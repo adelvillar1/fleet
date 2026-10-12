@@ -1,0 +1,19 @@
+[package]
+name = "fleet"
+version = "0.1.0"
+edition = "2021"
+description = "Native cross-platform launcher for the DeepSeek Harness agent runtime"
+license = "MIT"
+publish = false
+
+[lib]
+name = "fleet"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fleet"
+path = "src/main.rs"
+
+[profile.release]
+strip = true
+lto = true
