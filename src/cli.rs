@@ -1,200 +1,251 @@
-//! Command-line grammar for the `fleet` binary.
+//! Command-line grammar: parse argv into commands. The parser owns Fleet's
+//! own flags; there is nothing to forward anywhere.
 
-use std::path::PathBuf;
+use crate::api::DEFAULT_MODEL;
 
-/// Profile booted when `run` names none; mirrors a bare `dsh web`.
-pub const DEFAULT_PROFILE: &str = "web";
-/// Host the `status` command probes by default; the web UI binds loopback only.
-pub const DEFAULT_HOST: &str = "127.0.0.1";
-/// Port the `status` command probes by default; the web UI's shipped default.
-pub const DEFAULT_PORT: u16 = 3080;
-
-/// A parsed `fleet` invocation.
-#[derive(Debug)]
+/// Everything `fleet` answers to.
+#[derive(Debug, PartialEq, Eq)]
 pub enum Command {
-    /// `fleet [run]`: launch the harness.
+    /// Run one task to completion.
     Run(RunOptions),
-    /// `fleet status`: probe the harness web UI's port.
-    Status(StatusOptions),
-    /// `fleet doctor`: probe node, the checkout, and the dsh home.
-    Doctor(DoctorOptions),
-    /// `fleet --version`.
+    /// Interactive multi-turn session.
+    Chat(ChatOptions),
+    /// List saved sessions.
+    Sessions,
+    /// Environment and connectivity checks.
+    Doctor,
+    /// Print the version.
     Version,
-    /// `fleet --help`.
+    /// Print help.
     Help,
 }
 
-/// Options of the `run` command.
-#[derive(Debug)]
+/// Options for `fleet run`.
+#[derive(Debug, PartialEq, Eq)]
 pub struct RunOptions {
-    /// Harness checkout to launch, from `--home`.
-    pub home: Option<PathBuf>,
-    /// Node binary to launch with, from `--node`.
-    pub node: Option<PathBuf>,
-    /// Profile under `$DSH_HOME/profiles` to boot, from `--profile` or the first positional.
-    pub profile: Option<String>,
-    /// Extra patch overlays, from repeatable `--patch`.
-    pub patches: Vec<PathBuf>,
-    /// Arguments after `--` or the profile, forwarded verbatim to the harness.
-    pub forward: Vec<String>,
+    /// The task text: all non-flag words, joined.
+    pub task: String,
+    pub model: String,
+    pub max_turns: usize,
+    /// Approve every tool call without prompting.
+    pub yes: bool,
+    /// Session id to resume, when given.
+    pub session: Option<String>,
 }
 
-/// Options of the `status` command.
-#[derive(Debug)]
-pub struct StatusOptions {
-    /// Host to probe.
-    pub host: String,
-    /// Port to probe.
-    pub port: u16,
+/// Options for `fleet chat`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ChatOptions {
+    pub model: String,
+    pub yes: bool,
+    pub session: Option<String>,
 }
 
-/// Options of the `doctor` command.
-#[derive(Debug)]
-pub struct DoctorOptions {
-    /// Overrides `FLEET_HOME` discovery for the harness checkout.
-    pub home: Option<PathBuf>,
-}
+/// Turn cap when `--max-turns` is absent.
+pub const DEFAULT_MAX_TURNS: usize = 25;
 
-/// The `fleet --help` text.
+/// The help text; also the usage error body.
 pub const HELP: &str = "\
-Fleet - native launcher for the DeepSeek Harness agent runtime
+fleet — a native Rust agent based on DeepSeek Harness
 
-Usage:
-  fleet [run] [profile] [options] [-- <harness arguments>...]
-  fleet status [--host <host>] [--port <port>]
-  fleet doctor [--home <path>]
-  fleet -V | fleet --version
-  fleet -h | fleet --help
+usage:
+  fleet run \"<task>\" [options]   run one task to completion
+  fleet chat [options]           interactive multi-turn session
+  fleet sessions                 list saved sessions
+  fleet doctor                   check credentials, home, API, shell
+  fleet version                  print the version
+  fleet help                     print this help
 
-Commands:
-  run      Launch the harness (default command; default profile: web)
-  status   Report whether the harness web UI is listening
-  doctor   Probe node, the harness checkout, and the dsh home
+options for run and chat:
+  --model <name>      model to use (default deepseek-chat)
+  --max-turns <n>     tool-loop turn cap for run (default 25)
+  --yes, -y           approve every tool call without prompting
+  --session <id>      resume a saved session (see fleet sessions)
 
-Options:
-  --home <path>     Harness checkout to launch (default: FLEET_HOME, then
-                    ~/.fleet/harness, then the current directory)
-  --node <path>     Node binary to launch with (default: FLEET_NODE, then node)
-  --profile <name>  Profile under $DSH_HOME/profiles to boot
-  --patch <path>    Extra patch-list overlay applied after the profile layer
-                    (repeatable)
-  --host <host>     status: host to probe (default 127.0.0.1)
-  --port <port>     status: port to probe (default 3080)
+environment:
+  DEEPSEEK_API_KEY    required; also read from ~/.fleet/.env and the
+                      DeepSeek Harness credential store (~/.dsh/.credentials.yaml)
+  DEEPSEEK_BASE_URL   optional API base (default https://api.deepseek.com)
+  FLEET_HOME          optional home (default ~/.fleet)
 
-Fleet's own flags are recognized anywhere before `--`. Unknown flags, `--`
-arguments, and words past the profile are forwarded verbatim to the harness.
+exit codes: 0 success, 1 runtime failure, 2 usage or configuration,
+3 turn cap reached
 ";
 
-/// Parses `args` (argv without the program name) into a [`Command`].
+/// Parse the argument list (without the program name). `Err` carries the
+/// user-facing complaint.
 pub fn parse(args: &[String]) -> Result<Command, String> {
-    match args.first().map(String::as_str) {
-        None => Ok(Command::Run(RunOptions {
-            home: None,
-            node: None,
-            profile: None,
-            patches: Vec::new(),
-            forward: Vec::new(),
-        })),
-        Some("-h" | "--help") => Ok(Command::Help),
-        Some("-V" | "--version") => Ok(Command::Version),
-        Some("run") => parse_run(&args[1..]).map(Command::Run),
-        Some("status") => parse_status(&args[1..]).map(Command::Status),
-        Some("doctor") => parse_doctor(&args[1..]).map(Command::Doctor),
-        Some(other) => Err(format!(
-            "fleet: unknown command {other:?}; expected run, status, doctor, --help, or --version"
-        )),
-    }
-}
-
-/// Reads the value of `flag` at `args[*index]`, from `--flag=value` or the next token.
-fn take_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
-    let raw = &args[*index];
-    if let Some(rest) = raw.strip_prefix(&format!("{flag}=")) {
-        return Ok(rest.to_string());
-    }
-    match args.get(*index + 1) {
-        Some(value) => {
-            *index += 1;
-            Ok(value.clone())
-        }
-        None => Err(format!("fleet: {flag} needs a value")),
-    }
-}
-
-fn parse_run(args: &[String]) -> Result<RunOptions, String> {
-    let mut options = RunOptions {
-        home: None,
-        node: None,
-        profile: None,
-        patches: Vec::new(),
-        forward: Vec::new(),
+    let Some(command) = args.first() else {
+        return Err("no command given".to_string());
     };
+    let rest = &args[1..];
+    match command.as_str() {
+        "run" => parse_run(rest),
+        "chat" => parse_chat(rest),
+        "sessions" => no_flags(rest, Command::Sessions),
+        "doctor" => no_flags(rest, Command::Doctor),
+        "version" | "--version" | "-V" => no_flags(rest, Command::Version),
+        "help" | "--help" | "-h" => Ok(Command::Help),
+        other => Err(format!("unknown command `{other}` — try `fleet help`")),
+    }
+}
+
+fn parse_run(args: &[String]) -> Result<Command, String> {
+    let mut words: Vec<&str> = Vec::new();
+    let mut model = DEFAULT_MODEL.to_string();
+    let mut max_turns = DEFAULT_MAX_TURNS;
+    let mut yes = false;
+    let mut session: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
-        if arg == "--" {
-            options.forward.extend(args[index + 1..].iter().cloned());
-            break;
-        }
-        if arg == "--home" || arg.starts_with("--home=") {
-            options.home = Some(PathBuf::from(take_value(args, &mut index, "--home")?));
-        } else if arg == "--node" || arg.starts_with("--node=") {
-            options.node = Some(PathBuf::from(take_value(args, &mut index, "--node")?));
-        } else if arg == "--profile" || arg.starts_with("--profile=") {
-            if options.profile.is_some() {
-                return Err("fleet: --profile given more than once".to_string());
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--yes" | "-y" => yes = true,
+            "--model" => model = take_value(args, &mut index, arg)?,
+            "--max-turns" => {
+                let value = take_value(args, &mut index, arg)?;
+                max_turns = value.parse().map_err(|_| format!("`{value}` is not a turn count"))?;
             }
-            options.profile = Some(take_value(args, &mut index, "--profile")?);
-        } else if arg == "--patch" || arg.starts_with("--patch=") {
-            options
-                .patches
-                .push(PathBuf::from(take_value(args, &mut index, "--patch")?));
-        } else if arg.starts_with('-') && arg != "-" {
-            // Unknown flags belong to the harness, mirroring the launcher's
-            // pass-through semantics (`dsh` collects app flags the same way).
-            options.forward.push(arg.to_string());
-        } else if options.profile.is_none() {
-            options.profile = Some(arg.to_string());
-        } else {
-            options.forward.push(arg.to_string());
+            "--session" => session = Some(take_value(args, &mut index, arg)?),
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown run option `{arg}`"));
+            }
+            _ => words.push(arg),
         }
         index += 1;
     }
-    Ok(options)
+    if words.is_empty() {
+        return Err("run needs a task: fleet run \"<task>\"".to_string());
+    }
+    Ok(Command::Run(RunOptions {
+        task: words.join(" "),
+        model,
+        max_turns,
+        yes,
+        session,
+    }))
 }
 
-fn parse_status(args: &[String]) -> Result<StatusOptions, String> {
-    let mut host = DEFAULT_HOST.to_string();
-    let mut port = DEFAULT_PORT;
+fn parse_chat(args: &[String]) -> Result<Command, String> {
+    let mut model = DEFAULT_MODEL.to_string();
+    let mut yes = false;
+    let mut session: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
-        if arg == "--host" || arg.starts_with("--host=") {
-            host = take_value(args, &mut index, "--host")?;
-        } else if arg == "--port" || arg.starts_with("--port=") {
-            let raw = take_value(args, &mut index, "--port")?;
-            port = raw
-                .parse()
-                .map_err(|_| format!("fleet: --port needs a number, got {raw:?}"))?;
-        } else {
-            return Err(format!("fleet: unknown status option {arg:?}; see `fleet --help`"));
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--yes" | "-y" => yes = true,
+            "--model" => model = take_value(args, &mut index, arg)?,
+            "--session" => session = Some(take_value(args, &mut index, arg)?),
+            _ => return Err(format!("unknown chat option `{arg}`")),
         }
         index += 1;
     }
-    Ok(StatusOptions { host, port })
+    Ok(Command::Chat(ChatOptions { model, yes, session }))
 }
 
-fn parse_doctor(args: &[String]) -> Result<DoctorOptions, String> {
-    let mut home = None;
-    let mut index = 0;
-    while index < args.len() {
-        let arg = args[index].as_str();
-        if arg == "--home" || arg.starts_with("--home=") {
-            home = Some(PathBuf::from(take_value(args, &mut index, "--home")?));
-        } else {
-            return Err(format!("fleet: unknown doctor option {arg:?}; see `fleet --help`"));
-        }
-        index += 1;
+/// Commands that take no options at all; a stray flag is a usage error
+/// rather than a silently ignored one.
+fn no_flags(args: &[String], command: Command) -> Result<Command, String> {
+    match args.first() {
+        None => Ok(command),
+        Some(arg) => Err(format!("`{arg}` takes no options here")),
     }
-    Ok(DoctorOptions { home })
+}
+
+fn take_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
+    *index += 1;
+    args.get(*index)
+        .cloned()
+        .ok_or_else(|| format!("{flag} needs a value"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn run_takes_a_task_and_defaults() {
+        let command = parse(&args(&["run", "fix", "the", "bug"])).unwrap();
+        let Command::Run(options) = command else { panic!("not a run") };
+        assert_eq!(options.task, "fix the bug");
+        assert_eq!(options.model, "deepseek-chat");
+        assert_eq!(options.max_turns, DEFAULT_MAX_TURNS);
+        assert!(!options.yes);
+        assert_eq!(options.session, None);
+    }
+
+    #[test]
+    fn run_parses_all_flags_in_any_position() {
+        let command =
+            parse(&args(&["run", "--yes", "do it", "--model", "m2", "--max-turns", "3", "--session", "abc"]))
+                .unwrap();
+        let Command::Run(options) = command else { panic!("not a run") };
+        assert_eq!(options.task, "do it");
+        assert_eq!(options.model, "m2");
+        assert_eq!(options.max_turns, 3);
+        assert!(options.yes);
+        assert_eq!(options.session.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn run_rejects_unknown_flags_and_bad_counts() {
+        let error = parse(&args(&["run", "--profile", "web", "x"])).unwrap_err();
+        assert!(error.contains("--profile"));
+        let error = parse(&args(&["run", "--max-turns", "soon", "x"])).unwrap_err();
+        assert!(error.contains("not a turn count"));
+    }
+
+    #[test]
+    fn run_needs_a_task() {
+        assert!(parse(&args(&["run"])).is_err());
+        assert!(parse(&args(&["run", "--yes"])).is_err());
+    }
+
+    #[test]
+    fn chat_parses_flags() {
+        let command = parse(&args(&["chat", "-y", "--model", "m"])).unwrap();
+        assert_eq!(command, Command::Chat(ChatOptions {
+            model: "m".to_string(),
+            yes: true,
+            session: None,
+        }));
+    }
+
+    #[test]
+    fn chat_rejects_stray_words() {
+        assert!(parse(&args(&["chat", "hello"])).is_err());
+    }
+
+    #[test]
+    fn bare_commands_take_no_options() {
+        assert_eq!(parse(&args(&["sessions"])).unwrap(), Command::Sessions);
+        assert_eq!(parse(&args(&["doctor"])).unwrap(), Command::Doctor);
+        assert_eq!(parse(&args(&["version"])).unwrap(), Command::Version);
+        assert_eq!(parse(&args(&["--help"])).unwrap(), Command::Help);
+        assert!(parse(&args(&["sessions", "--all"])).is_err());
+    }
+
+    #[test]
+    fn missing_values_fail_with_the_flag_named() {
+        let error = parse(&args(&["run", "--model"])).unwrap_err();
+        assert!(error.contains("--model"));
+    }
+
+    #[test]
+    fn unknown_commands_fail() {
+        let error = parse(&args(&["frobnicate"])).unwrap_err();
+        assert!(error.contains("frobnicate"));
+    }
+
+    #[test]
+    fn no_command_is_a_usage_error() {
+        assert!(parse(&[]).is_err());
+    }
 }

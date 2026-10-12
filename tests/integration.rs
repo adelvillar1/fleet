@@ -1,290 +1,512 @@
-//! Behavior tests for Fleet's parsing, discovery, version floor, probing,
-//! doctor checks, and launch-argument construction. Standard library only;
-//! no network beyond loopback.
+//! End-to-end tests for the native agent: the parser's public surface, the
+//! HTTP client against a local mock API, and full tool-loop runs that assert
+//! both the run report and the session log the model saw. No network beyond
+//! loopback; the mock API runs as a child process.
+//!
+//! The live-API test is `#[ignore]`d like the repo's `test:e2e`: run it with
+//! `cargo test --test integration -- --ignored` and `DEEPSEEK_API_KEY` set.
 
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 
-use fleet::cli::{self, Command};
-use fleet::{discovery, doctor, net, nodever, run};
+use fleet::agent::{
+    Agent, AgentError, AgentOptions, ApproveAll, Approver, DenyAll, RunReport, StopReason,
+};
+use fleet::api::{Client, ClientError, ChatRequest, DEFAULT_BASE_URL, Message, Role};
+use fleet::cli;
+use fleet::session::{self, Record, Session};
+use fleet::tools::{Tool, ALL_TOOLS, MAX_TOOL_OUTPUT};
 
-fn tempdir(name: &str) -> PathBuf {
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
+// --- mock API server -------------------------------------------------------
+
+/// One scripted response: an HTTP status line and its JSON document.
+#[derive(Debug, Clone)]
+struct ScriptedResponse {
+    status: String,
+    body: String,
+}
+
+/// A `200 OK` response carrying `body`.
+fn ok(body: String) -> ScriptedResponse {
+    ScriptedResponse { status: "200 OK".to_string(), body }
+}
+
+/// One recorded HTTP request: the head (request line plus headers) and the
+/// body, as logged by the mock-server child.
+#[derive(serde::Deserialize)]
+struct RecordedRequest {
+    #[allow(dead_code)]
+    head: String,
+    body: String,
+}
+
+/// A local chat-completions stand-in, served by the `mock-server` binary in a
+/// child process. ureq's reads misbehave here when the client and an
+/// in-process loopback server share one process, so the mock runs
+/// cross-process: each connection gets the next scripted response with
+/// `Connection: close`, and requests are logged to a file the parent reads.
+/// When the script runs dry the server answers 500 `mock exhausted`, which
+/// fails the requesting test loudly.
+struct MockApi {
+    child: std::process::Child,
+    port: u16,
+    scratch: PathBuf,
+}
+
+impl MockApi {
+    fn start(responses: Vec<ScriptedResponse>) -> MockApi {
+        let scratch = temp_home("mock");
+        let script_path = scratch.join("responses.jsonl");
+        let script = responses
+            .iter()
+            .map(|response| {
+                serde_json::json!({ "status": response.status, "body": response.body })
+            })
+            .map(|line| format!("{line}\n"))
+            .collect::<String>();
+        std::fs::write(&script_path, script).unwrap();
+        let requests_path = scratch.join("requests.jsonl");
+        let port_path = scratch.join("port");
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_mock-server"))
+            .arg(&script_path)
+            .arg(&requests_path)
+            .arg(&port_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn the mock-server child");
+        let port = wait_for_port(&port_path, &mut child);
+        MockApi { child, port, scratch }
+    }
+
+    fn url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// Recorded request bodies, parsed.
+    fn bodies(&self) -> Vec<serde_json::Value> {
+        let text = std::fs::read_to_string(self.scratch.join("requests.jsonl")).unwrap_or_default();
+        text.lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let recorded: RecordedRequest =
+                    serde_json::from_str(line).expect("a recorded request line");
+                serde_json::from_str(&recorded.body).expect("a recorded request body")
+            })
+            .collect()
+    }
+}
+
+impl Drop for MockApi {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        std::fs::remove_dir_all(&self.scratch).ok();
+    }
+}
+
+/// Poll for the child's port file; a child that exits first fails the test.
+fn wait_for_port(port_path: &Path, child: &mut std::process::Child) -> u16 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(port_path) {
+            if let Ok(port) = text.trim().parse() {
+                return port;
+            }
+        }
+        if child.try_wait().unwrap().is_some() {
+            panic!("the mock-server child exited before writing its port");
+        }
+        assert!(std::time::Instant::now() < deadline, "the mock-server port never arrived");
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+// --- helpers ---------------------------------------------------------------
+
+fn temp_home(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "fleet-tests-{}-{}-{}",
-        name,
+        "fleet-integration-{tag}-{}-{}",
         std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
-fn make_harness(name: &str) -> PathBuf {
-    let dir = tempdir(name);
-    std::fs::create_dir_all(dir.join("apps/cli/src")).unwrap();
-    std::fs::write(dir.join("apps/cli/src/bin.ts"), "// harness entry").unwrap();
-    dir
+fn args(list: &[&str]) -> Vec<String> {
+    list.iter().map(|item| item.to_string()).collect()
 }
 
-fn argv(items: &[&str]) -> Vec<String> {
-    items.iter().map(|item| item.to_string()).collect()
+/// A plain assistant text response body.
+fn assistant_response(content: &str) -> String {
+    chat_response(serde_json::json!({ "role": "assistant", "content": content }))
 }
 
-fn as_run(command: Command) -> cli::RunOptions {
-    match command {
-        Command::Run(options) => options,
-        _ => panic!("expected a run command, got {command:?}"),
+/// An assistant response body requesting tool calls.
+fn tool_call_response(calls: serde_json::Value) -> String {
+    chat_response(serde_json::json!({
+        "role": "assistant",
+        "content": null,
+        "tool_calls": calls,
+    }))
+}
+
+fn chat_response(message: serde_json::Value) -> String {
+    serde_json::json!({
+        "choices": [{ "message": message, "finish_reason": "stop" }],
+        "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 },
+    })
+    .to_string()
+}
+
+fn tool_call(id: &str, name: &str, arguments: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "type": "function",
+        "function": { "name": name, "arguments": arguments },
+    })
+}
+
+/// One full agent run against `mock` on the given session.
+fn run_on(
+    mock: &MockApi,
+    session: &mut Session,
+    approver: Box<dyn Approver>,
+    max_turns: usize,
+    task: &str,
+) -> Result<RunReport, AgentError> {
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions { model: "test-model".to_string(), max_turns };
+    let mut progress = Vec::new();
+    let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
+    agent.run(task)
+}
+
+fn message_roles(body: &serde_json::Value) -> Vec<&str> {
+    body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|message| message["role"].as_str().unwrap())
+        .collect()
+}
+
+// --- parser ----------------------------------------------------------------
+
+#[test]
+fn parse_surfaces_the_documented_commands() {
+    assert_eq!(cli::parse(&args(&["sessions"])), Ok(cli::Command::Sessions));
+    assert_eq!(cli::parse(&args(&["doctor"])), Ok(cli::Command::Doctor));
+    assert_eq!(cli::parse(&args(&["version"])), Ok(cli::Command::Version));
+    let error = cli::parse(&args(&["launch", "--profile", "web"])).unwrap_err();
+    assert!(error.contains("launch"), "{error}");
+}
+
+// --- client ----------------------------------------------------------------
+
+#[test]
+fn client_posts_auth_and_tool_declarations() {
+    let mock = MockApi::start(vec![ok(assistant_response("hi"))]);
+    let client = Client::new(mock.url(), "test-key");
+    let request = ChatRequest {
+        model: "test-model",
+        messages: &[Message::text(Role::User, "hello")],
+        tools: ALL_TOOLS.iter().map(|tool| tool.spec()).collect(),
+    };
+    let response = client.chat(&request).unwrap();
+    assert_eq!(response.choices.len(), 1);
+    assert_eq!(response.usage.prompt_tokens, 10);
+
+    let text = std::fs::read_to_string(mock.scratch.join("requests.jsonl")).unwrap();
+    let recorded: RecordedRequest = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert!(recorded.head.starts_with("POST /chat/completions "), "{}", recorded.head);
+    assert!(recorded.head.contains("Authorization: Bearer test-key"), "{}", recorded.head);
+    let body: serde_json::Value = serde_json::from_str(&recorded.body).unwrap();
+    assert_eq!(body["model"], "test-model");
+    assert_eq!(body["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(body["messages"][0]["role"], "user");
+}
+
+#[test]
+fn client_maps_an_api_error_with_its_hint() {
+    let mock = MockApi::start(vec![ScriptedResponse {
+        status: "401 Unauthorized".to_string(),
+        body: r#"{"error":{"message":"auth failed"}}"#.to_string(),
+    }]);
+    let client = Client::new(mock.url(), "test-key");
+    let request = ChatRequest {
+        model: "test-model",
+        messages: &[Message::text(Role::User, "hello")],
+        tools: Vec::new(),
+    };
+    let error = match client.chat(&request) {
+        Err(ClientError::Api(error)) => error,
+        other => panic!("expected an API error, got {other:?}"),
+    };
+    assert_eq!(error.status, 401);
+    assert_eq!(error.message, "auth failed");
+    assert!(error.to_string().contains("DEEPSEEK_API_KEY"));
+}
+
+// --- the agent loop --------------------------------------------------------
+
+#[test]
+fn run_completes_a_two_turn_tool_loop() {
+    let mock = MockApi::start(vec![
+        ok(tool_call_response(serde_json::json!([tool_call(
+            "call-1",
+            "bash",
+            r#"{"command":"echo hello"}"#
+        )]))),
+        ok(assistant_response("All done.")),
+    ]);
+    let home = temp_home("two-turn");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say hello").unwrap();
+
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.turns, 2);
+    assert_eq!(report.final_message.as_deref(), Some("All done."));
+    assert_eq!(report.usage.prompt_tokens, 20);
+    assert_eq!(report.usage.completion_tokens, 10);
+
+    // The second request sees the system prompt, the task, the assistant's
+    // call, and the recorded tool output.
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(message_roles(&bodies[0]), vec!["system", "user"]);
+    assert_eq!(message_roles(&bodies[1]), vec!["system", "user", "assistant", "tool"]);
+    assert_eq!(bodies[1]["messages"][3]["tool_call_id"], "call-1");
+    assert!(bodies[1]["messages"][3]["content"].as_str().unwrap().contains("hello"));
+
+    // The log holds exactly what the model saw plus bookkeeping.
+    let records = session::replay(&session.path()).unwrap();
+    assert_eq!(records.len(), 6);
+    assert!(matches!(&records[0], Record::Start { v: 1, model, .. } if model == "test-model"));
+    assert!(matches!(&records[1], Record::User { content } if content == "say hello"));
+    assert!(matches!(&records[3], Record::ToolResult { approved: true, .. }));
+    assert!(matches!(
+        &records[5],
+        Record::End { stop_reason, turns: 2 } if stop_reason == "completed"
+    ));
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn resume_seeds_the_next_request_from_the_log() {
+    let first = MockApi::start(vec![
+        ok(tool_call_response(serde_json::json!([tool_call(
+            "call-1",
+            "bash",
+            r#"{"command":"echo one"}"#
+        )]))),
+        ok(assistant_response("First answer.")),
+    ]);
+    let home = temp_home("resume");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&first, &mut session, Box::new(ApproveAll), 5, "first task").unwrap();
+
+    let second = MockApi::start(vec![ok(assistant_response("Second answer."))]);
+    let mut resumed = Session::open(&session.path()).unwrap();
+    let report = run_on(&second, &mut resumed, Box::new(ApproveAll), 5, "second task").unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    let bodies = second.bodies();
+    let messages = bodies[0]["messages"].as_array().unwrap();
+    let roles: Vec<&str> = messages.iter().map(|m| m["role"].as_str().unwrap()).collect();
+    assert_eq!(roles, vec!["system", "user", "assistant", "tool", "assistant", "user"]);
+    assert_eq!(messages[1]["content"], "first task");
+    assert_eq!(messages[4]["content"], "First answer.");
+    assert_eq!(messages[5]["content"], "second task");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn denied_call_is_recorded_and_shown_to_the_model() {
+    let mock = MockApi::start(vec![
+        ok(tool_call_response(serde_json::json!([tool_call(
+            "call-1",
+            "bash",
+            r#"{"command":"echo no"}"#
+        )]))),
+        ok(assistant_response("Understood, standing down.")),
+    ]);
+    let home = temp_home("denied");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(&mock, &mut session, Box::new(DenyAll), 5, "go wild").unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    let records = session::replay(&session.path()).unwrap();
+    match &records[3] {
+        Record::ToolResult { output, approved: false, truncated: false, .. } => {
+            assert_eq!(output, "denied: the user did not approve this call.");
+        }
+        other => panic!("expected a denied tool result, got {other:?}"),
     }
+
+    let bodies = mock.bodies();
+    assert_eq!(bodies[1]["messages"][3]["content"], "denied: the user did not approve this call.");
+
+    std::fs::remove_dir_all(&home).ok();
 }
 
-fn as_status(command: Command) -> cli::StatusOptions {
-    match command {
-        Command::Status(options) => options,
-        _ => panic!("expected a status command, got {command:?}"),
+#[test]
+fn unknown_tool_and_bad_arguments_are_model_visible_errors() {
+    let mock = MockApi::start(vec![
+        ok(tool_call_response(serde_json::json!([
+            tool_call("call-1", "sudo", "{}"),
+            tool_call("call-2", "bash", "{not json"),
+        ]))),
+        ok(assistant_response("Recovering.")),
+    ]);
+    let home = temp_home("bad-tools");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "try things").unwrap();
+
+    let records = session::replay(&session.path()).unwrap();
+    let outputs: Vec<&str> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outputs.len(), 2);
+    assert_eq!(outputs[0], "error: unknown tool `sudo`");
+    assert!(outputs[1].starts_with("error: arguments were not valid JSON"), "{}", outputs[1]);
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn tool_failure_is_a_model_visible_error_result() {
+    let mock = MockApi::start(vec![
+        ok(tool_call_response(serde_json::json!([tool_call(
+            "call-1",
+            "read_file",
+            r#"{"path":"/nonexistent/fleet-test-file"}"#
+        )]))),
+        ok(assistant_response("Noted.")),
+    ]);
+    let home = temp_home("tool-error");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "read the missing file").unwrap();
+
+    let records = session::replay(&session.path()).unwrap();
+    match &records[3] {
+        Record::ToolResult { output, approved: true, .. } => {
+            assert!(output.starts_with("error: /nonexistent/fleet-test-file"), "{output}");
+        }
+        other => panic!("expected a failed tool result, got {other:?}"),
     }
+
+    std::fs::remove_dir_all(&home).ok();
 }
 
 #[test]
-fn bare_invocation_and_run_are_the_same_command() {
-    let bare = as_run(cli::parse(&argv(&[])).unwrap());
-    let explicit = as_run(cli::parse(&argv(&["run"])).unwrap());
-    assert!(bare.profile.is_none() && bare.forward.is_empty());
-    assert!(explicit.profile.is_none() && explicit.forward.is_empty());
+fn max_turns_stops_the_loop_and_marks_the_log() {
+    let scripted = tool_call_response(serde_json::json!([tool_call("call-1", "bash", "{}")]));
+    let mock = MockApi::start(vec![ok(scripted.clone()), ok(scripted)]);
+    let home = temp_home("max-turns");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 2, "loop forever").unwrap();
+
+    assert_eq!(report.stop_reason, StopReason::MaxTurns);
+    assert_eq!(report.turns, 2);
+    assert_eq!(report.final_message, None);
+    assert_eq!(mock.bodies().len(), 2);
+
+    let records = session::replay(&session.path()).unwrap();
+    assert!(matches!(
+        records.last(),
+        Some(Record::End { stop_reason, turns: 2 }) if stop_reason == "max-turns"
+    ));
+
+    std::fs::remove_dir_all(&home).ok();
 }
 
 #[test]
-fn run_takes_a_profile_then_forwards_words() {
-    let options = as_run(cli::parse(&argv(&["run", "fleet", "--no-open"])).unwrap());
-    assert_eq!(options.profile.as_deref(), Some("fleet"));
-    assert_eq!(options.forward, argv(&["--no-open"]));
-}
+fn oversized_tool_output_is_truncated_in_the_log() {
+    // write_file a larger-than-cap file, then read it back through the loop.
+    let scratch = temp_home("truncation-scratch");
+    let path = scratch.join("big.txt");
+    let big = "x".repeat(MAX_TOOL_OUTPUT + 10_000);
+    let mock = MockApi::start(vec![
+        ok(tool_call_response(serde_json::json!([tool_call(
+            "call-1",
+            "write_file",
+            &format!(r#"{{"path":"{}","content":"{}"}}"#, path.display(), big),
+        )]))),
+        ok(tool_call_response(serde_json::json!([tool_call(
+            "call-2",
+            "read_file",
+            &format!(r#"{{"path":"{}"}}"#, path.display()),
+        )]))),
+        ok(assistant_response("Read it, partially.")),
+    ]);
+    let home = temp_home("truncation-run");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "round-trip a big file").unwrap();
 
-#[test]
-fn run_accepts_flags_in_either_form_and_stops_at_double_dash() {
-    let options = as_run(cli::parse(&argv(&[
-        "run",
-        "--home",
-        "/tmp/h",
-        "--profile=web",
-        "--patch",
-        "/tmp/p.yml",
-        "--patch=/tmp/q.yml",
-        "--",
-        "--port",
-        "0",
-    ]))
-    .unwrap());
-    assert_eq!(options.home, Some(PathBuf::from("/tmp/h")));
-    assert_eq!(options.profile.as_deref(), Some("web"));
-    assert_eq!(
-        options.patches,
-        vec![PathBuf::from("/tmp/p.yml"), PathBuf::from("/tmp/q.yml")]
-    );
-    assert_eq!(options.forward, argv(&["--port", "0"]));
-}
-
-#[test]
-fn run_forwards_unknown_flags_and_rejects_bad_fleet_flags() {
-    // Unknown flags pass through to the harness, mirroring `dsh` semantics.
-    let options = as_run(cli::parse(&argv(&["run", "--wat"])).unwrap());
-    assert!(options.profile.is_none());
-    assert_eq!(options.forward, argv(&["--wat"]));
-    // Fleet's own flags still fail loudly when malformed.
-    assert!(cli::parse(&argv(&["run", "--home"])).is_err());
-    assert!(cli::parse(&argv(&["run", "--profile", "a", "--profile", "b"])).is_err());
-}
-
-#[test]
-fn status_defaults_to_the_web_ui_address() {
-    let defaults = as_status(cli::parse(&argv(&["status"])).unwrap());
-    assert_eq!(defaults.host, "127.0.0.1");
-    assert_eq!(defaults.port, 3080);
-
-    let custom = as_status(
-        cli::parse(&argv(&["status", "--host", "0.0.0.0", "--port=4080"])).unwrap(),
-    );
-    assert_eq!(custom.host, "0.0.0.0");
-    assert_eq!(custom.port, 4080);
-
-    assert!(cli::parse(&argv(&["status", "--port", "http"])).is_err());
-    assert!(cli::parse(&argv(&["status", "extra"])).is_err());
-}
-
-#[test]
-fn doctor_takes_only_a_home() {
-    match cli::parse(&argv(&["doctor", "--home", "/tmp/h"])).unwrap() {
-        Command::Doctor(options) => assert_eq!(options.home, Some(PathBuf::from("/tmp/h"))),
-        _ => panic!("expected a doctor command"),
+    let records = session::replay(&session.path()).unwrap();
+    match &records[5] {
+        Record::ToolResult { output, truncated: true, .. } => {
+            assert!(output.contains("[truncated"), "expected the truncation marker");
+            assert!(output.len() < MAX_TOOL_OUTPUT + 100);
+        }
+        other => panic!("expected a truncated tool result, got {other:?}"),
     }
-    assert!(cli::parse(&argv(&["doctor", "--wat"])).is_err());
+
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&scratch).ok();
 }
 
 #[test]
-fn version_and_help_tokens_parse_before_any_command() {
-    assert!(matches!(cli::parse(&argv(&["--version"])).unwrap(), Command::Version));
-    assert!(matches!(cli::parse(&argv(&["-V"])).unwrap(), Command::Version));
-    assert!(matches!(cli::parse(&argv(&["--help"])).unwrap(), Command::Help));
-    assert!(cli::parse(&argv(&["deploy"])).is_err());
+fn tools_execute_against_the_real_filesystem() {
+    let home = temp_home("tools");
+    let target = home.join("note.txt");
+    Tool::WriteFile
+        .execute(&serde_json::json!({ "path": target.display().to_string(), "content": "from fleet" }))
+        .unwrap();
+    let read = Tool::ReadFile
+        .execute(&serde_json::json!({ "path": target.display().to_string() }))
+        .unwrap();
+    assert_eq!(read.output, "from fleet");
+    let listed = Tool::ListDir
+        .execute(&serde_json::json!({ "path": home.display().to_string() }))
+        .unwrap();
+    assert!(listed.output.contains("note.txt"));
+    std::fs::remove_dir_all(&home).ok();
 }
 
-#[test]
-fn version_parsing_tolerates_prefixes_and_suffixes() {
-    assert_eq!(nodever::parse_version("v22.19.0\n"), Some((22, 19, 0)));
-    assert_eq!(nodever::parse_version("24.1.2"), Some((24, 1, 2)));
-    assert_eq!(nodever::parse_version("v22.19.0-beta.1"), Some((22, 19, 0)));
-    assert_eq!(nodever::parse_version("v24.0.0+build.7"), Some((24, 0, 0)));
-    assert_eq!(nodever::parse_version("bogus"), None);
-    assert_eq!(nodever::parse_version("v22"), None);
-}
+// --- live API --------------------------------------------------------------
 
 #[test]
-fn version_floor_matches_the_harness_engines_field() {
-    assert!(nodever::meets_floor((22, 19, 0)));
-    assert!(nodever::meets_floor((22, 20, 5)));
-    assert!(!nodever::meets_floor((22, 18, 3)));
-    assert!(!nodever::meets_floor((23, 5, 0)));
-    assert!(nodever::meets_floor((24, 0, 0)));
-    assert!(nodever::meets_floor((25, 1, 0)));
-    assert!(!nodever::meets_floor((21, 9, 9)));
-}
-
-#[test]
-fn discovery_prefers_flag_then_env_then_installed_then_cwd() {
-    let harness = make_harness("discovery");
-    let plain = tempdir("discovery-plain");
-
-    assert!(discovery::looks_like_harness(&harness));
-    assert!(!discovery::looks_like_harness(&plain));
-
-    let from_flag = discovery::resolve_root(Some(&harness), Some("/nonexistent"), None, &plain);
-    assert_eq!(from_flag.unwrap(), harness);
-
-    let env_path = harness.to_str().unwrap().to_string();
-    let from_env = discovery::resolve_root(None, Some(&env_path), None, &plain);
-    assert_eq!(from_env.unwrap(), harness);
-
-    let from_installed = discovery::resolve_root(None, None, Some(harness.clone()), &plain);
-    assert_eq!(from_installed.unwrap(), harness);
-
-    let from_cwd = discovery::resolve_root(None, None, None, &harness);
-    assert_eq!(from_cwd.unwrap(), harness);
-
-    let error = discovery::resolve_root(None, None, Some(plain.clone()), &plain).unwrap_err();
-    assert!(error.contains("no DeepSeek Harness checkout found"));
-    assert!(error.contains(&plain.display().to_string()));
-}
-
-#[test]
-fn installed_and_home_directories_follow_the_documented_layout() {
-    assert_eq!(
-        discovery::installed_home(Path::new("/Users/a")),
-        PathBuf::from("/Users/a/.fleet/harness")
+#[ignore = "real-API e2e; run with `cargo test --test integration -- --ignored` and DEEPSEEK_API_KEY set"]
+fn live_api_completes_a_tool_task() {
+    let Ok(key) = std::env::var("DEEPSEEK_API_KEY") else {
+        eprintln!("DEEPSEEK_API_KEY is not set; skipping the live test");
+        return;
+    };
+    let home = temp_home("live");
+    let mut session = Session::create(&home, "deepseek-chat").unwrap();
+    let client = Client::new(DEFAULT_BASE_URL, key);
+    let mut progress = std::io::stderr().lock();
+    let mut agent =
+        Agent::new(&client, AgentOptions::default(), &mut session, Box::new(ApproveAll), &mut progress)
+            .unwrap();
+    let report = agent
+        .run("Run `echo fleet-live-ok` with bash, then reply with exactly its output.")
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert!(
+        report.final_message.as_deref().unwrap_or_default().contains("fleet-live-ok"),
+        "{report:?}"
     );
-    assert_eq!(
-        discovery::home_dir(Some("/h"), Some("/w")),
-        Some(PathBuf::from("/h"))
-    );
-    assert_eq!(
-        discovery::home_dir(None, Some("/w")),
-        Some(PathBuf::from("/w"))
-    );
-    assert_eq!(discovery::home_dir(None, None), None);
-    assert_eq!(
-        discovery::dsh_home(Some("/d"), Some(Path::new("/h"))),
-        Some(PathBuf::from("/d"))
-    );
-    assert_eq!(
-        discovery::dsh_home(None, Some(Path::new("/h"))),
-        Some(PathBuf::from("/h/.dsh"))
-    );
-}
-
-#[test]
-fn probing_reports_a_live_listener_and_a_closed_port() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    assert!(net::listening("127.0.0.1", port));
-    drop(listener);
-    assert!(!net::listening("127.0.0.1", port));
-    assert!(!net::listening("no.such.host.invalid", 3080));
-}
-
-#[test]
-fn doctor_node_check_enforces_the_floor() {
-    assert!(doctor::evaluate_node(Ok((22, 19, 0))).ok);
-    assert!(doctor::evaluate_node(Ok((22, 20, 1))).ok);
-    assert!(!doctor::evaluate_node(Ok((22, 18, 0))).ok);
-    assert!(!doctor::evaluate_node(Err("cannot run node: no such file".to_string())).ok);
-}
-
-#[test]
-fn doctor_harness_check_reports_a_missing_entry() {
-    let harness = make_harness("doctor-harness");
-    assert!(doctor::evaluate_harness(Some(&harness)).ok);
-    let empty = tempdir("doctor-empty");
-    let failed = doctor::evaluate_harness(Some(&empty));
-    assert!(!failed.ok);
-    assert!(failed.detail.contains(discovery::HARNESS_ENTRY));
-    assert!(!doctor::evaluate_harness(None).ok);
-}
-
-#[test]
-fn doctor_deps_check_names_the_install_command() {
-    let plain = tempdir("doctor-deps");
-    let failed = doctor::evaluate_deps(&plain);
-    assert!(!failed.ok);
-    assert!(failed.detail.contains("pnpm install"));
-}
-
-#[test]
-fn doctor_profiles_check_lists_the_profiles() {
-    let home = tempdir("doctor-dsh");
-    std::fs::create_dir_all(home.join("profiles/web")).unwrap();
-    std::fs::write(home.join("profiles/web/cordis.yml"), "").unwrap();
-    std::fs::create_dir_all(home.join("profiles/fleet")).unwrap();
-    std::fs::write(home.join("profiles/fleet/cordis.yml"), "").unwrap();
-    // Directories without cordis.yml are not profiles.
-    std::fs::create_dir_all(home.join("profiles/node_modules")).unwrap();
-    let ok = doctor::evaluate_profiles(&home);
-    assert!(ok.ok);
-    assert!(ok.detail.contains("fleet") && ok.detail.contains("web"));
-    assert!(!ok.detail.contains("node_modules"));
-
-    let empty = tempdir("doctor-dsh-empty");
-    assert!(!doctor::evaluate_profiles(&empty).ok);
-}
-
-#[test]
-fn doctor_web_check_reports_the_endpoint() {
-    assert!(doctor::evaluate_web(true, "127.0.0.1", 3080).ok);
-    assert!(!doctor::evaluate_web(false, "127.0.0.1", 3080).ok);
-}
-
-#[test]
-fn check_rendering_marks_failures() {
-    let ok = doctor::render(&doctor::Check {
-        name: "node",
-        ok: true,
-        detail: "v22.19.0".to_string(),
-    });
-    assert!(ok.starts_with(" ok ") && ok.contains("node"));
-    let failed = doctor::render(&doctor::Check {
-        name: "node",
-        ok: false,
-        detail: "missing".to_string(),
-    });
-    assert!(failed.starts_with("FAIL"));
-}
-
-#[test]
-fn launch_arguments_put_patches_before_the_profile() {
-    let args = run::build_args(
-        "fleet",
-        &[PathBuf::from("/tmp/a.yml")],
-        &["--no-open".to_string()],
-    );
-    assert_eq!(args, argv(&["--patch", "/tmp/a.yml", "fleet", "--no-open"]));
-    assert_eq!(run::build_args("web", &[], &[]), argv(&["web"]));
+    std::fs::remove_dir_all(&home).ok();
 }

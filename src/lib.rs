@@ -1,9 +1,11 @@
-//! Fleet's library face: command parsing, harness discovery, the launch
-//! vector, and the probes the `fleet` binary composes.
+//! Fleet's library face: the DeepSeek API client, the tool set, the agent
+//! loop, session logs, command parsing, and the doctor's checks.
 
+pub mod agent;
+pub mod api;
 pub mod cli;
-pub mod discovery;
 pub mod doctor;
+pub mod home;
 pub mod net;
-pub mod nodever;
-pub mod run;
+pub mod session;
+pub mod tools;

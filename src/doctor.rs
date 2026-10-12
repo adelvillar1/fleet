@@ -1,147 +1,152 @@
-//! `fleet doctor` probes. Each check evaluates facts the caller gathered, so
-//! every evaluator runs hermetically in tests.
+//! `fleet doctor` checks: credentials, home, API reachability, shell.
+//! Evaluators take facts the caller gathered, so every evaluator runs
+//! hermetically in tests.
 
 use std::path::Path;
 
-use crate::discovery::{self, HARNESS_ENTRY};
-use crate::nodever::{self, NODE_FLOOR};
-
 /// One probe's outcome.
 pub struct Check {
-    /// Short check name, e.g. `node`.
+    /// Short check name, e.g. `credentials`.
     pub name: &'static str,
     /// Whether the check passed.
     pub ok: bool,
-    /// Human-readable detail, e.g. the observed version.
+    /// Human-readable detail, e.g. the masked key.
     pub detail: String,
 }
 
-/// Evaluates the node check from a `node --version` outcome.
-pub fn evaluate_node(version: Result<(u64, u64, u64), String>) -> Check {
-    match version {
-        Err(error) => Check {
-            name: "node",
-            ok: false,
-            detail: error,
-        },
-        Ok(version) => {
-            let (major, minor, patch) = version;
-            if nodever::meets_floor(version) {
-                Check {
-                    name: "node",
-                    ok: true,
-                    detail: format!("v{major}.{minor}.{patch} satisfies ^{}.{:02} || >=24", NODE_FLOOR.0, NODE_FLOOR.1),
-                }
-            } else {
-                Check {
-                    name: "node",
-                    ok: false,
-                    detail: format!(
-                        "v{major}.{minor}.{patch} is out of range; Fleet needs ^{}.{:02} || >=24",
-                        NODE_FLOOR.0, NODE_FLOOR.1
-                    ),
-                }
-            }
-        }
-    }
-}
-
-/// Evaluates the checkout check from a resolved root, when discovery found one.
-pub fn evaluate_harness(root: Option<&Path>) -> Check {
-    match root {
-        Some(root) if discovery::looks_like_harness(root) => Check {
-            name: "harness",
-            ok: true,
-            detail: root.display().to_string(),
-        },
-        Some(root) => Check {
-            name: "harness",
-            ok: false,
-            detail: format!("{root:?} does not carry {HARNESS_ENTRY}"),
-        },
-        None => Check {
-            name: "harness",
-            ok: false,
-            detail: "no checkout found; set --home or FLEET_HOME, or run inside the repository"
-                .to_string(),
-        },
-    }
-}
-
-/// Evaluates the installed-dependencies check: `node_modules` at the checkout root.
-pub fn evaluate_deps(root: &Path) -> Check {
-    let node_modules = root.join("node_modules");
-    if node_modules.is_dir() {
-        Check {
-            name: "dependencies",
-            ok: true,
-            detail: "node_modules present".to_string(),
-        }
-    } else {
-        Check {
-            name: "dependencies",
-            ok: false,
-            detail: format!("{} is missing; run `pnpm install` in the checkout", node_modules.display()),
-        }
-    }
-}
-
-/// Evaluates the dsh home check: the profiles directory and the profiles it holds.
-pub fn evaluate_profiles(dsh_home: &Path) -> Check {
-    let profiles = dsh_home.join("profiles");
-    let entries = match std::fs::read_dir(&profiles) {
-        Err(_) => {
-            return Check {
-                name: "dsh home",
-                ok: false,
-                detail: format!("{} does not exist; boot the harness once to create it", profiles.display()),
-            }
-        }
-        Ok(entries) => entries,
-    };
-    let mut names: Vec<String> = entries
-        .filter_map(|entry| entry.ok())
-        // A profile carries cordis.yml; other directories (pnpm's
-        // node_modules farm, for instance) are not profiles.
-        .filter(|entry| entry.path().join("cordis.yml").is_file())
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .collect();
-    names.sort();
-    if names.is_empty() {
-        Check {
-            name: "dsh home",
-            ok: false,
-            detail: format!("{} holds no profiles", profiles.display()),
-        }
-    } else {
-        Check {
-            name: "dsh home",
-            ok: true,
-            detail: format!("{} ({}: {})", profiles.display(), names.len(), names.join(", ")),
-        }
-    }
-}
-
-/// Evaluates the web UI check from a [`crate::net::listening`] probe. Doctor
-/// reports it as informational; it never fails the run on its own.
-pub fn evaluate_web(listening: bool, host: &str, port: u16) -> Check {
-    if listening {
-        Check {
-            name: "web ui",
-            ok: true,
-            detail: format!("listening on http://{host}:{port}"),
-        }
-    } else {
-        Check {
-            name: "web ui",
-            ok: false,
-            detail: format!("nothing listening on {host}:{port}"),
-        }
-    }
-}
-
-/// Renders a check as ` ok  name - detail` / `FAIL  name - detail`.
+/// Render one check as a report line.
 pub fn render(check: &Check) -> String {
-    let verdict = if check.ok { " ok " } else { "FAIL" };
-    format!("{verdict}  {} - {}", check.name, check.detail)
+    let verdict = if check.ok { "ok  " } else { "FAIL" };
+    format!("{:12} {}  {}", check.name, verdict, check.detail)
+}
+
+/// The credentials check from a resolved `DEEPSEEK_API_KEY` (after the
+/// `.env` and Harness credential-store fallbacks). The detail masks
+/// everything but the last four characters.
+pub fn evaluate_credentials(key: Option<&str>) -> Check {
+    match key {
+        None => Check {
+            name: "credentials",
+            ok: false,
+            detail: "DEEPSEEK_API_KEY is not set; export it, add it to ~/.fleet/.env, or store it in ~/.dsh/.credentials.yaml".to_string(),
+        },
+        Some(key) => Check {
+            name: "credentials",
+            ok: true,
+            detail: format!("set ({})", mask(key)),
+        },
+    }
+}
+
+/// `…last4` for anything longer than a plausible short prefix; short values
+/// are masked entirely.
+fn mask(key: &str) -> String {
+    if key.len() > 8 {
+        format!("\u{2026}{}", &key[key.len() - 4..])
+    } else {
+        "\u{2026}".to_string()
+    }
+}
+
+/// The home check from an `ensure_sessions_dir` outcome with its error
+/// already rendered.
+pub fn evaluate_home(home: Option<&Path>, outcome: Result<(), String>) -> Check {
+    match (home, outcome) {
+        (None, _) => Check {
+            name: "home",
+            ok: false,
+            detail: "no home directory known; set FLEET_HOME or HOME".to_string(),
+        },
+        (Some(home), Ok(())) => Check {
+            name: "home",
+            ok: true,
+            detail: format!("writable ({})", home.display()),
+        },
+        (Some(home), Err(error)) => Check {
+            name: "home",
+            ok: false,
+            detail: format!("{}: {error}", home.display()),
+        },
+    }
+}
+
+/// The API reachability check from a probe outcome against the parsed
+/// endpoint.
+pub fn evaluate_api(endpoint: Option<(&str, u16)>, reachable: bool) -> Check {
+    match (endpoint, reachable) {
+        (None, _) => Check {
+            name: "api",
+            ok: false,
+            detail: "DEEPSEEK_BASE_URL is not a host[:port] URL".to_string(),
+        },
+        (Some((host, port)), true) => Check {
+            name: "api",
+            ok: true,
+            detail: format!("reachable ({host}:{port})"),
+        },
+        (Some((host, port)), false) => Check {
+            name: "api",
+            ok: false,
+            detail: format!("{host}:{port} unreachable; check network or DEEPSEEK_BASE_URL"),
+        },
+    }
+}
+
+/// Parse an API base URL into `(host, port)`, defaulting the port by scheme.
+pub fn api_endpoint(base_url: &str) -> Option<(&str, u16)> {
+    let (scheme, rest) = base_url.split_once("://")?;
+    let authority = rest.split(['/']).next()?;
+    if authority.is_empty() {
+        return None;
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port)) => Some((host, port.parse().ok()?)),
+        None => match scheme {
+            "https" => Some((authority, 443)),
+            "http" => Some((authority, 80)),
+            _ => None,
+        },
+    }
+}
+
+/// The shell check from a probe outcome.
+pub fn evaluate_shell(probe: Result<&'static str, String>) -> Check {
+    match probe {
+        Ok(shell) => Check { name: "shell", ok: true, detail: format!("{shell} available") },
+        Err(error) => Check { name: "shell", ok: false, detail: error },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credentials_masks_but_never_hides_presence() {
+        let ok = evaluate_credentials(Some("sk-1234567890abcdef"));
+        assert!(ok.ok);
+        assert!(ok.detail.starts_with("set (\u{2026}"));
+        assert!(!ok.detail.contains("sk-1234567890"));
+        let short = evaluate_credentials(Some("short"));
+        assert_eq!(short.detail, "set (\u{2026})");
+        let missing = evaluate_credentials(None);
+        assert!(!missing.ok);
+        assert!(missing.detail.contains("DEEPSEEK_API_KEY"));
+    }
+
+    #[test]
+    fn api_endpoint_parses_hosts_and_ports() {
+        assert_eq!(api_endpoint("https://api.deepseek.com"), Some(("api.deepseek.com", 443)));
+        assert_eq!(api_endpoint("http://127.0.0.1:4141/v1"), Some(("127.0.0.1", 4141)));
+        assert_eq!(api_endpoint("https://host:notaport"), None);
+        assert_eq!(api_endpoint("ftp://host"), None);
+    }
+
+    #[test]
+    fn render_aligns_names_and_verdicts() {
+        let line = render(&evaluate_shell(Ok("sh")));
+        assert!(line.starts_with("shell        ok    sh available"), "{line}");
+        let line = render(&evaluate_shell(Err("no shell".to_string())));
+        assert!(line.contains("FAIL"), "{line}");
+    }
 }

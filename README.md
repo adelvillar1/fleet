@@ -1,59 +1,91 @@
 # Fleet
 
-Fleet is the native, cross-platform launcher for the [DeepSeek Harness](../README.md) — a single Rust binary for macOS, Linux, and Windows that boots the harness as-is, so every `dsh` surface stays exactly as the harness ships it.
+Fleet is a native Rust agent for the [DeepSeek API](https://api-docs.deepseek.com): one static binary with its own HTTP client, agent loop, tools, and session persistence. It has no Node runtime, no profile bundles, and no dependency on a DeepSeek Harness checkout — `cargo build` from this directory is the whole install.
 
-**Fleet is based on DeepSeek Harness.** It is not a port or a reimplementation of the agent runtime: the interface must remain intact, and the only way to guarantee that is to launch the harness itself. Fleet owns discovery, launch, and health checks; the harness owns the product.
+Fleet is based on DeepSeek Harness: the agent-loop discipline, the append-only session log, the model-visible-implies-logged rule, and the tool-approval posture all follow the harness's architecture, reimplemented natively in Rust. Both projects are MIT-licensed; see [LICENSE](../LICENSE).
 
 ## Status
 
-Alpha. The launcher is standard-library-only Rust (no third-party crates), so `cargo build` works offline on every supported platform.
+Alpha (crate version 0.2.0). Dependencies are `ureq` (HTTP), `serde`, and `serde_json`; everything else is standard library.
 
-## Requirements
-
-- Node.js `^22.19 || >=24`, the harness's own engine floor
-- A DeepSeek Harness checkout with dependencies installed (`pnpm install` at the checkout root)
-
-## Build
+## Build and test
 
 ```sh
 cd fleet
 cargo build --release   # binary at target/release/fleet
-cargo test              # behavior tests, loopback only
+cargo test              # unit + integration tests, loopback only, no key needed
+```
+
+The integration suite exercises the real HTTP client against a local mock chat-completions server built from the crate (`src/bin/mock-server.rs`) and run as a child process. One test is a real-API e2e and is `#[ignore]`d:
+
+```sh
+DEEPSEEK_API_KEY=sk-... cargo test --test integration -- --ignored
+```
+
+## Quick start
+
+```sh
+export DEEPSEEK_API_KEY=sk-...
+fleet doctor
+fleet run "list the Rust files in this directory and say how many there are" --yes
 ```
 
 ## Commands
 
-### fleet [run] [profile] [options] [-- <harness arguments>...]
+### `fleet run "<task>" [options]`
 
-Launches the harness exactly as `dsh <profile>` does:
+Run one task to completion through the tool loop. Options: `--model <name>` (default `deepseek-chat`), `--max-turns <n>` (default `25`), `--yes`/`-y` (approve every tool call without prompting), `--session <id>` (resume a saved session; see `fleet sessions`).
 
-```sh
-fleet                              # same as: dsh web
-fleet run fleet                    # same as: dsh fleet
-fleet run fleet --patch ./overlay.yml
-fleet run web -- --no-open --port 4080   # words after -- go to the harness verbatim
+Each tool call prints for approval (except with `--yes`): `y` approves, `n` or Enter denies, `a` approves this and every later call in the run. Denied calls are returned to the model as `denied: …`; tool errors, unknown tools, and malformed arguments are returned as `error: …` so the model can recover.
+
+Exit codes: `0` completed, `1` runtime failure, `2` usage or configuration, `3` the turn cap was reached (resume with `--session <id>`).
+
+### `fleet chat [options]`
+
+The same loop interactively: one session, many tasks, `you>` prompt, `/exit` or `/quit` to leave. API errors print and continue; only a local I/O failure ends the chat.
+
+### `fleet sessions`
+
+List saved sessions: id, model, state (`completed`, `max-turns`, `interrupted`, `unreadable`), last activity, oldest first.
+
+### `fleet doctor`
+
+One line per check — credentials, home, API reachability, shell — exiting nonzero when any check fails.
+
+### `fleet version`, `fleet help`
+
+## Configuration
+
+| Setting | Where Fleet reads it |
+|---|---|
+| API key | `DEEPSEEK_API_KEY`, else `KEY=VALUE` in `<home>/.env`, else the DeepSeek Harness credential store's `refs` (`$DSH_HOME/.credentials.yaml`, default `~/.dsh/.credentials.yaml`) |
+| API base | `DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`) |
+| Home | `FLEET_HOME`, else `~/.fleet` |
+
+The `.env` fallback is a convenience, not a config contract: `KEY=VALUE` lines and `#` comments, malformed lines skipped. The Harness credential store is read-only — one stored key serves both harnesses. Credentials never print; `fleet doctor` masks the key to its last four characters.
+
+## Sessions
+
+Every run and chat persists an append-only JSONL log at `<home>/sessions/<id>.jsonl`. Records are `start` (session and model), `user`, `assistant` (content and tool calls), `tool_result` (output, approval, truncation), and `end` (stop reason and turn count). The system prompt and tool declarations are compiled-in constants, reconstructed per request rather than logged.
+
+Resuming with `--session <id>` replays the log and fails loudly, naming the file and line, if a record is unreadable; the next request is seeded from exactly what the log holds, so the model continues with its own prior answers in view. Tool output is capped at 64 KiB per result, cut on a char boundary with a `[truncated]` marker.
+
+## Source layout
+
 ```
-
-Options: `--home <path>` (harness checkout), `--node <path>` (Node binary), `--profile <name>` (profile under `$DSH_HOME/profiles`), and repeatable `--patch <path>` overlays applied after the profile layer. Fleet's own flags are recognized anywhere before `--`; unknown flags pass through to the harness, mirroring the launcher. Ctrl+C stops the harness through the terminal process group, exactly as for a directly launched `dsh`, and the harness's exit code becomes Fleet's.
-
-### fleet status [--host <host>] [--port <port>]
-
-Probes the harness web UI's TCP port (default `127.0.0.1:3080`) and exits 0 when something is listening.
-
-### fleet doctor [--home <path>]
-
-Prints one line per check: node presence against the version floor, the harness checkout, installed dependencies, and the profiles under the dsh home. The web UI probe at the end is informational and never affects the exit code.
-
-## Where Fleet looks
-
-- Harness checkout: `--home`, then `FLEET_HOME`, then `~/.fleet/harness`, then the current directory — the checkout is identified by the harness CLI entry `apps/cli/src/bin.ts`
-- Node binary: `--node`, then `FLEET_NODE`, then `node` on `PATH`
-- User home: `HOME` on Unix, `USERPROFILE` on Windows; the dsh data home is `DSH_HOME` or `<user home>/.dsh`
+src/main.rs        dispatch, credential resolution, run/chat/sessions/doctor wiring
+src/cli.rs         argument parsing, help text, usage errors
+src/api.rs         DeepSeek chat-completions client (ureq), typed errors
+src/agent.rs       the tool loop, approvals, turn cap, progress reporting
+src/tools.rs       bash, read_file, write_file, list_dir; output capping
+src/session.rs     JSONL session log: append, replay, list, resume
+src/home.rs        FLEET_HOME / ~/.fleet, sessions dir, .env fallback
+src/doctor.rs      the four startup checks
+src/net.rs         loopback probe used by doctor
+src/bin/mock-server.rs   the scripted mock API the integration tests drive
+tests/integration.rs     end-to-end tests: parser, client, tool loop, log
+```
 
 ## Platform support
 
-macOS (arm64, x86_64), Linux (x86_64, arm64), and Windows (x86_64) are first-class: the crate is standard-library-only, uses no platform-specific APIs, and cross-compiles with the usual Rust targets.
-
-## Based on DeepSeek Harness
-
-DeepSeek Harness (https://github.com/deepseek-ai/deepseek-harness) is the agent runtime Fleet launches: the profiles, plugin bundles, web and desktop clients, and the `dsh` CLI are all the harness's own, and Fleet adds only distribution. Both projects are MIT-licensed; see [LICENSE](../LICENSE).
+macOS (arm64, x86_64), Linux (x86_64, arm64), and Windows (x86_64). The crate uses no platform-specific APIs beyond the per-OS shell probe (`sh -c true` / `cmd /C ver`) and compiles with the usual Rust targets.
