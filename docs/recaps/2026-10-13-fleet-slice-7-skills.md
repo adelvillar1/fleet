@@ -4,7 +4,8 @@
 **Feature:** `docs/features/skills.md`.
 **Ledger:** KI-052 (the drafter is deterministic, not model-written),
 KI-053 (a drafted lesson is never re-drafted), KI-054 (proposal names
-collide across kinds), KI-055 (the card family wraps two ways).
+collide across kinds), KI-055 (the card family wraps two ways),
+KI-056 (the usage scan double-parses).
 
 ## What landed
 
@@ -13,21 +14,24 @@ collide across kinds), KI-055 (the card family wraps two ways).
 - **Loading.** One directory per skill under `<FLEET_HOME>/skills/`,
   each a `SKILL.md` with `name` + `description` frontmatter and the body
   after the fence. The frontmatter subset is hand-parsed: `key: value`
-  lines between `---` fences, quotes stripped, unknown keys kept for
-  forward compatibility. Rejected with the reason named: no opening or
-  closing fence, a nested block or list entry or bare scalar inside the
-  fence, a duplicated key, an empty key or value. A malformed skill is
-  **skipped by name** with one logged line and the others still load; a
-  live skill carrying `proposed: true` is refused (a proposal that
-  reached the live tree is not promoted silently); the frontmatter's
-  `name` must equal the directory's.
+  lines between `---` fences, quotes stripped on both halves, unknown
+  keys kept for forward compatibility, a leading UTF-8 BOM stripped.
+  Rejected with the reason named: no opening or closing fence, a nested
+  block or list entry or bare scalar inside the fence, a duplicated
+  key, an empty key or value. A malformed skill is **skipped by name**
+  with one logged line and the others still load; a live skill carrying
+  `proposed: true` is refused (a proposal that reached the live tree is
+  not promoted silently); the frontmatter's `name` must equal the
+  directory's.
 - **Progressive disclosure.** Every run's system prompt carries the
-  skills as a name+description list. A body enters context only through
-  `use_skill(name)` — declared beside the closed four when a run has
-  skills — and rides the ordinary approval-gated `tool_result` path,
-  bounded by the same `MAX_TOOL_OUTPUT` cap and marker. An unknown name
-  is a typed error result. Model-visible ⟺ logged falls out of the
-  existing seam with no new record type.
+  skills as a name+description list (past a soft cap of 50, one logged
+  line warns that the list is growing the prompt — nothing is hidden).
+  A body enters context only through `use_skill(name)` — declared beside
+  the closed four when a run has skills — and rides the ordinary
+  approval-gated `tool_result` path, bounded by the same
+  `MAX_TOOL_OUTPUT` cap and marker. An unknown name is a typed error
+  result. Model-visible ⟺ logged falls out of the existing seam with no
+  new record type.
 - **Reconstructability.** One `skills` session-log record per run at run
   start (the `lane_tools` precedent), replaying to no message. A run
   with no skills records nothing and its prompt is the compiled-in
@@ -36,10 +40,11 @@ collide across kinds), KI-055 (the card family wraps two ways).
   `chat` after its loop, the TUI when its agent thread ends — a
   deterministic drafter reads the session log plus the day's calibration
   rows and files create/update proposals into `skills/proposals/`: a
-  tool call that failed and was then corrected (records cited), a
-  repeated multi-step tool sequence, or a `turn` row graded failed with
-  a named class joined to the session by the task's `input_hash`. At
-  most three lessons per session. Nothing applies a proposal.
+  tool call that failed and was then corrected by an APPROVED rerun
+  (records and both commands cited), a repeated multi-step sequence of
+  approved calls, or a `turn` row graded failed with a named class
+  joined to the session by the task's `input_hash`. At most three
+  lessons per session. Nothing applies a proposal.
 - **Curation.** The usage scan: the last N session logs (default 20,
   `skills.retire_after_sessions`), `use_skill` calls whose results were
   approved, counted per skill. Unused across the whole window → retire
@@ -50,8 +55,9 @@ collide across kinds), KI-055 (the card family wraps two ways).
 - **`fleet skills`.** Cards in the lanes/providers/calib style: name,
   description, usage count, mtime. `--proposed` lists the drafts with
   kind and evidence; `--curate` runs the scan; `--show <name>` prints a
-  draft verbatim. Exit 0 (a read surface); a `--show` miss is the one
-  failure. No new TUI surface — a skill's use is the ordinary tool card.
+  draft verbatim (a name carrying path separators or `.`/`..` is
+  refused). No new TUI surface — a skill's use is the ordinary tool
+  card.
 
 ## The gate boundary
 
@@ -63,49 +69,60 @@ surface names slice 12's gate on every proposal card. Applying is slice
 
 ## Evidence
 
-- Gate: `cargo build --all-targets` exit 0, **zero warnings**; `cargo
-  test` → **223 unit + 56 integration passed, 1 ignored** (was 198 + 51;
-  25 unit and 5 integration tests added, none deleted). rustfmt and
-  clippy are still absent on this machine (KI-007) and were not run.
+- Gate, parent-run after each commit: `cargo build --all-targets` exit 0,
+  **zero warnings**; `cargo test` → **232 unit + 56 integration passed,
+  1 ignored** in the final state. rustfmt and clippy are still absent on
+  this machine (KI-007) and were not run.
 - The AC's literal checks, exercised: a malformed skill is skipped by
-  name while the others load (unit test `a_malformed_skill_is_skipped_by_name_and_the_others_load`,
-  plus a real-binary probe printing `fleet: skills: skipping \`broken-one\`
-  — the file does not open with a \`---\` frontmatter fence` beside three
-  loaded cards); a selected skill's body enters context as the tool
-  result and the next request reads exactly those bytes (integration
-  `a_selected_skills_body_rides_the_tool_result_path`, which also
-  asserts the system prompt carries name+description and none of the
-  body, the five declarations, and the single `skills` record replaying
-  to no message); an unknown name is a typed error result
-  (`an_unknown_skill_is_a_typed_error_result`); `fleet skills` renders
-  cards (`the_skills_command_lists_cards_proposals_and_a_draft`).
+  name while the others load (unit test, plus a real-binary probe on a
+  scratch home printing `fleet: skills: skipping \`broken\` — the file
+  does not open with a \`---\` frontmatter fence` beside the loaded
+  cards); a selected skill's body enters context as the tool result and
+  the next request reads exactly those bytes; an unknown name is a typed
+  error result; `fleet skills` renders cards. The parent re-ran the
+  scratch-home probe on the final tree, including a BOM-prefixed skill
+  (loads) and `--show ../known-issues` (refused: a name carries no path
+  separator).
 - The self-authoring half end to end: a scripted session whose `bash`
   call failed and was corrected drafts `bash-recovery.md` with
-  `proposed: true`, `kind: create`, the session id and both record
-  indices cited — and the live tree holds exactly the one skill it held
-  before (`a_sessions_failure_then_correction_drafts_a_proposal`).
+  `proposed: true`, `kind: create`, the session id, both record indices,
+  and both commands cited — and the live tree holds exactly the one
+  skill it held before.
 - Curation end to end: four skills, a two-session window from
   `config.json`, one used pair and one unused — a retire draft for the
-  unused skill and a merge draft for the near-identical pair (0.86),
-  with the absorbed twin getting no retire draft and the live tree
-  unchanged (`the_usage_scan_curation_proposes_retirement_and_merge`).
+  unused skill and a merge draft for the near-identical pair, with the
+  absorbed twin getting no retire draft and the live tree unchanged.
 - UX exercised by hand against the real binary on a scratch
-  `FLEET_HOME`: `fleet skills` cards, `--curate` filing three proposals,
+  `FLEET_HOME`: `fleet skills` cards, `--curate` filing proposals,
   `--proposed` listing them with kind and evidence, `--show` printing a
-  draft verbatim, and the skip line for a malformed skill.
+  draft verbatim.
 
-## Review notes
+## Review cycle
 
-- The usage scan counts **approved** results: a denied `use_skill` call
-  loaded nothing, so it is not a use. The join is the assistant call's
-  id against the `tool_result`'s `approved` flag.
-- A `chat` session writes one `skills` record per run (per message), by
-  the spec's "one record per run" — a resumed log therefore carries one
-  per run it made, which is what each run's prompt actually was.
-- The drafter's evidence for the failed-turn lesson is the join on
-  `input_hash`; that required two additive `#[serde(default)]` fields on
-  `calib::ReadRow` (`input_hash`, `reason`), which no existing reader
-  breaks on.
+- **Stage 1 (spec, step-5-preview): SPEC-COMPLIANT** — all 12 checks;
+  the compiled-in system prompt stays constant with the dynamic list
+  appended per request and recorded once per run (hard rule 5 holds),
+  and the gate boundary is proven from the write paths.
+- **Stage 2 (quality, step-5-preview): APPROVED** — no criticals; one
+  Important and seven minors, all fixed in `34e5922`:
+  - the `failure_correction` detector's early return silently dropped
+    every correctable failure after the first uncorrected one — it now
+    skips to the next failure (the doc's "first such pair" is true
+    again), with a test whose first failure is uncorrected and second
+    corrected;
+  - denied calls no longer count as corrections or as repeated-sequence
+    evidence (`Executed` carries `approved`; a half-denied turn drafts
+    nothing);
+  - a BOM-prefixed SKILL.md loads (and a still-failing BOM'd file names
+    the BOM in its reason);
+  - quoted frontmatter keys unquote (one rule for both halves of a
+    pair), with a named rejection for an unbalanced quote;
+  - the drafter's evidence carries both commands (compacted, bounded),
+    so the owner can judge a draft at the gate without replaying;
+  - `--show` refuses separator-bearing names with a typed error;
+  - the skills list warns past a soft cap of 50;
+  - KI-056 records the usage scan's double-parse (the fix belongs with
+    `session::list`).
 
 ## Not done
 
@@ -114,3 +131,6 @@ surface names slice 12's gate on every proposal card. Applying is slice
 - Evidence accumulation onto an existing draft (KI-053).
 - Pair-named merge drafts (KI-054).
 - Slice 12's gate itself: nothing here applies, and the proposals wait.
+- The TUI's drafter wiring is compile-verified and mirrors headless; it
+  has not been driven through a live TUI session (the standing accepted
+  gap).
