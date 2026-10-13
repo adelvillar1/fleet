@@ -6,12 +6,20 @@ Owner's intent (2026-10-13): Fleet becomes the self-contained Rust harness for t
 
 ## The lanes — "the sys1 house pattern"
 
-| Repo | Role | Interface | State (2026-10-13) |
-|---|---|---|---|
-| sys1 | Judgment: decision models over text (Jev, Drex, GLiDE, Julia, Liquid d1, GLiNER-2.5-Decide, local GLiNER2) | MCP server, stdio JSON-RPC: `sys1_classify` | branch `feature/plan-surface`; 4 uncommitted files (MCP provider accept, safety task allow-list, api, tasks) |
-| sdm1 | Tabular: structured-data foundation models (NVIDIA SDM/Kumo-Tabular, Prior Labs TabPFN hosted) | MCP: `sdm1_classify`, `sdm1_health` | clean on `main`, pushed |
-| sem1 | Embeddings: language and images as geometry — "vectors in, vectors out, never verdicts" | MCP: `sem1_embed`, `sem1_probe`, `sem1_index`, `sem1_search` | clean on `main`, pushed; **no CLAUDE.md** (no methodology layer) |
-| gen1 | Media generation: renders the gates judge | MCP: `gen1_imagine` | clean on `master` |
+**The lanes are parts of the harness, not external dependencies.** All four are vendored *into* the fork at `services/<svc>/` (each with `src/`, `service/mcp_server.py`, `LICENSE`, and a `VENDOR.json` pinning the upstream repo + commit), and `@fleet/dsh-components` launches each bundled copy as an MCP stdio child (`python3 -u <home>/service/mcp_server.py`), registering tools under `mcp__sys1__*`, `mcp__sdm1__*`, `mcp__sem1__*`, `mcp__gen1__*`. Home resolution: a machine override (`homes` row or `DSH_COMPONENT_<SVC>_HOME` — a live checkout) wins, then the bundled copy, then the component is skipped with one named log line and the boot continues. Vendored in one commit (2026-10-09, "Wave B: the services bundle into the fork"); ~12,400 LoC of Python bundled; the sync rule is "upstream repos stay the development home; re-vendor by copying src/ and service/mcp_server.py at a recorded sha".
+
+The external repos are the development homes; the harness copy is what a clone carries:
+
+| Repo | Role | Tools published | External state (2026-10-13) | Vendored pin |
+|---|---|---|---|---|
+| sys1 | Judgment: decision models over text (Jev, Drex, GLiDE, Julia, Liquid d1, GLiNER-2.5-Decide, local GLiNER2) | `sys1_classify` | branch `feature/plan-surface`; 4 uncommitted files (MCP provider accept, safety task allow-list, api, tasks) — **not vendored** | `c1f7383` = HEAD |
+| sdm1 | Tabular: structured-data foundation models (NVIDIA SDM/Kumo-Tabular, Prior Labs TabPFN hosted) | `sdm1_classify`, `sdm1_health` | clean on `main`, pushed | `eeb3314` = HEAD |
+| sem1 | Embeddings: language and images as geometry — "vectors in, vectors out, never verdicts" | `sem1_embed`, `sem1_probe`, `sem1_index`, `sem1_search` | clean on `main`, pushed; **no CLAUDE.md** (no methodology layer) | `a338912` = HEAD |
+| gen1 | Media generation: renders the gates judge | `gen1_imagine` | clean on `master` | `c340313` = HEAD |
+
+All four pins match the upstream repos' committed HEADs, so the bundled copies are in sync as of 2026-10-09; sys1's uncommitted feature-branch work is the only drift, and it exists in no commit.
+
+**Runtime probe (2026-10-13, this session):** all four bundled cores were booted directly from `services/<svc>/service/mcp_server.py` with an MCP `initialize` + `tools/list` handshake over stdio. All four answered initialize (serverInfo name + version 0.1.0) and published their tool lists. The cores are stdlib-only at module level — heavy lanes (sentence-transformers, GLiNER2.5, kokoro-onnx, llama-server) live in external venvs installed by `services/bootstrap.mjs`, and a provider whose lane is absent degrades to nothing while the service still boots, which is what the probe exercised. One deviation found: sys1 and gen1 answer the `notifications/initialized` notification with a JSON-RPC `-32601` error instead of ignoring it (sdm1 and sem1 handle it correctly — their "ignore notifications and answer ping per MCP 2024-11-05" fix landed after sys1/gen1 were vendored).
 
 The house pattern in one sentence (from sem1's README): sys1 judges what the work says, sdm1 scores what the work measures, sem1 indexes what the work looks like, gen1 renders it.
 
