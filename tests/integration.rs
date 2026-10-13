@@ -1271,6 +1271,68 @@ async fn a_dead_child_is_an_error_not_a_hang() {
     server.close().await.expect("teardown after death");
 }
 
+/// A lane that logs loudly on stderr does not wedge its own call: the
+/// pipe is drained for the child's whole life, so the writes land
+/// somewhere instead of blocking the child on a full buffer (KI-043).
+#[tokio::test]
+async fn a_chatty_stderr_child_does_not_wedge_the_call() {
+    // 256 KiB, four times the OS pipe buffer: past it, a child with no
+    // reader blocks on its next write and never answers, and the call
+    // fails on its budget instead of on the work.
+    let chatty = 256 * 1024;
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "stderr_bytes": chatty, "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "embed", "description": "an embed", "inputSchema": { "type": "object" } },
+        ])) }),
+        serde_json::json!({ "reply": call_reply("embedded") }),
+    ]);
+    let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
+
+    let started = std::time::Instant::now();
+    server.initialize().await.expect("initialize despite the chatter");
+    server.list_tools().await.expect("tools/list despite the chatter");
+    let call = server.call_tool("embed", serde_json::json!({})).await.expect("tools/call");
+    assert_eq!(call.text(), "embedded");
+    // The budget is 5s and the drain is the only reason this is not the
+    // time it takes to hit it.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the stderr pipe must not wedge the call: {:?}",
+        started.elapsed()
+    );
+
+    server.close().await.expect("clean teardown");
+}
+
+/// A child that dies during startup leaves its reason on stderr, and the
+/// handshake failure carries it — the drain's other half (KI-043).
+#[tokio::test]
+async fn a_child_that_dies_during_startup_reports_its_stderr() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        // The child says why on stderr, then dies a moment later. The
+        // moment is what makes the drain's read deterministic rather than
+        // a race against the failure being built.
+        serde_json::json!({
+            "stderr": "ModuleNotFoundError: no module named 'glinter'",
+            "exit": 1,
+            "delay_ms": 100,
+        }),
+    ]);
+    let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
+    server.initialize().await.expect("initialize");
+
+    let error = server.list_tools().await.expect_err("the child died during startup");
+    assert!(matches!(error, McpError::Closed(_)), "got {error:?}");
+    assert!(
+        error.to_string().contains("no module named 'glinter'"),
+        "the child's reason must reach the caller: {error}"
+    );
+
+    server.close().await.expect("teardown after death");
+}
+
 /// A child that never answers times out on its budget.
 #[tokio::test]
 async fn a_silent_child_times_out_on_the_budget() {
@@ -1898,6 +1960,72 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
 
     std::fs::remove_dir_all(&home).ok();
     std::fs::remove_dir_all(&marker_dir).ok();
+}
+
+/// A lane answer past the tool-output cap is bounded the way every
+/// built-in's output is bounded, and the cut is marked the same way
+/// (KI-041): a sem1_embed batch is exactly the payload the cap exists
+/// for, and neither the model's context nor the session log is the place
+/// for it whole.
+#[tokio::test]
+async fn a_lane_answer_past_the_cap_is_bounded_and_marked() {
+    // 256 KiB: four times the 64 KiB tool-output cap, and far under the
+    // client's 8 MiB per-line cap, so the frame arrives whole and the
+    // tool cap is what cuts it.
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "embed", "description": "an embed", "inputSchema": { "type": "object" } },
+        ])) }),
+        serde_json::json!({ "huge_line_bytes": 4 * MAX_TOOL_OUTPUT }),
+    ]);
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__sem1__embed", r#"{"items":["a"]}"#),
+        assistant_stream("The embeddings came back; the answer was cut at the cap."),
+    ]);
+    let home = temp_home("lane-bounded");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    let report = run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(lane_specs(&fake)),
+        &mut progress,
+        "embed the batch",
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.turns, 2);
+
+    let records = session::replay(&session.path()).unwrap();
+    let output = match &records[4] {
+        Record::ToolResult { name, output, truncated: true, approved: true, .. } => {
+            assert_eq!(name, "mcp__sem1__embed");
+            // The same bound and the same marker a built-in's cut carries.
+            assert!(
+                output.len() <= MAX_TOOL_OUTPUT + 64,
+                "the lane's answer must be capped at MAX_TOOL_OUTPUT: {}",
+                output.len()
+            );
+            assert!(output.contains("\u{2026}[truncated"), "the cut must be marked: {output}");
+            // The head of the lane's answer survived; the tail did not.
+            assert!(output.starts_with('x'), "{output}");
+            assert!(!output.ends_with('x'), "the tail must be gone: {output}");
+            output.clone()
+        }
+        other => panic!("expected a bounded lane tool result, got {other:?}"),
+    };
+    // The model read the bounded text, not the lane's whole answer: the
+    // bytes the log recorded rode back in the next request.
+    let bodies = mock.bodies();
+    let seen = bodies[1]["messages"][3]["content"]
+        .as_str()
+        .expect("the tool result the model read");
+    assert_eq!(seen, output.as_str());
+
+    std::fs::remove_dir_all(&home).ok();
 }
 
 /// A lane tool's refusal (`isError`) is recorded as a failure with its

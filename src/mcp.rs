@@ -10,6 +10,10 @@
 //! unknown notifications (including the id-`null` stray frames sys1 and
 //! gen1 emit in answer to `notifications/initialized`, KI-002) are ignored.
 //!
+//! stderr is drained too, for the child's whole life, into a bounded tail:
+//! a pipe nobody reads is a pipe a chatty child fills and then blocks on,
+//! and the tail is where a lane's startup failure says why (KI-043).
+//!
 //! Every wait carries a budget, so a silent server is a timeout and a dead
 //! one an error — never a hang. Teardown is the graceful path first (close
 //! stdin, wait, kill on expiry); `Drop` is the best-effort net under it.
@@ -26,8 +30,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use tokio::task::JoinHandle;
@@ -62,6 +66,45 @@ pub const TEARDOWN_GRACE: Duration = Duration::from_secs(5);
 /// fails the wait with a typed protocol error instead of growing the
 /// reader's buffer until the process dies.
 pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
+
+/// How much of a child's stderr is kept, and why it is kept at all.
+///
+/// The pipe is the hazard, not the logging: nothing used to read a lane's
+/// stderr, so a lane that wrote more than the OS pipe buffer (64 KiB on
+/// macOS and Linux) blocked on its next write and stayed blocked until
+/// the call budget expired — a wedged child that looked exactly like a
+/// hung one. The drain below reads the pipe for the child's whole life,
+/// which is what keeps a chatty lane answering.
+///
+/// What it keeps is the tail, not the head: a lane that dies during
+/// startup prints its reason *last*, after whatever it printed on the way
+/// in — a Python import traceback lands at the end. So the last 64 KiB
+/// is where the reason is, and 64 KiB is a bound rather than a budget.
+const STDERR_TAIL_BYTES: usize = 64 * 1024;
+
+/// The bounded tail of one child's stderr.
+#[derive(Debug, Default)]
+struct StderrTail {
+    bytes: Vec<u8>,
+}
+
+impl StderrTail {
+    /// Keep the last `STDERR_TAIL_BYTES` of everything pushed, dropping
+    /// from the front whatever no longer fits.
+    fn push(&mut self, chunk: &[u8]) {
+        self.bytes.extend_from_slice(chunk);
+        let excess = self.bytes.len().saturating_sub(STDERR_TAIL_BYTES);
+        if excess > 0 {
+            self.bytes.drain(..excess);
+        }
+    }
+
+    /// What is kept, as text. Lossy on purpose: a lane's stderr is a
+    /// human's diagnostic, not a protocol frame.
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.bytes).into_owned()
+    }
+}
 
 /// The ambient names every MCP child gets, when the caller has them.
 ///
@@ -270,6 +313,12 @@ pub struct McpServer {
     next_id: AtomicU64,
     timeouts: Timeouts,
     reader: JoinHandle<()>,
+    /// The child's stderr, drained for its whole life into a bounded tail
+    /// (KI-043). The drain task holds the other handle; the tail is what a
+    /// handshake failure reports when the child said why on the way out.
+    stderr: Arc<Mutex<StderrTail>>,
+    /// The stderr drain. Aborted with the reader, on the same paths.
+    stderr_drain: JoinHandle<()>,
 }
 
 impl McpServer {
@@ -295,8 +344,11 @@ impl McpServer {
         if let Some(cwd) = &spec.cwd {
             command.current_dir(cwd);
         }
-        // stdin/stdout are the protocol; stderr is captured for the error
-        // message when a child dies during startup.
+        // stdin and stdout are the protocol; stderr is drained for the
+        // child's whole life into a bounded tail, so a lane that logs
+        // past the pipe buffer cannot wedge itself on a full pipe and a
+        // handshake failure can still report what the child said on its
+        // way out (KI-043).
         command.stdin(std::process::Stdio::piped());
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
@@ -307,9 +359,14 @@ impl McpServer {
         let stdout = child.stdout.take().ok_or_else(|| {
             McpError::Protocol("the child's stdout was not piped".to_string())
         })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            McpError::Protocol("the child's stderr was not piped".to_string())
+        })?;
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let reader = tokio::spawn(read_frames(stdout, Arc::clone(&pending)));
+        let stderr_tail: Arc<Mutex<StderrTail>> = Arc::new(Mutex::new(StderrTail::default()));
+        let stderr_drain = tokio::spawn(drain_stderr(stderr, Arc::clone(&stderr_tail)));
         Ok(McpServer {
             child: Mutex::new(Some(child)),
             stdin: tokio::sync::Mutex::new(Some(stdin)),
@@ -317,33 +374,55 @@ impl McpServer {
             next_id: AtomicU64::new(1),
             timeouts,
             reader,
+            stderr: stderr_tail,
+            stderr_drain,
         })
     }
 
     /// Perform the MCP handshake: `initialize`, then the
     /// `notifications/initialized` notification (never answered; sys1 and
     /// gen1 answer it with a `-32601` stray frame the reader ignores).
+    ///
+    /// A failure here carries the child's stderr tail when it wrote one:
+    /// startup is where a lane says why it cannot start, and it says it on
+    /// stderr, never on the protocol pipe (KI-043).
     pub async fn initialize(&self) -> Result<InitializeResult, McpError> {
-        let result = self
-            .request(
-                "initialize",
-                json!({
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": { "name": "fleet", "version": env!("CARGO_PKG_VERSION") },
-                }),
-                self.timeouts.initialize,
-            )
-            .await?;
-        let initialize = parse_initialize(result)?;
-        self.notify("notifications/initialized").await?;
-        Ok(initialize)
+        // One seam for the whole handshake: whichever step fails, the
+        // child's stderr tail rides along when it wrote one.
+        let handshake = async {
+            let result = self
+                .request(
+                    "initialize",
+                    json!({
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": { "name": "fleet", "version": env!("CARGO_PKG_VERSION") },
+                    }),
+                    self.timeouts.initialize,
+                )
+                .await?;
+            let initialize = parse_initialize(result)?;
+            self.notify("notifications/initialized").await?;
+            Ok(initialize)
+        };
+        match handshake.await {
+            Ok(initialize) => Ok(initialize),
+            Err(error) => Err(annotated(error, &self.stderr_tail())),
+        }
     }
 
-    /// The server's tool roster.
+    /// The server's tool roster. Part of the startup handshake, so a
+    /// failure here carries the child's stderr tail too (KI-043).
     pub async fn list_tools(&self) -> Result<Vec<ToolInfo>, McpError> {
-        let result = self.request("tools/list", json!({}), self.timeouts.list).await?;
-        parse_tools(result)
+        match self.request("tools/list", json!({}), self.timeouts.list).await {
+            Ok(result) => parse_tools(result),
+            Err(error) => Err(annotated(error, &self.stderr_tail())),
+        }
+    }
+
+    /// The last `STDERR_TAIL_BYTES` the child wrote to stderr, as text.
+    fn stderr_tail(&self) -> String {
+        lock(&self.stderr).text()
     }
 
     /// Call one tool. A JSON-RPC error (bad arguments, unknown tool) comes
@@ -372,6 +451,7 @@ impl McpServer {
         drop(self.stdin.lock().await.take());
         let child = lock(&self.child).take();
         self.reader.abort();
+        self.stderr_drain.abort();
         let Some(mut child) = child else { return Ok(()) };
         match timeout(TEARDOWN_GRACE, child.wait()).await {
             Ok(Ok(_)) => Ok(()),
@@ -446,6 +526,7 @@ impl Drop for McpServer {
         // the caller's thread (and cannot run inside a runtime), so the
         // graceful path is `close`'s job.
         self.reader.abort();
+        self.stderr_drain.abort();
         // The reader is stopped, so a lock it held is free; one another
         // task still holds is not worth waiting for in a destructor. The
         // child is killed either way, which closes the pipe from the
@@ -532,6 +613,63 @@ fn parse_call(result: Value) -> Result<CallResult, McpError> {
         content,
         is_error: result.get("isError").and_then(Value::as_bool).unwrap_or(false),
     })
+}
+
+/// The stderr drain: read the child's stderr to the end of its life,
+/// keeping only the bounded tail (KI-043).
+///
+/// Detached on purpose — nothing waits on it — because the point is that
+/// the pipe always has a reader. A child that logs a gigabyte of warnings
+/// is drained, not wedged: the reads are fixed-size, the tail is capped,
+/// and the task ends by itself when the child's stderr closes (its exit,
+/// its death, or the teardown's kill).
+async fn drain_stderr(stderr: ChildStderr, tail: Arc<Mutex<StderrTail>>) {
+    let mut stderr = stderr;
+    let mut chunk = vec![0u8; 8 * 1024];
+    loop {
+        match stderr.read(&mut chunk).await {
+            // EOF: the child's stderr is gone, which is the end of the drain.
+            Ok(0) => break,
+            Ok(read) => lock(&tail).push(&chunk[..read]),
+            // A pipe error is EOF's shape here: the child is gone.
+            Err(_) => break,
+        }
+    }
+}
+
+/// A handshake failure with the child's stderr tail attached, when it
+/// wrote one.
+///
+/// Startup is the moment a lane's stderr carries its reason: a missing
+/// venv, an unreadable config, a traceback on import — all of it lands on
+/// stderr, none of it on the protocol pipe, so without this the failure
+/// reads "the child closed its output" and nothing more. An empty tail
+/// leaves the error exactly as it was, which is why a silent child's
+/// messages are unchanged.
+///
+/// A timeout keeps its own shape: the budget and the step that blew it
+/// are the fact, and the variant carries no message to append to.
+fn annotated(error: McpError, tail: &str) -> McpError {
+    if tail.is_empty() {
+        return error;
+    }
+    let suffix = format!("; its stderr said: {tail}");
+    match error {
+        McpError::Spawn(error) => McpError::Spawn(annotated_io(&error, &suffix)),
+        McpError::Io(error) => McpError::Io(annotated_io(&error, &suffix)),
+        McpError::Timeout { .. } => error,
+        McpError::Closed(reason) => McpError::Closed(format!("{reason}{suffix}")),
+        McpError::Rpc { code, message } => {
+            McpError::Rpc { code, message: format!("{message}{suffix}") }
+        }
+        McpError::Protocol(detail) => McpError::Protocol(format!("{detail}{suffix}")),
+    }
+}
+
+/// The same `io::Error` with a longer message. The kind survives: a
+/// caller matches on it, and annotating the text must not cost that.
+fn annotated_io(error: &std::io::Error, suffix: &str) -> std::io::Error {
+    std::io::Error::new(error.kind(), format!("{error}{suffix}"))
 }
 
 /// Why the reader stopped draining the child's stdout. A waiter is never
@@ -1029,5 +1167,105 @@ mod tests {
         let parent = parent_env(&[("SEM1_ST_VENV", "/ambient")]);
         let env = child_env(&spec, &parent);
         assert_eq!(lookup(&env, "SEM1_ST_VENV"), Some(OsStr::new("/lane/declared")));
+    }
+
+    #[test]
+    fn the_stderr_tail_keeps_the_last_bytes_not_the_first() {
+        // A lane that fails mid-startup prints its reason last, after
+        // whatever it printed on the way in, so the tail is the half
+        // worth keeping — and the half that stays bounded.
+        let mut tail = StderrTail::default();
+        let head = vec![b'h'; STDERR_TAIL_BYTES / 2];
+        let middle = vec![b'm'; STDERR_TAIL_BYTES];
+        tail.push(&head);
+        tail.push(&middle);
+        let reason = b"ModuleNotFoundError: no module named 'glinter'\n";
+        tail.push(reason);
+
+        let text = tail.text();
+        assert_eq!(text.len(), STDERR_TAIL_BYTES, "the tail is a bound, not a budget");
+        // The reason survived whole, at the end.
+        assert!(text.ends_with("ModuleNotFoundError: no module named 'glinter'\n"), "{text}");
+        // The head is gone: the oldest bytes are what a cap drops.
+        assert!(!text.starts_with('h'), "the head must have been dropped: {text}");
+    }
+
+    #[test]
+    fn a_small_stderr_tail_is_kept_whole() {
+        let mut tail = StderrTail::default();
+        tail.push(b"warning: falling back to cpu\n");
+        assert_eq!(tail.text(), "warning: falling back to cpu\n");
+        // Nothing written is an empty tail, which is what leaves an error
+        // message unannotated.
+        assert!(StderrTail::default().text().is_empty());
+    }
+
+    #[test]
+    fn an_empty_stderr_tail_leaves_the_failure_exactly_as_it_was() {
+        // A silent child's messages must not change: the annotation is
+        // additive, and only when there is something to add.
+        let error = McpError::Closed("the child closed its output before replying".to_string());
+        let unchanged = annotated(error, "");
+        match unchanged {
+            McpError::Closed(reason) => {
+                assert_eq!(reason, "the child closed its output before replying")
+            }
+            other => panic!("expected a Closed error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_stderr_tail_rides_along_on_a_handshake_failure() {
+        // The point of draining at all: the child's reason reaches the
+        // caller instead of a bare "closed".
+        let error = McpError::Closed("the child closed its output before replying".to_string());
+        match annotated(error, "ModuleNotFoundError: no module named 'glinter'") {
+            McpError::Closed(reason) => {
+                assert!(reason.contains("the child closed its output before replying"), "{reason}");
+                assert!(
+                    reason.ends_with("; its stderr said: ModuleNotFoundError: no module named 'glinter'"),
+                    "{reason}"
+                );
+            }
+            other => panic!("expected a Closed error, got {other:?}"),
+        }
+        // The other message-carrying shapes take the tail too, keeping
+        // the fields a caller matches on.
+        match annotated(McpError::Protocol("malformed MCP reply: bad json".to_string()), "traceback") {
+            McpError::Protocol(detail) => {
+                assert!(detail.starts_with("malformed MCP reply: bad json"), "{detail}");
+                assert!(detail.ends_with("; its stderr said: traceback"), "{detail}");
+            }
+            other => panic!("expected a Protocol error, got {other:?}"),
+        }
+        match annotated(
+            McpError::Rpc { code: -32602, message: "`items` must be a string".to_string() },
+            "traceback",
+        ) {
+            McpError::Rpc { code, message } => {
+                assert_eq!(code, -32602);
+                assert!(message.starts_with("`items` must be a string"), "{message}");
+            }
+            other => panic!("expected an Rpc error, got {other:?}"),
+        }
+        // A timeout keeps its own shape: the budget and the step that
+        // blew it are the fact, and the variant has no message field.
+        let timeout = McpError::Timeout {
+            method: "initialize".to_string(),
+            budget: std::time::Duration::from_secs(10),
+        };
+        assert!(matches!(annotated(timeout, "traceback"), McpError::Timeout { .. }));
+        // An io::Error keeps its kind, so a caller matching on it still
+        // matches after the annotation.
+        let broken = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the pipe broke");
+        let annotated_io_error = annotated(McpError::Io(broken), "traceback");
+        match annotated_io_error {
+            McpError::Io(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+                assert!(error.to_string().contains("the pipe broke"), "{error}");
+                assert!(error.to_string().ends_with("; its stderr said: traceback"), "{error}");
+            }
+            other => panic!("expected an Io error, got {other:?}"),
+        }
     }
 }

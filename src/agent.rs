@@ -8,7 +8,7 @@ use crate::api::{ChatRequest, Client, ClientError, Message, Role, StreamEvent, T
 use crate::lanes;
 use crate::mcp::{CallResult, McpServer, ServerSpec, ToolInfo};
 use crate::session::{Record, Session};
-use crate::tools::{self, LaneTool, LaneTools, Tool};
+use crate::tools::{self, LaneTool, LaneTools, Tool, ToolOutcome};
 use std::collections::HashMap;
 use std::io::Write;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -517,7 +517,10 @@ impl<'a> Agent<'a> {
             self.emit(UiEvent::LaneJoined { lane: lane.to_string(), tool_count: count });
             self.record(&Record::LaneTools { lane: lane.to_string(), tools })?;
         }
-        Ok((outcome.text, false))
+        // The `truncated` flag is the lane's, not a guess: it rode out of
+        // the same `bound` the built-ins go through (KI-041), so the log
+        // says whether the model read a whole answer or a cut one.
+        Ok((outcome.text, outcome.truncated))
     }
 
     /// Send one event to the UI, when a UI is listening. A closed channel
@@ -653,8 +656,13 @@ enum LaneChild {
 struct LaneOutcome {
     /// The text the model sees, in exactly the shape a built-in's output
     /// takes — a refusal or a transport failure carries the `error:`
-    /// marker the built-ins use.
+    /// marker the built-ins use — and bounded by the same
+    /// `MAX_TOOL_OUTPUT` cap a built-in's output is (KI-041).
     text: String,
+    /// Whether the cap cut that text. The real flag, not a guess: it
+    /// rides into the session log's `tool_result` record beside the
+    /// built-ins' own, so the log says what the model actually read.
+    truncated: bool,
     /// The roster that joined on this call, when one did. The caller
     /// records it: the log is what keeps the dynamic declarations
     /// reconstructable.
@@ -700,9 +708,34 @@ impl LaneRoster {
         }
     }
 
-    /// Call one lane tool. Spawns and handshakes the lane first when this
-    /// run has not met it yet.
+    /// Call one lane tool, with its answer bounded. Spawns and handshakes
+    /// the lane first when this run has not met it yet.
+    ///
+    /// The cap lives here, at the one seam every lane answer crosses, so
+    /// a success, a refusal, and a typed failure are all bounded the same
+    /// way — and so the `truncated` flag the log records is the flag
+    /// `tools::bound` actually set (KI-041). Before this, a lane's text
+    /// rode into the log and the model's context at whatever length the
+    /// lane emitted, capped only by the transport's 8 MiB line limit.
     async fn call(
+        &mut self,
+        lane: &str,
+        tool: &str,
+        arguments: &serde_json::Value,
+    ) -> LaneOutcome {
+        let outcome = self.call_unbounded(lane, tool, arguments).await;
+        let bounded = tools::bound(ToolOutcome { output: outcome.text, truncated: false });
+        LaneOutcome {
+            text: bounded.output,
+            truncated: bounded.truncated,
+            joined: outcome.joined,
+        }
+    }
+
+    /// The lane call itself, before the output cap. Everything the lane
+    /// path does — the lazy join, the dead-lane fail-fast, the call and
+    /// its typed failures — and nothing about how much text came back.
+    async fn call_unbounded(
         &mut self,
         lane: &str,
         tool: &str,
@@ -730,7 +763,7 @@ impl LaneRoster {
                         lane.to_string(),
                         LaneChild::Dead { reason, tools: Vec::new() },
                     );
-                    return LaneOutcome { text, joined: None };
+                    return LaneOutcome { text, truncated: false, joined: None };
                 }
             }
         }
@@ -740,6 +773,7 @@ impl LaneRoster {
             // and nothing removes one while a run is in flight.
             return LaneOutcome {
                 text: format!("error: lane `{lane}` has no child to call"),
+                truncated: false,
                 joined,
             };
         };
@@ -749,6 +783,7 @@ impl LaneRoster {
                 text: format!(
                     "error: lane `{lane}` is unavailable for the rest of this run: {reason}"
                 ),
+                truncated: false,
                 joined,
             },
             LaneChild::Live { server, tools } => {
@@ -761,12 +796,17 @@ impl LaneRoster {
                     // tool: a model-visible correction, not a dead lane.
                     return LaneOutcome {
                         text: format!("error: lane `{lane}` has no tool `{tool}`"),
+                        truncated: false,
                         joined,
                     };
                 };
                 let lane_tool = listed.lane_tool.clone();
                 match server.call_tool(&lane_tool, arguments.clone()).await {
-                    Ok(result) => LaneOutcome { text: lane_call_output(&result), joined },
+                    Ok(result) => LaneOutcome {
+                        text: lane_call_output(&result),
+                        truncated: false,
+                        joined,
+                    },
                     // The child died under the call. The lane is dead for
                     // the rest of the run; the run itself carries on with
                     // the typed failure in its log and its conversation.
@@ -777,7 +817,7 @@ impl LaneRoster {
                             reason: reason.clone(),
                             tools: std::mem::take(tools),
                         };
-                        LaneOutcome { text: format!("error: {reason}"), joined }
+                        LaneOutcome { text: format!("error: {reason}"), truncated: false, joined }
                     }
                 }
             }

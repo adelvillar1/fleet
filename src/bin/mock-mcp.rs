@@ -31,6 +31,11 @@
 //! - `on_eof`: a file to write when this server's stdin reaches EOF —
 //!   the signature of a graceful teardown. A test that asks for one can
 //!   prove the run closed the child it spawned instead of killing it.
+//! - `stderr`: a line to write to this server's own stderr before
+//!   answering — the reason a lane that dies during startup prints.
+//! - `stderr_bytes`: this many bytes of padding to write to stderr
+//!   before answering, the shape a lane that logs loudly produces. The
+//!   client drains the pipe, so this must not wedge the call.
 //!
 //! A dry script exits 0.
 
@@ -65,6 +70,15 @@ struct ScriptEntry {
     /// spawned rather than killing it.
     #[serde(default)]
     on_eof: Option<String>,
+    /// A line to write to this server's own stderr before answering: the
+    /// shape of a lane that dies during startup saying why.
+    #[serde(default)]
+    stderr: Option<String>,
+    /// This many bytes of padding to write to stderr before answering,
+    /// in 8 KiB chunks: the shape of a lane that logs past the OS pipe
+    /// buffer. The client drains stderr, so this must not wedge the call.
+    #[serde(default)]
+    stderr_bytes: usize,
 }
 
 fn main() {
@@ -105,6 +119,16 @@ fn main() {
         std::thread::spawn(move || {
             if hangs {
                 return;
+            }
+            // Whatever this entry says on stderr comes first: a lane's
+            // reason precedes its answer, and a lane that logs a lot
+            // writes it in chunks the way a real logger does.
+            if let Some(line) = &entry.stderr {
+                let _ = writeln!(std::io::stderr(), "{line}");
+                let _ = std::io::stderr().flush();
+            }
+            if entry.stderr_bytes > 0 {
+                write_stderr_padding(entry.stderr_bytes);
             }
             if entry.delay_ms > 0 {
                 std::thread::sleep(Duration::from_millis(entry.delay_ms));
@@ -147,6 +171,24 @@ fn main() {
     if let Some(path) = marker {
         let _ = std::fs::write(path, "closed\n");
     }
+}
+
+/// Write `bytes` of padding to this server's stderr, in 8 KiB chunks.
+///
+/// Chunked on purpose: one giant `write_all` is not what a logging lane
+/// does, and the interesting property under test is that the *pipe* fills
+/// up while the client keeps reading it.
+fn write_stderr_padding(bytes: usize) {
+    let chunk = vec![b'e'; 8 * 1024];
+    let mut written = 0;
+    while written < bytes {
+        let take = (bytes - written).min(chunk.len());
+        if std::io::stderr().write_all(&chunk[..take]).is_err() {
+            break;
+        }
+        written += take;
+    }
+    let _ = std::io::stderr().flush();
 }
 
 /// This server's own environment as one JSON object: names only where a

@@ -95,8 +95,9 @@ pub fn declarations(lanes: &[LaneTools]) -> Vec<ToolSpec> {
 /// `mcp__sem1__sem1_probe`. The namespace drops that redundant prefix, so
 /// the model calls `mcp__sem1__probe`; a tool whose name does not start
 /// with the lane's keeps its own name verbatim. Two tools whose short
-/// names meet resolve to the lane's own full name, which cannot collide
-/// because a lane's tool names are unique.
+/// names meet resolve to distinct declared names — the lane's own full
+/// name first, then a numbered variant — so no two tools ever share one
+/// declaration and neither is shadowed when a call looks its name up.
 pub fn namespaced(lane: &str, tools: &[ToolInfo]) -> Vec<LaneTool> {
     let prefix = format!("{lane}_");
     let mut declared: Vec<String> = Vec::with_capacity(tools.len());
@@ -108,14 +109,7 @@ pub fn namespaced(lane: &str, tools: &[ToolInfo]) -> Vec<LaneTool> {
                 .strip_prefix(&prefix)
                 .filter(|short| !short.is_empty())
                 .unwrap_or(&tool.name);
-            let candidate = lane_tool_name(lane, short);
-            // The full name is the fallback: unique within the lane, so
-            // it cannot collide either.
-            let name = if declared.contains(&candidate) {
-                lane_tool_name(lane, &tool.name)
-            } else {
-                candidate
-            };
+            let name = unique_name(lane, short, &tool.name, &declared);
             declared.push(name.clone());
             LaneTool {
                 name,
@@ -125,6 +119,37 @@ pub fn namespaced(lane: &str, tools: &[ToolInfo]) -> Vec<LaneTool> {
             }
         })
         .collect()
+}
+
+/// The model-visible name for one lane tool: the short name when it is
+/// free, the lane's own full name when it is not, and a numbered variant
+/// of the full name when both are taken.
+///
+/// The fallback used to be the full name alone. That covers the obvious
+/// collision — a lane shipping `probe` and `sem1_probe`, where the second
+/// falls back to `mcp__sem1__sem1_probe` — and misses the corner: a lane
+/// shipping `sem1_x` and a bare `x` makes the bare tool's own full name
+/// *be* the short name it collided on, so the fallback handed it the
+/// first tool's declaration verbatim and `find` shadowed it for the rest
+/// of the run. Unreachable with the four vendored lanes, every one of
+/// which lists only prefixed tools, and one re-vendor away from
+/// mattering.
+fn unique_name(lane: &str, short: &str, full: &str, declared: &[String]) -> String {
+    for candidate in [lane_tool_name(lane, short), lane_tool_name(lane, full)] {
+        if !declared.contains(&candidate) {
+            return candidate;
+        }
+    }
+    // Both natural names are taken: number the full name until a free one
+    // turns up. `declared` is finite and every candidate is distinct, so
+    // this ends well before the last iteration.
+    for suffix in 2..=declared.len() + 2 {
+        let candidate = lane_tool_name(lane, &format!("{full}_{suffix}"));
+        if !declared.contains(&candidate) {
+            return candidate;
+        }
+    }
+    lane_tool_name(lane, full)
 }
 
 /// The closed tool set.
@@ -246,7 +271,14 @@ pub struct ToolOutcome {
 
 /// Cap an outcome at `MAX_TOOL_OUTPUT` bytes on a char boundary, marking the
 /// cut so the model knows the text is partial.
-fn bound(outcome: ToolOutcome) -> ToolOutcome {
+///
+/// The one cap every model-visible tool result goes through: the four
+/// built-ins inside [`Tool::execute`], and a lane's answer at the agent's
+/// lane seam (KI-041). It is public for exactly that reason — a second cap
+/// elsewhere would drift from this one's marker and its bound, and a lane
+/// answering with a batch of embedding vectors is precisely the payload the
+/// cap exists for.
+pub fn bound(outcome: ToolOutcome) -> ToolOutcome {
     if outcome.output.len() <= MAX_TOOL_OUTPUT {
         return outcome;
     }
@@ -646,5 +678,67 @@ mod tests {
         assert_eq!(names, vec!["mcp__sem1__probe", "mcp__sem1__sem1_probe"]);
         let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
         assert_eq!(own, vec!["probe", "sem1_probe"]);
+    }
+
+    /// One `tools/list` entry carrying nothing but its name, for the
+    /// collision tests below.
+    fn listed(name: &str) -> ToolInfo {
+        ToolInfo {
+            name: name.to_string(),
+            description: String::new(),
+            input_schema: serde_json::json!({ "type": "object" }),
+        }
+    }
+
+    /// Every declared name resolves to exactly one tool, which is what
+    /// makes it callable: the agent's lookup is a `find` over these.
+    fn each_name_resolves_to_one_tool(tools: &[LaneTool]) {
+        for tool in tools {
+            let found: Vec<&LaneTool> =
+                tools.iter().filter(|candidate| candidate.name == tool.name).collect();
+            assert_eq!(
+                found.len(),
+                1,
+                "{} is declared {} times: a call by that name runs at most one of them",
+                tool.name,
+                found.len()
+            );
+            assert_eq!(found[0].lane_tool, tool.lane_tool);
+            assert!(
+                lane_of(&tool.name).is_some_and(|(lane, _)| lane == "sem1"),
+                "{} must still read as a sem1 tool",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_lane_shipping_a_prefixed_and_a_bare_tool_declares_both() {
+        // The corner the old fallback missed: `sem1_x` takes the short
+        // name, and the bare `x`'s own full name *is* that same short
+        // name, so falling back to the full name handed the second tool
+        // the first one's declaration and shadowed it for the whole run.
+        let tools = namespaced("sem1", &[listed("sem1_x"), listed("x")]);
+        let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
+        assert_eq!(names.len(), 2);
+        assert_ne!(names[0], names[1], "two tools must not share one declaration: {names:?}");
+        each_name_resolves_to_one_tool(&tools);
+        // Both ends of each mapping survive: the lane's own name is what
+        // `tools/call` carries.
+        let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
+        assert_eq!(own, vec!["sem1_x", "x"]);
+    }
+
+    #[test]
+    fn a_third_colliding_tool_gets_a_numbered_name() {
+        // Both natural names are gone after `sem1_x` and `x`, so a lane
+        // that also lists `x_2` has to be numbered past it. The iteration
+        // has to keep going rather than return the duplicate.
+        let tools = namespaced("sem1", &[listed("sem1_x"), listed("x"), listed("x_2")]);
+        let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
+        assert_eq!(names, vec!["mcp__sem1__x", "mcp__sem1__x_2", "mcp__sem1__x_2_2"]);
+        each_name_resolves_to_one_tool(&tools);
+        let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
+        assert_eq!(own, vec!["sem1_x", "x", "x_2"]);
     }
 }
