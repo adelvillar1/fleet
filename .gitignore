@@ -1,1 +1,4 @@
 /target
+
+# Claude local env reference — env var names and URLs only, not credential values
+CLAUDE.local.md

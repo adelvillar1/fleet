@@ -1,0 +1,98 @@
+# Fleet
+
+A native Rust agent for the DeepSeek API — and the intended home of a self-contained Rust harness for the whole Fleet-of-Ones ecosystem. Repo: `git@github.com:adelvillar1/fleet.git` (private, MIT). Status: alpha 0.2.0, slice 1 (agent core) only.
+
+## What Fleet is
+
+Slice 1 shipped: one static binary with its own `ureq`-based DeepSeek chat-completions client, a closed four-tool set (`bash`, `read_file`, `write_file`, `list_dir`), terminal tool approvals, append-only JSONL session logs with resume, and `doctor`. No Node runtime, no harness checkout, no dsh launch path.
+
+The owner's intent (2026-10-13): Fleet is the self-contained Rust successor to the DeepSeek Harness fork's "fleet profile". It is meant to absorb the entire ecosystem, not just the agent core:
+
+- the sys1 house lanes — sys1 (judgment), sdm1 (tabular), sem1 (embeddings), gen1 (media), today MCP servers in their own repos
+- dev-decisions — the verification and calibration layer
+- agnostic-router-kit — model routing, the workflow plane, and its `/dashboard`
+- second-brain — the localhost control tower (never exposed beyond the machine)
+- the dashboards — router board, second-brain board, and tower over the board seam (today TypeScript plugins in the fork)
+
+None of that is in this repository yet. Verified inventory and per-repo state: [docs/architecture/ecosystem.md](docs/architecture/ecosystem.md). Current crate architecture: [docs/architecture/overview.md](docs/architecture/overview.md).
+
+## Today's state (2026-10-13)
+
+- Slice 1 in-repo and green: `cargo test` → 55 passed, 1 ignored (44 unit + 11 integration). Debug binary smoke-verified: `version`, `help`, `doctor` (all four checks ok, key resolved through the harness credential-store fallback), `sessions`, and exit codes 0/2 as documented.
+- Environmental blockers, none of them code:
+  - **CI is red by budget.** GitHub Actions minutes are exhausted; jobs never dispatch (job record: `runner_id: 0`, zero steps, ~3s). Until the budget resets, the gate must be run locally on every change.
+  - **rustfmt and clippy are not installed** on this machine (rustup `profile = "minimal"`, no rustup shim). `cargo fmt --check` and `cargo clippy -D warnings` cannot run here; match the existing style and say so in the recap when they were not run.
+  - **DeepSeek account balance is 0** — the API answers 402 Insufficient Balance, so the live-API e2e (plan criterion C3) and any real `fleet run` fail with the typed 402 mapping until top-up.
+- Ecosystem repos (sys1, sdm1, sem1, gen1, dev-decisions, agnostic-router-kit, second-brain) live outside this repo; their git-level states are verified in the ecosystem doc. Runtime health of those services has not been probed. Nothing has been absorbed into Rust yet.
+
+## Hard rules
+
+1. **Plan before non-trivial work.** Draft `docs/plans/YYYY-MM-DD-<slug>.md` with acceptance criteria before any feature ≥15 min or >2 files; update its `status` in the same turn the work lands. Trivial work may go direct.
+2. **The gate is local until CI is back:** `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`. Run it before every push; do not rely on the (budget-blocked) workflow.
+3. **Commit each verified increment as it goes green.** Explicit paths only — never `git add -A`. `master` is the only branch (solo tool, no hosted surface).
+4. **Never commit secrets.** Credentials resolve at runtime: `DEEPSEEK_API_KEY` env → `<FLEET_HOME>/.env` → the DeepSeek Harness credential store's `refs` block (read-only). This repo stores no keys; env var names live in `CLAUDE.local.md`.
+5. **Model-visible ⟺ logged** (inherited from the harness): anything the model sees must be reconstructable from the session log. The system prompt and tool declarations are compiled-in constants, reconstructed per request, never logged.
+6. **Native port, not a fork.** New work is Rust against the DeepSeek API; never reintroduce Node, a checkout dependency, or a dsh launch path (plan criterion C5).
+7. **Destructive operations** (session deletion, history rewrite, force push) require explicit approval in the current turn.
+
+## Where to find things
+
+```
+src/main.rs             dispatch, credential resolution, run/chat/sessions/doctor wiring
+src/cli.rs              argument parsing, help text, usage errors
+src/api.rs              DeepSeek chat-completions client (ureq), typed errors
+src/agent.rs            the tool loop, approvals, turn cap, progress reporting
+src/tools.rs            bash, read_file, write_file, list_dir; output capping
+src/session.rs          JSONL session log: append, replay, list, resume
+src/home.rs             FLEET_HOME / ~/.fleet, sessions dir, .env fallback, harness refs
+src/doctor.rs           the four startup checks
+src/net.rs              loopback probe used by doctor
+src/bin/mock-server.rs  the scripted mock API the integration tests drive
+tests/integration.rs    end-to-end tests: parser, client, tool loop, log
+docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice-1 + dashboards records inherited from the fork)
+docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
+docs/architecture/      overview.md (this crate), ecosystem.md (the repos Fleet will absorb)
+docs/features/          feature docs as they land
+CLAUDE.local.md         gitignored: env var names, machine paths, local quirks (no values)
+```
+
+## Common commands
+
+`cargo` is not on PATH on this machine — see the PATH line in `CLAUDE.local.md`.
+
+```sh
+cargo test                  # the gate's core: 55 passed, 1 ignored
+cargo build --release       # binary at target/release/fleet
+cargo run -- doctor         # credentials, home, API, shell; masks the key to its last 4 chars
+cargo run -- run "<task>" --yes
+cargo run -- sessions
+DEEPSEEK_API_KEY=sk-... cargo test --test integration -- --ignored   # live e2e; needs account balance
+```
+
+## Branch and environment topology
+
+Single branch `master` → `origin/master`. No staging/production split: solo tool, no hosted surface. If a deploy surface ever appears, add `develop` and a topology table here.
+
+## Housekeeping protocol
+
+- Hard rule about what to do → this file. Env var name or machine path → `CLAUDE.local.md`. What happened in a session → `docs/recaps/`. What to build → `docs/plans/`. Architecture or ecosystem detail → `docs/architecture/`.
+- This file stays ≤300 lines. When it grows, extract to a doc and leave a pointer — never append. One home per fact; no duplicated pointers. No "Updated YYYY-MM-DD" markers; git history owns dates.
+
+## Session protocol
+
+warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/`) → commit with explicit paths.
+
+## Ecosystem at a glance
+
+One line each; verified states and absorption notes in [docs/architecture/ecosystem.md](docs/architecture/ecosystem.md).
+
+| Repo | Role | State (git-level, verified 2026-10-13) |
+|---|---|---|
+| sys1 | judgment lane; decision models; MCP `sys1_classify` | `feature/plan-surface`, 4 uncommitted files |
+| sdm1 | tabular lane; foundation models; MCP classify/health | clean on `main` |
+| sem1 | embeddings lane; MCP embed/probe/index/search | clean on `main`; no CLAUDE.md |
+| gen1 | media lane; MCP `gen1_imagine` | clean on `master` |
+| dev-decisions | calibration/verification layer; JSONL ledger | clean on `main` + 3 feature branches |
+| agnostic-router-kit | model router, workflow plane, `/dashboard` | `master`, 4 untracked docs dirs; full methodology present |
+| second-brain | localhost control-tower dashboard | clean on `main`; last commit 2026-10-09 |
+| deepseek-harness (fork) | the TS "fleet profile": `packages/fleet/dsh-*` wires all of the above into the harness | parent repo; slice-1 and dashboards records originated here |
