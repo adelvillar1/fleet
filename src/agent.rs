@@ -224,7 +224,7 @@ impl<'a> Agent<'a> {
                 AgentError::Api(ClientError::Decode("response had no choices".to_string()))
             })?;
 
-            let mut message = choice.message;
+            let message = choice.message;
             for call in &message.tool_calls {
                 let _ = writeln!(self.progress, "\u{2192} {}", describe_call(call));
             }

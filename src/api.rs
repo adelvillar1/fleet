@@ -134,7 +134,8 @@ pub enum StreamEvent {
     Content(String),
     /// Every tool call the answer requested, assembled and complete.
     ToolCalls(Vec<ToolCall>),
-    /// The request's token accounting, delivered once at the end.
+    /// The request's token accounting; providers send it in the final chunk,
+    /// and any chunk carrying it is honored.
     Usage(Usage),
 }
 
@@ -409,13 +410,21 @@ fn parse_sse(
     reader: impl std::io::BufRead,
     events: &tokio::sync::mpsc::UnboundedSender<StreamEvent>,
 ) -> Result<bool, ClientError> {
-    let mut content = String::new();
     let mut drafts: Vec<ToolCallDraft> = Vec::new();
     let mut closed = false;
     for line in reader.lines() {
         let line = line.map_err(|error| ClientError::Network(error.to_string()))?;
         let Some(payload) = sse_data(&line) else { continue };
         if payload == "[DONE]" {
+            // A stream can close without a finish_reason; the calls it
+            // assembled are still the model's, and dropping them would lose
+            // them silently (KI-020).
+            if !drafts.is_empty() {
+                let calls: Vec<ToolCall> = drafts.iter().map(ToolCall::from).collect();
+                if events.send(StreamEvent::ToolCalls(calls)).is_err() {
+                    return Ok(true);
+                }
+            }
             closed = true;
             break;
         }
@@ -433,7 +442,6 @@ fn parse_sse(
         for choice in &chunk.choices {
             if let Some(delta) = &choice.delta.content {
                 if !delta.is_empty() {
-                    content.push_str(delta);
                     if events.send(StreamEvent::Content(delta.clone())).is_err() {
                         return Ok(true);
                     }
@@ -442,6 +450,16 @@ fn parse_sse(
             for call in &choice.delta.tool_calls {
                 // Indices arrive in order from a call's first fragment on;
                 // that first fragment names it, later ones extend it.
+                // Conforming streams number a call's fragments 0,1,2… in
+                // order; a gap would silently merge fragments into the wrong
+                // call, so it is a decode failure rather than a wrong tool
+                // call (KI-020).
+                if call.index > drafts.len() {
+                    return Err(ClientError::Decode(format!(
+                        "tool-call fragment index {} arrives before index {}",
+                        call.index, drafts.len()
+                    )));
+                }
                 let draft = if call.index < drafts.len() {
                     &mut drafts[call.index]
                 } else {
@@ -461,12 +479,14 @@ fn parse_sse(
                 }
             }
             if choice.finish_reason.is_some() {
-                // The calls are complete here; emit them whole.
+                // The calls are complete here; emit them whole. Clearing the
+                // drafts keeps a later [DONE] from emitting them twice.
                 if !drafts.is_empty() {
                     let calls: Vec<ToolCall> = drafts.iter().map(ToolCall::from).collect();
                     if events.send(StreamEvent::ToolCalls(calls)).is_err() {
                         return Ok(true);
                     }
+                    drafts.clear();
                 }
                 closed = true;
             }
@@ -704,6 +724,49 @@ mod tests {
     #[test]
     fn parse_sse_rejects_a_malformed_chunk() {
         let body = "data: {not json}\n\n";
+        let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
+        let error = parse_sse(std::io::Cursor::new(body.as_bytes()), &events).unwrap_err();
+        assert!(matches!(error, ClientError::Decode(_)), "{error:?}");
+        drop(events);
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn parse_sse_emits_assembled_calls_when_the_stream_closes_without_a_finish_reason() {
+        // A [DONE] with no finish_reason still delivers the calls the model
+        // asked for: dropping them would lose them silently (KI-020).
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",",
+            "\"function\":{\"name\":\"bash\",\"arguments\":\"{}\"}}]}}]}\n",
+            "\n",
+            "data: [DONE]\n",
+            "\n",
+        );
+        let (events, closed) = parse(body);
+        assert!(closed);
+        let calls = events
+            .iter()
+            .find_map(|event| match event {
+                StreamEvent::ToolCalls(calls) => Some(calls.clone()),
+                _ => None,
+            })
+            .expect("the assembled call is emitted at close");
+        assert_eq!(calls[0].id, "call-1");
+        assert_eq!(calls[0].function.name, "bash");
+    }
+
+    #[test]
+    fn parse_sse_rejects_a_gapped_tool_call_index() {
+        // A fragment whose index skips a slot would merge into the wrong
+        // call; that is a decode failure, not a silently wrong tool call.
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",",
+            "\"function\":{\"name\":\"bash\",\"arguments\":\"{}\"}}]}}]}\n",
+            "\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,",
+            "\"function\":{\"name\":\"bash\",\"arguments\":\"{}\"}}]}}]}\n",
+            "\n",
+        );
         let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
         let error = parse_sse(std::io::Cursor::new(body.as_bytes()), &events).unwrap_err();
         assert!(matches!(error, ClientError::Decode(_)), "{error:?}");
