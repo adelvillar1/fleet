@@ -533,7 +533,7 @@ fn doctor_command() -> ExitCode {
     // states and never touches the exit code: keyword-only recall is a
     // working configuration, and the failure this line exists to fix is
     // the live system's silent degradation, not a missing local model.
-    let probed = fleet::memory::probe(fleet::memory::DEFAULT_EMBEDDING_ENDPOINT);
+    let probed = fleet::memory::probe(&fleet::memory::embedding_endpoint());
     let recall_check = doctor::evaluate_recall(probed.vector());
     println!("{}", doctor::render(&recall_check));
 

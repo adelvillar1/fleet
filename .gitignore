@@ -7,5 +7,10 @@ __pycache__/
 # rebuilt on load, like __pycache__
 /memories/.recall-index.json
 
+# Orphans from the atomic rewrites: the index and the recall-count bump
+# each write through a unique `.<pid>.<n>.tmp` and rename, so a crash
+# mid-write can leave one behind. A leftover temp is never a fact.
+/memories/*.tmp
+
 # Claude local env reference — env var names and URLs only, not credential values
 CLAUDE.local.md

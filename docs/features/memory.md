@@ -101,7 +101,10 @@ route — and anything that does not answer a usable vector (connection
 refused, non-200, unreadable body, empty vector) is the keyword-only
 degradation. When the degradation is live, cached vectors are ignored
 as well as new ones, so what `doctor` names can never contradict what
-recall used.
+recall used. The endpoint is the loopback default unless
+`FLEET_EMBEDDING_ENDPOINT` names another — a second model on another
+port, or a llama-server bound elsewhere; resolution is env → default
+constant, the house style, and an empty value counts as unset.
 
 **The index is in-process.** Embeddings are computed at load and cached
 in `memories/.recall-index.json` — generated, gitignored, like
@@ -111,6 +114,19 @@ fact is re-embedded; the cache is rewritten only when something changed,
 through a unique temp file and a rename, best-effort and silent (a
 failed write costs the next load a recompute and nothing else). The
 every-turn path never depends on the sem1 child.
+
+**The index is keyed to the embedder.** It carries the embedder's
+identity — the endpoint or model name — and the vector length it
+served. On load, a mismatch invalidates the whole cache and rebuilds:
+a model swap leaves stale-dimension vectors that cosine's length guard
+scores 0.0, which would silently kill the vector channel while
+`doctor` names it live — the exact silent degradation this slice
+exists to prevent. An index in the pre-key format (no embedder, no
+dims) reads as a mismatch and rebuilds, so an existing cache
+self-heals on the first load. The atomic rewrites — the index and the
+recall-count bump — land through a unique `.<pid>.<n>.tmp` and a
+rename; a crash mid-write can leave one behind, and `memories/*.tmp`
+is gitignored so an orphan is never a fact.
 
 ## Routing: shape-routed recall
 
@@ -156,8 +172,8 @@ space.
 
 Turn context is **assembled**, not dumped: protected tier first, then
 shape-routed recall, then recent working memory, within
-`ASSEMBLY_TOKEN_BUDGET` (512 tokens, estimated at one token per four
-characters — the fork's own estimate and budget). The protected tier is
+`ASSEMBLY_TOKEN_BUDGET` (2048 tokens, estimated at one token per four
+characters — the fork's own estimate). The protected tier is
 added first and is never dropped, even when it alone exceeds the budget
 — that is the tier's whole point. The strongest recalled fact always
 enters (the fork's `renderBlock` rule: a budget too small for it still
@@ -165,6 +181,15 @@ carries the strongest match rather than an empty block); the rest enter
 while they fit, and the ones that do not are named in the surface's
 "dropped under budget" line. Protected facts are excluded from the
 recall ranking — no fact enters a turn twice.
+
+The budget is 2048 against DeepSeek's 128k context, not the fork's
+512: the seed corpus's seven protected facts cost ~450 tokens on their
+own (the module's own estimate, measured on the real tree), so at 512
+the second ranked fact — ~85 tokens — did not fit and ranked recall
+got exactly one fact beside the tier. The floor (`MIN_RECALL_SCORE`,
+0.20) is the coarse noise control and the budget the fine one; 2048
+bounds a turn to ~25-30 facts while letting the protected tier and
+ranked recall coexist.
 
 The observed failure this avoids: a turn about one topic injected with
 unrelated facts. The floor, the ranking, and the budget together are

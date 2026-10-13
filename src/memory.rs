@@ -17,8 +17,9 @@
 //! channels — vector similarity, keyword coverage, importance earned by
 //! recall-count, and exponential temporal decay — with the weights named
 //! constants below. The vector backend is **probed, not assumed**: the
-//! loopback llama-server sem1 serves (`127.0.0.1:8901`) is discovered
-//! with one real embedding round trip, and its absence degrades recall
+//! loopback llama-server sem1 serves (`127.0.0.1:8901`, or wherever
+//! `FLEET_EMBEDDING_ENDPOINT` points) is discovered with one real
+//! embedding round trip, and its absence degrades recall
 //! to keyword-only — the correct degradation, named by `doctor` and by
 //! this module's own surface, never silent. That is the fix for the live
 //! system, where an absent embedding stack silently degraded recall over
@@ -478,8 +479,32 @@ pub fn load_facts(root: &Path) -> Vec<Fact> {
 
 /// The loopback embedding endpoint this machine's llama-server serves —
 /// the same one sem1's default provider uses. Loopback by construction:
-/// no new crate, no key, no internet.
+/// no new crate, no key, no internet. `FLEET_EMBEDDING_ENDPOINT`
+/// overrides it for a machine whose server listens elsewhere.
 pub const DEFAULT_EMBEDDING_ENDPOINT: &str = "http://127.0.0.1:8901/v1/embeddings";
+
+/// The env var that overrides the embedding endpoint — a second model
+/// on another port, or a llama-server bound elsewhere. Resolved the
+/// house way: env → the default constant, an empty value counting as
+/// unset.
+pub const EMBEDDING_ENDPOINT_VAR: &str = "FLEET_EMBEDDING_ENDPOINT";
+
+/// The endpoint the probe uses: `FLEET_EMBEDDING_ENDPOINT` when it
+/// names one, the loopback default otherwise.
+pub fn embedding_endpoint() -> String {
+    endpoint_from(|name| std::env::var(name).ok())
+}
+
+/// The resolution itself, behind the lookup seam so the test proves the
+/// override without mutating a process-global environment other tests
+/// read — the same reason `calib::resolve_root` takes its home as a
+/// parameter.
+fn endpoint_from(lookup: impl Fn(&str) -> Option<String>) -> String {
+    lookup(EMBEDDING_ENDPOINT_VAR)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_EMBEDDING_ENDPOINT.to_string())
+}
 
 /// The probe's round-trip budget. A live server answers a single embed
 /// in milliseconds; a dead one refuses the connect instantly. The budget
@@ -646,11 +671,23 @@ pub fn probe(endpoint: &str) -> Probe {
 // --- the index -------------------------------------------------------------
 
 /// The generated cache under `memories/`: one entry per fact, keyed by
-/// name, carrying the stamp the vector was computed at. A cache never
-/// errors — an absent or malformed index reads as empty and costs a
-/// recompute.
+/// name, carrying the stamp the vector was computed at — plus the
+/// embedder identity and dimensionality the vectors were computed
+/// **at**. A cache never errors — an absent or malformed index reads
+/// as empty and costs a recompute — and an index keyed to another
+/// embedder is not this embedder's cache: a model swap leaves
+/// stale-dimension vectors that cosine's length guard scores 0.0,
+/// which would silently kill the vector channel while `doctor` names
+/// it live. The key is what makes that impossible.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Index {
+    /// The embedder that computed the cached vectors — its endpoint or
+    /// model name, from `Embedder::vector_info`.
+    #[serde(default)]
+    embedder: String,
+    /// The vector length that embedder served.
+    #[serde(default)]
+    dims: usize,
     #[serde(default)]
     facts: HashMap<String, IndexEntry>,
 }
@@ -675,13 +712,27 @@ impl Index {
             .unwrap_or_default()
     }
 
+    /// Whether the cached vectors came from the embedder loading now.
+    /// A different endpoint, a different dimensionality, or the pre-key
+    /// format (which reads as an empty key) all say no — and a no
+    /// invalidates the whole cache rather than serving vectors this
+    /// embedder did not compute.
+    fn keyed_for(&self, key: &(String, usize)) -> bool {
+        self.embedder == key.0 && self.dims == key.1
+    }
+
     /// Write the cache through a unique temp file and a rename, so a
     /// reader never sees a half-written index and two fleet processes
     /// cannot collide on one temp. Best-effort and silent by design: a
     /// failed write costs the next load a recompute and nothing else —
     /// the index is `__pycache__`, and `__pycache__` never complains.
-    fn write(root: &Path, entries: &HashMap<String, IndexEntry>) {
-        let Ok(text) = serde_json::to_string(&Index { facts: entries.clone() }) else {
+    fn write(root: &Path, key: Option<&(String, usize)>, entries: &HashMap<String, IndexEntry>) {
+        let index = Index {
+            embedder: key.map(|(name, _)| name.clone()).unwrap_or_default(),
+            dims: key.map(|(_, dims)| *dims).unwrap_or_default(),
+            facts: entries.clone(),
+        };
+        let Ok(text) = serde_json::to_string(&index) else {
             return;
         };
         let path = index_path(root);
@@ -775,6 +826,21 @@ impl Score {
             + W_DECAY * decay
             + shape_boost;
         Score { total, vector, keyword, importance, decay, shape_boost }
+    }
+
+    /// Every channel zero: the score of a fact that was never ranked.
+    /// The protected tier is admitted unconditionally — its members did
+    /// not compete for their place — so they carry this rather than an
+    /// invented standing the ranker never computed.
+    fn unranked() -> Score {
+        Score {
+            total: 0.0,
+            vector: 0.0,
+            keyword: 0.0,
+            importance: 0.0,
+            decay: 0.0,
+            shape_boost: 0.0,
+        }
     }
 }
 
@@ -998,20 +1064,30 @@ fn lock_facts(facts: &Mutex<Vec<Fact>>) -> std::sync::MutexGuard<'_, Vec<Fact>> 
 impl Memory {
     /// Load the corpus under `root` with the vector path probed: the
     /// real local-model backend when it answers, keyword-only otherwise.
+    /// The endpoint is `FLEET_EMBEDDING_ENDPOINT` when set, the loopback
+    /// default otherwise.
     pub fn load(root: &Path) -> Memory {
-        Memory::load_with(root, probe(DEFAULT_EMBEDDING_ENDPOINT).embedder())
+        Memory::load_with(root, probe(&embedding_endpoint()).embedder())
     }
 
     /// Load with an explicit embedder — the seam the tests and a future
     /// configured endpoint use. The index is built here: a fact whose
     /// stamp matches its cached entry keeps its vector, every other
     /// fact is embedded once, and the cache is rewritten only when
-    /// something changed.
+    /// something changed. The cache is keyed to the embedder: one
+    /// written by another model — or by the pre-key format — is
+    /// invalidated whole and rebuilt, so a model swap can never serve
+    /// stale-dimension vectors that cosine would score 0.0.
     pub fn load_with(root: &Path, embedder: Box<dyn Embedder>) -> Memory {
         let facts = load_facts(root);
         let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
         if embedder.serves_vectors() {
+            let key = embedder.vector_info();
             let index = Index::read(root);
+            let index = match &key {
+                Some(key) if index.keyed_for(key) => index,
+                _ => Index::default(),
+            };
             let mut fresh: HashMap<String, IndexEntry> = HashMap::new();
             let mut changed = false;
             for fact in &facts {
@@ -1029,7 +1105,16 @@ impl Memory {
                             changed = true;
                             vector
                         }
-                        None => continue,
+                        None => {
+                            // Never silent: the fact keeps no vector this
+                            // load and one line says so, by name — the
+                            // keyword channels still rank it.
+                            eprintln!(
+                                "fleet: memories: `{}` \u{2014} the embed failed, so it carries no vector this load",
+                                fact.name
+                            );
+                            continue;
+                        }
                     },
                 };
                 if let Some(stamp) = &fact.stamp {
@@ -1041,7 +1126,7 @@ impl Memory {
                 vectors.insert(fact.name.clone(), vector);
             }
             if changed || fresh.len() != index.facts.len() {
-                Index::write(root, &fresh);
+                Index::write(root, key.as_ref(), &fresh);
             }
         }
         Memory { root: root.to_path_buf(), embedder, facts: Mutex::new(facts), vectors }
@@ -1076,21 +1161,15 @@ impl Memory {
 
     /// The protected tier: every non-forgotten protected fact, sorted by
     /// name. These enter a turn unconditionally — the budget never
-    /// evicts them.
+    /// evicts them. Their score is [`Score::unranked`]: the tier did not
+    /// compete, so no standing is computed for it and none is rendered.
     pub fn protected(&self) -> Vec<ScoredFact> {
         let today = calib::today();
-        let today_days = parse_day(&today);
         let facts = lock_facts(&self.facts);
         let mut hits: Vec<ScoredFact> = facts
             .iter()
             .filter(|fact| fact.protected() && !fact.forgotten(&today))
-            .map(|fact| ScoredFact {
-                fact: fact.clone(),
-                // The protected tier is admitted unconditionally, so
-                // its score is the fact's own standing — importance and
-                // decay, with no query to match against.
-                score: Score::compute(0.0, 0.0, fact.recall_count, &fact.date, today_days, false),
-            })
+            .map(|fact| ScoredFact { fact: fact.clone(), score: Score::unranked() })
             .collect();
         hits.sort_by(|left, right| left.fact.name.cmp(&right.fact.name));
         hits
@@ -1275,9 +1354,18 @@ static REWRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
 // --- assembly --------------------------------------------------------------
 
 /// The turn-context budget in tokens, estimated at one token per four
-/// characters — the fork's own estimate and budget, ported. It bounds
-/// what enters a turn; it can never evict the protected tier.
-pub const ASSEMBLY_TOKEN_BUDGET: usize = 512;
+/// characters — the fork's own estimate, ported. It bounds what enters
+/// a turn; it can never evict the protected tier.
+///
+/// 2048 against DeepSeek's 128k context: the fork's 512 was tuned for
+/// a corpus whose protected tier was a handful of short lines, and on
+/// the seed corpus it starved recall — the seven protected facts cost
+/// ~450 tokens on their own, so at 512 the second ranked fact (~85
+/// tokens) did not fit and ranked recall got exactly one fact. The
+/// floor (`MIN_RECALL_SCORE`) already does the coarse noise control;
+/// the budget is the fine one, and 2048 bounds a turn to ~25-30 facts
+/// while letting the protected tier and ranked recall coexist.
+pub const ASSEMBLY_TOKEN_BUDGET: usize = 2048;
 
 /// One turn's assembled context: the protected tier (never evicted),
 /// the shape-routed recall that fit the budget, the working memory that
@@ -1736,16 +1824,27 @@ mod tests {
     /// text embeds as the indicator of which scripted terms it carries,
     /// so a cosine is a scripted-token overlap and every ordering below
     /// is exact. It shares its call counter with the test, which is how
-    /// the index-cache test proves a rebuild embeds only what changed.
+    /// the index-cache test proves a rebuild embeds only what changed,
+    /// and it serves a settable dimensionality, which is how the
+    /// index-key test swaps models.
     struct ScriptedEmbedder {
         calls: Arc<AtomicUsize>,
+        dims: usize,
     }
 
     impl ScriptedEmbedder {
-        /// The shared counter and the boxed embedder that increments it.
+        /// The shared counter and the boxed embedder that increments it,
+        /// serving the whole scripted vocabulary.
         fn new() -> (Arc<AtomicUsize>, Box<ScriptedEmbedder>) {
+            Self::at_dims(SCRIPTED_TERMS.len())
+        }
+
+        /// The same embedder at an explicit dimensionality — the model
+        /// swap. A dimension past the vocabulary's length truncates it,
+        /// so the vectors stay exact indicators over fewer terms.
+        fn at_dims(dims: usize) -> (Arc<AtomicUsize>, Box<ScriptedEmbedder>) {
             let calls = Arc::new(AtomicUsize::new(0));
-            (Arc::clone(&calls), Box::new(ScriptedEmbedder { calls }))
+            (Arc::clone(&calls), Box::new(ScriptedEmbedder { calls, dims }))
         }
     }
 
@@ -1759,6 +1858,7 @@ mod tests {
             Some(
                 SCRIPTED_TERMS
                     .iter()
+                    .take(self.dims)
                     .map(|term| if lower.contains(term) { 1.0 } else { 0.0 })
                     .collect(),
             )
@@ -1770,6 +1870,12 @@ mod tests {
 
         fn serves_vectors(&self) -> bool {
             true
+        }
+
+        /// The index key this embedder writes: its name and the vector
+        /// length it serves — the pair a model swap changes.
+        fn vector_info(&self) -> Option<(String, usize)> {
+            Some(("scripted".to_string(), self.dims))
         }
     }
 
@@ -2193,6 +2299,25 @@ mod tests {
         let _ = fs::remove_dir_all(&stream_root);
     }
 
+    // --- the embedder ---
+
+    #[test]
+    fn the_env_override_changes_the_resolved_endpoint() {
+        // The house resolution: env → the default constant, an empty or
+        // whitespace value counting as unset. The lookup seam keeps the
+        // test off the process-global environment, so it cannot race a
+        // sibling test.
+        assert_eq!(
+            endpoint_from(|_| Some("http://127.0.0.1:9002/v1/embeddings".to_string())),
+            "http://127.0.0.1:9002/v1/embeddings"
+        );
+        assert_eq!(endpoint_from(|_| None), DEFAULT_EMBEDDING_ENDPOINT);
+        assert_eq!(endpoint_from(|_| Some(String::new())), DEFAULT_EMBEDDING_ENDPOINT);
+        assert_eq!(endpoint_from(|_| Some("   ".to_string())), DEFAULT_EMBEDDING_ENDPOINT);
+        // The name the environment carries is the one documented.
+        assert_eq!(EMBEDDING_ENDPOINT_VAR, "FLEET_EMBEDDING_ENDPOINT");
+    }
+
     // --- the index ---
 
     #[test]
@@ -2226,6 +2351,69 @@ mod tests {
         // down, or doctor's naming would contradict what recall used.
         let keyword_only = Memory::load_with(&root, Box::new(KeywordOnly));
         assert_eq!(keyword_only.backend(), "keyword-only");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_dimension_mismatch_invalidates_the_index_and_rebuilds() {
+        let root = scratch("dims");
+        order_corpus(&root);
+
+        // The index is written at the scripted vocabulary's five
+        // dimensions, and every cached vector is five long.
+        let (calls, embedder) = ScriptedEmbedder::new();
+        let memory = Memory::load_with(&root, embedder);
+        assert_eq!(calls.load(Ordering::Relaxed), 4);
+        assert!(memory.vectors.values().all(|vector| vector.len() == 5));
+        drop(memory);
+
+        // A model swap — the same embedder name serving three
+        // dimensions — invalidates the whole cache: every fact is
+        // re-embedded at the new length. Without the key this is the
+        // silent failure: cosine's length guard scores the stale
+        // vectors 0.0 and the vector channel dies while doctor names
+        // it live.
+        let (calls, embedder) = ScriptedEmbedder::at_dims(3);
+        let memory = Memory::load_with(&root, embedder);
+        assert_eq!(calls.load(Ordering::Relaxed), 4);
+        assert!(memory.vectors.values().all(|vector| vector.len() == 3));
+        drop(memory);
+
+        // The rewritten index is keyed to the new model, so the next
+        // load with the same one embeds nothing.
+        let (calls, embedder) = ScriptedEmbedder::at_dims(3);
+        let _ = Memory::load_with(&root, embedder);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+        // And the file says so: the stale-dimension vectors are gone,
+        // not merely shadowed in memory.
+        let text = fs::read_to_string(index_path(&root)).unwrap();
+        assert!(text.contains("\"dims\":3"), "{text}");
+        assert!(text.contains("\"embedder\":\"scripted\""), "{text}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_legacy_index_without_the_key_is_rebuilt_not_served() {
+        let root = scratch("legacy-index");
+        write_fact(&root, "alpha", &good_fact("alpha", "railway deploy per branch", "project", "deploy"));
+        // The pre-key format: a stamp-matching entry with no embedder
+        // and no dims — an index written before the key existed. Its
+        // stamp says fresh; its absent key says it is not this
+        // embedder's cache, and the key wins.
+        let stamp = load_facts(&root)[0].stamp.clone().expect("the fact carries a stamp");
+        fs::write(
+            index_path(&root),
+            format!(
+                "{{\"facts\":{{\"alpha\":{{\"stamp\":\"{stamp}\",\"vector\":[9.0,9.0,9.0,9.0,9.0]}}}}}}"
+            ),
+        )
+        .unwrap();
+
+        let (calls, embedder) = ScriptedEmbedder::new();
+        let memory = Memory::load_with(&root, embedder);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(memory.vectors["alpha"], vec![1.0, 1.0, 0.0, 0.0, 0.0]);
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -2294,6 +2482,142 @@ mod tests {
         assert_eq!(full.recalled.len(), 3);
         assert!(full.dropped.is_empty());
         assert!(full.used <= full.budget);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The seed-corpus shape: seven protected facts carrying the seed
+    /// tree's own descriptions, plus four ranked facts above the
+    /// floor. The seven protected lines cost 449 tokens on their own
+    /// (the real tree measures 453), so at the fork's 512 the tier
+    /// crowded the ranking out: on the real tree the second ranked
+    /// fact is ~85 tokens and did not fit, which is the parent's
+    /// observed "exactly one fact". The shipped constant has to carry
+    /// the tier and the ranking together.
+    fn seed_shaped_corpus(root: &Path) {
+        let protected: [(&str, &str, &str); 7] = [
+            ("p-handle", "user", "The owner's GitHub handle is adelvillar1 and he runs ZCode as his daily coding agent on his own macOS machine; his LLM access is prepaid subscription plans routed through his own router kit, with DeepSeek held as a working account in reserve"),
+            ("p-plans", "user", "The owner prefers spending the other plans' quota first and holds DeepSeek in reserve even though it has balance (owner clarification 2026-10-13); the router kit at 127.0.0.1:8300 is the primary route, not the escape hatch"),
+            ("p-english", "feedback", "Fleet's documentation is English-only \u{2014} no Chinese or other non-English docs anywhere in the repo \u{2014} a deliberate departure from the fork's bilingual convention (owner directive 2026-10-13)"),
+            ("p-logging", "feedback", "Every error, warning, defect, gap, and improvement encountered in Fleet or any sibling repo lands in docs/known-issues.md with its evidence the moment it is seen; logging is not fixing and not scope, and 'not my code' is a reason to log, not to skip"),
+            ("p-gate", "feedback", "Fleet's gate is local and permanent: cargo build --all-targets then cargo test, with the exit code read on the cargo invocation itself and never through a status-losing pipe; CI is disarmed by owner decision because the GitHub Actions budget is exhausted"),
+            ("p-ux", "feedback", "Every Fleet slice ships its user-facing surface with the feature at the 'genuinely visual, never plain-text tables' bar \u{2014} cards, status dots, real layout \u{2014} as a per-slice deliverable, never a polish finale"),
+            ("p-successor", "feedback", "Fleet is the self-contained Rust successor to the DeepSeek Harness fork's fleet profile: the fork stays the spec and the integration lab, the two never both ship the same feature, and every absorption is a native port rather than a Node dependency"),
+        ];
+        for (name, fact_type, description) in protected {
+            write_fact(root, name, &good_fact(name, description, fact_type, ""));
+        }
+        write_fact(
+            root,
+            "top",
+            &good_fact("top", "the railway deploy is failing per branch", "project", "deploy"),
+        );
+        write_fact(
+            root,
+            "bottom",
+            &good_fact("bottom", "the railway deploy logs its outcome", "project", "deploy"),
+        );
+        write_fact(
+            root,
+            "lower",
+            &good_fact("lower", "the railway deploy ships quietly", "project", "deploy"),
+        );
+        write_fact(
+            root,
+            "middle",
+            &good_fact("middle", "the railway deploy waits for the webhook", "project", "deploy"),
+        );
+    }
+
+    #[test]
+    fn the_shipped_budget_carries_the_protected_tier_and_recall_together() {
+        let root = scratch("seed-shaped");
+        seed_shaped_corpus(&root);
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+
+        // The starvation the raise fixes, on the same corpus: at the
+        // fork's 512 the seven protected lines left a ranked fact
+        // behind. The budget arithmetic is exact integer math on fixed
+        // strings, so this is deterministic, not flaky.
+        let squeezed = memory.assemble_within("the railway deploy is failing", &[], 512);
+        assert_eq!(squeezed.protected.len(), 7);
+        assert_eq!(squeezed.recalled.len(), 3, "{:?}", squeezed.dropped);
+        assert_eq!(squeezed.dropped, vec!["middle".to_string()]);
+
+        // The shipped constant, not a test-local one: the tier and all
+        // four ranked facts coexist, and nothing is dropped.
+        let assembly = memory.assemble("the railway deploy is failing", &[]);
+        assert_eq!(assembly.budget, ASSEMBLY_TOKEN_BUDGET);
+        assert_eq!(assembly.protected.len(), 7);
+        assert_eq!(assembly.recalled.len(), 4, "{:?}", assembly.dropped);
+        assert!(assembly.dropped.is_empty(), "{:?}", assembly.dropped);
+        assert!(assembly.used <= assembly.budget);
+        // The block renders the tier first and the recall section
+        // after it, with every line present.
+        let block = render_assembly(&assembly);
+        assert!(block.contains("Standing context (protected"), "{block}");
+        for line in [
+            "the railway deploy is failing per branch",
+            "the railway deploy logs its outcome",
+            "the railway deploy ships quietly",
+            "waits for the webhook",
+        ] {
+            assert!(block.contains(line), "{block}");
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn protected_facts_never_enter_the_ranked_section() {
+        let root = scratch("protected-excluded");
+        // The instruction's best match is protected: its keyword
+        // coverage is the highest in the corpus, so if the ranking
+        // admitted protected facts it would top the ranked section.
+        write_fact(
+            &root,
+            "identity",
+            &good_fact(
+                "identity",
+                "the railway deploy is the owner's standing rule about deploys",
+                "user",
+                "deploy",
+            ),
+        );
+        write_fact(
+            &root,
+            "top",
+            &good_fact("top", "the railway deploy is failing per branch", "project", "deploy"),
+        );
+        write_fact(
+            &root,
+            "bottom",
+            &good_fact("bottom", "the railway deploy logs its outcome", "project", "deploy"),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+
+        // Recall excludes it: no fact enters a turn twice.
+        let ranked: Vec<String> = memory
+            .recall("the railway deploy is failing")
+            .into_iter()
+            .map(|hit| hit.fact.name)
+            .collect();
+        assert_eq!(ranked, vec!["top".to_string(), "bottom".to_string()]);
+
+        // The assembly shows it in the protected block and the ranked
+        // section carries the remainder — the documented behavior,
+        // pinned.
+        let assembly = memory.assemble("the railway deploy is failing", &[]);
+        let protected: Vec<&str> =
+            assembly.protected.iter().map(|hit| hit.fact.name.as_str()).collect();
+        assert_eq!(protected, vec!["identity"]);
+        let recalled: Vec<&str> =
+            assembly.recalled.iter().map(|hit| hit.fact.name.as_str()).collect();
+        assert_eq!(recalled, vec!["top", "bottom"]);
+        let block = render_assembly(&assembly);
+        let protected_at =
+            block.find("the owner's standing rule").expect("the protected fact renders in its tier");
+        let ranked_at =
+            block.find("the railway deploy is failing per branch").expect("the ranked section renders");
+        assert!(protected_at < ranked_at, "{block}");
         let _ = fs::remove_dir_all(&root);
     }
 
