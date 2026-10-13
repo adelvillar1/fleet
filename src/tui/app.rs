@@ -160,6 +160,12 @@ pub struct App {
     pub lanes: Vec<LaneHealth>,
     /// True while the lane probe is in flight and no rows have landed.
     pub lanes_loading: bool,
+    /// Which probe the open lanes view belongs to. Every `open_lanes`
+    /// stamps a new generation, so rows from a probe the user has already
+    /// closed can never render into a freshly opened modal: the event loop
+    /// cannot tell them apart by mode alone, because both arrive while the
+    /// modal is open.
+    pub lanes_probe: u64,
     pub selected: usize,
     pub approval: Option<ApprovalPrompt>,
     pub status: Status,
@@ -184,6 +190,7 @@ impl App {
             sessions: Vec::new(),
             lanes: Vec::new(),
             lanes_loading: false,
+            lanes_probe: 0,
             selected: 0,
             approval: None,
             status: Status {
@@ -379,18 +386,26 @@ impl App {
     }
 
     /// Open the lane health view. The rows arrive asynchronously from the
-    /// prober; until they do the view says it is probing.
-    pub fn open_lanes(&mut self) {
+    /// prober; until they do the view says it is probing. Returns the probe
+    /// generation this view belongs to, which the prober's rows must carry
+    /// to be applied.
+    pub fn open_lanes(&mut self) -> u64 {
+        self.lanes_probe = self.lanes_probe.wrapping_add(1);
         self.lanes = Vec::new();
         self.lanes_loading = true;
         self.selected = 0;
         self.mode = Mode::Lanes;
+        self.lanes_probe
     }
 
-    /// The prober's rows landed. Stale rows for a view the user already
-    /// closed are dropped by the event loop, which only forwards them
-    /// while the view is open.
-    pub fn set_lanes(&mut self, lanes: Vec<LaneHealth>) {
+    /// The prober's rows for probe `probe` landed. Rows from a probe the
+    /// user has already closed are dropped: the mode alone cannot tell
+    /// them from the open view's own rows, because a stale probe's rows
+    /// arrive while the fresh modal is open too.
+    pub fn set_lanes(&mut self, probe: u64, lanes: Vec<LaneHealth>) {
+        if probe != self.lanes_probe {
+            return;
+        }
         self.lanes = lanes;
         self.lanes_loading = false;
         self.selected = 0;
@@ -923,7 +938,7 @@ mod tests {
         assert!(app.lanes.is_empty());
         assert!(app.lanes_loading);
         // The prober's rows land and the loading state clears.
-        app.set_lanes(vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
+        app.set_lanes(app.lanes_probe, vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
         assert!(!app.lanes_loading);
         assert_eq!(app.lanes.len(), 1);
         // The view scrolls its rows and closes on escape.
@@ -936,10 +951,33 @@ mod tests {
     }
 
     #[test]
+    fn rows_from_a_previous_probe_never_render_into_a_fresh_modal() {
+        let mut app = app();
+        app.apply(Action::OpenLanes);
+        let stale = app.lanes_probe;
+        // The user closes it and opens it again before the first probe's
+        // rows land: a fresh generation, a fresh (empty) view.
+        app.apply(Action::CloseOverlay);
+        app.apply(Action::OpenLanes);
+        let fresh = app.lanes_probe;
+        assert_ne!(stale, fresh, "each open stamps a new probe");
+        // The stale rows arrive while the fresh modal is open — the mode
+        // alone would let them through, which is the whole bug.
+        app.set_lanes(stale, vec![lane_health("sys1", crate::lanes::LaneState::Ok, 1)]);
+        assert!(app.lanes.is_empty(), "stale rows must not render");
+        assert!(app.lanes_loading, "the fresh probe is still in flight");
+        // The fresh probe's own rows still land.
+        app.set_lanes(fresh, vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
+        assert_eq!(app.lanes.len(), 1);
+        assert_eq!(app.lanes[0].name, "sem1");
+        assert!(!app.lanes_loading);
+    }
+
+    #[test]
     fn the_lanes_view_holds_no_menu_semantics() {
         let mut app = app();
         app.apply(Action::OpenLanes);
-        app.set_lanes(vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
+        app.set_lanes(app.lanes_probe, vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
         // Enter picks nothing; typing is swallowed; only quit and close
         // answer.
         assert_eq!(app.apply(Action::Pick), None);

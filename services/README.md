@@ -55,6 +55,32 @@ vendored copy."
    root, otherwise it is discovered by walking up from the running executable;
 3. unavailable — the lane reports the reason; nothing else fails.
 
+Both the per-lane override and `FLEET_SERVICES_ROOT` must be **absolute**. A
+relative path passes every layout check and still launches from wherever the
+caller stood, so a relative one is refused with a named reason instead of
+resolving silently.
+
+## The child's environment
+
+A lane child does **not** inherit the caller's environment. `src/mcp.rs`'s
+spawn path calls `env_clear()` and hands the child exactly three things:
+
+1. a minimal base — `PATH` (the lanes launch as `python3`, resolved through
+   it), `HOME` (the cores resolve their config, cache and store roots through
+   `Path.home()`), `LANG`, and `TMPDIR`, each carried only when the caller
+   actually has it;
+2. the lane's own `<SVC>_PYTHONPATH=<home>/src`;
+3. a per-lane passthrough allowlist — the ambient names that lane legitimately
+   needs, copied only when present. The list lives in `src/lanes.rs` beside the
+   lane that declares it, and the rule is: a credential the lane's providers
+   read, and a locator for a machine-local resource the lane cannot discover
+   itself (a venv, an endpoint, a store root, a log root, an env file).
+
+`DEEPSEEK_API_KEY` is on no lane's list — Fleet's own credential is none of
+the lanes' business. Everything else in the caller's environment, however
+credential-shaped, stays behind. The fork's launcher resolves credential refs
+explicitly for the same reason; this is the native port of that policy.
+
 ## Heavy provider lanes (optional, machine-owner choices)
 
 The cores boot without these; the tools that need them fail at call time

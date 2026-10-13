@@ -294,11 +294,20 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
     frame.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
+/// The lanes modal's height in rows: two lines per lane, the border, and a
+/// line of headroom. Four two-line rows do not need 62% of the screen —
+/// the headless card renders the same facts in far less, and the surfaces
+/// are meant to read as one.
+fn lanes_height(rows: usize) -> u16 {
+    let wanted = (rows as u16).saturating_mul(2).saturating_add(4);
+    wanted.clamp(4, 20)
+}
+
 /// The lane health view over the conversation: one card-like row per
 /// lane — status dot, name, role, version, tool count, state — with the
 /// tool names (or the failure reason) underneath, in registry order.
 fn render_lanes(frame: &mut Frame<'_>, app: &App) {
-    let area = centered(78, 62, frame.area());
+    let area = centered_sized(78, lanes_height(app.lanes.len()), frame.area());
     frame.render_widget(Clear, area);
     let block = Block::bordered()
         .title(" lanes — esc close ")
@@ -348,6 +357,14 @@ fn render_lanes(frame: &mut Frame<'_>, app: &App) {
             ),
             Span::styled(format!("  {}", lane.state.label()), Style::new().fg(color)),
         ]));
+        // The latency, exactly as the headless card renders it — the two
+        // surfaces are meant to read as one.
+        if lane.source.is_some() {
+            lines.last_mut().expect("the row just pushed").push_span(Span::styled(
+                format!("  · {} ms", lane.elapsed_ms),
+                Style::new().fg(palette::DIM),
+            ));
+        }
         // The detail line: the tool names when the lane answered, the
         // reason it could not when it did not.
         let detail = if lane.tools.is_empty() {
@@ -546,6 +563,18 @@ fn centered(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     area
 }
 
+/// A centered overlay of the given width percentage and an exact height in
+/// rows. `centered`'s percentages cannot express a small height — 4% of a
+/// 24-row frame rounds to zero rows, and a zero-row modal renders nothing
+/// — so a view sized from its own content asks for rows.
+fn centered_sized(percent_x: u16, height: u16, area: Rect) -> Rect {
+    let height = height.min(area.height);
+    let [area] = Layout::vertical([Constraint::Length(height)]).flex(Flex::Center).areas(area);
+    let [area] =
+        Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center).areas(area);
+    area
+}
+
 /// The session id's distinctive tail, so the status bar keeps its shape.
 fn short_id(id: &str) -> String {
     let count = id.chars().count();
@@ -651,30 +680,33 @@ mod tests {
         assert!(probing.contains("lanes"), "{probing}");
         assert!(probing.contains("probing the lanes"), "{probing}");
 
-        app.set_lanes(vec![
-            crate::lanes::LaneHealth {
-                name: "sem1".to_string(),
-                role: "embeddings".to_string(),
-                home: Some(std::path::PathBuf::from("/repo/services/sem1")),
-                source: Some(crate::lanes::HomeSource::Bundled),
-                state: LaneState::Ok,
-                server_version: Some("0.1.0".to_string()),
-                tools: vec!["sem1_embed".to_string(), "sem1_probe".to_string()],
-                detail: "SEM1_PYTHONPATH=…/src python3 -u …/service/mcp_server.py".to_string(),
-                elapsed_ms: 53,
-            },
-            crate::lanes::LaneHealth {
-                name: "gen1".to_string(),
-                role: "media".to_string(),
-                home: None,
-                source: None,
-                state: LaneState::Unavailable,
-                server_version: None,
-                tools: Vec::new(),
-                detail: "no services root found".to_string(),
-                elapsed_ms: 0,
-            },
-        ]);
+        app.set_lanes(
+            app.lanes_probe,
+            vec![
+                crate::lanes::LaneHealth {
+                    name: "sem1".to_string(),
+                    role: "embeddings".to_string(),
+                    home: Some(std::path::PathBuf::from("/repo/services/sem1")),
+                    source: Some(crate::lanes::HomeSource::Bundled),
+                    state: LaneState::Ok,
+                    server_version: Some("0.1.0".to_string()),
+                    tools: vec!["sem1_embed".to_string(), "sem1_probe".to_string()],
+                    detail: "SEM1_PYTHONPATH=…/src python3 -u …/service/mcp_server.py".to_string(),
+                    elapsed_ms: 53,
+                },
+                crate::lanes::LaneHealth {
+                    name: "gen1".to_string(),
+                    role: "media".to_string(),
+                    home: None,
+                    source: None,
+                    state: LaneState::Unavailable,
+                    server_version: None,
+                    tools: Vec::new(),
+                    detail: "no services root found".to_string(),
+                    elapsed_ms: 0,
+                },
+            ],
+        );
         let drawn = draw(&app, 80, 24);
         assert!(drawn.contains("lanes"), "{drawn}");
         assert!(drawn.contains("sem1"), "{drawn}");
@@ -683,6 +715,9 @@ mod tests {
         assert!(drawn.contains("2 tools"), "{drawn}");
         assert!(drawn.contains("ok"), "{drawn}");
         assert!(drawn.contains("sem1_embed · sem1_probe"), "{drawn}");
+        // The latency renders here exactly as the headless card renders
+        // it — the two surfaces read as one.
+        assert!(drawn.contains("· 53 ms"), "{drawn}");
         // The unavailable lane shows its dot, its state, and the reason.
         assert!(drawn.contains("gen1"), "{drawn}");
         assert!(drawn.contains("unavailable"), "{drawn}");
@@ -690,6 +725,17 @@ mod tests {
         // A tiny terminal still renders the modal without a panic.
         let tiny = draw(&app, 20, 6);
         assert!(tiny.contains("lanes"), "{tiny}");
+    }
+
+    #[test]
+    fn the_lanes_modal_is_sized_from_its_rows_not_a_fixed_share() {
+        // Four two-line rows must not cost 62% of the screen.
+        assert_eq!(lanes_height(0), 4, "the probing view is one line plus its border");
+        assert_eq!(lanes_height(4), 12, "four rows: two lines each, plus four");
+        // Clamped at both ends, so a small frame or an unexpected row
+        // count cannot push the modal off screen.
+        assert_eq!(lanes_height(40), 20);
+        assert!(lanes_height(4) < 62, "the modal must not keep the fixed share");
     }
 
     #[test]

@@ -22,6 +22,12 @@
 //!   can land out of order).
 //! - `hang`: answer nothing; the client must time out.
 //! - `exit`: after handling, exit with this code (a crashed child).
+//! - `huge_line_bytes`: answer with one line whose text block is this
+//!   many bytes — the shape a lane streaming a runaway payload produces,
+//!   for the client's per-line cap.
+//! - `env`: answer with the server's own environment as the text block,
+//!   so a test can prove what crossed the spawn boundary and what did
+//!   not (KI-031).
 //!
 //! A dry script exits 0.
 
@@ -37,6 +43,14 @@ struct ScriptEntry {
     stray: Option<serde_json::Value>,
     #[serde(default)]
     reply: Option<serde_json::Value>,
+    /// Write a reply frame whose text block is this many bytes, as one
+    /// line. Past the client's cap the wait fails with a typed error
+    /// instead of an unbounded read.
+    #[serde(default)]
+    huge_line_bytes: usize,
+    /// Answer with this server's own environment, JSON-encoded.
+    #[serde(default)]
+    env: bool,
     #[serde(default)]
     delay_ms: u64,
     #[serde(default)]
@@ -88,6 +102,22 @@ fn main() {
                 let reply = with_echoed_id(reply, &request_id);
                 write_frame(&stdout, &reply);
             }
+            if entry.huge_line_bytes > 0 {
+                let reply = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": { "content": [{ "type": "text", "text": "x".repeat(entry.huge_line_bytes) }] },
+                });
+                write_frame(&stdout, &reply);
+            }
+            if entry.env {
+                let reply = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": { "content": [{ "type": "text", "text": own_environment() }] },
+                });
+                write_frame(&stdout, &reply);
+            }
             if let Some(code) = entry.exit {
                 // Flush whatever this entry wrote before the process dies.
                 if let Ok(mut guard) = stdout.lock() {
@@ -97,6 +127,22 @@ fn main() {
             }
         });
     }
+}
+
+/// This server's own environment as one JSON object: names only where a
+/// value would be a secret is not the point — a test needs the names to
+/// prove which crossed the spawn boundary, and the values are the test's
+/// own fixtures.
+fn own_environment() -> String {
+    let map: std::collections::BTreeMap<String, String> = std::env::vars_os()
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    serde_json::to_string(&map).expect("the environment is serializable JSON")
 }
 
 /// Pop the next script entry, or `None` when the script is dry.

@@ -13,14 +13,20 @@
 //! Every wait carries a budget, so a silent server is a timeout and a dead
 //! one an error — never a hang. Teardown is the graceful path first (close
 //! stdin, wait, kill on expiry); `Drop` is the best-effort net under it.
+//!
+//! A child starts from an empty environment, not the caller's: `env_clear`
+//! plus an explicitly built one (the base, the spec's own entries, the
+//! lane's declared passthrough). Inheritance is an accident of
+//! `tokio::process::Command`, not a decision — see KI-031.
 
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::oneshot;
 use tokio::time::timeout;
@@ -47,6 +53,63 @@ pub const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// a wedged child.
 pub const TEARDOWN_GRACE: Duration = Duration::from_secs(5);
 
+/// The largest single stdout line the reader will assemble.
+///
+/// One MCP frame is one line, and the biggest a lane legitimately emits
+/// is a batch of embedding vectors — kilobytes. 8 MiB is three orders of
+/// magnitude over that and still bounded, so a lane that streams one
+/// unterminated line (or a gigabyte of base64 with no newline in it)
+/// fails the wait with a typed protocol error instead of growing the
+/// reader's buffer until the process dies.
+pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The ambient names every MCP child gets, when the caller has them.
+///
+/// `PATH` first: the lanes launch as `python3`, resolved through the
+/// child's PATH, so a lane is only findable if the caller's PATH carried
+/// over. `HOME` because the Python cores resolve their config, cache and
+/// store roots through `Path.home()`. `LANG` and `TMPDIR` because a lane
+/// that shells out (sem1's st-worker venv) otherwise loses the caller's
+/// locale and scratch directory. Everything else — every
+/// credential-shaped name included — is left behind (KI-031).
+const BASE_ENV: &[&str] = &["PATH", "HOME", "LANG", "TMPDIR"];
+
+/// The child's whole environment: the minimal base, the lane's declared
+/// passthrough copied from the caller only when present, and the spec's
+/// own entries last so the lane's own declaration wins.
+///
+/// Pure over an injected parent environment, which is what makes the
+/// policy testable without mutating the test process's environment.
+pub fn child_env(
+    spec: &ServerSpec,
+    parent: &HashMap<OsString, OsString>,
+) -> Vec<(OsString, OsString)> {
+    let mut env: Vec<(OsString, OsString)> = Vec::new();
+    for name in BASE_ENV {
+        if let Some(value) = parent.get(OsStr::new(name)) {
+            env.push((OsString::from(name), value.clone()));
+        }
+    }
+    // The lane's declared passthrough: an ambient name the lane
+    // legitimately needs, copied only when the caller actually has it.
+    // Anything not named here — `DEEPSEEK_API_KEY` included — never
+    // reaches the child.
+    for name in &spec.passthrough {
+        // The spec's own declaration wins, and it wins once: a name in the
+        // child's environment twice is an ambiguity, not a precedence.
+        if spec.env.iter().any(|(declared, _)| declared == name) {
+            continue;
+        }
+        if let Some(value) = parent.get(OsStr::new(name)) {
+            env.push((OsString::from(name), value.clone()));
+        }
+    }
+    for (name, value) in &spec.env {
+        env.push((OsString::from(name), OsString::from(value)));
+    }
+    env
+}
+
 /// Everything needed to spawn one MCP stdio server. Built by the lane
 /// registry (`crate::lanes`); the client itself knows no lane names.
 #[derive(Debug, Clone)]
@@ -57,6 +120,11 @@ pub struct ServerSpec {
     pub args: Vec<String>,
     /// Extra environment entries for the child (e.g. `SEM1_PYTHONPATH`).
     pub env: Vec<(String, String)>,
+    /// Ambient names this server legitimately needs, copied from the
+    /// caller's environment only when present. The child gets the base
+    /// plus these plus `env` — never the caller's whole environment
+    /// (KI-031).
+    pub passthrough: Vec<String>,
     /// The child's working directory (the lane's home).
     pub cwd: Option<std::path::PathBuf>,
 }
@@ -149,15 +217,26 @@ impl std::fmt::Display for McpError {
 impl std::error::Error for McpError {}
 
 /// Lock a mutex, recovering from poisoning: a panic while the lock was
-/// held must not turn every later call into another panic.
+/// held must not turn every later call into another panic. The recovery
+/// is loud — one line on stderr — because a poisoned guard means some
+/// invariant the mutex protects was already broken, and silently
+/// continuing on is how that stays invisible. The crate has no logger;
+/// a CLI's stderr is its log.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+    mutex.lock().unwrap_or_else(|poison| {
+        eprintln!("fleet: a mutex was poisoned by a panic; recovering the value it guards");
+        PoisonError::into_inner(poison)
+    })
 }
 
 /// One MCP server child, with its reader task and pending waiters.
 pub struct McpServer {
     child: Mutex<Option<Child>>,
-    stdin: Mutex<Option<ChildStdin>>,
+    /// A tokio mutex, not a std one: the guard is held across the write's
+    /// await, which is only sound — and only `Send` — here. A std guard
+    /// across an await made the call future `!Send`, which slice 5's
+    /// `tokio::spawn`ed concurrent calls cannot compile against.
+    stdin: tokio::sync::Mutex<Option<ChildStdin>>,
     /// Waiters keyed by request id. The reader task owns the only other
     /// handle; an entry lives from the write until its reply, its timeout,
     /// or the child's death.
@@ -176,9 +255,15 @@ impl McpServer {
 
     /// `spawn` with explicit budgets (tests shorten them).
     pub fn spawn_with(spec: &ServerSpec, timeouts: Timeouts) -> Result<McpServer, McpError> {
+        let parent: HashMap<OsString, OsString> = std::env::vars_os().collect();
         let mut command = Command::new(&spec.program);
         command.args(&spec.args);
-        for (name, value) in &spec.env {
+        // The child starts from an empty environment and is handed exactly
+        // what `child_env` builds. Without `env_clear` the lane would see
+        // the caller's whole environment — `DEEPSEEK_API_KEY` and every
+        // other credential-shaped name on the machine included (KI-031).
+        command.env_clear();
+        for (name, value) in child_env(spec, &parent) {
             command.env(name, value);
         }
         if let Some(cwd) = &spec.cwd {
@@ -201,7 +286,7 @@ impl McpServer {
         let reader = tokio::spawn(read_frames(stdout, Arc::clone(&pending)));
         Ok(McpServer {
             child: Mutex::new(Some(child)),
-            stdin: Mutex::new(Some(stdin)),
+            stdin: tokio::sync::Mutex::new(Some(stdin)),
             pending,
             next_id: AtomicU64::new(1),
             timeouts,
@@ -258,7 +343,7 @@ impl McpServer {
     /// it. Consumes the server.
     pub async fn close(self) -> Result<(), McpError> {
         // Dropping the stdin handle is the EOF signal.
-        drop(lock(&self.stdin).take());
+        drop(self.stdin.lock().await.take());
         let child = lock(&self.child).take();
         self.reader.abort();
         let Some(mut child) = child else { return Ok(()) };
@@ -315,7 +400,11 @@ impl McpServer {
     async fn write_frame(&self, frame: &Value) -> Result<(), McpError> {
         let mut line = serde_json::to_string(frame).expect("a frame is serializable JSON");
         line.push('\n');
-        let mut guard = lock(&self.stdin);
+        // The guard is held across the write's await on purpose: that is
+        // what serializes two concurrent calls onto one stdin. A tokio
+        // mutex makes it sound and keeps the future `Send`; a std guard
+        // here did neither.
+        let mut guard = self.stdin.lock().await;
         let Some(stdin) = guard.as_mut() else {
             return Err(McpError::Closed("the server's stdin is closed".to_string()));
         };
@@ -330,8 +419,14 @@ impl Drop for McpServer {
         // then kill a child still running. A synchronous wait would block
         // the caller's thread (and cannot run inside a runtime), so the
         // graceful path is `close`'s job.
-        drop(lock(&self.stdin).take());
         self.reader.abort();
+        // The reader is stopped, so a lock it held is free; one another
+        // task still holds is not worth waiting for in a destructor. The
+        // child is killed either way, which closes the pipe from the
+        // other end, and the field drops with the struct.
+        if let Ok(mut guard) = self.stdin.try_lock() {
+            guard.take();
+        }
         if let Some(child) = lock(&self.child).as_mut() {
             let _ = child.start_kill();
         }
@@ -413,26 +508,112 @@ fn parse_call(result: Value) -> Result<CallResult, McpError> {
     })
 }
 
+/// Why the reader stopped draining the child's stdout. A waiter is never
+/// left hanging, and it is told which of these happened rather than a
+/// single "closed" that would misdescribe two of them.
+#[derive(Debug, Clone, Copy)]
+enum OutputEnd {
+    /// The output ended: EOF, or a pipe error, which is the same shape to
+    /// a waiter.
+    Closed,
+    /// The child sent a line that is not valid UTF-8.
+    NotUtf8,
+    /// The child sent one line longer than `MAX_LINE_BYTES`.
+    TooLong,
+}
+
+impl OutputEnd {
+    /// What every pending waiter is failed with.
+    fn error(self) -> McpError {
+        match self {
+            OutputEnd::Closed => {
+                McpError::Closed("the child closed its output before replying".to_string())
+            }
+            OutputEnd::NotUtf8 => {
+                McpError::Protocol("the MCP server sent a line that is not valid UTF-8".to_string())
+            }
+            OutputEnd::TooLong => McpError::Protocol(format!(
+                "the MCP server sent one line longer than the {} MiB cap",
+                MAX_LINE_BYTES / (1024 * 1024)
+            )),
+        }
+    }
+}
+
+/// One bounded read from the child's stdout.
+enum LineRead {
+    /// A complete line landed in `buffer`, its newline included.
+    Frame,
+    /// The output ended.
+    Eof,
+    /// A pipe error: the output is gone, which is `Eof`'s shape.
+    Error,
+    /// One line passed `MAX_LINE_BYTES`: `buffer` holds the first
+    /// `MAX_LINE_BYTES` bytes and the rest is abandoned.
+    TooLong,
+}
+
+/// Read one newline-terminated line into `buffer`, refusing to grow past
+/// `MAX_LINE_BYTES`. `buffer` is cleared first: one call, one line, no
+/// residue from the previous one. `fill_buf`/`consume` rather than
+/// `lines()`: the std and tokio line readers have no bound, and the bound
+/// is the point.
+async fn read_bounded_line<R>(reader: &mut R, buffer: &mut Vec<u8>) -> LineRead
+where
+    R: AsyncBufRead + Unpin,
+{
+    buffer.clear();
+    loop {
+        let available = match reader.fill_buf().await {
+            Ok(available) => available,
+            Err(_) => return LineRead::Error,
+        };
+        if available.is_empty() {
+            return LineRead::Eof;
+        }
+        match available.iter().position(|byte| *byte == b'\n') {
+            Some(at) => {
+                buffer.extend_from_slice(&available[..=at]);
+                let consumed = at + 1;
+                reader.consume(consumed);
+                return LineRead::Frame;
+            }
+            None => {
+                buffer.extend_from_slice(available);
+                let length = available.len();
+                reader.consume(length);
+                if buffer.len() > MAX_LINE_BYTES {
+                    return LineRead::TooLong;
+                }
+            }
+        }
+    }
+}
+
 /// The reader task: drain the child's stdout line by line, routing each
 /// reply to its waiter and ignoring everything unsolicited. When the
-/// output ends — the child exited or closed the pipe — every waiter is
-/// failed with [`McpError::Closed`] rather than left hanging.
+/// output ends — the child exited, closed the pipe, spoke a line that is
+/// not valid UTF-8, or blew the line cap — every waiter is failed with
+/// the matching typed error rather than left hanging.
 async fn read_frames(
     stdout: ChildStdout,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>>,
 ) {
-    let mut lines = BufReader::new(stdout).lines();
-    loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => route_frame(&line, &pending),
-            // EOF or a read error: either way no further replies exist.
-            Ok(None) | Err(_) => break,
+    let mut reader = BufReader::new(stdout);
+    let mut line: Vec<u8> = Vec::new();
+    let ended = loop {
+        match read_bounded_line(&mut reader, &mut line).await {
+            LineRead::Frame => match String::from_utf8(std::mem::take(&mut line)) {
+                Ok(text) => route_frame(&text, &pending),
+                Err(_invalid) => break OutputEnd::NotUtf8,
+            },
+            LineRead::Eof => break OutputEnd::Closed,
+            LineRead::Error => break OutputEnd::Closed,
+            LineRead::TooLong => break OutputEnd::TooLong,
         }
-    }
+    };
     for (_, waiter) in lock(&pending).drain() {
-        let _ = waiter.send(Err(McpError::Closed(
-            "the child closed its output before replying".to_string(),
-        )));
+        let _ = waiter.send(Err(ended.error()));
     }
 }
 
@@ -612,6 +793,7 @@ mod tests {
             program: "fleet-no-such-mcp-program".to_string(),
             args: Vec::new(),
             env: Vec::new(),
+            passthrough: Vec::new(),
             cwd: None,
         };
         let Err(error) = McpServer::spawn(&spec) else {
@@ -619,5 +801,175 @@ mod tests {
         };
         assert!(matches!(error, McpError::Spawn(_)), "got {error:?}");
         assert!(error.to_string().contains("could not spawn"), "{error}");
+    }
+
+    /// A parent environment for `child_env`: the caller's, plus the names
+    /// a test wants present. Nothing here mutates the test process.
+    fn parent_env(entries: &[(&str, &str)]) -> HashMap<OsString, OsString> {
+        let mut parent: HashMap<OsString, OsString> = std::env::vars_os().collect();
+        for (name, value) in entries {
+            parent.insert(OsString::from(name), OsString::from(value));
+        }
+        parent
+    }
+
+    fn names(env: &[(OsString, OsString)]) -> Vec<String> {
+        env.iter()
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn lookup<'a>(env: &'a [(OsString, OsString)], name: &str) -> Option<&'a OsStr> {
+        env.iter()
+            .find(|(key, _)| key == OsStr::new(name))
+            .map(|(_, value)| value.as_os_str())
+    }
+
+    #[test]
+    fn a_child_gets_the_base_and_the_lanes_allowlist_and_nothing_else() {
+        // KI-031: the lane child must not inherit the ambient environment.
+        // A sem1-shaped spec whose caller holds the DeepSeek key (which no
+        // lane has any use for), a sem1 allowlist entry, and the base.
+        let spec = ServerSpec {
+            program: "python3".to_string(),
+            args: vec!["-u".to_string(), "/lane/service/mcp_server.py".to_string()],
+            env: vec![("SEM1_PYTHONPATH".to_string(), "/lane/src".to_string())],
+            passthrough: vec!["SEM1_ST_VENV".to_string()],
+            cwd: None,
+        };
+        let parent = parent_env(&[
+            ("DEEPSEEK_API_KEY", "sk-do-not-cross-into-a-lane"),
+            ("TABPFN_API_KEY", "tabpfn-do-not-cross-either"),
+            ("SEM1_ST_VENV", "/opt/venvs/st"),
+            ("PATH", "/opt/homebrew/bin:/usr/bin"),
+        ]);
+
+        let env = child_env(&spec, &parent);
+
+        // The credential-shaped ambient names are gone.
+        assert!(!names(&env).contains(&"DEEPSEEK_API_KEY".to_string()), "{:?}", names(&env));
+        assert!(!names(&env).contains(&"TABPFN_API_KEY".to_string()), "{:?}", names(&env));
+        // The base is there, PATH first, and the caller's value survived.
+        assert_eq!(env[0].0.as_os_str(), OsStr::new("PATH"));
+        assert_eq!(lookup(&env, "PATH"), Some(OsStr::new("/opt/homebrew/bin:/usr/bin")));
+        assert!(names(&env).contains(&"HOME".to_string()), "{:?}", names(&env));
+        // The lane's allowlist entry crossed; its own declaration did too.
+        assert_eq!(
+            lookup(&env, "SEM1_ST_VENV"),
+            Some(OsStr::new("/opt/venvs/st")),
+            "{:?}",
+            names(&env)
+        );
+        assert_eq!(lookup(&env, "SEM1_PYTHONPATH"), Some(OsStr::new("/lane/src")));
+    }
+
+    #[test]
+    fn an_absent_allowlist_entry_is_absent_not_empty() {
+        // A name the caller does not have must not appear at all: an empty
+        // value in a child's environment is a different thing from an
+        // unset one, and several lanes branch on presence.
+        let spec = ServerSpec {
+            program: "python3".to_string(),
+            args: Vec::new(),
+            env: Vec::new(),
+            passthrough: vec!["SEM1_ST_VENV".to_string()],
+            cwd: None,
+        };
+        let parent = parent_env(&[]);
+        let env = child_env(&spec, &parent);
+        assert!(!names(&env).contains(&"SEM1_ST_VENV".to_string()), "{:?}", names(&env));
+        // Every name that did cross is one the caller actually has, so the
+        // child's environment is a subset of the base plus the allowlist.
+        for (name, _) in &env {
+            assert!(
+                BASE_ENV.contains(&name.to_string_lossy().as_ref()),
+                "{name:?} is not a base name"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_line_at_the_cap_is_a_frame_and_one_past_it_is_too_long() {
+        // The bound is the point: `lines()` has none, so a lane streaming
+        // an unterminated line could grow the reader without limit.
+        let mut buffer: Vec<u8> = Vec::new();
+        let short = b"{\"id\":1}\nrest".to_vec();
+        let at_cap = {
+            let mut line = b"x".repeat(MAX_LINE_BYTES);
+            line.push(b'\n');
+            line
+        };
+        let past_cap = b"y".repeat(MAX_LINE_BYTES + 4096);
+        let empty: Vec<u8> = Vec::new();
+
+        // A short line arrives whole, newline included.
+        let mut reader = BufReader::new(&short[..]);
+        assert!(matches!(
+            read_bounded_line(&mut reader, &mut buffer).await,
+            LineRead::Frame
+        ));
+        assert_eq!(&buffer, b"{\"id\":1}\n");
+
+        // A line of exactly the cap, newline included, is still a frame.
+        let mut reader = BufReader::new(&at_cap[..]);
+        assert!(matches!(
+            read_bounded_line(&mut reader, &mut buffer).await,
+            LineRead::Frame
+        ));
+        assert_eq!(buffer.len(), MAX_LINE_BYTES + 1);
+
+        // One byte past it is a typed refusal, and the buffer stopped
+        // growing at the cap rather than at the line's real length.
+        let mut reader = BufReader::new(&past_cap[..]);
+        assert!(matches!(
+            read_bounded_line(&mut reader, &mut buffer).await,
+            LineRead::TooLong
+        ));
+        assert!(buffer.len() > MAX_LINE_BYTES, "{}", buffer.len());
+        assert!(
+            buffer.len() <= MAX_LINE_BYTES + 8 * 1024,
+            "the buffer must stop at the cap, not at the line: {}",
+            buffer.len()
+        );
+
+        // EOF with nothing buffered is an Eof, not a frame.
+        let mut reader = BufReader::new(&empty[..]);
+        assert!(matches!(
+            read_bounded_line(&mut reader, &mut buffer).await,
+            LineRead::Eof
+        ));
+    }
+
+    #[test]
+    fn each_output_end_names_its_own_reason() {
+        // A non-UTF-8 line is not "the child closed its output", and a
+        // line past the cap is neither: the waiter is told which happened.
+        assert!(matches!(OutputEnd::Closed.error(), McpError::Closed(_)));
+        match OutputEnd::NotUtf8.error() {
+            McpError::Protocol(detail) => {
+                assert!(detail.contains("not valid UTF-8"), "{detail}")
+            }
+            other => panic!("expected a protocol error, got {other:?}"),
+        }
+        match OutputEnd::TooLong.error() {
+            McpError::Protocol(detail) => {
+                assert!(detail.contains("longer than the 8 MiB cap"), "{detail}")
+            }
+            other => panic!("expected a protocol error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_specs_own_entries_win_over_the_passthrough() {
+        let spec = ServerSpec {
+            program: "python3".to_string(),
+            args: Vec::new(),
+            env: vec![("SEM1_ST_VENV".to_string(), "/lane/declared".to_string())],
+            passthrough: vec!["SEM1_ST_VENV".to_string()],
+            cwd: None,
+        };
+        let parent = parent_env(&[("SEM1_ST_VENV", "/ambient")]);
+        let env = child_env(&spec, &parent);
+        assert_eq!(lookup(&env, "SEM1_ST_VENV"), Some(OsStr::new("/lane/declared")));
     }
 }

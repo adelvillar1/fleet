@@ -24,6 +24,6 @@
     "source": "deepseek-harness fork services/sys1/ working tree",
     "forkCommit": "542be5970b",
     "vendoredAt": "2026-10-13",
-    "note": "This copy matches the upstream WORKING TREE on branch feature/plan-surface, which carries 4 uncommitted files (service/mcp_server.py, src/sys1/api.py, src/sys1/tasks.py, docs/plans/2026-10-04-canonical-provider-env.md — 89 insertions beyond the pinned commit, KI-003). The pinned commit is the recorded upstream base, not a byte-exact description of this copy; that state is what was boot-verified (1 tool: sys1_classify)."
+    "note": "This copy matches the upstream WORKING TREE on branch feature/plan-surface, which carries 4 uncommitted files (service/mcp_server.py, src/sys1/api.py, src/sys1/tasks.py, docs/plans/2026-10-04-canonical-provider-env.md — 89 insertions beyond the pinned commit, KI-003). The pinned commit is the recorded upstream base, not a byte-exact description of this copy; that state is what was boot-verified (1 tool: sys1_classify). Of those four delta files, docs/plans/2026-10-04-canonical-provider-env.md is not present in this copy — docs/ is in this copy's excluded set, so only the three code files were vendored."
   }
 }

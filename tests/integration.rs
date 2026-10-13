@@ -154,13 +154,20 @@ fn wait_for_port(port_path: &Path, child: &mut std::process::Child) -> u16 {
 // --- helpers ---------------------------------------------------------------
 
 fn temp_home(tag: &str) -> PathBuf {
+    // Unique per call, three ways over: the process id, the clock, and an
+    // atomic counter. The clock alone is not enough — two calls in the
+    // same nanosecond produce the same `subsec_nanos`, and a collided
+    // scratch directory means one test's scripted fixture is another
+    // test's, which reads as a protocol error from the wrong server.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "fleet-integration-{tag}-{}-{}",
+        "fleet-integration-{tag}-{}-{}-{serial}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .subsec_nanos()
+            .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -994,6 +1001,7 @@ impl FakeMcp {
             program: env!("CARGO_BIN_EXE_mock-mcp").to_string(),
             args: vec![self.scratch.join("script.jsonl").to_string_lossy().into_owned()],
             env: Vec::new(),
+            passthrough: Vec::new(),
             cwd: None,
         }
     }
@@ -1317,11 +1325,254 @@ fn a_lane_home_override_shadows_the_bundled_copy() {
     assert!(stdout.contains("home: FLEET_LANE_SEM1_HOME"), "{stdout}");
 }
 
+/// A relative lane home is refused with a named reason instead of
+/// resolving against whatever directory the caller stood in.
+#[test]
+fn a_relative_lane_home_fails_with_a_named_reason() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the relative-home check");
+        return;
+    }
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .arg("lanes")
+        .env("FLEET_LANE_SEM1_HOME", "services/sem1")
+        .env_remove("FLEET_SERVICES_ROOT")
+        .output()
+        .expect("run the fleet binary");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("relative"), "{stdout}");
+    assert!(stdout.contains("FLEET_LANE_SEM1_HOME"), "{stdout}");
+    // Only the lane whose home was overridden is affected; the other three
+    // still boot from the bundled copy.
+    assert!(stdout.contains("4 lanes · 3 ok · 1 not ok"), "{stdout}");
+    assert!(stdout.contains("○ unavailable"), "{stdout}");
+}
+
+/// A relative services root is a typed error, not a silent fallback to the
+/// bundled copy.
+#[test]
+fn a_relative_services_root_fails_with_a_named_reason() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the relative-root check");
+        return;
+    }
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .arg("lanes")
+        .env("FLEET_SERVICES_ROOT", "services")
+        .output()
+        .expect("run the fleet binary");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("FLEET_SERVICES_ROOT=services"), "{stdout}");
+    assert!(stdout.contains("relative"), "{stdout}");
+}
+
+/// The child process the client spawns does not see the caller's
+/// credential-shaped environment (KI-031). The fake server answers a call
+/// with its own environment, so the assertion is on what actually crossed
+/// the spawn boundary rather than on the list the client builds.
+#[tokio::test]
+async fn a_spawned_child_does_not_inherit_the_ambient_environment() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "env": true }),
+    ]);
+    let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
+    server.initialize().await.expect("initialize");
+
+    // The DeepSeek key is in this process's environment while the call is
+    // in flight, which is exactly the shape the fix is about.
+    let _ambient_lock = AMBIENT_LOCK.lock().unwrap();
+    let _ambient = AmbientKey::set("DEEPSEEK_API_KEY", "sk-ambient-must-not-cross");
+    let _unrelated = AmbientKey::set("FLEET_UNRELATED_AMBIENT", "also-must-not-cross");
+
+    let call = server
+        .call_tool("fake_tool", serde_json::json!({}))
+        .await
+        .expect("the env-echo call answers");
+    let reported: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(call.content[0].data.as_str().expect("a text block"))
+            .expect("the echoed environment is a JSON object");
+
+    assert!(!reported.contains_key("DEEPSEEK_API_KEY"), "{reported:?}");
+    assert!(!reported.contains_key("FLEET_UNRELATED_AMBIENT"), "{reported:?}");
+    // The base crossed: the lanes launch as `python3`, resolved through the
+    // child's PATH, so PATH must be there.
+    assert!(reported.contains_key("PATH"), "{reported:?}");
+    assert!(reported.contains_key("HOME"), "{reported:?}");
+
+    server.close().await.expect("clean teardown");
+}
+
+/// Set one ambient variable for the duration of a test and restore it —
+/// including its absence — on the way out. The env-mutating tests hold
+/// `AMBIENT_LOCK` so a `set_var` is never visible mid-flight to another.
+static AMBIENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct AmbientKey {
+    name: String,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl AmbientKey {
+    fn set(name: &str, value: &str) -> AmbientKey {
+        let previous = std::env::var_os(name);
+        std::env::set_var(name, value);
+        AmbientKey { name: name.to_string(), previous }
+    }
+}
+
+impl Drop for AmbientKey {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(&self.name, value),
+            None => std::env::remove_var(&self.name),
+        }
+    }
+}
+
+/// A single stdout line past the cap fails the wait with a typed protocol
+/// error instead of growing the reader's buffer without bound.
+#[tokio::test]
+async fn a_line_past_the_cap_is_a_typed_error_not_an_unbounded_read() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        // One line about 9 MiB long: past the 8 MiB cap, still far short
+        // of anything a lane legitimately emits.
+        serde_json::json!({ "huge_line_bytes": 9 * 1024 * 1024 }),
+    ]);
+    let server = McpServer::spawn_with(&fake.spec(), budgets(20)).expect("spawn the fake");
+    server.initialize().await.expect("initialize");
+
+    let started = std::time::Instant::now();
+    let error = server
+        .call_tool("fake_tool", serde_json::json!({}))
+        .await
+        .expect_err("a line past the cap must fail the wait");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "the cap must fire, not the budget: {:?}",
+        started.elapsed()
+    );
+    match error {
+        McpError::Protocol(detail) => {
+            assert!(detail.contains("longer than the 8 MiB cap"), "{detail}")
+        }
+        other => panic!("expected a protocol error, got {other:?}"),
+    }
+
+    // The teardown is still graceful: the child exits on stdin EOF even
+    // though its writer is parked on a full pipe.
+    server.close().await.expect("teardown after the cap");
+}
+
+/// A reply that lands after its budget expired finds no waiter and is
+/// ignored, so the next request still correlates.
+#[tokio::test]
+async fn a_late_reply_after_the_timeout_is_dropped_cleanly() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        // 400 ms late against a 200 ms budget.
+        serde_json::json!({
+            "reply": { "jsonrpc": "2.0", "id": "$echo", "result": { "tools": [{ "name": "late" }] } },
+            "delay_ms": 400,
+        }),
+        serde_json::json!({
+            "reply": { "jsonrpc": "2.0", "id": "$echo", "result": { "tools": [{ "name": "next" }] } },
+        }),
+    ]);
+    let server = McpServer::spawn_with(
+        &fake.spec(),
+        Timeouts {
+            initialize: std::time::Duration::from_secs(5),
+            list: std::time::Duration::from_millis(200),
+            call: std::time::Duration::from_secs(5),
+        },
+    )
+    .expect("spawn the fake");
+    server.initialize().await.expect("initialize");
+
+    let error = server.list_tools().await.expect_err("the budget must fire first");
+    assert!(matches!(error, McpError::Timeout { .. }), "got {error:?}");
+
+    // The late reply arrives with no waiter left for its id: it is
+    // ignored, and the request after it still correlates by id.
+    let tools = server.list_tools().await.expect("the next request answers");
+    assert_eq!(tools[0].name, "next");
+
+    server.close().await.expect("clean teardown");
+}
+
+/// Teardown during a call: the child goes away while the call is waiting,
+/// and the call ends with a typed error rather than a hang. `close` cannot
+/// express this from the test's side — it consumes the server while a call
+/// borrows it — so the child's own exit is the shape.
+#[tokio::test]
+async fn a_child_that_goes_away_during_a_call_fails_the_call_typed() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        // The child exits instead of answering the call.
+        serde_json::json!({ "exit": 0 }),
+    ]);
+    let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
+    server.initialize().await.expect("initialize");
+
+    let error = server
+        .call_tool("fake_tool", serde_json::json!({}))
+        .await
+        .expect_err("a call into a departing child must fail");
+    assert!(matches!(error, McpError::Closed(_)), "got {error:?}");
+
+    // And the teardown afterwards is still graceful.
+    server.close().await.expect("teardown after the child left");
+}
+
+/// Slice 5 drives concurrent calls on one server through `tokio::spawn`,
+/// which needs the server and its call futures to be `Send`. Holding a
+/// `std::sync::MutexGuard` across the stdin write's await made them
+/// `!Send`; the field is a `tokio::sync::Mutex` now. The spawn below is the
+/// compile-time proof, and the round trip is the runtime one.
+#[tokio::test]
+async fn two_spawned_calls_share_one_server() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({
+            "reply": { "jsonrpc": "2.0", "id": "$echo",
+                       "result": { "content": [{ "type": "text", "text": "first" }], "isError": false } },
+        }),
+        serde_json::json!({
+            "reply": { "jsonrpc": "2.0", "id": "$echo",
+                       "result": { "content": [{ "type": "text", "text": "second" }], "isError": false } },
+        }),
+    ]);
+    let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
+    server.initialize().await.expect("initialize");
+    let server = std::sync::Arc::new(server);
+
+    let first = {
+        let server = std::sync::Arc::clone(&server);
+        tokio::spawn(async move { server.call_tool("fake_tool", serde_json::json!({})).await })
+    };
+    let second = {
+        let server = std::sync::Arc::clone(&server);
+        tokio::spawn(async move { server.call_tool("fake_tool", serde_json::json!({})).await })
+    };
+    let first = first.await.unwrap().expect("the first spawned call").content[0].data.clone();
+    let second = second.await.unwrap().expect("the second spawned call").content[0].data.clone();
+    let mut answered = vec![first.as_str().unwrap_or_default(), second.as_str().unwrap_or_default()];
+    answered.sort();
+    assert_eq!(answered, vec!["first", "second"]);
+}
+
 // --- live API --------------------------------------------------------------
 
 #[tokio::test]
 #[ignore = "real-API e2e; run with `cargo test --test integration -- --ignored` and DEEPSEEK_API_KEY set"]
 async fn live_api_completes_a_tool_task() {
+    // The ambient-key test sets DEEPSEEK_API_KEY for its own duration, so
+    // the read here serializes against it.
+    let _ambient_lock = AMBIENT_LOCK.lock().unwrap();
     let Ok(key) = std::env::var("DEEPSEEK_API_KEY") else {
         eprintln!("DEEPSEEK_API_KEY is not set; skipping the live test");
         return;

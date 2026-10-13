@@ -131,7 +131,7 @@ pub fn run(config: Config) -> Result<(), String> {
     });
 
     let mut app = App::new(&config.model, &session_id);
-    let (lanes_tx, lanes_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<LaneHealth>>();
+    let (lanes_tx, lanes_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, Vec<LaneHealth>)>();
     let outcome = event_loop(
         &config.home,
         &mut app,
@@ -168,8 +168,8 @@ fn event_loop(
     mut status_rx: UnboundedReceiver<StatusUpdate>,
     mut approval_rx: UnboundedReceiver<ApprovalRequest>,
     command_tx: &UnboundedSender<Command>,
-    mut lanes_rx: UnboundedReceiver<Vec<LaneHealth>>,
-    lanes_tx: &UnboundedSender<Vec<LaneHealth>>,
+    mut lanes_rx: UnboundedReceiver<(u64, Vec<LaneHealth>)>,
+    lanes_tx: &UnboundedSender<(u64, Vec<LaneHealth>)>,
 ) -> Result<(), String> {
     let mut pending: Option<ApprovalRequest> = None;
     while !app.should_quit {
@@ -183,12 +183,13 @@ fn event_loop(
             app.show_approval(&request.call.function.name, &request.summary);
             pending = Some(request);
         }
-        // Lane health lands asynchronously from the prober thread; rows
-        // for a view the user already closed are dropped, not applied.
-        while let Ok(rows) = lanes_rx.try_recv() {
-            if app.mode == app::Mode::Lanes {
-                app.set_lanes(rows);
-            }
+        // Lane health lands asynchronously from the prober thread. Which
+        // rows belong to the open view is the state machine's call — the
+        // generation stamped at `open_lanes` — so the loop only forwards;
+        // it never guesses from the mode, which cannot tell a fresh
+        // modal's rows from a previous probe's.
+        while let Ok((probe, rows)) = lanes_rx.try_recv() {
+            app.set_lanes(probe, rows);
         }
 
         if ratatui::crossterm::event::poll(POLL)
@@ -217,7 +218,7 @@ fn dispatch_key(
     app: &mut App,
     key: &KeyEvent,
     command_tx: &UnboundedSender<Command>,
-    lanes_tx: &UnboundedSender<Vec<LaneHealth>>,
+    lanes_tx: &UnboundedSender<(u64, Vec<LaneHealth>)>,
     pending: &mut Option<ApprovalRequest>,
 ) {
     let Some(action) = action_for(app, key) else { return };
@@ -254,22 +255,24 @@ fn open_picker(home: &Path, app: &mut App) {
 /// thread with its own current-thread runtime — the event-loop thread
 /// never spawns children or waits on them, and the prober is not inside
 /// a runtime context, so nothing here can block-in-runtime panic
-/// (KI-021's class).
-fn open_lanes_view(app: &mut App, lanes_tx: &UnboundedSender<Vec<LaneHealth>>) {
-    app.open_lanes();
+/// (KI-021's class). The generation `open_lanes` stamped rides with the
+/// rows, so a probe the user has already closed cannot land in the view
+/// that replaced it.
+fn open_lanes_view(app: &mut App, lanes_tx: &UnboundedSender<(u64, Vec<LaneHealth>)>) {
+    let generation = app.open_lanes();
     let lanes_tx = lanes_tx.clone();
     thread::spawn(move || {
         let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
             Ok(runtime) => runtime,
             Err(error) => {
-                let _ = lanes_tx.send(lanes::unavailable_all(&format!(
+                let _ = lanes_tx.send((generation, lanes::unavailable_all(&format!(
                     "the lane probe runtime failed to start: {error}"
-                )));
+                ))));
                 return;
             }
         };
         let health = runtime.block_on(lanes::health_all());
-        let _ = lanes_tx.send(health);
+        let _ = lanes_tx.send((generation, health));
     });
 }
 
