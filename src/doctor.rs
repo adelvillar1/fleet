@@ -150,7 +150,8 @@ mod tests {
         assert!(check.detail.starts_with("set (\u{2026}"));
         let long = "sk-1234567890\u{e9}";
         let check = evaluate_credentials(Some(long));
-        assert!(check.detail.ends_with('\u{e9}'), "{}", check.detail);
+        // The wrapper is `set (…)`, so the masked tail sits just inside the paren.
+        assert!(check.detail.ends_with("890\u{e9})"), "{}", check.detail);
         assert!(!check.detail.contains("sk-1234567890"));
     }
 
