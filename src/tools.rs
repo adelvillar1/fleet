@@ -26,6 +26,29 @@ pub const MAX_DIR_ENTRIES: usize = 1_000;
 /// `mcp__<svc>__<tool>`.
 pub const MCP_NAMESPACE: &str = "mcp__";
 
+/// The model-visible name of the progressive-disclosure tool a run
+/// declares when it carries skills: `use_skill` fetches one skill's body
+/// on demand. It lives beside the lane namespace because it is tool-set
+/// vocabulary, but its semantics belong to `crate::skills` — the
+/// declaration is here so every tool name has one home.
+pub const USE_SKILL_TOOL: &str = "use_skill";
+
+/// The request declaration for `use_skill`. The skills themselves ride
+/// the system prompt as a name+description list; this declares the one
+/// call that fetches a body. An unknown name is a typed error result the
+/// model can read, which is why the description says so.
+pub fn use_skill_spec() -> ToolSpec {
+    ToolSpec::function(
+        USE_SKILL_TOOL,
+        "Load a skill's body into context by name. The available skills are listed in the system prompt with their descriptions; an unknown name is an error result, not a guess.",
+        serde_json::json!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } },
+            "required": ["name"],
+        }),
+    )
+}
+
 /// The model-visible name of one lane tool. The lane's own name stays
 /// inside the namespaced one, so a replayed log and the request the model
 /// saw name the same tool the lane does.
@@ -540,6 +563,17 @@ mod tests {
             Tool::Bash.summarize(&serde_json::json!({ "command": "x".repeat(200) }), 60);
         assert_eq!(summary.chars().count(), 61);
         assert!(summary.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn use_skill_declares_one_string_name_and_is_not_one_of_the_closed_four() {
+        let spec = serde_json::to_value(use_skill_spec()).unwrap();
+        assert_eq!(spec["function"]["name"], USE_SKILL_TOOL);
+        assert_eq!(spec["function"]["parameters"]["required"][0], "name");
+        assert_eq!(spec["function"]["parameters"]["properties"]["name"]["type"], "string");
+        // The closed four stay closed: `use_skill` is declared beside
+        // them by the agent when a run carries skills, never inside them.
+        assert_eq!(Tool::from_name(USE_SKILL_TOOL), None);
     }
 
     /// One lane's roster as `tools/list` answers it, for the assembly

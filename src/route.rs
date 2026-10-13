@@ -190,6 +190,8 @@ struct ConfigFile {
     providers: Vec<ProviderEntry>,
     #[serde(default)]
     calib: Option<CalibEntry>,
+    #[serde(default)]
+    skills: Option<SkillsEntry>,
 }
 
 /// One provider override in the config file. Any subset of fields; a bare
@@ -225,6 +227,39 @@ struct CalibEntry {
     log_root: Option<String>,
 }
 
+/// The `skills` section: the two curation knobs. Both are optional; a
+/// missing file, a missing section, or a value this reader cannot use
+/// falls back to the compiled-in defaults, exactly the way
+/// [`calib_log_root`] does.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SkillsEntry {
+    /// How many sessions a skill may go unused across before curation
+    /// proposes retiring it.
+    #[serde(default)]
+    retire_after_sessions: Option<usize>,
+    /// The description similarity at which two skills read as
+    /// near-identical.
+    #[serde(default)]
+    merge_similarity: Option<f64>,
+}
+
+/// The resolved skills knobs, with the defaults applied.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkillsConfig {
+    pub retire_after_sessions: usize,
+    pub merge_similarity: f64,
+}
+
+impl Default for SkillsConfig {
+    fn default() -> SkillsConfig {
+        SkillsConfig {
+            retire_after_sessions: crate::skills::DEFAULT_RETIRE_AFTER_SESSIONS,
+            merge_similarity: crate::skills::MERGE_SIMILARITY_THRESHOLD,
+        }
+    }
+}
+
 /// Load the roster: the compiled-in defaults, then `<home>/config.json`
 /// merged over them per entry. A missing file is the defaults; a present
 /// but invalid file is a typed [`ConfigError`].
@@ -256,6 +291,29 @@ pub fn calib_log_root(home: &Path) -> Option<PathBuf> {
         .map(|root| root.trim().to_string())
         .filter(|root| !root.is_empty())
         .map(PathBuf::from)
+}
+
+/// The skills knobs as `<home>/config.json` names them, with the
+/// compiled-in defaults for everything the file does not. Best-effort by
+/// design, like [`calib_log_root`]: a config too broken to parse has
+/// already failed the roster load loud, and this reader is for the
+/// surfaces that want the knobs without a roster.
+///
+/// A `merge_similarity` outside 0..1 is clamped into range rather than
+/// rejected: a similarity is a ratio by definition, and clamping keeps
+/// the curation honest instead of silently disabling it.
+pub fn skills_config(home: &Path) -> SkillsConfig {
+    let mut config = SkillsConfig::default();
+    let Ok(text) = std::fs::read_to_string(home.join("config.json")) else { return config };
+    let Ok(file) = serde_json::from_str::<ConfigFile>(&text) else { return config };
+    let Some(skills) = file.skills else { return config };
+    if let Some(sessions) = skills.retire_after_sessions {
+        config.retire_after_sessions = sessions;
+    }
+    if let Some(similarity) = skills.merge_similarity {
+        config.merge_similarity = similarity.clamp(0.0, 1.0);
+    }
+    config
 }
 
 /// Merge `file` over `candidates`, per entry by id. An override on a known
@@ -1505,6 +1563,42 @@ mod tests {
         // A misspelled section is rejected, the way a provider's is.
         std::fs::write(home.join("config.json"), r#"{ "calib": { "logroot": "/x" } }"#).unwrap();
         assert_eq!(calib_log_root(&home), None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_config_skills_section_names_the_curation_knobs() {
+        let home = std::env::temp_dir().join(format!("fleet-skills-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        // Absent is the compiled-in defaults.
+        assert_eq!(skills_config(&home), SkillsConfig::default());
+        assert_eq!(
+            skills_config(&home).retire_after_sessions,
+            crate::skills::DEFAULT_RETIRE_AFTER_SESSIONS
+        );
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "skills": { "retire_after_sessions": 3, "merge_similarity": 0.65 } }"#,
+        )
+        .unwrap();
+        let config = skills_config(&home);
+        assert_eq!(config.retire_after_sessions, 3);
+        assert!((config.merge_similarity - 0.65).abs() < 1e-9);
+        // A misspelled key is rejected, the way a provider's is.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "skills": { "retire_after": 3 } }"#,
+        )
+        .unwrap();
+        assert_eq!(skills_config(&home), SkillsConfig::default());
+        // A similarity outside 0..1 is clamped, not silently disabling.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "skills": { "merge_similarity": 4.2 } }"#,
+        )
+        .unwrap();
+        assert_eq!(skills_config(&home).merge_similarity, 1.0);
         let _ = std::fs::remove_dir_all(&home);
     }
 

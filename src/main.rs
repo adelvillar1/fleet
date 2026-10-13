@@ -39,6 +39,7 @@ async fn main() -> ExitCode {
         Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
+        Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Doctor) => doctor_command(),
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -123,10 +124,22 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         }
     };
     eprintln!("route: {} ({})", prepared.decision.provider, prepared.decision.how.label());
-    let outcome =
-        drive(&prepared, options.model.clone(), options.max_turns, options.yes, &mut session, &options.task)
-            .await;
+    let skills = fleet::skills::load(&home);
+    let outcome = drive(
+        &prepared,
+        options.model.clone(),
+        options.max_turns,
+        options.yes,
+        &mut session,
+        &options.task,
+        skills,
+    )
+    .await;
     prepared.record_route(&options.task);
+    // The self-authoring half: after the session, the harness drafts the
+    // skill changes its outcomes justify. Best-effort by construction —
+    // drafting is the harness noticing, never the run's outcome.
+    draft_lessons(&home, session.path());
     match outcome {
         Ok(report) => match report.stop_reason {
             StopReason::Completed => ExitCode::SUCCESS,
@@ -163,6 +176,10 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         }
     };
     println!("fleet chat — model {}, session {} (/exit to quit)", options.model, session.id());
+    // The skills are loaded once per chat session and declared on every
+    // run in it: the files can change between runs, and the per-run
+    // `skills` record is what pins what each run actually saw.
+    let skills = fleet::skills::load(&home);
     let stdin = std::io::stdin();
     // The route is chosen once, on the first task, and the committed router
     // is reused for the rest of the session — one sys1 judgment, not one
@@ -204,6 +221,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
             options.yes,
             &mut session,
             trimmed,
+            skills.clone(),
         )
         .await;
         match outcome {
@@ -219,6 +237,75 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     }
     if let Some(prepared) = &prepared {
         prepared.record_route(&judge_task);
+    }
+    // The session is over: draft its lessons into proposals, best-effort.
+    draft_lessons(&home, session.path());
+    ExitCode::SUCCESS
+}
+
+/// The self-authoring half, after a session ends: read the session's log
+/// plus the day's calibration rows, draft the lessons the evidence
+/// justifies, and file them as proposals awaiting the slice-12 gate.
+///
+/// Nothing is applied here and nothing is applied silently — the only
+/// writer in this path is `skills/proposals/`, and a proposal enters the
+/// live tree only when a gate says so. Best-effort throughout: an
+/// unreadable log or an unwritable proposals directory drafts nothing
+/// and fails nothing.
+fn draft_lessons(home: &std::path::Path, session_path: &std::path::Path) {
+    let user_home = std::env::var("HOME").ok();
+    let filed =
+        fleet::skills::draft_session(home, session_path, user_home.as_deref());
+    if !filed.is_empty() {
+        eprintln!(
+            "fleet: skills: drafted {} proposal(s) awaiting the gate in {}",
+            filed.len(),
+            fleet::skills::proposals_dir(home).display()
+        );
+    }
+}
+
+/// `fleet skills`: the loaded skills as cards, with each one's usage
+/// count from the log scan and its file's mtime. `--proposed` lists the
+/// drafts awaiting the gate instead; `--curate` runs the usage-scan
+/// curation first; `--show <name>` prints one draft verbatim.
+///
+/// The exit code is always success: this is a read surface over Fleet's
+/// own files, like `fleet calib` — a home with no skills says so rather
+/// than failing. The one failure is a `--show` naming a draft that does
+/// not exist.
+fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    if let Some(name) = &options.show {
+        return match fleet::skills::read_proposal(&home, name) {
+            Some(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!(
+                    "fleet: no proposal named `{name}` under {}",
+                    fleet::skills::proposals_dir(&home).display()
+                );
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if options.curate {
+        let config = route::skills_config(&home);
+        let filed = fleet::skills::curate(&home, config.retire_after_sessions, config.merge_similarity);
+        print!("{}", fleet::skills::render_curation(&filed));
+    }
+    if options.proposed {
+        print!("{}", fleet::skills::render_proposals(&fleet::skills::load_proposals(&home)));
+    } else if !options.curate {
+        let config = route::skills_config(&home);
+        let skills = fleet::skills::load(&home);
+        let usage = fleet::skills::scan_usage(&home, config.retire_after_sessions);
+        print!("{}", fleet::skills::render(&skills, &usage));
     }
     ExitCode::SUCCESS
 }
@@ -253,6 +340,7 @@ async fn drive(
     yes: bool,
     session: &mut Session,
     task: &str,
+    skills: Vec<fleet::skills::Skill>,
 ) -> Result<RunReport, AgentError> {
     let client = Client::routed(prepared.router.clone());
     let options = AgentOptions {
@@ -261,6 +349,7 @@ async fn drive(
         ui_tx: None,
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
+        skills,
     };
     let approver: Box<dyn Approver> =
         if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };

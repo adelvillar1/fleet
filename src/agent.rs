@@ -39,6 +39,13 @@ pub struct AgentOptions {
     /// the silent path — a test that does not care about the stream, or a
     /// surface that has none.
     pub calib: Option<crate::calib::Stream>,
+    /// The skills this run declares. The list rides the system prompt as
+    /// name+description pairs and `use_skill` fetches a body on demand,
+    /// so an empty list is the run this crate has always had: the same
+    /// prompt, the same four declarations, the same log. A non-empty
+    /// list is recorded once per run as the `skills` record, which is
+    /// what keeps the prompt reconstructable from the log.
+    pub skills: Vec<crate::skills::Skill>,
 }
 
 impl Default for AgentOptions {
@@ -49,6 +56,7 @@ impl Default for AgentOptions {
             ui_tx: None,
             lane_specs: None,
             calib: None,
+            skills: Vec::new(),
         }
     }
 }
@@ -298,6 +306,10 @@ pub struct Agent<'a> {
     /// tool spawns nothing; a run that does closes every child it
     /// spawned when it ends.
     lanes: LaneRoster,
+    /// The skills this run declared, in load order. Their
+    /// name+description pairs ride the system prompt; a body enters
+    /// context only when the loop selects it through `use_skill`.
+    skills: Vec<crate::skills::Skill>,
     /// The calibration stream this run records to, when it has one.
     calib: Option<crate::calib::Stream>,
 }
@@ -314,6 +326,7 @@ impl<'a> Agent<'a> {
     ) -> Result<Agent<'a>, AgentError> {
         let records = crate::session::replay(session.path()).map_err(AgentError::Io)?;
         let ui_tx = options.ui_tx.clone();
+        let skills = options.skills.clone();
         // An injected spec map wins for the lanes it names; every other
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
@@ -330,6 +343,7 @@ impl<'a> Agent<'a> {
             usage: Usage::default(),
             turns: 0,
             lanes,
+            skills,
             calib,
         })
     }
@@ -337,6 +351,43 @@ impl<'a> Agent<'a> {
     /// Token accounting accumulated across the run's requests.
     pub fn usage(&self) -> Usage {
         self.usage
+    }
+
+    /// The system prompt this run's requests carry: the compiled-in
+    /// constant, plus the available skills as a name+description list
+    /// when the run declared any. Progressive disclosure starts here —
+    /// the model sees what each skill is for and nothing of what it
+    /// says, until it selects one.
+    ///
+    /// With no skills the prompt is the constant itself, so a run that
+    /// carries no skills is byte-for-byte the run it has always been.
+    fn system_prompt(&self) -> String {
+        if self.skills.is_empty() {
+            return SYSTEM_PROMPT.to_string();
+        }
+        let mut prompt = String::from(SYSTEM_PROMPT);
+        prompt.push_str(
+            "\n\n## Skills\n\nSkills are procedural knowledge you can load on demand. Call `use_skill(name)` with one of these names when a task matches its description; the skill's body arrives as that call's result.\n",
+        );
+        for skill in &self.skills {
+            prompt.push_str(&format!("\n- {}: {}", skill.name, skill.description));
+        }
+        prompt
+    }
+
+    /// Every declaration this run's requests carry: the four built-ins,
+    /// then `use_skill` when the run declared skills, then each joined
+    /// lane's tools in join order.
+    ///
+    /// `use_skill` is declared beside the closed four rather than inside
+    /// them: the four are compiled in, and this one exists only while
+    /// the run has something to select.
+    fn declarations(&self) -> Vec<crate::api::ToolSpec> {
+        let mut specs = self.lanes.declarations();
+        if !self.skills.is_empty() {
+            specs.push(tools::use_skill_spec());
+        }
+        specs
     }
 
     /// Run `task` to a stop. The session log receives every message and the
@@ -445,6 +496,19 @@ impl<'a> Agent<'a> {
                 how: decision.how.label().to_string(),
             });
         }
+        // The skills this run declared, recorded once, at run start. The
+        // list is dynamic — the files change between runs — and the
+        // system prompt carries it, so the log is what makes the prompt
+        // the model saw reconstructable (hard rule 5). The lane_tools
+        // precedent, applied to the skills seam. A run with no skills
+        // records nothing and its prompt is the compiled-in constant, so
+        // the skill-less run is byte-for-byte the run it has always been.
+        if !self.skills.is_empty() {
+            let declared: Vec<crate::skills::SkillRef> =
+                self.skills.iter().map(crate::skills::SkillRef::from).collect();
+            self.record(&Record::Skills { skills: declared })?;
+        }
+        let system_prompt = self.system_prompt();
         self.push_message(Message::text(Role::User, task))?;
         while self.turns < self.options.max_turns as u64 {
             self.turns += 1;
@@ -452,22 +516,24 @@ impl<'a> Agent<'a> {
             let _ = writeln!(self.progress, "\u{2014} turn {}", self.turns);
             let _ = self.progress.flush();
 
-            // The system prompt is a compiled-in constant, like the tool
-            // declarations: model-visible but not session-specific, so it is
-            // reconstructed per request rather than logged.
+            // The system prompt is the compiled-in constant plus this
+            // run's skills list, which the `skills` record above carries:
+            // model-visible and reconstructable, like the tool
+            // declarations.
             let mut request_messages = Vec::with_capacity(self.messages.len() + 1);
-            request_messages.push(Message::text(Role::System, SYSTEM_PROMPT));
+            request_messages.push(Message::text(Role::System, &system_prompt));
             request_messages.extend(self.messages.iter().cloned());
-            // The declarations are dynamic now: the four built-ins, plus
-            // every lane that has joined this run so far, in join order.
-            // A lane's tools enter the set on its first call and stay for
+            // The declarations are dynamic now: the four built-ins, the
+            // `use_skill` tool when this run carries skills, plus every
+            // lane that has joined this run so far, in join order. A
+            // lane's tools enter the set on its first call and stay for
             // the rest of the run — and because they are dynamic, each
             // join is recorded in the log as `lane_tools`, so the request
             // the model saw stays reconstructable.
             let request = ChatRequest {
                 model: &self.options.model,
                 messages: &request_messages,
-                tools: self.lanes.declarations(),
+                tools: self.declarations(),
             };
             let client = self.client;
             let progress = &mut *self.progress;
@@ -556,6 +622,24 @@ impl<'a> Agent<'a> {
         let tool = Tool::from_name(&call.function.name);
         let (output, truncated) = if !approved {
             ("denied: the user did not approve this call.".to_string(), false)
+        } else if call.function.name == tools::USE_SKILL_TOOL {
+            // A skill's body is model-visible content, so it crosses the
+            // same approval gate every other tool crosses — approving a
+            // body into context is the same decision as approving any
+            // other text the model will read — and it rides the same
+            // bounded tool_result path: the log records exactly the body
+            // the model received, with the same truncation marker a
+            // built-in's cut carries.
+            match serde_json::from_str(&call.function.arguments) {
+                Err(error) => (format!("error: arguments were not valid JSON: {error}"), false),
+                Ok(arguments) => {
+                    let outcome = tools::bound(ToolOutcome {
+                        output: crate::skills::use_skill_result(&self.skills, &arguments),
+                        truncated: false,
+                    });
+                    (outcome.output, outcome.truncated)
+                }
+            }
         } else if let Some((lane, lane_tool)) = tools::lane_of(&call.function.name) {
             self.call_lane(call, lane, lane_tool).await?
         } else {
@@ -679,6 +763,12 @@ fn parse_arguments(arguments: &str) -> serde_json::Value {
 
 /// One-line summary of what a call does, for prompts and UI events.
 fn call_summary(call: &ToolCall) -> String {
+    if call.function.name == tools::USE_SKILL_TOOL {
+        // The skill a `use_skill` call would load: the fact the user
+        // needs to answer "may this run?".
+        return crate::skills::requested_skill(&call.function.arguments)
+            .unwrap_or_else(|| call.function.name.clone());
+    }
     if let Some((lane, tool)) = tools::lane_of(&call.function.name) {
         return lane_summary(lane, tool, &parse_arguments(&call.function.arguments));
     }
@@ -713,6 +803,9 @@ fn compact_arguments(arguments: &serde_json::Value, limit: usize) -> String {
 
 /// `tool: summary` for a progress line.
 fn describe_call(call: &ToolCall) -> String {
+    if call.function.name == tools::USE_SKILL_TOOL {
+        return format!("{}: {}", tools::USE_SKILL_TOOL, call_summary(call));
+    }
     if tools::lane_of(&call.function.name).is_some() {
         return format!("{}: {}", call.function.name, call_summary(call));
     }
@@ -1006,6 +1099,18 @@ mod tests {
     fn describe_call_handles_unknown_tools() {
         let text = describe_call(&call("1", "launch_missiles", "{}"));
         assert!(text.contains("unknown tool"));
+    }
+
+    #[test]
+    fn a_use_skill_call_summarizes_as_the_skill_it_would_load() {
+        // The approval prompt and the progress line name the skill, which
+        // is the fact a user needs to answer "may this run?".
+        let named = call("c1", "use_skill", r#"{"name":"bash-recovery"}"#);
+        assert_eq!(call_summary(&named), "bash-recovery");
+        assert!(describe_call(&named).starts_with("use_skill: bash-recovery"));
+        // Arguments that name no skill still summarize without a panic.
+        let unnamed = call("c2", "use_skill", "{not json");
+        assert_eq!(call_summary(&unnamed), "use_skill");
     }
 
     #[test]

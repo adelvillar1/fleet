@@ -18,6 +18,9 @@ pub enum Command {
     Providers,
     /// Show the calibration stream: one day's rows, grouped by op.
     Calib(CalibOptions),
+    /// The skills surface: the live skills, the drafts awaiting the
+    /// slice-12 gate, and the usage-scan curation.
+    Skills(SkillsOptions),
     /// Environment and connectivity checks.
     Doctor,
     /// Print the version.
@@ -54,6 +57,20 @@ pub struct CalibOptions {
     pub day: Option<String>,
 }
 
+/// Options for `fleet skills`. The bare command lists the live skills;
+/// each flag narrows to one of the slice's other three surfaces.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SkillsOptions {
+    /// List the drafts awaiting the slice-12 gate instead of the live
+    /// skills.
+    pub proposed: bool,
+    /// Run the usage-scan curation first, filing any retire/merge
+    /// proposals it finds.
+    pub curate: bool,
+    /// Print one proposal's draft verbatim.
+    pub show: Option<String>,
+}
+
 /// Turn cap when `--max-turns` is absent.
 pub const DEFAULT_MAX_TURNS: usize = 25;
 
@@ -68,6 +85,10 @@ usage:
   fleet lanes                    probe the four vendored lanes' health
   fleet providers                list the routing roster and per-provider state
   fleet calib [--day <date>]    the calibration stream: one day's rows by op
+  fleet skills [--proposed] [--curate] [--show <name>]
+                                the loaded skills; --proposed lists the drafts
+                                awaiting the gate, --curate files usage-scan
+                                proposals, --show prints one draft
   fleet doctor                   check credentials, home, API, shell
   fleet version                  print the version
   fleet help                     print this help
@@ -105,6 +126,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "lanes" => no_flags(rest, Command::Lanes),
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
+        "skills" => parse_skills(rest),
         "doctor" => no_flags(rest, Command::Doctor),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -201,6 +223,33 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
         }
     }
     Ok(Command::Calib(CalibOptions { day }))
+}
+
+/// `fleet skills`: the bare command lists the live skills; `--proposed`
+/// lists the drafts awaiting the gate; `--curate` runs the usage-scan
+/// curation and files what it finds; `--show <name>` prints one draft
+/// verbatim. The flags compose in that order, so `--curate --proposed`
+/// curates and then shows what is waiting.
+fn parse_skills(args: &[String]) -> Result<Command, String> {
+    let mut proposed = false;
+    let mut curate = false;
+    let mut show: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--proposed" => proposed = true,
+            "--curate" => curate = true,
+            "--show" => show = Some(take_value(args, &mut index, arg)?),
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown skills option `{arg}`"));
+            }
+            _ => return Err(format!("`{arg}` takes no value here; see `fleet help`")),
+        }
+        index += 1;
+    }
+    Ok(Command::Skills(SkillsOptions { proposed, curate, show }))
 }
 
 /// A real calendar check on an already-`YYYY-MM-DD`-shaped string: the
@@ -350,6 +399,34 @@ mod tests {
     fn missing_values_fail_with_the_flag_named() {
         let error = parse(&args(&["run", "--model"])).unwrap_err();
         assert!(error.contains("--model"));
+    }
+
+    #[test]
+    fn skills_parses_its_flags_and_rejects_junk() {
+        assert_eq!(
+            parse(&args(&["skills"])).unwrap(),
+            Command::Skills(SkillsOptions { proposed: false, curate: false, show: None })
+        );
+        assert_eq!(
+            parse(&args(&["skills", "--proposed"])).unwrap(),
+            Command::Skills(SkillsOptions { proposed: true, curate: false, show: None })
+        );
+        assert_eq!(
+            parse(&args(&["skills", "--curate", "--proposed"])).unwrap(),
+            Command::Skills(SkillsOptions { proposed: true, curate: true, show: None })
+        );
+        assert_eq!(
+            parse(&args(&["skills", "--show", "bash-recovery"])).unwrap(),
+            Command::Skills(SkillsOptions {
+                proposed: false,
+                curate: false,
+                show: Some("bash-recovery".to_string()),
+            })
+        );
+        assert!(parse(&args(&["skills", "--json"])).is_err());
+        assert!(parse(&args(&["skills", "extra"])).is_err());
+        assert!(parse(&args(&["skills", "--show"])).is_err());
+        assert_eq!(parse(&args(&["skills", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]

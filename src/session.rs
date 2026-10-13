@@ -54,6 +54,17 @@ pub enum Record {
         lane: String,
         tools: Vec<crate::tools::LaneTool>,
     },
+    /// The skills one run declared, recorded once at run start. The
+    /// skills list is dynamic the way a lane's tools are — the files
+    /// change between runs — and the system prompt carries it as a
+    /// name+description list, so this record is what makes the prompt
+    /// the model saw reconstructable from the log (hard rule 5).
+    /// Bookkeeping, like `lane_tools`: it replays to no message. The
+    /// body of a selected skill is not here — it is already in that
+    /// call's `tool_result`.
+    Skills {
+        skills: Vec<crate::skills::SkillRef>,
+    },
     /// An orderly stop; a log without it was interrupted.
     End {
         stop_reason: String,
@@ -196,7 +207,9 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
 /// `lane_tools` is bookkeeping too: it names the tools a lane contributed
 /// to a request, not anything the model said, so it replays to no
 /// message. It is still recorded, because the declarations it describes
-/// are dynamic and only the log can reconstruct them.
+/// are dynamic and only the log can reconstruct them. `skills` is the
+/// same shape one seam over: the name+description list the system prompt
+/// carried, recorded because the files can change between runs.
 pub fn messages(records: &[Record]) -> Vec<Message> {
     records
         .iter()
@@ -211,7 +224,10 @@ pub fn messages(records: &[Record]) -> Vec<Message> {
             Record::ToolResult { call_id, output, .. } => {
                 Some(Message::tool_result(call_id.clone(), output.clone()))
             }
-            Record::Start { .. } | Record::End { .. } | Record::LaneTools { .. } => None,
+            Record::Start { .. }
+            | Record::End { .. }
+            | Record::LaneTools { .. }
+            | Record::Skills { .. } => None,
         })
         .collect()
 }
@@ -392,6 +408,68 @@ mod tests {
                 assert_eq!(tools[0].input_schema, serde_json::json!({ "type": "object" }));
             }
             other => panic!("expected a lane_tools record, got {other:?}"),
+        }
+        // And the log still lists as a readable session.
+        assert_eq!(list(&home).unwrap().len(), 1);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// One `skills` record, as the agent writes it when a run declares
+    /// skills: the name+description list the system prompt carried.
+    fn skills_record() -> Record {
+        Record::Skills {
+            skills: vec![crate::skills::SkillRef {
+                name: "bash-recovery".to_string(),
+                description: "Recover a failed bash call".to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_skills_record_replays_as_bookkeeping_not_conversation() {
+        // The vocabulary grew mid-format-version: a log carrying the new
+        // record must still replay, and the record must not become a
+        // message — it describes the system prompt's skills list, not
+        // anything the model said.
+        let records = vec![
+            Record::Start { v: 1, model: "m".into(), created: "c".into() },
+            skills_record(),
+            Record::User { content: "do it".into() },
+            Record::Assistant { content: Some("done".into()), tool_calls: vec![] },
+            Record::End { stop_reason: "completed".into(), turns: 1 },
+        ];
+        let messages = messages(&records);
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[1].role, Role::Assistant);
+    }
+
+    #[test]
+    fn a_skills_line_round_trips_through_the_log_file() {
+        // The record's own line, written the way the log writes it and
+        // read back by a reader that only knows the vocabulary: the tag
+        // is `skills`, and every declared skill rides along with the
+        // description the model was shown.
+        let home = temp_home("skills");
+        let mut session = Session::create(&home, "m").unwrap();
+        session.record(&skills_record()).unwrap();
+        let line = std::fs::read_to_string(session.path()).unwrap();
+        let recorded = line.lines().nth(1).expect("the skills line");
+        assert!(recorded.starts_with("{\"type\":\"skills\""), "{recorded}");
+        assert!(recorded.contains("\"name\":\"bash-recovery\""), "{recorded}");
+        assert!(
+            recorded.contains("\"description\":\"Recover a failed bash call\""),
+            "{recorded}"
+        );
+
+        let records = replay(&session.path()).unwrap();
+        match &records[1] {
+            Record::Skills { skills } => {
+                assert_eq!(skills.len(), 1);
+                assert_eq!(skills[0].name, "bash-recovery");
+                assert_eq!(skills[0].description, "Recover a failed bash call");
+            }
+            other => panic!("expected a skills record, got {other:?}"),
         }
         // And the log still lists as a readable session.
         assert_eq!(list(&home).unwrap().len(), 1);

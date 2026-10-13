@@ -320,6 +320,7 @@ async fn run_on(
         ui_tx: None,
         lane_specs: None,
         calib: None,
+        skills: Vec::new(),
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -340,6 +341,7 @@ async fn run_on_probe(
         ui_tx: None,
         lane_specs: None,
         calib: None,
+        skills: Vec::new(),
     };
     let mut agent =
         Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
@@ -364,6 +366,7 @@ async fn run_with_lanes(
         ui_tx: None,
         lane_specs,
         calib: None,
+        skills: Vec::new(),
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
@@ -884,6 +887,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
         calib: None,
+        skills: Vec::new(),
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -942,6 +946,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         ui_tx: Some(ui_tx),
         lane_specs: None,
         calib: None,
+        skills: Vec::new(),
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -973,6 +978,7 @@ async fn a_denied_call_reports_its_result_event() {
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
         calib: None,
+        skills: Vec::new(),
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1024,6 +1030,7 @@ async fn a_failed_run_reports_a_failure_event() {
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
         calib: None,
+        skills: Vec::new(),
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1927,6 +1934,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             ui_tx: Some(ui_tx.clone()),
             lane_specs: Some(lane_specs(&fake)),
             calib: None,
+            skills: Vec::new(),
         };
         let report = {
             let mut agent =
@@ -2261,6 +2269,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         ui_tx: None,
         lane_specs: None,
         calib: None,
+        skills: Vec::new(),
     };
     let mut progress = Vec::new();
     let report = {
@@ -2416,6 +2425,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         ui_tx: None,
         lane_specs: None,
         calib: Some(stream.clone()),
+        skills: Vec::new(),
     };
     let report = {
         let mut progress = Vec::new();
@@ -2470,6 +2480,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         ui_tx: None,
         lane_specs: None,
         calib: Some(stream.clone()),
+        skills: Vec::new(),
     };
     let outcome = {
         let mut progress = Vec::new();
@@ -2509,6 +2520,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         ui_tx: None,
         lane_specs: None,
         calib: Some(stream.clone()),
+        skills: Vec::new(),
     };
     let report = {
         let mut progress = Vec::new();
@@ -2548,6 +2560,7 @@ async fn a_run_without_a_stream_records_nothing() {
             ui_tx: None,
             lane_specs: None,
             calib: None,
+            skills: Vec::new(),
         },
         &mut session,
         Box::new(ApproveAll),
@@ -2663,6 +2676,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         ui_tx: None,
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
+        skills: Vec::new(),
     };
     let report = {
         let mut progress = Vec::new();
@@ -2695,6 +2709,398 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
     let rows = calib_rows(&calib_root, &day);
     assert_eq!(rows_of(&rows, "route").len(), 4, "three graded rows plus this session's");
     std::fs::remove_dir_all(&home).ok();
+}
+
+// --- skills (slice 7) ------------------------------------------------------
+
+/// A scratch FLEET_HOME carrying one live skill.
+fn skills_home(tag: &str, name: &str, description: &str, body: &str) -> PathBuf {
+    let home = temp_home(tag);
+    let dir = fleet::skills::skills_dir(&home).join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n"),
+    )
+    .unwrap();
+    home
+}
+
+/// Write one live skill into an existing home.
+fn write_skill(home: &Path, name: &str, description: &str) {
+    let dir = fleet::skills::skills_dir(home).join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n"),
+    )
+    .unwrap();
+}
+
+/// One full agent run that declares `skills`.
+async fn run_with_skills(
+    mock: &MockApi,
+    session: &mut Session,
+    skills: Vec<fleet::skills::Skill>,
+    task: &str,
+) -> Result<RunReport, AgentError> {
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills,
+    };
+    let mut progress = Vec::new();
+    let mut agent =
+        Agent::new(&client, options, session, Box::new(ApproveAll), &mut progress).unwrap();
+    agent.run(task).await
+}
+
+/// One assistant record requesting the tool calls `calls` describes.
+fn assistant_calls(calls: Vec<(&str, &str, &str)>) -> Record {
+    Record::Assistant {
+        content: None,
+        tool_calls: calls
+            .into_iter()
+            .map(|(id, name, arguments)| {
+                serde_json::from_value::<ToolCall>(tool_call(id, name, arguments)).unwrap()
+            })
+            .collect(),
+    }
+}
+
+/// The headline of the slice: a full run whose turn 1 selects a skill.
+/// The description rides the system prompt, the body rides back as the
+/// call's ordinary tool result, and the `skills` record is what keeps
+/// that prompt reconstructable from the log.
+#[tokio::test]
+async fn a_selected_skills_body_rides_the_tool_result_path() {
+    let home = skills_home(
+        "skill-run",
+        "demo-skill",
+        "Recover a failed bash call",
+        "# demo\n\nread the error, fix one thing, rerun",
+    );
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "use_skill", r#"{"name":"demo-skill"}"#),
+        assistant_stream("The skill is loaded; I will read the error first."),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report =
+        run_with_skills(&mock, &mut session, fleet::skills::load(&home), "recover from it")
+            .await
+            .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 2);
+    // The first request's system prompt carries the name and the
+    // description and nothing of the body: description first, body on
+    // demand.
+    let system = bodies[0]["messages"][0]["content"].as_str().expect("the system prompt");
+    assert!(system.contains("demo-skill"), "{system}");
+    assert!(system.contains("Recover a failed bash call"), "{system}");
+    assert!(!system.contains("read the error, fix one thing"), "{system}");
+    // The declarations carry `use_skill` beside the four built-ins.
+    let declared = declared_tools(&bodies[0]);
+    assert_eq!(declared.len(), 5, "{declared:?}");
+    assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
+    // The body entered context as the call's ordinary tool result — the
+    // same seam, the same message the model reads.
+    let seen = bodies[1]["messages"][3]["content"].as_str().expect("the tool result");
+    assert_eq!(seen, "# demo\n\nread the error, fix one thing, rerun");
+
+    // One `skills` record, written once at run start, and it replays to
+    // no message: the prompt the model saw stays reconstructable.
+    let records = session::replay(&session.path()).unwrap();
+    let declared_records: Vec<&Record> = records
+        .iter()
+        .filter(|record| matches!(record, Record::Skills { .. }))
+        .collect();
+    assert_eq!(declared_records.len(), 1, "{records:?}");
+    match declared_records[0] {
+        Record::Skills { skills } => {
+            assert_eq!(skills.len(), 1);
+            assert_eq!(skills[0].name, "demo-skill");
+            assert_eq!(skills[0].description, "Recover a failed bash call");
+        }
+        other => panic!("expected a skills record, got {other:?}"),
+    }
+    // The body is in the log exactly once — as the tool result — and the
+    // messages the log rebuilds are the four the model saw.
+    assert_eq!(session::messages(&records).len(), 4, "{records:?}");
+    match &records[4] {
+        Record::ToolResult { name, output, approved: true, .. } => {
+            assert_eq!(name, "use_skill");
+            assert_eq!(output, "# demo\n\nread the error, fix one thing, rerun");
+        }
+        other => panic!("expected the use_skill tool result, got {other:?}"),
+    }
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// An unknown skill is a typed error result the model can read and react
+/// to, never a panic and never a silent empty answer.
+#[tokio::test]
+async fn an_unknown_skill_is_a_typed_error_result() {
+    let home = skills_home("skill-unknown", "demo-skill", "d", "body");
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "use_skill", r#"{"name":"no-such-skill"}"#),
+        assistant_stream("That skill does not exist; carrying on."),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report =
+        run_with_skills(&mock, &mut session, fleet::skills::load(&home), "try it").await.unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    let records = session::replay(&session.path()).unwrap();
+    match &records[4] {
+        Record::ToolResult { name, output, .. } => {
+            assert_eq!(name, "use_skill");
+            assert_eq!(output, "error: no skill named `no-such-skill`");
+        }
+        other => panic!("expected a typed error result, got {other:?}"),
+    }
+    // The model read the typed error in the next request.
+    let bodies = mock.bodies();
+    let seen = bodies[1]["messages"][3]["content"].as_str().expect("the tool result");
+    assert_eq!(seen, "error: no skill named `no-such-skill`");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The self-authoring half: a session whose `bash` call failed and was
+/// then corrected drafts a creation proposal with the records cited —
+/// and the live tree is never the drafter's target.
+#[tokio::test]
+async fn a_sessions_failure_then_correction_drafts_a_proposal() {
+    let home = skills_home("draft", "unrelated", "a skill that is not the drafted one", "body");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    session.record(&Record::User { content: "run it".to_string() }).unwrap();
+    session
+        .record(&assistant_calls(vec![("call-1", "bash", r#"{"command":"ls"}"#)]))
+        .unwrap();
+    session
+        .record(&Record::ToolResult {
+            call_id: "call-1".to_string(),
+            name: "bash".to_string(),
+            output: "error: exit 127".to_string(),
+            truncated: false,
+            approved: true,
+        })
+        .unwrap();
+    session
+        .record(&assistant_calls(vec![("call-2", "bash", r#"{"command":"ls -la"}"#)]))
+        .unwrap();
+    session
+        .record(&Record::ToolResult {
+            call_id: "call-2".to_string(),
+            name: "bash".to_string(),
+            output: "exit 0".to_string(),
+            truncated: false,
+            approved: true,
+        })
+        .unwrap();
+    session
+        .record(&Record::Assistant { content: Some("done".to_string()), tool_calls: vec![] })
+        .unwrap();
+
+    let filed = fleet::skills::draft_session(&home, session.path(), None);
+    assert_eq!(filed.len(), 1, "{filed:?}");
+    let draft = std::fs::read_to_string(&filed[0]).unwrap();
+    // The frontmatter carries the proposal flag, the kind, and the
+    // evidence — the session id and both records.
+    assert!(draft.starts_with("---\n"), "{draft}");
+    assert!(draft.contains("name: bash-recovery"), "{draft}");
+    assert!(draft.contains("proposed: true"), "{draft}");
+    assert!(draft.contains("kind: create"), "{draft}");
+    assert!(draft.contains(&format!("session {}", session.id())), "{draft}");
+    assert!(draft.contains("record 4"), "{draft}");
+    assert!(draft.contains("record 6"), "{draft}");
+    // The draft lives under proposals/ and the live tree is untouched:
+    // the one skill it held, and no `bash-recovery` directory beside it.
+    assert!(filed[0].starts_with(fleet::skills::proposals_dir(&home)), "{filed:?}");
+    let live = fleet::skills::load(&home);
+    assert_eq!(live.len(), 1, "{live:?}");
+    assert_eq!(live[0].name, "unrelated");
+    assert!(!fleet::skills::skills_dir(&home).join("bash-recovery").exists());
+    // The proposal loads back through the loader, ready for the gate.
+    let proposals = fleet::skills::load_proposals(&home);
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(proposals[0].kind, fleet::skills::ProposalKind::Create);
+    assert_eq!(proposals[0].name, "bash-recovery");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The usage-scan curation, end to end: the window from config, a used
+/// skill, an unused one, and a near-identical pair — one retire draft,
+/// one merge draft, and a live tree nothing touched.
+#[tokio::test]
+async fn the_usage_scan_curation_proposes_retirement_and_merge() {
+    let home = temp_home("curate");
+    write_skill(&home, "alpha", "probe the embeddings worker for reachability");
+    write_skill(&home, "beta", "probe the embeddings worker for reachability now");
+    write_skill(&home, "gamma", "write the weekly release notes");
+    write_skill(&home, "delta", "run the release checklist");
+    // The window is two sessions and the merge threshold is the default.
+    std::fs::write(
+        home.join("config.json"),
+        r#"{"skills":{"retire_after_sessions":2,"merge_similarity":0.8}}"#,
+    )
+    .unwrap();
+    let config = fleet::route::skills_config(&home);
+    assert_eq!(config.retire_after_sessions, 2);
+
+    // Two sessions of history — the whole window. One selects alpha and
+    // delta; gamma is never selected and beta only exists as alpha's twin.
+    let mut used = Session::create(&home, "test-model").unwrap();
+    used.record(&Record::User { content: "t".to_string() }).unwrap();
+    used.record(&assistant_calls(vec![
+        ("call-1", "use_skill", r#"{"name":"alpha"}"#),
+        ("call-2", "use_skill", r#"{"name":"delta"}"#),
+    ]))
+    .unwrap();
+    used.record(&Record::ToolResult {
+        call_id: "call-1".to_string(),
+        name: "use_skill".to_string(),
+        output: "# alpha".to_string(),
+        truncated: false,
+        approved: true,
+    })
+    .unwrap();
+    used.record(&Record::ToolResult {
+        call_id: "call-2".to_string(),
+        name: "use_skill".to_string(),
+        output: "# delta".to_string(),
+        truncated: false,
+        approved: true,
+    })
+    .unwrap();
+    let mut idle = Session::create(&home, "test-model").unwrap();
+    idle.record(&Record::User { content: "t2".to_string() }).unwrap();
+
+    let filed =
+        fleet::skills::curate(&home, config.retire_after_sessions, config.merge_similarity);
+    let names: Vec<String> = filed
+        .iter()
+        .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert!(names.contains(&"gamma".to_string()), "{names:?}");
+    assert!(names.contains(&"alpha".to_string()), "{names:?}");
+    // beta is the absorbed half of the merge draft, so it gets no
+    // separate retire draft; delta was used, so it gets none either.
+    assert!(!names.contains(&"beta".to_string()), "{names:?}");
+    assert!(!names.contains(&"delta".to_string()), "{names:?}");
+
+    let proposals = fleet::skills::load_proposals(&home);
+    let retire = proposals.iter().find(|proposal| proposal.name == "gamma").expect("the retire");
+    assert_eq!(retire.kind, fleet::skills::ProposalKind::Retire);
+    assert!(retire.evidence.contains("last 2 sessions"), "{}", retire.evidence);
+    let merge = proposals.iter().find(|proposal| proposal.name == "alpha").expect("the merge");
+    assert_eq!(merge.kind, fleet::skills::ProposalKind::Merge);
+    assert!(merge.evidence.contains("0.86"), "{}", merge.evidence);
+    assert!(merge.evidence.contains("`beta`"), "{}", merge.evidence);
+
+    // The live tree is exactly what it was.
+    let live = fleet::skills::load(&home);
+    let live_names: Vec<&str> = live.iter().map(|skill| skill.name.as_str()).collect();
+    assert_eq!(live_names, vec!["alpha", "beta", "delta", "gamma"]);
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// `fleet skills` end to end against the real binary: the live skills as
+/// cards, the drafts awaiting the gate, and one draft printed verbatim.
+#[test]
+fn the_skills_command_lists_cards_proposals_and_a_draft() {
+    let home = skills_home("skills-cmd", "demo-skill", "Recover a failed bash call", "# demo");
+    let fleet = env!("CARGO_BIN_EXE_fleet");
+    let run = |args: &[&str]| {
+        std::process::Command::new(fleet)
+            .args(args)
+            .env("FLEET_HOME", &home)
+            .output()
+            .expect("run the fleet binary")
+    };
+
+    let listed = run(&["skills"]);
+    assert!(listed.status.success(), "{listed:?}");
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    assert!(stdout.contains("fleet skills"), "{stdout}");
+    assert!(stdout.contains("demo-skill"), "{stdout}");
+    assert!(stdout.contains("Recover a failed bash call"), "{stdout}");
+    // Cards, not a table.
+    assert!(stdout.contains("\u{250c}\u{2500}"), "{stdout}");
+    assert!(!stdout.contains("| id |"), "{stdout}");
+
+    // No drafts yet says so rather than rendering nothing.
+    let empty_proposed = run(&["skills", "--proposed"]);
+    assert!(empty_proposed.status.success());
+    assert!(String::from_utf8_lossy(&empty_proposed.stdout).contains("no drafts yet"));
+
+    // A `--show` naming a draft that does not exist is a named failure.
+    let missing = run(&["skills", "--show", "nope"]);
+    assert_eq!(missing.status.code(), Some(1), "{missing:?}");
+
+    // File one draft through the crate's own drafter, then read it back
+    // through both surfaces.
+    let mut session = Session::create(&home, "test-model").unwrap();
+    session.record(&Record::User { content: "run it".to_string() }).unwrap();
+    session
+        .record(&assistant_calls(vec![("call-1", "bash", r#"{"command":"ls"}"#)]))
+        .unwrap();
+    session
+        .record(&Record::ToolResult {
+            call_id: "call-1".to_string(),
+            name: "bash".to_string(),
+            output: "error: exit 127".to_string(),
+            truncated: false,
+            approved: true,
+        })
+        .unwrap();
+    session
+        .record(&assistant_calls(vec![("call-2", "bash", r#"{"command":"ls -la"}"#)]))
+        .unwrap();
+    session
+        .record(&Record::ToolResult {
+            call_id: "call-2".to_string(),
+            name: "bash".to_string(),
+            output: "exit 0".to_string(),
+            truncated: false,
+            approved: true,
+        })
+        .unwrap();
+    let filed = fleet::skills::draft_session(&home, session.path(), None);
+    assert_eq!(filed.len(), 1, "{filed:?}");
+
+    let shown = run(&["skills", "--show", "bash-recovery"]);
+    assert!(shown.status.success(), "{shown:?}");
+    let shown_out = String::from_utf8_lossy(&shown.stdout);
+    assert!(shown_out.contains("proposed: true"), "{shown_out}");
+    assert!(shown_out.contains("# bash-recovery"), "{shown_out}");
+
+    let proposed = run(&["skills", "--proposed"]);
+    assert!(proposed.status.success());
+    let proposed_out = String::from_utf8_lossy(&proposed.stdout);
+    assert!(proposed_out.contains("bash-recovery"), "{proposed_out}");
+    assert!(proposed_out.contains("create"), "{proposed_out}");
+    assert!(proposed_out.contains("awaiting the slice-12 gate"), "{proposed_out}");
+    // The gate boundary is named on the surface: nothing here applies.
+    assert!(proposed_out.contains("slice 12"), "{proposed_out}");
+
+    // A home with no skills directory says so and still exits 0.
+    let bare = temp_home("skills-bare");
+    let listed_bare = std::process::Command::new(fleet)
+        .arg("skills")
+        .env("FLEET_HOME", &bare)
+        .output()
+        .expect("run the fleet binary");
+    assert!(listed_bare.status.success());
+    assert!(String::from_utf8_lossy(&listed_bare.stdout).contains("no skills yet"));
+
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&bare).ok();
 }
 
 // --- live API --------------------------------------------------------------

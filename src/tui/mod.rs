@@ -326,6 +326,11 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
         };
         runtime.block_on(async move {
             let dotenv = crate::home::read_dotenv(&home);
+            // The skills are loaded once, when the agent thread starts,
+            // and declared on every run it drives: the files can change
+            // between runs, and each run's `skills` record pins what
+            // that run actually saw.
+            let skills = crate::skills::load(&home);
             // The route is chosen once, on the first run, and the committed
             // router is reused for the rest of the session — one sys1
             // judgment, not one per task.
@@ -378,6 +383,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             ui_tx: Some(ui_tx.clone()),
                             lane_specs: None,
                             calib: Some(prepared.calib.clone()),
+                            skills: skills.clone(),
                         };
                         let approver: Box<dyn Approver> =
                             Box::new(TuiApprover::new(approval_tx.clone()));
@@ -409,6 +415,19 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             // agent thread ends — best-effort, never fatal.
             if let Some(prepared) = &prepared {
                 prepared.record_route(&judge_task);
+            }
+            // And the self-authoring half runs once, on the session the
+            // TUI drove: its lessons are drafted into proposals awaiting
+            // the slice-12 gate, best-effort, never applied here.
+            let user_home = std::env::var("HOME").ok();
+            let path = crate::session::session_path(&home, &current_session);
+            let filed = crate::skills::draft_session(&home, &path, user_home.as_deref());
+            if !filed.is_empty() {
+                eprintln!(
+                    "fleet: skills: drafted {} proposal(s) awaiting the gate in {}",
+                    filed.len(),
+                    crate::skills::proposals_dir(&home).display()
+                );
             }
         });
     })

@@ -768,6 +768,16 @@ pub struct ReadRow {
     pub stop_reason: String,
     #[serde(default)]
     pub turns: u64,
+    /// The task's hash, carried so slice 7's drafter can join a `turn`
+    /// row back to the session log that produced it — the same 16 hex
+    /// characters the row was written with.
+    #[serde(default)]
+    pub input_hash: String,
+    /// The failure class a `failed` turn row names, which is what makes
+    /// the drafter's failed-turn lesson class-specific rather than
+    /// generic.
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// One attempt as a row carries it: the provider and its outcome, which is

@@ -13,5 +13,6 @@ pub mod mcp;
 pub mod net;
 pub mod route;
 pub mod session;
+pub mod skills;
 pub mod tools;
 pub mod tui;

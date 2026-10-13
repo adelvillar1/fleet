@@ -659,6 +659,12 @@ fn entry_of(record: &Record) -> Option<Entry> {
         Record::LaneTools { lane, tools } => {
             Some(Entry::Lane(LaneCard { lane: lane.clone(), tool_count: tools.len() }))
         }
+        // The skills record is bookkeeping about the system prompt, like
+        // `start` and `end`: it replays to no conversation block. A
+        // skill's use shows as the ordinary tool card its `tool_result`
+        // seeded — there is deliberately no separate skills surface in
+        // the TUI this slice.
+        Record::Skills { .. } => None,
         Record::Start { .. } | Record::End { .. } => None,
     }
 }
@@ -960,6 +966,59 @@ mod tests {
                     summary: String::new(),
                     status: ToolStatus::Done,
                     preview: "reachable".to_string(),
+                }),
+            ]
+        );
+    }
+
+    /// A `skills` record is bookkeeping about the system prompt, like
+    /// `start` and `end`: seeding a log that carries one adds no
+    /// conversation block, and a skill's use shows as the ordinary tool
+    /// card its `tool_result` seeded — no separate skills surface.
+    #[test]
+    fn seeding_a_log_skips_the_skills_record() {
+        let mut app = app();
+        app.seed(&[
+            Record::Start { v: 1, model: "m".to_string(), created: "c".to_string() },
+            Record::Skills {
+                skills: vec![crate::skills::SkillRef {
+                    name: "bash-recovery".to_string(),
+                    description: "Recover a failed bash call".to_string(),
+                }],
+            },
+            Record::User { content: "run it".to_string() },
+            Record::Assistant {
+                content: None,
+                tool_calls: vec![crate::api::ToolCall {
+                    id: "call-1".to_string(),
+                    kind: "function".to_string(),
+                    function: crate::api::FunctionCall {
+                        name: "use_skill".to_string(),
+                        arguments: r#"{"name":"bash-recovery"}"#.to_string(),
+                    },
+                }],
+            },
+            Record::ToolResult {
+                call_id: "call-1".to_string(),
+                name: "use_skill".to_string(),
+                output: "# bash-recovery".to_string(),
+                truncated: false,
+                approved: true,
+            },
+        ]);
+        assert_eq!(
+            app.entries,
+            vec![
+                Entry::User("run it".to_string()),
+                // The assistant turn that requested the call renders as
+                // its own (empty) block, exactly as it always has.
+                Entry::Assistant(String::new()),
+                // The skill's use is an ordinary tool card.
+                Entry::Tool(ToolCard {
+                    name: "use_skill".to_string(),
+                    summary: String::new(),
+                    status: ToolStatus::Done,
+                    preview: "# bash-recovery".to_string(),
                 }),
             ]
         );

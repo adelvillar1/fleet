@@ -1,0 +1,1670 @@
+//! Skills: SKILL.md loading with frontmatter, progressive disclosure
+//! through the `use_skill` tool, the self-authoring drafter, and
+//! usage-scan curation.
+//!
+//! The layout is the owner's own convention: one directory per skill
+//! under `<FLEET_HOME>/skills/`, each holding a `SKILL.md` whose YAML
+//! frontmatter carries at least `name` and `description`, with the body
+//! after the fence. The fork's `packages/skill` is the spec for the
+//! shape; the frontmatter parse is hand-rolled on purpose — the subset
+//! is `key: value` lines between `---` fences and nothing else, so a YAML
+//! dependency would buy nothing and cost a crate.
+//!
+//! **Progressive disclosure.** Every run's system prompt carries the
+//! available skills as a name+description list — the same seam the tool
+//! declarations use — and a body enters context only when the loop
+//! selects it, through the `use_skill` tool. The body rides the ordinary
+//! `tool_result` path, so model-visible ⟺ logged falls out of the
+//! existing seam with no new record type. Because the list is dynamic
+//! (the files change between runs), each run records the skills it
+//! declared as one session-log `skills` record at run start, exactly the
+//! way a lane joining records `lane_tools`.
+//!
+//! **The self-improving half.** After a session, the drafter reads that
+//! session's log plus the day's calibration rows, identifies a lesson —
+//! a tool call that failed and was then corrected, a repeated multi-step
+//! tool sequence, or a turn graded failed with a named class — and
+//! drafts a SKILL.md creation or update into
+//! `<FLEET_HOME>/skills/proposals/`. A proposal is never applied here:
+//! applying one is slice 12's gate, and no code path in this slice moves
+//! a proposal into the live tree.
+//!
+//! **Curation is usage-scan, not semantic recall.** Past session logs are
+//! scanned for `use_skill` calls; a skill unused across the last N
+//! sessions is proposed for retirement, and two skills whose descriptions
+//! are near-identical (token Jaccard over the normalized text) are
+//! proposed for merge. Slice 8's recall upgrades this; until then the
+//! scan is honest about what it measures.
+//!
+//! A skill whose frontmatter is missing or malformed is **skipped by
+//! name** with one logged line naming it: a broken skill never blocks the
+//! others, and never enters the model's view at all.
+
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
+
+use crate::session::Record;
+
+/// The directory under `<FLEET_HOME>` holding one directory per skill.
+pub const SKILLS_DIR: &str = "skills";
+
+/// The file every skill directory carries.
+pub const SKILL_FILE: &str = "SKILL.md";
+
+/// The directory under `skills/` holding drafted proposals. It is never
+/// read as a skill: [`load`] skips it by name.
+pub const PROPOSALS_DIR: &str = "proposals";
+
+/// How many sessions a skill may go unused across before curation
+/// proposes retiring it. Configurable as `skills.retire_after_sessions`
+/// in `<FLEET_HOME>/config.json`.
+pub const DEFAULT_RETIRE_AFTER_SESSIONS: usize = 20;
+
+/// The token-Jaccard similarity at which two skills' descriptions read as
+/// near-identical and curation proposes a merge. Documented here and in
+/// the feature doc; configurable as `skills.merge_similarity`.
+pub const MERGE_SIMILARITY_THRESHOLD: f64 = 0.8;
+
+/// How many lessons one session may draft. The evidence is finite and a
+/// session that trips every detector should not flood the proposals
+/// directory; the cap keeps the drafts reviewable.
+pub const MAX_LESSONS_PER_SESSION: usize = 3;
+
+// --- the loaded shapes -----------------------------------------------------
+
+/// One live skill: its frontmatter, its body, and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skill {
+    pub name: String,
+    pub description: String,
+    /// Everything after the frontmatter fence; what `use_skill` returns.
+    pub body: String,
+    pub path: PathBuf,
+    /// The SKILL.md's mtime, for the surface's card. `None` when the
+    /// metadata could not be read.
+    pub modified: Option<SystemTime>,
+}
+
+/// One skill as the session log's `skills` record carries it: the two
+/// facts the system prompt showed the model. The body is deliberately
+/// absent — it enters context only when selected, and then it is already
+/// in the log as that call's `tool_result`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillRef {
+    pub name: String,
+    pub description: String,
+}
+
+impl From<&Skill> for SkillRef {
+    fn from(skill: &Skill) -> SkillRef {
+        SkillRef { name: skill.name.clone(), description: skill.description.clone() }
+    }
+}
+
+/// What a proposal asks the gate to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalKind {
+    /// A new skill.
+    Create,
+    /// A change to an existing skill.
+    Update,
+    /// Remove an unused skill.
+    Retire,
+    /// Fold one skill into another.
+    Merge,
+}
+
+impl ProposalKind {
+    /// The word the frontmatter and the surface carry.
+    pub fn label(self) -> &'static str {
+        match self {
+            ProposalKind::Create => "create",
+            ProposalKind::Update => "update",
+            ProposalKind::Retire => "retire",
+            ProposalKind::Merge => "merge",
+        }
+    }
+
+    /// Every kind, in the order the surface groups them.
+    pub const ALL: [ProposalKind; 4] = [
+        ProposalKind::Create,
+        ProposalKind::Update,
+        ProposalKind::Retire,
+        ProposalKind::Merge,
+    ];
+}
+
+/// One drafted change awaiting the slice-12 gate. The file on disk is the
+/// draft itself: frontmatter carrying `proposed: true` and the evidence,
+/// then the proposed SKILL.md body. Nothing in this slice applies one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Proposal {
+    pub name: String,
+    pub description: String,
+    pub kind: ProposalKind,
+    /// The session id and the record or row that justifies the draft.
+    pub evidence: String,
+    pub body: String,
+    pub path: PathBuf,
+}
+
+/// How a skill's usage was measured: the per-skill `use_skill` counts and
+/// how many sessions the scan actually saw.
+#[derive(Debug, Clone, Default)]
+pub struct UsageScan {
+    per_skill: HashMap<String, usize>,
+    pub sessions: usize,
+}
+
+impl UsageScan {
+    /// How many times the scan saw this skill selected.
+    pub fn count(&self, name: &str) -> usize {
+        self.per_skill.get(name).copied().unwrap_or(0)
+    }
+
+    /// How many of the scanned skills were never selected.
+    pub fn unused(&self, skills: &[Skill]) -> usize {
+        skills.iter().filter(|skill| self.count(&skill.name) == 0).count()
+    }
+}
+
+// --- the frontmatter subset ------------------------------------------------
+
+/// One parsed SKILL.md document: its frontmatter fields, in order, and
+/// the body after the closing fence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Document {
+    fields: Vec<(String, String)>,
+    body: String,
+}
+
+impl Document {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn required(&self, key: &str) -> Result<String, String> {
+        self.get(key)
+            .map(str::to_string)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("frontmatter is missing a non-empty `{key}`"))
+    }
+}
+
+/// Parse the frontmatter subset Fleet accepts: an opening `---` fence,
+/// `key: value` lines, a closing `---` fence, then the body.
+///
+/// The subset is deliberately small and the rejections are deliberate
+/// too. Accepted: `key: value` pairs with surrounding whitespace
+/// trimmed, values optionally wrapped in matching single or double
+/// quotes, blank lines inside the fence, and unknown keys (forward
+/// compatibility — a future field must not invalidate today's file).
+/// Rejected, each with the reason named: no opening fence, no closing
+/// fence, a fence line that is not a `key: value` pair (a nested block's
+/// indent, a `- item` list entry, a bare scalar), a key that appears
+/// twice, an empty key, and an empty value. The body is everything after
+/// the closing fence with one leading newline taken off.
+fn parse_document(text: &str) -> Result<Document, String> {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.first().map(|line| line.trim_end()) != Some("---") {
+        return Err("the file does not open with a `---` frontmatter fence".to_string());
+    }
+    let mut fields: Vec<(String, String)> = Vec::new();
+    let mut closing: Option<usize> = None;
+    for (index, line) in lines.iter().enumerate().skip(1) {
+        if line.trim_end() == "---" {
+            closing = Some(index);
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // A nested block, a list entry, or any indented line is YAML this
+        // parser does not speak: name it rather than guessing.
+        if line.starts_with(' ') || line.starts_with('\t') || trimmed.starts_with('-') {
+            return Err(format!(
+                "frontmatter line {} is not a `key: value` pair (nested YAML is not supported)",
+                index + 1
+            ));
+        }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            return Err(format!("frontmatter line {} is not a `key: value` pair", index + 1));
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(format!("frontmatter line {} has an empty key", index + 1));
+        }
+        let value = unquote(value.trim());
+        if value.is_empty() {
+            return Err(format!("frontmatter key `{key}` has an empty value"));
+        }
+        if fields.iter().any(|(seen, _)| seen == key) {
+            return Err(format!("frontmatter key `{key}` appears twice"));
+        }
+        fields.push((key.to_string(), value.to_string()));
+    }
+    let Some(closing) = closing else {
+        return Err("the frontmatter fence never closes".to_string());
+    };
+    let body = lines[closing + 1..].join("\n");
+    let body = body.strip_prefix('\n').unwrap_or(&body).to_string();
+    Ok(Document { fields, body })
+}
+
+/// Strip one layer of matching surrounding quotes.
+fn unquote(value: &str) -> &str {
+    for quote in ['"', '\''] {
+        if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
+}
+
+/// One log line naming the skill that was skipped and why. A broken
+/// skill is never silent and never fatal.
+fn skip_line(name: &str, reason: &str) {
+    eprintln!("fleet: skills: skipping `{name}` \u{2014} {reason}");
+}
+
+// --- loading ---------------------------------------------------------------
+
+/// `<home>/skills`.
+pub fn skills_dir(home: &Path) -> PathBuf {
+    home.join(SKILLS_DIR)
+}
+
+/// `<home>/skills/proposals`.
+pub fn proposals_dir(home: &Path) -> PathBuf {
+    skills_dir(home).join(PROPOSALS_DIR)
+}
+
+/// Load every live skill under `<home>/skills`, sorted by name. A missing
+/// directory is no skills, not an error. A directory without a readable
+/// `SKILL.md`, or with a malformed one, is skipped by name with one
+/// logged line; the others still load.
+///
+/// The `proposals` directory is skipped by name: it holds drafts, and a
+/// draft is not a live skill. A live skill whose frontmatter carries
+/// `proposed: true` is skipped too — that is a proposal that somehow
+/// reached the live tree, and the loader refuses to promote it silently.
+pub fn load(home: &Path) -> Vec<Skill> {
+    let dir = skills_dir(home);
+    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
+    let mut directories: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    directories.sort();
+    let mut skills: Vec<Skill> = Vec::new();
+    for path in directories {
+        // Owned, so the path itself stays free to move into the skill.
+        let Some(name) =
+            path.file_name().and_then(|name| name.to_str()).map(str::to_string)
+        else {
+            continue;
+        };
+        if name == PROPOSALS_DIR {
+            continue;
+        }
+        let file = path.join(SKILL_FILE);
+        let text = match fs::read_to_string(&file) {
+            Ok(text) => text,
+            Err(_) => {
+                skip_line(&name, &format!("no readable {SKILL_FILE}"));
+                continue;
+            }
+        };
+        let modified = fs::metadata(&file).and_then(|meta| meta.modified()).ok();
+        match parse_document(&text).and_then(|document| live_skill(document, &name, file, modified))
+        {
+            Ok(skill) => skills.push(skill),
+            Err(reason) => skip_line(&name, &reason),
+        }
+    }
+    skills.sort_by(|left, right| left.name.cmp(&right.name));
+    skills
+}
+
+/// The live-skill rules on top of the shared parse: `name` and
+/// `description` are required, the frontmatter's `name` must equal the
+/// directory's (one skill, one name), and `proposed: true` is refused.
+fn live_skill(
+    document: Document,
+    directory: &str,
+    path: PathBuf,
+    modified: Option<SystemTime>,
+) -> Result<Skill, String> {
+    let name = document.required("name")?;
+    if name != directory {
+        return Err(format!(
+            "frontmatter name `{name}` does not match the directory `{directory}`"
+        ));
+    }
+    let description = document.required("description")?;
+    if document.get("proposed") == Some("true") {
+        return Err("carries `proposed: true` \u{2014} that is a proposal, not a live skill".to_string());
+    }
+    Ok(Skill { name, description, body: document.body, path, modified })
+}
+
+/// Load every proposal under `<home>/skills/proposals`, sorted by name.
+/// Same discipline as [`load`]: a malformed draft is skipped by name
+/// with one logged line, and the others still list.
+pub fn load_proposals(home: &Path) -> Vec<Proposal> {
+    let dir = proposals_dir(home);
+    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect();
+    files.sort();
+    let mut proposals: Vec<Proposal> = Vec::new();
+    for path in files {
+        // Owned, so the path itself stays free to move into the proposal.
+        let Some(stem) =
+            path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string)
+        else {
+            continue;
+        };
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(_) => {
+                skip_line(&stem, "no readable proposal file");
+                continue;
+            }
+        };
+        match parse_document(&text).and_then(|document| proposal(document, &stem, path)) {
+            Ok(proposal) => proposals.push(proposal),
+            Err(reason) => skip_line(&stem, &reason),
+        }
+    }
+    proposals.sort_by(|left, right| left.name.cmp(&right.name));
+    proposals
+}
+
+/// The proposal rules on top of the shared parse: `name`, `description`,
+/// `proposed: true`, a known `kind`, and the `evidence` line are all
+/// required, and the frontmatter's `name` must equal the file's stem.
+fn proposal(document: Document, stem: &str, path: PathBuf) -> Result<Proposal, String> {
+    let name = document.required("name")?;
+    if name != stem {
+        return Err(format!(
+            "frontmatter name `{name}` does not match the file `{stem}.md`"
+        ));
+    }
+    let description = document.required("description")?;
+    if document.get("proposed") != Some("true") {
+        return Err("frontmatter is missing `proposed: true`".to_string());
+    }
+    let kind = match document.get("kind") {
+        Some("create") => ProposalKind::Create,
+        Some("update") => ProposalKind::Update,
+        Some("retire") => ProposalKind::Retire,
+        Some("merge") => ProposalKind::Merge,
+        Some(other) => {
+            return Err(format!("unknown proposal kind `{other}`"));
+        }
+        None => return Err("frontmatter is missing a `kind`".to_string()),
+    };
+    let evidence = document.required("evidence")?;
+    Ok(Proposal { name, description, kind, evidence, body: document.body, path })
+}
+
+// --- the use_skill tool ----------------------------------------------------
+
+/// The skill name one `use_skill` call asks for, for the approval prompt
+/// and the progress line. `None` when the arguments do not carry one.
+pub fn requested_skill(arguments: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    parsed
+        .get("name")
+        .and_then(|name| name.as_str())
+        .map(str::to_string)
+        .filter(|name| !name.is_empty())
+}
+
+/// The `use_skill` tool's result for one call: the selected skill's body,
+/// or a typed error the model can read and react to. Never a panic, and
+/// never an empty answer.
+pub fn use_skill_result(skills: &[Skill], arguments: &serde_json::Value) -> String {
+    let Some(name) =
+        arguments.get("name").and_then(|name| name.as_str()).filter(|name| !name.is_empty())
+    else {
+        return "error: the `name` argument is required and must be a string".to_string();
+    };
+    match skills.iter().find(|skill| skill.name == name) {
+        Some(skill) => skill.body.clone(),
+        None => format!("error: no skill named `{name}`"),
+    }
+}
+
+// --- the usage scan --------------------------------------------------------
+
+/// Scan the last `sessions` session logs for `use_skill` calls, counting
+/// selections per skill. The count comes from the assistant's call
+/// arguments joined to that call's `tool_result`: a result is the body,
+/// which names no skill, and a call the user denied loaded nothing — so
+/// a denied selection is not a use.
+///
+/// This is the pre-slice-8 measure of use — a log scan, not recall.
+pub fn scan_usage(home: &Path, sessions: usize) -> UsageScan {
+    let mut scan = UsageScan::default();
+    let Ok(summaries) = crate::session::list(home) else { return scan };
+    // `list` is oldest first; the window is the most recent `sessions`.
+    for summary in summaries.iter().rev().take(sessions) {
+        scan.sessions += 1;
+        let Ok(records) = crate::session::replay(&summary.path) else { continue };
+        // Which calls were approved, by id: the join that makes the
+        // count "the body entered context" rather than "the model
+        // asked".
+        let mut approved: HashMap<String, bool> = HashMap::new();
+        for record in &records {
+            if let Record::ToolResult { call_id, approved: ok, .. } = record {
+                approved.insert(call_id.clone(), *ok);
+            }
+        }
+        for record in &records {
+            let Record::Assistant { tool_calls, .. } = record else { continue };
+            for call in tool_calls {
+                if call.function.name != crate::tools::USE_SKILL_TOOL {
+                    continue;
+                }
+                if !approved.get(&call.id).copied().unwrap_or(false) {
+                    continue;
+                }
+                if let Some(name) = requested_skill(&call.function.arguments) {
+                    *scan.per_skill.entry(name).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    scan
+}
+
+// --- similarity ------------------------------------------------------------
+
+/// The normalized token set of `text`: lowercased, split on every
+/// non-alphanumeric run, deduplicated.
+fn tokens(text: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    for token in text
+        .to_lowercase()
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+    {
+        if !tokens.iter().any(|seen| seen == token) {
+            tokens.push(token.to_string());
+        }
+    }
+    tokens
+}
+
+/// Token Jaccard over two descriptions: the shared tokens over the union.
+/// An empty token set on either side scores 0 — two descriptions with no
+/// words in common with anything are not similar, they are absent.
+pub fn description_similarity(left: &str, right: &str) -> f64 {
+    let left = tokens(left);
+    let right = tokens(right);
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    let mut union = left.clone();
+    for token in &right {
+        if !union.iter().any(|seen| seen == token) {
+            union.push(token.clone());
+        }
+    }
+    let shared = left.iter().filter(|token| right.iter().any(|seen| seen == *token)).count();
+    shared as f64 / union.len() as f64
+}
+
+// --- the drafter -----------------------------------------------------------
+
+/// One lesson a session's evidence justifies, before it is filed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lesson {
+    pub kind: ProposalKind,
+    pub name: String,
+    pub description: String,
+    pub evidence: String,
+    pub body: String,
+}
+
+impl Lesson {
+    /// This lesson as an update to an existing skill: the kind flips, the
+    /// description stays the live skill's (the proposal replaces the
+    /// file, so its frontmatter must stay the skill's), and the body is
+    /// the live body plus the drafted addition — a diff a reviewer can
+    /// read.
+    fn as_update(self, existing: &Skill) -> Lesson {
+        let addition = format!(
+            "\n\n## Proposed addition (drafted {})\n\n{}\n\nEvidence: {}\n",
+            crate::calib::today(),
+            self.description,
+            self.evidence,
+        );
+        Lesson {
+            kind: ProposalKind::Update,
+            description: existing.description.clone(),
+            evidence: self.evidence,
+            body: format!("{}{}", existing.body.trim_end(), addition),
+            name: self.name,
+        }
+    }
+}
+
+/// The lessons `records` and the day's calibration `rows` justify, at most
+/// [`MAX_LESSONS_PER_SESSION`], in a fixed order: a failure that was
+/// corrected, a repeated multi-step tool sequence, a turn graded failed
+/// with a named class. `session_id` rides in every evidence line.
+///
+/// Deterministic by construction: the same log and the same rows draft
+/// the same lessons, which is what makes the drafter testable without a
+/// model. The bodies are structured drafts carrying their evidence, not
+/// model-written prose.
+pub fn lessons(
+    records: &[Record],
+    rows: &[crate::calib::ReadRow],
+    session_id: &str,
+) -> Vec<Lesson> {
+    let mut found: Vec<Lesson> = Vec::new();
+    if let Some(lesson) = failure_correction(records, session_id) {
+        found.push(lesson);
+    }
+    if let Some(lesson) = repeated_sequence(records, session_id) {
+        found.push(lesson);
+    }
+    if let Some(lesson) = failed_turn(records, rows, session_id) {
+        found.push(lesson);
+    }
+    found.truncate(MAX_LESSONS_PER_SESSION);
+    found
+}
+
+/// One executed tool call, resolved against the assistant turn that
+/// requested it.
+struct Executed {
+    name: String,
+    output: String,
+    /// The tool_result record's index in the log, for the evidence line.
+    record: usize,
+}
+
+/// Every executed call in the log, in order, with the tool each result
+/// belongs to. The call id is the join; the result record's own `name`
+/// is the fallback.
+fn executed_calls(records: &[Record]) -> Vec<Executed> {
+    let mut requested: HashMap<String, String> = HashMap::new();
+    let mut executed: Vec<Executed> = Vec::new();
+    for (index, record) in records.iter().enumerate() {
+        match record {
+            Record::Assistant { tool_calls, .. } => {
+                for call in tool_calls {
+                    requested.insert(call.id.clone(), call.function.name.clone());
+                }
+            }
+            Record::ToolResult { call_id, name, output, .. } => {
+                let resolved =
+                    requested.get(call_id).cloned().unwrap_or_else(|| name.clone());
+                executed.push(Executed { name: resolved, output: output.clone(), record: index });
+            }
+            _ => {}
+        }
+    }
+    executed
+}
+
+/// The failure→correction lesson: one tool that failed with a typed
+/// `error:` result and was later called again successfully. The first
+/// such pair in the log is the lesson; the correction is the evidence
+/// that the failure was understood, not just survived.
+fn failure_correction(records: &[Record], session_id: &str) -> Option<Lesson> {
+    let calls = executed_calls(records);
+    for (index, failed) in calls.iter().enumerate() {
+        if !failed.output.starts_with("error:") {
+            continue;
+        }
+        let corrected = calls[index + 1..]
+            .iter()
+            .find(|call| call.name == failed.name && !call.output.starts_with("error:"))?;
+        let name = format!("{}-recovery", slug(&failed.name));
+        let description = format!(
+            "Recover a failed `{}` call: read the typed error, correct one thing, and rerun the same tool.",
+            failed.name
+        );
+        let evidence = format!(
+            "session {session_id}: `{}` failed at record {} and succeeded at record {}",
+            failed.name,
+            failed.record + 1,
+            corrected.record + 1
+        );
+        let body = format!(
+            "# {name}\n\n{description}\n\n## When to reach for it\n\nA `{tool}` call has just come back with a typed `error:` result.\n\n## The lesson\n\nRead the error before retrying. The failure text names what was wrong, so the corrected call is a fix rather than a repeat: change one thing, then run the same tool again.\n\n## Evidence\n\n{evidence}\n",
+            name = name,
+            description = description,
+            tool = failed.name,
+            evidence = evidence,
+        );
+        return Some(Lesson { kind: ProposalKind::Create, name, description, evidence, body });
+    }
+    None
+}
+
+/// The repeated-sequence lesson: one assistant turn that requested two or
+/// more tools, whose exact ordered sequence appeared in another turn of
+/// the same session. A recurring multi-step procedure is a skill the
+/// session kept re-deriving.
+fn repeated_sequence(records: &[Record], session_id: &str) -> Option<Lesson> {
+    let mut seen: Vec<(Vec<String>, Vec<usize>)> = Vec::new();
+    for (index, record) in records.iter().enumerate() {
+        let Record::Assistant { tool_calls, .. } = record else { continue };
+        if tool_calls.len() < 2 {
+            continue;
+        }
+        let names: Vec<String> =
+            tool_calls.iter().map(|call| call.function.name.clone()).collect();
+        match seen.iter_mut().find(|(sequence, _)| *sequence == names) {
+            Some((_, turns)) => turns.push(index),
+            None => seen.push((names, vec![index])),
+        }
+    }
+    let (names, turns) = seen.into_iter().find(|(_, turns)| turns.len() >= 2)?;
+    let name = format!("procedure-{}", slug(&names.join("-")));
+    let arrow = names.join(" \u{2192} ");
+    let description = format!(
+        "The recurring {} step procedure `{}` as one skill instead of {} separate decisions.",
+        names.len(),
+        arrow,
+        turns.len()
+    );
+    let records_at = turns.iter().map(|index| index + 1).collect::<Vec<_>>();
+    let evidence = format!(
+        "session {session_id}: the sequence `{arrow}` ran {} times (records {})",
+        turns.len(),
+        records_at
+            .iter()
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let body = format!(
+        "# {name}\n\n{description}\n\n## When to reach for it\n\nThe task needs these steps in this order: {arrow}.\n\n## The lesson\n\nThis sequence recurred within one session. Treat it as one procedure with one intent, not as a series of independent calls: decide the sequence once, then run it.\n\n## Evidence\n\n{evidence}\n",
+        name = name,
+        description = description,
+        arrow = arrow,
+        evidence = evidence,
+    );
+    Some(Lesson { kind: ProposalKind::Create, name, description, evidence, body })
+}
+
+/// The failed-turn lesson: a `turn` row graded `failed` with a named
+/// class, joined to this session by the task's hash. The row is the
+/// audit spine's own grade of the run; the join is what makes the
+/// evidence this session's rather than the day's.
+fn failed_turn(
+    records: &[Record],
+    rows: &[crate::calib::ReadRow],
+    session_id: &str,
+) -> Option<Lesson> {
+    let task_hashes: Vec<String> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::User { content } => Some(crate::calib::hash16(content)),
+            _ => None,
+        })
+        .collect();
+    let row = rows.iter().find(|row| {
+        row.op == crate::calib::OP_TURN
+            && row.outcome == "failed"
+            && !row.reason.is_empty()
+            && task_hashes.iter().any(|hash| hash == &row.input_hash)
+    })?;
+    let name = format!("turn-failure-{}", slug(&row.reason));
+    let description = format!(
+        "A run ending `failed` with the `{}` class: what the class means and the first thing to check.",
+        row.reason
+    );
+    let evidence = format!(
+        "session {session_id}; calibration turn row {} graded failed/{} (task hash {})",
+        row.ts, row.reason, row.input_hash
+    );
+    let body = format!(
+        "# {name}\n\n{description}\n\n## When to reach for it\n\nA run is ending `failed` and the calibration row names the `{reason}` class.\n\n## The lesson\n\nThe class is the router's own failure classification, so it names the layer that broke. Check that layer first, and record what the check found rather than retrying blind.\n\n## Evidence\n\n{evidence}\n",
+        name = name,
+        description = description,
+        reason = row.reason,
+        evidence = evidence,
+    );
+    Some(Lesson { kind: ProposalKind::Create, name, description, evidence, body })
+}
+
+/// A filesystem-safe name: lowercased alphanumerics, every other run as
+/// one dash, bounded so a long tool sequence cannot name an absurd file.
+fn slug(text: &str) -> String {
+    let mut out = String::new();
+    for character in text.chars() {
+        if character.is_ascii_alphanumeric() {
+            out.push(character.to_ascii_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let slug: String = out.trim_matches('-').chars().take(48).collect();
+    slug.trim_matches('-').to_string()
+}
+
+/// Render one proposal's file text: the frontmatter the loader reads
+/// back, then the body.
+fn render_proposal(lesson: &Lesson) -> String {
+    format!(
+        "---\nname: {name}\ndescription: {description}\nproposed: true\nkind: {kind}\nevidence: {evidence}\n---\n\n{body}",
+        name = lesson.name,
+        description = lesson.description,
+        kind = lesson.kind.label(),
+        evidence = lesson.evidence,
+        body = lesson.body,
+    )
+}
+
+/// File one lesson as a proposal, unless a proposal with that name is
+/// already waiting: a lesson stays as first drafted, and the gate
+/// disposes of it. Returns the path written, or `None` when nothing was.
+///
+/// The write lands in `<home>/skills/proposals/` and nowhere else — this
+/// is the only writer in the slice, and the live tree is never its
+/// target.
+fn file_proposal(home: &Path, lesson: &Lesson) -> Option<PathBuf> {
+    let dir = proposals_dir(home);
+    let path = dir.join(format!("{}.md", lesson.name));
+    if path.exists() {
+        return None;
+    }
+    fs::create_dir_all(&dir).ok()?;
+    fs::write(&path, render_proposal(lesson)).ok()?;
+    Some(path)
+}
+
+/// Draft the lessons one session's evidence justifies and file them as
+/// proposals. Best-effort throughout: an unreadable log, an absent
+/// stream, or an unwritable proposals directory produce no drafts and no
+/// failure — drafting is the harness noticing, never the run's outcome.
+///
+/// Returns the paths filed. A lesson whose name matches a live skill is
+/// filed as an update to that skill rather than a create, so the draft
+/// diffs against the file it would replace.
+pub fn draft_session(home: &Path, session_path: &Path, user_home: Option<&str>) -> Vec<PathBuf> {
+    let Ok(records) = crate::session::replay(session_path) else { return Vec::new() };
+    if records.is_empty() {
+        return Vec::new();
+    }
+    let session_id = session_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default()
+        .to_string();
+    let live = load(home);
+    let root = crate::calib::resolve_root(home, user_home);
+    let rows = crate::calib::read_day(&root, &crate::calib::today(), crate::calib::READ_CAP);
+    let mut filed: Vec<PathBuf> = Vec::new();
+    for lesson in lessons(&records, &rows, &session_id) {
+        let lesson = match live.iter().find(|skill| skill.name == lesson.name) {
+            Some(existing) => lesson.as_update(existing),
+            None => lesson,
+        };
+        if let Some(path) = file_proposal(home, &lesson) {
+            filed.push(path);
+        }
+    }
+    filed
+}
+
+// --- curation --------------------------------------------------------------
+
+/// Run the usage-scan curation and file what it finds: a retirement
+/// proposal for every skill unused across the whole window, and a merge
+/// proposal for every pair of skills whose descriptions are at least
+/// `merge_similarity` similar. Returns the paths filed.
+///
+/// The retirement rule refuses to judge on a short window: with fewer
+/// sessions of history than the window, nothing is proposed — "unused
+/// across the last N sessions" means N sessions were actually there. A
+/// skill that is the absorbed half of a merge pair is not separately
+/// proposed for retirement: the merge draft already names it, and two
+/// drafts disposing of one skill is noise a reviewer should not have to
+/// reconcile.
+pub fn curate(home: &Path, retire_after: usize, merge_similarity: f64) -> Vec<PathBuf> {
+    let live = load(home);
+    let usage = scan_usage(home, retire_after);
+    let mut lessons: Vec<Lesson> = Vec::new();
+    let mut absorbed: Vec<String> = Vec::new();
+    for (index, left) in live.iter().enumerate() {
+        for right in &live[index + 1..] {
+            let similarity = description_similarity(&left.description, &right.description);
+            if similarity >= merge_similarity {
+                let lesson =
+                    merge_lesson(left, right, similarity, merge_similarity, usage.sessions);
+                absorbed.push(if left.name <= right.name {
+                    right.name.clone()
+                } else {
+                    left.name.clone()
+                });
+                lessons.push(lesson);
+            }
+        }
+    }
+    if usage.sessions >= retire_after {
+        for skill in &live {
+            if usage.count(&skill.name) == 0 && !absorbed.iter().any(|name| name == &skill.name) {
+                lessons.push(retire_lesson(skill, usage.sessions));
+            }
+        }
+    }
+    let mut filed: Vec<PathBuf> = Vec::new();
+    for lesson in &lessons {
+        if let Some(path) = file_proposal(home, lesson) {
+            filed.push(path);
+        }
+    }
+    filed
+}
+
+/// The retirement lesson for one unused skill.
+fn retire_lesson(skill: &Skill, sessions: usize) -> Lesson {
+    let evidence = format!(
+        "unused across the last {sessions} sessions (0 `{}` calls)",
+        crate::tools::USE_SKILL_TOOL
+    );
+    let description = format!(
+        "Retire `{}`: {} It was never selected within the scanned window.",
+        skill.name, skill.description
+    );
+    let body = format!(
+        "# retire: {name}\n\n{description}\n\n## Proposed retirement\n\nThe skill was never selected: 0 `{tool}` calls across the last {sessions} scanned sessions.\n\n## Evidence\n\n{evidence}\n\n## What applying this means\n\nSlice 12's gate decides. Until it does, the live file stays on disk untouched and this draft is the record of what was proposed and why.\n",
+        name = skill.name,
+        description = description,
+        tool = crate::tools::USE_SKILL_TOOL,
+        sessions = sessions,
+        evidence = evidence,
+    );
+    Lesson {
+        kind: ProposalKind::Retire,
+        name: skill.name.clone(),
+        description,
+        evidence,
+        body,
+    }
+}
+
+/// The merge lesson for one near-identical pair. The survivor is the
+/// alphabetically first name; the other is named in the evidence as the
+/// one to absorb.
+fn merge_lesson(
+    left: &Skill,
+    right: &Skill,
+    similarity: f64,
+    threshold: f64,
+    sessions: usize,
+) -> Lesson {
+    let (survivor, absorbed) =
+        if left.name <= right.name { (left, right) } else { (right, left) };
+    let evidence = format!(
+        "usage scan over {sessions} sessions: `{}` and `{}` descriptions score {similarity:.2} token Jaccard (threshold {threshold:.2})",
+        survivor.name, absorbed.name
+    );
+    let description = format!(
+        "Merge `{}` into `{}`: the two descriptions are {similarity:.2} similar, so they read as one skill.",
+        absorbed.name, survivor.name
+    );
+    let body = format!(
+        "# merge: {absorbed} into {survivor}\n\n{description}\n\n## Proposed merge\n\n`{absorbed}`: {absorbed_description}\n\n`{survivor}`: {survivor_description}\n\nThe descriptions share most of their tokens. Two skills a reader cannot tell apart are one skill with a stale name.\n\n## Evidence\n\n{evidence}\n\n## What applying this means\n\nSlice 12's gate decides. Until it does, both live files stay on disk untouched and this draft is the record of what was proposed and why.\n",
+        survivor = survivor.name,
+        absorbed = absorbed.name,
+        description = description,
+        absorbed_description = absorbed.description,
+        survivor_description = survivor.description,
+        evidence = evidence,
+    );
+    Lesson {
+        kind: ProposalKind::Merge,
+        name: survivor.name.clone(),
+        description,
+        evidence,
+        body,
+    }
+}
+
+// --- the surface -----------------------------------------------------------
+
+mod palette {
+    pub const ACCENT: &str = "\u{1b}[36m";
+    pub const OK: &str = "\u{1b}[32m";
+    pub const WARN: &str = "\u{1b}[33m";
+    pub const DIM: &str = "\u{1b}[90m";
+    pub const TEXT: &str = "\u{1b}[37m";
+    pub const BOLD: &str = "\u{1b}[1m";
+    pub const RESET: &str = "\u{1b}[0m";
+}
+
+use palette::{ACCENT, BOLD, DIM, RESET, TEXT};
+
+/// The card width, matching `lanes`, `providers`, and `calib`.
+const CARD_WIDTH: usize = 72;
+
+/// Render the live skills as cards: one per skill with its description,
+/// its usage count from the scan, and the file's mtime. Never a
+/// plain-text table.
+pub fn render(skills: &[Skill], usage: &UsageScan) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{BOLD}fleet skills{RESET} {DIM}\u{2014} {} loaded from {}{RESET}\n\n",
+        skills.len(),
+        SKILLS_DIR,
+    ));
+    if skills.is_empty() {
+        out.push_str(&format!(
+            "{DIM}no skills yet \u{b7} a skill is {SKILLS_DIR}/<name>/{SKILL_FILE}{RESET}\n"
+        ));
+        return out;
+    }
+    for skill in skills {
+        out.push_str(&render_card(skill, usage));
+    }
+    if usage.sessions == 0 {
+        out.push_str(&format!(
+            "\n{DIM}{} skills \u{b7} usage unscanned (no sessions yet){RESET}\n",
+            skills.len(),
+        ));
+        return out;
+    }
+    out.push_str(&format!(
+        "\n{DIM}{} skills \u{b7} {} used \u{b7} {} unused in the last {} session{}{RESET}\n",
+        skills.len(),
+        skills.len() - usage.unused(skills),
+        usage.unused(skills),
+        usage.sessions,
+        if usage.sessions == 1 { "" } else { "s" },
+    ));
+    out
+}
+
+/// One skill's card.
+fn render_card(skill: &Skill, usage: &UsageScan) -> String {
+    let uses = usage.count(&skill.name);
+    let uses_color = if uses == 0 { palette::WARN } else { palette::OK };
+    let header_right = format!("{uses} use{}", if uses == 1 { "" } else { "s" });
+    let header = format!(
+        "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{name}{RESET} {DIM}{dashes} {uses_color}{right}{RESET} {DIM}\u{2510}{RESET}",
+        name = skill.name,
+        dashes = dashes_for(&format!(" {} ", skill.name), &header_right),
+        right = header_right,
+    );
+    let mut lines: Vec<String> = Vec::new();
+    for chunk in wrap_detail(&skill.description, CARD_WIDTH - 4) {
+        lines.push(format!("{DIM}\u{2502}{RESET} {TEXT}{chunk}{RESET}"));
+    }
+    // The file, as the last two path components: `<name>/SKILL.md` names
+    // it without the machine's home prefix filling the card.
+    let relative: String = skill
+        .path
+        .components()
+        .rev()
+        .take(2)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{relative}{RESET}"));
+    if let Some(modified) = skill.modified {
+        let stamp = crate::session::iso_utc_stamp(modified).unwrap_or_default();
+        lines.push(format!("{DIM}\u{2502}{RESET} {DIM}modified {stamp}{RESET}"));
+    }
+    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    let mut card = format!("{header}\n");
+    for line in lines {
+        card.push_str(&line);
+        card.push('\n');
+    }
+    card.push_str(&bottom);
+    card.push('\n');
+    card
+}
+
+/// Render the proposals awaiting the gate as cards: one per draft with
+/// its kind and its evidence line.
+pub fn render_proposals(proposals: &[Proposal]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{BOLD}fleet skills --proposed{RESET} {DIM}\u{2014} {} draft{} awaiting the slice-12 gate{RESET}\n\n",
+        proposals.len(),
+        if proposals.len() == 1 { "" } else { "s" },
+    ));
+    if proposals.is_empty() {
+        out.push_str(&format!(
+            "{DIM}no drafts yet \u{b7} a session's lessons are drafted after it ends{RESET}\n"
+        ));
+        return out;
+    }
+    for proposal in proposals {
+        out.push_str(&render_proposal_card(proposal));
+    }
+    out.push_str(&format!(
+        "\n{DIM}applying a draft is slice 12's gate \u{b7} `fleet skills --show <name>` prints one{RESET}\n"
+    ));
+    out
+}
+
+/// One proposal's card.
+fn render_proposal_card(proposal: &Proposal) -> String {
+    let header_right = format!("{} \u{b7} proposed", proposal.kind.label());
+    let header = format!(
+        "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{name}{RESET} {DIM}{dashes} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}",
+        name = proposal.name,
+        dashes = dashes_for(&format!(" {} ", proposal.name), &header_right),
+        right = header_right,
+    );
+    let mut lines: Vec<String> = Vec::new();
+    for chunk in wrap_detail(&proposal.description, CARD_WIDTH - 4) {
+        lines.push(format!("{DIM}\u{2502}{RESET} {TEXT}{chunk}{RESET}"));
+    }
+    for chunk in wrap_detail(&format!("evidence: {}", proposal.evidence), CARD_WIDTH - 4) {
+        lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{chunk}{RESET}"));
+    }
+    lines.push(format!(
+        "{DIM}\u{2502}{RESET} {DIM}{}{RESET}",
+        proposal.path.display()
+    ));
+    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    let mut card = format!("{header}\n");
+    for line in lines {
+        card.push_str(&line);
+        card.push('\n');
+    }
+    card.push_str(&bottom);
+    card.push('\n');
+    card
+}
+
+/// Render what a curation run filed.
+pub fn render_curation(filed: &[PathBuf]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{BOLD}fleet skills --curate{RESET} {DIM}\u{2014} {} proposal{} filed{RESET}\n\n",
+        filed.len(),
+        if filed.len() == 1 { "" } else { "s" },
+    ));
+    for path in filed {
+        out.push_str(&format!("{DIM}  {}{RESET}\n", path.display()));
+    }
+    out
+}
+
+/// One proposal's draft, verbatim — the diff-able content `--show`
+/// prints. `None` when no proposal carries that name.
+pub fn read_proposal(home: &Path, name: &str) -> Option<String> {
+    fs::read_to_string(proposals_dir(home).join(format!("{name}.md"))).ok()
+}
+
+/// The dash run that pads a card header so its right edge aligns.
+fn dashes_for(left: &str, right: &str) -> String {
+    let used = left.chars().count() + right.chars().count() + 2;
+    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+}
+
+/// Wrap `text` into `width`-character chunks. Prose breaks at the last
+/// space that fits, so a description never splits mid-word; a single
+/// word longer than the width — a path, a command — hard-splits rather
+/// than overflowing the card, the way `lanes` wraps its details.
+fn wrap_detail(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(16);
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_inclusive(' ') {
+        // A word that cannot fit on a line of its own hard-splits.
+        if word.chars().count() > width {
+            if !current.is_empty() {
+                chunks.push(std::mem::take(&mut current));
+            }
+            let mut long = String::new();
+            for character in word.chars() {
+                long.push(character);
+                if long.chars().count() >= width {
+                    chunks.push(std::mem::take(&mut long));
+                }
+            }
+            current = long;
+            continue;
+        }
+        if current.chars().count() + word.chars().count() > width {
+            chunks.push(std::mem::take(&mut current));
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch home, unique per call.
+    fn scratch(tag: &str) -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-skills-{tag}-{}-{serial}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Write one live skill into `home`.
+    fn write_skill(home: &Path, name: &str, text: &str) -> PathBuf {
+        let dir = skills_dir(home).join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(SKILL_FILE);
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    fn good_skill(name: &str, description: &str, body: &str) -> String {
+        format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n")
+    }
+
+    fn skill_names(skills: &[Skill]) -> Vec<&str> {
+        skills.iter().map(|skill| skill.name.as_str()).collect()
+    }
+
+    // --- the frontmatter subset ---
+
+    #[test]
+    fn the_parser_accepts_the_subset_and_returns_the_body() {
+        let document = parse_document(
+            "---\nname: demo\ndescription: 'a quoted: description'\nextra: ignored\n---\n\n# Body\n\nline two\n",
+        )
+        .unwrap();
+        assert_eq!(document.get("name"), Some("demo"));
+        // Quotes come off, and a colon inside a value is not a second key.
+        assert_eq!(document.get("description"), Some("a quoted: description"));
+        // An unknown key is kept, not rejected: forward compatibility.
+        assert_eq!(document.get("extra"), Some("ignored"));
+        // The body is everything after the fence, one leading newline
+        // taken off; line endings normalize and a trailing newline does
+        // not survive the split, which is fine for markdown.
+        assert_eq!(document.body, "# Body\n\nline two");
+    }
+
+    #[test]
+    fn the_parser_rejects_what_it_does_not_speak() {
+        // No opening fence.
+        assert!(parse_document("name: demo\n").unwrap_err().contains("does not open"));
+        // No closing fence.
+        assert!(parse_document("---\nname: demo\n").unwrap_err().contains("never closes"));
+        // A nested block's indent — the YAML block-scalar shape, after
+        // one valid pair.
+        assert!(
+            parse_document("---\nname: demo\ndescription: >\n  folded text\n---\nbody\n")
+                .unwrap_err()
+                .contains("nested YAML")
+        );
+        // A list entry.
+        assert!(parse_document("---\n- item\n---\nbody\n").unwrap_err().contains("key: value"));
+        // A bare scalar line.
+        assert!(parse_document("---\nbare\n---\nbody\n").unwrap_err().contains("key: value"));
+        // A missing required key is the loader's rule, not the parser's:
+        // the document parses, and `required` names what is absent.
+        let document = parse_document("---\ndescription: only\n---\nbody\n").unwrap();
+        assert!(document.required("name").unwrap_err().contains("name"));
+        assert_eq!(document.required("description").unwrap(), "only");
+        // An empty value.
+        assert!(parse_document("---\nname: \"\"\ndescription: d\n---\nbody\n")
+            .unwrap_err()
+            .contains("empty value"));
+        // A duplicated key.
+        assert!(parse_document("---\nname: a\nname: b\ndescription: d\n---\nbody\n")
+            .unwrap_err()
+            .contains("twice"));
+    }
+
+    // --- loading ---
+
+    #[test]
+    fn a_malformed_skill_is_skipped_by_name_and_the_others_load() {
+        let home = scratch("skip");
+        write_skill(&home, "good-one", &good_skill("good-one", "the first", "body one"));
+        write_skill(&home, "good-two", &good_skill("good-two", "the second", "body two"));
+        // Three ways to be malformed: no frontmatter, a missing
+        // description, and a frontmatter name that is not the directory.
+        write_skill(&home, "broken-fence", "# no fence here\n");
+        write_skill(&home, "broken-fields", "---\nname: broken-fields\n---\nbody\n");
+        write_skill(&home, "broken-name", &good_skill("some-other-name", "d", "body"));
+        // The proposals directory is not a skill.
+        std::fs::create_dir_all(proposals_dir(&home)).unwrap();
+
+        let skills = load(&home);
+        assert_eq!(skill_names(&skills), vec!["good-one", "good-two"]);
+        assert_eq!(skills[0].body, "body one");
+        // The loaded skills carry where they came from, for the card.
+        assert!(skills[0].path.ends_with("good-one/SKILL.md"));
+        assert!(skills[0].modified.is_some());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_live_skill_carrying_proposed_true_is_refused() {
+        // A proposal that reached the live tree is not promoted silently.
+        let home = scratch("proposed-live");
+        write_skill(
+            &home,
+            "misfiled",
+            "---\nname: misfiled\ndescription: d\nproposed: true\n---\nbody\n",
+        );
+        assert!(load(&home).is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_missing_skills_directory_is_no_skills_not_an_error() {
+        let home = scratch("absent");
+        assert!(load(&home).is_empty());
+        assert!(load_proposals(&home).is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn proposals_load_with_their_kind_and_evidence() {
+        let home = scratch("proposals");
+        let dir = proposals_dir(&home);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("bash-recovery.md"),
+            "---\nname: bash-recovery\ndescription: d\nproposed: true\nkind: create\nevidence: session x\n---\n\n# body\n",
+        )
+        .unwrap();
+        // A malformed draft is skipped by name, the other still lists.
+        std::fs::write(dir.join("broken.md"), "---\nname: broken\n---\nbody\n").unwrap();
+        let proposals = load_proposals(&home);
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].kind, ProposalKind::Create);
+        assert_eq!(proposals[0].evidence, "session x");
+        assert_eq!(proposals[0].body, "# body");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // --- the use_skill tool ---
+
+    #[test]
+    fn use_skill_returns_the_body_or_a_typed_error() {
+        let skills = vec![Skill {
+            name: "demo".to_string(),
+            description: "d".to_string(),
+            body: "the body".to_string(),
+            path: PathBuf::from("/x/SKILL.md"),
+            modified: None,
+        }];
+        let found = use_skill_result(&skills, &serde_json::json!({ "name": "demo" }));
+        assert_eq!(found, "the body");
+        let missing = use_skill_result(&skills, &serde_json::json!({ "name": "nope" }));
+        assert_eq!(missing, "error: no skill named `nope`");
+        let unnamed = use_skill_result(&skills, &serde_json::json!({}));
+        assert!(unnamed.starts_with("error: the `name` argument"), "{unnamed}");
+        // The name a call asks for is what the approval prompt shows.
+        assert_eq!(requested_skill(r#"{"name":"demo"}"#).as_deref(), Some("demo"));
+        assert_eq!(requested_skill("{not json"), None);
+        assert_eq!(requested_skill(r#"{"name":""}"#), None);
+    }
+
+    // --- similarity ---
+
+    #[test]
+    fn near_identical_descriptions_score_high_and_different_ones_do_not() {
+        // Six shared tokens over a seven-token union: the added `now` is
+        // the only difference.
+        let similarity = description_similarity(
+            "probe the embeddings worker for reachability",
+            "probe the embeddings worker for reachability now",
+        );
+        assert!((similarity - 6.0 / 7.0).abs() < 1e-9, "{similarity}");
+        assert!(similarity >= MERGE_SIMILARITY_THRESHOLD, "{similarity}");
+        assert!(
+            description_similarity("write release notes", "probe the embeddings worker") < 0.2
+        );
+        // Two empty token sets are not similar; they are absent.
+        assert_eq!(description_similarity("", "anything"), 0.0);
+        assert_eq!(description_similarity("---", "!!!"), 0.0);
+        // Identical text is a perfect score.
+        assert_eq!(description_similarity("one two three", "one two three"), 1.0);
+    }
+
+    // --- the drafter ---
+
+    fn tool_call(id: &str, name: &str, arguments: &str) -> crate::api::ToolCall {
+        crate::api::ToolCall {
+            id: id.to_string(),
+            kind: "function".to_string(),
+            function: crate::api::FunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        }
+    }
+
+    fn assistant(calls: Vec<crate::api::ToolCall>) -> Record {
+        Record::Assistant { content: None, tool_calls: calls }
+    }
+
+    fn result(call_id: &str, name: &str, output: &str) -> Record {
+        Record::ToolResult {
+            call_id: call_id.to_string(),
+            name: name.to_string(),
+            output: output.to_string(),
+            truncated: false,
+            approved: true,
+        }
+    }
+
+    #[test]
+    fn a_failure_that_was_corrected_drafts_a_create_with_the_records_cited() {
+        let records = vec![
+            Record::Start { v: 1, model: "m".into(), created: "c".into() },
+            Record::User { content: "run it".into() },
+            assistant(vec![tool_call("c1", "bash", "{}")]),
+            result("c1", "bash", "error: exit 127"),
+            assistant(vec![tool_call("c2", "bash", "{}")]),
+            result("c2", "bash", "exit 0"),
+            assistant(vec![]),
+        ];
+        let found = lessons(&records, &[], "session-1");
+        assert_eq!(found.len(), 1, "{found:?}");
+        let lesson = &found[0];
+        assert_eq!(lesson.kind, ProposalKind::Create);
+        assert_eq!(lesson.name, "bash-recovery");
+        // The evidence names the session and both records.
+        assert!(lesson.evidence.contains("session-1"), "{}", lesson.evidence);
+        assert!(lesson.evidence.contains("record 4"), "{}", lesson.evidence);
+        assert!(lesson.evidence.contains("record 6"), "{}", lesson.evidence);
+        let filed = render_proposal(lesson);
+        assert!(filed.contains("proposed: true"), "{filed}");
+        assert!(filed.contains("kind: create"), "{filed}");
+        assert!(filed.starts_with("---\n"), "{filed}");
+    }
+
+    #[test]
+    fn a_repeated_multi_step_sequence_drafts_a_procedure() {
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "list_dir", "{}"), tool_call("c2", "read_file", "{}")]),
+            result("c1", "list_dir", "ok"),
+            result("c2", "read_file", "ok"),
+            assistant(vec![tool_call("c3", "list_dir", "{}"), tool_call("c4", "read_file", "{}")]),
+            result("c3", "list_dir", "ok"),
+            result("c4", "read_file", "ok"),
+        ];
+        let found = lessons(&records, &[], "session-2");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, "procedure-list-dir-read-file");
+        assert_eq!(found[0].kind, ProposalKind::Create);
+        assert!(found[0].evidence.contains("ran 2 times"), "{}", found[0].evidence);
+    }
+
+    #[test]
+    fn a_failed_turn_row_joined_by_the_task_hash_drafts_a_lesson() {
+        let records = vec![Record::User { content: "refactor the crate".into() }];
+        let hash = crate::calib::hash16("refactor the crate");
+        let rows = vec![crate::calib::ReadRow {
+            ts: "2026-10-13T12:00:00Z".to_string(),
+            op: crate::calib::OP_TURN.to_string(),
+            input_hash: hash.clone(),
+            outcome: "failed".to_string(),
+            stop_reason: "failed".to_string(),
+            reason: "server".to_string(),
+            ..Default::default()
+        }];
+        let found = lessons(&records, &rows, "session-3");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, "turn-failure-server");
+        assert!(found[0].evidence.contains(&hash), "{}", found[0].evidence);
+        // A row for some other session's task is not this session's
+        // evidence: the join is on the hash.
+        let other = vec![crate::calib::ReadRow {
+            input_hash: "ffffffffffffffff".to_string(),
+            ..rows[0].clone()
+        }];
+        assert!(lessons(&records, &other, "session-3").is_empty());
+    }
+
+    #[test]
+    fn an_update_lesson_keeps_the_live_body_and_appends_the_lesson() {
+        let home = scratch("update");
+        write_skill(&home, "bash-recovery", &good_skill("bash-recovery", "live description", "# live body"));
+        let live = load(&home);
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "bash", "{}")]),
+            result("c1", "bash", "error: exit 127"),
+            assistant(vec![tool_call("c2", "bash", "{}")]),
+            result("c2", "bash", "exit 0"),
+        ];
+        let filed = draft_session(&home, &session_log(&home, &records), None);
+        assert_eq!(filed.len(), 1, "{filed:?}");
+        let text = std::fs::read_to_string(&filed[0]).unwrap();
+        assert!(text.contains("kind: update"), "{text}");
+        // The description stays the live skill's, and the live body rides
+        // along so the draft diffs against the file it would replace.
+        assert!(text.contains("description: live description"), "{text}");
+        assert!(text.contains("# live body"), "{text}");
+        assert!(text.contains("## Proposed addition"), "{text}");
+        // The live tree is untouched: one skill, unchanged on disk.
+        let after = load(&home);
+        assert_eq!(after, live);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Write `records` as a session log under `home` and return its path.
+    fn session_log(home: &Path, records: &[Record]) -> PathBuf {
+        let mut session = crate::session::Session::create(home, "m").unwrap();
+        for record in records {
+            session.record(record).unwrap();
+        }
+        session.path().to_path_buf()
+    }
+
+    #[test]
+    fn drafting_files_into_proposals_and_never_into_the_live_tree() {
+        let home = scratch("draft");
+        // One live skill that is NOT the drafted name, to prove the
+        // drafter does not touch it.
+        write_skill(&home, "unrelated", &good_skill("unrelated", "d", "body"));
+        let before = std::fs::read_to_string(skills_dir(&home).join("unrelated/SKILL.md")).unwrap();
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "read_file", "{}")]),
+            result("c1", "read_file", "error: not valid UTF-8"),
+            assistant(vec![tool_call("c2", "read_file", "{}")]),
+            result("c2", "read_file", "the text"),
+        ];
+        let filed = draft_session(&home, &session_log(&home, &records), None);
+        assert_eq!(filed.len(), 1, "{filed:?}");
+        assert!(filed[0].starts_with(proposals_dir(&home)), "{filed:?}");
+        assert_eq!(filed[0].file_name().unwrap(), "read-file-recovery.md");
+        // The live tree holds exactly the one skill it held before.
+        let mut entries: Vec<String> = std::fs::read_dir(skills_dir(&home))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        entries.sort();
+        assert_eq!(entries, vec!["proposals".to_string(), "unrelated".to_string()]);
+        assert_eq!(
+            before,
+            std::fs::read_to_string(skills_dir(&home).join("unrelated/SKILL.md")).unwrap()
+        );
+        // A second draft of the same lesson files nothing new: the gate
+        // disposes of what is already waiting.
+        assert!(draft_session(&home, &session_log(&home, &records), None).is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // --- curation ---
+
+    #[test]
+    fn curation_proposes_retirement_for_the_unused_and_merge_for_the_twins() {
+        let home = scratch("curate");
+        write_skill(&home, "alpha", &good_skill("alpha", "probe the embeddings worker for reachability", "a"));
+        write_skill(&home, "beta", &good_skill("beta", "probe the embeddings worker for reachability now", "b"));
+        write_skill(&home, "gamma", &good_skill("gamma", "write the weekly release notes", "g"));
+        // Two sessions of history — the whole window — and one `use_skill`
+        // call for alpha.
+        let used = session_log(
+            &home,
+            &[
+                Record::User { content: "t".into() },
+                assistant(vec![tool_call(
+                    "c1",
+                    crate::tools::USE_SKILL_TOOL,
+                    r#"{"name":"alpha"}"#,
+                )]),
+                result("c1", "use_skill", "a"),
+            ],
+        );
+        let _unused = session_log(&home, &[Record::User { content: "t2".into() }]);
+        let _ = used;
+
+        let filed = curate(&home, 2, MERGE_SIMILARITY_THRESHOLD);
+        let names: Vec<String> = filed
+            .iter()
+            .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"gamma".to_string()), "{names:?}");
+        assert!(names.contains(&"alpha".to_string()), "{names:?}");
+        let proposals = load_proposals(&home);
+        let retire = proposals.iter().find(|p| p.name == "gamma").expect("the retire draft");
+        assert_eq!(retire.kind, ProposalKind::Retire);
+        assert!(retire.evidence.contains("last 2 sessions"), "{}", retire.evidence);
+        let merge = proposals.iter().find(|p| p.name == "alpha").expect("the merge draft");
+        assert_eq!(merge.kind, ProposalKind::Merge);
+        assert!(merge.evidence.contains("0.86"), "{}", merge.evidence);
+        assert!(merge.evidence.contains("`beta`"), "{}", merge.evidence);
+        // alpha was used, so it is not retired. beta is the absorbed half
+        // of the merge draft, so it gets no separate retire draft — two
+        // drafts disposing of one skill is noise.
+        assert!(!names.contains(&"beta".to_string()), "{names:?}");
+        // The live tree is untouched.
+        assert_eq!(skill_names(&load(&home)), vec!["alpha", "beta", "gamma"]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn curation_refuses_to_judge_on_a_window_shorter_than_the_rule() {
+        let home = scratch("curate-short");
+        write_skill(&home, "lonely", &good_skill("lonely", "never used at all", "b"));
+        let _one = session_log(&home, &[Record::User { content: "t".into() }]);
+        // One session of history against a window of twenty: nothing is
+        // proposed, because "unused across the last 20" is not knowable.
+        assert!(curate(&home, DEFAULT_RETIRE_AFTER_SESSIONS, MERGE_SIMILARITY_THRESHOLD).is_empty());
+        assert!(load_proposals(&home).is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_usage_scan_counts_selections_per_skill_over_the_window() {
+        let home = scratch("usage");
+        write_skill(&home, "alpha", &good_skill("alpha", "d", "a"));
+        for _ in 0..3 {
+            let _ = session_log(
+                &home,
+                &[
+                    Record::User { content: "t".into() },
+                    assistant(vec![tool_call(
+                        "c1",
+                        crate::tools::USE_SKILL_TOOL,
+                        r#"{"name":"alpha"}"#,
+                    )]),
+                    result("c1", "use_skill", "a"),
+                ],
+            );
+        }
+        let scan = scan_usage(&home, 2);
+        assert_eq!(scan.sessions, 2);
+        assert_eq!(scan.count("alpha"), 2);
+        // The window is the most recent sessions, not the oldest.
+        let wide = scan_usage(&home, 20);
+        assert_eq!(wide.count("alpha"), 3);
+        // A denied selection is not a use: the body never entered
+        // context, so the call does not count.
+        let denied = session_log(
+            &home,
+            &[
+                Record::User { content: "t".into() },
+                assistant(vec![tool_call("c9", crate::tools::USE_SKILL_TOOL, r#"{"name":"alpha"}"#)]),
+                Record::ToolResult {
+                    call_id: "c9".to_string(),
+                    name: "use_skill".to_string(),
+                    output: "denied: the user did not approve this call.".to_string(),
+                    truncated: false,
+                    approved: false,
+                },
+            ],
+        );
+        let _ = denied;
+        let after = scan_usage(&home, 20);
+        assert_eq!(after.count("alpha"), 3, "a denied selection must not count");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // --- the surface ---
+
+    #[test]
+    fn the_surface_is_cards_and_never_a_table() {
+        let home = scratch("render");
+        write_skill(&home, "alpha", &good_skill("alpha", "probe the embeddings worker", "a"));
+        let skills = load(&home);
+        let usage = scan_usage(&home, 20);
+        let rendered = render(&skills, &usage);
+        assert!(rendered.contains("fleet skills"), "{rendered}");
+        assert!(rendered.contains("alpha"), "{rendered}");
+        assert!(rendered.contains("0 uses"), "{rendered}");
+        assert!(rendered.contains("\u{250c}\u{2500}"), "{rendered}");
+        // An empty tree says so rather than rendering nothing.
+        let empty = scratch("render-empty");
+        assert!(render(&load(&empty), &usage).contains("no skills yet"));
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn the_proposed_surface_lists_the_kind_and_the_evidence() {
+        let home = scratch("render-proposed");
+        std::fs::create_dir_all(proposals_dir(&home)).unwrap();
+        std::fs::write(
+            proposals_dir(&home).join("gamma.md"),
+            "---\nname: gamma\ndescription: retire gamma\nproposed: true\nkind: retire\nevidence: unused across the last 20 sessions\n---\n\n# retire: gamma\n",
+        )
+        .unwrap();
+        let rendered = render_proposals(&load_proposals(&home));
+        assert!(rendered.contains("awaiting the slice-12 gate"), "{rendered}");
+        assert!(rendered.contains("retire"), "{rendered}");
+        assert!(rendered.contains("unused across the last 20 sessions"), "{rendered}");
+        // The draft itself is readable back, for `--show`.
+        assert!(read_proposal(&home, "gamma").unwrap().contains("# retire: gamma"));
+        assert!(read_proposal(&home, "nope").is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}

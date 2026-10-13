@@ -105,6 +105,27 @@ green: build warning-free, 194 unit + 51 integration. Evidence: the external
 
 SKILL.md loading from a skills directory with frontmatter, progressive disclosure (description first, body on demand), and selection by the loop. Spec: the fork's `packages/skill` and the owner's existing skill conventions. **The self-improving half**: after a session, the harness drafts the SKILL.md creations and updates its outcomes justify — the owner's own protocol (difficult task → lesson → skill) executed by the harness — and files them as proposals through slice 12's gate, never applied silently. Curation uses recall data: unused skills are proposed for retirement, near-duplicates for merge. AC: skills load with malformed ones skipped by name; a relevant skill's body enters context when selected; `fleet skills` lists them; a session's lessons surface as drafted skill updates awaiting the gate.
 
+**Landed 2026-10-13** (`src/skills.rs`): one directory per skill under
+`<FLEET_HOME>/skills/` with a hand-parsed frontmatter subset (`name` +
+`description` required; a malformed skill is skipped by name with one
+logged line, never blocking the others). Progressive disclosure: the
+name+description list rides the system prompt, a body enters context
+only through the `use_skill` tool's ordinary approval-gated
+`tool_result` path, and one `skills` session-log record per run keeps
+the dynamic list reconstructable (the `lane_tools` precedent). The
+self-authoring half: after a session, a deterministic drafter reads the
+session log plus the day's calibration rows and files create/update
+proposals into `skills/proposals/` — a failure that was corrected, a
+repeated multi-step tool sequence, or a turn graded failed with a named
+class joined by the task's hash — with the evidence cited and the live
+tree never the target. Curation is the usage scan: a skill unused across
+the last N sessions (default 20, configurable) is proposed for
+retirement; two descriptions at 0.8 token Jaccard are proposed for
+merge. Nothing in the slice applies a proposal — that is slice 12's
+gate, and the surface says so. Gate green: build warning-free, 223 unit
++ 56 integration. Record: `docs/recaps/2026-10-13-fleet-slice-7-skills.md`;
+feature: `docs/features/skills.md`.
+
 ### Slice 8 — the semantic layer: memory that ranks, routes, and protects
 
 The memory design merges the two implementations the owner already runs, fixing each one's weakness. Six parts:
