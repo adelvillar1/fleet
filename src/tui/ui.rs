@@ -178,7 +178,8 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
         return;
     }
 
-    let (lines, cursor) = input_lines(&app.input, inner.width as usize, inner.height as usize);
+    let (lines, cursor) =
+        input_lines(&app.input, app.cursor, inner.width as usize, inner.height as usize);
     let paragraph = Paragraph::new(Text::from(lines));
     frame.render_widget(paragraph, inner);
     if let Some((x, y)) = cursor {
@@ -188,7 +189,7 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 /// The key hints.
 fn render_footer(frame: &mut Frame<'_>, area: Rect) {
-    let hints = "enter send · alt+enter newline · ctrl+o sessions · ↑↓ scroll · q quit · y/n/a approve";
+    let hints = "enter send · alt+enter newline · ←→ move · ctrl+o sessions · ↑↓ scroll · q quit";
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hints, Style::new().fg(palette::TEXT)))),
         area,
@@ -356,8 +357,11 @@ fn dot_marker(status: ToolStatus) -> &'static str {
 }
 
 /// Wrap `text` into `width`-wide lines, breaking on spaces where possible
-/// so words stay whole. Exact line counts matter: the conversation's
-/// scroll offset is computed from them.
+/// so words stay whole. The break lands *after* the space, so no
+/// character is dropped, moved, or invented: the lines' lengths account
+/// for every input character, and the cursor's row and column are found
+/// by walking them with the same rules. Exact line counts matter too —
+/// the conversation's scroll offset is computed from them.
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(8);
     let mut lines: Vec<String> = Vec::new();
@@ -371,19 +375,17 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
             let word_width = word.chars().count();
             // A word longer than the line is split hard; it has no choice.
             if !current.is_empty() && current.chars().count() + word_width > width {
-                lines.push(current.trim_end().to_string());
-                current.clear();
+                lines.push(std::mem::take(&mut current));
             }
             for character in word.chars() {
                 current.push(character);
                 if current.chars().count() >= width {
-                    lines.push(current.trim_end().to_string());
-                    current.clear();
+                    lines.push(std::mem::take(&mut current));
                 }
             }
         }
         if !current.is_empty() {
-            lines.push(current.trim_end().to_string());
+            lines.push(current);
         }
     }
     if lines.is_empty() {
@@ -392,24 +394,75 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// The input box's visible lines (its tail) and where its cursor sits.
-fn input_lines(input: &str, width: usize, height: usize) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
+/// Where the cursor's `index`-th character lands once `text` is wrapped:
+/// the row and column in characters, read straight off `wrap`'s output so
+/// the two can never disagree. A cursor on a line boundary shows at the
+/// next line's start, keeping it inside the box; the end of the text
+/// stays where it is. Saturates at the end of the text.
+fn cursor_position(text: &str, index: usize, width: usize) -> (usize, usize) {
+    let index = index.min(text.chars().count());
+    let width = width.max(8);
+    let paragraphs: Vec<&str> = text.split('\n').collect();
+    let mut row = 0usize;
+    let mut seen_input = 0usize;
+    for (number, paragraph) in paragraphs.iter().enumerate() {
+        let para_len = paragraph.chars().count();
+        let lines = wrap(paragraph, width);
+        let last_para = number + 1 == paragraphs.len();
+        if index <= seen_input + para_len {
+            // The cursor is inside this paragraph (or at its end).
+            let within = index - seen_input;
+            let mut seen = 0usize;
+            for (offset, line) in lines.iter().enumerate() {
+                let len = line.chars().count();
+                let last_line = offset + 1 == lines.len();
+                if within < seen + len {
+                    return (row + offset, within - seen);
+                }
+                if within == seen + len {
+                    // A boundary shows on the next line when there is
+                    // one — here or in the next paragraph — so the caret
+                    // stays inside the box; the text's very end stays.
+                    if !last_line || !last_para {
+                        return (row + offset + 1, 0);
+                    }
+                    return (row + offset, len);
+                }
+                seen += len;
+            }
+        }
+        seen_input += para_len + 1;
+        row += lines.len();
+    }
+    // Unreachable: the clamped index always lands in a paragraph.
+    (row.saturating_sub(1), 0)
+}
+
+/// The input box's visible lines and where its cursor sits among them.
+/// The window follows the tail, but never scrolls the cursor out of
+/// view: wherever the cursor sits, it stays on screen.
+fn input_lines(
+    input: &str,
+    cursor: usize,
+    width: usize,
+    height: usize,
+) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
     let width = width.max(8);
     let all: Vec<String> = wrap(input, width);
     let height = height.max(1);
-    let skip = all.len().saturating_sub(height);
-    let visible: Vec<String> = all.iter().skip(skip).cloned().collect();
+    let (cursor_row, cursor_col) = cursor_position(input, cursor, width);
+    // The window follows the tail, but never scrolls the cursor out of
+    // view: it starts at the tail unless the cursor sits above it, and
+    // never more than a screen above the cursor.
+    let tail = all.len().saturating_sub(height);
+    let skip = tail.max(cursor_row.saturating_sub(height - 1)).min(cursor_row);
+    let visible: Vec<String> = all.iter().skip(skip).take(height).cloned().collect();
     let lines: Vec<Line<'static>> = visible
         .iter()
         .map(|line| Line::from(Span::styled(line.clone(), Style::new().fg(palette::TEXT))))
         .collect();
-    let last_width = visible.last().map(|line| line.chars().count()).unwrap_or(0) as u16;
-    let row = visible.len().saturating_sub(1) as u16;
-    let cursor = if last_width < width as u16 {
-        Some((last_width, row))
-    } else {
-        None
-    };
+    let row = cursor_row.saturating_sub(skip);
+    let cursor = (row < visible.len() && cursor_col < width).then_some((cursor_col as u16, row as u16));
     (lines, cursor)
 }
 
@@ -571,12 +624,108 @@ mod tests {
 
     #[test]
     fn wrapping_keeps_words_whole_and_hard_splits_the_impossible() {
-        assert_eq!(wrap("one two three", 7), vec!["one two", "three"]);
+        // The break lands after the space, so the wrapped lines keep
+        // every input character — that exactness is what the cursor
+        // walks.
+        assert_eq!(
+            wrap("aaaa bbbb cccc dddd", 10),
+            vec!["aaaa bbbb ", "cccc dddd"]
+        );
+        // No character is dropped or moved: the lines' lengths still
+        // account for every input character, breaks included.
+        let wrapped = wrap("aaaa bbbb cccc dddd", 10);
+        let accounted: usize = wrapped.iter().map(|line| line.chars().count()).sum();
+        assert_eq!(accounted, "aaaa bbbb cccc dddd".chars().count());
         assert_eq!(wrap("a\n\nb", 10), vec!["a", "", "b"]);
         // Width is clamped to 8, and a single word wider than the line is
         // split hard rather than dropped.
         assert_eq!(wrap("abcdefghij", 4), vec!["abcdefgh", "ij"]);
         assert_eq!(wrap("0123456789abcdefghij", 8), vec!["01234567", "89abcdef", "ghij"]);
         assert_eq!(wrap("", 10), vec![""]);
+    }
+
+    #[test]
+    fn the_cursor_walks_the_wrapped_lines() {
+        // "aaaa bbbb cccc dddd" wraps at width 10 into "aaaa bbbb " /
+        // "cccc dddd". The cursor on the first "c" (index 10) sits at
+        // the start of the second row.
+        assert_eq!(cursor_position("aaaa bbbb cccc dddd", 10, 10), (1, 0));
+        // Parked on the first "d" (index 15): still row 1, column 5.
+        assert_eq!(cursor_position("aaaa bbbb cccc dddd", 15, 10), (1, 5));
+        // Past the end: row 1, column 9.
+        assert_eq!(cursor_position("aaaa bbbb cccc dddd", 19, 10), (1, 9));
+        // A newline is its own row; the next line starts at column 0.
+        assert_eq!(cursor_position("ab\ncd", 3, 10), (1, 0));
+        assert_eq!(cursor_position("ab\ncd", 4, 10), (1, 1));
+        assert_eq!(cursor_position("ab\ncd", 5, 10), (1, 2));
+        // A hard-split word breaks exactly where wrap pushes it (width
+        // is clamped to 8, so "abcdefghij" splits as "abcdefgh"/"ij").
+        assert_eq!(cursor_position("abcdefghij", 10, 4), (1, 2));
+        // An index past the end saturates instead of panicking.
+        assert_eq!(cursor_position("ab", 99, 10), (0, 2));
+        assert_eq!(cursor_position("", 3, 10), (0, 0));
+        // The cursor's row and column always land where the wrapped
+        // output can show them: the row exists, and the line on it is at
+        // least `col` characters long.
+        for text in ["aaaa bbbb cccc dddd", "ab\ncd", "abcdefghij", "a b c d e f g"] {
+            for width in [8, 10, 20] {
+                let lines = wrap(text, width);
+                let chars = text.chars().count();
+                for index in 0..=chars {
+                    let (row, col) = cursor_position(text, index, width);
+                    assert!(row < lines.len(), "{text} @{index} w{width} -> {row},{col}");
+                    assert!(
+                        col <= lines[row].chars().count(),
+                        "{text} @{index} w{width} -> {row},{col} in {:?}",
+                        lines
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_input_box_renders_the_cursor_on_the_right_cell() {
+        // "hello there friends" is 19 characters; the input box's inner
+        // width in a 20-wide terminal is 18, so it wraps once into
+        // "hello there " / "friends". With the cursor on the 't' of
+        // "there" (index 6) it belongs at row 0, column 6 — one cell
+        // inside the left border, on the box's first text row.
+        let mut app = fresh();
+        app.paste("hello there friends");
+        app.cursor = 6;
+        let backend = TestBackend::new(20, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let position = terminal.backend().cursor_position();
+        assert_eq!(position, ratatui::layout::Position { x: 7, y: 15 });
+        assert!(terminal.backend().cursor_visible());
+        // At the end of the same input the cursor sits past "friends",
+        // on the second wrapped row.
+        app.cursor = 19;
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        assert_eq!(
+            terminal.backend().cursor_position(),
+            ratatui::layout::Position { x: 8, y: 16 }
+        );
+    }
+
+    #[test]
+    fn the_input_box_keeps_the_cursor_in_view() {
+        // Four lines of input in a three-row window: the tail shows the
+        // last three, but the cursor on the first line pulls the window
+        // up rather than hiding the cursor off-screen.
+        let mut app = fresh();
+        app.paste("aa\nbb\ncc\ndd");
+        app.cursor = 1; // inside the first line
+        let (lines, cursor) = input_lines(&app.input, app.cursor, 12, 3);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].to_string().contains("aa"), "{lines:?}");
+        assert_eq!(cursor, Some((1, 0)));
+        // The tail alone: the cursor at the end keeps the last row.
+        app.cursor = 11;
+        let (lines, cursor) = input_lines(&app.input, app.cursor, 12, 3);
+        assert_eq!(cursor, Some((2, 2)));
+        assert!(lines[2].to_string().contains("dd"), "{lines:?}");
     }
 }

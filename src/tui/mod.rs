@@ -35,8 +35,9 @@ use crate::session::{self, Session};
 use app::{Action, App, Effect, StatusUpdate};
 use events::action_for;
 
-/// How long the event loop waits for a key before redrawing. Token deltas
-/// and agent traffic wake it immediately through their channels.
+/// How long the event loop waits for a key before redrawing. The agent's
+/// channels are drained once per tick — they wake no waiter of their own
+/// — so a token delta is at most one tick behind the frame that shows it.
 const POLL: Duration = Duration::from_millis(100);
 
 /// What the TUI needs resolved before it starts.
@@ -73,11 +74,18 @@ struct AgentConfig {
 }
 
 /// Restores the terminal when the TUI ends, including on a panic, so the
-/// shell is never left in raw mode or on the alternate screen.
+/// shell is never left in raw mode, on the alternate screen, or with
+/// bracketed paste still armed.
 struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        // Paste mode goes off before the screen is restored: a shell
+        // left with bracketed paste on mangles every later command line.
+        let _ = ratatui::crossterm::execute!(
+            io::stdout(),
+            ratatui::crossterm::event::DisableBracketedPaste
+        );
         let _ = ratatui::try_restore();
     }
 }
@@ -93,6 +101,15 @@ pub fn run(config: Config) -> Result<(), String> {
     let mut terminal = ratatui::try_init()
         .map_err(|error| format!("the terminal could not start: {error}"))?;
     let _guard = TerminalGuard;
+
+    // `try_init` arms raw mode and the alternate screen but not bracketed
+    // paste; without it a multi-line paste delivers its newlines as
+    // Enter and submits the lines one by one.
+    ratatui::crossterm::execute!(
+        io::stdout(),
+        ratatui::crossterm::event::EnableBracketedPaste
+    )
+    .map_err(|error| format!("the terminal could not start: {error}"))?;
 
     let session_id = create_session(&config.home, &config.model)?;
     let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
@@ -164,8 +181,12 @@ fn event_loop(
         if ratatui::crossterm::event::poll(POLL)
             .map_err(|error| format!("the keyboard could not be read: {error}"))?
         {
-            if let Ok(Event::Key(key)) = ratatui::crossterm::event::read() {
-                dispatch_key(home, app, &key, command_tx, &mut pending);
+            match ratatui::crossterm::event::read() {
+                Ok(Event::Key(key)) => dispatch_key(home, app, &key, command_tx, &mut pending),
+                // A paste is typing: the text lands in the input box with
+                // its newlines intact, never submitted line by line.
+                Ok(Event::Paste(text)) => app.paste(&text),
+                _ => {}
             }
         }
 
@@ -189,12 +210,23 @@ fn dispatch_key(
     // The picker's rows are filesystem reads, so the loop loads them and
     // hands them to the state machine.
     if matches!(action, Action::OpenSessions) {
-        let sessions = session::list(home).unwrap_or_default();
-        app.open_sessions(sessions);
+        open_picker(home, app);
         return;
     }
     if let Some(effect) = app.apply(action) {
         apply_effect(home, app, effect, command_tx, pending);
+    }
+}
+
+/// Load the picker's rows and open it over the conversation. A failed
+/// read is an error, not an empty picker: "no sessions yet" would be a
+/// lie about a directory the interface simply could not read.
+fn open_picker(home: &Path, app: &mut App) {
+    match session::list(home) {
+        Ok(sessions) => app.open_sessions(sessions),
+        Err(error) => {
+            app.error = Some(format!("could not list the sessions: {error}"));
+        }
     }
 }
 
@@ -313,4 +345,31 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             }
         });
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use app::Mode;
+
+    #[test]
+    fn a_failed_sessions_read_is_an_error_not_an_empty_picker() {
+        // A `sessions` path that is a file, not a directory: read_dir
+        // fails with something other than NotFound, which is exactly the
+        // IO error the picker must report instead of swallowing.
+        let home = std::env::temp_dir().join(format!("fleet-picker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("sessions"), b"not a directory").unwrap();
+
+        let mut app = App::new("m", "s");
+        open_picker(&home, &mut app);
+        // The picker never opened, and the banner says why.
+        assert_eq!(app.mode, Mode::Chat);
+        assert_eq!(app.sessions.len(), 0);
+        let error = app.error.clone().expect("an error banner");
+        assert!(error.contains("could not list the sessions"), "{error}");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }

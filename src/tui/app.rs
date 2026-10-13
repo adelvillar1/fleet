@@ -60,6 +60,18 @@ pub enum Action {
     Input(char),
     /// Delete the character before the cursor.
     Backspace,
+    /// Delete the character at the cursor (forward delete).
+    Delete,
+    /// Delete the word before the cursor (alt+backspace, ctrl+w).
+    DeleteWord,
+    /// Move the input cursor one character left.
+    CursorLeft,
+    /// Move the input cursor one character right.
+    CursorRight,
+    /// Move the input cursor to the start of the input.
+    CursorHome,
+    /// Move the input cursor to the end of the input.
+    CursorEnd,
     /// Submit the input box.
     Submit,
     /// Leave the TUI.
@@ -105,7 +117,9 @@ pub struct Status {
     pub session_id: String,
     /// The current run's turn, 0 when idle.
     pub turn: u64,
-    /// Tokens counted across every run in this session.
+    /// Tokens counted since this view opened. A resume restarts the
+    /// count: the counters describe the conversation on screen, and a
+    /// resumed log replays runs whose usage the live stream never sees.
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     /// True while a run is in flight.
@@ -130,6 +144,9 @@ pub struct App {
     /// turn's next event arrives.
     streaming: String,
     pub input: String,
+    /// The input cursor, a character index into `input`. Editing keeps
+    /// it clamped to the input's length, so it never points past a char.
+    pub cursor: usize,
     pub mode: Mode,
     /// The picker's rows, oldest first, exactly as `session::list` returns.
     pub sessions: Vec<SessionSummary>,
@@ -152,6 +169,7 @@ impl App {
             entries: Vec::new(),
             streaming: String::new(),
             input: String::new(),
+            cursor: 0,
             mode: Mode::Chat,
             sessions: Vec::new(),
             selected: 0,
@@ -212,7 +230,31 @@ impl App {
                     None
                 }
                 Action::Backspace => {
-                    self.input.pop();
+                    self.backspace();
+                    None
+                }
+                Action::Delete => {
+                    self.delete();
+                    None
+                }
+                Action::DeleteWord => {
+                    self.delete_word();
+                    None
+                }
+                Action::CursorLeft => {
+                    self.cursor_left();
+                    None
+                }
+                Action::CursorRight => {
+                    self.cursor_right();
+                    None
+                }
+                Action::CursorHome => {
+                    self.cursor = 0;
+                    None
+                }
+                Action::CursorEnd => {
+                    self.cursor = self.input.chars().count();
                     None
                 }
                 Action::Submit => self.submit(),
@@ -321,6 +363,12 @@ impl App {
         self.following = true;
         self.status.turn = 0;
         self.status.working = false;
+        // The counters belong to the view being replaced, not to the log
+        // being replayed: the resumed conversation's earlier runs never
+        // streamed through here, so the count restarts at zero.
+        self.status.prompt_tokens = 0;
+        self.status.completion_tokens = 0;
+        self.clamp_cursor();
     }
 
     /// The conversation's text, streaming tail included, for rendering.
@@ -332,11 +380,91 @@ impl App {
         lines
     }
 
-    /// Type one character, honoring the input cap.
+    /// Type one character at the cursor, honoring the input cap.
     pub fn push_input(&mut self, character: char) {
         if self.input.chars().count() < MAX_INPUT {
-            self.input.push(character);
+            let byte = self.char_index_to_byte(self.cursor);
+            self.input.insert(byte, character);
+            self.cursor += 1;
         }
+    }
+
+    /// Insert pasted text at the cursor without submitting it: a paste is
+    /// typing, never an Enter. Terminals disagree on the line ending they
+    /// deliver inside a bracketed paste — `\n`, `\r\n`, or a bare `\r`
+    /// (tmux's choice) — and all of them mean a newline here. One
+    /// trailing newline is stripped, the one terminals append to the
+    /// payload, and the cap still applies so a runaway paste truncates
+    /// instead of growing forever.
+    pub fn paste(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        let text = text.strip_suffix('\n').unwrap_or(&text);
+        let room = MAX_INPUT.saturating_sub(self.input.chars().count());
+        let inserted: String = text.chars().take(room).collect();
+        let byte = self.char_index_to_byte(self.cursor);
+        self.input.insert_str(byte, &inserted);
+        self.cursor += inserted.chars().count();
+    }
+
+    /// Delete the character before the cursor.
+    pub fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let byte = self.char_index_to_byte(self.cursor - 1);
+        self.cursor -= 1;
+        self.input.remove(byte);
+    }
+
+    /// Delete the character at the cursor, pulling the tail left.
+    pub fn delete(&mut self) {
+        if self.cursor >= self.input.chars().count() {
+            return;
+        }
+        let byte = self.char_index_to_byte(self.cursor);
+        self.input.remove(byte);
+    }
+
+    /// Delete the word before the cursor: the run of non-space characters
+    /// plus the spaces in front of it, the way a shell's alt+backspace
+    /// eats a word.
+    pub fn delete_word(&mut self) {
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut start = self.cursor;
+        while start > 0 && chars[start - 1] == ' ' {
+            start -= 1;
+        }
+        while start > 0 && chars[start - 1] != ' ' {
+            start -= 1;
+        }
+        let from = self.char_index_to_byte(start);
+        let to = self.char_index_to_byte(self.cursor);
+        self.input.replace_range(from..to, "");
+        self.cursor = start;
+    }
+
+    /// Move the cursor one character left, stopping at the start.
+    pub fn cursor_left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    /// Move the cursor one character right, stopping at the end.
+    pub fn cursor_right(&mut self) {
+        self.cursor = (self.cursor + 1).min(self.input.chars().count());
+    }
+
+    /// Keep the cursor inside the input after anything else changes it.
+    fn clamp_cursor(&mut self) {
+        self.cursor = self.cursor.min(self.input.chars().count());
+    }
+
+    /// The byte offset of the `index`-th character.
+    fn char_index_to_byte(&self, index: usize) -> usize {
+        self.input
+            .char_indices()
+            .nth(index)
+            .map(|(byte, _)| byte)
+            .unwrap_or(self.input.len())
     }
 
     fn submit(&mut self) -> Option<Effect> {
@@ -345,6 +473,7 @@ impl App {
             return None;
         }
         self.input.clear();
+        self.cursor = 0;
         // The headless chat's `/exit` and `/quit` keep their meaning here.
         if text == "/exit" || text == "/quit" {
             self.should_quit = true;
@@ -357,6 +486,12 @@ impl App {
     }
 
     fn pick_session(&mut self) -> Option<Effect> {
+        // Resuming mid-run would mix the in-flight run's tokens into the
+        // seeded view: the log stays correct, the counters would not.
+        if self.status.working {
+            self.error = Some("wait for the run to finish before resuming a session".to_string());
+            return None;
+        }
         let picked = self.sessions.get(self.selected)?.id.clone();
         self.mode = Mode::Chat;
         Some(Effect::Resume(picked))
@@ -477,8 +612,143 @@ mod tests {
             app.push_input('x');
         }
         assert_eq!(app.input.chars().count(), MAX_INPUT);
+        assert_eq!(app.cursor, MAX_INPUT);
         app.apply(Action::Backspace);
         assert_eq!(app.input.chars().count(), MAX_INPUT - 1);
+        assert_eq!(app.cursor, MAX_INPUT - 1);
+    }
+
+    #[test]
+    fn typing_edits_at_the_cursor_not_the_end() {
+        let mut app = app();
+        for character in "ac".chars() {
+            app.apply(Action::Input(character));
+        }
+        // Park the cursor between the two characters.
+        app.apply(Action::CursorHome);
+        app.apply(Action::CursorRight);
+        assert_eq!(app.cursor, 1);
+        app.apply(Action::Input('b'));
+        assert_eq!(app.input, "abc");
+        assert_eq!(app.cursor, 2);
+        // Backspace eats the character before the cursor.
+        app.apply(Action::Backspace);
+        assert_eq!(app.input, "ac");
+        assert_eq!(app.cursor, 1);
+        // Delete eats the character at the cursor.
+        app.apply(Action::Delete);
+        assert_eq!(app.input, "a");
+        assert_eq!(app.cursor, 1);
+        // Delete at the end is a no-op, never a panic.
+        app.apply(Action::Delete);
+        assert_eq!(app.input, "a");
+    }
+
+    #[test]
+    fn the_cursor_clamps_at_both_ends() {
+        let mut app = app();
+        for character in "hi".chars() {
+            app.apply(Action::Input(character));
+        }
+        app.apply(Action::CursorHome);
+        assert_eq!(app.cursor, 0);
+        // Left at the start and right past the end both saturate.
+        app.apply(Action::CursorLeft);
+        assert_eq!(app.cursor, 0);
+        app.apply(Action::CursorEnd);
+        assert_eq!(app.cursor, 2);
+        app.apply(Action::CursorRight);
+        assert_eq!(app.cursor, 2);
+        // Editing keeps the cursor inside the input it just changed.
+        app.apply(Action::CursorHome);
+        app.apply(Action::Backspace);
+        assert_eq!(app.cursor, 0);
+        assert_eq!(app.input, "hi");
+    }
+
+    #[test]
+    fn word_delete_eats_the_word_before_the_cursor() {
+        let mut app = app();
+        app.paste("one two three");
+        app.apply(Action::DeleteWord);
+        assert_eq!(app.input, "one two ");
+        assert_eq!(app.cursor, 8);
+        app.apply(Action::DeleteWord);
+        assert_eq!(app.input, "one ");
+        app.apply(Action::DeleteWord);
+        assert_eq!(app.input, "");
+        // Nothing left to eat, and still no panic.
+        app.apply(Action::DeleteWord);
+        assert_eq!(app.input, "");
+        assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn paste_types_without_submitting() {
+        let mut typed = app();
+        typed.paste("line one\nline two");
+        // No Enter, no submit: the newlines are input newlines.
+        assert_eq!(typed.input, "line one\nline two");
+        assert_eq!(typed.cursor, 17);
+        assert_eq!(typed.entries.len(), 0);
+        // A single trailing newline is the terminal's, not the user's.
+        typed.paste(" more\n");
+        assert_eq!(typed.input, "line one\nline two more");
+        // Terminals deliver paste line endings three ways; all of them
+        // are newlines here (tmux sends a bare \r).
+        let mut carriage = app();
+        carriage.paste("one\rtwo\r");
+        assert_eq!(carriage.input, "one\ntwo");
+        let mut crlf = app();
+        crlf.paste("one\r\ntwo\r\n");
+        assert_eq!(crlf.input, "one\ntwo");
+        // The cap still applies to a runaway paste.
+        let mut greedy = app();
+        greedy.paste(&"x".repeat(MAX_INPUT + 50));
+        assert_eq!(greedy.input.chars().count(), MAX_INPUT);
+        assert_eq!(greedy.cursor, MAX_INPUT);
+    }
+
+    #[test]
+    fn resume_is_refused_while_a_run_is_in_flight() {
+        let mut app = app();
+        app.open_sessions(vec![summary("other")]);
+        app.apply_ui_event(UiEvent::Turn(1));
+        // The picker stays open, the error explains why, nothing resumes.
+        let effect = app.apply(Action::Pick);
+        assert_eq!(effect, None);
+        assert_eq!(app.mode, Mode::Sessions);
+        assert_eq!(
+            app.error.as_deref(),
+            Some("wait for the run to finish before resuming a session")
+        );
+        // Once the run ends, the same pick resumes.
+        app.apply_ui_event(UiEvent::Finished { stop_reason: "completed".to_string() });
+        app.error = None;
+        let effect = app.apply(Action::Pick).unwrap();
+        assert_eq!(effect, Effect::Resume("other".to_string()));
+        assert_eq!(app.mode, Mode::Chat);
+    }
+
+    #[test]
+    fn seeding_resets_the_token_counters() {
+        let mut app = app();
+        app.apply_status(StatusUpdate::Usage(Usage {
+            prompt_tokens: 40,
+            completion_tokens: 12,
+            total_tokens: 52,
+        }));
+        app.seed(&[Record::User { content: "old task".to_string() }]);
+        assert_eq!(app.status.prompt_tokens, 0);
+        assert_eq!(app.status.completion_tokens, 0);
+        // The count then runs for the resumed conversation only.
+        app.apply_status(StatusUpdate::Usage(Usage {
+            prompt_tokens: 7,
+            completion_tokens: 3,
+            total_tokens: 10,
+        }));
+        assert_eq!(app.status.prompt_tokens, 7);
+        assert_eq!(app.status.completion_tokens, 3);
     }
 
     #[test]

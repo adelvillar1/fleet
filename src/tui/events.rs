@@ -37,7 +37,7 @@ pub fn action_for(app: &App, key: &KeyEvent) -> Option<Action> {
     }
 }
 
-/// The chat pane's keys: typing, submitting, overlays, scrolling.
+/// The chat pane's keys: typing, editing, submitting, overlays, scrolling.
 fn chat_action(app: &App, key: &KeyEvent, control: bool, alt: bool) -> Option<Action> {
     match key.code {
         KeyCode::Enter => {
@@ -48,7 +48,15 @@ fn chat_action(app: &App, key: &KeyEvent, control: bool, alt: bool) -> Option<Ac
                 Some(Action::Submit)
             }
         }
+        // Editing keys: the cursor moves, deletes land at it.
+        KeyCode::Left => Some(Action::CursorLeft),
+        KeyCode::Right => Some(Action::CursorRight),
+        KeyCode::Home => Some(Action::CursorHome),
+        KeyCode::End => Some(Action::CursorEnd),
+        KeyCode::Delete => Some(Action::Delete),
+        KeyCode::Backspace if alt => Some(Action::DeleteWord),
         KeyCode::Backspace => Some(Action::Backspace),
+        KeyCode::Char('w') if control => Some(Action::DeleteWord),
         KeyCode::Tab => Some(Action::Input('\t')),
         KeyCode::Up => Some(Action::Scroll(1)),
         KeyCode::Down => Some(Action::Scroll(-1)),
@@ -122,6 +130,29 @@ mod tests {
         assert_eq!(action_for(&app, &key(KeyCode::Up)), Some(Action::Scroll(1)));
         assert_eq!(action_for(&app, &key(KeyCode::PageUp)), Some(Action::Scroll(10)));
         assert_eq!(action_for(&app, &key(KeyCode::PageDown)), Some(Action::Scroll(-10)));
+    }
+
+    #[test]
+    fn the_editing_keys_move_and_delete_at_the_cursor() {
+        let typing = app();
+        assert_eq!(action_for(&typing, &key(KeyCode::Left)), Some(Action::CursorLeft));
+        assert_eq!(action_for(&typing, &key(KeyCode::Right)), Some(Action::CursorRight));
+        assert_eq!(action_for(&typing, &key(KeyCode::Home)), Some(Action::CursorHome));
+        assert_eq!(action_for(&typing, &key(KeyCode::End)), Some(Action::CursorEnd));
+        assert_eq!(action_for(&typing, &key(KeyCode::Delete)), Some(Action::Delete));
+        assert_eq!(action_for(&typing, &key(KeyCode::Backspace)), Some(Action::Backspace));
+        // Word delete answers to alt+backspace and to ctrl+w.
+        let alt_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::ALT);
+        assert_eq!(action_for(&typing, &alt_backspace), Some(Action::DeleteWord));
+        assert_eq!(
+            action_for(&typing, &control(KeyCode::Char('w'))),
+            Some(Action::DeleteWord)
+        );
+        // The picker ignores the chat's editing keys.
+        let mut picking = app();
+        picking.open_sessions(Vec::new());
+        assert_eq!(action_for(&picking, &key(KeyCode::Left)), None);
+        assert_eq!(action_for(&picking, &key(KeyCode::Delete)), None);
     }
 
     #[test]
