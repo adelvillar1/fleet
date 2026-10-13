@@ -25,7 +25,7 @@ The fork is therefore the **spec and integration lab**, not a shipping competito
 
 "As self-improving as technically possible" is defined here as a **ladder of closed loops**, each earning the next on evidence — not a single feature:
 
-1. **Remember** — durable facts with a lifecycle: consolidate, supersede, forget (slice 8).
+1. **Remember** — the semantic layer: git-tracked facts with provenance and lifecycle, hybrid shape-routed recall with a probed vector path, scheduled consolidation (slice 8).
 2. **Learn procedures** — skills the harness itself authors and maintains from session outcomes (slice 7).
 3. **Calibrate** — every decision and every outcome graded into the dev-decisions stream; autonomy earned on evidence (slice 5).
 4. **Self-maintain** — the harness proposes and applies changes to its own skills, memory, and config under gates (slice 12), with source-level self-editing as its gated extension path.
@@ -79,9 +79,27 @@ A ratatui interface over the async core: chat and run panes with streamed tokens
 
 SKILL.md loading from a skills directory with frontmatter, progressive disclosure (description first, body on demand), and selection by the loop. Spec: the fork's `packages/skill` and the owner's existing skill conventions. **The self-improving half**: after a session, the harness drafts the SKILL.md creations and updates its outcomes justify — the owner's own protocol (difficult task → lesson → skill) executed by the harness — and files them as proposals through slice 12's gate, never applied silently. Curation uses recall data: unused skills are proposed for retirement, near-duplicates for merge. AC: skills load with malformed ones skipped by name; a relevant skill's body enters context when selected; `fleet skills` lists them; a session's lessons surface as drafted skill updates awaiting the gate.
 
-### Slice 8 — memory (the brain)
+### Slice 8 — the semantic layer: memory that ranks, routes, and protects
 
-Durable facts in a git-tracked `memories/` tree (one file per fact with lifecycle frontmatter — recall-count, superseded-by, valid-until, and `basis` recording confirmed-by-user vs inferred) plus sem1-indexed recall over session journals and skills, refreshed before each instruction; a `brain_remember`-shaped write path; a consolidation cycle on a timer that compresses old working memory into episodic summaries, supersedes stale facts, and forgets expired ones. Spec: `@fleet/dsh-brain` and the fork's Wave D slices. AC: facts persist across sessions; recall returns ranked matches for a new instruction; the consolidation cycle runs and its actions are logged as calibration rows.
+The memory design merges the two implementations the owner already runs, fixing each one's weakness. Six parts:
+
+**Substrate — git-tracked fact files.** One markdown file per durable fact under `memories/`, frontmatter carrying `name`, `description`, `type`, `date`, `shape`, and the lifecycle fields `recall-count`, `superseded-by`, `valid-until`, and — load-bearing — `basis: confirmed-by | inferred`. Human-readable, diffable, and structurally reversible: a bad fact is a revert, which is what slice 12's gated self-modification requires. The fork's `memories/` tree (234 facts in exactly this shape) is the spec.
+
+**Retrieval — hybrid ranking with the vector path probed, not assumed.** Embeddings (a small local model, bge-small-en-v1.5 class, CPU, no network, no key) + keyword/FTS + importance + temporal decay, weights tunable. The lesson from the live system — where the embedding stack is absent and recall silently degrades to keyword matching over 11k entries — is that **the vector path is a probed, named dependency**: `doctor` checks it, and its absence degrades recall to keyword with one named line, never silently. Recall refreshes before each new instruction (the fork's brain pattern). The every-turn path owns its index in-process rather than depending on the sem1 child; sem1 (slice 3) stays available for the bulk corpus — workspace files, code symbols — where latency does not matter.
+
+**Routing — shape-routed recall.** The incoming instruction classifies into one structure shape from a curated keyword vocabulary (`rendering`, `state-sync`, `deploy`, `build`, `change`, `deps`, `docs` — the fork's Wave D taxonomy, keyword-backed rather than model-backed after the model path proved unreliable), and retrieval routes by it. An unclassifiable instruction answers from the surface alone — the documented fallback, not an error.
+
+**Feedback — the measure rung.** A recall hit updates the fact's `recall-count` and its rank; importance is earned by use, not asserted at write. Never-recalled facts age toward consolidation. Recall hits and consolidation actions land in the calibration stream (slice 5) as rows, so the loop's effect is auditable.
+
+**Writes and tiering — mechanism over prose, and the protected tier.** `valid-until` is required for session-scoped facts and defaulted for working memory; durable writes record `basis`; the write path is `brain_remember`-shaped (the fork's vocabulary). Three speeds: working (session-scoped, expiring), durable (basis-recorded), episodic (consolidated summaries). **The deviation from both current designs**: identity and standing preferences are a protected tier the injection budget can never evict — the fix for the live system's mis-tiered cap, where the most load-bearing facts contend with task facts in the smallest space. Turn context is *assembled* (protected tier + shape-routed recall + recent working memory, budget-aware) rather than dumped whole; the observed fixed-dump failure — a live session injecting terrain-rendering and lead-pipeline facts into a turn about the memory design — is the behavior to avoid.
+
+**Consolidation — scheduled, not manual.** A timer runs the cycle: compress old working memory into episodic summaries, supersede stale facts, forget expired ones, log every action as a calibration row. The live system's consolidation is manual and its episodic store has been dormant for weeks — the timer is the fix.
+
+**Provenance as the permission model (feeds slice 12).** Inferred facts are proposals the self-maintenance loop may supersede on its own justification; confirmed-by facts are load-bearing and require approval to modify or delete. Memory provenance becomes the guardrail's input, not just metadata.
+
+Spec: the fork's `@fleet/dsh-brain` and the Wave D slices (durable-fact lane, shape-routed recall, out-of-process indexing), the fork's `memories/` tree as the substrate, and the live Mnemosyne's hybrid-ranking design — ported with the five fixes above (probed vector path, recall-hit feedback, scheduled consolidation, protected tier, mechanism-constrained writes).
+
+AC: facts persist across sessions and a bad one reverts cleanly; recall returns ranked matches for a new instruction and re-ranks on hits; with the embedding model present the vector path serves, with it absent `doctor` names the degradation and keyword recall still answers; a session-scoped fact expires on its `valid-until`; the consolidation cycle runs on its timer and logs rows; the protected tier survives an injection-budget pressure test; a confirmed-by fact cannot be modified without approval while an inferred one is supersedable by a justified proposal.
 
 ### Slice 9 — subagents
 
@@ -97,7 +115,7 @@ Cron-shaped scheduling with a persistent job store, catch-up on missed runs, and
 
 ### Slice 12 — self-maintenance under gates (the loop closes)
 
-New `src/improve.rs`: the harness maintains **its own** skills, memory, and config. Every change is a proposal — a plan with acceptance criteria, a diff, and an expected effect — that applies only when: the local gate is green, the change is non-destructive or explicitly approved in the current turn, and the proposal is recorded in the calibration ledger. Every applied change is reversible (git-tracked substrates make this structural). **Stage 2 — self-editing**: the same gate structure extended to source patches — the harness proposes a change to its own Rust, the proposal carries the failing test or graded outcome that justifies it, and it applies only with fmt/clippy/build/test green plus approval. Spec: the fork's runtime self-modification surface (`packages/extensions` — runtime API inspection, process-local runners, creator-mode plugin installation through Plugin Manager) and the owner's plan-gate protocol. AC: a session's justified skill update applies through the gate and appears in the ledger; a proposal that fails the gate is refused with the failure named; a destructive proposal waits for approval; an applied change reverts cleanly; a source-level proposal runs the full gate before applying.
+New `src/improve.rs`: the harness maintains **its own** skills, memory, and config. Every change is a proposal — a plan with acceptance criteria, a diff, and an expected effect — that applies only when: the local gate is green, the change is non-destructive or explicitly approved in the current turn, and the proposal is recorded in the calibration ledger. Every applied change is reversible (git-tracked substrates make this structural). Memory changes follow the provenance rule from slice 8: inferred facts are supersedable on the loop's own justification; confirmed-by facts require approval. **Stage 2 — self-editing**: the same gate structure extended to source patches — the harness proposes a change to its own Rust, the proposal carries the failing test or graded outcome that justifies it, and it applies only with fmt/clippy/build/test green plus approval. Spec: the fork's runtime self-modification surface (`packages/extensions` — runtime API inspection, process-local runners, creator-mode plugin installation through Plugin Manager) and the owner's plan-gate protocol. AC: a session's justified skill update applies through the gate and appears in the ledger; a proposal that fails the gate is refused with the failure named; a destructive proposal waits for approval; an applied change reverts cleanly; a source-level proposal runs the full gate before applying.
 
 ### Slice 13 — self-diagnosis and the eval corpus
 
@@ -116,7 +134,7 @@ Native read-only surfaces: router board (the kit's operator API), second-brain b
 - C1: `fleet install` on a clean machine produces a working home; `fleet doctor` green.
 - C2: `fleet chat` streams; routes across the roster with sys1 judgment and failover; completes a real multi-step task end to end.
 - C3: all four lanes callable as tools inside a run; calibration rows land in the dev-decisions stream and `devdec` reads them.
-- C4: skills load and are selected; durable memory persists across sessions and recalls by shape.
+- C4: skills load and are selected; durable memory persists across sessions, recalls by shape with hybrid ranking, re-ranks on recall hits, and protects confirmed-by facts from unapproved modification.
 - C5: subagents run isolated tasks; the parent verifies their results.
 - C6: sessions survive compaction and resume; a scheduled task fires on time and after a missed window.
 - C7: the three boards render real data read-only; a refused read keeps the last snapshot.
@@ -130,7 +148,8 @@ Native read-only surfaces: router board (the kit's operator API), second-brain b
 - `src/api.rs` — streaming rework (slice 2).
 - `src/agent.rs` — async loop, MCP tool registration, routing hook, calibration hook.
 - `src/mcp.rs`, `src/route.rs`, `src/calib.rs` — new (slices 3–5).
-- `src/tui/`, `src/skills.rs`, `src/memory.rs`, `src/subagent.rs`, `src/compact.rs`, `src/cron.rs` — new (slices 6–11).
+- `src/tui/`, `src/skills.rs`, `src/subagent.rs`, `src/compact.rs`, `src/cron.rs` — new (slices 6–11).
+- `src/memory/` (substrate, index, routing, recall, consolidation) and the `memories/` fact tree — new (slice 8).
 - `src/improve.rs`, `src/diagnose.rs`, `eval/` — new (slices 12–13).
 - `src/boards/`, `src/install.rs` — new (slices 14–15).
 - `services/` — the vendored cores with `VENDOR.json` (slice 3).
