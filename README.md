@@ -2,7 +2,7 @@
 
 Fleet is a native Rust agent for the [DeepSeek API](https://api-docs.deepseek.com): one static binary with its own HTTP client, agent loop, tools, and session persistence. It has no Node runtime, no profile bundles, and no dependency on a DeepSeek Harness checkout — `cargo build` from this directory is the whole install.
 
-Fleet is based on DeepSeek Harness: the agent-loop discipline, the append-only session log, the model-visible-implies-logged rule, and the tool-approval posture all follow the harness's architecture, reimplemented natively in Rust. Both projects are MIT-licensed; see [LICENSE](../LICENSE).
+Fleet is based on DeepSeek Harness: the agent-loop discipline, the append-only session log, the model-visible-implies-logged rule, and the tool-approval posture all follow the harness's architecture, reimplemented natively in Rust. Fleet is MIT-licensed; see [LICENSE](LICENSE). DeepSeek Harness is separately MIT-licensed by its authors.
 
 ## Status
 

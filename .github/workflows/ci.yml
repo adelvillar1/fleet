@@ -1,0 +1,30 @@
+# One job: fmt, clippy, build, test. That is deliberately the whole CI.
+#
+# The suite is zero-real-network by design: every integration test spawns the
+# crate's own mock chat-completions server (src/bin/mock-server.rs) as a child
+# process and talks to loopback. The one real-API test is #[ignore]d, so a
+# keyless run is green on its own.
+#
+# Deliberately NOT copied from bigger projects: multi-OS sharding, release
+# builds, duration-sequenced shards. One green job on ubuntu-latest is the
+# gate; per-OS release binaries are a later slice, not a CI concern yet.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo build --release
+      - run: cargo test
