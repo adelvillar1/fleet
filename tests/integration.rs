@@ -2354,8 +2354,15 @@ async fn the_real_sys1_lane_exposes_the_classify_schema() {
     match schema {
         Some(schema) => {
             // The route call sends {"task": "route", "text": …}; the schema
-            // must make `text` required and carry a `task` default.
-            assert_eq!(schema["required"], serde_json::json!(["text"]));
+            // must make `text` required and carry a `task` default. The
+            // required check tolerates ADDED fields — a re-vendored sys1
+            // that gains a required field must not break this canary; the
+            // default stays exact.
+            let required = schema["required"].as_array().cloned().unwrap_or_default();
+            assert!(
+                required.iter().any(|field| field == "text"),
+                "sys1_classify must require `text`: {required:?}"
+            );
             assert_eq!(schema["properties"]["task"]["default"], "change");
         }
         None => eprintln!(

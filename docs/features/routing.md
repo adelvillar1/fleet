@@ -46,16 +46,26 @@ fail them). A candidate that starts streaming is committed: a mid-stream
 failure fails the run typed, with no silent restart. Each attempt and the
 final choice are recorded.
 
+There is no per-candidate budget — each attempt inherits the client's single
+overall timeout (600 s). The worst case is therefore bounded but large:
+every candidate hanging to timeout costs (chain length − start) × 600 s,
+about an hour for a full chain. In practice a dead candidate fails in
+milliseconds (connection refused); the hour case needs every candidate to
+accept a connection and then stall.
+
 ## The decision row
 
 Every routing decision appends one `devdec`-vocabulary JSONL row to
 `<FLEET_HOME>/logs/events-<UTC date>.jsonl` — `op: "route"`, the selected
 and served provider, `how` (judged/fallback/pinned), the workload and
 verdict, every attempt with its failure class, and a content hash of the
-task (never the text). The append is serialized process-wide and
-best-effort: a full disk is logged, never fatal. Slice 6 (`src/calib.rs`)
-formalizes this writer and aligns the log root with dev-decisions so the
-`devdec` CLI reads these rows beside its own.
+task (never the text). The append is a single `write_all` under O_APPEND, so
+two fleet processes cannot interleave a row, and is serialized process-wide
+and best-effort: a full disk is logged, never fatal. The log line goes to
+stderr — visible in a headless run, invisible under the TUI, whose failure
+surface is its own error bar. Slice 6 (`src/calib.rs`) formalizes this writer
+and aligns the log root with dev-decisions so the `devdec` CLI reads these
+rows beside its own.
 
 ## Surfaces
 
@@ -82,5 +92,7 @@ formalizes this writer and aligns the log root with dev-decisions so the
 ```
 
 An invalid config file fails startup with a typed, named error — never
-silently ignored. A new provider id must be fully specified (base_url,
-key_env, model) to be added; a partial one is a named error.
+silently ignored. Unknown fields are rejected the same way: a misspelled
+override (`keyenv`) fails the load rather than vanishing. A new provider id
+must be fully specified (base_url, key_env, model) to be added; a partial one
+is a named error.

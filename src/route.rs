@@ -191,8 +191,12 @@ struct ConfigFile {
 }
 
 /// One provider override in the config file. Any subset of fields; a bare
-/// `{"id": …}` toggles nothing but still addresses the entry.
+/// `{"id": …}` toggles nothing but still addresses the entry. Unknown
+/// fields are rejected, not ignored: a misspelled override (`keyenv`)
+/// fails the load the way a misspelled id does — loud beats silent for a
+/// hand-written config.
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProviderEntry {
     id: String,
     #[serde(default)]
@@ -729,6 +733,14 @@ impl Router {
 
         let mut last_error: Option<ClientError> = None;
         for index in start..self.resolved.len() {
+            if !self.resolved[index].candidate.enabled {
+                self.record(Attempt {
+                    provider: self.resolved[index].id().to_string(),
+                    outcome: "skipped",
+                    class: Some("disabled"),
+                });
+                continue;
+            }
             if !self.resolved[index].usable() {
                 self.record(Attempt {
                     provider: self.resolved[index].id().to_string(),
@@ -878,11 +890,12 @@ impl DecisionLog {
         let _guard = lock(&WRITE_LOCK);
         match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
             Ok(mut file) => {
-                if let Err(error) = file
-                    .write_all(line.as_bytes())
-                    .and_then(|_| file.write_all(b"\n"))
-                    .and_then(|_| file.flush())
-                {
+                // One write, not two: under O_APPEND a single write_all is
+                // atomic enough that two fleet processes appending side by
+                // side cannot interleave into a corrupt line.
+                let mut payload = line.into_bytes();
+                payload.push(b'\n');
+                if let Err(error) = file.write_all(&payload).and_then(|_| file.flush()) {
                     eprintln!(
                         "fleet: the route decision log append failed (best-effort, the run is unaffected): {error}"
                     );
