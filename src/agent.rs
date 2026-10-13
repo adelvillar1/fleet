@@ -4,7 +4,7 @@
 //! Every message is recorded to the session log as it happens, so the log
 //! always contains exactly what the model saw.
 
-use crate::api::{ChatRequest, Client, ClientError, Message, Role, ToolCall, Usage};
+use crate::api::{ChatRequest, Client, ClientError, Message, Role, StreamEvent, ToolCall, Usage};
 use crate::session::{Record, Session};
 use crate::tools::{Tool, ALL_TOOLS};
 use std::io::Write;
@@ -183,7 +183,13 @@ impl<'a> Agent<'a> {
     /// Run `task` to a stop. The session log receives every message and the
     /// `end` record; an API error leaves the log without `end`, which is the
     /// documented interrupted-log shape.
-    pub fn run(&mut self, task: &str) -> Result<RunReport, AgentError> {
+    ///
+    /// The exchange is streamed: content deltas are written to `progress`
+    /// as raw text with no formatting, so a headless run shows tokens live
+    /// and a TUI receives the same events. The assembled assistant message
+    /// is logged once, exactly as before — deltas are transport, not log
+    /// content.
+    pub async fn run(&mut self, task: &str) -> Result<RunReport, AgentError> {
         self.push_message(Message::text(Role::User, task))?;
         while self.turns < self.options.max_turns as u64 {
             self.turns += 1;
@@ -201,7 +207,17 @@ impl<'a> Agent<'a> {
                 messages: &request_messages,
                 tools: ALL_TOOLS.iter().map(|tool| tool.spec()).collect(),
             };
-            let response = self.client.chat(&request).map_err(AgentError::Api)?;
+            let client = self.client;
+            let progress = &mut *self.progress;
+            let response = client
+                .chat_stream(&request, |event| {
+                    if let StreamEvent::Content(delta) = event {
+                        let _ = progress.write_all(delta.as_bytes());
+                        let _ = progress.flush();
+                    }
+                })
+                .await
+                .map_err(AgentError::Api)?;
             self.usage.prompt_tokens += response.usage.prompt_tokens;
             self.usage.completion_tokens += response.usage.completion_tokens;
             let choice = response.choices.into_iter().next().ok_or_else(|| {

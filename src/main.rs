@@ -14,7 +14,8 @@ use fleet::home::{self, resolve_setting};
 use fleet::net;
 use fleet::session::{self, Session};
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match cli::parse(&args) {
         Ok(Command::Help) => {
@@ -25,8 +26,8 @@ fn main() -> ExitCode {
             println!("fleet {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
-        Ok(Command::Run(options)) => run_command(&options),
-        Ok(Command::Chat(options)) => chat_command(&options),
+        Ok(Command::Run(options)) => run_command(&options).await,
+        Ok(Command::Chat(options)) => chat_command(&options).await,
         Ok(Command::Sessions) => sessions_command(),
         Ok(Command::Doctor) => doctor_command(),
         Err(message) => {
@@ -81,7 +82,7 @@ fn fleet_home() -> Result<std::path::PathBuf, String> {
     home::fleet_home(std::env::var("FLEET_HOME").ok().as_deref(), user_home.as_deref())
 }
 
-fn run_command(options: &RunOptions) -> ExitCode {
+async fn run_command(options: &RunOptions) -> ExitCode {
     let credentials = match credentials() {
         Ok(credentials) => credentials,
         Err(code) => return code,
@@ -108,7 +109,9 @@ fn run_command(options: &RunOptions) -> ExitCode {
         options.yes,
         &mut session,
         &options.task,
-    ) {
+    )
+    .await
+    {
         Ok(report) => match report.stop_reason {
             StopReason::Completed => ExitCode::SUCCESS,
             StopReason::MaxTurns => {
@@ -127,7 +130,7 @@ fn run_command(options: &RunOptions) -> ExitCode {
     }
 }
 
-fn chat_command(options: &ChatOptions) -> ExitCode {
+async fn chat_command(options: &ChatOptions) -> ExitCode {
     let credentials = match credentials() {
         Ok(credentials) => credentials,
         Err(code) => return code,
@@ -169,7 +172,8 @@ fn chat_command(options: &ChatOptions) -> ExitCode {
             options.yes,
             &mut session,
             trimmed,
-        );
+        )
+        .await;
         match outcome {
             Ok(_) => {}
             // A failed log write makes the session unsafe to continue.
@@ -185,7 +189,7 @@ fn chat_command(options: &ChatOptions) -> ExitCode {
 }
 
 /// Build the agent and run `task`, printing the final answer to stdout.
-fn drive(
+async fn drive(
     credentials: &Credentials,
     model: String,
     max_turns: usize,
@@ -199,7 +203,7 @@ fn drive(
         if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };
     let mut progress = std::io::stderr().lock();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress)?;
-    let report = agent.run(task)?;
+    let report = agent.run(task).await?;
     if let Some(answer) = &report.final_message {
         println!("\n{answer}\n");
     }

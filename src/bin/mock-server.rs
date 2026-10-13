@@ -10,14 +10,19 @@
 //! mock-server <responses.jsonl> <requests.jsonl> <port-file>
 //! ```
 //!
-//! The script is JSONL, one response per line: `{"status":"200 OK","body":…}`.
-//! Every served request is appended to the requests log as
+//! The script is JSONL, one response per line. A plain line is
+//! `{"status":"200 OK","body":…}` and is answered as one document. A
+//! streaming line is `{"status":"200 OK","sse":["data: {…}","data: [DONE]"]}`
+//! and is answered as a chunkless SSE body: `Connection: close`, no
+//! `Content-Length`, so the client reads to EOF exactly as it does against
+//! the real API. Every served request is appended to the requests log as
 //! `{"head":…,"body":…}` so the test can assert on what arrived.
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::Path;
+use std::time::Duration;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -26,12 +31,11 @@ fn main() {
     let port_path = args.next().expect("usage: mock-server <responses> <requests> <port-file>");
 
     let script = std::fs::read_to_string(&script_path).expect("read the response script");
-    let mut responses: VecDeque<(String, String)> = script
+    let mut responses: VecDeque<ScriptedResponse> = script
         .lines()
         .filter(|line| !line.is_empty())
         .map(|line| {
-            let scripted: ScriptedResponse = serde_json::from_str(line).expect("a scripted line");
-            (scripted.status, scripted.body)
+            serde_json::from_str(line).expect("a scripted line")
         })
         .collect();
 
@@ -45,7 +49,7 @@ fn main() {
         let Some((head, body)) = read_request_and_body(&mut stream) else { break };
         record_request(Path::new(&requests_path), &head, &body);
         match responses.pop_front() {
-            Some((status, response_body)) => write_response(&mut stream, &status, &response_body),
+            Some(scripted) => write_scripted(&mut stream, &scripted),
             None => write_response(
                 &mut stream,
                 "500 Internal Server Error",
@@ -55,11 +59,41 @@ fn main() {
     }
 }
 
-/// One scripted response line.
+/// One scripted response line: either a whole document or a list of raw SSE
+/// frames.
 #[derive(serde::Deserialize)]
 struct ScriptedResponse {
     status: String,
+    #[serde(default)]
     body: String,
+    /// Raw `data: …` frame strings, written as a close-delimited body.
+    #[serde(default)]
+    sse: Vec<String>,
+    /// Pause between SSE frames, simulating a model that types.
+    #[serde(default)]
+    delay_ms: u64,
+}
+
+/// Answer one connection from its scripted response.
+fn write_scripted(stream: &mut TcpStream, scripted: &ScriptedResponse) {
+    if scripted.sse.is_empty() {
+        write_response(stream, &scripted.status, &scripted.body);
+        return;
+    }
+    let head = format!(
+        "HTTP/1.1 {}\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+        scripted.status
+    );
+    let _ = stream.write_all(head.as_bytes());
+    for frame in &scripted.sse {
+        if scripted.delay_ms > 0 {
+            std::thread::sleep(Duration::from_millis(scripted.delay_ms));
+        }
+        let _ = stream.write_all(frame.as_bytes());
+        let _ = stream.write_all(b"\n\n");
+        let _ = stream.flush();
+    }
+    let _ = stream.shutdown(Shutdown::Write);
 }
 
 /// Read the head plus its `Content-Length`-bounded body.

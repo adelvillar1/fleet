@@ -107,6 +107,92 @@ pub struct ChatRequest<'a> {
     pub tools: Vec<ToolSpec>,
 }
 
+/// The streaming knobs carried beside a request. Absent on the
+/// non-streaming path, where the API answers with one whole document.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct StreamOptions {
+    /// Ask for the usage-only final chunk, so token accounting stays exact
+    /// on the streamed path.
+    pub include_usage: bool,
+}
+
+/// A streamed chat-completions request: the same shape plus `"stream": true`
+/// and the usage option that keeps accounting exact.
+#[derive(Debug, Serialize)]
+pub struct StreamRequest<'a> {
+    #[serde(flatten)]
+    pub request: &'a ChatRequest<'a>,
+    pub stream: bool,
+    pub stream_options: StreamOptions,
+}
+
+/// One event off a streamed completion. Deltas are transport, not state:
+/// `chat_stream` assembles them into the same `ChatResponse` `chat` returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamEvent {
+    /// One content delta: a token, a fragment of one, or a text chunk.
+    Content(String),
+    /// Every tool call the answer requested, assembled and complete.
+    ToolCalls(Vec<ToolCall>),
+    /// The request's token accounting, delivered once at the end.
+    Usage(Usage),
+}
+
+/// One SSE chunk's payload: the fields this crate reads. Everything else
+/// (ids, logprobs, system fingerprints) is transport detail.
+#[derive(Debug, Deserialize)]
+struct Chunk {
+    #[serde(default)]
+    choices: Vec<ChunkChoice>,
+    #[serde(default)]
+    usage: Option<Usage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChunkChoice {
+    #[serde(default)]
+    delta: ChunkDelta,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ChunkDelta {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ChunkToolCall>,
+}
+
+/// One tool-call delta, keyed by `index`: the fragments of a call arrive
+/// across chunks and concatenate into the whole.
+#[derive(Debug, Deserialize)]
+struct ChunkToolCall {
+    #[serde(default)]
+    index: usize,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<ChunkToolCallFunction>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ChunkToolCallFunction {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+/// A tool call under assembly: the first fragment names it, later ones
+/// extend its arguments.
+#[derive(Debug, Default)]
+struct ToolCallDraft {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ChatResponse {
     pub choices: Vec<Choice>,
@@ -122,7 +208,7 @@ pub struct Choice {
 }
 
 /// Token accounting for one request. Absent fields read as zero.
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 pub struct Usage {
     #[serde(default)]
     pub prompt_tokens: u64,
@@ -221,6 +307,196 @@ impl Client {
         }
         serde_json::from_str(&body).map_err(|error| ClientError::Decode(error.to_string()))
     }
+
+    /// One streamed chat completion. Every delta reaches `on_event` as it
+    /// arrives; the returned `ChatResponse` is the same assembled shape
+    /// `chat` produces, so callers keep one code path downstream.
+    ///
+    /// The blocking socket work runs on a spawned blocking task and crosses
+    /// to this async function over an unbounded channel: no `futures` Stream
+    /// trait, and the reader stops as soon as the receiver goes away.
+    pub async fn chat_stream(
+        &self,
+        request: &ChatRequest<'_>,
+        mut on_event: impl FnMut(StreamEvent),
+    ) -> Result<ChatResponse, ClientError> {
+        let url = format!("{}/chat/completions", self.base_url);
+        let key = self.api_key.clone();
+        let body = serde_json::to_vec(&StreamRequest {
+            request,
+            stream: true,
+            stream_options: StreamOptions { include_usage: true },
+        })
+        .map_err(|error| ClientError::Decode(error.to_string()))?;
+        let agent = self.agent.clone();
+
+        let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
+        let reader = tokio::task::spawn_blocking(move || {
+            let outcome = stream_response(&agent, &url, &key, &body, &events);
+            // Drop the sender inside the blocking task, so a read failure or
+            // a dropped receiver both end the pump instead of deadlocking.
+            drop(events);
+            outcome
+        });
+
+        let mut content = String::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut usage = Usage::default();
+        while let Some(event) = receiver.recv().await {
+            match &event {
+                StreamEvent::Content(delta) => content.push_str(delta),
+                StreamEvent::ToolCalls(calls) => tool_calls = calls.clone(),
+                StreamEvent::Usage(counted) => usage = *counted,
+            }
+            on_event(event);
+        }
+
+        // A pump that ended without a closing event failed; its error is the
+        // run's error. A stream that ended without one is a decode failure,
+        // exactly as on the non-streaming path.
+        let closed = reader.await.map_err(|error| ClientError::Network(error.to_string()))??;
+        if !closed {
+            return Err(ClientError::Decode("the stream ended without a completion".to_string()));
+        }
+        Ok(ChatResponse {
+            choices: vec![Choice {
+                message: Message {
+                    role: Role::Assistant,
+                    content: (!content.is_empty()).then_some(content),
+                    tool_calls,
+                    tool_call_id: None,
+                },
+                finish_reason: None,
+            }],
+            usage,
+        })
+    }
+}
+
+/// The blocking half of a streamed exchange: send the request, then hand
+/// ureq's body reader to the SSE parser. Returns whether the stream closed
+/// cleanly.
+fn stream_response(
+    agent: &ureq::Agent,
+    url: &str,
+    api_key: &str,
+    body: &[u8],
+    events: &tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+) -> Result<bool, ClientError> {
+    let response = agent
+        .post(url)
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set("Content-Type", "application/json")
+        .send_bytes(body)
+        .map_err(map_send_error)?;
+    let status = response.status();
+    if status != 200 {
+        // An error answer is one document, not a stream.
+        let text = response
+            .into_string()
+            .map_err(|error| ClientError::Network(error.to_string()))?;
+        return Err(ClientError::Api(api_error(status, &text)));
+    }
+    parse_sse(std::io::BufReader::new(response.into_reader()), events)
+}
+
+/// Read an SSE body line by line, emitting one event per delta and the
+/// assembled tool calls at the finish. Blank lines, comments, and non-`data`
+/// fields are skipped; `data: [DONE]` closes the stream. Returns whether it
+/// closed cleanly, so a truncated body is a decode failure rather than a
+/// silently empty answer.
+fn parse_sse(
+    reader: impl std::io::BufRead,
+    events: &tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+) -> Result<bool, ClientError> {
+    let mut content = String::new();
+    let mut drafts: Vec<ToolCallDraft> = Vec::new();
+    let mut closed = false;
+    for line in reader.lines() {
+        let line = line.map_err(|error| ClientError::Network(error.to_string()))?;
+        let Some(payload) = sse_data(&line) else { continue };
+        if payload == "[DONE]" {
+            closed = true;
+            break;
+        }
+        let chunk: Chunk = serde_json::from_str(payload)
+            .map_err(|error| ClientError::Decode(format!("bad SSE chunk: {error}")))?;
+        // The usage-only final chunk (empty choices) carries the exact
+        // accounting; a usage-bearing content chunk would carry it too.
+        if let Some(counted) = chunk.usage {
+            // A dropped receiver means the caller stopped caring; reading on
+            // would only block on a channel nobody reads.
+            if events.send(StreamEvent::Usage(counted)).is_err() {
+                return Ok(true);
+            }
+        }
+        for choice in &chunk.choices {
+            if let Some(delta) = &choice.delta.content {
+                if !delta.is_empty() {
+                    content.push_str(delta);
+                    if events.send(StreamEvent::Content(delta.clone())).is_err() {
+                        return Ok(true);
+                    }
+                }
+            }
+            for call in &choice.delta.tool_calls {
+                // Indices arrive in order from a call's first fragment on;
+                // that first fragment names it, later ones extend it.
+                let draft = if call.index < drafts.len() {
+                    &mut drafts[call.index]
+                } else {
+                    drafts.push(ToolCallDraft::default());
+                    drafts.last_mut().expect("just pushed a draft")
+                };
+                if let Some(id) = &call.id {
+                    draft.id.push_str(id);
+                }
+                if let Some(function) = &call.function {
+                    if let Some(name) = &function.name {
+                        draft.name.push_str(name);
+                    }
+                    if let Some(arguments) = &function.arguments {
+                        draft.arguments.push_str(arguments);
+                    }
+                }
+            }
+            if choice.finish_reason.is_some() {
+                // The calls are complete here; emit them whole.
+                if !drafts.is_empty() {
+                    let calls: Vec<ToolCall> = drafts.iter().map(ToolCall::from).collect();
+                    if events.send(StreamEvent::ToolCalls(calls)).is_err() {
+                        return Ok(true);
+                    }
+                }
+                closed = true;
+            }
+        }
+    }
+    Ok(closed)
+}
+
+/// The `data:` payload of one SSE line, or `None` for blank lines,
+/// heartbeats/comments, and any other field this protocol does not use.
+fn sse_data(line: &str) -> Option<&str> {
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    if line.is_empty() || line.starts_with(':') {
+        return None;
+    }
+    let payload = line.strip_prefix("data:")?;
+    Some(payload.strip_prefix(' ').unwrap_or(payload))
+}
+
+impl From<&ToolCallDraft> for ToolCall {
+    fn from(draft: &ToolCallDraft) -> ToolCall {
+        ToolCall {
+            id: draft.id.clone(),
+            kind: "function".to_string(),
+            function: FunctionCall {
+                name: draft.name.clone(),
+                arguments: draft.arguments.clone(),
+            },
+        }
+    }
 }
 
 /// Split ureq's two failure shapes: an answered status carries its response
@@ -303,5 +579,135 @@ mod tests {
         let line = serde_json::to_string(&result).unwrap();
         assert!(line.contains(r#""role":"tool""#));
         assert!(line.contains(r#""tool_call_id":"call-1""#));
+    }
+
+    #[test]
+    fn stream_request_carries_the_stream_and_usage_flags() {
+        let request = ChatRequest {
+            model: "test-model",
+            messages: &[Message::text(Role::User, "hi")],
+            tools: Vec::new(),
+        };
+        let line = serde_json::to_string(&StreamRequest {
+            request: &request,
+            stream: true,
+            stream_options: StreamOptions { include_usage: true },
+        })
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["stream_options"]["include_usage"], true);
+        assert_eq!(body["model"], "test-model");
+        assert_eq!(body["messages"][0]["role"], "user");
+    }
+
+    /// Drive the parser over a body, collecting the events it emitted.
+    fn parse(body: &str) -> (Vec<StreamEvent>, bool) {
+        let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
+        // The parser is synchronous; drain the channel without a runtime by
+        // reading what a blocking send already delivered.
+        let closed = parse_sse(std::io::Cursor::new(body.as_bytes()), &events).unwrap();
+        drop(events);
+        let mut collected = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            collected.push(event);
+        }
+        (collected, closed)
+    }
+
+    #[test]
+    fn sse_data_reads_payloads_and_skips_the_rest() {
+        assert_eq!(sse_data("data: {\"a\":1}"), Some("{\"a\":1}"));
+        assert_eq!(sse_data("data:{\"a\":1}"), Some("{\"a\":1}"));
+        assert_eq!(sse_data("data: [DONE]"), Some("[DONE]"));
+        assert_eq!(sse_data(""), None);
+        assert_eq!(sse_data(": heartbeat"), None);
+        assert_eq!(sse_data("event: message"), None);
+        assert_eq!(sse_data("id: 7"), None);
+    }
+
+    #[test]
+    fn parse_sse_emits_content_deltas_and_the_final_usage() {
+        let body = concat!(
+            ": keep-alive\n",
+            "\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n",
+            "\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n",
+            "\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2,\"total_tokens\":12}}\n",
+            "\n",
+            "data: [DONE]\n",
+            "\n",
+        );
+        let (events, closed) = parse(body);
+        assert!(closed);
+        assert_eq!(
+            events,
+            vec![
+                StreamEvent::Content("Hel".to_string()),
+                StreamEvent::Content("lo".to_string()),
+                StreamEvent::Usage(Usage {
+                    prompt_tokens: 10,
+                    completion_tokens: 2,
+                    total_tokens: 12,
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_sse_assembles_tool_call_deltas_keyed_by_index() {
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",",
+            "\"type\":\"function\",\"function\":{\"name\":\"ba\",\"arguments\":\"{\\\"comm\"}}]}}]}\n",
+            "\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,",
+            "\"function\":{\"name\":\"sh\",\"arguments\":\"and\\\":1}\"}}]}}]}\n",
+            "\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n",
+            "\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"total_tokens\":7}}\n",
+            "\n",
+            "data: [DONE]\n",
+            "\n",
+        );
+        let (events, closed) = parse(body);
+        assert!(closed);
+        let calls = events
+            .iter()
+            .find_map(|event| match event {
+                StreamEvent::ToolCalls(calls) => Some(calls.clone()),
+                _ => None,
+            })
+            .expect("one assembled tool-call event");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call-1");
+        assert_eq!(calls[0].kind, "function");
+        assert_eq!(calls[0].function.name, "bash");
+        assert_eq!(calls[0].function.arguments, r#"{"command":1}"#);
+        assert!(events.contains(&StreamEvent::Usage(Usage {
+            prompt_tokens: 3,
+            completion_tokens: 4,
+            total_tokens: 7,
+        })));
+    }
+
+    #[test]
+    fn parse_sse_reports_a_truncated_body_as_unclosed() {
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"half\"}}]}\n\n";
+        let (events, closed) = parse(body);
+        assert!(!closed);
+        assert_eq!(events, vec![StreamEvent::Content("half".to_string())]);
+    }
+
+    #[test]
+    fn parse_sse_rejects_a_malformed_chunk() {
+        let body = "data: {not json}\n\n";
+        let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
+        let error = parse_sse(std::io::Cursor::new(body.as_bytes()), &events).unwrap_err();
+        assert!(matches!(error, ClientError::Decode(_)), "{error:?}");
+        drop(events);
+        assert!(receiver.try_recv().is_err());
     }
 }
