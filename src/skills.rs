@@ -203,15 +203,34 @@ impl Document {
 ///
 /// The subset is deliberately small and the rejections are deliberate
 /// too. Accepted: `key: value` pairs with surrounding whitespace
-/// trimmed, values optionally wrapped in matching single or double
-/// quotes, blank lines inside the fence, and unknown keys (forward
-/// compatibility — a future field must not invalidate today's file).
-/// Rejected, each with the reason named: no opening fence, no closing
-/// fence, a fence line that is not a `key: value` pair (a nested block's
-/// indent, a `- item` list entry, a bare scalar), a key that appears
-/// twice, an empty key, and an empty value. The body is everything after
-/// the closing fence with one leading newline taken off.
+/// trimmed, keys and values optionally wrapped in matching single or
+/// double quotes, blank lines inside the fence, and unknown keys
+/// (forward compatibility — a future field must not invalidate today's
+/// file). A leading UTF-8 BOM is stripped before anything else: editors
+/// write them, and a BOM'd file is a valid file. Rejected, each with
+/// the reason named: no opening fence, no closing fence, a fence line
+/// that is not a `key: value` pair (a nested block's indent, a `- item`
+/// list entry, a bare scalar), a key whose quotes do not balance, a key
+/// that appears twice, an empty key, and an empty value. A BOM'd file
+/// that still fails names the BOM in its reason, so the complaint is
+/// not misdirected at the fence. The body is everything after the
+/// closing fence with one leading newline taken off.
 fn parse_document(text: &str) -> Result<Document, String> {
+    let (text, bom) = match text.strip_prefix('\u{feff}') {
+        Some(rest) => (rest, true),
+        None => (text, false),
+    };
+    parse_frontmatter(text).map_err(|reason| {
+        if bom {
+            format!("{reason} \u{2014} the file also opens with a UTF-8 BOM")
+        } else {
+            reason
+        }
+    })
+}
+
+/// The fence-and-fields parse itself, on text that carries no BOM.
+fn parse_frontmatter(text: &str) -> Result<Document, String> {
     let lines: Vec<&str> = text.lines().collect();
     if lines.first().map(|line| line.trim_end()) != Some("---") {
         return Err("the file does not open with a `---` frontmatter fence".to_string());
@@ -238,9 +257,22 @@ fn parse_document(text: &str) -> Result<Document, String> {
         let Some((key, value)) = trimmed.split_once(':') else {
             return Err(format!("frontmatter line {} is not a `key: value` pair", index + 1));
         };
-        let key = key.trim();
+        // Keys unquote the way values do: `"name": x` is `name: x`,
+        // which is what a writer that quotes every key emits.
+        let raw = key.trim();
+        let key = unquote(raw);
         if key.is_empty() {
             return Err(format!("frontmatter line {} has an empty key", index + 1));
+        }
+        // A key that still carries a quote after unquoting has
+        // unbalanced ones — a typo. Name it here rather than letting it
+        // read later as a missing required field with the key in plain
+        // sight.
+        if key.contains('"') || key.contains('\'') {
+            return Err(format!(
+                "frontmatter line {} has an unbalanced quoted key `{raw}`",
+                index + 1
+            ));
         }
         let value = unquote(value.trim());
         if value.is_empty() {
@@ -596,7 +628,13 @@ pub fn lessons(
 /// requested it.
 struct Executed {
     name: String,
+    /// The arguments the requesting turn sent, for the evidence line.
+    arguments: String,
     output: String,
+    /// Whether the call was approved. A denied call produced no result
+    /// of its own — its output is the denial — so it is evidence of
+    /// nothing the tool did.
+    approved: bool,
     /// The tool_result record's index in the log, for the evidence line.
     record: usize,
 }
@@ -605,19 +643,28 @@ struct Executed {
 /// belongs to. The call id is the join; the result record's own `name`
 /// is the fallback.
 fn executed_calls(records: &[Record]) -> Vec<Executed> {
-    let mut requested: HashMap<String, String> = HashMap::new();
+    let mut requested: HashMap<String, (String, String)> = HashMap::new();
     let mut executed: Vec<Executed> = Vec::new();
     for (index, record) in records.iter().enumerate() {
         match record {
             Record::Assistant { tool_calls, .. } => {
                 for call in tool_calls {
-                    requested.insert(call.id.clone(), call.function.name.clone());
+                    requested.insert(
+                        call.id.clone(),
+                        (call.function.name.clone(), call.function.arguments.clone()),
+                    );
                 }
             }
-            Record::ToolResult { call_id, name, output, .. } => {
-                let resolved =
-                    requested.get(call_id).cloned().unwrap_or_else(|| name.clone());
-                executed.push(Executed { name: resolved, output: output.clone(), record: index });
+            Record::ToolResult { call_id, name, output, approved, .. } => {
+                let (resolved, arguments) =
+                    requested.get(call_id).cloned().unwrap_or_else(|| (name.clone(), String::new()));
+                executed.push(Executed {
+                    name: resolved,
+                    arguments,
+                    output: output.clone(),
+                    approved: *approved,
+                    record: index,
+                });
             }
             _ => {}
         }
@@ -625,29 +672,105 @@ fn executed_calls(records: &[Record]) -> Vec<Executed> {
     executed
 }
 
+/// The call ids whose result was approved, by id. A call with no result
+/// record — a log that ends mid-turn — counts as not approved.
+fn approved_calls(records: &[Record]) -> HashMap<String, bool> {
+    let mut approved: HashMap<String, bool> = HashMap::new();
+    for record in records {
+        if let Record::ToolResult { call_id, approved: ok, .. } = record {
+            approved.insert(call_id.clone(), *ok);
+        }
+    }
+    approved
+}
+
+/// How wide a compacted argument summary or output line may run in an
+/// evidence line. Long enough for a real command, short enough that one
+/// evidence line stays one line.
+const COMPACT_WIDTH: usize = 80;
+
+/// One call as an evidence line names it: the tool, then a compacted
+/// argument summary in parentheses. Self-containment is the point — the
+/// owner judges the pair at the gate, not the log behind it.
+fn call_label(call: &Executed) -> String {
+    let arguments = compact_arguments(&call.arguments);
+    if arguments.is_empty() {
+        format!("`{}`", call.name)
+    } else {
+        format!("`{}` ({arguments})", call.name)
+    }
+}
+
+/// A compacted one-line summary of one call's arguments: a JSON
+/// object's `key: value` pairs joined, string values unquoted, bounded
+/// to [`COMPACT_WIDTH`]. Anything that is not an object — `{}`, a bare
+/// string, invalid JSON — is used raw and bounded the same way.
+fn compact_arguments(arguments: &str) -> String {
+    let rendered = match serde_json::from_str::<serde_json::Value>(arguments) {
+        Ok(serde_json::Value::Object(fields)) => fields
+            .iter()
+            .map(|(key, value)| match value {
+                serde_json::Value::String(text) => format!("{key}: {text}"),
+                other => format!("{key}: {other}"),
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => arguments.trim().to_string(),
+    };
+    compact(&rendered, COMPACT_WIDTH)
+}
+
+/// `text` on one bounded line: the first line, cut to `width`
+/// characters with an ellipsis when longer. An evidence line is one
+/// line by construction — a multi-line or unbounded output would flood
+/// the proposal's frontmatter.
+fn compact(text: &str, width: usize) -> String {
+    let first = text.lines().next().unwrap_or_default();
+    let mut characters = first.chars();
+    let head: String = characters.by_ref().take(width).collect();
+    if characters.next().is_some() {
+        format!("{head}\u{2026}")
+    } else {
+        head
+    }
+}
+
 /// The failure→correction lesson: one tool that failed with a typed
 /// `error:` result and was later called again successfully. The first
 /// such pair in the log is the lesson; the correction is the evidence
 /// that the failure was understood, not just survived.
+///
+/// A failure with no correction is not the lesson and does not end the
+/// search — the next failure in the log may be the one that was
+/// understood. Only approved calls count on either side: a denied retry
+/// produced no result of its own, so it corrects nothing.
+///
+/// The evidence line is self-contained: the tool name, a compacted
+/// argument summary on both sides, and both record numbers, so the
+/// owner judges the pair at the gate without replaying the log.
 fn failure_correction(records: &[Record], session_id: &str) -> Option<Lesson> {
     let calls = executed_calls(records);
     for (index, failed) in calls.iter().enumerate() {
-        if !failed.output.starts_with("error:") {
+        if !failed.approved || !failed.output.starts_with("error:") {
             continue;
         }
-        let corrected = calls[index + 1..]
-            .iter()
-            .find(|call| call.name == failed.name && !call.output.starts_with("error:"))?;
+        let Some(corrected) = calls[index + 1..].iter().find(|call| {
+            call.approved && call.name == failed.name && !call.output.starts_with("error:")
+        }) else {
+            continue;
+        };
         let name = format!("{}-recovery", slug(&failed.name));
         let description = format!(
             "Recover a failed `{}` call: read the typed error, correct one thing, and rerun the same tool.",
             failed.name
         );
         let evidence = format!(
-            "session {session_id}: `{}` failed at record {} and succeeded at record {}",
-            failed.name,
-            failed.record + 1,
-            corrected.record + 1
+            "session {session_id}: {failed_call} failed at record {failed_record} with `{failure}`; the approved rerun {corrected_call} succeeded at record {corrected_record}",
+            failed_call = call_label(failed),
+            failed_record = failed.record + 1,
+            failure = compact(&failed.output, COMPACT_WIDTH),
+            corrected_call = call_label(corrected),
+            corrected_record = corrected.record + 1,
         );
         let body = format!(
             "# {name}\n\n{description}\n\n## When to reach for it\n\nA `{tool}` call has just come back with a typed `error:` result.\n\n## The lesson\n\nRead the error before retrying. The failure text names what was wrong, so the corrected call is a fix rather than a repeat: change one thing, then run the same tool again.\n\n## Evidence\n\n{evidence}\n",
@@ -665,11 +788,19 @@ fn failure_correction(records: &[Record], session_id: &str) -> Option<Lesson> {
 /// more tools, whose exact ordered sequence appeared in another turn of
 /// the same session. A recurring multi-step procedure is a skill the
 /// session kept re-deriving.
+///
+/// A turn counts only when every call it requested was approved: a
+/// denied call means the procedure never ran, and a sequence of denials
+/// is not a procedure the session kept re-deriving.
 fn repeated_sequence(records: &[Record], session_id: &str) -> Option<Lesson> {
+    let approved = approved_calls(records);
     let mut seen: Vec<(Vec<String>, Vec<usize>)> = Vec::new();
     for (index, record) in records.iter().enumerate() {
         let Record::Assistant { tool_calls, .. } = record else { continue };
         if tool_calls.len() < 2 {
+            continue;
+        }
+        if !tool_calls.iter().all(|call| approved.get(&call.id).copied().unwrap_or(false)) {
             continue;
         }
         let names: Vec<String> =
@@ -1111,10 +1242,58 @@ pub fn render_curation(filed: &[PathBuf]) -> String {
     out
 }
 
+/// Why one proposal could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposalReadError {
+    /// The name is not a bare proposal name: it carries a path
+    /// separator or a parent component, so it addresses a file rather
+    /// than naming a draft.
+    NotAName(String),
+    /// No proposal carries that name.
+    Missing(String),
+}
+
+impl std::fmt::Display for ProposalReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProposalReadError::NotAName(name) => write!(
+                f,
+                "`{name}` is not a proposal name: a name carries no path separator and is not `.` or `..`"
+            ),
+            ProposalReadError::Missing(name) => {
+                write!(f, "no proposal named `{name}` under {SKILLS_DIR}/{PROPOSALS_DIR}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ProposalReadError {}
+
+/// A bare proposal name: not empty, no path separator, not `.` or `..`.
+/// `--show` joins the name into a path, so a name that is really a path
+/// would read an arbitrary file and print it as a draft.
+pub fn proposal_name(name: &str) -> Result<&str, ProposalReadError> {
+    let invalid = name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0');
+    if invalid {
+        Err(ProposalReadError::NotAName(name.to_string()))
+    } else {
+        Ok(name)
+    }
+}
+
 /// One proposal's draft, verbatim — the diff-able content `--show`
-/// prints. `None` when no proposal carries that name.
-pub fn read_proposal(home: &Path, name: &str) -> Option<String> {
-    fs::read_to_string(proposals_dir(home).join(format!("{name}.md"))).ok()
+/// prints. The name must be a bare proposal name; a name carrying a path
+/// separator or a parent component is refused rather than joined into a
+/// path.
+pub fn read_proposal(home: &Path, name: &str) -> Result<String, ProposalReadError> {
+    let name = proposal_name(name)?;
+    fs::read_to_string(proposals_dir(home).join(format!("{name}.md")))
+        .map_err(|_| ProposalReadError::Missing(name.to_string()))
 }
 
 /// The dash run that pads a card header so its right edge aligns.
@@ -1241,6 +1420,49 @@ mod tests {
         assert!(parse_document("---\nname: a\nname: b\ndescription: d\n---\nbody\n")
             .unwrap_err()
             .contains("twice"));
+    }
+
+    #[test]
+    fn a_utf8_bom_is_stripped_and_a_bomd_failure_names_the_bom() {
+        // Editors do write BOMs; a BOM'd valid file is a valid file.
+        let document =
+            parse_document("\u{feff}---\nname: demo\ndescription: d\n---\n\nbody\n").unwrap();
+        assert_eq!(document.get("name"), Some("demo"));
+        assert_eq!(document.body, "body");
+        // And through the loader, not just the parser.
+        let home = scratch("bom");
+        write_skill(&home, "bommed", "\u{feff}---\nname: bommed\ndescription: d\n---\n\nbody\n");
+        assert_eq!(skill_names(&load(&home)), vec!["bommed"]);
+        // A BOM'd file that still fails names the BOM, so the reason is
+        // not misdirected at the fence alone.
+        let reason = parse_document("\u{feff}name: demo\n").unwrap_err();
+        assert!(reason.contains("does not open"), "{reason}");
+        assert!(reason.contains("UTF-8 BOM"), "{reason}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn quoted_keys_unquote_and_unbalanced_ones_are_named() {
+        // A writer that quotes every key is not a writer this parser
+        // rejects: the key unquotes the way the value does.
+        let document =
+            parse_document("---\n\"name\": demo\n'description': d\n---\nbody\n").unwrap();
+        assert_eq!(document.get("name"), Some("demo"));
+        assert_eq!(document.get("description"), Some("d"));
+        // The duplicate check runs on the unquoted key, so a quoted key
+        // and a bare one still collide.
+        assert!(parse_document("---\n\"name\": a\nname: b\ndescription: d\n---\nbody\n")
+            .unwrap_err()
+            .contains("twice"));
+        // A quoted-but-empty key is still an empty key.
+        assert!(parse_document("---\n\"\": a\ndescription: d\n---\nbody\n")
+            .unwrap_err()
+            .contains("empty key"));
+        // An unbalanced quote is a typo, and it is named as the key it
+        // is rather than read later as a missing required field.
+        let reason = parse_document("---\n\"name: demo\ndescription: d\n---\nbody\n").unwrap_err();
+        assert!(reason.contains("unbalanced quoted key"), "{reason}");
+        assert!(reason.contains("\"name"), "{reason}");
     }
 
     // --- loading ---
@@ -1380,6 +1602,18 @@ mod tests {
         }
     }
 
+    /// A call the user denied: the denial text the model received, with
+    /// the `approved` flag the log carries.
+    fn denied(call_id: &str, name: &str) -> Record {
+        Record::ToolResult {
+            call_id: call_id.to_string(),
+            name: name.to_string(),
+            output: "denied: the user did not approve this call.".to_string(),
+            truncated: false,
+            approved: false,
+        }
+    }
+
     #[test]
     fn a_failure_that_was_corrected_drafts_a_create_with_the_records_cited() {
         let records = vec![
@@ -1404,6 +1638,137 @@ mod tests {
         assert!(filed.contains("proposed: true"), "{filed}");
         assert!(filed.contains("kind: create"), "{filed}");
         assert!(filed.starts_with("---\n"), "{filed}");
+    }
+
+    #[test]
+    fn an_uncorrected_failure_does_not_end_the_search() {
+        // The first failure is never corrected; the second one is. The
+        // lesson is the second pair, not nothing.
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "bash", "{}")]),
+            result("c1", "bash", "error: exit 127"),
+            assistant(vec![tool_call("c2", "read_file", "{}")]),
+            result("c2", "read_file", "error: not valid UTF-8"),
+            assistant(vec![tool_call("c3", "read_file", "{}")]),
+            result("c3", "read_file", "the text"),
+        ];
+        let found = lessons(&records, &[], "session-4");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, "read-file-recovery");
+        assert!(found[0].evidence.contains("record 5"), "{}", found[0].evidence);
+        assert!(found[0].evidence.contains("record 7"), "{}", found[0].evidence);
+    }
+
+    #[test]
+    fn a_denied_retry_is_not_a_correction() {
+        // A denied retry's output is the denial, not a result: it
+        // corrects nothing, and the failure it follows stays
+        // uncorrected.
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "bash", "{}")]),
+            result("c1", "bash", "error: exit 127"),
+            assistant(vec![tool_call("c2", "bash", "{}")]),
+            denied("c2", "bash"),
+        ];
+        assert!(lessons(&records, &[], "session-5").is_empty());
+        // The denial neither corrects nor ends the search: an approved
+        // success after it is the correction.
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "bash", "{}")]),
+            result("c1", "bash", "error: exit 127"),
+            assistant(vec![tool_call("c2", "bash", "{}")]),
+            denied("c2", "bash"),
+            assistant(vec![tool_call("c3", "bash", "{}")]),
+            result("c3", "bash", "exit 0"),
+        ];
+        let found = lessons(&records, &[], "session-5");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, "bash-recovery");
+        assert!(found[0].evidence.contains("record 7"), "{}", found[0].evidence);
+    }
+
+    #[test]
+    fn two_denied_sequences_are_not_a_repeated_procedure() {
+        // Two identical turns the user denied twice are not a procedure
+        // the session kept re-deriving: nothing ran.
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "list_dir", "{}"), tool_call("c2", "read_file", "{}")]),
+            denied("c1", "list_dir"),
+            denied("c2", "read_file"),
+            assistant(vec![tool_call("c3", "list_dir", "{}"), tool_call("c4", "read_file", "{}")]),
+            denied("c3", "list_dir"),
+            denied("c4", "read_file"),
+        ];
+        assert!(lessons(&records, &[], "session-6").is_empty());
+        // A turn that only half ran does not count either: the sequence
+        // that executed is not the sequence that was requested.
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "list_dir", "{}"), tool_call("c2", "read_file", "{}")]),
+            result("c1", "list_dir", "ok"),
+            denied("c2", "read_file"),
+            assistant(vec![tool_call("c3", "list_dir", "{}"), tool_call("c4", "read_file", "{}")]),
+            result("c3", "list_dir", "ok"),
+            result("c4", "read_file", "ok"),
+        ];
+        assert!(lessons(&records, &[], "session-6").is_empty());
+    }
+
+    #[test]
+    fn the_evidence_names_the_tool_and_a_compacted_argument_summary() {
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "bash", r#"{"command":"ls"}"#)]),
+            result("c1", "bash", "error: exit 127"),
+            assistant(vec![tool_call("c2", "bash", r#"{"command":"ls -la"}"#)]),
+            result("c2", "bash", "exit 0"),
+        ];
+        let found = lessons(&records, &[], "session-7");
+        assert_eq!(found.len(), 1, "{found:?}");
+        let evidence = &found[0].evidence;
+        // Self-contained: the tool, both argument summaries, and both
+        // records, so the pair is judgeable without replaying the log.
+        assert!(evidence.contains("`bash`"), "{evidence}");
+        assert!(evidence.contains("command: ls -la"), "{evidence}");
+        assert!(evidence.contains("command: ls)"), "{evidence}");
+        assert!(evidence.contains("record 3"), "{evidence}");
+        assert!(evidence.contains("record 5"), "{evidence}");
+        assert!(evidence.contains("error: exit 127"), "{evidence}");
+        // The evidence rides the proposal's frontmatter as one line.
+        let filed = render_proposal(&found[0]);
+        assert!(filed.contains("evidence: session session-7:"), "{filed}");
+    }
+
+    #[test]
+    fn a_long_argument_summary_stays_one_bounded_line() {
+        let long = "x".repeat(200);
+        let records = vec![
+            Record::User { content: "t".into() },
+            assistant(vec![tool_call("c1", "bash", &format!(r#"{{"command":"{long}"}}"#))]),
+            result("c1", "bash", "error: exit 127"),
+            assistant(vec![tool_call("c2", "bash", r#"{"command":"ls"}"#)]),
+            result("c2", "bash", "exit 0"),
+        ];
+        let found = lessons(&records, &[], "session-8");
+        let evidence = &found[0].evidence;
+        assert!(!evidence.contains('\n'), "{evidence}");
+        assert!(evidence.contains('\u{2026}'), "{evidence}");
+        assert!(evidence.contains("command: x"), "{evidence}");
+    }
+
+    #[test]
+    fn compact_arguments_summarizes_an_object_and_falls_back_to_raw() {
+        assert_eq!(compact_arguments(r#"{"command":"ls -la"}"#), "command: ls -la");
+        assert_eq!(compact_arguments(r#"{"a":"1","b":2}"#), "a: 1, b: 2");
+        // An empty object, a bare string, and invalid JSON are used raw.
+        assert_eq!(compact_arguments("{}"), "");
+        assert_eq!(compact_arguments("not json"), "not json");
+        // A multi-line output keeps only its first line.
+        assert_eq!(compact("a\nb", 80), "a");
     }
 
     #[test]
@@ -1664,7 +2029,26 @@ mod tests {
         assert!(rendered.contains("unused across the last 20 sessions"), "{rendered}");
         // The draft itself is readable back, for `--show`.
         assert!(read_proposal(&home, "gamma").unwrap().contains("# retire: gamma"));
-        assert!(read_proposal(&home, "nope").is_none());
+        assert_eq!(
+            read_proposal(&home, "nope"),
+            Err(ProposalReadError::Missing("nope".to_string()))
+        );
+        // A name that is really a path is refused, not joined: the file
+        // outside the proposals directory stays unread.
+        std::fs::write(home.join("outside.md"), "not a draft").unwrap();
+        assert_eq!(
+            read_proposal(&home, "../outside"),
+            Err(ProposalReadError::NotAName("../outside".to_string()))
+        );
+        assert_eq!(
+            read_proposal(&home, "nested/gamma"),
+            Err(ProposalReadError::NotAName("nested/gamma".to_string()))
+        );
+        assert_eq!(
+            read_proposal(&home, ".."),
+            Err(ProposalReadError::NotAName("..".to_string()))
+        );
+        assert!(proposal_name("bash-recovery").is_ok());
         let _ = std::fs::remove_dir_all(&home);
     }
 }

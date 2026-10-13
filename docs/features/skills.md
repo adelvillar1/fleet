@@ -36,14 +36,19 @@ The frontmatter is hand-parsed, not YAML-parsed. The subset is small and
 its rejections are named:
 
 - **Accepted:** an opening `---` fence, `key: value` lines, a closing
-  `---` fence, then the body. Values may carry colons and may be wrapped
-  in matching single or double quotes. Blank lines inside the fence are
-  fine. Unknown keys are kept, not rejected — a future field must not
-  invalidate today's file.
+  `---` fence, then the body. Keys and values may carry colons and may
+  be wrapped in matching single or double quotes — `"name": x` reads as
+  `name: x`, the way a writer that quotes every key emits it. Blank
+  lines inside the fence are fine. Unknown keys are kept, not rejected —
+  a future field must not invalidate today's file. A leading UTF-8 BOM
+  is stripped before anything else: editors write them, and a BOM'd
+  file is a valid file.
 - **Rejected, each with the reason named:** no opening fence; no closing
   fence; a fence line that is not a `key: value` pair (an indented
-  nested block, a `- item` list entry, a bare scalar); a key that
-  appears twice; an empty key; an empty value.
+  nested block, a `- item` list entry, a bare scalar); a key whose
+  quotes do not balance; a key that appears twice; an empty key; an
+  empty value. A BOM'd file that still fails names the BOM in its
+  reason, so the complaint is not misdirected at the fence.
 
 A skill whose frontmatter is missing or malformed is **skipped by name**
 with one logged line naming it — a broken skill never blocks the others,
@@ -73,6 +78,14 @@ A run with no skills records nothing and its prompt is the compiled-in
 constant, so the skill-less run is byte-for-byte the run it has always
 been.
 
+The list has a **soft cap**, `agent::SKILLS_PROMPT_SOFT_CAP` (50): past
+it, one line per run is logged — `N skills declared; the list is
+growing the prompt — curation retires unused ones`. A warning only:
+nothing is hidden, every skill stays declared and callable, and the
+prompt still carries all of them. The list is re-sent on every request
+of every run, so an unbounded list is an unbounded per-turn cost, and
+curation retiring unused skills is the lever that brings it down.
+
 `use_skill` goes through the same Approver as every other tool: a
 skill's body is model-visible content, and approving a body into
 context is the same decision as approving any other text the model will
@@ -88,14 +101,19 @@ its loop, the TUI when its agent thread ends — the drafter reads that
 session's log plus the day's calibration rows and identifies a **lesson**:
 
 1. **A failure that was corrected.** One tool call that came back with a
-   typed `error:` result, followed later in the same session by a
-   successful call to the same tool. The correction is the evidence the
-   failure was understood, not just survived. Drafts
-   `<tool>-recovery`.
+   typed `error:` result, followed later in the same session by an
+   approved, successful call to the same tool. The correction is the
+   evidence the failure was understood, not just survived. A failure
+   with no correction is not the lesson and does not end the search —
+   the next failure in the log may be the one that was understood — and
+   a denied retry corrects nothing, because its result is the denial
+   rather than the tool's. Drafts `<tool>-recovery`.
 2. **A repeated multi-step tool sequence.** One assistant turn that
    requested two or more tools whose exact ordered sequence appeared in
-   another turn of the same session — a procedure the session kept
-   re-deriving. Drafts `procedure-<a>-<b>`.
+   another turn of the same session, every call in both turns approved
+   — a procedure the session kept re-deriving. Two turns the user
+   denied are not a procedure; nothing ran. Drafts
+   `procedure-<a>-<b>`.
 3. **A turn graded failed with a named class.** A calibration `turn` row
    with outcome `failed` and a non-empty `reason`, joined to this
    session by the task's `input_hash` — the row is the audit spine's own
@@ -118,12 +136,19 @@ name: bash-recovery
 description: Recover a failed `bash` call: read the typed error, correct one thing, and rerun the same tool.
 proposed: true
 kind: create
-evidence: session 20261013T214210Z-88706500: `bash` failed at record 4 and succeeded at record 6
+evidence: session 20261013T214210Z-88706500: `bash` (command: ls) failed at record 4 with `error: exit 127`; the approved rerun `bash` (command: ls -la) succeeded at record 6
 ---
 
 # bash-recovery
 …
 ```
+
+The evidence line is **self-contained**: the tool name, a compacted
+argument summary on both sides of the pair, both record numbers, and
+the session id, so the owner can judge the draft at the gate without
+replaying the log. It is one line by construction — a long command is
+cut with an ellipsis and a multi-line output keeps only its first line,
+because the evidence rides the proposal's frontmatter.
 
 **No code path in this slice moves a proposal into the live tree.**
 Applying one is slice 12's gate: the local gate green, the change
@@ -167,11 +192,15 @@ scan, the file's mtime — in the card style of `fleet lanes`,
   (create/update/retire/merge), the evidence line, and the draft's path.
 - `fleet skills --curate` — run the usage-scan curation and file what it
   finds.
-- `fleet skills --show <name>` — print one draft verbatim.
+- `fleet skills --show <name>` — print one draft verbatim. The name is a
+  bare proposal name: a name carrying a path separator or a parent
+  component addresses a file rather than naming a draft, and is refused
+  with a typed error rather than joined into a path.
 
 The exit code is always success (a read surface over Fleet's own files,
-like `fleet calib`); the one failure is a `--show` naming a draft that
-does not exist. `--curate --proposed` composes: curate, then list.
+like `fleet calib`); the failures are a `--show` naming a draft that
+does not exist and a `--show` name that is not a bare name.
+`--curate --proposed` composes: curate, then list.
 
 **No new TUI surface this slice.** A skill's use shows as the ordinary
 tool card in the conversation — the same card a `bash` call gets — and a

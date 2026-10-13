@@ -272,8 +272,9 @@ fn draft_lessons(home: &std::path::Path, session_path: &std::path::Path) {
 ///
 /// The exit code is always success: this is a read surface over Fleet's
 /// own files, like `fleet calib` — a home with no skills says so rather
-/// than failing. The one failure is a `--show` naming a draft that does
-/// not exist.
+/// than failing. The two failures are a `--show` naming a draft that
+/// does not exist and a `--show` name that is not a bare name (a path
+/// separator or a parent component addresses a file, not a draft).
 fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
@@ -281,15 +282,12 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
     };
     if let Some(name) = &options.show {
         return match fleet::skills::read_proposal(&home, name) {
-            Some(text) => {
+            Ok(text) => {
                 print!("{text}");
                 ExitCode::SUCCESS
             }
-            None => {
-                eprintln!(
-                    "fleet: no proposal named `{name}` under {}",
-                    fleet::skills::proposals_dir(&home).display()
-                );
+            Err(error) => {
+                eprintln!("fleet: {error}");
                 ExitCode::FAILURE
             }
         };

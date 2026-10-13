@@ -19,6 +19,24 @@ pub const SYSTEM_PROMPT: &str = "You are Fleet, a native Rust coding agent based
 /// Turn cap when the caller does not choose one.
 pub const DEFAULT_MAX_TURNS: usize = 25;
 
+/// The soft cap on how many skills one run declares in its system
+/// prompt. Past it, one line is logged naming the count — a warning
+/// only: every skill stays declared and callable, and nothing is hidden.
+/// The list grows the prompt on every request of every run, so an
+/// unbounded list is an unbounded per-turn cost; curation retiring
+/// unused skills is the lever that brings it back down.
+pub const SKILLS_PROMPT_SOFT_CAP: usize = 50;
+
+/// The one logged line when a run declares more than
+/// [`SKILLS_PROMPT_SOFT_CAP`] skills; `None` at or under the cap.
+fn skills_prompt_growth_line(declared: usize) -> Option<String> {
+    (declared > SKILLS_PROMPT_SOFT_CAP).then(|| {
+        format!(
+            "fleet: {declared} skills declared; the list is growing the prompt \u{2014} curation retires unused ones"
+        )
+    })
+}
+
 /// Options for one run.
 #[derive(Debug, Clone)]
 pub struct AgentOptions {
@@ -361,9 +379,16 @@ impl<'a> Agent<'a> {
     ///
     /// With no skills the prompt is the constant itself, so a run that
     /// carries no skills is byte-for-byte the run it has always been.
+    ///
+    /// Called once per run, before the turn loop, so the growth warning
+    /// is one logged line per run. Nothing is ever dropped from the
+    /// list: the cap warns, it does not curate.
     fn system_prompt(&self) -> String {
         if self.skills.is_empty() {
             return SYSTEM_PROMPT.to_string();
+        }
+        if let Some(line) = skills_prompt_growth_line(self.skills.len()) {
+            eprintln!("{line}");
         }
         let mut prompt = String::from(SYSTEM_PROMPT);
         prompt.push_str(
@@ -1080,6 +1105,63 @@ fn lane_call_output(result: &CallResult) -> String {
 mod tests {
     use super::*;
     use crate::api::FunctionCall;
+
+    /// A scratch home, unique per call, for a test that needs a session
+    /// log on disk.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-agent-{tag}-{}-{serial}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_run_past_the_skills_soft_cap_still_declares_every_skill() {
+        // The cap warns; it never hides. A run carrying more skills than
+        // the soft cap declares every one of them in its prompt, and the
+        // warning line is the only thing that changes.
+        let home = scratch("skills-cap");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let count = SKILLS_PROMPT_SOFT_CAP + 1;
+        let skills: Vec<crate::skills::Skill> = (0..count)
+            .map(|index| crate::skills::Skill {
+                name: format!("skill-{index:02}"),
+                description: format!("description {index}"),
+                body: "body".to_string(),
+                path: std::path::PathBuf::from("/x/SKILL.md"),
+                modified: None,
+            })
+            .collect();
+        let options = AgentOptions {
+            model: "m".to_string(),
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills,
+        };
+        let mut progress = Vec::new();
+        let agent =
+            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
+                .unwrap();
+        let prompt = agent.system_prompt();
+        for index in 0..count {
+            assert!(prompt.contains(&format!("skill-{index:02}")), "skill {index} is missing");
+        }
+        // At the cap and under it, no warning line is built at all.
+        assert_eq!(skills_prompt_growth_line(SKILLS_PROMPT_SOFT_CAP), None);
+        assert_eq!(skills_prompt_growth_line(0), None);
+        let line = skills_prompt_growth_line(count).expect("the warning line");
+        assert!(line.contains(&format!("{count} skills declared")), "{line}");
+        assert!(line.contains("curation retires unused ones"), "{line}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     fn call(id: &str, name: &str, arguments: &str) -> ToolCall {
         ToolCall {
