@@ -1,4 +1,5 @@
-# One job: fmt, clippy, build, test. That is deliberately the whole CI.
+# One job: fmt, clippy, build, test. That is deliberately the whole CI —
+# preserved here for a manual run, not armed (see the decision note above).
 #
 # The suite is zero-real-network by design: every integration test spawns the
 # crate's own mock chat-completions server (src/bin/mock-server.rs) as a child
@@ -10,10 +11,13 @@
 # gate; per-OS release binaries are a later slice, not a CI concern yet.
 name: ci
 
+# Owner decision (2026-10-13): no funds for GitHub Actions, and no failure
+# notifications. The workflow therefore does not arm on push or pull_request —
+# trigger it by hand from the Actions tab (workflow_dispatch) once a paid
+# runner exists. Until then the gate is local-only, per the plan's standing
+# rule: fmt, clippy, build --release, test, run before every push.
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
