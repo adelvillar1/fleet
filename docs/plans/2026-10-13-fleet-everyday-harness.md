@@ -51,10 +51,10 @@ Self-improvement is a **property assembled from the slices, not a slice bolted o
 
 1. **Documentation is English-only.** No Chinese (or other non-English) documentation anywhere in this repository — a deliberate departure from the fork's bilingual convention.
 2. **Delegation runs on the parent's base model** (step-5-preview class): subagents inherit the model and never downgrade; build-time delegation follows the same rule.
-3. **Every error or warning is logged, not ignored.** Anything encountered — in this crate, the vendored cores, sibling repos, or the toolchain — goes to `docs/known-issues.md` with its evidence, and is worked or explicitly deferred by the owner. "Not my code" is a reason to log, not a reason to skip.
+3. **Every error, warning, and improvement opportunity is logged, not ignored.** Anything encountered — in this crate, the vendored cores, sibling repos, or the toolchain — goes to `docs/known-issues.md` with its evidence, and is worked or explicitly deferred by the owner. Defects, gaps, and "this could be better" all land the same way; an improvement is logged, never silently scope-creeped into the running slice. "Not my code" is a reason to log, not a reason to skip.
 4. **UX is co-equal with technical maturity.** Every slice ships its user-facing surface with the feature, never as a later polish phase; each slice's AC includes a hand-exercised UX criterion. The bar is the owner's own, set in the dashboards plan: genuinely visual surfaces — cards, status dots, real layout — never a plain-text-table-only view.
 
-Plus the engineering standing rules: model-visible ⟺ logged; no secrets in the repo; the local gate (`cargo fmt --check`, `clippy -D warnings`, `build --release`, `test`) runs before every push because CI is budget-blocked; unit + integration tests at the current bar, with MCP slices tested against the real vendored cores on loopback; no duplication of anything the fork already ships as canonical.
+Plus the engineering standing rules: model-visible ⟺ logged; no secrets in the repo; the local gate (`cargo fmt --check`, `clippy -D warnings`, `build --release`, `test`) runs before every push and its exit code is read — never through a status-losing pipe — because CI is disarmed by owner decision (no Actions funds; the workflow is manual-dispatch only); unit + integration tests at the current bar, with MCP slices tested against the real vendored cores on loopback; no duplication of anything the fork already ships as canonical.
 
 **Foundation decision — async.** Slice 2 adopts tokio. Streaming reads, concurrent MCP children, subagents, and scheduled runs are concurrent by nature; std threads would be fought for the rest of the app's life. This is the one place a small upfront rewrite prevents permanent debt.
 
@@ -145,7 +145,7 @@ Native read-only surfaces: router board (the kit's operator API), second-brain b
 - C5: subagents run isolated tasks on the parent's base model; the parent verifies their results.
 - C6: sessions survive compaction and resume; a scheduled task fires on time and after a missed window.
 - C7: the three boards render real data read-only and visually; a refused read keeps the last snapshot.
-- C8: the local gate green at every slice; a release binary installs and launches on macOS and Linux.
+- C8: the local gate green at every slice — exit code read, never piped through a status-losing pipe; a release binary installs and launches on macOS and Linux.
 - C9: after a session, the harness has drafted the skill/memory updates its outcomes justify; a justified update applies through the gate, lands in the calibration ledger, and reverts cleanly; a gate-failing or destructive proposal is refused or waits for approval.
 - C10: a broken layer is named at boot; a failed run yields a classified diagnosis and an evidence-cited recap; the eval corpus runs on a schedule; a self-edit that regresses the corpus is refused; every error or warning encountered during the build is logged in `docs/known-issues.md` with evidence, and none is closed without it.
 
@@ -179,7 +179,7 @@ Per slice: the local gate plus that slice's ACs exercised for real — MCP slice
 
 ## Linked artifacts
 
-- `docs/known-issues.md` — the ledger every error and warning lands in (directive 3); seeded with the nine items found before the build.
+- `docs/known-issues.md` — the ledger every error, warning, defect, gap, and improvement lands in (directive 3); seeded with the items found before the build, KI-001 through KI-014.
 - `docs/architecture/overview.md` — slice-1 crate architecture (updated per slice).
 - `docs/architecture/ecosystem.md` — the verified ecosystem map and the per-piece absorption shapes.
 - `docs/plans/2026-10-12-fleet-native-app.md` — slice 1's record; this plan supersedes it as the forward plan (it stays `active` only for C3's balance blocker).

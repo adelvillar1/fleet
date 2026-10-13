@@ -28,7 +28,7 @@ None of that is in this repository yet. Verified inventory and per-repo state: [
 ## Hard rules
 
 1. **Plan before non-trivial work.** Draft `docs/plans/YYYY-MM-DD-<slug>.md` with acceptance criteria before any feature ≥15 min or >2 files; update its `status` in the same turn the work lands. Trivial work may go direct.
-2. **The gate is local until CI is back:** `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`. Run it before every push; do not rely on the (budget-blocked) workflow.
+2. **The gate is local and permanent:** `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`. Run it before every push and **read the exit code — never through a status-losing pipe** (KI-014). CI is disarmed by owner decision (no Actions funds); the workflow is manual-dispatch only until the owner re-arms it.
 3. **Commit each verified increment as it goes green.** Explicit paths only — never `git add -A`. `master` is the only branch (solo tool, no hosted surface).
 4. **Never commit secrets.** Credentials resolve at runtime: `DEEPSEEK_API_KEY` env → `<FLEET_HOME>/.env` → the DeepSeek Harness credential store's `refs` block (read-only). This repo stores no keys; env var names live in `CLAUDE.local.md`.
 5. **Model-visible ⟺ logged** (inherited from the harness): anything the model sees must be reconstructable from the session log. The system prompt and tool declarations are compiled-in constants, reconstructed per request, never logged.
