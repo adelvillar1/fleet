@@ -179,7 +179,7 @@ Per slice: the local gate plus that slice's ACs exercised for real — MCP slice
 
 ## Linked artifacts
 
-- `docs/known-issues.md` — the ledger every error, warning, defect, gap, and improvement lands in (directive 3); seeded with the items found before the build, KI-001 through KI-014.
+- `docs/known-issues.md` — the ledger every error, warning, defect, gap, and improvement lands in (directive 3); seeded with the items found before the build, KI-001 through KI-015.
 - `docs/architecture/overview.md` — slice-1 crate architecture (updated per slice).
 - `docs/architecture/ecosystem.md` — the verified ecosystem map and the per-piece absorption shapes.
 - `docs/plans/2026-10-12-fleet-native-app.md` — slice 1's record; this plan supersedes it as the forward plan (it stays `active` only for C3's balance blocker).
