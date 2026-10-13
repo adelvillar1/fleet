@@ -62,6 +62,12 @@ Three ops are emitted today:
 | `tool_screen` | approval decision | `ts`, `tool` (namespaced for a lane call), `verdict` (approved/denied/always), `lane` (MCP calls), `input_chars`, `input_hash` (of the arguments) |
 | `turn` | run ending | `ts`, `outcome` (ok/failed), `stop_reason`, `turns`, `usage`, `input_chars`, `input_hash` (of the task), `reason` (the failure class) |
 
+`turn`'s `usage.total_tokens` is always 0: the streamed usage chunk carries
+prompt and completion tokens only, and the agent's usage accounting sums
+what the stream delivered. Prompt and completion are real; the total is
+derivable as their sum and left at zero rather than fabricated (KI-019's
+streamed-path family).
+
 The session-log vocabulary is untouched: `turn`'s `stop_reason` carries the
 session log's own endings verbatim — `completed`, `max-turns` from its
 `end` record, and `interrupted` for the documented log-without-`end`
