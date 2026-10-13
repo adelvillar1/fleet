@@ -2,7 +2,7 @@
 
 **Plan:** `docs/plans/2026-10-13-fleet-everyday-harness.md` (slice 6).
 **Feature:** `docs/features/calibration.md`.
-**Ledger:** KI-048 (the log-root decision), KI-049, KI-050.
+**Ledger:** KI-048 (the log-root decision), KI-049, KI-050, KI-051.
 
 ## What landed
 
@@ -16,7 +16,9 @@
   audit trail. One `write_all` per row under `O_APPEND` keeps two
   processes from interleaving a row. The last handle's drop drains the
   queue, bounded at two seconds, so a row is never lost to a process on
-  its way out and a wedged writer cannot hold a shutdown open.
+  its way out and a wedged writer cannot hold a shutdown open — and the
+  drain's expiry counts what it could not write rather than losing it
+  silently.
 - **Slice 5's `DecisionLog` is absorbed.** `route.rs` calls the stream;
   the writer has one home. The decision row's shape is unchanged.
 - **Three graded ops.** `route` (slice 5's shape), `tool_screen` (one row
@@ -25,15 +27,24 @@
   endings named). `eval_corpus` is reserved for slice 13.
 - **The hash is devdec's.** `input_hash` is the 16 hex characters of
   SHA-256, hand-rolled in `calib::sha256` (no crypto dependency, one
-  primitive, tested against the FIPS vector for `"abc"`).
+  primitive, tested against the FIPS vector for `"abc"`). devdec's own
+  rows name the field `input_sha256`; Fleet's is `input_hash` because the
+  join is on the value, and the feature doc says so.
 - **The first reader.** At route-prepare time the stream is read back:
   today's file, the last 512 rows, and a candidate with three consecutive
   failed attempts is demoted to the end of the session's failover walk.
   sys1's selection is untouched — demotion reorders the walk only, and
-  the demotion rides in the decision row's `reason`.
+  the demotion rides in the decision row's `reason`. A served attempt
+  resets the streak; the read is cross-process by intent (today's file is
+  shared) and both facts are documented.
 - **`fleet calib`.** Today's rows as cards, one per op with its counts,
-  the writer's persisted counters, and the last few rows. `--day` for a
-  past day. No new TUI surface (documented in the feature doc).
+  the writer's persisted counters (labeled last-writer, since the state
+  file is last-writer-wins across processes), and the last few rows.
+  `--day` for a past day, calendar-validated. No new TUI surface
+  (documented in the feature doc).
+- **`fleet doctor`** gained one informational line: the resolved
+  calibration root and whether today's file exists — the cheapest
+  mitigation for the hardcoded-literal hazard below.
 
 ## The root, and why
 
@@ -48,17 +59,17 @@ no user home is known. Recorded as KI-048.
 
 ## Evidence
 
-- Gate: `cargo build --all-targets` exit 0, warning-free; `cargo test` →
-  245 passed, 1 ignored (194 unit + 51 integration). rustfmt and clippy
-  are still absent on this machine (KI-007) and were not run.
-- The AC's literal check: the external `devdec` CLI is installed
-  (`~/.local/bin/dev-decisions`, a shim over
-  `~/Projects/dev-decisions/scripts/dev_decisions.py`, v0.3.0). Two real
-  `fleet run` invocations landed 5 rows in
-  `~/.local/share/dev-decisions/logs/2026/10/13/events.jsonl` beside 1313
-  of devdec's own, and `dev-decisions log` printed them in both text and
-  JSON formats with exit 0 — the rows are read beside devdec's own with
-  no adapter.
+- Gate, parent-run after each commit: `cargo build --all-targets` exit 0,
+  warning-free; `cargo test` → **249 passed, 1 ignored (198 unit + 51
+  integration)** in the final state. rustfmt and clippy are still absent
+  on this machine (KI-007) and were not run.
+- The AC's literal check, parent-verified: the external `devdec` CLI is
+  installed (`~/.local/bin/dev-decisions`, v0.3.0). Real `fleet run`s
+  landed rows in `~/.local/share/dev-decisions/logs/2026/10/13/events.jsonl`
+  beside devdec's own, and `dev-decisions log --tail 3` prints Fleet's
+  `route`/`tool_screen`/`turn` rows beside devdec's — exit 0, no adapter.
+  (The bare `log` subcommand needs `--tail`; without it it prints nothing,
+  a CLI quirk worth knowing.)
 - The "a full disk never fails a decision" half: with the day's file made
   unwritable, a real run logged `the calibration append failed
   (best-effort, the run is unaffected): Permission denied (os error 13)`
@@ -67,6 +78,26 @@ no user home is known. Recorded as KI-048.
   scripted mocks: three graded failures against the kit, sys1 judging
   `hard` (zai), and the walk ordering zai → mimo → stepfun with the
   demoted kit never tried.
+- The review round's fixes are negative-probed: the state temp name is
+  per-writer, and the drain-expiry counting is proven by a wedged-writer
+  test (a reader-less FIFO blocks the writer in `open` until the budget
+  expires, and the backlog lands in `dropped`).
+
+## Review cycle
+
+- **Stage 1 (spec, step-5-preview): SPEC-COMPLIANT** — all 12 checks; the
+  one non-blocking gap (the streamed path's zero `total_tokens`, disclosed
+  nowhere) was fixed by the parent in `e4d81fd` and folded into KI-019.
+- **Stage 2 (quality, step-5-preview): APPROVED** — no criticals, no
+  importants; twelve minors, eight taken in `c8678e2`: KI-050's false
+  clause corrected (a serve DOES reset the demotion streak — the ledger
+  must not invite a future reader to "fix" correct behavior), the state
+  file's temp name made unique per writer, drain-expiry drops counted,
+  the counter labeled last-writer, the crate's newest production `expect`
+  removed, `--day` calendar-validated, three disclosure sentences added
+  (signal death records no turn row; cross-process demotion is intended;
+  the hash field's divergence joins on the value), and doctor's
+  calibration line. The rest are disclosed or accepted.
 
 ## What the rows do not carry
 
@@ -80,4 +111,10 @@ arguments, and both keep the length beside the hash.
   threshold is today's last 512 rows and nothing more.
 - `dev-decisions log`'s text renderer prints `?` for Fleet's rows' `repo`
   and `verdict` (KI-049) — cosmetic, and an owner decision.
+- A signal death (Ctrl-C/SIGTERM) records no turn row at all; the crate
+  has no signal handling, so `interrupted` is reachable only via I/O
+  failures today. Documented, not built.
+- The hardcoded devdec literal is a maintenance hazard (devdec moving its
+  `LOG_DIR` silently re-routes the stream); doctor's line makes it
+  visible, and nothing more.
 - Slice 13's `eval_corpus` op is reserved and unimplemented, as designed.
