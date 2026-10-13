@@ -1,0 +1,29 @@
+{
+  "name": "sys1",
+  "upstream": "~/Projects/sys1",
+  "commit": "c1f73836e1849b3b3a594bf0ca5e706a186fd1f3",
+  "committedAt": "2026-10-09",
+  "commitSubject": "MCP classify accepts provider; safety task allow-list includes glide",
+  "license": "Apache-2.0",
+  "upstreamAuthor": "adelvillar1 (same author as the fork; Apache-2.0)",
+  "vendored": [
+    "src/",
+    "service/mcp_server.py",
+    "LICENSE"
+  ],
+  "excluded": [
+    "tests/",
+    "docs/",
+    "deploy/",
+    "__pycache__/",
+    "*.egg-info"
+  ],
+  "pythonLoc": 6668,
+  "syncRule": "upstream repos stay the development home; re-vendor by copying src/ and service/mcp_server.py at a recorded sha",
+  "fleetVendor": {
+    "source": "deepseek-harness fork services/sys1/ working tree",
+    "forkCommit": "542be5970b",
+    "vendoredAt": "2026-10-13",
+    "note": "This copy matches the upstream WORKING TREE on branch feature/plan-surface, which carries 4 uncommitted files (service/mcp_server.py, src/sys1/api.py, src/sys1/tasks.py, docs/plans/2026-10-04-canonical-provider-env.md — 89 insertions beyond the pinned commit, KI-003). The pinned commit is the recorded upstream base, not a byte-exact description of this copy; that state is what was boot-verified (1 tool: sys1_classify)."
+  }
+}

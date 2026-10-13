@@ -1,0 +1,29 @@
+{
+  "name": "sdm1",
+  "upstream": "~/Projects/sdm1",
+  "commit": "eeb331479cd9f2c5c94b686d0194d85870a06185",
+  "committedAt": "2026-10-09",
+  "commitSubject": "fix: ignore notifications and answer ping per MCP 2024-11-05",
+  "license": "Apache-2.0",
+  "upstreamAuthor": "adelvillar1 (same author as the fork; Apache-2.0)",
+  "vendored": [
+    "src/",
+    "service/mcp_server.py",
+    "LICENSE"
+  ],
+  "excluded": [
+    "tests/",
+    "docs/",
+    "deploy/",
+    "__pycache__/",
+    "*.egg-info"
+  ],
+  "pythonLoc": 1895,
+  "syncRule": "upstream repos stay the development home; re-vendor by copying src/ and service/mcp_server.py at a recorded sha",
+  "fleetVendor": {
+    "source": "deepseek-harness fork services/sdm1/ working tree",
+    "forkCommit": "542be5970b",
+    "vendoredAt": "2026-10-13",
+    "note": "Copied byte-exact from the fork's working tree, which matches the pinned upstream commit's tree. Boot-verified from this copy: 2 tools (sdm1_classify, sdm1_health)."
+  }
+}

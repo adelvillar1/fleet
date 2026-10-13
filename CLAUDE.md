@@ -42,18 +42,23 @@ None of that is in this repository yet. Verified inventory and per-repo state: [
 ## Where to find things
 
 ```
-src/main.rs             dispatch, credential resolution, run/chat/sessions/doctor wiring
+src/main.rs             dispatch, credential resolution, run/chat/sessions/lanes/doctor wiring
 src/cli.rs              argument parsing, help text, usage errors
-src/api.rs              DeepSeek chat-completions client (ureq), typed errors
+src/api.rs              DeepSeek chat-completions client (ureq), streaming, typed errors
 src/agent.rs            the tool loop, approvals, turn cap, progress reporting
+src/mcp.rs              the hand-rolled MCP stdio client (spawn, initialize, tools/list, tools/call, teardown)
+src/lanes.rs            the four vendored lane cores: home resolution, launch specs, health probe
 src/tools.rs            bash, read_file, write_file, list_dir; output capping
 src/session.rs          JSONL session log: append, replay, list, resume
 src/home.rs             FLEET_HOME / ~/.fleet, sessions dir, .env fallback, harness refs
 src/doctor.rs           the four startup checks
 src/net.rs              loopback probe used by doctor
+src/tui/                the ratatui surface: app.rs state, events.rs keys, ui.rs render, mod.rs loop
 src/bin/mock-server.rs  the scripted mock API the integration tests drive
-tests/integration.rs    end-to-end tests: parser, client, tool loop, log
-docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice-1 + dashboards records inherited from the fork)
+src/bin/mock-mcp.rs     the scripted fake MCP stdio server the integration tests drive
+services/               the four vendored Python lane cores with VENDOR.json; services/README.md documents the launch
+tests/integration.rs    end-to-end tests: parser, client, tool loop, log, real sem1 lane via MCP
+docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice records + dashboards record inherited from the fork)
 docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
 docs/known-issues.md    the ledger: every error/warning encountered, with evidence
 docs/architecture/      overview.md (this crate), ecosystem.md (the repos Fleet will absorb)
@@ -66,11 +71,12 @@ CLAUDE.local.md         gitignored: env var names, machine paths, local quirks (
 `cargo` is not on PATH on this machine — see the PATH line in `CLAUDE.local.md`.
 
 ```sh
-cargo test                  # the gate's core: 55 passed, 1 ignored
-cargo build --release       # binary at target/release/fleet
-cargo run -- doctor         # credentials, home, API, shell; masks the key to its last 4 chars
-cargo run -- run "<task>" --yes
-cargo run -- sessions
+cargo test                          # the gate's core: 142 passed, 1 ignored
+cargo build --release               # binary at target/release/fleet
+cargo run --bin fleet -- doctor     # credentials, home, API, shell; masks the key to its last 4 chars
+cargo run --bin fleet -- run "<task>" --yes
+cargo run --bin fleet -- sessions
+cargo run --bin fleet -- lanes      # probe the four vendored lanes, health cards
 DEEPSEEK_API_KEY=sk-... cargo test --test integration -- --ignored   # live e2e; needs account balance
 ```
 

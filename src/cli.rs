@@ -12,6 +12,8 @@ pub enum Command {
     Chat(ChatOptions),
     /// List saved sessions.
     Sessions,
+    /// Probe the four vendored lanes' health.
+    Lanes,
     /// Environment and connectivity checks.
     Doctor,
     /// Print the version.
@@ -52,6 +54,7 @@ usage:
   fleet run \"<task>\" [options]   run one task to completion
   fleet chat [options]           interactive multi-turn session
   fleet sessions                 list saved sessions
+  fleet lanes                    probe the four vendored lanes' health
   fleet doctor                   check credentials, home, API, shell
   fleet version                  print the version
   fleet help                     print this help
@@ -83,6 +86,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "run" => parse_run(rest),
         "chat" => parse_chat(rest),
         "sessions" => no_flags(rest, Command::Sessions),
+        "lanes" => no_flags(rest, Command::Lanes),
         "doctor" => no_flags(rest, Command::Doctor),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -226,10 +230,12 @@ mod tests {
     #[test]
     fn bare_commands_take_no_options() {
         assert_eq!(parse(&args(&["sessions"])).unwrap(), Command::Sessions);
+        assert_eq!(parse(&args(&["lanes"])).unwrap(), Command::Lanes);
         assert_eq!(parse(&args(&["doctor"])).unwrap(), Command::Doctor);
         assert_eq!(parse(&args(&["version"])).unwrap(), Command::Version);
         assert_eq!(parse(&args(&["--help"])).unwrap(), Command::Help);
         assert!(parse(&args(&["sessions", "--all"])).is_err());
+        assert!(parse(&args(&["lanes", "--json"])).is_err());
     }
 
     #[test]

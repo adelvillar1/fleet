@@ -30,6 +30,7 @@ use crate::agent::{
     Agent, AgentOptions, ApprovalRequest, Approver, DEFAULT_MAX_TURNS, TuiApprover, UiEvent,
 };
 use crate::api::Client;
+use crate::lanes::{self, LaneHealth};
 use crate::session::{self, Session};
 
 use app::{Action, App, Effect, StatusUpdate};
@@ -130,6 +131,7 @@ pub fn run(config: Config) -> Result<(), String> {
     });
 
     let mut app = App::new(&config.model, &session_id);
+    let (lanes_tx, lanes_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<LaneHealth>>();
     let outcome = event_loop(
         &config.home,
         &mut app,
@@ -138,6 +140,8 @@ pub fn run(config: Config) -> Result<(), String> {
         status_rx,
         approval_rx,
         &command_tx,
+        lanes_rx,
+        &lanes_tx,
     );
     // The agent thread is detached: it ends between runs once the command
     // channel closes, and the process's exit ends it mid-run, which leaves
@@ -164,6 +168,8 @@ fn event_loop(
     mut status_rx: UnboundedReceiver<StatusUpdate>,
     mut approval_rx: UnboundedReceiver<ApprovalRequest>,
     command_tx: &UnboundedSender<Command>,
+    mut lanes_rx: UnboundedReceiver<Vec<LaneHealth>>,
+    lanes_tx: &UnboundedSender<Vec<LaneHealth>>,
 ) -> Result<(), String> {
     let mut pending: Option<ApprovalRequest> = None;
     while !app.should_quit {
@@ -177,12 +183,19 @@ fn event_loop(
             app.show_approval(&request.call.function.name, &request.summary);
             pending = Some(request);
         }
+        // Lane health lands asynchronously from the prober thread; rows
+        // for a view the user already closed are dropped, not applied.
+        while let Ok(rows) = lanes_rx.try_recv() {
+            if app.mode == app::Mode::Lanes {
+                app.set_lanes(rows);
+            }
+        }
 
         if ratatui::crossterm::event::poll(POLL)
             .map_err(|error| format!("the keyboard could not be read: {error}"))?
         {
             match ratatui::crossterm::event::read() {
-                Ok(Event::Key(key)) => dispatch_key(home, app, &key, command_tx, &mut pending),
+                Ok(Event::Key(key)) => dispatch_key(home, app, &key, command_tx, lanes_tx, &mut pending),
                 // A paste is typing: the text lands in the input box with
                 // its newlines intact, never submitted line by line.
                 Ok(Event::Paste(text)) => app.paste(&text),
@@ -204,6 +217,7 @@ fn dispatch_key(
     app: &mut App,
     key: &KeyEvent,
     command_tx: &UnboundedSender<Command>,
+    lanes_tx: &UnboundedSender<Vec<LaneHealth>>,
     pending: &mut Option<ApprovalRequest>,
 ) {
     let Some(action) = action_for(app, key) else { return };
@@ -211,6 +225,12 @@ fn dispatch_key(
     // hands them to the state machine.
     if matches!(action, Action::OpenSessions) {
         open_picker(home, app);
+        return;
+    }
+    // The lanes' rows are child-process probes, so the loop hands the
+    // state machine an open view and starts the prober.
+    if matches!(action, Action::OpenLanes) {
+        open_lanes_view(app, lanes_tx);
         return;
     }
     if let Some(effect) = app.apply(action) {
@@ -228,6 +248,29 @@ fn open_picker(home: &Path, app: &mut App) {
             app.error = Some(format!("could not list the sessions: {error}"));
         }
     }
+}
+
+/// Open the lanes view and start the prober. The probe runs on its own
+/// thread with its own current-thread runtime — the event-loop thread
+/// never spawns children or waits on them, and the prober is not inside
+/// a runtime context, so nothing here can block-in-runtime panic
+/// (KI-021's class).
+fn open_lanes_view(app: &mut App, lanes_tx: &UnboundedSender<Vec<LaneHealth>>) {
+    app.open_lanes();
+    let lanes_tx = lanes_tx.clone();
+    thread::spawn(move || {
+        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let _ = lanes_tx.send(lanes::unavailable_all(&format!(
+                    "the lane probe runtime failed to start: {error}"
+                )));
+                return;
+            }
+        };
+        let health = runtime.block_on(lanes::health_all());
+        let _ = lanes_tx.send(health);
+    });
 }
 
 /// Perform what a state change cannot do from inside the state machine.

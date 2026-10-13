@@ -28,6 +28,14 @@ pub fn action_for(app: &App, key: &KeyEvent) -> Option<Action> {
             KeyCode::Char('q') if !control => Some(Action::Quit),
             _ => None,
         },
+        // The lanes view is information with a cursor, not a menu.
+        Mode::Lanes => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Char('q') if !control => Some(Action::Quit),
+            _ => None,
+        },
         // The modal answers or denies on any key, like the console prompt.
         Mode::Approval => Some(match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => Action::Approve(Approval::Once),
@@ -63,6 +71,7 @@ fn chat_action(app: &App, key: &KeyEvent, control: bool, alt: bool) -> Option<Ac
         KeyCode::PageUp => Some(Action::Scroll(10)),
         KeyCode::PageDown => Some(Action::Scroll(-10)),
         KeyCode::Char('o') if control => Some(Action::OpenSessions),
+        KeyCode::Char('l') if control => Some(Action::OpenLanes),
         KeyCode::Char(character) => {
             if control {
                 // Ctrl+key combinations are commands or nothing, never text.
@@ -164,6 +173,29 @@ mod tests {
         assert_eq!(action_for(&app, &key(KeyCode::Enter)), Some(Action::Pick));
         assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::CloseOverlay));
         assert_eq!(action_for(&app, &key(KeyCode::Char('q'))), Some(Action::Quit));
+    }
+
+    #[test]
+    fn ctrl_l_opens_the_lanes_view() {
+        let app = app();
+        assert_eq!(
+            action_for(&app, &control(KeyCode::Char('l'))),
+            Some(Action::OpenLanes)
+        );
+    }
+
+    #[test]
+    fn lanes_view_keys_scroll_and_close_but_never_type() {
+        let mut app = app();
+        app.apply(Action::OpenLanes);
+        assert_eq!(action_for(&app, &key(KeyCode::Down)), Some(Action::Move(1)));
+        assert_eq!(action_for(&app, &key(KeyCode::Char('j'))), Some(Action::Move(1)));
+        assert_eq!(action_for(&app, &key(KeyCode::Up)), Some(Action::Move(-1)));
+        assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::CloseOverlay));
+        assert_eq!(action_for(&app, &key(KeyCode::Char('q'))), Some(Action::Quit));
+        // Enter picks nothing here, and letters are not text.
+        assert_eq!(action_for(&app, &key(KeyCode::Enter)), None);
+        assert_eq!(action_for(&app, &key(KeyCode::Char('x'))), None);
     }
 
     #[test]

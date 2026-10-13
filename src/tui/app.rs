@@ -6,6 +6,7 @@
 
 use crate::agent::{Approval, UiEvent};
 use crate::api::Usage;
+use crate::lanes::LaneHealth;
 use crate::session::{Record, SessionSummary};
 
 /// One rendered block in the conversation pane.
@@ -51,6 +52,8 @@ pub enum Mode {
     Sessions,
     /// An approval prompt is waiting on a key.
     Approval,
+    /// The lane health view is open over the conversation.
+    Lanes,
 }
 
 /// One key press, translated for the current mode.
@@ -78,6 +81,8 @@ pub enum Action {
     Quit,
     /// Open the session picker.
     OpenSessions,
+    /// Open the lane health view.
+    OpenLanes,
     /// Close whatever overlay is open.
     CloseOverlay,
     /// Move the picker selection; positive is down.
@@ -150,6 +155,11 @@ pub struct App {
     pub mode: Mode,
     /// The picker's rows, oldest first, exactly as `session::list` returns.
     pub sessions: Vec<SessionSummary>,
+    /// The lane health rows, in registry order, exactly as
+    /// `lanes::health_all` returns.
+    pub lanes: Vec<LaneHealth>,
+    /// True while the lane probe is in flight and no rows have landed.
+    pub lanes_loading: bool,
     pub selected: usize,
     pub approval: Option<ApprovalPrompt>,
     pub status: Status,
@@ -172,6 +182,8 @@ impl App {
             cursor: 0,
             mode: Mode::Chat,
             sessions: Vec::new(),
+            lanes: Vec::new(),
+            lanes_loading: false,
             selected: 0,
             approval: None,
             status: Status {
@@ -210,7 +222,7 @@ impl App {
             },
             Mode::Sessions => match action {
                 Action::Move(delta) => {
-                    self.move_selection(delta);
+                    self.move_selection(delta, self.sessions.len());
                     None
                 }
                 Action::Pick => self.pick_session(),
@@ -222,6 +234,22 @@ impl App {
                     self.should_quit = true;
                     Some(Effect::Quit)
                 }
+                _ => None,
+            },
+            Mode::Lanes => match action {
+                Action::Move(delta) => {
+                    self.move_selection(delta, self.lanes.len());
+                    None
+                }
+                Action::CloseOverlay => {
+                    self.mode = Mode::Chat;
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                // The lanes are information, not a menu: nothing to pick.
                 _ => None,
             },
             Mode::Chat => match action {
@@ -258,6 +286,10 @@ impl App {
                     None
                 }
                 Action::Submit => self.submit(),
+                Action::OpenLanes => {
+                    self.open_lanes();
+                    None
+                }
                 Action::Scroll(delta) => {
                     self.scroll_by(delta);
                     None
@@ -344,6 +376,24 @@ impl App {
         self.sessions = sessions;
         self.selected = 0;
         self.mode = Mode::Sessions;
+    }
+
+    /// Open the lane health view. The rows arrive asynchronously from the
+    /// prober; until they do the view says it is probing.
+    pub fn open_lanes(&mut self) {
+        self.lanes = Vec::new();
+        self.lanes_loading = true;
+        self.selected = 0;
+        self.mode = Mode::Lanes;
+    }
+
+    /// The prober's rows landed. Stale rows for a view the user already
+    /// closed are dropped by the event loop, which only forwards them
+    /// while the view is open.
+    pub fn set_lanes(&mut self, lanes: Vec<LaneHealth>) {
+        self.lanes = lanes;
+        self.lanes_loading = false;
+        self.selected = 0;
     }
 
     /// Show an approval prompt; the responder stays with the event loop.
@@ -497,12 +547,12 @@ impl App {
         Some(Effect::Resume(picked))
     }
 
-    fn move_selection(&mut self, delta: i32) {
-        if self.sessions.is_empty() {
+    fn move_selection(&mut self, delta: i32, len: usize) {
+        if len == 0 {
             self.selected = 0;
             return;
         }
-        let last = self.sessions.len() as i32 - 1;
+        let last = len as i32 - 1;
         let next = self.selected as i32 + delta;
         self.selected = next.clamp(0, last) as usize;
     }
@@ -862,6 +912,55 @@ mod tests {
         assert_eq!(app.apply(Action::Pick), None);
         app.apply(Action::CloseOverlay);
         assert_eq!(app.mode, Mode::Chat);
+    }
+
+    #[test]
+    fn ctrl_l_opens_the_lanes_view_and_the_rows_fill_it() {
+        let mut app = app();
+        app.apply(Action::OpenLanes);
+        assert_eq!(app.mode, Mode::Lanes);
+        // The probe is in flight: the view is open but empty.
+        assert!(app.lanes.is_empty());
+        assert!(app.lanes_loading);
+        // The prober's rows land and the loading state clears.
+        app.set_lanes(vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
+        assert!(!app.lanes_loading);
+        assert_eq!(app.lanes.len(), 1);
+        // The view scrolls its rows and closes on escape.
+        app.apply(Action::Move(1));
+        assert_eq!(app.selected, 0);
+        app.apply(Action::Move(-1));
+        assert_eq!(app.selected, 0);
+        app.apply(Action::CloseOverlay);
+        assert_eq!(app.mode, Mode::Chat);
+    }
+
+    #[test]
+    fn the_lanes_view_holds_no_menu_semantics() {
+        let mut app = app();
+        app.apply(Action::OpenLanes);
+        app.set_lanes(vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
+        // Enter picks nothing; typing is swallowed; only quit and close
+        // answer.
+        assert_eq!(app.apply(Action::Pick), None);
+        assert_eq!(app.apply(Action::Input('x')), None);
+        assert_eq!(app.mode, Mode::Lanes);
+        assert_eq!(app.apply(Action::Quit), Some(Effect::Quit));
+        assert!(app.should_quit);
+    }
+
+    fn lane_health(name: &str, state: crate::lanes::LaneState, tools: usize) -> LaneHealth {
+        LaneHealth {
+            name: name.to_string(),
+            role: "embeddings".to_string(),
+            home: Some(std::path::PathBuf::from("/repo/services/sem1")),
+            source: Some(crate::lanes::HomeSource::Bundled),
+            state,
+            server_version: Some("0.1.0".to_string()),
+            tools: (0..tools).map(|index| format!("tool_{index}")).collect(),
+            detail: "SEM1_PYTHONPATH=…/src python3 -u …/service/mcp_server.py".to_string(),
+            elapsed_ms: 53,
+        }
     }
 
     #[test]

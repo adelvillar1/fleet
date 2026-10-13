@@ -1,0 +1,128 @@
+//! Test-only fake MCP stdio server, run as a child process.
+//!
+//! Fleet's integration tests exercise the real MCP client; some client
+//! paths cannot be produced deterministically by the real lane cores —
+//! an unsolicited id-`null` stray frame, a child that dies mid-session, a
+//! child that never answers, out-of-order replies. This binary provides
+//! them, in the same cross-process style as `mock-server`.
+//!
+//! ```text
+//! mock-mcp <script.jsonl>
+//! ```
+//!
+//! The script is JSONL, one entry consumed per request line received.
+//! Notifications (frames with no `id`) are never answered. Each entry is
+//! an object with any of:
+//!
+//! - `reply`: the frame to write in answer to the request. Its `id` may
+//!   be the string `"$echo"`, which is replaced by the request's id.
+//! - `stray`: an unsolicited frame written before the reply (the shape
+//!   sys1 and gen1 emit for `notifications/initialized`).
+//! - `delay_ms`: pause before writing (spawned per request, so replies
+//!   can land out of order).
+//! - `hang`: answer nothing; the client must time out.
+//! - `exit`: after handling, exit with this code (a crashed child).
+//!
+//! A dry script exits 0.
+
+use std::io::{BufRead, Write};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// One scripted entry. Every field is optional; an empty entry consumes
+/// the request silently.
+#[derive(serde::Deserialize)]
+struct ScriptEntry {
+    #[serde(default)]
+    stray: Option<serde_json::Value>,
+    #[serde(default)]
+    reply: Option<serde_json::Value>,
+    #[serde(default)]
+    delay_ms: u64,
+    #[serde(default)]
+    hang: bool,
+    #[serde(default)]
+    exit: Option<i32>,
+}
+
+fn main() {
+    let mut args = std::env::args().skip(1);
+    let script_path = args.next().expect("usage: mock-mcp <script.jsonl>");
+    let script = std::fs::read_to_string(&script_path).expect("read the script");
+    let mut entries: Vec<ScriptEntry> = script
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("a scripted entry"))
+        .collect();
+
+    let stdout = Arc::new(Mutex::new(std::io::stdout()));
+    let stdin = std::io::stdin();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+        // A notification carries no id and is never answered.
+        let Some(request_id) = request.get("id").cloned() else { continue };
+        let Some(entry) = pop_entry(&mut entries) else {
+            // A dry script ends the server: the client sees a closed
+            // child, which is the honest answer to an unscripted request.
+            std::process::exit(0);
+        };
+        let stdout = Arc::clone(&stdout);
+        // A hanging entry never answers, and the server keeps reading so
+        // the client's timeout — not a dead pipe — ends the wait.
+        let hangs = entry.hang;
+        std::thread::spawn(move || {
+            if hangs {
+                return;
+            }
+            if entry.delay_ms > 0 {
+                std::thread::sleep(Duration::from_millis(entry.delay_ms));
+            }
+            if let Some(stray) = &entry.stray {
+                write_frame(&stdout, stray);
+            }
+            if let Some(reply) = &entry.reply {
+                let reply = with_echoed_id(reply, &request_id);
+                write_frame(&stdout, &reply);
+            }
+            if let Some(code) = entry.exit {
+                // Flush whatever this entry wrote before the process dies.
+                if let Ok(mut guard) = stdout.lock() {
+                    let _ = guard.flush();
+                }
+                std::process::exit(code);
+            }
+        });
+    }
+}
+
+/// Pop the next script entry, or `None` when the script is dry.
+fn pop_entry(entries: &mut Vec<ScriptEntry>) -> Option<ScriptEntry> {
+    if entries.is_empty() {
+        return None;
+    }
+    Some(entries.remove(0))
+}
+
+/// A reply frame whose `id` is the string `"$echo"` takes the request's
+/// id, so one script entry can serve whichever in-flight request it
+/// answers.
+fn with_echoed_id(reply: &serde_json::Value, request_id: &serde_json::Value) -> serde_json::Value {
+    let mut reply = reply.clone();
+    if reply.get("id").and_then(serde_json::Value::as_str) == Some("$echo") {
+        reply["id"] = request_id.clone();
+    }
+    reply
+}
+
+/// Write one frame as a newline-terminated line, serialized against the
+/// other writers.
+fn write_frame(stdout: &Mutex<std::io::Stdout>, frame: &serde_json::Value) {
+    let line = serde_json::to_string(frame).expect("a frame is serializable JSON");
+    let mut guard = stdout.lock().expect("the stdout lock");
+    let _ = writeln!(guard, "{line}");
+    let _ = guard.flush();
+}

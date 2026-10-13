@@ -1,4 +1,7 @@
 /target
 
+# Vendored Python lane cores: bytecode is regenerated on every lane run
+__pycache__/
+
 # Claude local env reference — env var names and URLs only, not credential values
 CLAUDE.local.md

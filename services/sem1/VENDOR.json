@@ -1,0 +1,29 @@
+{
+  "name": "sem1",
+  "upstream": "~/Projects/sem1",
+  "commit": "a3389124f099a0c015360fbd764e71f91b1931d8",
+  "committedAt": "2026-10-09",
+  "commitSubject": "fix: ignore notifications and answer ping per MCP 2024-11-05",
+  "license": "Apache-2.0",
+  "upstreamAuthor": "adelvillar1 (same author as the fork; Apache-2.0)",
+  "vendored": [
+    "src/",
+    "service/mcp_server.py",
+    "LICENSE"
+  ],
+  "excluded": [
+    "tests/",
+    "docs/",
+    "deploy/",
+    "__pycache__/",
+    "*.egg-info"
+  ],
+  "pythonLoc": 1190,
+  "syncRule": "upstream repos stay the development home; re-vendor by copying src/ and service/mcp_server.py at a recorded sha",
+  "fleetVendor": {
+    "source": "deepseek-harness fork services/sem1/ working tree",
+    "forkCommit": "542be5970b",
+    "vendoredAt": "2026-10-13",
+    "note": "Copied byte-exact from the fork's working tree, which matches the pinned upstream commit's tree. Boot-verified from this copy: 4 tools (sem1_embed, sem1_probe, sem1_index, sem1_search) — the lane Fleet's integration tests drive."
+  }
+}

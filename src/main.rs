@@ -34,6 +34,7 @@ async fn main() -> ExitCode {
         Ok(Command::Run(options)) => run_command(&options).await,
         Ok(Command::Chat(options)) => chat_command(&options).await,
         Ok(Command::Sessions) => sessions_command(),
+        Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Doctor) => doctor_command(),
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -291,6 +292,20 @@ fn sessions_command() -> ExitCode {
         );
     }
     ExitCode::SUCCESS
+}
+
+/// `fleet lanes`: probe every vendored lane through the MCP client and
+/// render the health cards. No credentials, no home, no network beyond
+/// the lane children themselves — the lanes are local services. The exit
+/// code is the doctor's convention: success only when every lane is ok.
+async fn lanes_command() -> ExitCode {
+    let health = fleet::lanes::health_all().await;
+    print!("{}", fleet::lanes::render(&health));
+    if health.iter().all(|lane| lane.state == fleet::lanes::LaneState::Ok) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn doctor_command() -> ExitCode {

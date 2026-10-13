@@ -3,6 +3,12 @@
 //! both the run report and the session log the model saw. No network beyond
 //! loopback; the mock API runs as a child process.
 //!
+//! The MCP section drives the real vendored sem1 lane through the client
+//! end to end (skipped with a loud note when `python3` is absent), and
+//! covers the paths the real lanes cannot produce deterministically —
+//! stray id-`null` frames, a crashed child, a silent child, out-of-order
+//! replies — against a scripted fake MCP server in the mock-server style.
+//!
 //! The live-API test is `#[ignore]`d like the repo's `test:e2e`: run it with
 //! `cargo test --test integration -- --ignored` and `DEEPSEEK_API_KEY` set.
 
@@ -15,6 +21,8 @@ use fleet::api::{
     Client, ClientError, ChatRequest, DEFAULT_BASE_URL, Message, Role, StreamEvent, ToolCall, Usage,
 };
 use fleet::cli;
+use fleet::lanes::{self, Lane, LaneHome, LaneState};
+use fleet::mcp::{McpError, McpServer, ServerSpec, Timeouts};
 use fleet::session::{self, Record, Session};
 use fleet::tools::{Tool, ALL_TOOLS, MAX_TOOL_OUTPUT};
 
@@ -951,6 +959,362 @@ async fn a_failed_run_reports_a_failure_event() {
     assert!(records.iter().all(|record| !matches!(record, Record::End { .. })));
 
     std::fs::remove_dir_all(&home).ok();
+}
+
+// --- MCP client and the vendored lanes --------------------------------------
+
+/// A scripted fake MCP stdio server in a child process (the `mock-mcp`
+/// binary): the paths the real lanes cannot produce deterministically.
+struct FakeMcp {
+    child: std::process::Child,
+    scratch: PathBuf,
+}
+
+impl FakeMcp {
+    /// Start the fake over `entries` (one script entry per request).
+    fn start(entries: Vec<serde_json::Value>) -> FakeMcp {
+        let scratch = temp_home("mock-mcp");
+        let script_path = scratch.join("script.jsonl");
+        let script =
+            entries.iter().map(|entry| format!("{entry}\n")).collect::<String>();
+        std::fs::write(&script_path, script).unwrap();
+        let child = std::process::Command::new(env!("CARGO_BIN_EXE_mock-mcp"))
+            .arg(&script_path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn the mock-mcp child");
+        FakeMcp { child, scratch }
+    }
+
+    /// The client-side launch spec for the fake.
+    fn spec(&self) -> ServerSpec {
+        ServerSpec {
+            program: env!("CARGO_BIN_EXE_mock-mcp").to_string(),
+            args: vec![self.scratch.join("script.jsonl").to_string_lossy().into_owned()],
+            env: Vec::new(),
+            cwd: None,
+        }
+    }
+}
+
+impl Drop for FakeMcp {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        std::fs::remove_dir_all(&self.scratch).ok();
+    }
+}
+
+/// Test budgets: generous for the happy paths, so a real failure is never
+/// masked by a tight clock on a loaded machine.
+fn budgets(seconds: u64) -> Timeouts {
+    Timeouts {
+        initialize: std::time::Duration::from_secs(seconds),
+        list: std::time::Duration::from_secs(seconds),
+        call: std::time::Duration::from_secs(seconds),
+    }
+}
+
+/// The initialize result every scripted reply below reuses.
+fn initialize_reply() -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": { "tools": { "listChanged": false } },
+            "serverInfo": { "name": "fake", "version": "9.9.9" },
+        },
+    })
+}
+
+/// The id-`null` `-32601` frame sys1 and gen1 emit in answer to
+/// `notifications/initialized` (KI-002).
+fn stray_initialized_error() -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": null,
+        "result": { "error": { "code": -32601, "message": "Method not found: notifications/initialized" } },
+    })
+}
+
+/// Is `python3` on PATH? The real-lane tests skip with a loud note when
+/// it is not, so a Python-less machine stays green without silently
+/// passing.
+fn python3_available() -> bool {
+    std::process::Command::new("python3")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// One registry lane by name.
+fn lane(name: &str) -> Lane {
+    *lanes::LANES.iter().find(|lane| lane.name == name).expect("a registry lane")
+}
+
+/// sem1's resolved home; the vendored copy must always answer.
+fn sem1_home() -> PathBuf {
+    match lanes::resolve_home(&lane("sem1")) {
+        LaneHome::Resolved { home, .. } => home,
+        LaneHome::Unavailable { reason } => {
+            panic!("sem1 must resolve from the vendored copy: {reason}")
+        }
+    }
+}
+
+/// The real vendored sem1 lane, driven end to end: initialize (with the
+/// `notifications/initialized` notification the servers deviate on),
+/// tools/list, a tools/call error path, and clean teardown.
+#[tokio::test]
+async fn the_real_sem1_lane_round_trips_through_the_client() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the real-lane round trip");
+        return;
+    }
+    let spec = lanes::launch_spec(&lane("sem1"), &sem1_home());
+    let server = McpServer::spawn(&spec).expect("spawn the sem1 lane");
+
+    let initialize = server.initialize().await.expect("initialize");
+    assert_eq!(initialize.protocol_version, "2024-11-05");
+    assert_eq!(initialize.server_name, "sem1");
+    assert_eq!(initialize.server_version, "0.1.0");
+
+    let tools = server.list_tools().await.expect("tools/list");
+    let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
+    assert_eq!(names, vec!["sem1_embed", "sem1_probe", "sem1_index", "sem1_search"]);
+    assert_eq!(tools[0].input_schema["required"], serde_json::json!(["items"]));
+
+    // A tools/call the server refuses comes back as a typed JSON-RPC
+    // error, not a hang and not a panic.
+    let error = server
+        .call_tool("sem1_embed", serde_json::json!({ "items": 42 }))
+        .await
+        .expect_err("invalid items must be refused");
+    match error {
+        McpError::Rpc { code, message } => {
+            assert_eq!(code, -32602);
+            assert!(message.contains("`items`"), "{message}");
+        }
+        other => panic!("expected an Rpc error, got {other:?}"),
+    }
+
+    // The success path: sem1_probe reports reachability without raising,
+    // whether or not this machine runs an embedding endpoint.
+    let probe = server
+        .call_tool("sem1_probe", serde_json::json!({}))
+        .await
+        .expect("sem1_probe answers");
+    let report: serde_json::Value =
+        serde_json::from_str(probe.content[0].data.as_str().expect("a text block"))
+            .expect("the probe report is JSON");
+    assert_eq!(report["provider"], "llama-server");
+    assert!(report.get("reachable").is_some(), "{report}");
+
+    // Teardown: stdin closes, the child exits 0, nothing lingers.
+    server.close().await.expect("clean teardown");
+}
+
+/// The registry's probe wrapper over the real lane: the health row the
+/// headless command and the TUI both render.
+#[tokio::test]
+async fn the_lane_probe_reports_the_real_sem1_as_ok() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the real-lane probe");
+        return;
+    }
+    let health = lanes::probe_lane(&lane("sem1")).await;
+    assert_eq!(health.state, LaneState::Ok, "{}", health.detail);
+    assert_eq!(health.name, "sem1");
+    assert_eq!(health.role, "embeddings");
+    assert_eq!(health.server_version.as_deref(), Some("0.1.0"));
+    assert_eq!(health.tools.len(), 4);
+    assert!(health.detail.contains("python3 -u"), "{}", health.detail);
+}
+
+/// The client round-trips a scripted fake and ignores the id-`null`
+/// stray frame sys1 and gen1 emit (KI-002).
+#[tokio::test]
+async fn the_client_round_trips_a_fake_server_and_ignores_strays() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({
+            "stray": stray_initialized_error(),
+            "reply": {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "tools": [{ "name": "fake_tool", "description": "a fake", "inputSchema": { "type": "object" } }] },
+            },
+        }),
+        serde_json::json!({
+            "reply": {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "result": { "content": [{ "type": "text", "text": "called" }], "isError": false },
+            },
+        }),
+    ]);
+    let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
+
+    let initialize = server.initialize().await.expect("initialize");
+    assert_eq!(initialize.server_name, "fake");
+    assert_eq!(initialize.server_version, "9.9.9");
+
+    let tools = server.list_tools().await.expect("tools/list");
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name, "fake_tool");
+
+    let call = server.call_tool("fake_tool", serde_json::json!({ "x": 1 })).await.expect("tools/call");
+    assert_eq!(call.content.len(), 1);
+    assert_eq!(call.content[0].data, serde_json::json!("called"));
+    assert!(!call.is_error);
+
+    server.close().await.expect("clean teardown");
+}
+
+/// A child that dies mid-session fails the pending wait — an error, never
+/// a hang.
+#[tokio::test]
+async fn a_dead_child_is_an_error_not_a_hang() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "exit": 1 }),
+    ]);
+    let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
+    server.initialize().await.expect("initialize");
+
+    let error = server.list_tools().await.expect_err("a dead child must fail the wait");
+    assert!(matches!(error, McpError::Closed(_)), "got {error:?}");
+    // The teardown of an already-dead child is still graceful.
+    server.close().await.expect("teardown after death");
+}
+
+/// A child that never answers times out on its budget.
+#[tokio::test]
+async fn a_silent_child_times_out_on_the_budget() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "hang": true }),
+    ]);
+    let server = McpServer::spawn_with(
+        &fake.spec(),
+        Timeouts {
+            initialize: std::time::Duration::from_secs(5),
+            list: std::time::Duration::from_millis(300),
+            call: std::time::Duration::from_secs(5),
+        },
+    )
+    .expect("spawn the fake");
+    server.initialize().await.expect("initialize");
+
+    let started = std::time::Instant::now();
+    let error = server.list_tools().await.expect_err("a silent child must time out");
+    let elapsed = started.elapsed();
+    assert!(elapsed < std::time::Duration::from_secs(5), "the budget must fire: {elapsed:?}");
+    match error {
+        McpError::Timeout { method, budget } => {
+            assert_eq!(method, "tools/list");
+            assert_eq!(budget, std::time::Duration::from_millis(300));
+        }
+        other => panic!("expected a timeout, got {other:?}"),
+    }
+    server.close().await.expect("teardown after timeout");
+}
+
+/// Two requests in flight correlate even when the replies land out of
+/// order: the id-keyed pending map, not arrival order, routes them.
+#[tokio::test]
+async fn concurrent_requests_correlate_when_replies_land_out_of_order() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        // The first-arriving request's reply is delayed, so the second
+        // request's reply lands first.
+        serde_json::json!({
+            "reply": { "jsonrpc": "2.0", "id": "$echo", "result": { "tools": [{ "name": "slow" }] } },
+            "delay_ms": 400,
+        }),
+        serde_json::json!({
+            "reply": { "jsonrpc": "2.0", "id": "$echo", "result": { "tools": [{ "name": "fast" }] } },
+        }),
+    ]);
+    let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
+    server.initialize().await.expect("initialize");
+
+    let started = std::time::Instant::now();
+    let (first, second) = tokio::join!(server.list_tools(), server.list_tools());
+    let first = first.expect("the delayed request completed");
+    let second = second.expect("the immediate request completed");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(300),
+        "the delayed reply must have been awaited, not dropped"
+    );
+    let mut names = vec![first[0].name.clone(), second[0].name.clone()];
+    names.sort();
+    assert_eq!(names, vec!["fast".to_string(), "slow".to_string()]);
+
+    server.close().await.expect("clean teardown");
+}
+
+/// `fleet lanes` end to end against the real vendored lanes: cards, one
+/// per lane, every one ok.
+#[test]
+fn the_lanes_command_reports_every_real_lane() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the real-lanes command");
+        return;
+    }
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .arg("lanes")
+        .output()
+        .expect("run the fleet binary");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for name in ["sys1", "sdm1", "sem1", "gen1"] {
+        assert!(stdout.contains(name), "{stdout}");
+    }
+    // Cards, not a table.
+    assert!(stdout.contains("┌─"), "{stdout}");
+    assert_eq!(stdout.matches('┌').count(), 4, "{stdout}");
+    assert!(stdout.contains("4 lanes · 4 ok · 0 not ok"), "{stdout}");
+}
+
+/// A wrong services root degrades loudly: every lane unavailable, one
+/// named reason per card, exit 1.
+#[test]
+fn the_lanes_command_reports_unavailable_when_the_root_is_wrong() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .arg("lanes")
+        .env("FLEET_SERVICES_ROOT", "/definitely/not/a/services/root")
+        .output()
+        .expect("run the fleet binary");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("unavailable"), "{stdout}");
+    assert!(stdout.contains("4 lanes · 0 ok · 4 not ok"), "{stdout}");
+    assert!(stdout.contains("┌─"), "{stdout}");
+}
+
+/// A per-lane home override shadows the bundled copy and names itself as
+/// the source.
+#[test]
+fn a_lane_home_override_shadows_the_bundled_copy() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the lane override");
+        return;
+    }
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .arg("lanes")
+        .env("FLEET_LANE_SEM1_HOME", sem1_home())
+        .output()
+        .expect("run the fleet binary");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("home: FLEET_LANE_SEM1_HOME"), "{stdout}");
 }
 
 // --- live API --------------------------------------------------------------

@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use super::app::{App, Entry, Mode, ToolStatus};
+use crate::lanes::LaneState;
 
 /// The palette. One home per role, so the surface stays coherent as later
 /// slices extend it.
@@ -54,6 +55,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Mode::Chat => {}
         Mode::Sessions => render_picker(frame, app),
         Mode::Approval => render_approval(frame, app),
+        Mode::Lanes => render_lanes(frame, app),
     }
 }
 
@@ -189,7 +191,7 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 /// The key hints.
 fn render_footer(frame: &mut Frame<'_>, area: Rect) {
-    let hints = "enter send · alt+enter newline · ←→ move · ctrl+o sessions · ↑↓ scroll · q quit";
+    let hints = "enter send · alt+enter newline · ctrl+o sessions · ctrl+l lanes · q quit";
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hints, Style::new().fg(palette::TEXT)))),
         area,
@@ -288,6 +290,75 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
             spans.push(Span::styled("  (current)", Style::new().fg(palette::ACCENT)));
         }
         lines.push(Line::from(spans));
+    }
+    frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// The lane health view over the conversation: one card-like row per
+/// lane — status dot, name, role, version, tool count, state — with the
+/// tool names (or the failure reason) underneath, in registry order.
+fn render_lanes(frame: &mut Frame<'_>, app: &App) {
+    let area = centered(78, 62, frame.area());
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .title(" lanes — esc close ")
+        .title_style(title_style())
+        .border_style(Style::new().fg(palette::ACCENT));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
+
+    if app.lanes.is_empty() && app.lanes_loading {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " probing the lanes…",
+                Style::new().fg(palette::DIM),
+            ))),
+            inner,
+        );
+        return;
+    }
+
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    for (index, lane) in app.lanes.iter().enumerate() {
+        let selected = index == app.selected;
+        let marker = if selected { "▸" } else { " " };
+        let (dot, color) = match lane.state {
+            LaneState::Ok => ("●", palette::DONE),
+            LaneState::Unavailable => ("○", palette::DIM),
+            LaneState::Error => ("✕", palette::DENIED),
+        };
+        let version = lane.server_version.as_deref().unwrap_or("—");
+        let name_style = if selected {
+            Style::new().fg(palette::TEXT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(palette::TEXT)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{marker} "), Style::new().fg(palette::ACCENT)),
+            Span::styled(format!("{dot} "), Style::new().fg(color)),
+            Span::styled(lane.name.clone(), name_style),
+            Span::styled(format!("  {}  ", lane.role), Style::new().fg(palette::DIM)),
+            Span::styled(format!("v{version}"), Style::new().fg(palette::DIM)),
+            Span::styled(
+                format!("  {} tool{}", lane.tools.len(), if lane.tools.len() == 1 { "" } else { "s" }),
+                Style::new().fg(palette::TEXT),
+            ),
+            Span::styled(format!("  {}", lane.state.label()), Style::new().fg(color)),
+        ]));
+        // The detail line: the tool names when the lane answered, the
+        // reason it could not when it did not.
+        let detail = if lane.tools.is_empty() {
+            lane.detail.clone()
+        } else {
+            lane.tools.join(" · ")
+        };
+        lines.push(Line::from(Span::styled(
+            format!("   {detail}"),
+            Style::new().fg(palette::DIM),
+        )));
     }
     frame.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
@@ -569,6 +640,56 @@ mod tests {
         // A tiny terminal still renders: the panes clamp instead of dying.
         let tiny = draw(&fresh(), 20, 6);
         assert!(tiny.contains("conversation"), "{tiny}");
+    }
+
+    #[test]
+    fn the_lanes_view_renders_dots_names_and_tool_counts() {
+        let mut app = fresh();
+        app.apply(crate::tui::app::Action::OpenLanes);
+        // Before the probe lands, the view says it is probing.
+        let probing = draw(&app, 80, 24);
+        assert!(probing.contains("lanes"), "{probing}");
+        assert!(probing.contains("probing the lanes"), "{probing}");
+
+        app.set_lanes(vec![
+            crate::lanes::LaneHealth {
+                name: "sem1".to_string(),
+                role: "embeddings".to_string(),
+                home: Some(std::path::PathBuf::from("/repo/services/sem1")),
+                source: Some(crate::lanes::HomeSource::Bundled),
+                state: LaneState::Ok,
+                server_version: Some("0.1.0".to_string()),
+                tools: vec!["sem1_embed".to_string(), "sem1_probe".to_string()],
+                detail: "SEM1_PYTHONPATH=…/src python3 -u …/service/mcp_server.py".to_string(),
+                elapsed_ms: 53,
+            },
+            crate::lanes::LaneHealth {
+                name: "gen1".to_string(),
+                role: "media".to_string(),
+                home: None,
+                source: None,
+                state: LaneState::Unavailable,
+                server_version: None,
+                tools: Vec::new(),
+                detail: "no services root found".to_string(),
+                elapsed_ms: 0,
+            },
+        ]);
+        let drawn = draw(&app, 80, 24);
+        assert!(drawn.contains("lanes"), "{drawn}");
+        assert!(drawn.contains("sem1"), "{drawn}");
+        assert!(drawn.contains("embeddings"), "{drawn}");
+        assert!(drawn.contains("v0.1.0"), "{drawn}");
+        assert!(drawn.contains("2 tools"), "{drawn}");
+        assert!(drawn.contains("ok"), "{drawn}");
+        assert!(drawn.contains("sem1_embed · sem1_probe"), "{drawn}");
+        // The unavailable lane shows its dot, its state, and the reason.
+        assert!(drawn.contains("gen1"), "{drawn}");
+        assert!(drawn.contains("unavailable"), "{drawn}");
+        assert!(drawn.contains("no services root found"), "{drawn}");
+        // A tiny terminal still renders the modal without a panic.
+        let tiny = draw(&app, 20, 6);
+        assert!(tiny.contains("lanes"), "{tiny}");
     }
 
     #[test]
