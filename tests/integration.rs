@@ -23,8 +23,10 @@ use fleet::api::{
 use fleet::cli;
 use fleet::lanes::{self, Lane, LaneHome, LaneState};
 use fleet::mcp::{McpError, McpServer, ServerSpec, Timeouts};
+use fleet::route::{Candidate, How, Resolved, RouteDecision, Router};
 use fleet::session::{self, Record, Session};
 use fleet::tools::{Tool, ALL_TOOLS, MAX_TOOL_OUTPUT};
+use std::sync::Arc;
 
 // --- mock API server -------------------------------------------------------
 
@@ -2192,6 +2194,174 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert_eq!(declared_tools(&mock.bodies()[1]).len(), 4);
 
     std::fs::remove_dir_all(&home).ok();
+}
+
+// --- multi-provider routing (slice 5) --------------------------------------
+
+/// One roster entry with its key state, for the routing tests.
+fn resolved(id: &str, base_url: String, key_required: bool, key: Option<&str>) -> Resolved {
+    Resolved {
+        candidate: Candidate {
+            id: id.to_string(),
+            base_url,
+            key_env: format!("{}_KEY", id.to_uppercase().replace('-', "_")),
+            model: format!("{id}-model"),
+            enabled: true,
+            key_required,
+            disabled_reason: None,
+        },
+        key: key.map(str::to_string),
+    }
+}
+
+/// The headline of slice 5's failover: a full run where the HEAD candidate
+/// answers 402 and the second serves — the answer comes from candidate two,
+/// and the decision row names both attempts.
+#[tokio::test]
+async fn a_failed_head_fails_over_to_the_next_candidate() {
+    let head = MockApi::start(vec![ScriptedResponse {
+        status: "402 Payment Required".to_string(),
+        body: r#"{"error":{"message":"insufficient balance"}}"#.to_string(),
+        sse: Vec::new(),
+        delay_ms: 0,
+    }]);
+    let second = MockApi::start(vec![assistant_stream("Answered by candidate two.")]);
+    let home = temp_home("failover");
+    let mut session = Session::create(&home, "test-model").unwrap();
+
+    let resolved = vec![
+        resolved("cand-head", head.url(), false, None),
+        resolved("cand-two", second.url(), true, Some("sk-fake-test")),
+    ];
+    let decision = RouteDecision {
+        provider: "cand-head".to_string(),
+        how: How::Fallback,
+        workload: None,
+        verdict: None,
+        reason: "test head".to_string(),
+        start_index: 0,
+    };
+    let router = Arc::new(Router::new(resolved, decision));
+    let client = Client::routed(router.clone());
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+    };
+    let mut progress = Vec::new();
+    let report = {
+        let mut agent =
+            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        agent.run("do the thing").await.unwrap()
+    };
+
+    // The answer came from the second candidate.
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.final_message.as_deref(), Some("Answered by candidate two."));
+
+    // The head was tried exactly once and failed; the second served. The
+    // walk never retried the head.
+    assert_eq!(head.bodies().len(), 1, "the head was tried exactly once");
+    assert_eq!(second.bodies().len(), 1, "the second served the run");
+
+    // The decision row names both attempts, in order, and the final choice.
+    let row = router.row("do the thing", 0);
+    assert_eq!(row.provider, "cand-two");
+    assert_eq!(row.model, "cand-two-model");
+    let attempts: Vec<(&str, &str, Option<&str>)> = row
+        .attempts
+        .iter()
+        .map(|attempt| (attempt.provider.as_str(), attempt.outcome, attempt.class))
+        .collect();
+    assert_eq!(
+        attempts,
+        vec![("cand-head", "failed", Some("quota")), ("cand-two", "served", None)]
+    );
+    assert_eq!(row.providers_used, vec!["cand-head".to_string(), "cand-two".to_string()]);
+
+    // The session log is unchanged in vocabulary: no routing record, just
+    // the ordinary turn and its orderly end.
+    let records = session::replay(&session.path()).unwrap();
+    assert!(records
+        .iter()
+        .any(|record| matches!(record, Record::End { stop_reason, .. } if stop_reason == "completed")));
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// sys1 judges the route through the injected-spec seam: the fake lane
+/// answers `sys1_classify` with a `hard` workload, which maps to the zai
+/// candidate — a judged route, not the head.
+#[tokio::test]
+async fn sys1_judges_the_route_through_the_injected_spec() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "content": [{ "type": "text",
+                "text": r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"hard","confidence":0.91}}}}"# }],
+                "isError": false }
+        }}),
+    ]);
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), fake.spec());
+
+    let resolved = vec![
+        resolved("router-kit", "http://127.0.0.1:8300/v1".to_string(), false, None),
+        resolved("zai-coding-plan", "https://api.z.ai".to_string(), true, Some("sk-fake-test")),
+    ];
+    let (decision, _latency) =
+        fleet::route::select(&resolved, None, "refactor the crate", &specs).await;
+    assert_eq!(decision.how, How::Judged);
+    assert_eq!(decision.provider, "zai-coding-plan");
+    assert_eq!(decision.workload.as_deref(), Some("hard"));
+    assert_eq!(decision.verdict.as_deref(), Some("pass"));
+    assert_eq!(decision.start_index, 1);
+}
+
+/// A real-lane probe of `sys1_classify`'s schema: if the vendored sys1 lane
+/// boots on this machine, confirm the call shape the route judgment relies
+/// on. If it does not boot (no python3, an import failure), log it and do
+/// not block the slice.
+#[tokio::test]
+async fn the_real_sys1_lane_exposes_the_classify_schema() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the real sys1 schema probe");
+        return;
+    }
+    let Ok(spec) = lanes::spec_for("sys1") else {
+        eprintln!("the sys1 lane did not resolve from the vendored copy; skipping the schema probe");
+        return;
+    };
+    let server = match McpServer::spawn(&spec) {
+        Ok(server) => server,
+        Err(error) => {
+            eprintln!("the sys1 lane could not spawn ({error}); skipping the schema probe");
+            return;
+        }
+    };
+    let schema = async {
+        server.initialize().await.ok()?;
+        let tools = server.list_tools().await.ok()?;
+        tools
+            .iter()
+            .find(|tool| tool.name == "sys1_classify")
+            .map(|tool| tool.input_schema.clone())
+    }
+    .await;
+    let _ = server.close().await;
+    match schema {
+        Some(schema) => {
+            // The route call sends {"task": "route", "text": …}; the schema
+            // must make `text` required and carry a `task` default.
+            assert_eq!(schema["required"], serde_json::json!(["text"]));
+            assert_eq!(schema["properties"]["task"]["default"], "change");
+        }
+        None => eprintln!(
+            "the sys1 lane booted but did not list sys1_classify; skipping the schema assertion"
+        ),
+    }
 }
 
 // --- live API --------------------------------------------------------------

@@ -53,6 +53,7 @@ src/session.rs          JSONL session log: append, replay, list, resume
 src/home.rs             FLEET_HOME / ~/.fleet, sessions dir, .env fallback, harness refs
 src/doctor.rs           the four startup checks
 src/net.rs              loopback probe used by doctor
+src/route.rs            multi-provider routing: roster, sys1-judged selection, failover, decision rows
 src/tui/                the ratatui surface: app.rs state, events.rs keys, ui.rs render, mod.rs loop
 src/bin/mock-server.rs  the scripted mock API the integration tests drive
 src/bin/mock-mcp.rs     the scripted fake MCP stdio server the integration tests drive
@@ -77,6 +78,7 @@ cargo run --bin fleet -- doctor     # credentials, home, API, shell; masks the k
 cargo run --bin fleet -- run "<task>" --yes
 cargo run --bin fleet -- sessions
 cargo run --bin fleet -- lanes      # probe the four vendored lanes, health cards
+cargo run --bin fleet -- providers  # the routing roster in chain order, per-provider state
 DEEPSEEK_API_KEY=sk-... cargo test --test integration -- --ignored   # live e2e; needs account balance
 ```
 

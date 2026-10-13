@@ -31,6 +31,7 @@ use crate::agent::{
 };
 use crate::api::Client;
 use crate::lanes::{self, LaneHealth};
+use crate::route;
 use crate::session::{self, Session};
 
 use app::{Action, App, Effect, StatusUpdate};
@@ -43,11 +44,9 @@ const POLL: Duration = Duration::from_millis(100);
 
 /// What the TUI needs resolved before it starts.
 pub struct Config {
-    /// The resolved API key.
-    pub key: String,
-    /// The resolved API base URL.
-    pub base_url: String,
-    /// The fleet home that owns the sessions directory.
+    /// The fleet home that owns the sessions directory and the routing
+    /// config. Credentials are resolved per run by the router, so no single
+    /// key is required up front.
     pub home: PathBuf,
     /// The model to run.
     pub model: String,
@@ -64,8 +63,6 @@ enum Command {
 /// The agent thread's inputs.
 struct AgentConfig {
     home: PathBuf,
-    base_url: String,
-    key: String,
     model: String,
     session_id: String,
     ui_tx: UnboundedSender<UiEvent>,
@@ -120,8 +117,6 @@ pub fn run(config: Config) -> Result<(), String> {
 
     let agent = spawn_agent(AgentConfig {
         home: config.home.clone(),
-        base_url: config.base_url,
-        key: config.key,
         model: config.model.clone(),
         session_id: session_id.clone(),
         ui_tx,
@@ -314,17 +309,8 @@ fn apply_effect(
 /// never waits on the network or on a tool.
 fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let AgentConfig {
-            home,
-            base_url,
-            key,
-            model,
-            session_id,
-            ui_tx,
-            status_tx,
-            approval_tx,
-            command_rx,
-        } = config;
+        let AgentConfig { home, model, session_id, ui_tx, status_tx, approval_tx, command_rx } =
+            config;
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -339,12 +325,40 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             }
         };
         runtime.block_on(async move {
-            let client = Client::new(base_url, key);
+            let dotenv = crate::home::read_dotenv(&home);
+            // The route is chosen once, on the first run, and the committed
+            // router is reused for the rest of the session — one sys1
+            // judgment, not one per task.
+            let mut prepared: Option<route::Prepared> = None;
+            let mut judge_task = String::new();
             let mut current_session = session_id;
             let mut commands = command_rx;
             while let Some(command) = commands.recv().await {
                 match command {
                     Command::Run(task) => {
+                        if prepared.is_none() {
+                            match route::prepare(
+                                &home,
+                                &dotenv,
+                                &task,
+                                &std::collections::HashMap::new(),
+                            )
+                            .await
+                            {
+                                Ok(fresh) => {
+                                    judge_task = task.clone();
+                                    prepared = Some(fresh);
+                                }
+                                Err(error) => {
+                                    let _ = ui_tx.send(UiEvent::Failed(format!(
+                                        "routing config: {error}"
+                                    )));
+                                    continue;
+                                }
+                            }
+                        }
+                        let prepared = prepared.as_ref().expect("prepared on the first run");
+                        let client = Client::routed(prepared.router.clone());
                         let path = session::session_path(&home, &current_session);
                         // One agent per task over a freshly opened log: the
                         // replay seeds the conversation exactly as a resumed
@@ -389,6 +403,11 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                     }
                     Command::Resume(id) => current_session = id,
                 }
+            }
+            // The session's routing decision is recorded once, when the
+            // agent thread ends — best-effort, never fatal.
+            if let Some(prepared) = &prepared {
+                route::record(&home, &prepared.router, &judge_task, prepared.latency_ms);
             }
         });
     })

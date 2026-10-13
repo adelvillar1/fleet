@@ -150,7 +150,7 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         (palette::IDLE, "idle")
     };
     let turn = if status.turn == 0 { "—".to_string() } else { status.turn.to_string() };
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(" ● ", Style::new().fg(dot)),
         Span::styled(state, Style::new().fg(dot)),
         Span::styled("  ", Style::new()),
@@ -164,8 +164,17 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
             format!("{}/{}", status.prompt_tokens, status.completion_tokens),
             Style::new().fg(palette::TEXT),
         ),
-    ]);
-    frame.render_widget(Paragraph::new(line), area);
+    ];
+    // The active provider and how it was chosen, once a routed run has
+    // reported one — the TUI's half of slice 5's route surfacing.
+    if let Some(provider) = &status.provider {
+        spans.push(Span::styled("  route ", Style::new().fg(palette::DIM)));
+        spans.push(Span::styled(provider.clone(), Style::new().fg(palette::ACCENT)));
+        if let Some(how) = &status.route_how {
+            spans.push(Span::styled(format!(" ({how})"), Style::new().fg(palette::DIM)));
+        }
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// The input box with its cursor.

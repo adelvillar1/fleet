@@ -2,7 +2,10 @@
 //! tool declarations, and error mapping with actionable messages.
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::route::{RouteDecision, Router};
 
 /// Public DeepSeek API base.
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
@@ -267,6 +270,11 @@ pub struct Client {
     base_url: String,
     api_key: String,
     agent: ureq::Agent,
+    /// When set, every request routes through the roster with failover
+    /// ([`Router`]) instead of talking to `base_url` directly. `None` is a
+    /// plain single-endpoint client — the shape every existing caller and
+    /// test builds, unchanged.
+    router: Option<Arc<Router>>,
 }
 
 impl Client {
@@ -282,7 +290,29 @@ impl Client {
             agent: ureq::AgentBuilder::new()
                 .timeout(Duration::from_secs(600))
                 .build(),
+            router: None,
         }
+    }
+
+    /// A client that routes every request through `router` — the roster
+    /// with sys1-judged selection and failover. Its own base URL and key
+    /// are unused: the router picks the candidate (endpoint, key, model)
+    /// per request.
+    pub fn routed(router: Arc<Router>) -> Client {
+        Client {
+            base_url: String::new(),
+            api_key: String::new(),
+            agent: ureq::AgentBuilder::new()
+                .timeout(Duration::from_secs(600))
+                .build(),
+            router: Some(router),
+        }
+    }
+
+    /// The routing decision this client was built with, or `None` for a
+    /// plain single-endpoint client.
+    pub fn route_decision(&self) -> Option<RouteDecision> {
+        self.router.as_ref().map(|router| router.decision())
     }
 
     /// The base URL this client talks to.
@@ -317,6 +347,23 @@ impl Client {
     /// to this async function over an unbounded channel: no `futures` Stream
     /// trait, and the reader stops as soon as the receiver goes away.
     pub async fn chat_stream(
+        &self,
+        request: &ChatRequest<'_>,
+        mut on_event: impl FnMut(StreamEvent),
+    ) -> Result<ChatResponse, ClientError> {
+        // A routed client walks the roster with failover; a plain one takes
+        // the single-endpoint path below, byte-for-byte as before.
+        if let Some(router) = &self.router {
+            return router.chat_stream(request, &mut on_event).await;
+        }
+        self.chat_stream_plain(request, on_event).await
+    }
+
+    /// The single-endpoint streamed exchange, no routing. Split out so the
+    /// router calls it per candidate without the compiler seeing an
+    /// infinitely-sized recursive `chat_stream` future: the routed branch
+    /// and the plain branch would otherwise form one mutual async cycle.
+    pub(crate) async fn chat_stream_plain(
         &self,
         request: &ChatRequest<'_>,
         mut on_event: impl FnMut(StreamEvent),

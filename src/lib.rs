@@ -10,6 +10,7 @@ pub mod home;
 pub mod lanes;
 pub mod mcp;
 pub mod net;
+pub mod route;
 pub mod session;
 pub mod tools;
 pub mod tui;

@@ -1,5 +1,6 @@
 //! Fleet: a native Rust agent based on DeepSeek Harness.
 
+use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
@@ -12,6 +13,7 @@ use fleet::cli::{self, ChatOptions, Command, RunOptions};
 use fleet::doctor;
 use fleet::home::{self, resolve_setting};
 use fleet::net;
+use fleet::route;
 use fleet::session::{self, Session};
 
 #[tokio::main]
@@ -35,6 +37,7 @@ async fn main() -> ExitCode {
         Ok(Command::Chat(options)) => chat_command(&options).await,
         Ok(Command::Sessions) => sessions_command(),
         Ok(Command::Lanes) => lanes_command().await,
+        Ok(Command::Providers) => providers_command(),
         Ok(Command::Doctor) => doctor_command(),
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -44,20 +47,11 @@ async fn main() -> ExitCode {
     }
 }
 
-/// The resolved client inputs: API key and base URL, environment first with
-/// `~/.fleet/.env` and the DeepSeek Harness credential store as fallbacks.
-struct Credentials {
-    key: String,
-    base_url: String,
-}
-
-/// `fleet` with no subcommand: the TUI on the default model, a fresh
-/// session, and the resolved credentials.
+/// `fleet` with no subcommand: the TUI on the default model and a fresh
+/// session. Credentials are resolved per run by the router — each roster
+/// candidate names its own key env var — so no single key is required up
+/// front, and the doctor stays the place that reports a missing one.
 fn tui_command() -> ExitCode {
-    let credentials = match credentials() {
-        Ok(credentials) => credentials,
-        Err(code) => return code,
-    };
     let home = match fleet_home() {
         Ok(home) => home,
         Err(message) => {
@@ -66,8 +60,6 @@ fn tui_command() -> ExitCode {
         }
     };
     match fleet::tui::run(fleet::tui::Config {
-        key: credentials.key,
-        base_url: credentials.base_url,
         home,
         model: fleet::api::DEFAULT_MODEL.to_string(),
     }) {
@@ -77,17 +69,6 @@ fn tui_command() -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-/// Resolve credentials, printing the failed credentials check on the way out.
-fn credentials() -> Result<Credentials, ExitCode> {
-    let dotenv = read_dotenv();
-    let Some(key) = setting("DEEPSEEK_API_KEY", &dotenv) else {
-        eprintln!("{}", doctor::render(&doctor::evaluate_credentials(None)));
-        return Err(ExitCode::from(2));
-    };
-    let base_url = setting("DEEPSEEK_BASE_URL", &dotenv).unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
-    Ok(Credentials { key, base_url })
 }
 
 /// Resolve a setting: the environment and `~/.fleet/.env` first
@@ -117,10 +98,6 @@ fn fleet_home() -> Result<std::path::PathBuf, String> {
 }
 
 async fn run_command(options: &RunOptions) -> ExitCode {
-    let credentials = match credentials() {
-        Ok(credentials) => credentials,
-        Err(code) => return code,
-    };
     let home = match fleet_home() {
         Ok(home) => home,
         Err(message) => {
@@ -128,6 +105,7 @@ async fn run_command(options: &RunOptions) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let dotenv = read_dotenv();
     let mut session = match open_session(&home, options.session.as_deref(), &options.model) {
         Ok(session) => session,
         Err(message) => {
@@ -136,16 +114,19 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         }
     };
     eprintln!("fleet: session {} (model {})", session.id(), options.model);
-    match drive(
-        &credentials,
-        options.model.clone(),
-        options.max_turns,
-        options.yes,
-        &mut session,
-        &options.task,
-    )
-    .await
-    {
+    let prepared = match route::prepare(&home, &dotenv, &options.task, &HashMap::new()).await {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    eprintln!("route: {} ({})", prepared.decision.provider, prepared.decision.how.label());
+    let outcome =
+        drive(&prepared, options.model.clone(), options.max_turns, options.yes, &mut session, &options.task)
+            .await;
+    route::record(&home, &prepared.router, &options.task, prepared.latency_ms);
+    match outcome {
         Ok(report) => match report.stop_reason {
             StopReason::Completed => ExitCode::SUCCESS,
             StopReason::MaxTurns => {
@@ -165,10 +146,6 @@ async fn run_command(options: &RunOptions) -> ExitCode {
 }
 
 async fn chat_command(options: &ChatOptions) -> ExitCode {
-    let credentials = match credentials() {
-        Ok(credentials) => credentials,
-        Err(code) => return code,
-    };
     let home = match fleet_home() {
         Ok(home) => home,
         Err(message) => {
@@ -176,6 +153,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let dotenv = read_dotenv();
     let mut session = match open_session(&home, options.session.as_deref(), &options.model) {
         Ok(session) => session,
         Err(message) => {
@@ -185,6 +163,11 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     };
     println!("fleet chat — model {}, session {} (/exit to quit)", options.model, session.id());
     let stdin = std::io::stdin();
+    // The route is chosen once, on the first task, and the committed router
+    // is reused for the rest of the session — one sys1 judgment, not one
+    // per message.
+    let mut prepared: Option<route::Prepared> = None;
+    let mut judge_task = String::new();
     loop {
         print!("you> ");
         let _ = std::io::stdout().flush();
@@ -199,8 +182,22 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         if trimmed == "/exit" || trimmed == "/quit" {
             break;
         }
+        if prepared.is_none() {
+            match route::prepare(&home, &dotenv, trimmed, &HashMap::new()).await {
+                Ok(fresh) => {
+                    eprintln!("route: {} ({})", fresh.decision.provider, fresh.decision.how.label());
+                    judge_task = trimmed.to_string();
+                    prepared = Some(fresh);
+                }
+                Err(error) => {
+                    eprintln!("fleet: {error}");
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        let prepared = prepared.as_ref().expect("prepared on the first task");
         let outcome = drive(
-            &credentials,
+            prepared,
             options.model.clone(),
             DEFAULT_MAX_TURNS,
             options.yes,
@@ -219,19 +216,24 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
             Err(error) => eprintln!("fleet: {error}"),
         }
     }
+    if let Some(prepared) = &prepared {
+        route::record(&home, &prepared.router, &judge_task, prepared.latency_ms);
+    }
     ExitCode::SUCCESS
 }
 
-/// Build the agent and run `task`, printing the final answer to stdout.
+/// Build the routed agent and run `task`, printing the final answer to
+/// stdout. The route line and the decision row are the caller's: `run`
+/// prints once per task, `chat` once per session.
 async fn drive(
-    credentials: &Credentials,
+    prepared: &route::Prepared,
     model: String,
     max_turns: usize,
     yes: bool,
     session: &mut Session,
     task: &str,
 ) -> Result<RunReport, AgentError> {
-    let client = Client::new(credentials.base_url.clone(), credentials.key.clone());
+    let client = Client::routed(prepared.router.clone());
     let options = AgentOptions { model, max_turns, ui_tx: None, lane_specs: None };
     let approver: Box<dyn Approver> =
         if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };
@@ -302,6 +304,34 @@ async fn lanes_command() -> ExitCode {
     let health = fleet::lanes::health_all().await;
     print!("{}", fleet::lanes::render(&health));
     if health.iter().all(|lane| lane.state == fleet::lanes::LaneState::Ok) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// `fleet providers`: list the routing roster in declared chain order with
+/// per-provider state (configured/unconfigured, key present/absent — never
+/// the key) and the head marked, as cards in `fleet lanes`' style. No
+/// network and no child spawn: key presence is an environment read. The
+/// exit code doubles as "is routing possible here" — success when at least
+/// one candidate is configured.
+fn providers_command() -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let dotenv = read_dotenv();
+    let roster = match route::load_roster(&home) {
+        Ok(roster) => roster,
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let resolved = route::resolve(&roster.candidates, &dotenv);
+    print!("{}", route::render(&resolved));
+    if resolved.iter().any(|entry| route::provider_state(entry) == route::ProviderState::Ready) {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

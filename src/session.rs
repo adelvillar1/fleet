@@ -228,7 +228,7 @@ fn compact_utc_stamp(at: SystemTime) -> io::Result<String> {
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ` from the wall clock.
-fn iso_utc_stamp(at: SystemTime) -> io::Result<String> {
+pub(crate) fn iso_utc_stamp(at: SystemTime) -> io::Result<String> {
     let (year, month, day, hour, minute, second) = civil_utc(at)?;
     Ok(format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"))
 }

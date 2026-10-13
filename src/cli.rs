@@ -14,6 +14,8 @@ pub enum Command {
     Sessions,
     /// Probe the four vendored lanes' health.
     Lanes,
+    /// List the routing roster in declared chain order with per-provider state.
+    Providers,
     /// Environment and connectivity checks.
     Doctor,
     /// Print the version.
@@ -55,6 +57,7 @@ usage:
   fleet chat [options]           interactive multi-turn session
   fleet sessions                 list saved sessions
   fleet lanes                    probe the four vendored lanes' health
+  fleet providers                list the routing roster and per-provider state
   fleet doctor                   check credentials, home, API, shell
   fleet version                  print the version
   fleet help                     print this help
@@ -87,6 +90,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "chat" => parse_chat(rest),
         "sessions" => no_flags(rest, Command::Sessions),
         "lanes" => no_flags(rest, Command::Lanes),
+        "providers" => no_flags(rest, Command::Providers),
         "doctor" => no_flags(rest, Command::Doctor),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),

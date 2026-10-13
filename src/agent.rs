@@ -64,6 +64,11 @@ pub enum UiEvent {
     /// A lane joined the run: its tools are in the model's tool set for
     /// the rest of the run, and its `lane_tools` record is in the log.
     LaneJoined { lane: String, tool_count: usize },
+    /// The route this run takes: the active provider and how it was chosen
+    /// (`judged`/`fallback`/`pinned`). Emitted once at the start of a
+    /// routed run; a plain single-endpoint client emits nothing, so the
+    /// unrouted and headless paths are unchanged.
+    Routed { provider: String, how: String },
     /// The loop stopped orderly.
     Finished { stop_reason: String },
     /// The loop failed; the run is over.
@@ -335,6 +340,15 @@ impl<'a> Agent<'a> {
     }
 
     async fn run_task(&mut self, task: &str) -> Result<RunReport, AgentError> {
+        // A routed run announces its route once, before the first turn: the
+        // headless surface prints the same fact, and the TUI's status bar
+        // reads it. A plain client emits nothing here.
+        if let Some(decision) = self.client.route_decision() {
+            self.emit(UiEvent::Routed {
+                provider: decision.provider.clone(),
+                how: decision.how.label().to_string(),
+            });
+        }
         self.push_message(Message::text(Role::User, task))?;
         while self.turns < self.options.max_turns as u64 {
             self.turns += 1;

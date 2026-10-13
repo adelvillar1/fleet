@@ -139,6 +139,11 @@ pub struct Status {
     pub completion_tokens: u64,
     /// True while a run is in flight.
     pub working: bool,
+    /// The active provider for the current/last routed run, and how it was
+    /// chosen (`judged`/`fallback`/`pinned`). `None` until a routed run
+    /// reports one.
+    pub provider: Option<String>,
+    pub route_how: Option<String>,
 }
 
 /// What the agent thread reports beside the `UiEvent` stream: exact token
@@ -210,6 +215,8 @@ impl App {
                 prompt_tokens: 0,
                 completion_tokens: 0,
                 working: false,
+                provider: None,
+                route_how: None,
             },
             error: None,
             scrolled_back: 0,
@@ -373,6 +380,12 @@ impl App {
                 // and lands as its own block, exactly like a tool card.
                 self.flush_streaming();
                 self.entries.push(Entry::Lane(LaneCard { lane, tool_count }));
+            }
+            UiEvent::Routed { provider, how } => {
+                // The route this run takes: the status bar shows the active
+                // provider and how it was chosen.
+                self.status.provider = Some(provider);
+                self.status.route_how = Some(how);
             }
             UiEvent::Finished { .. } => {
                 self.flush_streaming();
