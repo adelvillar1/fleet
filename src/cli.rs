@@ -21,6 +21,9 @@ pub enum Command {
     /// The skills surface: the live skills, the drafts awaiting the
     /// slice-12 gate, and the usage-scan curation.
     Skills(SkillsOptions),
+    /// The memories surface: the durable facts as cards, the ranked
+    /// assembly for one instruction, or the cards filtered by shape.
+    Memories(MemoriesOptions),
     /// Environment and connectivity checks.
     Doctor,
     /// Print the version.
@@ -71,6 +74,18 @@ pub struct SkillsOptions {
     pub show: Option<String>,
 }
 
+/// Options for `fleet memories`. The bare command cards the live facts;
+/// each flag narrows to one of the slice's other two surfaces, and the
+/// two do not combine — one prints an assembly, the other filters cards.
+#[derive(Debug, PartialEq, Eq)]
+pub struct MemoriesOptions {
+    /// Print the ranked assembly for this instruction — what would
+    /// enter a turn's context — instead of the cards. A dry run.
+    pub recall: Option<String>,
+    /// Filter the cards to facts carrying this structure shape.
+    pub shape: Option<String>,
+}
+
 /// Turn cap when `--max-turns` is absent.
 pub const DEFAULT_MAX_TURNS: usize = 25;
 
@@ -89,6 +104,10 @@ usage:
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
                                 proposals, --show prints one draft
+  fleet memories [--recall \"<instruction>\"] [--shape <name>]
+                                the durable facts as cards; --recall prints the
+                                ranked assembly for one instruction, --shape
+                                filters the cards by structure shape
   fleet doctor                   check credentials, home, API, shell
   fleet version                  print the version
   fleet help                     print this help
@@ -127,6 +146,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
         "skills" => parse_skills(rest),
+        "memories" => parse_memories(rest),
         "doctor" => no_flags(rest, Command::Doctor),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -250,6 +270,44 @@ fn parse_skills(args: &[String]) -> Result<Command, String> {
         index += 1;
     }
     Ok(Command::Skills(SkillsOptions { proposed, curate, show }))
+}
+
+/// `fleet memories`: the bare command cards the live facts;
+/// `--recall "<instruction>"` prints the ranked assembly for one
+/// instruction (a dry run — printing records no hit); `--shape <name>`
+/// filters the cards by structure shape. The two flags do not combine:
+/// one prints an assembly, the other filters cards, and a caller who
+/// wants both is asking two questions.
+fn parse_memories(args: &[String]) -> Result<Command, String> {
+    let mut recall: Option<String> = None;
+    let mut shape: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--recall" => {
+                let value = take_value(args, &mut index, arg)?;
+                if value.trim().is_empty() {
+                    return Err("--recall needs an instruction".to_string());
+                }
+                recall = Some(value);
+            }
+            "--shape" => shape = Some(take_value(args, &mut index, arg)?),
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown memories option `{arg}`"));
+            }
+            _ => return Err(format!("`{arg}` takes no value here; see `fleet help`")),
+        }
+        index += 1;
+    }
+    if recall.is_some() && shape.is_some() {
+        return Err(
+            "--recall prints the assembly and --shape filters the cards; they do not combine"
+                .to_string(),
+        );
+    }
+    Ok(Command::Memories(MemoriesOptions { recall, shape }))
 }
 
 /// A real calendar check on an already-`YYYY-MM-DD`-shaped string: the
@@ -427,6 +485,35 @@ mod tests {
         assert!(parse(&args(&["skills", "extra"])).is_err());
         assert!(parse(&args(&["skills", "--show"])).is_err());
         assert_eq!(parse(&args(&["skills", "--help"])).unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn memories_parses_its_flags_and_rejects_junk() {
+        assert_eq!(
+            parse(&args(&["memories"])).unwrap(),
+            Command::Memories(MemoriesOptions { recall: None, shape: None })
+        );
+        assert_eq!(
+            parse(&args(&["memories", "--recall", "the deploy is failing"])).unwrap(),
+            Command::Memories(MemoriesOptions {
+                recall: Some("the deploy is failing".to_string()),
+                shape: None
+            })
+        );
+        assert_eq!(
+            parse(&args(&["memories", "--shape", "deploy"])).unwrap(),
+            Command::Memories(MemoriesOptions { recall: None, shape: Some("deploy".to_string()) })
+        );
+        // The two flags answer two different questions and do not
+        // combine.
+        assert!(parse(&args(&["memories", "--recall", "x", "--shape", "deploy"])).is_err());
+        // An empty instruction is a usage error, not a silent empty
+        // recall.
+        assert!(parse(&args(&["memories", "--recall", ""])).is_err());
+        assert!(parse(&args(&["memories", "--recall"])).is_err());
+        assert!(parse(&args(&["memories", "--json"])).is_err());
+        assert!(parse(&args(&["memories", "extra"])).is_err());
+        assert_eq!(parse(&args(&["memories", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]

@@ -1306,7 +1306,10 @@ fn dashes_for(left: &str, right: &str) -> String {
 /// space that fits, so a description never splits mid-word; a single
 /// word longer than the width — a path, a command — hard-splits rather
 /// than overflowing the card, the way `lanes` wraps its details.
-fn wrap_detail(text: &str, width: usize) -> Vec<String> {
+///
+/// `pub(crate)`: the card family shares one word-aware wrapper (KI-055's
+/// named remedy), and slice 8's memory surface is the next card author.
+pub(crate) fn wrap_detail(text: &str, width: usize) -> Vec<String> {
     let width = width.max(16);
     let mut chunks: Vec<String> = Vec::new();
     let mut current = String::new();

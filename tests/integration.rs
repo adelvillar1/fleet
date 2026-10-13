@@ -3103,6 +3103,202 @@ fn the_skills_command_lists_cards_proposals_and_a_draft() {
     std::fs::remove_dir_all(&bare).ok();
 }
 
+// --- memory (slice 8) ------------------------------------------------------
+
+/// A scratch corpus under a fresh working directory: two protected
+/// facts, three ranked facts above the floor, one below it, and one
+/// malformed file the loader must skip by name. Returns the directory
+/// the binary runs from — `fleet memories` resolves the nearest
+/// `memories/` at or above the working directory.
+fn memories_corpus(tag: &str) -> PathBuf {
+    let root = temp_home(tag);
+    let memories = root.join("memories");
+    std::fs::create_dir_all(&memories).unwrap();
+    let fact = |name: &str, description: &str, fact_type: &str, shape: &str| {
+        std::fs::write(
+            memories.join(format!("{name}.md")),
+            format!(
+                "---\nname: {name}\ndescription: \"{description}\"\ntype: {fact_type}\ndate: 2026-10-13\nbasis: confirmed-by\nshape: [{shape}]\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe full content of {name}.\n"
+            ),
+        )
+        .unwrap();
+    };
+    fact("identity", "who the owner is and how he works, in a standing fact", "user", "");
+    fact("rule", "a standing rule the owner stated about documentation", "feedback", "docs");
+    fact("top", "the railway deploy is failing per branch", "project", "deploy");
+    fact("middle", "the railway deploy waits for the webhook", "project", "deploy");
+    fact("bottom", "the railway deploy logs its outcome", "project", "deploy");
+    fact("junk", "the walnut table texture", "project", "");
+    std::fs::write(memories.join("broken.md"), "# no fence here\n").unwrap();
+    root
+}
+
+/// `fleet memories` end to end against the real binary: the facts as
+/// cards, the protected and retired tallies, and the backend the probe
+/// found — named either way, never silent.
+#[test]
+fn the_memories_command_cards_the_facts_and_names_the_backend() {
+    let root = memories_corpus("memories-cmd");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .arg("memories")
+        .current_dir(&root)
+        .output()
+        .expect("run the fleet binary");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Cards, never a table: one per live fact, the malformed one skipped.
+    assert!(stdout.contains("fleet memories"), "{stdout}");
+    assert_eq!(stdout.matches('\u{250c}').count(), 6, "{stdout}");
+    assert!(stdout.contains("6 facts \u{b7} 2 protected \u{b7} 0 retired"), "{stdout}");
+    // Every card field the surface promises: type, basis, shape,
+    // recall-count, valid-until.
+    assert!(stdout.contains("project \u{b7} confirmed-by"), "{stdout}");
+    assert!(stdout.contains("shape: deploy \u{b7} recalls: 0 \u{b7} valid-until: \u{2014}"), "{stdout}");
+    // The backend is named where an operator looks — which of the two
+    // paths serves is the machine's, the naming is the contract.
+    assert!(
+        stdout.contains("backend: vector") || stdout.contains("backend: keyword-only"),
+        "{stdout}"
+    );
+    // The malformed fact is skipped by name, on stderr, once.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("skipping `broken`"), "{stderr}");
+    // The generated index is gitignored-style cache, not a fact.
+    assert!(root.join("memories/.recall-index.json").exists() || stdout.contains("keyword-only"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// `fleet memories --recall` end to end: the ranked assembly for one
+/// instruction, the protected tier in the block, and the dry run that
+/// changes nothing on disk.
+#[test]
+fn the_memories_recall_flag_prints_the_ranked_assembly() {
+    let root = memories_corpus("memories-recall");
+    let before: Vec<u8> = {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("memories"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+            .collect();
+        files.sort();
+        files
+            .iter()
+            .flat_map(|path| std::fs::read(path).unwrap())
+            .collect()
+    };
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .args(["memories", "--recall", "the railway deploy is failing"])
+        .current_dir(&root)
+        .output()
+        .expect("run the fleet binary");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The shape the instruction routed under, and the fallback named
+    // when nothing classifies.
+    assert!(stdout.contains("shape: deploy"), "{stdout}");
+    // The protected tier enters whatever the budget says.
+    assert!(stdout.contains("Standing context (protected"), "{stdout}");
+    assert!(stdout.contains("[user confirmed-by]"), "{stdout}");
+    assert!(stdout.contains("[feedback confirmed-by]"), "{stdout}");
+    // The recall section names its shape, and the dry run is honest.
+    assert!(stdout.contains("shape-routed recall for `deploy`"), "{stdout}");
+    assert!(stdout.contains("a dry run"), "{stdout}");
+    // Nothing on disk changed: printing is not a recall hit.
+    let after: Vec<u8> = {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("memories"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+            .collect();
+        files.sort();
+        files
+            .iter()
+            .flat_map(|path| std::fs::read(path).unwrap())
+            .collect()
+    };
+    assert_eq!(before, after);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// An unclassifiable instruction answers from the surface alone — the
+/// documented fallback, named on the surface, not an error.
+#[test]
+fn the_memories_recall_flag_names_the_unclassified_fallback() {
+    let root = memories_corpus("memories-fallback");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .args(["memories", "--recall", "tell me about the walnut table"])
+        .current_dir(&root)
+        .output()
+        .expect("run the fleet binary");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("shape: none \u{2014} surface recall (the documented fallback)"),
+        "{stdout}"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// `fleet memories --shape` filters the cards by structure shape, and a
+/// shape nothing carries names the taxonomy rather than showing an
+/// empty screen.
+#[test]
+fn the_memories_shape_flag_filters_the_cards() {
+    let root = memories_corpus("memories-shape");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .args(["memories", "--shape", "deploy"])
+        .current_dir(&root)
+        .output()
+        .expect("run the fleet binary");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("filtered by shape: deploy"), "{stdout}");
+    assert_eq!(stdout.matches('\u{250c}').count(), 3, "{stdout}");
+    let empty = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .args(["memories", "--shape", "telemetry"])
+        .current_dir(&root)
+        .output()
+        .expect("run the fleet binary");
+    let empty_out = String::from_utf8_lossy(&empty.stdout);
+    assert!(empty_out.contains("no facts carry shape `telemetry`"), "{empty_out}");
+    assert!(
+        empty_out.contains("rendering, state-sync, deploy, build, change, deps, docs"),
+        "{empty_out}"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// `fleet doctor`'s recall line names which retrieval path is live —
+/// the vector path with the endpoint and dimensionality when the local
+/// model answers, the one named degradation line when it does not.
+/// Either way the line is there: never silent.
+#[test]
+fn the_doctor_recall_line_names_the_live_path() {
+    let root = memories_corpus("memories-doctor");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .arg("doctor")
+        .current_dir(&root)
+        .output()
+        .expect("run the fleet binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let recall = stdout
+        .lines()
+        .find(|line| line.starts_with("recall"))
+        .unwrap_or_else(|| panic!("doctor names no recall path: {stdout}"));
+    assert!(
+        recall.contains("vector path live") || recall.contains("embeddings unavailable"),
+        "{recall}"
+    );
+    // The degradation, when it is the live answer, is the one named
+    // line — not a silent absence.
+    if recall.contains("embeddings unavailable") {
+        assert!(recall.contains("recall is keyword-only"), "{recall}");
+    }
+    std::fs::remove_dir_all(&root).ok();
+}
+
 // --- live API --------------------------------------------------------------
 
 #[tokio::test]

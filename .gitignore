@@ -3,5 +3,9 @@
 # Vendored Python lane cores: bytecode is regenerated on every lane run
 __pycache__/
 
+# The generated embedding index beside the fact tree it derives from —
+# rebuilt on load, like __pycache__
+/memories/.recall-index.json
+
 # Claude local env reference — env var names and URLs only, not credential values
 CLAUDE.local.md

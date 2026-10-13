@@ -137,6 +137,26 @@ pub fn render_calib(root: Option<&Path>, today_file_exists: bool) -> String {
     format!("{:12} {}  {}", "calib", "info", detail)
 }
 
+/// The recall-path check: which retrieval path is live. It passes in
+/// **both** states — a keyword-only recall is a working configuration,
+/// not a failure, and a clean machine has no local embedding model — and
+/// its detail names the path. When the vector path is absent, the one
+/// named line says so: that is the live system's failure this check
+/// exists to fix, where an absent embedding stack silently degraded
+/// recall over 11k entries. The line is never silent.
+///
+/// `vector` is `(endpoint, dims)` when the probe found a live local
+/// model, `None` for the keyword-only degradation.
+pub fn evaluate_recall(vector: Option<(&str, usize)>) -> Check {
+    let detail = match vector {
+        Some((endpoint, dims)) => {
+            format!("vector path live \u{2014} {endpoint} ({dims}-dim embeddings serve recall)")
+        }
+        None => "embeddings unavailable \u{2014} recall is keyword-only".to_string(),
+    };
+    Check { name: "recall", ok: true, detail }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +222,23 @@ mod tests {
         // A present file is named present; a missing home says so plainly.
         assert!(render_calib(Some(&root), true).contains("present"));
         assert!(render_calib(None, false).contains("no home directory known"));
+    }
+
+    #[test]
+    fn the_recall_check_names_the_live_path_both_ways() {
+        // The vector path: the endpoint and the dimensionality the probe
+        // found are named where an operator looks.
+        let live = evaluate_recall(Some(("http://127.0.0.1:8901/v1/embeddings", 768)));
+        assert!(live.ok);
+        assert!(live.detail.contains("vector path live"), "{}", live.detail);
+        assert!(live.detail.contains("768"), "{}", live.detail);
+        // The degradation: one named line, never silent.
+        let degraded = evaluate_recall(None);
+        assert!(degraded.ok);
+        assert_eq!(degraded.detail, "embeddings unavailable \u{2014} recall is keyword-only");
+        // Both states pass: keyword-only recall is a working
+        // configuration, and doctor is the install gate — a clean
+        // machine with no local model must stay green.
+        assert!(render(&degraded).starts_with("recall"), "{}", render(&degraded));
     }
 }

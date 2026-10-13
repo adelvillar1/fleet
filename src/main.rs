@@ -40,6 +40,7 @@ async fn main() -> ExitCode {
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Skills(options)) => skills_command(&options),
+        Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Doctor) => doctor_command(),
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -308,6 +309,29 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `fleet memories`: the durable facts as cards, the ranked assembly for
+/// one instruction (`--recall`), or the cards filtered by structure
+/// shape (`--shape`). A read surface over the repo's own git-tracked
+/// files, like `fleet calib` and `fleet skills`: the exit code is always
+/// success, and a corpus with no facts says so rather than failing.
+///
+/// The corpus is the nearest `memories/` at or above the working
+/// directory — the repo root in everyday use, the fork's
+/// `resolveMemoryRoot` rule. The vector path is probed at load and the
+/// surface's header names which backend serves; `--recall` is a dry run
+/// that writes nothing, because the turn path that records hits is
+/// part 2's.
+fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
+    let root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+    let memory = fleet::memory::Memory::load(&root);
+    if let Some(instruction) = &options.recall {
+        print!("{}", fleet::memory::render_recall(&memory, instruction));
+    } else {
+        print!("{}", fleet::memory::render(&memory, options.shape.as_deref()));
+    }
+    ExitCode::SUCCESS
+}
+
 /// `fleet calib`: one day of the calibration stream as cards — the rows
 /// grouped by op with their counts, the writer's counters, and the last
 /// few rows. No network, no lane spawn, no writer of its own: this is a
@@ -501,6 +525,17 @@ fn doctor_command() -> ExitCode {
         None => doctor::render_calib(None, false),
     };
     println!("{calib_line}");
+
+    // The recall-path line: which retrieval path is live. The probe is
+    // one real embedding round trip against the loopback llama-server —
+    // a `/health` poll would prove nothing about the embeddings route —
+    // and the check names what it found either way. It passes in both
+    // states and never touches the exit code: keyword-only recall is a
+    // working configuration, and the failure this line exists to fix is
+    // the live system's silent degradation, not a missing local model.
+    let probed = fleet::memory::probe(fleet::memory::DEFAULT_EMBEDDING_ENDPOINT);
+    let recall_check = doctor::evaluate_recall(probed.vector());
+    println!("{}", doctor::render(&recall_check));
 
     if failed {
         ExitCode::FAILURE

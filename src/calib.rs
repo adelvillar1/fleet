@@ -2,11 +2,13 @@
 //!
 //! One `events.jsonl` per UTC day under the dev-decisions log root, in
 //! `devdec`'s row vocabulary, written through a bounded non-blocking queue
-//! that one background thread drains. Three ops are emitted today —
+//! that one background thread drains. Four ops are emitted today —
 //! `route` (slice 5's decision row, shape unchanged), `tool_screen` (one
-//! approval decision), and `turn` (one run ending, graded ok/failed with
-//! the partial endings named) — and `eval_corpus` is reserved for slice
-//! 13's scores.
+//! approval decision), `turn` (one run ending, graded ok/failed with
+//! the partial endings named), and `recall_hit` (slice 8's memory
+//! feedback: one fact retrieval surfaced, the shape it routed under,
+//! and the score it ranked at) — and `eval_corpus` is reserved for
+//! slice 13's scores.
 //!
 //! The contract is dev-decisions' own: it **gates the operations, grades
 //! the outcomes, and earns autonomy on evidence**. Fleet's rows land in
@@ -97,6 +99,21 @@ pub struct TurnRow {
     pub reason: Option<String>,
 }
 
+/// One recall hit: a fact the retrieval surfaced, the shape the
+/// instruction routed under, and the score it ranked at. The feedback
+/// rung's audit row — recall's effect is measurable in the stream
+/// rather than asserted.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecallHitRow {
+    pub ts: String,
+    /// The fact's name, the file stem under `memories/`.
+    pub fact: String,
+    /// The classified structure shape, or empty when unclassified.
+    pub shape: String,
+    /// The composite score the fact ranked at.
+    pub score: f64,
+}
+
 /// One row in the stream, tagged by its op the way devdec's rows are: the
 /// tag is a field of the JSON object, not a wrapper.
 #[derive(Debug, Clone, Serialize)]
@@ -105,6 +122,7 @@ pub enum Row {
     Route(RouteRow),
     ToolScreen(ToolScreenRow),
     Turn(TurnRow),
+    RecallHit(RecallHitRow),
 }
 
 impl Row {
@@ -114,6 +132,7 @@ impl Row {
             Row::Route(_) => OP_ROUTE,
             Row::ToolScreen(_) => OP_TOOL_SCREEN,
             Row::Turn(_) => OP_TURN,
+            Row::RecallHit(_) => OP_RECALL_HIT,
         }
     }
 
@@ -123,6 +142,7 @@ impl Row {
             Row::Route(row) => &row.ts,
             Row::ToolScreen(row) => &row.ts,
             Row::Turn(row) => &row.ts,
+            Row::RecallHit(row) => &row.ts,
         }
     }
 }
@@ -133,12 +153,14 @@ pub const OP_ROUTE: &str = "route";
 pub const OP_TOOL_SCREEN: &str = "tool_screen";
 /// The run-ending op.
 pub const OP_TURN: &str = "turn";
+/// The memory-recall op: one hit per fact a recall surfaced.
+pub const OP_RECALL_HIT: &str = "recall_hit";
 /// Reserved for slice 13's eval-corpus scores. Nothing emits it yet; the
 /// name is claimed here so the reader and `fleet calib` need no format
 /// change when it lands.
 pub const OP_EVAL_CORPUS: &str = "eval_corpus";
 /// The ops this slice emits, in the order `fleet calib` groups them.
-pub const OPS: [&str; 3] = [OP_ROUTE, OP_TOOL_SCREEN, OP_TURN];
+pub const OPS: [&str; 4] = [OP_ROUTE, OP_TOOL_SCREEN, OP_TURN, OP_RECALL_HIT];
 
 /// One approval decision's verdict, as the row names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -778,6 +800,16 @@ pub struct ReadRow {
     /// generic.
     #[serde(default)]
     pub reason: String,
+    /// The fact a `recall_hit` row names — slice 8's memory feedback.
+    #[serde(default)]
+    pub fact: String,
+    /// The shape a `recall_hit` row routed under; empty when the
+    /// instruction was unclassified.
+    #[serde(default)]
+    pub shape: String,
+    /// The composite score a `recall_hit` row ranked at.
+    #[serde(default)]
+    pub score: f64,
 }
 
 /// One attempt as a row carries it: the provider and its outcome, which is
@@ -949,6 +981,7 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
         OP_ROUTE => route_detail(&op_rows),
         OP_TOOL_SCREEN => screen_detail(&op_rows),
         OP_TURN => turn_detail(&op_rows),
+        OP_RECALL_HIT => recall_detail(&op_rows),
         _ => Vec::new(),
     };
     let header_right = format!("{} row{}", op_rows.len(), plural(op_rows.len()));
@@ -1033,6 +1066,32 @@ fn turn_detail(rows: &[&ReadRow]) -> Vec<String> {
     vec![
         format!("{ok} ok \u{b7} {failed} failed \u{b7} {turns} turn{}", plural(turns as usize)),
         format!("endings: {}", ending_tally(rows).join(" \u{b7} ")),
+    ]
+}
+
+/// The recall-hit card's facts: hits, distinct facts recalled, and the
+/// last hit — the fact, the shape it routed under, and its score.
+fn recall_detail(rows: &[&ReadRow]) -> Vec<String> {
+    let Some(last) = rows.last() else {
+        return Vec::new();
+    };
+    let mut facts: Vec<&str> = rows.iter().map(|row| row.fact.as_str()).collect();
+    facts.sort_unstable();
+    facts.dedup();
+    vec![
+        format!(
+            "{} hit{} \u{b7} {} fact{} recalled",
+            rows.len(),
+            plural(rows.len()),
+            facts.len(),
+            plural(facts.len())
+        ),
+        format!(
+            "last {} \u{b7} shape {} \u{b7} score {:.2}",
+            last.fact,
+            if last.shape.is_empty() { "unclassified" } else { &last.shape },
+            last.score
+        ),
     ]
 }
 
@@ -1126,6 +1185,13 @@ fn row_summary(row: &ReadRow) -> String {
             "{}  turn  {}  {}  {} turns",
             row.ts, row.outcome, row.stop_reason, row.turns
         ),
+        OP_RECALL_HIT => format!(
+            "{}  recall_hit  {}  {}  {:.2}",
+            row.ts,
+            row.fact,
+            if row.shape.is_empty() { "unclassified" } else { &row.shape },
+            row.score
+        ),
         _ => format!("{}  {}", row.ts, row.op),
     }
 }
@@ -1202,6 +1268,15 @@ mod tests {
             lane: None,
             input_chars: 2,
             input_hash: hash16("{}"),
+        })
+    }
+
+    fn recall_hit_row(fact: &str, shape: &str, score: f64) -> Row {
+        Row::RecallHit(RecallHitRow {
+            ts: "2026-10-13T12:00:03Z".to_string(),
+            fact: fact.to_string(),
+            shape: shape.to_string(),
+            score,
         })
     }
 
@@ -1548,6 +1623,55 @@ mod tests {
         let root = scratch("empty");
         let rendered = render(&root, "2026-10-13");
         assert!(rendered.contains("no Fleet rows for 2026-10-13"), "{rendered}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the recall_hit op ---
+
+    #[test]
+    fn the_recall_hit_row_carries_the_fact_the_shape_and_the_score() {
+        let row = serde_json::to_string(&recall_hit_row("fleet-gate-is-local", "build", 0.42)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&row).unwrap();
+        assert_eq!(value["op"], "recall_hit");
+        assert_eq!(value["fact"], "fleet-gate-is-local");
+        assert_eq!(value["shape"], "build");
+        assert_eq!(value["score"], 0.42);
+        assert_eq!(OPS, ["route", "tool_screen", "turn", "recall_hit"]);
+    }
+
+    #[test]
+    fn the_reader_keeps_recall_hit_rows_with_their_shape() {
+        let root = scratch("read-recall");
+        write_rows(&root, "2026-10-13", &[recall_hit_row("a-fact", "deploy", 0.5)]);
+        let rows = read_day(&root, "2026-10-13", 512);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].op, OP_RECALL_HIT);
+        assert_eq!(rows[0].fact, "a-fact");
+        assert_eq!(rows[0].shape, "deploy");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_surface_cards_the_recall_hit_op_beside_the_others() {
+        let root = scratch("render-recall-hit");
+        write_rows(
+            &root,
+            "2026-10-13",
+            &[
+                recall_hit_row("a-fact", "deploy", 0.5),
+                recall_hit_row("b-fact", "", 0.31),
+                turn_row(TurnStop::Completed, 1),
+            ],
+        );
+        let rendered = render(&root, "2026-10-13");
+        assert!(rendered.contains("recall_hit"), "{rendered}");
+        assert!(rendered.contains("2 hits \u{b7} 2 facts recalled"), "{rendered}");
+        // An unclassified hit names itself unclassified rather than
+        // printing an empty shape.
+        assert!(rendered.contains("shape unclassified"), "{rendered}");
+        assert!(rendered.contains("score 0.31"), "{rendered}");
+        // The verbatim tail carries the row's own facts.
+        assert!(rendered.contains("recall_hit  b-fact  unclassified  0.31"), "{rendered}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
