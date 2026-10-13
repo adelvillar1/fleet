@@ -121,6 +121,22 @@ pub fn evaluate_shell(probe: Result<&'static str, String>) -> Check {
     }
 }
 
+/// The calibration-stream line, informational and never a check: the
+/// resolved root and whether today's file exists. It is the cheapest
+/// guard against dev-decisions moving its `LOG_DIR` literal and silently
+/// re-routing Fleet's stream — the root is named where an operator looks.
+/// It never touches the exit code.
+pub fn render_calib(root: Option<&Path>, today_file_exists: bool) -> String {
+    let detail = match root {
+        Some(root) => {
+            let status = if today_file_exists { "present" } else { "absent" };
+            format!("{} (today's file: {})", root.display(), status)
+        }
+        None => "no home directory known; set FLEET_HOME or HOME".to_string(),
+    };
+    format!("{:12} {}  {}", "calib", "info", detail)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +185,22 @@ mod tests {
         assert!(line.starts_with("shell        ok    sh available"), "{line}");
         let line = render(&evaluate_shell(Err("no shell".to_string())));
         assert!(line.contains("FAIL"), "{line}");
+    }
+
+    #[test]
+    fn the_calib_line_names_the_resolved_root() {
+        // A scratch home with no config.json and no user home resolves to
+        // the <FLEET_HOME>/logs fallback; the informational line names it
+        // and says today's file is absent, without touching any check.
+        let home = std::path::Path::new("/scratch/fleet-home");
+        let root = crate::calib::resolve_root(home, None);
+        assert_eq!(root, std::path::Path::new("/scratch/fleet-home/logs"));
+        let line = render_calib(Some(&root), false);
+        assert!(line.contains("calib"), "{line}");
+        assert!(line.contains("/scratch/fleet-home/logs"), "{line}");
+        assert!(line.contains("absent"), "{line}");
+        // A present file is named present; a missing home says so plainly.
+        assert!(render_calib(Some(&root), true).contains("present"));
+        assert!(render_calib(None, false).contains("no home directory known"));
     }
 }

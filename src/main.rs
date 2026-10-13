@@ -399,6 +399,22 @@ fn doctor_command() -> ExitCode {
     failed |= !shell_check.ok;
     println!("{}", doctor::render(&shell_check));
 
+    // The calibration-stream line: informational, never a check, and it
+    // never changes the exit code. It names the root the stream actually
+    // resolves to and whether today's file exists — the cheapest guard
+    // against dev-decisions moving its LOG_DIR literal and silently
+    // re-routing Fleet's rows.
+    let user_home = std::env::var("HOME").ok();
+    let calib_line = match &home {
+        Some(home) => {
+            let root = fleet::calib::resolve_root(home, user_home.as_deref());
+            let today_file = fleet::calib::day_path(&root, &fleet::calib::today());
+            doctor::render_calib(Some(&root), today_file.exists())
+        }
+        None => doctor::render_calib(None, false),
+    };
+    println!("{calib_line}");
+
     if failed {
         ExitCode::FAILURE
     } else {

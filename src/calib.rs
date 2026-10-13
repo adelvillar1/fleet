@@ -22,9 +22,9 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -399,10 +399,16 @@ struct Counters {
     done: AtomicBool,
 }
 
-/// What the writer shares with every handle: the root and its counters.
+/// What the writer shares with every handle: the root, its counters, and
+/// the queue's receiving end.
 struct Inner {
     root: PathBuf,
     counters: Arc<Counters>,
+    /// The queue's receiving end, shared with the writer so a shutdown
+    /// that exhausts its drain budget can pull the still-buffered rows
+    /// and count them rather than lose them silently — see
+    /// [`count_undrained`].
+    receiver: Arc<Mutex<Receiver<Row>>>,
 }
 
 /// The calibration stream: a bounded queue drained by one background
@@ -448,11 +454,13 @@ impl Stream {
         let root = root.into();
         let counters = Arc::new(Counters::default());
         let (queue, receiver) = std::sync::mpsc::sync_channel::<Row>(capacity);
+        let receiver = Arc::new(Mutex::new(receiver));
         let spawned = thread::Builder::new()
             .name("fleet-calib".to_string())
             .spawn({
                 let root = root.clone();
                 let counters = Arc::clone(&counters);
+                let receiver = Arc::clone(&receiver);
                 move || drain(root, receiver, counters)
             });
         // A thread that could not spawn leaves the queue disconnected:
@@ -465,7 +473,10 @@ impl Stream {
                 "fleet: the calibration writer could not start; rows will be counted as dropped"
             );
         }
-        Stream { queue: Some(Arc::new(queue)), inner: Arc::new(Inner { root, counters }) }
+        Stream {
+            queue: Some(Arc::new(queue)),
+            inner: Arc::new(Inner { root, counters, receiver }),
+        }
     }
 
     /// Enqueue one row. Never blocks and never fails the caller: a full
@@ -532,10 +543,27 @@ impl Drop for Stream {
             || !self.inner.counters.done.load(Ordering::Relaxed)
         {
             if Instant::now() >= deadline {
+                // The budget is spent: pull every row still buffered in
+                // the queue and count it as dropped, so a wedged writer's
+                // leftovers are named rather than silently lost. The rows
+                // the writer has already taken (it is mid-append on them)
+                // stay the writer's — counting them here too would
+                // double-count a row it still writes.
+                let uncounted = count_undrained(&self.inner.receiver, &self.inner.counters);
+                // Persist the counted drops now: the writer is what ran
+                // out of budget and may never reach its own final write,
+                // and the counter's whole point is that a later
+                // `fleet calib` reads it.
+                let state = WriterState {
+                    written: self.inner.counters.written.load(Ordering::Relaxed),
+                    dropped: self.inner.counters.dropped.load(Ordering::Relaxed),
+                    failed: self.inner.counters.failed.load(Ordering::Relaxed),
+                };
+                write_state(&self.inner.root, &state);
                 eprintln!(
                     "fleet: the calibration writer did not drain within {}s; {} queued row(s) were not written (the run is unaffected)",
                     DRAIN_BUDGET.as_secs(),
-                    self.inner.counters.pending.load(Ordering::Relaxed)
+                    uncounted
                 );
                 break;
             }
@@ -544,11 +572,42 @@ impl Drop for Stream {
     }
 }
 
+/// The queue's lock, recovered from poison: the only critical section is
+/// a `recv`/`try_recv`, which cannot panic, so a poisoned lock means some
+/// unrelated panic tripped the flag and the queue is still sound. The
+/// crate's rule is that a tool or API failure is a value, never a panic,
+/// and a lock is the last place to introduce one.
+fn lock_queue(queue: &Mutex<Receiver<Row>>) -> std::sync::MutexGuard<'_, Receiver<Row>> {
+    queue.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// A shutdown that has spent its drain budget pulls every row still
+/// buffered in the queue and counts it as dropped, so a wedged writer's
+/// leftovers are named rather than silently lost. The rows the writer has
+/// already taken are left alone — it owns them and may still write them,
+/// and counting them here too would double-count. Returns how many were
+/// counted. This is the seam the drain-budget path is tested against.
+fn count_undrained(queue: &Mutex<Receiver<Row>>, counters: &Counters) -> usize {
+    let receiver = lock_queue(queue);
+    let mut counted = 0;
+    while let Ok(_row) = receiver.try_recv() {
+        counters.dropped.fetch_add(1, Ordering::Relaxed);
+        counters.pending.fetch_sub(1, Ordering::Relaxed);
+        counted += 1;
+    }
+    counted
+}
+
 /// The writer thread: one row at a time, in arrival order, until the
 /// queue closes.
-fn drain(root: PathBuf, queue: Receiver<Row>, counters: Arc<Counters>) {
+fn drain(root: PathBuf, queue: Arc<Mutex<Receiver<Row>>>, counters: Arc<Counters>) {
     let mut persisted = WriterState::default();
-    while let Ok(row) = queue.recv() {
+    loop {
+        // Take one row under the lock, then release it before the
+        // (possibly slow) append: a shutdown that has run out of drain
+        // budget must still be able to reach the rows still buffered.
+        let received = { lock_queue(&queue).recv() };
+        let Ok(row) = received else { break };
         let appended = append(&root, &row);
         match &appended {
             Ok(()) => {
@@ -640,8 +699,24 @@ pub fn read_state(root: &Path) -> WriterState {
         .unwrap_or_default()
 }
 
-/// Persist the counters through a temp file and a rename, so a reader
-/// never sees a half-written state. Best-effort throughout: a disk that
+/// A per-write serial for the state file's temp name, so two fleet
+/// processes — or two writes in one process — never share a temp file and
+/// rename a corrupt one over the good state.
+static STATE_WRITE_SERIAL: AtomicU64 = AtomicU64::new(0);
+
+/// The unique temp path for one state write: the state file's own name
+/// with `.<pid>.<serial>.tmp` appended, so the final name stays
+/// `fleet-stream-state.json` and no two writers collide on a temp.
+fn temp_state_path(path: &Path) -> PathBuf {
+    let serial = STATE_WRITE_SERIAL.fetch_add(1, Ordering::Relaxed);
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(".{}.{}.tmp", std::process::id(), serial));
+    PathBuf::from(name)
+}
+
+/// Persist the counters through a unique temp file and a rename, so a
+/// reader never sees a half-written state and two writers cannot
+/// interleave into one shared temp. Best-effort throughout: a disk that
 /// cannot take one more small file is named once, and nothing else
 /// changes.
 fn write_state(root: &Path, state: &WriterState) {
@@ -650,7 +725,7 @@ fn write_state(root: &Path, state: &WriterState) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let temp = path.with_extension("json.tmp");
+    let temp = temp_state_path(&path);
     if fs::write(&temp, text).is_ok() {
         let _ = fs::rename(&temp, &path);
     } else {
@@ -905,7 +980,12 @@ fn route_detail(rows: &[&ReadRow]) -> Vec<String> {
         .flat_map(|row| row.attempts.iter())
         .filter(|attempt| attempt.outcome == "failed")
         .count();
-    let last = rows.last().expect("a non-empty op selection");
+    // `op_card` calls this only on a non-empty selection, so the empty
+    // case is unreachable — but a panic is never the answer: an empty
+    // selection renders an empty detail rather than crashing the surface.
+    let Some(last) = rows.last() else {
+        return Vec::new();
+    };
     vec![
         format!("{served} served \u{b7} {failed} failed \u{b7} {} skipped", skipped(rows)),
         format!("last {} \u{b7} {} attempts in the walk", last.provider, last.attempts.len()),
@@ -988,7 +1068,7 @@ fn stream_card(root: &Path, rows: &[ReadRow]) -> String {
     let lines = vec![
         format!("{DIM}\u{2502}{RESET} {TEXT}{} rows today{RESET}", rows.len()),
         format!(
-            "{DIM}\u{2502}{RESET} {TEXT}written {written} \u{b7} {dropped_color}dropped {dropped}{RESET} \u{b7} {failed_color}failed {failed}{RESET}",
+            "{DIM}\u{2502}{RESET} {TEXT}written {written} (last writer) \u{b7} {dropped_color}dropped {dropped}{RESET} \u{b7} {failed_color}failed {failed}{RESET}",
             written = state.written,
             dropped_color = dropped_color,
             dropped = state.dropped,
@@ -1446,6 +1526,10 @@ mod tests {
         assert!(rendered.contains("turn"), "{rendered}");
         assert!(rendered.contains("1 ok \u{b7} 1 failed"), "{rendered}");
         assert!(rendered.contains("dropped 0"), "{rendered}");
+        // The last-writer counter is labeled honestly beside the file's
+        // own row count — they can disagree, because one counts the file
+        // and the other is the last process to persist.
+        assert!(rendered.contains("(last writer)"), "{rendered}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1454,6 +1538,88 @@ mod tests {
         let root = scratch("empty");
         let rendered = render(&root, "2026-10-13");
         assert!(rendered.contains("no Fleet rows for 2026-10-13"), "{rendered}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the state file's temp name and the drain-budget expiry ---
+
+    #[test]
+    fn the_state_temp_name_is_unique_per_write_and_the_final_name_is_stable() {
+        let root = scratch("state-temp");
+        // Two writes to one root: each takes a distinct temp name and
+        // leaves only the final file behind (the temp is renamed away).
+        write_state(&root, &WriterState { written: 1, dropped: 0, failed: 0 });
+        write_state(&root, &WriterState { written: 2, dropped: 1, failed: 0 });
+        // The final name is the contract; no temp survives a clean write.
+        assert_eq!(state_path(&root).extension().unwrap(), "json");
+        let leftovers: Vec<String> = std::fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        // The last write wins, read back whole.
+        let state = read_state(&root);
+        assert_eq!(state.written, 2);
+        assert_eq!(state.dropped, 1);
+        // Distinct temp names for distinct writes, both derived from the
+        // state path and carrying this process's pid.
+        let first = temp_state_path(&state_path(&root));
+        let second = temp_state_path(&state_path(&root));
+        assert_ne!(first, second, "each write takes its own temp name");
+        assert!(first.to_string_lossy().contains(&std::process::id().to_string()));
+        assert!(first.to_string_lossy().ends_with(".tmp"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn drain_budget_expiry_counts_the_still_queued_rows() {
+        // A writer that never runs leaves its rows in the queue; the
+        // shutdown seam pulls them out and counts them as dropped rather
+        // than losing them silently. This is the seam the drop-budget
+        // path calls when the writer cannot finish in time.
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<Row>(8);
+        let receiver = Mutex::new(receiver);
+        let counters = Counters::default();
+        for _ in 0..4 {
+            sender.try_send(route_row(&[("a", "failed")])).unwrap();
+            counters.pending.fetch_add(1, Ordering::Relaxed);
+        }
+        let counted = count_undrained(&receiver, &counters);
+        assert_eq!(counted, 4);
+        assert_eq!(counters.dropped.load(Ordering::Relaxed), 4);
+        assert_eq!(counters.pending.load(Ordering::Relaxed), 0);
+        // A second sweep finds an empty queue and counts nothing more.
+        assert_eq!(count_undrained(&receiver, &counters), 0);
+        assert_eq!(counters.dropped.load(Ordering::Relaxed), 4);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_wedged_writer_counts_its_backlog_on_shutdown() {
+        // A FIFO with no reader wedges the writer inside its append: the
+        // open blocks until a reader appears, so the writer never drains
+        // and the shutdown runs out of its budget with rows still queued.
+        // End to end, the backlog must be counted, not lost.
+        let root = scratch("wedge");
+        let fifo = day_path(&root, "2026-10-13");
+        std::fs::create_dir_all(fifo.parent().unwrap()).unwrap();
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        assert!(made.success(), "mkfifo failed");
+        let stream = Stream::open(&root);
+        // More rows than the wedged writer can take: it blocks on the
+        // first, the rest stay queued.
+        for _ in 0..5 {
+            stream.record(route_row(&[("a", "failed")]));
+        }
+        // The last handle's drop waits out the drain budget, then counts
+        // the backlog and persists it — the writer never reaches its own
+        // final write, so the drop's persist is the only one.
+        drop(stream);
+        let state = read_state(&root);
+        assert_eq!(state.written, 0, "the wedged writer appended nothing: {state:?}");
+        assert!(state.dropped >= 1, "the backlog was not counted: {state:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

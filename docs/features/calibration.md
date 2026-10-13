@@ -52,7 +52,10 @@ field names are devdec's (`ts`, `provider`, `providers_used`, `verdict`,
 `input_hash` is the 16 hex characters of SHA-256 — the same algorithm and
 the same truncation dev-decisions joins on (`hashlib.sha256(x).hexdigest()[:16]`),
 hand-rolled in `calib::sha256` because the crate carries no crypto
-dependency and needs exactly one primitive.
+dependency and needs exactly one primitive. Fleet names this field
+`input_hash` where dev-decisions' own rows name the same value
+`input_sha256`; there is deliberately no alias, because devdec joins on
+the hash value (the 16 hex characters) and never on the field name.
 
 Three ops are emitted today:
 
@@ -73,7 +76,10 @@ session log's own endings verbatim — `completed`, `max-turns` from its
 `end` record, and `interrupted` for the documented log-without-`end`
 shape. A failure that reached the loop's own end is `failed`, with the
 router's failure class in `reason`. An I/O failure is `interrupted`,
-because that is what leaves the log without its `end` record.
+because that is what leaves the log without its `end` record. A signal
+death (Ctrl-C, SIGTERM) also leaves the log without its `end`, but it
+records no `turn` row at all — the crate installs no signal handler, so
+`interrupted` is reachable today only through an I/O failure, not a kill.
 
 `eval_corpus` is reserved for slice 13's scores. The name is claimed in
 `calib::OP_EVAL_CORPUS`; nothing emits it yet, and the reader and the
@@ -116,7 +122,10 @@ One background thread per stream, fed by a bounded `sync_channel` of
 Slice 5's last acceptance criterion was "a graded failure moves the failed
 provider down its chain". At route-prepare time, the stream is read back:
 
-- **Only today's file**, and only the last `READ_CAP` (512) rows.
+- **Only today's file**, and only the last `READ_CAP` (512) rows. That
+  file is shared by every fleet process on the machine, so cross-process
+  demotion is intended: another process's failures demote this session's
+  walk.
 - A candidate with **3 or more consecutive failed attempts**
   (`DEMOTION_THRESHOLD`) in those rows is demoted to the **end of this
   session's failover walk**. A `served` attempt resets the streak; a

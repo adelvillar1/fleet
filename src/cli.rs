@@ -196,8 +196,35 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
         if !numeric {
             return Err(format!("`{day}` is not a day; use --day YYYY-MM-DD"));
         }
+        if !valid_calendar_day(day) {
+            return Err(format!("`{day}` is not a real day; use --day YYYY-MM-DD"));
+        }
     }
     Ok(Command::Calib(CalibOptions { day }))
+}
+
+/// A real calendar check on an already-`YYYY-MM-DD`-shaped string: the
+/// month is 1-12 and the day is within that month's own length (leap
+/// years included). Without it, `--day 2026-13-45` reads as "Fleet did
+/// not run" rather than "that day does not exist" — the shape is numeric,
+/// but the day is not real.
+fn valid_calendar_day(day: &str) -> bool {
+    let year: i32 = day.get(0..4).and_then(|part| part.parse().ok()).unwrap_or(0);
+    let month: u32 = day.get(5..7).and_then(|part| part.parse().ok()).unwrap_or(0);
+    let day_of_month: u32 = day.get(8..10).and_then(|part| part.parse().ok()).unwrap_or(0);
+    let longest = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return false,
+    };
+    (1..=longest).contains(&day_of_month)
 }
 
 /// Commands that take no options at all; a stray flag is a usage error
@@ -300,6 +327,20 @@ mod tests {
         );
         assert!(parse(&args(&["calib", "--day", "yesterday"])).is_err());
         assert!(parse(&args(&["calib", "--day", "2026-1-1"])).is_err());
+        // A well-shaped but unreal day is a usage error, not a silent
+        // "Fleet did not run" read.
+        assert!(parse(&args(&["calib", "--day", "2026-13-45"])).is_err());
+        assert!(parse(&args(&["calib", "--day", "2026-00-10"])).is_err());
+        assert!(parse(&args(&["calib", "--day", "2026-02-30"])).is_err());
+        assert!(parse(&args(&["calib", "--day", "2026-02-29"])).is_err()); // 2026 is not a leap year
+        assert_eq!(
+            parse(&args(&["calib", "--day", "2024-02-29"])).unwrap(),
+            Command::Calib(CalibOptions { day: Some("2024-02-29".to_string()) })
+        ); // 2024 is a leap year
+        assert_eq!(
+            parse(&args(&["calib", "--day", "2026-12-31"])).unwrap(),
+            Command::Calib(CalibOptions { day: Some("2026-12-31".to_string()) })
+        );
         assert!(parse(&args(&["calib", "--day"])).is_err());
         assert!(parse(&args(&["calib", "--json"])).is_err());
         assert!(parse(&args(&["calib", "today"])).is_err());
