@@ -8,7 +8,7 @@ Slice 1 shipped: one static binary with its own `ureq`-based DeepSeek chat-compl
 
 The owner's intent (2026-10-13): Fleet is the self-contained Rust successor to the DeepSeek Harness fork's "fleet profile". It is meant to absorb the entire ecosystem, not just the agent core:
 
-- the sys1 house lanes — sys1 (judgment), sdm1 (tabular), sem1 (embeddings), gen1 (media), today MCP servers in their own repos
+- the sys1 house lanes — sys1 (judgment), sdm1 (tabular), sem1 (embeddings), gen1 (media) — already parts of the fork as vendored service cores (boot-verified 2026-10-13), not yet in this Rust crate
 - dev-decisions — the verification and calibration layer
 - agnostic-router-kit — model routing, the workflow plane, and its `/dashboard`
 - second-brain — the localhost control tower (never exposed beyond the machine)
@@ -34,6 +34,10 @@ None of that is in this repository yet. Verified inventory and per-repo state: [
 5. **Model-visible ⟺ logged** (inherited from the harness): anything the model sees must be reconstructable from the session log. The system prompt and tool declarations are compiled-in constants, reconstructed per request, never logged.
 6. **Native port, not a fork.** New work is Rust against the DeepSeek API; never reintroduce Node, a checkout dependency, or a dsh launch path (plan criterion C5).
 7. **Destructive operations** (session deletion, history rewrite, force push) require explicit approval in the current turn.
+8. **Documentation is English-only** — no Chinese or other non-English docs in this repo (a deliberate departure from the fork's bilingual convention).
+9. **Delegation runs on the parent's base model** (step-5-preview class) — subagents inherit it and never downgrade; build-time delegation follows the same rule.
+10. **Every error or warning is logged, not ignored** — anything encountered, in this crate or any sibling repo, lands in `docs/known-issues.md` with its evidence. "Not my code" is a reason to log, not a reason to skip.
+11. **UX is co-equal with technical maturity** — every slice ships its user-facing surface with the feature; UX is a per-slice deliverable at the "genuinely visual, never plain-text tables" bar, never a polish finale.
 
 ## Where to find things
 
@@ -51,6 +55,7 @@ src/bin/mock-server.rs  the scripted mock API the integration tests drive
 tests/integration.rs    end-to-end tests: parser, client, tool loop, log
 docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice-1 + dashboards records inherited from the fork)
 docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
+docs/known-issues.md    the ledger: every error/warning encountered, with evidence
 docs/architecture/      overview.md (this crate), ecosystem.md (the repos Fleet will absorb)
 docs/features/          feature docs as they land
 CLAUDE.local.md         gitignored: env var names, machine paths, local quirks (no values)
