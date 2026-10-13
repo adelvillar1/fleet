@@ -314,8 +314,13 @@ async fn run_on(
     task: &str,
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
-    let options =
-        AgentOptions { model: "test-model".to_string(), max_turns, ui_tx: None, lane_specs: None };
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+    };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
     agent.run(task).await
@@ -334,6 +339,7 @@ async fn run_on_probe(
         max_turns: 5,
         ui_tx: None,
         lane_specs: None,
+        calib: None,
     };
     let mut agent =
         Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
@@ -357,6 +363,7 @@ async fn run_with_lanes(
         max_turns: 5,
         ui_tx: None,
         lane_specs,
+        calib: None,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
@@ -876,6 +883,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         max_turns: 5,
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
+        calib: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -933,6 +941,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         max_turns: 5,
         ui_tx: Some(ui_tx),
         lane_specs: None,
+        calib: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -963,6 +972,7 @@ async fn a_denied_call_reports_its_result_event() {
         max_turns: 5,
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
+        calib: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1013,6 +1023,7 @@ async fn a_failed_run_reports_a_failure_event() {
         max_turns: 5,
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
+        calib: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1915,6 +1926,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             max_turns: 5,
             ui_tx: Some(ui_tx.clone()),
             lane_specs: Some(lane_specs(&fake)),
+            calib: None,
         };
         let report = {
             let mut agent =
@@ -2248,6 +2260,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         max_turns: 5,
         ui_tx: None,
         lane_specs: None,
+        calib: None,
     };
     let mut progress = Vec::new();
     let report = {
@@ -2369,6 +2382,319 @@ async fn the_real_sys1_lane_exposes_the_classify_schema() {
             "the sys1 lane booted but did not list sys1_classify; skipping the schema assertion"
         ),
     }
+}
+
+// --- the calibration stream (slice 6) -------------------------------------
+
+/// One day of the calibration stream, read back through the crate's own
+/// reader — the same path `fleet calib` and the demotion take.
+fn calib_rows(root: &Path, day: &str) -> Vec<fleet::calib::ReadRow> {
+    fleet::calib::read_day(root, day, 512)
+}
+
+/// The rows of one op, in arrival order.
+fn rows_of<'a>(rows: &'a [fleet::calib::ReadRow], op: &str) -> Vec<&'a fleet::calib::ReadRow> {
+    rows.iter().filter(|row| row.op == op).collect()
+}
+
+/// A completed run with one approved tool call records both rows: the
+/// screening verdict (named after the decision) and the turn ending.
+#[tokio::test]
+async fn a_completed_run_records_its_screenings_and_its_turn_row() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "list_dir", "{\"path\":\".\"}"),
+        assistant_stream("Listed the directory."),
+    ]);
+    let home = temp_home("calib-turn");
+    let calib_root = home.join("calib");
+    let stream = fleet::calib::Stream::open(&calib_root);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: Some(stream.clone()),
+    };
+    let report = {
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
+            .unwrap();
+        agent.run("list the directory").await.unwrap()
+    };
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    drop(stream);
+
+    let day = fleet::calib::today();
+    let rows = calib_rows(&calib_root, &day);
+    // One screening row per approval decision: `--yes` is a run-scoped
+    // always, so the verdict is named `always`, and the tool is named.
+    let screens = rows_of(&rows, "tool_screen");
+    assert_eq!(screens.len(), 1, "{screens:?}");
+    assert_eq!(screens[0].tool, "list_dir");
+    assert_eq!(screens[0].verdict, "always");
+    // One turn row: an orderly stop, graded ok, with the ending named the
+    // way the session log names it.
+    let turns = rows_of(&rows, "turn");
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(turns[0].outcome, "ok");
+    assert_eq!(turns[0].stop_reason, "completed");
+    assert_eq!(turns[0].turns, report.turns);
+
+    // The task text is nowhere in the stream — only its hash and length.
+    let text = std::fs::read_to_string(fleet::calib::day_path(&calib_root, &day)).unwrap();
+    assert!(!text.contains("list the directory"), "{text}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A run that dies on the API records its turn row too, with the ending
+/// named and the router's failure class carried — the stream grades
+/// failures, it does not only record successes.
+#[tokio::test]
+async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
+    let mock = MockApi::start(vec![ScriptedResponse {
+        status: "500 Internal Server Error".to_string(),
+        body: r#"{"error":{"message":"boom"}}"#.to_string(),
+        sse: Vec::new(),
+        delay_ms: 0,
+    }]);
+    let home = temp_home("calib-failed");
+    let calib_root = home.join("calib");
+    let stream = fleet::calib::Stream::open(&calib_root);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: Some(stream.clone()),
+    };
+    let outcome = {
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
+            .unwrap();
+        agent.run("do the thing").await
+    };
+    assert!(outcome.is_err());
+    drop(stream);
+
+    let day = fleet::calib::today();
+    let rows = calib_rows(&calib_root, &day);
+    let turns = rows_of(&rows, "turn");
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(turns[0].outcome, "failed");
+    assert_eq!(turns[0].stop_reason, "failed");
+    // The failure class is the router's, so the row joins to the route
+    // row's own attempt classes.
+    let text = std::fs::read_to_string(fleet::calib::day_path(&calib_root, &day)).unwrap();
+    assert!(text.contains("\"reason\":\"server\""), "{text}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The turn cap is a partial ending: the run is graded ok, and the ending
+/// is named `max-turns` exactly as the session log names it.
+#[tokio::test]
+async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
+    let mock = MockApi::start(vec![tool_call_stream("call-1", "list_dir", "{\"path\":\".\"}")]);
+    let home = temp_home("calib-cap");
+    let calib_root = home.join("calib");
+    let stream = fleet::calib::Stream::open(&calib_root);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 1,
+        ui_tx: None,
+        lane_specs: None,
+        calib: Some(stream.clone()),
+    };
+    let report = {
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
+            .unwrap();
+        agent.run("keep going").await.unwrap()
+    };
+    assert_eq!(report.stop_reason, StopReason::MaxTurns);
+    drop(stream);
+
+    let day = fleet::calib::today();
+    let rows = calib_rows(&calib_root, &day);
+    let turns = rows_of(&rows, "turn");
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(turns[0].outcome, "ok");
+    assert_eq!(turns[0].stop_reason, "max-turns");
+    assert_eq!(turns[0].turns, 1);
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A run that never touches the stream records nothing: the calibration
+/// path is opt-in per surface, and the silent path stays silent.
+#[tokio::test]
+async fn a_run_without_a_stream_records_nothing() {
+    let mock = MockApi::start(vec![assistant_stream("Done.")]);
+    let home = temp_home("calib-silent");
+    let calib_root = home.join("calib");
+    std::fs::create_dir_all(&calib_root).unwrap();
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let mut progress = Vec::new();
+    let mut agent = Agent::new(
+        &client,
+        AgentOptions {
+            model: "test-model".to_string(),
+            max_turns: 5,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+        },
+        &mut session,
+        Box::new(ApproveAll),
+        &mut progress,
+    )
+    .unwrap();
+    agent.run("say done").await.unwrap();
+    assert!(calib_rows(&calib_root, &fleet::calib::today()).is_empty());
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The stream's first reader: a candidate with three consecutive failed
+/// attempts in today's rows is demoted to the END of this session's
+/// failover walk, while sys1's judgment still chooses the provider.
+#[tokio::test]
+async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
+    // Four mocks, one per roster candidate that stays enabled.
+    let kit = MockApi::start(vec![assistant_stream("Answered by the kit.")]);
+    let zai = MockApi::start(vec![ScriptedResponse {
+        status: "500 Internal Server Error".to_string(),
+        body: r#"{"error":{"message":"zai is down"}}"#.to_string(),
+        sse: Vec::new(),
+        delay_ms: 0,
+    }]);
+    let mimo = MockApi::start(vec![ScriptedResponse {
+        status: "500 Internal Server Error".to_string(),
+        body: r#"{"error":{"message":"mimo is down"}}"#.to_string(),
+        sse: Vec::new(),
+        delay_ms: 0,
+    }]);
+    let stepfun = MockApi::start(vec![assistant_stream("Answered by stepfun.")]);
+
+    let home = temp_home("calib-demote");
+    let calib_root = home.join("calib");
+    // The stream's root is the config override, which is also the path the
+    // demotion reader takes.
+    std::fs::write(
+        home.join("config.json"),
+        serde_json::json!({
+            "providers": [
+                { "id": "router-kit", "base_url": kit.url(), "key_required": false },
+                { "id": "zai-coding-plan", "base_url": zai.url(), "key_required": false },
+                { "id": "xiaomi-mimo", "base_url": mimo.url(), "key_required": false },
+                { "id": "stepfun", "base_url": stepfun.url(), "key_required": false },
+                { "id": "token-plan", "enabled": false },
+                { "id": "deepseek", "enabled": false }
+            ],
+            "calib": { "log_root": calib_root.to_string_lossy() }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // Three graded failures against the kit, in the stream's own
+    // vocabulary: three route rows whose walk failed at the kit.
+    let day = fleet::calib::today();
+    let path = fleet::calib::day_path(&calib_root, &day);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut scripted = String::new();
+    for _ in 0..3 {
+        scripted.push_str(
+            &serde_json::json!({
+                "ts": "2026-10-13T12:00:00Z",
+                "op": "route",
+                "provider": "router-kit",
+                "how": "fallback",
+                "reason": "sys1 gave no usable verdict",
+                "model": "auto",
+                "providers_used": ["router-kit"],
+                "attempts": [{ "provider": "router-kit", "outcome": "failed", "class": "auth" }],
+                "input_chars": 9,
+                "input_hash": "0000000000000000",
+                "latency_ms": 1
+            })
+            .to_string(),
+        );
+        scripted.push('\n');
+    }
+    std::fs::write(&path, scripted).unwrap();
+
+    // sys1 judges `hard`, which maps to zai: the selection is the
+    // judgment's, and the demotion must not touch it.
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "content": [{ "type": "text",
+                "text": r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"hard","confidence":0.91}}}}"# }],
+                "isError": false }
+        }}),
+    ]);
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), fake.spec());
+
+    let dotenv = std::collections::HashMap::new();
+    let prepared = fleet::route::prepare(&home, &dotenv, "refactor the crate", &specs).await.unwrap();
+    assert_eq!(prepared.decision.provider, "zai-coding-plan");
+    assert_eq!(prepared.decision.how, How::Judged);
+    // The demotion is auditable: it rides in the decision row's reason.
+    assert!(
+        prepared.decision.reason.contains("demoted router-kit"),
+        "{}",
+        prepared.decision.reason
+    );
+
+    // The walk: zai fails, mimo fails, stepfun serves — and the demoted
+    // kit is never tried, because it now sits at the end of the chain.
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::routed(prepared.router.clone());
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: Some(prepared.calib.clone()),
+    };
+    let report = {
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
+            .unwrap();
+        agent.run("refactor the crate").await.unwrap()
+    };
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.final_message.as_deref(), Some("Answered by stepfun."));
+    assert_eq!(kit.bodies().len(), 0, "the demoted candidate was never tried");
+    assert_eq!(zai.bodies().len(), 1);
+    assert_eq!(mimo.bodies().len(), 1);
+    assert_eq!(stepfun.bodies().len(), 1);
+
+    let row = prepared.router.row("refactor the crate", 0);
+    let attempts: Vec<(&str, &str)> = row
+        .attempts
+        .iter()
+        .map(|attempt| (attempt.provider.as_str(), attempt.outcome))
+        .collect();
+    assert_eq!(
+        attempts,
+        vec![("zai-coding-plan", "failed"), ("xiaomi-mimo", "failed"), ("stepfun", "served")]
+    );
+
+    // The session's own route row lands in the stream beside the graded
+    // ones that reordered it.
+    prepared.record_route("refactor the crate");
+    drop(prepared);
+    let rows = calib_rows(&calib_root, &day);
+    assert_eq!(rows_of(&rows, "route").len(), 4, "three graded rows plus this session's");
+    std::fs::remove_dir_all(&home).ok();
 }
 
 // --- live API --------------------------------------------------------------

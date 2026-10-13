@@ -16,6 +16,8 @@ pub enum Command {
     Lanes,
     /// List the routing roster in declared chain order with per-provider state.
     Providers,
+    /// Show the calibration stream: one day's rows, grouped by op.
+    Calib(CalibOptions),
     /// Environment and connectivity checks.
     Doctor,
     /// Print the version.
@@ -45,6 +47,13 @@ pub struct ChatOptions {
     pub session: Option<String>,
 }
 
+/// Options for `fleet calib`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CalibOptions {
+    /// A past day to show, `YYYY-MM-DD`; absent is today (UTC).
+    pub day: Option<String>,
+}
+
 /// Turn cap when `--max-turns` is absent.
 pub const DEFAULT_MAX_TURNS: usize = 25;
 
@@ -58,6 +67,7 @@ usage:
   fleet sessions                 list saved sessions
   fleet lanes                    probe the four vendored lanes' health
   fleet providers                list the routing roster and per-provider state
+  fleet calib [--day <date>]    the calibration stream: one day's rows by op
   fleet doctor                   check credentials, home, API, shell
   fleet version                  print the version
   fleet help                     print this help
@@ -67,6 +77,9 @@ options for run and chat:
   --max-turns <n>     tool-loop turn cap for run (default 25)
   --yes, -y           approve every tool call without prompting
   --session <id>      resume a saved session (see fleet sessions)
+
+options for calib:
+  --day <YYYY-MM-DD>  a past day's rows (default: today, UTC)
 
 environment:
   DEEPSEEK_API_KEY    required; also read from ~/.fleet/.env and the
@@ -91,6 +104,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "sessions" => no_flags(rest, Command::Sessions),
         "lanes" => no_flags(rest, Command::Lanes),
         "providers" => no_flags(rest, Command::Providers),
+        "calib" => parse_calib(rest),
         "doctor" => no_flags(rest, Command::Doctor),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -152,6 +166,38 @@ fn parse_chat(args: &[String]) -> Result<Command, String> {
         index += 1;
     }
     Ok(Command::Chat(ChatOptions { model, yes, session }))
+}
+
+/// `fleet calib`: one optional `--day`, and nothing else. A day that is
+/// not `YYYY-MM-DD` is a usage error rather than a silently wrong read.
+fn parse_calib(args: &[String]) -> Result<Command, String> {
+    let mut day: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--day" => day = Some(take_value(args, &mut index, arg)?),
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown calib option `{arg}`"));
+            }
+            _ => return Err(format!("`{arg}` takes no value here; calib reads a day with --day")),
+        }
+        index += 1;
+    }
+    if let Some(day) = &day {
+        let numeric = day.len() == 10 && day.chars().enumerate().all(|(position, character)| {
+            if position == 4 || position == 7 {
+                character == '-'
+            } else {
+                character.is_ascii_digit()
+            }
+        });
+        if !numeric {
+            return Err(format!("`{day}` is not a day; use --day YYYY-MM-DD"));
+        }
+    }
+    Ok(Command::Calib(CalibOptions { day }))
 }
 
 /// Commands that take no options at all; a stray flag is a usage error
@@ -240,6 +286,23 @@ mod tests {
         assert_eq!(parse(&args(&["--help"])).unwrap(), Command::Help);
         assert!(parse(&args(&["sessions", "--all"])).is_err());
         assert!(parse(&args(&["lanes", "--json"])).is_err());
+    }
+
+    #[test]
+    fn calib_parses_an_optional_day_and_rejects_junk() {
+        assert_eq!(
+            parse(&args(&["calib"])).unwrap(),
+            Command::Calib(CalibOptions { day: None })
+        );
+        assert_eq!(
+            parse(&args(&["calib", "--day", "2026-10-01"])).unwrap(),
+            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()) })
+        );
+        assert!(parse(&args(&["calib", "--day", "yesterday"])).is_err());
+        assert!(parse(&args(&["calib", "--day", "2026-1-1"])).is_err());
+        assert!(parse(&args(&["calib", "--day"])).is_err());
+        assert!(parse(&args(&["calib", "--json"])).is_err());
+        assert!(parse(&args(&["calib", "today"])).is_err());
     }
 
     #[test]

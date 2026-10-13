@@ -23,7 +23,9 @@ env-var *name*, and model id is sourced from the fork's
 
 The router kit is the primary route, not the escape hatch; DeepSeek is a
 working account held in reserve. The chain order is compiled in and starts
-declared — slice 6 grades outcomes and reorders candidates over time.
+declared — slice 6 grades outcomes and demotes a candidate with three
+consecutive failed attempts to the end of the session's walk, so the order
+becomes *calibrated* without ever overriding sys1's judgment.
 
 ## Selection
 
@@ -55,17 +57,19 @@ accept a connection and then stall.
 
 ## The decision row
 
-Every routing decision appends one `devdec`-vocabulary JSONL row to
-`<FLEET_HOME>/logs/events-<UTC date>.jsonl` — `op: "route"`, the selected
-and served provider, `how` (judged/fallback/pinned), the workload and
-verdict, every attempt with its failure class, and a content hash of the
-task (never the text). The append is a single `write_all` under O_APPEND, so
-two fleet processes cannot interleave a row, and is serialized process-wide
-and best-effort: a full disk is logged, never fatal. The log line goes to
-stderr — visible in a headless run, invisible under the TUI, whose failure
-surface is its own error bar. Slice 6 (`src/calib.rs`) formalizes this writer
-and aligns the log root with dev-decisions so the `devdec` CLI reads these
-rows beside its own.
+Every routing decision appends one `devdec`-vocabulary JSONL row to the
+calibration stream — `op: "route"`, the selected and served provider, `how`
+(judged/fallback/pinned), the workload and verdict, every attempt with its
+failure class, and a content hash of the task (never the text). The
+append is a single `write_all` under O_APPEND, so two fleet processes
+cannot interleave a row, and crosses a bounded non-blocking queue drained
+by one writer thread: a full disk or a full queue is logged and counted,
+never fatal.
+
+Slice 6 (`src/calib.rs`) owns that writer, and the rows now land in
+dev-decisions' own log root — `<user home>/.local/share/dev-decisions/logs/<YYYY>/<MM>/<DD>/events.jsonl`
+— so the external `devdec` CLI reads them beside its own. Full detail:
+[docs/features/calibration.md](calibration.md).
 
 ## Surfaces
 

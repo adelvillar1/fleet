@@ -84,6 +84,23 @@ New `src/route.rs`: a roster of OpenAI-compatible gateways in config, in the own
 
 New `src/calib.rs`: one `events.jsonl` per UTC day under the dev-decisions log root, in `devdec`'s row vocabulary, through a serialized non-blocking queue. **Graded outcomes, not just decisions**: route and failover rows, tool-call screening verdicts, turn outcomes (ok/failed, with the partial endings named), and — once slice 13 lands — eval-corpus scores. This ledger is the audit spine every self-improvement loop writes to and reads from. Spec: `@fleet/dsh-decisions` plus the dev-decisions repo's own "gates the operations, grades the outcomes, earns autonomy on evidence" contract. AC: rows land in the stream; the external `devdec` CLI reads them beside its own; a full disk never fails a decision.
 
+**Landed 2026-10-13** (`src/calib.rs`): one `events.jsonl` per UTC day under
+dev-decisions' own log root (`~/.local/share/dev-decisions/logs/<YYYY>/<MM>/<DD>/`),
+in devdec's row vocabulary, through a bounded non-blocking queue drained by one
+serialized writer thread that absorbed slice 5's `DecisionLog`. Three graded ops
+— `route` (slice 5's shape, unchanged), `tool_screen` (one row per approval
+decision), and `turn` (one row per run ending, ok/failed with the partial endings
+named `completed`/`interrupted`/`max-turns`/`failed`) — plus `eval_corpus`
+reserved for slice 13. The stream's first reader is the bounded demotion: three
+consecutive failed attempts against a candidate in today's last 512 rows move it
+to the end of the session's failover walk, with sys1's selection untouched. The
+surface is `fleet calib` (`--day` for a past day); no new TUI surface. Gate
+green: build warning-free, 194 unit + 51 integration. Evidence: the external
+`devdec` CLI read Fleet's rows beside its own in the live stream
+(`dev-decisions log` → `turn`, `route`, `tool_screen` rows, exit 0). Record:
+`docs/recaps/2026-10-13-fleet-slice-6-calibration.md`; feature:
+`docs/features/calibration.md`.
+
 ### Slice 7 — skills (with self-authoring)
 
 SKILL.md loading from a skills directory with frontmatter, progressive disclosure (description first, body on demand), and selection by the loop. Spec: the fork's `packages/skill` and the owner's existing skill conventions. **The self-improving half**: after a session, the harness drafts the SKILL.md creations and updates its outcomes justify — the owner's own protocol (difficult task → lesson → skill) executed by the harness — and files them as proposals through slice 12's gate, never applied silently. Curation uses recall data: unused skills are proposed for retirement, near-duplicates for merge. AC: skills load with malformed ones skipped by name; a relevant skill's body enters context when selected; `fleet skills` lists them; a session's lessons surface as drafted skill updates awaiting the gate.

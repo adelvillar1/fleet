@@ -38,6 +38,7 @@ async fn main() -> ExitCode {
         Ok(Command::Sessions) => sessions_command(),
         Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Providers) => providers_command(),
+        Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Doctor) => doctor_command(),
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -125,7 +126,7 @@ async fn run_command(options: &RunOptions) -> ExitCode {
     let outcome =
         drive(&prepared, options.model.clone(), options.max_turns, options.yes, &mut session, &options.task)
             .await;
-    route::record(&home, &prepared.router, &options.task, prepared.latency_ms);
+    prepared.record_route(&options.task);
     match outcome {
         Ok(report) => match report.stop_reason {
             StopReason::Completed => ExitCode::SUCCESS,
@@ -217,8 +218,28 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         }
     }
     if let Some(prepared) = &prepared {
-        route::record(&home, &prepared.router, &judge_task, prepared.latency_ms);
+        prepared.record_route(&judge_task);
     }
+    ExitCode::SUCCESS
+}
+
+/// `fleet calib`: one day of the calibration stream as cards — the rows
+/// grouped by op with their counts, the writer's counters, and the last
+/// few rows. No network, no lane spawn, no writer of its own: this is a
+/// read of the audit trail, and a day with no rows says so rather than
+/// failing. The exit code is always success; the stream is an artifact,
+/// not a gate.
+fn calib_command(options: &cli::CalibOptions) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let root = fleet::calib::resolve_root(&home, std::env::var("HOME").ok().as_deref());
+    let day = options
+        .day
+        .clone()
+        .unwrap_or_else(fleet::calib::today);
+    print!("{}", fleet::calib::render(&root, &day));
     ExitCode::SUCCESS
 }
 
@@ -234,7 +255,13 @@ async fn drive(
     task: &str,
 ) -> Result<RunReport, AgentError> {
     let client = Client::routed(prepared.router.clone());
-    let options = AgentOptions { model, max_turns, ui_tx: None, lane_specs: None };
+    let options = AgentOptions {
+        model,
+        max_turns,
+        ui_tx: None,
+        lane_specs: None,
+        calib: Some(prepared.calib.clone()),
+    };
     let approver: Box<dyn Approver> =
         if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };
     let mut progress = std::io::stderr().lock();

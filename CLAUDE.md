@@ -18,7 +18,7 @@ None of that is in this repository yet. Verified inventory and per-repo state: [
 
 ## Today's state (2026-10-13)
 
-- Slice 1 in-repo and green: `cargo test` → 55 passed, 1 ignored (44 unit + 11 integration). Debug binary smoke-verified: `version`, `help`, `doctor` (all four checks ok, key resolved through the harness credential-store fallback), `sessions`, and exit codes 0/2 as documented.
+- Slices 1-6 in-repo and green: `cargo test` → 245 passed, 1 ignored (194 unit + 51 integration), build warning-free. Debug binary smoke-verified through slice 6: `version`, `help`, `doctor`, `sessions`, `run`, `lanes`, `providers`, and `calib` (the calibration stream), with exit codes 0/2/3 as documented.
 - Environmental blockers, none of them code:
   - **CI is red by budget.** GitHub Actions minutes are exhausted; jobs never dispatch (job record: `runner_id: 0`, zero steps, ~3s). Until the budget resets, the gate must be run locally on every change.
   - **rustfmt and clippy are not installed** on this machine (rustup `profile = "minimal"`, no rustup shim). `cargo fmt --check` and `cargo clippy -D warnings` cannot run here; match the existing style and say so in the recap when they were not run.
@@ -54,6 +54,7 @@ src/home.rs             FLEET_HOME / ~/.fleet, sessions dir, .env fallback, harn
 src/doctor.rs           the four startup checks
 src/net.rs              loopback probe used by doctor
 src/route.rs            multi-provider routing: roster, sys1-judged selection, failover, decision rows
+src/calib.rs            the calibration stream: devdec-vocabulary rows, bounded writer, demotion reader, `fleet calib`
 src/tui/                the ratatui surface: app.rs state, events.rs keys, ui.rs render, mod.rs loop
 src/bin/mock-server.rs  the scripted mock API the integration tests drive
 src/bin/mock-mcp.rs     the scripted fake MCP stdio server the integration tests drive
@@ -72,13 +73,14 @@ CLAUDE.local.md         gitignored: env var names, machine paths, local quirks (
 `cargo` is not on PATH on this machine — see the PATH line in `CLAUDE.local.md`.
 
 ```sh
-cargo test                          # the gate's core: 142 passed, 1 ignored
+cargo test                          # the gate's core: 245 passed, 1 ignored
 cargo build --release               # binary at target/release/fleet
 cargo run --bin fleet -- doctor     # credentials, home, API, shell; masks the key to its last 4 chars
 cargo run --bin fleet -- run "<task>" --yes
 cargo run --bin fleet -- sessions
 cargo run --bin fleet -- lanes      # probe the four vendored lanes, health cards
 cargo run --bin fleet -- providers  # the routing roster in chain order, per-provider state
+cargo run --bin fleet -- calib      # the calibration stream: today's rows by op, the writer's counters
 DEEPSEEK_API_KEY=sk-... cargo test --test integration -- --ignored   # live e2e; needs account balance
 ```
 

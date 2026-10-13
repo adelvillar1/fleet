@@ -377,6 +377,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             max_turns: DEFAULT_MAX_TURNS,
                             ui_tx: Some(ui_tx.clone()),
                             lane_specs: None,
+                            calib: Some(prepared.calib.clone()),
                         };
                         let approver: Box<dyn Approver> =
                             Box::new(TuiApprover::new(approval_tx.clone()));
@@ -407,7 +408,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             // The session's routing decision is recorded once, when the
             // agent thread ends — best-effort, never fatal.
             if let Some(prepared) = &prepared {
-                route::record(&home, &prepared.router, &judge_task, prepared.latency_ms);
+                prepared.record_route(&judge_task);
             }
         });
     })

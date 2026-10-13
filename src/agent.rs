@@ -35,6 +35,10 @@ pub struct AgentOptions {
     /// scripted fake's spec here so the loop's lane paths run without a
     /// real lane on the machine.
     pub lane_specs: Option<HashMap<String, ServerSpec>>,
+    /// The calibration stream this run's rows are recorded to. `None` is
+    /// the silent path — a test that does not care about the stream, or a
+    /// surface that has none.
+    pub calib: Option<crate::calib::Stream>,
 }
 
 impl Default for AgentOptions {
@@ -44,6 +48,7 @@ impl Default for AgentOptions {
             max_turns: DEFAULT_MAX_TURNS,
             ui_tx: None,
             lane_specs: None,
+            calib: None,
         }
     }
 }
@@ -117,6 +122,14 @@ impl std::error::Error for AgentError {}
 pub trait Approver {
     /// True when the call may run.
     fn approve(&mut self, call: &ToolCall) -> bool;
+
+    /// Whether this approver's approvals come from a run-scoped latch
+    /// rather than a per-call decision: `--yes`, or the console/TUI `a`
+    /// key. The calibration row reads it to name the third verdict
+    /// (`always`) — recording happens after the decision, never inside it.
+    fn latched(&self) -> bool {
+        false
+    }
 }
 
 /// Approves everything (`--yes`).
@@ -125,6 +138,11 @@ pub struct ApproveAll;
 
 impl Approver for ApproveAll {
     fn approve(&mut self, _call: &ToolCall) -> bool {
+        true
+    }
+
+    fn latched(&self) -> bool {
+        // `--yes` is a run-scoped always: no per-call decision happens.
         true
     }
 }
@@ -180,6 +198,10 @@ impl Approver for ConsoleApprover {
             }
             _ => false,
         }
+    }
+
+    fn latched(&self) -> bool {
+        self.always
     }
 }
 
@@ -255,6 +277,10 @@ impl Approver for TuiApprover {
             _ => false,
         }
     }
+
+    fn latched(&self) -> bool {
+        self.always
+    }
 }
 
 /// Runs tasks against the API with the built-in tools.
@@ -272,6 +298,8 @@ pub struct Agent<'a> {
     /// tool spawns nothing; a run that does closes every child it
     /// spawned when it ends.
     lanes: LaneRoster,
+    /// The calibration stream this run records to, when it has one.
+    calib: Option<crate::calib::Stream>,
 }
 
 impl<'a> Agent<'a> {
@@ -290,6 +318,7 @@ impl<'a> Agent<'a> {
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
         let lanes = LaneRoster::new(options.lane_specs.clone().unwrap_or_default());
+        let calib = options.calib.clone();
         Ok(Agent {
             client,
             options,
@@ -301,6 +330,7 @@ impl<'a> Agent<'a> {
             usage: Usage::default(),
             turns: 0,
             lanes,
+            calib,
         })
     }
 
@@ -330,6 +360,9 @@ impl<'a> Agent<'a> {
     pub async fn run(&mut self, task: &str) -> Result<RunReport, AgentError> {
         let outcome = self.run_task(task).await;
         self.lanes.close_all().await;
+        // One turn row per run, on every exit path — the outcome's grade
+        // and the ending named. Best-effort by construction.
+        self.record_turn(task, &outcome);
         match outcome {
             Ok(report) => Ok(report),
             Err(error) => {
@@ -337,6 +370,69 @@ impl<'a> Agent<'a> {
                 Err(error)
             }
         }
+    }
+
+    /// The stop reason's name in the calibration row: the session log's
+    /// own ending vocabulary, carried verbatim.
+    fn turn_stop(reason: StopReason) -> crate::calib::TurnStop {
+        match reason {
+            StopReason::Completed => crate::calib::TurnStop::Completed,
+            StopReason::MaxTurns => crate::calib::TurnStop::MaxTurns,
+        }
+    }
+
+    /// Record the run's ending. An API failure that reached the loop's own
+    /// end is `failed`, with the router's failure class; an I/O failure is
+    /// `interrupted`, because it is what leaves the session log without
+    /// its `end` record — the documented interrupted-log shape.
+    fn record_turn(&self, task: &str, outcome: &Result<RunReport, AgentError>) {
+        let Some(stream) = &self.calib else { return };
+        let (stop, reason) = match outcome {
+            Ok(report) => (Self::turn_stop(report.stop_reason), None),
+            Err(AgentError::Api(error)) => (
+                crate::calib::TurnStop::Failed,
+                Some(crate::route::failure_class(error).to_string()),
+            ),
+            Err(AgentError::Io(_)) => {
+                (crate::calib::TurnStop::Interrupted, Some("io".to_string()))
+            }
+        };
+        let (turns, usage) = match outcome {
+            Ok(report) => (report.turns, report.usage),
+            Err(_) => (self.turns, self.usage),
+        };
+        stream.record(crate::calib::Row::Turn(crate::calib::TurnRow {
+            ts: crate::calib::stamp(),
+            outcome: stop.outcome().to_string(),
+            stop_reason: stop.label().to_string(),
+            turns,
+            usage,
+            input_chars: task.chars().count(),
+            input_hash: crate::calib::hash16(task),
+            reason,
+        }));
+    }
+
+    /// Record the screening verdict for one tool call — after the
+    /// decision, never inside it.
+    fn record_screen(&self, call: &ToolCall, approved: bool) {
+        let Some(stream) = &self.calib else { return };
+        let verdict = if !approved {
+            crate::calib::ScreenVerdict::Denied
+        } else if self.approver.latched() {
+            crate::calib::ScreenVerdict::Always
+        } else {
+            crate::calib::ScreenVerdict::Approved
+        };
+        let (lane, _) = tools::lane_of(&call.function.name).unzip();
+        stream.record(crate::calib::Row::ToolScreen(crate::calib::ToolScreenRow {
+            ts: crate::calib::stamp(),
+            tool: call.function.name.clone(),
+            verdict: verdict.label().to_string(),
+            lane: lane.map(str::to_string),
+            input_chars: call.function.arguments.chars().count(),
+            input_hash: crate::calib::hash16(&call.function.arguments),
+        }));
     }
 
     async fn run_task(&mut self, task: &str) -> Result<RunReport, AgentError> {
@@ -454,6 +550,9 @@ impl<'a> Agent<'a> {
     /// this call if the run has not met the lane yet.
     async fn execute_call(&mut self, call: &ToolCall) -> Result<(), AgentError> {
         let approved = self.approver.approve(call);
+        // The screening verdict, recorded after the decision: the gate's
+        // own answer, one row per call, never inside the decision itself.
+        self.record_screen(call, approved);
         let tool = Tool::from_name(&call.function.name);
         let (output, truncated) = if !approved {
             ("denied: the user did not approve this call.".to_string(), false)

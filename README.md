@@ -80,6 +80,8 @@ src/agent.rs       the tool loop, approvals, turn cap, progress reporting
 src/tools.rs       bash, read_file, write_file, list_dir; output capping
 src/session.rs     JSONL session log: append, replay, list, resume
 src/home.rs        FLEET_HOME / ~/.fleet, sessions dir, .env fallback
+src/route.rs       multi-provider routing: roster, sys1-judged selection, failover
+src/calib.rs       the calibration stream: devdec-vocabulary rows, bounded writer
 src/doctor.rs      the four startup checks
 src/net.rs         loopback probe used by doctor
 src/bin/mock-server.rs   the scripted mock API the integration tests drive

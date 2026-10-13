@@ -212,7 +212,7 @@ pub struct Choice {
 }
 
 /// Token accounting for one request. Absent fields read as zero.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     #[serde(default)]
     pub prompt_tokens: u64,

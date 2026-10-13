@@ -20,15 +20,14 @@
 //!   the selected candidate on the failure classes in [`failure_class`];
 //!   a candidate that starts streaming is committed and a mid-stream
 //!   failure fails the run typed — no silent restart.
-//! - **The decision row** ([`DecisionLog`]) appends one `devdec`-vocabulary
-//!   row per routing decision to `<log root>/events-<UTC date>.jsonl`,
-//!   best-effort, so a full disk never fails a run. Slice 6
-//!   (`src/calib.rs`) formalizes this writer.
+//! - **The decision row** ([`calib::RouteRow`]) is appended to the
+//!   calibration stream (`src/calib.rs`) once per session, best-effort, so
+//!   a full disk never fails a run. Slice 6 also reads that stream back:
+//!   a candidate with a trailing streak of failed attempts is demoted to
+//!   the end of this session's failover walk.
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -38,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::api::{ChatRequest, ChatResponse, Client, ClientError, StreamEvent};
+use crate::calib;
 use crate::lanes;
 use crate::mcp::{McpServer, ServerSpec};
 use crate::session;
@@ -188,6 +188,8 @@ struct ConfigFile {
     pin: Option<String>,
     #[serde(default)]
     providers: Vec<ProviderEntry>,
+    #[serde(default)]
+    calib: Option<CalibEntry>,
 }
 
 /// One provider override in the config file. Any subset of fields; a bare
@@ -213,6 +215,16 @@ struct ProviderEntry {
     disabled_reason: Option<String>,
 }
 
+/// The `calib` section: where the calibration stream lives when
+/// dev-decisions' own default is not where it should be. Unknown fields
+/// are rejected for the same reason a provider's are.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CalibEntry {
+    #[serde(default)]
+    log_root: Option<String>,
+}
+
 /// Load the roster: the compiled-in defaults, then `<home>/config.json`
 /// merged over them per entry. A missing file is the defaults; a present
 /// but invalid file is a typed [`ConfigError`].
@@ -220,7 +232,7 @@ pub fn load_roster(home: &Path) -> Result<Roster, ConfigError> {
     let path = home.join("config.json");
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Roster { candidates: default_roster(), pin: None });
         }
         Err(error) => return Err(ConfigError::Read(error)),
@@ -229,6 +241,21 @@ pub fn load_roster(home: &Path) -> Result<Roster, ConfigError> {
         .map_err(|error| ConfigError::Parse(format!("{}: {error}", path.display())))?;
     let (candidates, pin) = merge(default_roster(), &file)?;
     Ok(Roster { candidates, pin })
+}
+
+/// The config file's calibration log root, when it names one. Read
+/// separately from [`load_roster`] and best-effort: `fleet calib` and the
+/// demotion reader both want the root without a roster, and a config file
+/// too broken to parse has already failed the roster load loud. See
+/// [`calib::resolve_root`] for the whole resolution order.
+pub fn calib_log_root(home: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(home.join("config.json")).ok()?;
+    let file: ConfigFile = serde_json::from_str(&text).ok()?;
+    file.calib
+        .and_then(|calib| calib.log_root)
+        .map(|root| root.trim().to_string())
+        .filter(|root| !root.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Merge `file` over `candidates`, per entry by id. An override on a known
@@ -664,7 +691,7 @@ impl Router {
 
     /// The assembled decision row after the run, with every attempt and the
     /// final choice. `latency_ms` is the selection judgment's cost.
-    pub fn row(&self, task: &str, latency_ms: u128) -> DecisionRow {
+    pub fn row(&self, task: &str, latency_ms: u128) -> calib::RouteRow {
         let state = lock(&self.state);
         let served_index = state.served;
         let provider = served_index
@@ -684,9 +711,8 @@ impl Router {
             .map(|attempt| attempt.provider.clone())
             .collect();
         let ts = session::iso_utc_stamp(SystemTime::now()).unwrap_or_default();
-        DecisionRow {
+        calib::RouteRow {
             ts,
-            op: "route".to_string(),
             provider,
             how: self.decision.how.label().to_string(),
             workload: self.decision.workload.clone(),
@@ -696,7 +722,7 @@ impl Router {
             providers_used,
             attempts: state.attempts.clone(),
             input_chars: task.chars().count(),
-            input_hash: content_hash(task),
+            input_hash: calib::hash16(task),
             latency_ms,
         }
     }
@@ -820,110 +846,24 @@ impl Router {
     }
 }
 
-// --- the decision log -------------------------------------------------------
 
-/// One routing decision as a `devdec`-vocabulary JSONL row. The field names
-/// follow the dev-decisions log schema (`ts`, `op`, `provider`,
-/// `providers_used`, `verdict`, `latency_ms`, …) so the external `devdec`
-/// CLI can read these rows beside its own once slice 6 aligns the log root.
-#[derive(Debug, Clone, Serialize)]
-pub struct DecisionRow {
-    pub ts: String,
-    pub op: String,
-    /// The candidate that served, or the selected one when none did.
-    pub provider: String,
-    /// `judged`, `fallback`, or `pinned`.
-    pub how: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workload: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub verdict: Option<String>,
-    pub reason: String,
-    pub model: String,
-    /// The candidates actually attempted, in order.
-    pub providers_used: Vec<String>,
-    pub attempts: Vec<Attempt>,
-    pub input_chars: usize,
-    /// A stable content hash of the task, for joining — never the text.
-    pub input_hash: String,
-    pub latency_ms: u128,
-}
-
-/// Fleet's calibration log root: `<home>/logs`. Slice 6 aligns this with
-/// the dev-decisions log root so the CLI reads the rows beside its own.
-pub fn log_root(home: &Path) -> PathBuf {
-    home.join("logs")
-}
-
-/// The best-effort decision-row writer. Appends are serialized
-/// process-wide and never fail a run: a full disk, a missing directory, or
-/// a serialization error is logged and swallowed. Slice 6
-/// (`src/calib.rs`) formalizes this into the calibration stream's queue.
-pub struct DecisionLog {
-    root: PathBuf,
-}
-
-impl DecisionLog {
-    /// A writer under `root`.
-    pub fn new(root: PathBuf) -> DecisionLog {
-        DecisionLog { root }
-    }
-
-    /// Append one decision row as one JSON line, best-effort.
-    pub fn record(&self, row: &DecisionRow) {
-        // The UTC date is the timestamp's leading `YYYY-MM-DD`.
-        let date = row.ts.get(..10).unwrap_or("unknown");
-        let path = self.root.join(format!("events-{date}.jsonl"));
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let line = match serde_json::to_string(row) {
-            Ok(line) => line,
-            Err(error) => {
-                eprintln!("fleet: the route decision row did not serialize (logged, not fatal): {error}");
-                return;
-            }
-        };
-        // Serialize appends process-wide; a poisoned lock is recovered the
-        // way the MCP client's is, so one panic cannot wedge the writer.
-        static WRITE_LOCK: Mutex<()> = Mutex::new(());
-        let _guard = lock(&WRITE_LOCK);
-        match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-            Ok(mut file) => {
-                // One write, not two: under O_APPEND a single write_all is
-                // atomic enough that two fleet processes appending side by
-                // side cannot interleave into a corrupt line.
-                let mut payload = line.into_bytes();
-                payload.push(b'\n');
-                if let Err(error) = file.write_all(&payload).and_then(|_| file.flush()) {
-                    eprintln!(
-                        "fleet: the route decision log append failed (best-effort, the run is unaffected): {error}"
-                    );
-                }
-            }
-            Err(error) => {
-                eprintln!(
-                    "fleet: the route decision log could not be opened (best-effort, the run is unaffected): {error}"
-                );
-            }
-        }
-    }
-}
-
-/// A stable, non-crypto content hash for the decision row's `input_hash`
-/// (dev-decisions joins on a content hash; slice 6 aligns the algorithm).
-fn content_hash(text: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
-}
-
-/// A route prepared for a session: the router, its decision, and the
-/// judgment's latency.
+/// A route prepared for a session: the router, its decision, the
+/// judgment's latency, and the calibration stream this session writes to.
 pub struct Prepared {
     pub router: Arc<Router>,
     pub decision: RouteDecision,
     pub latency_ms: u128,
+    /// The calibration stream: this session's rows go here, and its first
+    /// read is what demoted the chain.
+    pub calib: calib::Stream,
+}
+
+impl Prepared {
+    /// Record this session's routing decision to the calibration stream,
+    /// best-effort — a full queue drops the row, never the run.
+    pub fn record_route(&self, task: &str) {
+        self.calib.record(calib::Row::Route(self.router.row(task, self.latency_ms)));
+    }
 }
 
 /// Resolve the roster, judge the route for `task`, and build the router.
@@ -938,15 +878,56 @@ pub async fn prepare(
 ) -> Result<Prepared, ConfigError> {
     let roster = load_roster(home)?;
     let resolved = resolve(&roster.candidates, dotenv);
-    let (decision, latency_ms) = select(&resolved, roster.pin.as_deref(), task, specs).await;
+    let (mut decision, latency_ms) = select(&resolved, roster.pin.as_deref(), task, specs).await;
+    // The calibration stream, and its first read: today's graded rows
+    // demote a candidate that keeps failing to the end of this session's
+    // walk (slice 5's last acceptance criterion).
+    let calib = calib::Stream::open(calib::resolve_root(
+        home,
+        std::env::var("HOME").ok().as_deref(),
+    ));
+    let demoted = calib::demotions(
+        calib.root(),
+        &calib::today(),
+        &resolved.iter().map(Resolved::id).collect::<Vec<_>>(),
+    );
+    let resolved = reorder_for_demotion(resolved, &decision.provider, &demoted);
+    if !demoted.is_empty() {
+        // The demotion is auditable: it rides in the decision row's
+        // reason, so a later reader sees why the walk was ordered as it
+        // was rather than having to infer it.
+        decision.reason.push_str(&format!(
+            "; demoted {} ({} consecutive failures today)",
+            demoted.join(", "),
+            calib::DEMOTION_THRESHOLD
+        ));
+    }
+    decision.start_index =
+        resolved.iter().position(|entry| entry.id() == decision.provider).unwrap_or(0);
     let router = Arc::new(Router::new(resolved, decision.clone()));
-    Ok(Prepared { router, decision, latency_ms })
+    Ok(Prepared { router, decision, latency_ms, calib })
 }
 
-/// Record one session's routing decision to the calibration log,
-/// best-effort — a full disk or a missing directory is logged, never fatal.
-pub fn record(home: &Path, router: &Router, task: &str, latency_ms: u128) {
-    DecisionLog::new(log_root(home)).record(&router.row(task, latency_ms));
+/// Reorder the chain for this session's walk: the selected candidate keeps
+/// the head of the walk — sys1's judgment is untouched — every other
+/// candidate keeps its declared order, and the demoted ones move to the
+/// end. A candidate that is both selected and demoted stays at the head:
+/// demotion reorders the walk, it does not override the selection.
+pub fn reorder_for_demotion(
+    resolved: Vec<Resolved>,
+    selected: &str,
+    demoted: &[String],
+) -> Vec<Resolved> {
+    let (mut demoted_entries, mut kept): (Vec<Resolved>, Vec<Resolved>) = resolved
+        .into_iter()
+        .partition(|entry| demoted.iter().any(|id| id == entry.id()) && entry.id() != selected);
+    let mut ordered = Vec::with_capacity(kept.len() + demoted_entries.len());
+    if let Some(index) = kept.iter().position(|entry| entry.id() == selected) {
+        ordered.push(kept.remove(index));
+    }
+    ordered.append(&mut kept);
+    ordered.append(&mut demoted_entries);
+    ordered
 }
 
 /// Lock a mutex, recovering from poisoning the way the MCP client does: a
@@ -1439,7 +1420,9 @@ mod tests {
         ]);
         lock(&router.state).served = Some(1);
         let row = router.row("refactor the parser", 812);
-        let line = serde_json::to_string(&row).unwrap();
+        // The row is serialized through the stream's tag, which is what
+        // puts `op` in the JSON.
+        let line = serde_json::to_string(&calib::Row::Route(row)).unwrap();
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value["op"], "route");
         assert_eq!(value["provider"], "zai-coding-plan");
@@ -1463,35 +1446,65 @@ mod tests {
     }
 
     #[test]
-    fn the_decision_log_appends_one_row_and_swallows_a_failure() {
-        let home = std::env::temp_dir().join(format!("fleet-route-log-{}", std::process::id()));
+    fn the_demotion_reorders_the_walk_and_leaves_the_selection_alone() {
+        let chain = vec![
+            resolved_for_test("router-kit"),
+            resolved_for_test("zai-coding-plan"),
+            resolved_for_test("xiaomi-mimo"),
+        ];
+        // A demoted candidate moves to the end; the selected one keeps the
+        // head of the walk.
+        let ordered = reorder_for_demotion(chain, "zai-coding-plan", &["router-kit".to_string()]);
+        let ids: Vec<&str> = ordered.iter().map(Resolved::id).collect();
+        assert_eq!(ids, vec!["zai-coding-plan", "xiaomi-mimo", "router-kit"]);
+
+        // A candidate that is both selected and demoted stays the head:
+        // demotion reorders the walk, it never overrides the judgment.
+        let chain = vec![
+            resolved_for_test("router-kit"),
+            resolved_for_test("zai-coding-plan"),
+            resolved_for_test("xiaomi-mimo"),
+        ];
+        let ordered = reorder_for_demotion(chain, "router-kit", &["router-kit".to_string()]);
+        let ids: Vec<&str> = ordered.iter().map(Resolved::id).collect();
+        assert_eq!(ids, vec!["router-kit", "zai-coding-plan", "xiaomi-mimo"]);
+    }
+
+    /// One resolved candidate for the reorder tests.
+    fn resolved_for_test(id: &str) -> Resolved {
+        Resolved {
+            candidate: Candidate {
+                id: id.to_string(),
+                base_url: "http://127.0.0.1:1/v1".to_string(),
+                key_env: format!("{}_KEY", id.to_uppercase().replace('-', "_")),
+                model: format!("{id}-model"),
+                enabled: true,
+                key_required: false,
+                disabled_reason: None,
+            },
+            key: None,
+        }
+    }
+
+    #[test]
+    fn the_config_calib_section_names_the_log_root() {
+        let home = std::env::temp_dir().join(format!("fleet-calib-cfg-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
-        let log = DecisionLog::new(log_root(&home));
-        let row = DecisionRow {
-            ts: "2026-10-13T12:00:00Z".to_string(),
-            op: "route".to_string(),
-            provider: HEAD_ID.to_string(),
-            how: "fallback".to_string(),
-            workload: None,
-            verdict: None,
-            reason: "sys1 gave no usable verdict".to_string(),
-            model: "auto".to_string(),
-            providers_used: vec![HEAD_ID.to_string()],
-            attempts: vec![Attempt { provider: HEAD_ID.to_string(), outcome: "served", class: None }],
-            input_chars: 4,
-            input_hash: content_hash("task"),
-            latency_ms: 3,
-        };
-        log.record(&row);
-        let path = log_root(&home).join("events-2026-10-13.jsonl");
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(text.lines().count(), 1);
-        assert!(text.contains("\"op\":\"route\""));
-        assert!(text.ends_with('\n'));
-        // A second record appends, never truncates.
-        log.record(&row);
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(text.lines().count(), 2);
+        std::fs::create_dir_all(&home).unwrap();
+        // Absent by default.
+        assert_eq!(calib_log_root(&home), None);
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "calib": { "log_root": "/tmp/somewhere-else/logs" } }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            calib_log_root(&home),
+            Some(PathBuf::from("/tmp/somewhere-else/logs"))
+        );
+        // A misspelled section is rejected, the way a provider's is.
+        std::fs::write(home.join("config.json"), r#"{ "calib": { "logroot": "/x" } }"#).unwrap();
+        assert_eq!(calib_log_root(&home), None);
         let _ = std::fs::remove_dir_all(&home);
     }
 

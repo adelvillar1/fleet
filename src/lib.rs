@@ -4,6 +4,7 @@
 
 pub mod agent;
 pub mod api;
+pub mod calib;
 pub mod cli;
 pub mod doctor;
 pub mod home;
