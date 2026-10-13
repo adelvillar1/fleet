@@ -57,11 +57,18 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     }
 }
 
+/// Every pane's title, one style: the borders stay dim, the words on them
+/// do not — dim-on-black titles were the least readable text on screen.
+fn title_style() -> Style {
+    Style::new().fg(palette::TEXT)
+}
+
 /// The conversation pane: user turns, assistant text, and tool cards with
 /// their status dots, newest at the bottom.
 fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let block = Block::bordered()
         .title(" conversation ")
+        .title_style(title_style())
         .border_style(Style::new().fg(palette::DIM));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -72,6 +79,26 @@ fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let mut lines: Vec<Line<'_>> = Vec::new();
     for entry in app.conversation_lines() {
         lines.extend(entry_lines(&entry, inner.width as usize));
+    }
+    // A fresh session is not an empty void: the pane says what this is and
+    // what to do, so the first frame reads as intentional rather than broken.
+    if lines.is_empty() {
+        let welcome = Text::from(vec![
+            Line::from(Span::styled(
+                "fleet",
+                Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "a native agent on this machine.",
+                Style::new().fg(palette::TEXT),
+            )),
+            Line::from(Span::styled(
+                "type a task below — tools ask before they run.",
+                Style::new().fg(palette::DIM),
+            )),
+        ]);
+        frame.render_widget(Paragraph::new(welcome), inner);
+        return;
     }
     let total = lines.len();
     let visible = inner.height as usize;
@@ -90,6 +117,7 @@ fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
 fn render_board(frame: &mut Frame<'_>, area: Rect) {
     let block = Block::bordered()
         .title(" board ")
+        .title_style(title_style())
         .border_style(Style::new().fg(palette::BOARD));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -142,6 +170,7 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
 fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let block = Block::bordered()
         .title(" message ")
+        .title_style(title_style())
         .border_style(Style::new().fg(palette::ACCENT));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -161,7 +190,7 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
 fn render_footer(frame: &mut Frame<'_>, area: Rect) {
     let hints = "enter send · alt+enter newline · ctrl+o sessions · ↑↓ scroll · q quit · y/n/a approve";
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(hints, Style::new().fg(palette::DIM)))),
+        Paragraph::new(Line::from(Span::styled(hints, Style::new().fg(palette::TEXT)))),
         area,
     );
 }
@@ -173,6 +202,7 @@ fn render_approval(frame: &mut Frame<'_>, app: &App) {
     frame.render_widget(Clear, area);
     let block = Block::bordered()
         .title(" approval ")
+        .title_style(title_style())
         .border_style(Style::new().fg(palette::PENDING));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -207,6 +237,7 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
     frame.render_widget(Clear, area);
     let block = Block::bordered()
         .title(" sessions — enter resume, esc close ")
+        .title_style(title_style())
         .border_style(Style::new().fg(palette::ACCENT));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -509,6 +540,33 @@ mod tests {
         let back = draw(&app, 60, 12);
         assert!(back.contains("line 0"), "{back}");
         assert!(!back.contains("line 39"), "{back}");
+    }
+
+    #[test]
+    fn a_fresh_session_says_what_it_is() {
+        let drawn = draw(&fresh(), 80, 24);
+        assert!(drawn.contains("fleet"), "{drawn}");
+        assert!(drawn.contains("type a task below"), "{drawn}");
+    }
+
+    #[test]
+    fn the_input_blocks_four_borders_share_one_style() {
+        // The tmux capture showed the input box's top and right borders
+        // styled while its left and bottom rendered default — either a
+        // ratatui split or a capture artifact. The buffer is the truth.
+        let app = fresh();
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        // In an 80x24 frame the input box owns rows 18..22: row 18 is its
+        // top border, row 22 its bottom.
+        let corners = [(0, 18), (79, 18), (0, 19), (79, 19), (0, 22), (79, 22)];
+        let styles: Vec<_> = corners.iter().map(|(x, y)| buffer[(*x, *y)].fg).collect();
+        assert!(
+            styles.windows(2).all(|pair| pair[0] == pair[1]),
+            "the input border is not one style: {styles:?}"
+        );
     }
 
     #[test]
