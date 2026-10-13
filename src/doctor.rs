@@ -39,10 +39,14 @@ pub fn evaluate_credentials(key: Option<&str>) -> Check {
 }
 
 /// `…last4` for anything longer than a plausible short prefix; short values
-/// are masked entirely.
+/// are masked entirely. Operates on chars, not bytes: a key is arbitrary text
+/// until the API says otherwise, and byte-slicing 4-from-the-end panics when
+/// the index straddles a multi-byte char (logged as KI-010).
 fn mask(key: &str) -> String {
-    if key.len() > 8 {
-        format!("\u{2026}{}", &key[key.len() - 4..])
+    if key.chars().count() > 8 {
+        let last_four: String =
+            key.chars().rev().take(4).collect::<Vec<char>>().into_iter().rev().collect();
+        format!("\u{2026}{last_four}")
     } else {
         "\u{2026}".to_string()
     }
@@ -132,6 +136,22 @@ mod tests {
         let missing = evaluate_credentials(None);
         assert!(!missing.ok);
         assert!(missing.detail.contains("DEEPSEEK_API_KEY"));
+    }
+
+    #[test]
+    fn credentials_mask_never_panics_on_multibyte_keys() {
+        // The byte-slicing mask panicked when the 4-from-end index straddled a
+        // multi-byte char (KI-010); a key is arbitrary text until the API says
+        // otherwise, and doctor is the last place a panic belongs.
+        let crafted = "aaaa\u{1d54f}\u{e9}";
+        let check = evaluate_credentials(Some(crafted));
+        assert!(check.ok);
+        assert!(!check.detail.contains('\u{1d54f}'), "{}", check.detail);
+        assert!(check.detail.starts_with("set (\u{2026}"));
+        let long = "sk-1234567890\u{e9}";
+        let check = evaluate_credentials(Some(long));
+        assert!(check.detail.ends_with('\u{e9}'), "{}", check.detail);
+        assert!(!check.detail.contains("sk-1234567890"));
     }
 
     #[test]
