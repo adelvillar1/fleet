@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use fleet::agent::{
-    Agent, AgentError, AgentOptions, ApproveAll, Approver, DenyAll, RunReport, StopReason,
+    Agent, AgentError, AgentOptions, ApproveAll, Approver, DenyAll, RunReport, StopReason, UiEvent,
 };
 use fleet::api::{
     Client, ClientError, ChatRequest, DEFAULT_BASE_URL, Message, Role, StreamEvent, ToolCall, Usage,
@@ -297,7 +297,7 @@ async fn run_on(
     task: &str,
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
-    let options = AgentOptions { model: "test-model".to_string(), max_turns };
+    let options = AgentOptions { model: "test-model".to_string(), max_turns, ui_tx: None };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
     agent.run(task).await
@@ -311,7 +311,8 @@ async fn run_on_probe(
     task: &str,
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
-    let options = AgentOptions { model: "test-model".to_string(), max_turns: 5 };
+    let options =
+        AgentOptions { model: "test-model".to_string(), max_turns: 5, ui_tx: None };
     let mut agent =
         Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
     agent.run(task).await
@@ -763,6 +764,192 @@ async fn tools_execute_against_the_real_filesystem() {
         .execute(&serde_json::json!({ "path": home.display().to_string() }))
         .unwrap();
     assert!(listed.output.contains("note.txt"));
+    std::fs::remove_dir_all(&home).ok();
+}
+
+// --- the TUI's event seam ---------------------------------------------------
+
+/// One run with a `ui_tx` attached: the events a TUI renders, in the order
+/// the loop emits them, beside the unchanged log and report.
+#[tokio::test]
+async fn ui_events_arrive_in_order_and_beside_the_log() {
+    let mock = MockApi::start(vec![
+        stream(vec![
+            tool_call_delta(0, "call-1", "bash", r#"{"command":"echo hi"}"#),
+            finish_frame("tool_calls"),
+            usage_frame(10, 5),
+            "data: [DONE]".to_string(),
+        ]),
+        stream(vec![
+            content_delta("All "),
+            content_delta("done."),
+            finish_frame("stop"),
+            usage_frame(10, 5),
+            "data: [DONE]".to_string(),
+        ]),
+    ]);
+    let home = temp_home("ui-events");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let log_path = session.path().to_path_buf();
+    let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: Some(ui_tx.clone()),
+    };
+    let client = Client::new(mock.url(), "test-key");
+    let mut progress = Vec::new();
+    let report = {
+        let mut agent =
+            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
+                .unwrap();
+        agent.run("say hello").await.unwrap()
+    };
+    drop(ui_tx);
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    let mut events = Vec::new();
+    while let Some(event) = ui_rx.recv().await {
+        events.push(event);
+    }
+    assert_eq!(
+        events,
+        vec![
+            UiEvent::Turn(1),
+            UiEvent::ToolCall { name: "bash".to_string(), summary: "echo hi".to_string() },
+            UiEvent::ToolResult {
+                name: "bash".to_string(),
+                preview: "exit 0".to_string(),
+                approved: true,
+            },
+            UiEvent::Turn(2),
+            UiEvent::Token("All ".to_string()),
+            UiEvent::Token("done.".to_string()),
+            UiEvent::Finished { stop_reason: "completed".to_string() },
+        ]
+    );
+
+    // The headless contract is untouched: the log holds the whole turn, and
+    // the progress sink saw the same deltas as raw text.
+    let records = session::replay(&log_path).unwrap();
+    assert_eq!(records.len(), 6);
+    let progress = String::from_utf8(progress).unwrap();
+    assert!(progress.contains("bash: echo hi"), "{progress}");
+    assert!(progress.contains("exit 0"), "{progress}");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A closed UI channel does not break the run: emissions are best-effort,
+/// the log and the report are the record.
+#[tokio::test]
+async fn a_closed_ui_channel_does_not_break_the_run() {
+    let mock = MockApi::start(vec![assistant_stream("Just text.")]);
+    let home = temp_home("ui-headless");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    let options =
+        AgentOptions { model: "test-model".to_string(), max_turns: 5, ui_tx: Some(ui_tx) };
+    let client = Client::new(mock.url(), "test-key");
+    let mut progress = Vec::new();
+    let mut agent =
+        Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+    // The channel is closed before the run, so nothing can be delivered.
+    drop(ui_rx);
+    let report = agent.run("hello").await.unwrap();
+    assert_eq!(report.final_message.as_deref(), Some("Just text."));
+    assert!(report.stop_reason == StopReason::Completed);
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A denied call still reports its result event, with `approved: false`,
+/// and the denial still reaches the model through the log.
+#[tokio::test]
+async fn a_denied_call_reports_its_result_event() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "bash", r#"{"command":"echo no"}"#),
+        assistant_stream("Standing down."),
+    ]);
+    let home = temp_home("ui-denied");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: Some(ui_tx.clone()),
+    };
+    let client = Client::new(mock.url(), "test-key");
+    let mut progress = Vec::new();
+    {
+        let mut agent =
+            Agent::new(&client, options, &mut session, Box::new(DenyAll), &mut progress).unwrap();
+        agent.run("go wild").await.unwrap();
+    }
+    // The agent's own sender clone is gone with it, so the channel closes.
+    drop(ui_tx);
+
+    let mut events = Vec::new();
+    while let Some(event) = ui_rx.recv().await {
+        events.push(event);
+    }
+    let result = events
+        .iter()
+        .find(|event| matches!(event, UiEvent::ToolResult { .. }))
+        .expect("a tool result event");
+    match result {
+        UiEvent::ToolResult { name, preview, approved } => {
+            assert_eq!(name, "bash");
+            assert!(!approved);
+            assert!(preview.contains("denied"), "{preview}");
+        }
+        other => panic!("expected a tool result event, got {other:?}"),
+    }
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A failing run reports its failure as an event, and the log keeps the
+/// interrupted shape.
+#[tokio::test]
+async fn a_failed_run_reports_a_failure_event() {
+    let mock = MockApi::start(vec![ScriptedResponse {
+        status: "500 Internal Server Error".to_string(),
+        body: r#"{"error":{"message":"boom"}}"#.to_string(),
+        sse: Vec::new(),
+        delay_ms: 0,
+    }]);
+    let home = temp_home("ui-failed");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let log_path = session.path().to_path_buf();
+    let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: Some(ui_tx.clone()),
+    };
+    let client = Client::new(mock.url(), "test-key");
+    let mut progress = Vec::new();
+    let failed = {
+        let mut agent =
+            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
+                .unwrap();
+        agent.run("break things").await.is_err()
+    };
+    assert!(failed);
+    drop(ui_tx);
+
+    let mut events = Vec::new();
+    while let Some(event) = ui_rx.recv().await {
+        events.push(event);
+    }
+    match events.last() {
+        Some(UiEvent::Failed(message)) => assert!(message.contains("boom"), "{message}"),
+        other => panic!("expected a failure event, got {other:?}"),
+    }
+    let records = session::replay(&log_path).unwrap();
+    assert!(records.iter().all(|record| !matches!(record, Record::End { .. })));
+
     std::fs::remove_dir_all(&home).ok();
 }
 

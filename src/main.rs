@@ -17,6 +17,11 @@ use fleet::session::{self, Session};
 #[tokio::main]
 async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // No subcommand is the TUI, Fleet's daily-driver surface; every
+    // subcommand path below is the headless one, unchanged.
+    if args.is_empty() {
+        return tui_command();
+    }
     match cli::parse(&args) {
         Ok(Command::Help) => {
             print!("{}", cli::HELP);
@@ -43,6 +48,34 @@ async fn main() -> ExitCode {
 struct Credentials {
     key: String,
     base_url: String,
+}
+
+/// `fleet` with no subcommand: the TUI on the default model, a fresh
+/// session, and the resolved credentials.
+fn tui_command() -> ExitCode {
+    let credentials = match credentials() {
+        Ok(credentials) => credentials,
+        Err(code) => return code,
+    };
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    match fleet::tui::run(fleet::tui::Config {
+        key: credentials.key,
+        base_url: credentials.base_url,
+        home,
+        model: fleet::api::DEFAULT_MODEL.to_string(),
+    }) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// Resolve credentials, printing the failed credentials check on the way out.
@@ -198,7 +231,7 @@ async fn drive(
     task: &str,
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(credentials.base_url.clone(), credentials.key.clone());
-    let options = AgentOptions { model, max_turns };
+    let options = AgentOptions { model, max_turns, ui_tx: None };
     let approver: Box<dyn Approver> =
         if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };
     let mut progress = std::io::stderr().lock();
