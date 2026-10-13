@@ -9,7 +9,7 @@ slug: fleet-everyday-harness
 
 ## Context
 
-The owner wants a fully working, installable, launchable native application to use as the every-day harness — the agent loop, sessions, skills, memory, subagents, scheduling, routing, and the boards — in one self-contained unit. Architecture is the owner's non-concern; the outcome is the concern. Time and token budgets are explicitly not constraints. The owner is open to pivoting to a different base harness if that is the better path.
+The owner wants a fully working, installable, launchable native application to use as the every-day harness — the agent loop, sessions, skills, memory, subagents, scheduling, routing, and the boards — in one self-contained unit, **and as self-improving as technically possible**. Architecture is the owner's non-concern; the outcome is the concern. Time and token budgets are explicitly not constraints. The owner is open to pivoting to a different base harness if that is the better path.
 
 ### The base decision: no pivot (and why)
 
@@ -20,6 +20,18 @@ The question was "full pivot and rewrite onto a different base, or finish this o
 3. **A pivot rents an architecture and its mismatches become permanent constraints.** The credible native-ish candidates (codex-cli: Rust but OpenAI-loop-shaped; opencode: excellent but TypeScript) each mismatch this stack — DeepSeek/z.ai roster routing, sys1 judgment under the loop, the dev-decisions calibration vocabulary — in places that would be fought forever. The owner explicitly does not want legacy constraints from earlier decisions; inheriting a foreign loop's seams is the largest such constraint available.
 
 The fork is therefore the **spec and integration lab**, not a shipping competitor: it keeps the canonical dsh-* implementations and the vendored cores; Fleet becomes the shipping native core; the two never both ship the same feature.
+
+### The self-improvement requirement
+
+"As self-improving as technically possible" is defined here as a **ladder of closed loops**, each earning the next on evidence — not a single feature:
+
+1. **Remember** — durable facts with a lifecycle: consolidate, supersede, forget (slice 8).
+2. **Learn procedures** — skills the harness itself authors and maintains from session outcomes (slice 7).
+3. **Calibrate** — every decision and every outcome graded into the dev-decisions stream; autonomy earned on evidence (slice 5).
+4. **Self-maintain** — the harness proposes and applies changes to its own skills, memory, and config under gates (slice 12), with source-level self-editing as its gated extension path.
+5. **Self-diagnose** — failures classified, layers probed, a fixed eval corpus run on a schedule, recaps and postmortems drafted from evidence (slice 13).
+
+The guardrail philosophy is the owner's own, already proven in dev-decisions and the fork: **nothing destructive without approval in the current turn; every self-modification is a plan with acceptance criteria; it applies only with the gate green; it is recorded in the calibration ledger; it is reversible.** Self-improvement is proposed-then-gated, never silent. An ungraded change is not an improvement, it is a mutation — which is why the calibration ledger (slice 5) and the eval corpus (slice 13) exist before the loops that consume them.
 
 ### What "everyday harness" means here (the target surface)
 
@@ -33,13 +45,15 @@ Slice 1 is in-repo and green: 55 tests (44 unit + 11 integration), binary smoke-
 
 A Rust core that **composes** rather than reimplements: the agent loop, client, sessions, and approvals are native (slice 1, done); the lanes are Python services spawned as MCP stdio children (they can never be Rust — the ML ecosystem is Python); routing, calibration, skills, memory, subagents, compaction, and cron are native ports of the fork's implementations, each slice naming its spec; the boards are native read-only surfaces over the same sources the fork's boards read.
 
+Self-improvement is a **property assembled from the slices, not a slice bolted on**: the calibration ledger is the audit spine every later loop writes to (from slice 5 onward), memory and skills are the substrates the loops modify (slices 7–8), and slices 12–13 are where the loops close. The design rule for every loop: **propose → gate → apply → log → measure**. A loop that cannot show its effect in the ledger or the eval corpus does not ship.
+
 Standing rules for every slice: model-visible ⟺ logged; no secrets in the repo; the local gate (`cargo fmt --check`, `clippy -D warnings`, `build --release`, `test`) runs before every push because CI is budget-blocked; unit + integration tests at the current bar, with MCP slices tested against the real vendored cores on loopback; no duplication of anything the fork already ships as canonical.
 
 **Foundation decision — async.** Slice 2 adopts tokio. Streaming reads, concurrent MCP children, subagents, and scheduled runs are concurrent by nature; std threads would be fought for the rest of the app's life. This is the one place a small upfront rewrite prevents permanent debt.
 
 ## The slices
 
-Order is dependency-driven: each slice unblocks the next and nothing is built ahead of its consumer.
+Order is dependency-driven: each slice unblocks the next and nothing is built ahead of its consumer. Slices 12–13 are the self-improvement loops; they exist last because every loop needs its substrate and its audit spine first.
 
 ### Slice 2 — the async core: tokio + streaming (foundation)
 
@@ -51,23 +65,23 @@ New `src/mcp.rs`: spawn `python3 -u <home>/service/mcp_server.py` children, spea
 
 ### Slice 4 — multi-provider routing
 
-New `src/route.rs`: a roster of OpenAI-compatible gateways (DeepSeek direct, z.ai Coding Plan, Xiaomi MiMo, and the router kit at `127.0.0.1:8300` as escape hatch) in config; per-task route selection that asks `sys1_classify` (the slice-3 MCP tool) instead of a ported judge; failover walks the declared chain on failure classes; every decision appends a calibration row (slice 5's writer). Spec: `@fleet/dsh-router`'s decision semantics and the fork's route/failover row vocabulary. AC: a judged `auto` turn routes inside the roster; a failed head fails over to the next candidate; the kit serves as last resort; decisions are logged.
+New `src/route.rs`: a roster of OpenAI-compatible gateways (DeepSeek direct, z.ai Coding Plan, Xiaomi MiMo, and the router kit at `127.0.0.1:8300` as escape hatch) in config; per-task route selection that asks `sys1_classify` (the slice-3 MCP tool) instead of a ported judge; failover walks the declared chain on failure classes; every decision appends a calibration row (slice 5's writer). Chain order starts declared and becomes *calibrated*: graded route outcomes (slice 5) reorder candidates over time — the fork's router is the spec for the semantics, and the kit's provider benching is the spec for learning from failure. AC: a judged `auto` turn routes inside the roster; a failed head fails over to the next candidate; the kit serves as last resort; decisions are logged; a graded failure moves the failed provider down its chain.
 
 ### Slice 5 — the calibration stream
 
-New `src/calib.rs`: one `events.jsonl` per UTC day under the dev-decisions log root, in `devdec`'s row vocabulary, through a serialized non-blocking queue. Spec: `@fleet/dsh-decisions`. AC: route/failover/screening rows land; the external `devdec` CLI reads them beside its own; a full disk never fails a decision.
+New `src/calib.rs`: one `events.jsonl` per UTC day under the dev-decisions log root, in `devdec`'s row vocabulary, through a serialized non-blocking queue. **Graded outcomes, not just decisions**: route and failover rows, tool-call screening verdicts, turn outcomes (ok/failed, with the partial endings named), and — once slice 13 lands — eval-corpus scores. This ledger is the audit spine every self-improvement loop writes to and reads from. Spec: `@fleet/dsh-decisions` plus the dev-decisions repo's own "gates the operations, grades the outcomes, earns autonomy on evidence" contract. AC: rows land in the stream; the external `devdec` CLI reads them beside its own; a full disk never fails a decision.
 
 ### Slice 6 — the TUI
 
 A ratatui interface over the async core: chat and run panes with streamed tokens, the approval prompt, session browse/resume, tool-call progress, and a board pane mount point. Spec: the fork web client's information architecture (not its code). AC: `fleet` with no args launches the TUI; a full task runs interactively; approvals work from the keyboard; headless `run`/`chat`/`doctor` unchanged.
 
-### Slice 7 — skills
+### Slice 7 — skills (with self-authoring)
 
-SKILL.md loading from a skills directory with frontmatter, progressive disclosure (description first, body on demand), and selection by the loop. Spec: the fork's `packages/skill` and the owner's existing skill conventions. AC: skills load with malformed ones skipped by name; a relevant skill's body enters context when selected; `fleet skills` lists them.
+SKILL.md loading from a skills directory with frontmatter, progressive disclosure (description first, body on demand), and selection by the loop. Spec: the fork's `packages/skill` and the owner's existing skill conventions. **The self-improving half**: after a session, the harness drafts the SKILL.md creations and updates its outcomes justify — the owner's own protocol (difficult task → lesson → skill) executed by the harness — and files them as proposals through slice 12's gate, never applied silently. Curation uses recall data: unused skills are proposed for retirement, near-duplicates for merge. AC: skills load with malformed ones skipped by name; a relevant skill's body enters context when selected; `fleet skills` lists them; a session's lessons surface as drafted skill updates awaiting the gate.
 
 ### Slice 8 — memory (the brain)
 
-Durable facts in a git-tracked `memories/` tree (one file per fact with lifecycle frontmatter) plus sem1-indexed recall over session journals and skills, refreshed before each instruction; a `brain_remember`-shaped write path. Spec: `@fleet/dsh-brain` and the fork's Wave D slices. AC: facts persist across sessions; recall returns ranked matches for a new instruction; the sleep/consolidation cycle runs on a timer.
+Durable facts in a git-tracked `memories/` tree (one file per fact with lifecycle frontmatter — recall-count, superseded-by, valid-until, and `basis` recording confirmed-by-user vs inferred) plus sem1-indexed recall over session journals and skills, refreshed before each instruction; a `brain_remember`-shaped write path; a consolidation cycle on a timer that compresses old working memory into episodic summaries, supersedes stale facts, and forgets expired ones. Spec: `@fleet/dsh-brain` and the fork's Wave D slices. AC: facts persist across sessions; recall returns ranked matches for a new instruction; the consolidation cycle runs and its actions are logged as calibration rows.
 
 ### Slice 9 — subagents
 
@@ -81,11 +95,19 @@ Context-window management: summarize-and-continue under a token budget with the 
 
 Cron-shaped scheduling with a persistent job store, catch-up on missed runs, and delivery to a gateway-connected surface. Spec: the fork's `packages/schedule` + `packages/jobs`. AC: a scheduled task fires on time and after a missed window; `fleet cron` lists/edits jobs; a job's output is retained.
 
-### Slice 12 — the boards
+### Slice 12 — self-maintenance under gates (the loop closes)
+
+New `src/improve.rs`: the harness maintains **its own** skills, memory, and config. Every change is a proposal — a plan with acceptance criteria, a diff, and an expected effect — that applies only when: the local gate is green, the change is non-destructive or explicitly approved in the current turn, and the proposal is recorded in the calibration ledger. Every applied change is reversible (git-tracked substrates make this structural). **Stage 2 — self-editing**: the same gate structure extended to source patches — the harness proposes a change to its own Rust, the proposal carries the failing test or graded outcome that justifies it, and it applies only with fmt/clippy/build/test green plus approval. Spec: the fork's runtime self-modification surface (`packages/extensions` — runtime API inspection, process-local runners, creator-mode plugin installation through Plugin Manager) and the owner's plan-gate protocol. AC: a session's justified skill update applies through the gate and appears in the ledger; a proposal that fails the gate is refused with the failure named; a destructive proposal waits for approval; an applied change reverts cleanly; a source-level proposal runs the full gate before applying.
+
+### Slice 13 — self-diagnosis and the eval corpus
+
+Two mechanisms. **Diagnosis**: per-layer probes in `doctor`'s image (credentials, home, each MCP core, the roster, the ledger), failure classification (network vs auth vs quota vs decode vs tool), and evidence-first drafting — recaps and postmortems composed from the ledger and session logs rather than from narrative, with unimplemented action items surfaced until closed. **The eval corpus**: a fixed, graded task suite (headless runs with asserted outcomes, in the image of the fork's `benchmarks/` tree — session-corpus replay, agent-continuation, conversation-fold) run on a schedule and before any slice-12 stage-2 self-edit applies; scores land in the calibration stream, and a regression blocks the edit. sdm1 telemetry (turn-duration prediction, outcome scoring) joins here as the harness's model of its own performance. Spec: `@fleet/dsh-doctor`, `@fleet/dsh-sdm1`'s telemetry loop, the fork's `benchmarks/`, and the owner's recap protocol. AC: a broken layer is named at boot with its reason; a failed run produces a classified diagnosis and a drafted recap citing ledger evidence; the eval corpus runs on a schedule and its scores are queryable; a self-edit proposal that regresses the corpus is refused.
+
+### Slice 14 — the boards
 
 Native read-only surfaces: router board (the kit's operator API), second-brain board (the six derived state files), tower (git facts per project). TUI panes and/or a small embedded web server with hand-rolled SVG/CSS — no chart library, matching the fork's approach. Spec: `dsh-router-board`, `dsh-second-brain`, `dsh-tower`, `dsh-board-seam`. AC: each board renders real data from its source; a refused read keeps the last snapshot visible and names the error.
 
-### Slice 13 — install and launch
+### Slice 15 — install and launch
 
 `fleet install`: home layout, config scaffold, optional heavy-lane venvs (a port of `services/bootstrap.mjs` — per-lane, idempotent, degrade-without), `fleet doctor` as the gate; release binaries per OS; the README's quick start becomes literally true on a clean machine. AC: on a clean machine, install → doctor green → `fleet chat` completes a real task; no step requires the fork or Node.
 
@@ -99,6 +121,8 @@ Native read-only surfaces: router board (the kit's operator API), second-brain b
 - C6: sessions survive compaction and resume; a scheduled task fires on time and after a missed window.
 - C7: the three boards render real data read-only; a refused read keeps the last snapshot.
 - C8: the local gate green at every slice; a release binary installs and launches on macOS and Linux.
+- C9: after a session, the harness has drafted the skill/memory updates its outcomes justify; a justified update applies through the gate, lands in the calibration ledger, and reverts cleanly; a gate-failing or destructive proposal is refused or waits for approval.
+- C10: a broken layer is named at boot; a failed run yields a classified diagnosis and an evidence-cited recap; the eval corpus runs on a schedule; a self-edit that regresses the corpus is refused.
 
 ## Files to be touched (first slices)
 
@@ -106,7 +130,9 @@ Native read-only surfaces: router board (the kit's operator API), second-brain b
 - `src/api.rs` — streaming rework (slice 2).
 - `src/agent.rs` — async loop, MCP tool registration, routing hook, calibration hook.
 - `src/mcp.rs`, `src/route.rs`, `src/calib.rs` — new (slices 3–5).
-- `src/tui/`, `src/skills.rs`, `src/memory.rs`, `src/subagent.rs`, `src/compact.rs`, `src/cron.rs`, `src/boards/`, `src/install.rs` — new (slices 6–13).
+- `src/tui/`, `src/skills.rs`, `src/memory.rs`, `src/subagent.rs`, `src/compact.rs`, `src/cron.rs` — new (slices 6–11).
+- `src/improve.rs`, `src/diagnose.rs`, `eval/` — new (slices 12–13).
+- `src/boards/`, `src/install.rs` — new (slices 14–15).
 - `services/` — the vendored cores with `VENDOR.json` (slice 3).
 - `tests/` — each slice's integration coverage at the current bar.
 
@@ -117,10 +143,11 @@ Native read-only surfaces: router board (the kit's operator API), second-brain b
 - The fork's web/desktop client parity; Fleet's surfaces are the TUI plus embedded read-only boards.
 - Multi-tenant, hosted, or team anything; this is a solo daily driver.
 - Windows as a first-class target until the core is daily-driven on macOS/Linux.
+- **Un-gated self-modification of any kind**: no silent skill/memory/config/source edits, no self-rewriting of the system prompt outside the slice-12 gate, no autonomy the calibration ledger has not earned. The loops propose; the gates and the owner dispose.
 
 ## Verification
 
-Per slice: the local gate plus that slice's ACs exercised for real — MCP slices against the real vendored cores, routing against the live roster once the account has balance, boards against the live kit and the second-brain tree. The live-API e2e stays `#[ignore]`d until the DeepSeek balance is topped up; every other claim is tool-verified in-session.
+Per slice: the local gate plus that slice's ACs exercised for real — MCP slices against the real vendored cores, routing against the live roster once the account has balance, boards against the live kit and the second-brain tree, self-improvement slices against a scratch clone where a bad proposal must fail visibly. The live-API e2e stays `#[ignore]`d until the DeepSeek balance is topped up; every other claim is tool-verified in-session.
 
 ## Linked artifacts
 
