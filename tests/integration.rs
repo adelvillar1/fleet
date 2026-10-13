@@ -490,12 +490,25 @@ async fn run_completes_a_two_turn_tool_loop() {
     assert_eq!(message_roles(&bodies[1]), vec!["system", "user", "assistant", "tool"]);
     assert_eq!(bodies[1]["messages"][3]["tool_call_id"], "call-1");
     assert!(bodies[1]["messages"][3]["content"].as_str().unwrap().contains("hello"));
+    // KI-016: the assistant message the next request carries still names its
+    // tool call — an assistant turn with no tool_calls followed by a tool
+    // result is not a valid sequence for the API.
+    let replayed_calls = &bodies[1]["messages"][2]["tool_calls"];
+    assert_eq!(replayed_calls.as_array().map(Vec::len), Some(1), "{replayed_calls}");
+    assert_eq!(replayed_calls[0]["id"], "call-1");
 
     // The log holds exactly what the model saw plus bookkeeping.
     let records = session::replay(&session.path()).unwrap();
     assert_eq!(records.len(), 6);
     assert!(matches!(&records[0], Record::Start { v: 1, model, .. } if model == "test-model"));
     assert!(matches!(&records[1], Record::User { content } if content == "say hello"));
+    // KI-016: the assistant record carries the call the model made, so a
+    // resumed session replays a valid sequence.
+    assert!(
+        matches!(&records[2], Record::Assistant { tool_calls, .. } if tool_calls.len() == 1 && tool_calls[0].id == "call-1"),
+        "{:?}",
+        records[2]
+    );
     assert!(matches!(&records[3], Record::ToolResult { approved: true, .. }));
     assert!(matches!(
         &records[5],

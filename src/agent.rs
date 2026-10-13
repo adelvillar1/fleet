@@ -230,8 +230,12 @@ impl<'a> Agent<'a> {
             }
             let _ = self.progress.flush();
 
-            let tool_calls = std::mem::take(&mut message.tool_calls);
-            if tool_calls.is_empty() {
+            // The assistant turn is logged and kept in the live conversation
+            // with its tool calls intact: a record without them breaks resume
+            // (the replay emits an assistant message with no calls followed by
+            // a tool result — not a valid sequence), and the next request in
+            // this same run would carry the same invalid sequence. KI-016.
+            if message.tool_calls.is_empty() {
                 let content = message.content.clone().unwrap_or_default();
                 self.push_message(message)?;
                 let turns = self.turns;
@@ -247,6 +251,7 @@ impl<'a> Agent<'a> {
                 });
             }
 
+            let tool_calls = message.tool_calls.clone();
             self.push_message(message)?;
             for call in tool_calls {
                 self.execute_call(&call)?;
