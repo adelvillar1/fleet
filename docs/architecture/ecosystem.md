@@ -23,14 +23,16 @@ All four pins match the upstream repos' committed HEADs, so the bundled copies a
 
 The house pattern in one sentence (from sem1's README): sys1 judges what the work says, sdm1 scores what the work measures, sem1 indexes what the work looks like, gen1 renders it.
 
-## Calibration and routing
+## Calibration and routing — what became part of the harness
 
-- **dev-decisions** — the verification and calibration layer: gates operations (commit hygiene, plan contracts, rendered UI), classifies diffs with multiple providers, logs every decision and graded outcome to JSONL. Clean on `main` with three feature branches (tabular, semantic, media-generation lanes).
-- **agnostic-router-kit** — a local, harness-neutral model router and the workflow plane it runs; owns `lib/workflow/` and the proxy; depends on no harness. Serves its own dashboard at `http://127.0.0.1:8300/dashboard` (usage ledger, provider enable/disable, quota, delegation, live run activity). On `master` with 4 untracked `docs/architecture/refresh-*` dirs; has the full methodology layer (CLAUDE.md + TECHNICAL-DOCUMENTATION.md + FUNCTIONAL-SPECIFICATIONS.md). Its Oct 7–9 CI runs dispatched and failed on real test steps — those predate the Actions-budget exhaustion and are a separate, genuine red.
+The fork's `docs/fleet/architecture.md` records the integration depth per project, and the three did **not** integrate the same way:
 
-## Second-brain
+- **dev-decisions → external, integrated by wire contract (did not become part of the harness).** The architecture doc labels it "the fork's own verification layer (external)": its git hooks + CLI gate the fork's development unchanged. What the harness gained is the *calibration stream* — `@fleet/dsh-decisions` appends one `events.jsonl` per UTC day under the dev-decisions log root (`~/.local/share/dev-decisions/logs/`) in dev-decisions' own row vocabulary, so the external `devdec` CLI reconciles the fork's route/failover/screening verdicts beside its own. Live evidence (2026-10-11): a judged `auto` turn and a real network-class failover recorded as rows. The dev-decisions repo itself: clean on `main` with three feature branches (tabular, semantic, media-generation lanes).
+- **agnostic-router-kit → the decision core was ported in; the kit stays external as the escape hatch (the deepest of the three).** Wave A "moved routing into the fork": `@fleet/dsh-router` ports the router kit's decision core (capability rules, workload tiers, the sys1 judge, quota steering, failover) as a Cordis plugin wired at the `agent/request`, `llm/stream`, and `agent/request-error` waterfalls, and the router is the default route. The kit at `127.0.0.1:8300` stays declared as the escape hatch: when every candidate in a declared chain fails, the walk falls back to it for that turn. So routing *decisions* are in-harness; the kit remains a runtime dependency as last resort, and `dsh-router-board` reads its operator API read-only. The kit repo itself: on `master` with 4 untracked `docs/architecture/refresh-*` dirs, full methodology layer present, its own `/dashboard` (usage ledger, providers, quota, delegation, live runs).
 
-`~/Projects/second-brain` — one live control tower for the solo developer's multi-harness agent fleet: every chat, plan, recap, and skill inventoried, classified, reconciled against git, served as a localhost dashboard. **Never exposed beyond the machine.** Clean on `main`; last commit 2026-10-09 added the harness-outcomes ingester (`record_harness.py` → `harness_state.json`, harness job in the build chain, Harness outcomes card on the cockpit).
+## Second-brain — external by design (did not become part of the harness)
+
+The architecture doc labels it "control tower (external)": the fork is another inventoried harness, and second-brain already reconciles multi-harness fleets against git — making it part of one harness would be circular. What the harness gained instead: `@fleet/dsh-second-brain` reads the six derived state files (`reports_state.json`, `gates_state.json`, `harness_state.json`, `maturity_state.json`, `loops_state.json`, `tower_data.json`) read-only on a self-scheduled cadence and serves one board snapshot; and Wave C's mirror handoff writes one row per turn to `~/.helmsman/harness-runs.jsonl` under the same redaction law (no message, reply, or text ever) so second-brain keeps deriving `harness_runs` unchanged. The repo: clean on `main`; last commit 2026-10-09 added the harness-outcomes ingester (`record_harness.py` → `harness_state.json`, harness job in the build chain, Harness outcomes card on the cockpit).
 
 ## The dashboards (fork-side, TypeScript)
 
@@ -50,10 +52,10 @@ Nothing below is built — this is the shape of the work, for slice-2 planning:
 
 | Piece | Absorption shape |
 |---|---|
-| Lanes (sys1/sdm1/sem1/gen1) | Fleet already speaks MCP-shaped tool calls; the lanes stay services, Fleet mounts them as tools (stdio JSON-RPC children) instead of shelling out |
-| dev-decisions | the calibration ledger becomes a Fleet-side recorder; gates run before/after each run |
-| agnostic-router-kit | routing becomes a client concern in `api.rs` (declared workload chains, quota steering, failover) or a local sidecar; its dashboard data is read-only over its operator API |
-| second-brain | derived state stays in second-brain; Fleet gets a read-only board surface |
+| Lanes (sys1/sdm1/sem1/gen1) | The fork already does this: `dsh-components` spawns the vendored cores as MCP stdio children. Fleet needs the equivalent Rust MCP stdio client (spawn `python3 -u <home>/service/mcp_server.py`, speak JSON-RPC over stdin/stdout); `dsh-components/src/manifest.ts` is the reference implementation |
+| dev-decisions | The fork already speaks the contract: `dsh-decisions` appends `events.jsonl` per UTC day in `devdec`'s row vocabulary. Fleet needs the same writer; the `devdec` CLI stays the external reconciler and gate |
+| agnostic-router-kit | The decision core is already ported once (`dsh-router`, Wave A) — the reference for a Rust port in `api.rs`. The kit stays the escape hatch at `127.0.0.1:8300`; its dashboard data is read-only over the operator API |
+| second-brain | Stays external by design; the harness is a reader + producer (`dsh-second-brain` board, harness-runs mirror rows). Fleet would do the same |
 | Dashboards | native Rust surfaces (or an embedded web view) over the same read-only sources the dsh-* plugins read today |
 
 ## Known cross-repo facts
