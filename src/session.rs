@@ -44,6 +44,16 @@ pub enum Record {
         truncated: bool,
         approved: bool,
     },
+    /// The tools one lane brought into a run, recorded the moment the
+    /// lane joined. The tool declarations are dynamic now — a lane's
+    /// tools enter the model's tool set mid-run — so this record is what
+    /// makes the request the model saw reconstructable from the log
+    /// (hard rule 5). Bookkeeping, like `start` and `end`: it replays to
+    /// no message.
+    LaneTools {
+        lane: String,
+        tools: Vec<crate::tools::LaneTool>,
+    },
     /// An orderly stop; a log without it was interrupted.
     End {
         stop_reason: String,
@@ -182,6 +192,11 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
 
 /// Rebuild the wire messages a log represents: `start`/`end` are bookkeeping,
 /// everything else is model-visible.
+///
+/// `lane_tools` is bookkeeping too: it names the tools a lane contributed
+/// to a request, not anything the model said, so it replays to no
+/// message. It is still recorded, because the declarations it describes
+/// are dynamic and only the log can reconstruct them.
 pub fn messages(records: &[Record]) -> Vec<Message> {
     records
         .iter()
@@ -196,7 +211,7 @@ pub fn messages(records: &[Record]) -> Vec<Message> {
             Record::ToolResult { call_id, output, .. } => {
                 Some(Message::tool_result(call_id.clone(), output.clone()))
             }
-            Record::Start { .. } | Record::End { .. } => None,
+            Record::Start { .. } | Record::End { .. } | Record::LaneTools { .. } => None,
         })
         .collect()
 }
@@ -314,6 +329,73 @@ mod tests {
         assert_eq!(messages[1].role, Role::Assistant);
         assert_eq!(messages[2].role, Role::Tool);
         assert_eq!(messages[2].tool_call_id.as_deref(), Some("call-1"));
+    }
+
+    /// One `lane_tools` record, as the agent writes it when a lane joins.
+    fn lane_tools_record() -> Record {
+        Record::LaneTools {
+            lane: "sem1".to_string(),
+            tools: vec![crate::tools::LaneTool {
+                name: "mcp__sem1__probe".to_string(),
+                lane_tool: "sem1_probe".to_string(),
+                description: "Capability and reachability probe".to_string(),
+                input_schema: serde_json::json!({ "type": "object" }),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_lane_tools_record_replays_as_bookkeeping_not_conversation() {
+        // The vocabulary grew mid-format-version: a log carrying the new
+        // record must still replay, and the record must not become a
+        // message — it describes the tool set, not anything the model
+        // said.
+        let records = vec![
+            Record::Start { v: 1, model: "m".into(), created: "c".into() },
+            Record::User { content: "probe it".into() },
+            lane_tools_record(),
+            Record::Assistant { content: None, tool_calls: Vec::new() },
+            Record::End { stop_reason: "completed".into(), turns: 1 },
+        ];
+        let messages = messages(&records);
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[1].role, Role::Assistant);
+    }
+
+    #[test]
+    fn a_lane_tools_line_round_trips_through_the_log_file() {
+        // The record's own line, written the way the log writes it and
+        // read back by a reader that only knows the vocabulary: the tag
+        // is `lane_tools`, and the lane, the namespaced name, the
+        // description and the schema all survive.
+        let home = temp_home("lane-tools");
+        let mut session = Session::create(&home, "m").unwrap();
+        session.record(&lane_tools_record()).unwrap();
+        let line = std::fs::read_to_string(session.path()).unwrap();
+        let recorded = line.lines().nth(1).expect("the lane_tools line");
+        assert!(recorded.starts_with("{\"type\":\"lane_tools\""), "{recorded}");
+        assert!(recorded.contains("\"lane\":\"sem1\""), "{recorded}");
+        assert!(recorded.contains("\"name\":\"mcp__sem1__probe\""), "{recorded}");
+        // Both ends of the mapping ride along: the name the model saw and
+        // the lane's own name the call carries.
+        assert!(recorded.contains("\"lane_tool\":\"sem1_probe\""), "{recorded}");
+
+        let records = replay(&session.path()).unwrap();
+        match &records[1] {
+            Record::LaneTools { lane, tools } => {
+                assert_eq!(lane, "sem1");
+                assert_eq!(tools.len(), 1);
+                assert_eq!(tools[0].name, "mcp__sem1__probe");
+                assert_eq!(tools[0].lane_tool, "sem1_probe");
+                assert_eq!(tools[0].description, "Capability and reachability probe");
+                assert_eq!(tools[0].input_schema, serde_json::json!({ "type": "object" }));
+            }
+            other => panic!("expected a lane_tools record, got {other:?}"),
+        }
+        // And the log still lists as a readable session.
+        assert_eq!(list(&home).unwrap().len(), 1);
+        fs::remove_dir_all(&home).ok();
     }
 
     #[test]

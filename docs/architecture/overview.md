@@ -9,8 +9,8 @@ The whole binary is Rust across the modules below; dependencies are `ureq` (HTTP
 | `main.rs` | argv dispatch, credential resolution, wiring for `run` / `chat` / `sessions` / `lanes` / `doctor` |
 | `cli.rs` | the grammar: flags anywhere before the task words, usage errors name the offending flag |
 | `api.rs` | chat-completions client: typed request/response, streaming SSE parse, tool declarations, `ApiError`/`ClientError` taxonomy (401 credentials, 402 balance, 429 rate limit, network, decode) |
-| `agent.rs` | the tool loop, the `Approver` gate (`ApproveAll` / `DenyAll` / `ConsoleApprover` / `TuiApprover`), turn cap, `UiEvent` stream |
-| `tools.rs` | the closed four-tool set; every failure is a model-visible result, never a panic |
+| `agent.rs` | the tool loop, the `Approver` gate (`ApproveAll` / `DenyAll` / `ConsoleApprover` / `TuiApprover`), turn cap, `UiEvent` stream, and the run-scoped `LaneRoster` behind the lanes' tools |
+| `tools.rs` | the closed four-tool set; every failure is a model-visible result, never a panic. Also the tool-declaration vocabulary: the built-ins, the `mcp__<svc>__<tool>` namespace, and the pure assembly of one request's declarations |
 | `session.rs` | append-only JSONL at `<home>/sessions/<id>.jsonl`, format version 1 |
 | `home.rs` | `FLEET_HOME` / `~/.fleet`, `.env` fallback, harness `refs` reader |
 | `mcp.rs` | the hand-rolled MCP stdio client: spawn, initialize (2024-11-05), tools/list, tools/call, teardown; id-keyed pending waiters, per-op budgets, typed `McpError` |
@@ -31,9 +31,17 @@ The whole binary is Rust across the modules below; dependencies are `ureq` (HTTP
 5. Tool calls → approval gate per call → execute → record `tool_result` with exactly the text the model receives (denials, unknown tools, malformed arguments, and tool errors are all model-visible results).
 6. Turn cap reached → record `end` (`max-turns`), exit 3; resume with `--session <id>`.
 
+## The lanes' tools inside a run
+
+A lane's tools join the model-visible tool set as `mcp__<svc>__<tool>` — the redundant lane prefix in the lane's own tool name is dropped, so sem1's `sem1_probe` is called as `mcp__sem1__probe`; a tool whose name does not start with the lane's keeps it. The four built-ins are always declared first.
+
+Spawn is lazy and run-scoped (`agent.rs`'s `LaneRoster`): no lane process starts unless one of its tools is called, and every child a run spawns closes when the run ends, on every exit path. A lane that cannot spawn, cannot initialize, cannot list, or dies under a call is dead for the rest of the run — later calls fail fast with the recorded reason, and nothing respawns — while its tools stay declared, because the model saw them and the log's `lane_tools` record must keep matching the requests that followed. A lane failure is never fatal to a run: it is a typed failure result the model reads, in the same `error: …` vocabulary the built-ins use. A lane call goes through the same `Approver`, the same `Record::ToolResult`, and the same `Role::Tool` message as a built-in; a denied lane call spawns nothing.
+
+Where a lane's launch spec comes from is injectable (`AgentOptions::lane_specs`): `None` is the production path, the vendored registry resolved by name (`lanes::spec_for`) with its named reason when a lane cannot launch. Tests inject a scripted fake's spec so the loop's lane paths run without a real lane.
+
 ## Session log format (v1)
 
-One JSON object per line: `start` (v, model, created), `user`, `assistant` (content + tool_calls), `tool_result` (call_id, name, output, truncated, approved), `end` (stop_reason, turns). A log without `end` was interrupted. Replay fails loud, naming file and line. Bump `SESSION_FORMAT_VERSION` only when existing logs cannot be read safely.
+One JSON object per line: `start` (v, model, created), `user`, `assistant` (content + tool_calls), `tool_result` (call_id, name, output, truncated, approved), `lane_tools` (lane, and each tool's model-visible name, the lane's own name, description, and inputSchema), `end` (stop_reason, turns). A log without `end` was interrupted. `lane_tools` is bookkeeping like `start`/`end`: it replays to no message, and it exists because the tool declarations are dynamic — a lane's tools enter the model's set mid-run, so the log is the only place the request the model saw can be reconstructed from. Replay fails loud, naming file and line. Bump `SESSION_FORMAT_VERSION` only when existing logs cannot be read safely.
 
 ## Invariants carried over from the harness
 
@@ -43,8 +51,8 @@ One JSON object per line: `start` (v, model, created), `user`, `assistant` (cont
 
 ## Lane health (`fleet lanes`)
 
-The four lane cores launch exactly as the fork's `dsh-components` bundle launches them: `python3 -u <home>/service/mcp_server.py`, `<SVC>_PYTHONPATH=<home>/src` in the child env, the lane's home as cwd. `src/mcp.rs` speaks newline-delimited JSON-RPC 2.0 (no Content-Length headers); a reader task routes replies to id-keyed waiters and ignores notifications, unknown ids, and the id-`null` stray sys1/gen1 emit (KI-002). Every wait carries a budget (initialize 10s, tools/list 10s, tools/call 60s); teardown closes stdin, waits 5s, then kills. `fleet lanes` probes each lane through the client and renders cards (headless ANSI, TUI palette); the TUI's Ctrl+L view renders the same `LaneHealth` rows. The agent's tool loop does not gain MCP tools at this slice — that is slice 5's roster routing.
+The four lane cores launch exactly as the fork's `dsh-components` bundle launches them: `python3 -u <home>/service/mcp_server.py`, `<SVC>_PYTHONPATH=<home>/src` in the child env, the lane's home as cwd. `src/mcp.rs` speaks newline-delimited JSON-RPC 2.0 (no Content-Length headers); a reader task routes replies to id-keyed waiters and ignores notifications, unknown ids, and the id-`null` stray sys1/gen1 emit (KI-002). Every wait carries a budget (initialize 10s, tools/list 10s, tools/call 60s); teardown closes stdin, waits 5s, then kills. `fleet lanes` probes each lane through the client and renders cards (headless ANSI, TUI palette); the TUI's Ctrl+L view renders the same `LaneHealth` rows. The lanes' tools are callable inside a run under the `mcp__<svc>__*` namespace, spawned lazily per run — see the section above.
 
 ## Testing posture
 
-Zero real network by design: the integration suite spawns `mock-server` as a child process (ureq's reads misbehave when client and loopback server share a process on this machine) and asserts on both the run report and the recorded request bodies. The MCP suite drives the real vendored sem1 lane end to end (initialize, tools/list, a tools/call round trip, teardown; skipped with a loud note when `python3` is absent) plus `mock-mcp` for stray frames, crashed children, timeouts, and out-of-order replies. The one live-API test is `#[ignore]`d and self-skips without a key.
+Zero real network by design: the integration suite spawns `mock-server` as a child process (ureq's reads misbehave when client and loopback server share a process on this machine) and asserts on both the run report and the recorded request bodies. The MCP suite drives the real vendored sem1 lane end to end — through the client (initialize, tools/list, a tools/call round trip, teardown) and through a full two-turn agent run against the mock API whose turn 1 calls `mcp__sem1__probe`, skipped with a loud note when `python3` is absent — plus `mock-mcp` for stray frames, crashed children, timeouts, out-of-order replies, a dead child mid-run, and an EOF marker that proves the run closed the child it spawned. The one live-API test is `#[ignore]`d and self-skips without a key.

@@ -431,6 +431,23 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             }
             lines
         }
+        Entry::Lane(card) => {
+            // A lane joining the run is a one-line fact in the same
+            // family as a tool card: a dot, the lane, and what it brought.
+            let tools = if card.tool_count == 1 { "1 tool" } else { " tools" };
+            let count = if card.tool_count == 1 { String::new() } else { card.tool_count.to_string() };
+            vec![Line::from(vec![
+                Span::styled(" \u{2713} ", Style::new().fg(palette::DONE)),
+                Span::styled(
+                    card.lane.clone(),
+                    Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" joined \u{b7} {count}{tools}"),
+                    Style::new().fg(palette::DIM),
+                ),
+            ])]
+        }
     }
 }
 
@@ -736,6 +753,28 @@ mod tests {
         // count cannot push the modal off screen.
         assert_eq!(lanes_height(40), 20);
         assert!(lanes_height(4) < 62, "the modal must not keep the fixed share");
+    }
+
+    #[test]
+    fn a_lane_joining_renders_its_name_and_its_tool_count() {
+        let mut app = fresh();
+        app.apply_ui_event(UiEvent::ToolCall {
+            name: "mcp__sem1__probe".to_string(),
+            summary: "embeddings \u{b7} probe {}".to_string(),
+        });
+        app.apply_ui_event(UiEvent::LaneJoined { lane: "sem1".to_string(), tool_count: 4 });
+        let drawn = draw(&app, 80, 24);
+        // The lane's block names the lane and what it brought, and the
+        // tool card beside it shows the model-visible namespaced name.
+        assert!(drawn.contains("sem1"), "{drawn}");
+        assert!(drawn.contains("joined"), "{drawn}");
+        assert!(drawn.contains("4 tools"), "{drawn}");
+        assert!(drawn.contains("mcp__sem1__probe"), "{drawn}");
+        // A single tool reads as one, not "1 tools".
+        let mut single = fresh();
+        single.apply_ui_event(UiEvent::LaneJoined { lane: "gen1".to_string(), tool_count: 1 });
+        let one = draw(&single, 80, 24);
+        assert!(one.contains("1 tool"), "{one}");
     }
 
     #[test]

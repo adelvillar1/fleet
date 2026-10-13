@@ -362,6 +362,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             model: model.clone(),
                             max_turns: DEFAULT_MAX_TURNS,
                             ui_tx: Some(ui_tx.clone()),
+                            lane_specs: None,
                         };
                         let approver: Box<dyn Approver> =
                             Box::new(TuiApprover::new(approval_tx.clone()));

@@ -5,8 +5,11 @@
 //! always contains exactly what the model saw.
 
 use crate::api::{ChatRequest, Client, ClientError, Message, Role, StreamEvent, ToolCall, Usage};
+use crate::lanes;
+use crate::mcp::{CallResult, McpServer, ServerSpec, ToolInfo};
 use crate::session::{Record, Session};
-use crate::tools::{Tool, ALL_TOOLS};
+use crate::tools::{self, LaneTool, LaneTools, Tool};
+use std::collections::HashMap;
 use std::io::Write;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -24,6 +27,14 @@ pub struct AgentOptions {
     /// Where live UI events go; `None` is the headless path, which keeps
     /// its progress-write behavior exactly as it was.
     pub ui_tx: Option<UnboundedSender<UiEvent>>,
+    /// Where a run's lane children come from, keyed by lane name.
+    ///
+    /// `None` is the production path: the vendored registry
+    /// (`crate::lanes::spec_for`), resolved lazily, one lane at a time,
+    /// the first time one of its tools is called. A test injects a
+    /// scripted fake's spec here so the loop's lane paths run without a
+    /// real lane on the machine.
+    pub lane_specs: Option<HashMap<String, ServerSpec>>,
 }
 
 impl Default for AgentOptions {
@@ -32,6 +43,7 @@ impl Default for AgentOptions {
             model: crate::api::DEFAULT_MODEL.to_string(),
             max_turns: DEFAULT_MAX_TURNS,
             ui_tx: None,
+            lane_specs: None,
         }
     }
 }
@@ -49,6 +61,9 @@ pub enum UiEvent {
     ToolCall { name: String, summary: String },
     /// A call finished: executed or denied.
     ToolResult { name: String, preview: String, approved: bool },
+    /// A lane joined the run: its tools are in the model's tool set for
+    /// the rest of the run, and its `lane_tools` record is in the log.
+    LaneJoined { lane: String, tool_count: usize },
     /// The loop stopped orderly.
     Finished { stop_reason: String },
     /// The loop failed; the run is over.
@@ -248,6 +263,10 @@ pub struct Agent<'a> {
     ui_tx: Option<UnboundedSender<UiEvent>>,
     usage: Usage,
     turns: u64,
+    /// The lane children this run owns. A run that never calls a lane
+    /// tool spawns nothing; a run that does closes every child it
+    /// spawned when it ends.
+    lanes: LaneRoster,
 }
 
 impl<'a> Agent<'a> {
@@ -262,6 +281,10 @@ impl<'a> Agent<'a> {
     ) -> Result<Agent<'a>, AgentError> {
         let records = crate::session::replay(session.path()).map_err(AgentError::Io)?;
         let ui_tx = options.ui_tx.clone();
+        // An injected spec map wins for the lanes it names; every other
+        // lane resolves through the vendored registry at call time, with
+        // its named reason when it cannot launch.
+        let lanes = LaneRoster::new(options.lane_specs.clone().unwrap_or_default());
         Ok(Agent {
             client,
             options,
@@ -272,6 +295,7 @@ impl<'a> Agent<'a> {
             ui_tx,
             usage: Usage::default(),
             turns: 0,
+            lanes,
         })
     }
 
@@ -293,8 +317,15 @@ impl<'a> Agent<'a> {
     /// A `ui_tx` in the options receives every event beside the progress
     /// writes; without one the run is byte-for-byte the headless run it
     /// has always been.
+    ///
+    /// The run owns its lane children: every lane it spawned closes on
+    /// the way out, on every exit path — orderly stop, turn cap, or API
+    /// failure alike. A teardown that goes wrong never fails a run that
+    /// is already over.
     pub async fn run(&mut self, task: &str) -> Result<RunReport, AgentError> {
-        match self.run_task(task).await {
+        let outcome = self.run_task(task).await;
+        self.lanes.close_all().await;
+        match outcome {
             Ok(report) => Ok(report),
             Err(error) => {
                 self.emit(UiEvent::Failed(error.to_string()));
@@ -317,10 +348,16 @@ impl<'a> Agent<'a> {
             let mut request_messages = Vec::with_capacity(self.messages.len() + 1);
             request_messages.push(Message::text(Role::System, SYSTEM_PROMPT));
             request_messages.extend(self.messages.iter().cloned());
+            // The declarations are dynamic now: the four built-ins, plus
+            // every lane that has joined this run so far, in join order.
+            // A lane's tools enter the set on its first call and stay for
+            // the rest of the run — and because they are dynamic, each
+            // join is recorded in the log as `lane_tools`, so the request
+            // the model saw stays reconstructable.
             let request = ChatRequest {
                 model: &self.options.model,
                 messages: &request_messages,
-                tools: ALL_TOOLS.iter().map(|tool| tool.spec()).collect(),
+                tools: self.lanes.declarations(),
             };
             let client = self.client;
             let progress = &mut *self.progress;
@@ -396,11 +433,18 @@ impl<'a> Agent<'a> {
     /// Execute one call behind the approval gate and record what the model
     /// will see. Unknown tools and malformed arguments are model-visible
     /// error results, so the model can correct itself.
+    ///
+    /// A lane call goes through the same gate, the same result record, and
+    /// the same conversation message a built-in does. It differs only in
+    /// where the work happens: the lane's own child process, spawned on
+    /// this call if the run has not met the lane yet.
     async fn execute_call(&mut self, call: &ToolCall) -> Result<(), AgentError> {
         let approved = self.approver.approve(call);
         let tool = Tool::from_name(&call.function.name);
         let (output, truncated) = if !approved {
             ("denied: the user did not approve this call.".to_string(), false)
+        } else if let Some((lane, lane_tool)) = tools::lane_of(&call.function.name) {
+            self.call_lane(call, lane, lane_tool).await?
         } else {
             match tool {
                 None => (
@@ -443,6 +487,37 @@ impl<'a> Agent<'a> {
         })?;
         self.messages.push(Message::tool_result(call.id.clone(), output));
         Ok(())
+    }
+
+    /// Execute one lane tool call behind the approval gate: the lane's
+    /// child spawns on this call when the run has not met the lane yet,
+    /// and the answer maps onto the same `(output, truncated)` pair the
+    /// built-ins produce.
+    ///
+    /// A lane that just joined is visible twice over: one progress line
+    /// and one UI event for the user, one `lane_tools` record for the
+    /// log — the record is what keeps the model's now-dynamic tool set
+    /// reconstructable.
+    async fn call_lane(
+        &mut self,
+        call: &ToolCall,
+        lane: &str,
+        lane_tool: &str,
+    ) -> Result<(String, bool), AgentError> {
+        let arguments = parse_arguments(&call.function.arguments);
+        let outcome = self.lanes.call(lane, lane_tool, &arguments).await;
+        if let Some(tools) = outcome.joined {
+            let count = tools.len();
+            let _ = writeln!(
+                self.progress,
+                "\u{2192} lane {lane} joined \u{2014} {count} tool{}",
+                if count == 1 { "" } else { "s" },
+            );
+            let _ = self.progress.flush();
+            self.emit(UiEvent::LaneJoined { lane: lane.to_string(), tool_count: count });
+            self.record(&Record::LaneTools { lane: lane.to_string(), tools })?;
+        }
+        Ok((outcome.text, false))
     }
 
     /// Send one event to the UI, when a UI is listening. A closed channel
@@ -488,13 +563,43 @@ fn parse_arguments(arguments: &str) -> serde_json::Value {
 
 /// One-line summary of what a call does, for prompts and UI events.
 fn call_summary(call: &ToolCall) -> String {
+    if let Some((lane, tool)) = tools::lane_of(&call.function.name) {
+        return lane_summary(lane, tool, &parse_arguments(&call.function.arguments));
+    }
     let tool = Tool::from_name(&call.function.name);
     tool.map(|tool| tool.summarize(&parse_arguments(&call.function.arguments), 72))
         .unwrap_or_else(|| call.function.name.clone())
 }
 
+/// One line naming the lane and the call, for an approval prompt and a
+/// UI event: the lane's role in the house pattern, the lane's own tool
+/// name, and the arguments as one compact line — the facts a user needs
+/// to answer "may this run?".
+fn lane_summary(lane: &str, tool: &str, arguments: &serde_json::Value) -> String {
+    let role = lanes::LANES
+        .iter()
+        .find(|candidate| candidate.name == lane)
+        .map(|candidate| candidate.role)
+        .unwrap_or("lane");
+    format!("{role} \u{b7} {tool} {}", compact_arguments(arguments, 60))
+}
+
+/// `arguments` as one compact JSON line, cut at `limit` characters. An
+/// absent or non-object argument set reads as `{}`.
+fn compact_arguments(arguments: &serde_json::Value, limit: usize) -> String {
+    let text = serde_json::to_string(arguments).unwrap_or_else(|_| "{}".to_string());
+    let mut compact: String = text.chars().take(limit).collect();
+    if text.chars().count() > limit {
+        compact.push('\u{2026}');
+    }
+    compact
+}
+
 /// `tool: summary` for a progress line.
 fn describe_call(call: &ToolCall) -> String {
+    if tools::lane_of(&call.function.name).is_some() {
+        return format!("{}: {}", call.function.name, call_summary(call));
+    }
     let tool = Tool::from_name(&call.function.name);
     let arguments = parse_arguments(&call.function.arguments);
     match tool {
@@ -511,6 +616,218 @@ pub(crate) fn preview(text: &str, limit: usize) -> String {
         preview.push('\u{2026}');
     }
     preview
+}
+
+/// The lane children one run owns.
+///
+/// A lane spawns on the first call to one of its tools — a run that never
+/// touches a lane starts no child, so the lazy path costs nothing — and
+/// every child it spawns closes when the run ends. A lane that cannot
+/// spawn, cannot complete its handshake, or dies under a call is dead for
+/// the rest of the run: later calls fail fast with the reason, and
+/// nothing respawns. No lane failure is ever fatal to the run; each one
+/// is a typed failure result the model can read and react to.
+struct LaneRoster {
+    /// Launch specs injected for this run, keyed by lane name. Empty on
+    /// the production path, where a lane resolves through the vendored
+    /// registry the first time it is called.
+    specs: HashMap<String, ServerSpec>,
+    /// One entry per lane this run has met.
+    children: HashMap<String, LaneChild>,
+    /// Lane names in join order, so the declaration order is stable and
+    /// the log reads in the order the run met the lanes.
+    order: Vec<String>,
+}
+
+/// One lane's child process for the length of a run.
+enum LaneChild {
+    /// Spawned, initialized, and listed: its tools are in the model's
+    /// tool set until the run ends, dead child or not.
+    Live { server: McpServer, tools: Vec<LaneTool> },
+    /// Failed or gone: the tools it brought stay declared — the model saw
+    /// them, and the log records them — but every call fails fast.
+    Dead { reason: String, tools: Vec<LaneTool> },
+}
+
+/// What one lane call produced.
+struct LaneOutcome {
+    /// The text the model sees, in exactly the shape a built-in's output
+    /// takes — a refusal or a transport failure carries the `error:`
+    /// marker the built-ins use.
+    text: String,
+    /// The roster that joined on this call, when one did. The caller
+    /// records it: the log is what keeps the dynamic declarations
+    /// reconstructable.
+    joined: Option<Vec<LaneTool>>,
+}
+
+impl LaneRoster {
+    /// A roster over `specs`; an empty map is the production path.
+    fn new(specs: HashMap<String, ServerSpec>) -> LaneRoster {
+        LaneRoster { specs, children: HashMap::new(), order: Vec::new() }
+    }
+
+    /// Every declaration the run's requests carry: the four built-ins,
+    /// then each joined lane's tools under the lane namespace, in join
+    /// order.
+    fn declarations(&self) -> Vec<crate::api::ToolSpec> {
+        tools::declarations(&self.lane_tools())
+    }
+
+    /// Each joined lane's tools as the model sees them, in join order. A
+    /// lane that died after joining keeps its tools here: the model saw
+    /// them declared, so withdrawing them would make the log's
+    /// `lane_tools` record stop matching the requests that followed.
+    fn lane_tools(&self) -> Vec<LaneTools> {
+        self.order
+            .iter()
+            .filter_map(|lane| match self.children.get(lane) {
+                Some(LaneChild::Live { tools, .. }) | Some(LaneChild::Dead { tools, .. }) => {
+                    Some(LaneTools { lane: lane.clone(), tools: tools.clone() })
+                }
+                None => None,
+            })
+            .collect()
+    }
+
+    /// The launch spec for `lane`: an injected one when the run carries
+    /// it, else the vendored registry's — which names the reason when a
+    /// lane cannot launch.
+    fn spec_for(&self, lane: &str) -> Result<ServerSpec, String> {
+        match self.specs.get(lane) {
+            Some(spec) => Ok(spec.clone()),
+            None => lanes::spec_for(lane),
+        }
+    }
+
+    /// Call one lane tool. Spawns and handshakes the lane first when this
+    /// run has not met it yet.
+    async fn call(
+        &mut self,
+        lane: &str,
+        tool: &str,
+        arguments: &serde_json::Value,
+    ) -> LaneOutcome {
+        let mut joined: Option<Vec<LaneTool>> = None;
+        if !self.children.contains_key(lane) {
+            match self.join(lane).await {
+                Ok((server, listed)) => {
+                    // The roster moves into the namespace once, at the
+                    // join: the declarations, the log record, and the
+                    // call below all read the same names.
+                    let tools = tools::namespaced(lane, &listed);
+                    joined = Some(tools.clone());
+                    self.order.push(lane.to_string());
+                    self.children.insert(lane.to_string(), LaneChild::Live { server, tools });
+                }
+                // A lane that cannot start is dead for the rest of the
+                // run: the reason is recorded once and reused, so a
+                // broken lane costs one spawn attempt, not one per call.
+                // It brought no tools, so it declares none.
+                Err(reason) => {
+                    let text = format!("error: lane `{lane}` could not start: {reason}");
+                    self.children.insert(
+                        lane.to_string(),
+                        LaneChild::Dead { reason, tools: Vec::new() },
+                    );
+                    return LaneOutcome { text, joined: None };
+                }
+            }
+        }
+        // The lane's child exists now: live, or dead from an earlier call.
+        let Some(child) = self.children.get_mut(lane) else {
+            // Unreachable: the branch above inserted this lane's child,
+            // and nothing removes one while a run is in flight.
+            return LaneOutcome {
+                text: format!("error: lane `{lane}` has no child to call"),
+                joined,
+            };
+        };
+        match child {
+            // Dead: fail fast. No respawn, and the run carries on.
+            LaneChild::Dead { reason, .. } => LaneOutcome {
+                text: format!(
+                    "error: lane `{lane}` is unavailable for the rest of this run: {reason}"
+                ),
+                joined,
+            },
+            LaneChild::Live { server, tools } => {
+                // The model called `mcp__<lane>__<short>`; the declaration
+                // it answered is the one that name maps to, which is the
+                // lane's own tool name for the call itself.
+                let wanted = tools::lane_tool_name(lane, tool);
+                let Some(listed) = tools.iter().find(|listed| listed.name == wanted) else {
+                    // The lane is healthy and simply does not carry this
+                    // tool: a model-visible correction, not a dead lane.
+                    return LaneOutcome {
+                        text: format!("error: lane `{lane}` has no tool `{tool}`"),
+                        joined,
+                    };
+                };
+                let lane_tool = listed.lane_tool.clone();
+                match server.call_tool(&lane_tool, arguments.clone()).await {
+                    Ok(result) => LaneOutcome { text: lane_call_output(&result), joined },
+                    // The child died under the call. The lane is dead for
+                    // the rest of the run; the run itself carries on with
+                    // the typed failure in its log and its conversation.
+                    // The tools it brought stay declared.
+                    Err(error) => {
+                        let reason = error.to_string();
+                        *child = LaneChild::Dead {
+                            reason: reason.clone(),
+                            tools: std::mem::take(tools),
+                        };
+                        LaneOutcome { text: format!("error: {reason}"), joined }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Spawn one lane and complete its handshake: spawn, `initialize`,
+    /// `tools/list`. A failure at any step tears the child down and names
+    /// the step that failed, which the caller records as the lane's
+    /// death.
+    async fn join(&self, lane: &str) -> Result<(McpServer, Vec<ToolInfo>), String> {
+        let spec = self.spec_for(lane)?;
+        let server = McpServer::spawn(&spec)
+            .map_err(|error| format!("lane `{lane}` could not start: {error}"))?;
+        if let Err(error) = server.initialize().await {
+            let _ = server.close().await;
+            return Err(format!("lane `{lane}` could not initialize: {error}"));
+        }
+        match server.list_tools().await {
+            Ok(tools) => Ok((server, tools)),
+            Err(error) => {
+                let _ = server.close().await;
+                Err(format!("lane `{lane}` could not list its tools: {error}"))
+            }
+        }
+    }
+
+    /// Close every child this run spawned, on every exit path. Best
+    /// effort by design: a wedged child is killed, and a teardown failure
+    /// never fails a run that is already over.
+    async fn close_all(&mut self) {
+        for (_, child) in self.children.drain() {
+            if let LaneChild::Live { server, .. } = child {
+                let _ = server.close().await;
+            }
+        }
+        self.order.clear();
+    }
+}
+
+/// What the model sees for one lane call: the server's text, and the
+/// `error:` marker a refusal carries — the same failure vocabulary the
+/// built-ins use, so the model reads one shape either way.
+fn lane_call_output(result: &CallResult) -> String {
+    let text = result.text();
+    if result.is_error {
+        format!("error: {text}")
+    } else {
+        text
+    }
 }
 
 #[cfg(test)]
@@ -577,5 +894,105 @@ mod tests {
         let mut approver = approver;
         assert!(!approver.approve(&call("c2", "bash", "{}")));
         ui.join().unwrap();
+    }
+
+    #[test]
+    fn a_lane_calls_summary_names_the_lane_the_role_and_the_arguments() {
+        // The approval prompt is the same gate a built-in goes through,
+        // so a lane call owes the user the same facts: which lane, what
+        // kind of worker it is, and what the call asks for.
+        let probe = call("c1", "mcp__sem1__probe", r#"{"provider":"llama-server"}"#);
+        assert_eq!(call_summary(&probe), "embeddings \u{b7} probe {\"provider\":\"llama-server\"}");
+        // A long argument set is cut, not wrapped into the prompt.
+        let long = call("c2", "mcp__sem1__embed", &format!(r#"{{"items":"{}"}}"#, "x".repeat(200)));
+        let summary = call_summary(&long);
+        assert!(summary.chars().count() <= 80, "{summary}");
+        assert!(summary.ends_with('\u{2026}'), "{summary}");
+        // A built-in's summary is untouched.
+        assert_eq!(call_summary(&call("c3", "bash", r#"{"command":"ls -la"}"#)), "ls -la");
+        // And the progress line names the model-visible tool name.
+        assert!(describe_call(&probe).starts_with("mcp__sem1__probe: embeddings"));
+    }
+
+    #[test]
+    fn a_refused_lane_call_is_a_failure_that_keeps_its_text() {
+        // `isError` means the tool ran and refused: the model reads the
+        // refusal, so the text survives and the marker matches the one
+        // the built-ins use for their own failures.
+        let refused = crate::mcp::CallResult {
+            content: vec![crate::mcp::ContentBlock {
+                content_type: "text".to_string(),
+                data: serde_json::json!("`items` must be a string"),
+            }],
+            is_error: true,
+        };
+        assert_eq!(lane_call_output(&refused), "error: `items` must be a string");
+        // A success carries no marker.
+        let answered = crate::mcp::CallResult {
+            content: vec![crate::mcp::ContentBlock {
+                content_type: "text".to_string(),
+                data: serde_json::json!("{\"dims\": 768}"),
+            }],
+            is_error: false,
+        };
+        assert_eq!(lane_call_output(&answered), "{\"dims\": 768}");
+    }
+
+    /// A roster whose one lane cannot even spawn: no such program.
+    fn unspawnable_roster() -> LaneRoster {
+        let mut specs: HashMap<String, ServerSpec> = HashMap::new();
+        specs.insert(
+            "sem1".to_string(),
+            ServerSpec {
+                program: "fleet-no-such-lane-program".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                passthrough: Vec::new(),
+                cwd: None,
+            },
+        );
+        LaneRoster::new(specs)
+    }
+
+    #[tokio::test]
+    async fn a_lane_that_cannot_start_dies_once_and_fails_fast_after() {
+        let mut roster = unspawnable_roster();
+        // The first call tries the spawn and names the reason.
+        let first = roster.call("sem1", "probe", &serde_json::json!({})).await;
+        assert!(first.joined.is_none(), "a lane that cannot start never joins");
+        assert!(first.text.starts_with("error: lane `sem1` could not start:"), "{}", first.text);
+        // The second call does not try again: the lane is dead for the
+        // rest of the run, and it says so.
+        let second = roster.call("sem1", "probe", &serde_json::json!({})).await;
+        assert!(
+            second.text.starts_with("error: lane `sem1` is unavailable for the rest of this run:"),
+            "{}",
+            second.text
+        );
+        // A dead lane contributes no declarations: the model never saw a
+        // tool that cannot run.
+        assert_eq!(roster.declarations().len(), 4);
+        assert!(roster.lane_tools().is_empty());
+        // And an unknown lane is a named reason, not a panic — and not a
+        // spawn: no registry lane carries this name, so nothing launches.
+        let unknown = roster.call("nosuchlane", "classify", &serde_json::json!({})).await;
+        assert!(unknown.text.contains("no lane named `nosuchlane`"), "{}", unknown.text);
+        assert!(unknown.joined.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_lane_that_never_joins_leaves_the_declarations_at_the_builtins() {
+        // The lazy path's cost when no lane is called: nothing.
+        let roster = LaneRoster::new(HashMap::new());
+        assert_eq!(roster.declarations().len(), 4);
+        let names: Vec<String> = roster
+            .declarations()
+            .iter()
+            .map(|spec| serde_json::to_value(spec).unwrap()["function"]["name"]
+                .as_str()
+                .unwrap()
+                .to_string())
+            .collect();
+        assert_eq!(names, vec!["bash", "read_file", "write_file", "list_dir"]);
     }
 }

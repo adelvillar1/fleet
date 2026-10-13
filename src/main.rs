@@ -232,7 +232,7 @@ async fn drive(
     task: &str,
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(credentials.base_url.clone(), credentials.key.clone());
-    let options = AgentOptions { model, max_turns, ui_tx: None };
+    let options = AgentOptions { model, max_turns, ui_tx: None, lane_specs: None };
     let approver: Box<dyn Approver> =
         if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };
     let mut progress = std::io::stderr().lock();

@@ -367,6 +367,21 @@ pub fn launch_command(lane: &Lane, home: &Path) -> String {
     )
 }
 
+/// The launch spec for the lane named `name`, or the reason it cannot
+/// launch: a name the registry does not carry, or a home that did not
+/// resolve. The agent's tool loop resolves a lane through this the first
+/// time one of its tools is called, so a lane that cannot launch fails
+/// that call with its named reason instead of silently never answering.
+pub fn spec_for(name: &str) -> Result<ServerSpec, String> {
+    let Some(lane) = LANES.iter().find(|lane| lane.name == name) else {
+        return Err(format!("no lane named `{name}`"));
+    };
+    match resolve_home(lane) {
+        LaneHome::Resolved { home, .. } => Ok(launch_spec(lane, &home)),
+        LaneHome::Unavailable { reason } => Err(reason),
+    }
+}
+
 /// Probe every lane in order, tearing each child down before the next.
 /// Sequential on purpose: four small children under a loaded machine is
 /// where parallel spawns flake (KI-027), and the order stays the
@@ -730,6 +745,30 @@ mod tests {
         assert!(reason.contains("FLEET_SERVICES_ROOT=services"), "{reason}");
         assert!(reason.contains("relative"), "{reason}");
         assert!(RootError::NotFound.to_string().contains("FLEET_SERVICES_ROOT"));
+    }
+
+    #[test]
+    fn a_named_lane_resolves_its_spec_and_an_unknown_one_names_itself() {
+        // Resolution reads the ambient `FLEET_SERVICES_ROOT`, so this test
+        // serializes against the env-mutating ones below the way they
+        // serialize against each other.
+        let _guard = ENV_LOCK.lock();
+        // The agent loop resolves a lane by name on its first call, so an
+        // unknown name must be a reason, not a panic and not silence.
+        let error = spec_for("nope").expect_err("an unknown lane has no spec");
+        assert!(error.contains("no lane named `nope`"), "{error}");
+        // Every registry lane either resolves or names why it cannot; the
+        // vendored copies resolve.
+        for lane in LANES {
+            let outcome = spec_for(lane.name);
+            if lane.name == "sem1" {
+                let spec = outcome.expect("the vendored sem1 resolves");
+                assert_eq!(spec.program, "python3");
+                assert!(spec.args[1].ends_with("service/mcp_server.py"), "{:?}", spec.args);
+            } else {
+                assert!(outcome.is_ok(), "{} must resolve from the vendored copy", lane.name);
+            }
+        }
     }
 
     #[test]

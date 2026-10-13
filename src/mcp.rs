@@ -181,6 +181,32 @@ pub struct CallResult {
     pub is_error: bool,
 }
 
+impl CallResult {
+    /// The text one call answered with, in the shape the agent's tool
+    /// results use: every text block joined by a newline, every non-text
+    /// block noted by its type (`[image]`), so the model knows something
+    /// came back that it cannot read rather than seeing nothing at all.
+    /// A content-less result says so instead of reading as an empty
+    /// success.
+    pub fn text(&self) -> String {
+        let mut parts: Vec<String> = Vec::with_capacity(self.content.len());
+        for block in &self.content {
+            if block.content_type == "text" {
+                let text = block.data.as_str().unwrap_or_default();
+                if !text.is_empty() {
+                    parts.push(text.to_string());
+                }
+            } else if !block.content_type.is_empty() {
+                parts.push(format!("[{}]", block.content_type));
+            }
+        }
+        if parts.is_empty() {
+            return "(the tool returned no content)".to_string();
+        }
+        parts.join("\n")
+    }
+}
+
 /// The client's failures. Typed values, never panics: a crashed child is
 /// an error here, not a hang.
 #[derive(Debug)]
@@ -785,6 +811,38 @@ mod tests {
         // An empty result parses as no content, not an error.
         let empty = parse_call(json!({})).unwrap();
         assert!(empty.content.is_empty());
+    }
+
+    /// A parsed call result over `blocks`, for the mapping tests.
+    fn call_result(blocks: serde_json::Value, is_error: bool) -> CallResult {
+        parse_call(json!({ "content": blocks, "isError": is_error })).unwrap()
+    }
+
+    #[test]
+    fn a_call_results_text_joins_the_text_blocks_and_notes_the_rest() {
+        // The agent's tool results carry one text blob: text blocks join,
+        // and a block the model cannot read is named by its type rather
+        // than dropped, so the model knows it is there.
+        let result = call_result(
+            json!([
+                { "type": "text", "text": "{\"dims\": 768}" },
+                { "type": "text", "text": "model: bge-small" },
+                { "type": "image", "text": "ignored-for-a-non-text-block" },
+            ]),
+            false,
+        );
+        assert_eq!(result.text(), "{\"dims\": 768}\nmodel: bge-small\n[image]");
+    }
+
+    #[test]
+    fn a_content_less_result_says_so_rather_than_reading_as_an_empty_success() {
+        let empty = call_result(json!([]), false);
+        assert_eq!(empty.text(), "(the tool returned no content)");
+        // An isError result keeps its text: a refusal is the model's to
+        // read, and the agent records it as the failure it is.
+        let refused = call_result(json!([{ "type": "text", "text": "`items` must be a string" }]), true);
+        assert!(refused.is_error);
+        assert_eq!(refused.text(), "`items` must be a string");
     }
 
     #[tokio::test]

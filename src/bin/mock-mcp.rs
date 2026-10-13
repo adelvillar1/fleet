@@ -28,6 +28,9 @@
 //! - `env`: answer with the server's own environment as the text block,
 //!   so a test can prove what crossed the spawn boundary and what did
 //!   not (KI-031).
+//! - `on_eof`: a file to write when this server's stdin reaches EOF —
+//!   the signature of a graceful teardown. A test that asks for one can
+//!   prove the run closed the child it spawned instead of killing it.
 //!
 //! A dry script exits 0.
 
@@ -57,6 +60,11 @@ struct ScriptEntry {
     hang: bool,
     #[serde(default)]
     exit: Option<i32>,
+    /// Write this file when stdin reaches EOF: the graceful teardown's
+    /// signature, so a test can prove the run closed the child it
+    /// spawned rather than killing it.
+    #[serde(default)]
+    on_eof: Option<String>,
 }
 
 fn main() {
@@ -71,6 +79,9 @@ fn main() {
 
     let stdout = Arc::new(Mutex::new(std::io::stdout()));
     let stdin = std::io::stdin();
+    // The last entry that named a marker owns it: the script decides when
+    // the marker becomes armed, not the request order.
+    let mut marker: Option<String> = None;
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -84,6 +95,9 @@ fn main() {
             // child, which is the honest answer to an unscripted request.
             std::process::exit(0);
         };
+        if entry.on_eof.is_some() {
+            marker = entry.on_eof.clone();
+        }
         let stdout = Arc::clone(&stdout);
         // A hanging entry never answers, and the server keeps reading so
         // the client's timeout — not a dead pipe — ends the wait.
@@ -126,6 +140,12 @@ fn main() {
                 std::process::exit(code);
             }
         });
+    }
+    // stdin reached EOF: the graceful teardown's signature. A scripted
+    // marker lands here, and only here — a killed child never writes one,
+    // which is exactly what makes the marker worth asserting on.
+    if let Some(path) = marker {
+        let _ = std::fs::write(path, "closed\n");
     }
 }
 

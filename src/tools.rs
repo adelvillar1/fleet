@@ -5,6 +5,8 @@
 //! can read and react to, not control-flow errors.
 
 use crate::api::ToolSpec;
+use crate::mcp::ToolInfo;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -19,6 +21,111 @@ pub const BASH_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// `list_dir` entry cap.
 pub const MAX_DIR_ENTRIES: usize = 1_000;
+
+/// The namespace a lane's tools enter the model-visible tool set under:
+/// `mcp__<svc>__<tool>`.
+pub const MCP_NAMESPACE: &str = "mcp__";
+
+/// The model-visible name of one lane tool. The lane's own name stays
+/// inside the namespaced one, so a replayed log and the request the model
+/// saw name the same tool the lane does.
+pub fn lane_tool_name(lane: &str, tool: &str) -> String {
+    format!("{MCP_NAMESPACE}{lane}__{tool}")
+}
+
+/// The lane and the lane's own tool name behind a model-visible name, or
+/// `None` for anything that is not a lane tool — the four built-ins
+/// included.
+pub fn lane_of(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix(MCP_NAMESPACE)?;
+    let (lane, tool) = rest.split_once("__")?;
+    (!lane.is_empty() && !tool.is_empty()).then_some((lane, tool))
+}
+
+/// One lane tool as the model sees it: the namespaced name it was
+/// declared under, with the lane's own description and JSON Schema
+/// carried verbatim. The same value builds the request's declarations and
+/// the session log's `lane_tools` record, so what the model saw is
+/// exactly what the log holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneTool {
+    /// The model-visible name: `mcp__<svc>__<short>`.
+    pub name: String,
+    /// The lane's own name for this tool, which is what `tools/call`
+    /// carries. Recorded beside the namespaced name so the log names both
+    /// ends of the mapping rather than leaving it to be re-derived.
+    pub lane_tool: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// One lane's contribution to a run's tool set, in the order the lane
+/// joined.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneTools {
+    pub lane: String,
+    pub tools: Vec<LaneTool>,
+}
+
+/// Every declaration one request carries: the four built-ins first, in
+/// their fixed order, then each joined lane's tools under the lane
+/// namespace, in the order the lanes joined.
+///
+/// Pure over its input, which is what makes the assembly testable without
+/// a lane, a child process, or a run.
+pub fn declarations(lanes: &[LaneTools]) -> Vec<ToolSpec> {
+    let mut specs: Vec<ToolSpec> = ALL_TOOLS.iter().map(|tool| tool.spec()).collect();
+    for lane in lanes {
+        for tool in &lane.tools {
+            specs.push(ToolSpec::function(
+                tool.name.clone(),
+                tool.description.clone(),
+                tool.input_schema.clone(),
+            ));
+        }
+    }
+    specs
+}
+
+/// One lane's roster as the model sees it: every `tools/list` entry moved
+/// into the lane namespace, in the order the server listed them.
+///
+/// A lane's own tool names already carry the lane's name — `sem1_probe`,
+/// `sys1_classify` — and repeating it inside the namespace would read as
+/// `mcp__sem1__sem1_probe`. The namespace drops that redundant prefix, so
+/// the model calls `mcp__sem1__probe`; a tool whose name does not start
+/// with the lane's keeps its own name verbatim. Two tools whose short
+/// names meet resolve to the lane's own full name, which cannot collide
+/// because a lane's tool names are unique.
+pub fn namespaced(lane: &str, tools: &[ToolInfo]) -> Vec<LaneTool> {
+    let prefix = format!("{lane}_");
+    let mut declared: Vec<String> = Vec::with_capacity(tools.len());
+    tools
+        .iter()
+        .map(|tool| {
+            let short = tool
+                .name
+                .strip_prefix(&prefix)
+                .filter(|short| !short.is_empty())
+                .unwrap_or(&tool.name);
+            let candidate = lane_tool_name(lane, short);
+            // The full name is the fallback: unique within the lane, so
+            // it cannot collide either.
+            let name = if declared.contains(&candidate) {
+                lane_tool_name(lane, &tool.name)
+            } else {
+                candidate
+            };
+            declared.push(name.clone());
+            LaneTool {
+                name,
+                lane_tool: tool.name.clone(),
+                description: tool.description.clone(),
+                input_schema: tool.input_schema.clone(),
+            }
+        })
+        .collect()
+}
 
 /// The closed tool set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -401,5 +508,143 @@ mod tests {
             Tool::Bash.summarize(&serde_json::json!({ "command": "x".repeat(200) }), 60);
         assert_eq!(summary.chars().count(), 61);
         assert!(summary.ends_with('\u{2026}'));
+    }
+
+    /// One lane's roster as `tools/list` answers it, for the assembly
+    /// tests below.
+    fn lane_roster(lane: &str, tools: &[(&str, &str)]) -> LaneTools {
+        LaneTools {
+            lane: lane.to_string(),
+            tools: tools
+                .iter()
+                .map(|(name, description)| LaneTool {
+                    name: lane_tool_name(lane, name),
+                    lane_tool: format!("{lane}_{name}"),
+                    description: description.to_string(),
+                    input_schema: serde_json::json!({
+                        "type": "object",
+                        "properties": { "items": { "type": "string" } },
+                    }),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn lane_tool_names_round_trip_through_the_namespace() {
+        assert_eq!(lane_tool_name("sem1", "probe"), "mcp__sem1__probe");
+        assert_eq!(lane_of("mcp__sem1__probe"), Some(("sem1", "probe")));
+        // A tool name with an underscore in it still splits on the lane's
+        // separator only.
+        assert_eq!(lane_of("mcp__sys1__sys1_classify"), Some(("sys1", "sys1_classify")));
+        // Everything that is not a lane tool reads as not one.
+        for name in ["bash", "read_file", "mcp__sem1", "mcp__sem1__", "mcp____x", "sem1_probe"] {
+            assert_eq!(lane_of(name), None, "{name} must not read as a lane tool");
+        }
+    }
+
+    #[test]
+    fn declarations_put_the_builtins_first_and_namespace_the_lanes() {
+        let lanes = vec![lane_roster("sem1", &[("probe", "probe the embeddings worker")])];
+        let specs = declarations(&lanes);
+        // The four built-ins keep their names and their order, always.
+        assert_eq!(specs.len(), 5);
+        let names: Vec<String> = specs
+            .iter()
+            .map(|spec| serde_json::to_value(spec).unwrap()["function"]["name"]
+                .as_str()
+                .unwrap()
+                .to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["bash", "read_file", "write_file", "list_dir", "mcp__sem1__probe"]
+        );
+        // The lane's own description and schema rode along verbatim.
+        let lane = serde_json::to_value(&specs[4]).unwrap();
+        assert_eq!(lane["function"]["description"], "probe the embeddings worker");
+        assert_eq!(
+            lane["function"]["parameters"]["properties"]["items"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn declarations_keep_the_join_order_across_lanes() {
+        let lanes = vec![
+            lane_roster("sem1", &[("probe", "probe")]),
+            lane_roster("sys1", &[("sys1_classify", "classify")]),
+        ];
+        let specs = declarations(&lanes);
+        assert_eq!(specs.len(), 6);
+        let last = serde_json::to_value(&specs[5]).unwrap();
+        assert_eq!(last["function"]["name"], "mcp__sys1__sys1_classify");
+        // No lanes joined: exactly the closed four, unchanged.
+        assert_eq!(declarations(&[]).len(), 4);
+    }
+
+    #[test]
+    fn a_lanes_roster_is_renamed_into_the_namespace_in_order() {
+        let listed = vec![
+            ToolInfo {
+                name: "sem1_embed".to_string(),
+                description: "embed".to_string(),
+                input_schema: serde_json::json!({ "type": "object" }),
+            },
+            ToolInfo {
+                name: "sem1_probe".to_string(),
+                description: "probe".to_string(),
+                input_schema: serde_json::json!({ "type": "object" }),
+            },
+        ];
+        let tools = namespaced("sem1", &listed);
+        // The redundant lane prefix is dropped inside the namespace: the
+        // model calls `mcp__sem1__probe`, not `mcp__sem1__sem1_probe`.
+        let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
+        assert_eq!(names, vec!["mcp__sem1__embed", "mcp__sem1__probe"]);
+        // Both ends of the mapping are recorded: the lane's own name is
+        // what `tools/call` carries.
+        let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
+        assert_eq!(own, vec!["sem1_embed", "sem1_probe"]);
+        assert_eq!(tools[0].description, "embed");
+        assert_eq!(tools[1].input_schema, serde_json::json!({ "type": "object" }));
+    }
+
+    #[test]
+    fn a_tool_without_the_lanes_prefix_keeps_its_own_name() {
+        // Not every lane names its tools after itself; those keep their
+        // name verbatim inside the namespace.
+        let listed = vec![ToolInfo {
+            name: "classify".to_string(),
+            description: "classify".to_string(),
+            input_schema: serde_json::json!({ "type": "object" }),
+        }];
+        let tools = namespaced("sys1", &listed);
+        assert_eq!(tools[0].name, "mcp__sys1__classify");
+        assert_eq!(tools[0].lane_tool, "classify");
+    }
+
+    #[test]
+    fn two_tools_whose_short_names_meet_do_not_share_one_declaration() {
+        // A lane shipping both `probe` and `sem1_probe`: the second one
+        // falls back to its own full name, so each declaration names
+        // exactly one tool.
+        let listed = vec![
+            ToolInfo {
+                name: "probe".to_string(),
+                description: "short".to_string(),
+                input_schema: serde_json::json!({ "type": "object" }),
+            },
+            ToolInfo {
+                name: "sem1_probe".to_string(),
+                description: "long".to_string(),
+                input_schema: serde_json::json!({ "type": "object" }),
+            },
+        ];
+        let tools = namespaced("sem1", &listed);
+        let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
+        assert_eq!(names, vec!["mcp__sem1__probe", "mcp__sem1__sem1_probe"]);
+        let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
+        assert_eq!(own, vec!["probe", "sem1_probe"]);
     }
 }

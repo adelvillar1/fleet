@@ -18,6 +18,8 @@ pub enum Entry {
     Assistant(String),
     /// One tool call, with where it stands and what came back.
     Tool(ToolCard),
+    /// One lane joining the run, with the tools it brought.
+    Lane(LaneCard),
 }
 
 /// One tool call as a card: name, one-line summary, a status dot, and the
@@ -28,6 +30,14 @@ pub struct ToolCard {
     pub summary: String,
     pub status: ToolStatus,
     pub preview: String,
+}
+
+/// One lane joining a run: its name and how many tools it brought into
+/// the model's tool set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneCard {
+    pub lane: String,
+    pub tool_count: usize,
 }
 
 /// Where a tool call stands.
@@ -357,6 +367,13 @@ impl App {
                     })),
                 }
             }
+            UiEvent::LaneJoined { lane, tool_count } => {
+                // A lane joining the run is a fact about the run, not
+                // something the model said: it flushes the streaming tail
+                // and lands as its own block, exactly like a tool card.
+                self.flush_streaming();
+                self.entries.push(Entry::Lane(LaneCard { lane, tool_count }));
+            }
             UiEvent::Finished { .. } => {
                 self.flush_streaming();
                 self.status.working = false;
@@ -624,6 +641,11 @@ fn entry_of(record: &Record) -> Option<Entry> {
             status: if *approved { ToolStatus::Done } else { ToolStatus::Denied },
             preview: crate::agent::preview(output, 80),
         })),
+        // A resumed conversation shows the lanes its earlier runs joined,
+        // so the tool cards that follow read as the lane's own.
+        Record::LaneTools { lane, tools } => {
+            Some(Entry::Lane(LaneCard { lane: lane.clone(), tool_count: tools.len() }))
+        }
         Record::Start { .. } | Record::End { .. } => None,
     }
 }
@@ -846,6 +868,88 @@ mod tests {
         assert_eq!(card.status, ToolStatus::Done);
         assert_eq!(card.preview, "total 0");
         assert_eq!(card.summary, "ls -la");
+    }
+
+    /// A lane joining the run lands as its own block, between the call
+    /// that triggered it and the result that follows.
+    #[test]
+    fn a_lane_joining_lands_as_its_own_block() {
+        let mut app = app();
+        app.apply_ui_event(UiEvent::Turn(1));
+        app.apply_ui_event(UiEvent::Token("half a thought".to_string()));
+        app.apply_ui_event(UiEvent::ToolCall {
+            name: "mcp__sem1__probe".to_string(),
+            summary: "embeddings \u{b7} probe {}".to_string(),
+        });
+        app.apply_ui_event(UiEvent::LaneJoined { lane: "sem1".to_string(), tool_count: 4 });
+        app.apply_ui_event(UiEvent::ToolResult {
+            name: "mcp__sem1__probe".to_string(),
+            preview: "reachable".to_string(),
+            approved: true,
+        });
+        // The streaming tail flushed when the lane landed, and the lane's
+        // block sits between the call and its result.
+        assert_eq!(
+            app.entries,
+            vec![
+                Entry::Assistant("half a thought".to_string()),
+                Entry::Tool(ToolCard {
+                    name: "mcp__sem1__probe".to_string(),
+                    summary: "embeddings \u{b7} probe {}".to_string(),
+                    status: ToolStatus::Done,
+                    preview: "reachable".to_string(),
+                }),
+                Entry::Lane(LaneCard { lane: "sem1".to_string(), tool_count: 4 }),
+            ]
+        );
+    }
+
+    /// A resumed conversation shows the lanes its earlier runs joined, so
+    /// the lane's tool cards that follow read as the lane's own.
+    #[test]
+    fn seeding_a_log_shows_the_lanes_that_joined_it() {
+        let mut app = app();
+        app.seed(&[
+            Record::User { content: "probe it".to_string() },
+            Record::LaneTools {
+                lane: "sem1".to_string(),
+                tools: vec![
+                    crate::tools::LaneTool {
+                        name: "mcp__sem1__probe".to_string(),
+                        lane_tool: "sem1_probe".to_string(),
+                        description: "probe".to_string(),
+                        input_schema: serde_json::json!({ "type": "object" }),
+                    },
+                    crate::tools::LaneTool {
+                        name: "mcp__sem1__embed".to_string(),
+                        lane_tool: "sem1_embed".to_string(),
+                        description: "embed".to_string(),
+                        input_schema: serde_json::json!({ "type": "object" }),
+                    },
+                ],
+            },
+            Record::ToolResult {
+                call_id: "call-1".to_string(),
+                name: "mcp__sem1__probe".to_string(),
+                output: "reachable".to_string(),
+                truncated: false,
+                approved: true,
+            },
+        ]);
+        assert_eq!(
+            app.entries,
+            vec![
+                Entry::User("probe it".to_string()),
+                Entry::Lane(LaneCard { lane: "sem1".to_string(), tool_count: 2 }),
+                // The lane's own tool result, under its namespaced name.
+                Entry::Tool(ToolCard {
+                    name: "mcp__sem1__probe".to_string(),
+                    summary: String::new(),
+                    status: ToolStatus::Done,
+                    preview: "reachable".to_string(),
+                }),
+            ]
+        );
     }
 
     #[test]

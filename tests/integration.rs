@@ -312,7 +312,8 @@ async fn run_on(
     task: &str,
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
-    let options = AgentOptions { model: "test-model".to_string(), max_turns, ui_tx: None };
+    let options =
+        AgentOptions { model: "test-model".to_string(), max_turns, ui_tx: None, lane_specs: None };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
     agent.run(task).await
@@ -326,11 +327,72 @@ async fn run_on_probe(
     task: &str,
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
-    let options =
-        AgentOptions { model: "test-model".to_string(), max_turns: 5, ui_tx: None };
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+    };
     let mut agent =
         Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
     agent.run(task).await
+}
+
+/// One full agent run whose lane children come from `lane_specs` rather
+/// than the vendored registry. `None` is the production path: a lane
+/// resolves through `lanes::spec_for` on its first call.
+async fn run_with_lanes(
+    mock: &MockApi,
+    session: &mut Session,
+    approver: Box<dyn Approver>,
+    lane_specs: Option<std::collections::HashMap<String, ServerSpec>>,
+    progress: &mut dyn std::io::Write,
+    task: &str,
+) -> Result<RunReport, AgentError> {
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs,
+    };
+    let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
+    agent.run(task).await
+}
+
+/// The scripted fake standing in for the lane a run addresses by name.
+fn lane_specs(fake: &FakeMcp) -> std::collections::HashMap<String, ServerSpec> {
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sem1".to_string(), fake.spec());
+    specs
+}
+
+/// A scripted `tools/list` reply carrying `tools`.
+fn tools_list_reply(tools: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": "$echo",
+        "result": { "tools": tools },
+    })
+}
+
+/// A scripted `tools/call` reply carrying one text block.
+fn call_reply(text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": "$echo",
+        "result": { "content": [{ "type": "text", "text": text }], "isError": false },
+    })
+}
+
+/// The model-visible names in one request body's tool declarations.
+fn declared_tools(body: &serde_json::Value) -> Vec<String> {
+    body["tools"]
+        .as_array()
+        .expect("a tools array")
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap_or_default().to_string())
+        .collect()
 }
 
 fn message_roles(body: &serde_json::Value) -> Vec<&str> {
@@ -811,6 +873,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         model: "test-model".to_string(),
         max_turns: 5,
         ui_tx: Some(ui_tx.clone()),
+        lane_specs: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -863,8 +926,12 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
     let home = temp_home("ui-headless");
     let mut session = Session::create(&home, "test-model").unwrap();
     let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
-    let options =
-        AgentOptions { model: "test-model".to_string(), max_turns: 5, ui_tx: Some(ui_tx) };
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: Some(ui_tx),
+        lane_specs: None,
+    };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
     let mut agent =
@@ -893,6 +960,7 @@ async fn a_denied_call_reports_its_result_event() {
         model: "test-model".to_string(),
         max_turns: 5,
         ui_tx: Some(ui_tx.clone()),
+        lane_specs: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -942,6 +1010,7 @@ async fn a_failed_run_reports_a_failure_event() {
         model: "test-model".to_string(),
         max_turns: 5,
         ui_tx: Some(ui_tx.clone()),
+        lane_specs: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1563,6 +1632,438 @@ async fn two_spawned_calls_share_one_server() {
     let mut answered = vec![first.as_str().unwrap_or_default(), second.as_str().unwrap_or_default()];
     answered.sort();
     assert_eq!(answered, vec!["first", "second"]);
+}
+
+// --- the agent loop's lane tools -------------------------------------------
+
+/// The headline of the slice-4 remainder: a full two-turn run against the
+/// scripted mock API whose turn 1 calls `mcp__sem1__probe`. The agent
+/// spawns the REAL sem1 lane on that call, the call succeeds, and turn 2
+/// answers — with the lane's tools in the model's tool set from then on.
+#[tokio::test]
+async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the real-lane agent run");
+        return;
+    }
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__sem1__probe", "{}"),
+        assistant_stream("The embeddings worker answers; llama-server is not running here."),
+    ]);
+    let home = temp_home("lane-run");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    // No injected specs: the production path, resolved through the
+    // vendored registry the first time the lane's tool is called.
+    let report = run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        None,
+        &mut progress,
+        "probe the embeddings worker",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.turns, 2);
+    assert_eq!(
+        report.final_message.as_deref(),
+        Some("The embeddings worker answers; llama-server is not running here.")
+    );
+
+    // Lazy by construction: turn 1's request was built before the run had
+    // met the lane, so it declared only the four built-ins. Turn 2's
+    // request carries the lane's four tools under the namespace too.
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(declared_tools(&bodies[0]), vec!["bash", "read_file", "write_file", "list_dir"]);
+    let second = declared_tools(&bodies[1]);
+    assert_eq!(second.len(), 8, "{second:?}");
+    assert_eq!(&second[..4], &["bash", "read_file", "write_file", "list_dir"]);
+    assert_eq!(
+        &second[4..],
+        &["mcp__sem1__embed", "mcp__sem1__probe", "mcp__sem1__index", "mcp__sem1__search"]
+    );
+    // The tool result the model read rode back in the same request.
+    let answer = bodies[1]["messages"][3]["content"].as_str().expect("the tool result");
+    assert!(answer.contains("llama-server"), "{answer}");
+    assert!(answer.contains("reachable"), "{answer}");
+
+    // The log holds the whole turn, in order: the assistant's call, the
+    // lane that joined for it, the result, and the answer.
+    let records = session::replay(&session.path()).unwrap();
+    assert_eq!(records.len(), 7, "{records:?}");
+    assert!(matches!(&records[1], Record::User { content } if content == "probe the embeddings worker"));
+    assert!(
+        matches!(&records[2], Record::Assistant { tool_calls, .. }
+            if tool_calls.len() == 1 && tool_calls[0].function.name == "mcp__sem1__probe"),
+        "{:?}",
+        records[2]
+    );
+    // The reconstructability record: the lane, and every tool it brought
+    // with the description and schema the model was shown.
+    match &records[3] {
+        Record::LaneTools { lane, tools } => {
+            assert_eq!(lane, "sem1");
+            let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
+            assert_eq!(
+                names,
+                vec!["mcp__sem1__embed", "mcp__sem1__probe", "mcp__sem1__index", "mcp__sem1__search"]
+            );
+            // The lane's own names ride along, so the log names both ends
+            // of the mapping the model's call went through.
+            let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
+            assert_eq!(own, vec!["sem1_embed", "sem1_probe", "sem1_index", "sem1_search"]);
+            for tool in tools {
+                assert!(!tool.description.is_empty(), "{} has no description", tool.name);
+                assert_eq!(tool.input_schema["type"], "object", "{}", tool.name);
+            }
+        }
+        other => panic!("expected a lane_tools record, got {other:?}"),
+    }
+    match &records[4] {
+        Record::ToolResult { name, output, approved: true, .. } => {
+            assert_eq!(name, "mcp__sem1__probe");
+            assert!(output.contains("llama-server"), "{output}");
+        }
+        other => panic!("expected a lane tool result, got {other:?}"),
+    }
+    assert!(matches!(
+        &records[6],
+        Record::End { stop_reason, turns: 2 } if stop_reason == "completed"
+    ));
+
+    // And the headless surface said the lane joined.
+    let progress = String::from_utf8(progress).unwrap();
+    assert!(progress.contains("lane sem1 joined \u{2014} 4 tools"), "{progress}");
+    assert!(progress.contains("mcp__sem1__probe"), "{progress}");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A lane whose child dies mid-run degrades instead of killing the run:
+/// the first call records the typed failure, every later call to that
+/// lane fails fast with no respawn, and the run answers anyway.
+#[tokio::test]
+async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "probe", "description": "a probe", "inputSchema": { "type": "object" } },
+        ])) }),
+        // The child exits instead of answering the call: a dead child.
+        serde_json::json!({ "exit": 1 }),
+    ]);
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__sem1__probe", "{}"),
+        tool_call_stream("call-2", "mcp__sem1__probe", "{}"),
+        assistant_stream("The embeddings worker went away mid-run; that is recorded."),
+    ]);
+    let home = temp_home("dead-lane");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    let report = run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(lane_specs(&fake)),
+        &mut progress,
+        "probe it twice",
+    )
+    .await
+    .unwrap();
+
+    // The run survived its lane's death and answered on its third turn.
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.turns, 3);
+    assert!(report.final_message.is_some());
+
+    // Two failures, two different shapes: the child's death, then the
+    // fail-fast that proves nothing respawned.
+    let records = session::replay(&session.path()).unwrap();
+    let outputs: Vec<String> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outputs.len(), 2);
+    assert!(
+        outputs[0].starts_with("error: the MCP server closed:"),
+        "the dead child is a typed failure: {}",
+        outputs[0]
+    );
+    assert!(
+        outputs[1].starts_with("error: lane `sem1` is unavailable for the rest of this run:"),
+        "the second call fails fast, it does not respawn: {}",
+        outputs[1]
+    );
+    // The lane joined exactly once: no second `lane_tools` record, so no
+    // second spawn and no second handshake.
+    let joins = records
+        .iter()
+        .filter(|record| matches!(record, Record::LaneTools { .. }))
+        .count();
+    assert_eq!(joins, 1, "{records:?}");
+
+    // The lane's tools stayed in the model's tool set after it died: the
+    // model can still see them, and calling one is a typed failure.
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 3);
+    assert_eq!(declared_tools(&bodies[1]).len(), 5);
+    assert_eq!(declared_tools(&bodies[2]).len(), 5);
+    assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A lane joining a run is visible on both surfaces: the headless
+/// progress line and the UI's event stream, beside the unchanged log.
+/// The run also closes the child it spawned — the fake's EOF marker is
+/// the graceful teardown's signature.
+#[tokio::test]
+async fn a_lane_joining_is_visible_and_its_child_is_closed() {
+    let marker_dir = temp_home("lane-marker");
+    let marker = marker_dir.join("closed.marker");
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply(), "on_eof": marker.display().to_string() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "probe", "description": "a probe", "inputSchema": { "type": "object" } },
+            { "name": "embed", "description": "an embed", "inputSchema": { "type": "object" } },
+        ])) }),
+        serde_json::json!({ "reply": call_reply("{\"provider\":\"fake\",\"reachable\":true}") }),
+    ]);
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__sem1__probe", "{}"),
+        assistant_stream("Probed."),
+    ]);
+    let home = temp_home("lane-visible");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    let progress_text = {
+        let mut progress = Vec::new();
+        let client = Client::new(mock.url(), "test-key");
+        let options = AgentOptions {
+            model: "test-model".to_string(),
+            max_turns: 5,
+            ui_tx: Some(ui_tx.clone()),
+            lane_specs: Some(lane_specs(&fake)),
+        };
+        let report = {
+            let mut agent =
+                Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
+                    .unwrap();
+            agent.run("probe it").await.unwrap()
+        };
+        assert_eq!(report.stop_reason, StopReason::Completed);
+        String::from_utf8(progress).unwrap()
+    };
+    // The agent's own sender clone is gone with it, so the channel closes.
+    drop(ui_tx);
+
+    let mut events = Vec::new();
+    while let Some(event) = ui_rx.recv().await {
+        events.push(event);
+    }
+    // The lane's arrival sits between the call and its result, exactly
+    // where it happened.
+    assert_eq!(
+        events,
+        vec![
+            UiEvent::Turn(1),
+            UiEvent::ToolCall {
+                name: "mcp__sem1__probe".to_string(),
+                summary: "embeddings \u{b7} probe {}".to_string(),
+            },
+            UiEvent::LaneJoined { lane: "sem1".to_string(), tool_count: 2 },
+            UiEvent::ToolResult {
+                name: "mcp__sem1__probe".to_string(),
+                // The preview keeps one line up to 80 characters: this
+                // answer is shorter, so it arrives whole.
+                preview: "{\"provider\":\"fake\",\"reachable\":true}".to_string(),
+                approved: true,
+            },
+            UiEvent::Turn(2),
+            UiEvent::Token("Probed.".to_string()),
+            UiEvent::Finished { stop_reason: "completed".to_string() },
+        ]
+    );
+    // The headless surface said the same thing.
+    assert!(progress_text.contains("lane sem1 joined \u{2014} 2 tools"), "{progress_text}");
+    // And the run closed the child it spawned rather than killing it.
+    assert!(marker.exists(), "the run must close the lane child it spawned");
+
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&marker_dir).ok();
+}
+
+/// A lane tool's refusal (`isError`) is recorded as a failure with its
+/// text: the model reads why the tool refused, and the run carries on.
+#[tokio::test]
+async fn a_lane_tool_refusal_is_recorded_as_a_failure_with_its_text() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "embed", "description": "an embed", "inputSchema": { "type": "object" } },
+        ])) }),
+        serde_json::json!({
+            "reply": {
+                "jsonrpc": "2.0",
+                "id": "$echo",
+                "result": {
+                    "content": [{ "type": "text", "text": "`items` must be a string" }],
+                    "isError": true,
+                },
+            },
+        }),
+    ]);
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__sem1__embed", r#"{"items":42}"#),
+        assistant_stream("The lane refused; I will fix the arguments."),
+    ]);
+    let home = temp_home("lane-refusal");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    let report = run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(lane_specs(&fake)),
+        &mut progress,
+        "embed the number 42",
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.turns, 2);
+
+    let records = session::replay(&session.path()).unwrap();
+    match &records[4] {
+        Record::ToolResult { name, output, approved: true, .. } => {
+            assert_eq!(name, "mcp__sem1__embed");
+            assert_eq!(output, "error: `items` must be a string");
+        }
+        other => panic!("expected a refused lane tool result, got {other:?}"),
+    }
+    // The refusal reached the model in the next request.
+    let bodies = mock.bodies();
+    assert_eq!(
+        bodies[1]["messages"][3]["content"],
+        "error: `items` must be a string"
+    );
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A denied lane call never spawns the lane: the gate runs first, so a
+/// refusal costs no child and leaves no `lane_tools` record behind.
+#[tokio::test]
+async fn a_denied_lane_call_never_spawns_the_lane() {
+    let fake = FakeMcp::start(vec![serde_json::json!({ "reply": initialize_reply() })]);
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__sem1__probe", "{}"),
+        assistant_stream("Standing down."),
+    ]);
+    let home = temp_home("lane-denied");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    let report = run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(DenyAll),
+        Some(lane_specs(&fake)),
+        &mut progress,
+        "probe it",
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    let records = session::replay(&session.path()).unwrap();
+    assert!(
+        records.iter().all(|record| !matches!(record, Record::LaneTools { .. })),
+        "a denied call must not join a lane: {records:?}"
+    );
+    match &records[3] {
+        Record::ToolResult { name, output, approved: false, .. } => {
+            assert_eq!(name, "mcp__sem1__probe");
+            assert_eq!(output, "denied: the user did not approve this call.");
+        }
+        other => panic!("expected a denied lane tool result, got {other:?}"),
+    }
+    // No lane joined, so the second request still declares only the
+    // built-ins.
+    let bodies = mock.bodies();
+    assert_eq!(declared_tools(&bodies[1]).len(), 4);
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A lane this run cannot launch fails that call with its named reason,
+/// and the run answers anyway — a missing lane is never fatal.
+#[tokio::test]
+async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
+    // An injected spec whose program does not exist: the shape a machine
+    // without `python3` produces, without depending on one.
+    let mut specs = std::collections::HashMap::new();
+    specs.insert(
+        "sem1".to_string(),
+        ServerSpec {
+            program: "fleet-no-such-lane-program".to_string(),
+            args: Vec::new(),
+            env: Vec::new(),
+            passthrough: Vec::new(),
+            cwd: None,
+        },
+    );
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__sem1__probe", "{}"),
+        tool_call_stream("call-2", "mcp__sem1__probe", "{}"),
+        assistant_stream("The lane never started; the reason is in the log."),
+    ]);
+    let home = temp_home("lane-unlaunchable");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    let report = run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(specs),
+        &mut progress,
+        "probe it twice",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.turns, 3);
+    let records = session::replay(&session.path()).unwrap();
+    let outputs: Vec<String> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outputs.len(), 2);
+    assert!(
+        outputs[0].starts_with("error: lane `sem1` could not start:"),
+        "the launch failure is named: {}",
+        outputs[0]
+    );
+    assert!(
+        outputs[1].starts_with("error: lane `sem1` is unavailable for the rest of this run:"),
+        "the second call fails fast: {}",
+        outputs[1]
+    );
+    // A lane that never started never joined, so nothing was declared.
+    assert!(records.iter().all(|record| !matches!(record, Record::LaneTools { .. })));
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 4);
+
+    std::fs::remove_dir_all(&home).ok();
 }
 
 // --- live API --------------------------------------------------------------
