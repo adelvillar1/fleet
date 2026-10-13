@@ -39,7 +39,9 @@ Plan (`GLM-5.3-Flash`) → Xiaomi MiMo (`mimo-v2.6-flash`) → StepFun
 (`step-5-preview`) → Qwen Token plan (`qwen3.8-flash`) → DeepSeek direct
 (`deepseek-chat`, reserve). Every endpoint, key env-var name, and model is
 from the fork's `agnostic-router-kit/roster.json`; the router kit's token is
-referenced by name only (`AGNOSTIC_ROUTER_TOKEN`), never stored.
+referenced by name only (`AGNOSTIC_ROUTER_TOKEN`), never stored. The order is
+the owner's declared directive (2026-10-13): the kit is primary and DeepSeek
+is a working account held in reserve — a quota preference, not a workaround.
 
 ## Verification (local gate, exit codes read — never piped)
 
@@ -55,16 +57,41 @@ referenced by name only (`AGNOSTIC_ROUTER_TOKEN`), never stored.
   served on `router-kit (fallback)`; without it the head 401'd and the walk
   served on `zai-coding-plan`, both attempts in the row. One decision row
   per run landed under `<FLEET_HOME>/logs/events-<UTC date>.jsonl`.
+- Parent-run against the final tree: `fleet providers` prints the six cards
+  in chain order, all configured by env-var name, exit 0; the kit answers
+  `{"ok":true}` on `/healthz`.
+
+## Review cycle
+
+- **Stage 1 (spec, step-5-preview): SPEC-COMPLIANT** — all 12 checks; the
+  config schema has no key-value field at all (names only), the unrouted
+  api.rs path is byte-for-byte unchanged, and the chain is locked by a unit
+  test asserting the owner's order.
+- **Stage 2 (quality, step-5-preview): APPROVED** — no criticals, no
+  importants; six minors, five taken in `19bb5b5`: the decision row is one
+  `write_all` under O_APPEND (two fleet processes cannot interleave a line),
+  a disabled candidate records class `disabled` instead of masquerading as
+  `no-key`, unknown config fields fail the load like a misspelled id, the
+  real-sys1 canary tolerates added required fields, and routing.md documents
+  the failover worst case ((chain − start) × 600 s) plus the row-writer's
+  stderr line being invisible under the TUI. The sixth minor (surfacing
+  row-write failures through the TUI) is documented, not built.
+- The parent redacted the kit's published-default token constant from KI-047
+  (`f9e5c5f`): a token-shaped string does not belong in a repo file even
+  when it is not a credential.
 
 ## Ledger
 
 KI-044 (per-session sys1 spawn cost when its providers are unconfigured),
 KI-045 (run/chat no longer pre-flight a credential), KI-046 (the
-workload→candidate map is the one tunable), KI-047 (the kit's `/v1` is
-token-gated; modeled key-optional, token by name only).
+workload→candidate map is the one tunable — flagged for the owner),
+KI-047 (the kit's `/v1` is token-gated; modeled key-optional, token by name
+only, the default constant redacted from the row).
 
 ## Next
 
 Slice 6 (`src/calib.rs`) formalizes the decision writer into the
-calibration stream, aligns the log root with dev-decisions, and grades route
-outcomes so the chain reorders on evidence.
+calibration stream, aligns the log root with dev-decisions, grades outcomes
+(route/failover rows, tool-call screening verdicts, turn outcomes) so the
+chain reorders on evidence — the first reader of the stream is the bounded
+demotion slice 5's last AC called for.
