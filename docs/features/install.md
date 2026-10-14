@@ -95,10 +95,21 @@ dependency, and the fork stays the read-only spec.
 
 | Lane | Packages | Wiring the core reads |
 |---|---|---|
-| `sys1` (judgment) | `gliner2` | a config-file key: `[providers] local_venv` in `~/.config/sys1/config.toml` |
+| `sys1` (judgment) | `gliner2[local]` | a config-file key: `[providers] local_venv` in `~/.config/sys1/config.toml` |
 | `sdm1` (tabular) | `structured-data-models` | `export SDM1_MODELS_VENV=<venv>` |
 | `sem1` (embeddings) | `sentence-transformers` | `export SEM1_ST_VENV=<venv>` |
 | `gen1` (media) | `kokoro-onnx` | `export GEN1_KOKORO_PYTHON=<venv>/bin/python` |
+
+The package sets are the fork's with one fix at the vendoring boundary:
+`gliner2` declares its local-model stack — torch, transformers, numpy,
+peft, safetensors — under the `local` extra, and
+`gliner2/models/base.py` imports torch at module load, so the bare
+`gliner2` the fork's bootstrap (and sys1's own setup note in
+`providers.py`) names produces a venv that cannot serve. Verified: with
+`gliner2[local]` the lane's python imports `gliner2.classification`
+(the sys1 local provider's own import); with bare `gliner2` it fails
+with `ModuleNotFoundError: No module named 'torch'`. The lane installs
+`gliner2[local]`.
 
 The three behaviors, each named in the output:
 
@@ -184,4 +195,10 @@ only — no key material):
 The release-binary and `fleet chat` halves of the quick start are
 proven by hand against the live roster (the chat half is not
 deterministic and does not belong in a suite); the executed output is
-in the slice's session recap.
+in the slice's session recap. The real `fleet install --lanes` was also
+run for real on this machine: the machine's own `uv` built all four
+venvs (Python 3.12, the fork's pin) and installed every package set
+(1.6 GB), a second run named all four present and rebuilt none, the
+sem1 venv's python imports `sentence-transformers` 6.1.0, and the
+sys1 venv's python imports `gliner2.classification` once the `local`
+extra's torch stack is in — the executed output is in the recap too.

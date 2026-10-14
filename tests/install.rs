@@ -271,7 +271,7 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
         4
     );
     for package in [
-        "gliner2",
+        "gliner2[local]",
         "structured-data-models",
         "sentence-transformers",
         "kokoro-onnx",

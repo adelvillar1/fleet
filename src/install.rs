@@ -143,11 +143,18 @@ pub struct Lane {
 }
 
 /// The four lanes, one per vendored core, in the fork's order.
+///
+/// The package sets are the fork's, with one fix at the vendoring
+/// boundary: `gliner2` declares its local-model stack — torch,
+/// transformers, numpy, peft, safetensors — under the `local` extra,
+/// and `gliner2/models/base.py` imports torch at module load, so the
+/// bare package the fork (and sys1's own setup note) names produces a
+/// venv that cannot serve. The lane installs `gliner2[local]`.
 pub const LANES: &[Lane] = &[
     Lane {
         name: "sys1",
         role: "judgment",
-        packages: &["gliner2"],
+        packages: &["gliner2[local]"],
         env_var: None,
         env_target: EnvTarget::Root,
         note: "point ~/.config/sys1/config.toml at it: [providers] local_venv = \"<venv>\"",
@@ -610,7 +617,10 @@ mod tests {
         // sys1 reads a config-file key, so it carries no environment
         // name and names the config step instead.
         let sys1 = LANES.iter().find(|lane| lane.name == "sys1").unwrap();
-        assert_eq!(sys1.packages, &["gliner2"]);
+        // The one fix at the vendoring boundary: gliner2's local-model
+        // stack (torch and the rest) is the `local` extra, and the
+        // classifier imports torch at module load.
+        assert_eq!(sys1.packages, &["gliner2[local]"]);
         assert_eq!(sys1.env_var, None);
         assert!(sys1.note.contains("local_venv"));
     }
