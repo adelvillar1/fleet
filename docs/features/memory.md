@@ -298,8 +298,9 @@ One pass, three actions, each fact taking the ones its state calls for:
 
 - **compress** — a working fact that is past its `valid-until` or older
   than `WORKING_MAX_AGE_DAYS` (7) is folded into the pass's episodic
-  summary and stamped `superseded-by` it. The file stays; the summary
-  carries its content.
+  summary and stamped `superseded-by` it. The file stays; the summary's
+  body carries the folded bullets, and its description — the part
+  recall surfaces — names the fold.
 - **supersede** — a durable `inferred` fact recall has never surfaced,
   older than `STALE_AFTER_DAYS` (180), is folded into the same summary
   and stamped. A `confirmed-by` fact in that shape is left alone and
@@ -308,12 +309,22 @@ One pass, three actions, each fact taking the ones its state calls for:
   carries is moved to `memories/.archive/`. Nothing is deleted: the
   file stays, reversible by a move back, and diffable in git — it
   simply leaves the loader's read, which takes `memories/*.md` and
-  never a subdirectory.
+  never a subdirectory. A name the archive already holds takes a
+  serial suffix — `.archive/<name>.md`, then `.archive/<name>.2.md`,
+  `.archive/<name>.3.md` — so a re-used fact name never clobbers the
+  copy already there; the name is claimed in one step, so two
+  archivers cannot pick the same serial.
 
 A fact that is past its `valid-until` gets two of them, in order:
 compress folds its content into the summary, then forget archives the
-expired original — the content lives on in the recallable summary, and
-the file leaves the working tree.
+expired original. What recall surfaces afterwards is the summary's
+**description** — "the consolidation cycle's `<day>` pass — N facts
+folded" — because a recalled fact enters a turn as its description,
+never its body. The folded bullets (each fact's name, date, and
+description) live in the summary's **body** on disk: the audit record
+of what was compressed, not context the model sees. The archived
+original leaves the working tree but stays on disk, reversible by a
+move back.
 
 The pass takes `today` as a parameter — the seam a test injects a fixed
 day through, so the cycle is deterministic rather than sleep-dependent.
@@ -364,6 +375,14 @@ the loader retires it now and the cycle's next pass archives the file.
 Nothing is deleted either way. This is slice 12's guardrail input: the
 self-maintenance loop may supersede an inferred fact on its own
 justification, and a confirmed-by one waits for approval.
+
+A stamp that fails to land fails the whole supersession with a typed
+`WriteError::Stamp` and records no calibration row: the audit trail
+cannot claim an action the files did not take. The modify path writes
+the replacement first and stamps after, so its error names the
+replacement that landed beside the stamp that did not; the forget path
+lands both of its writes — the expiry and the retirement note — before
+its row.
 
 ## The turn path
 

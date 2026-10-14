@@ -418,21 +418,28 @@ fn skip_line(name: &str, reason: &str) {
 
 /// The memory rules on top of the shared parse: `name` and `description`
 /// are required, the frontmatter's `name` must equal the file's stem
-/// (one fact, one name — the name is the index and calibration key), a
-/// `basis` outside the vocabulary is refused, a `tier` outside the three
-/// speeds is refused, a `recall-count` that is not a non-negative integer
-/// is refused, and an absent `basis` defaults to `inferred` — a fact the
-/// session merely produced is a guess until someone confirms it. An
-/// absent `tier` defaults to `durable`: the corpus's own facts were
-/// written before the tier field existed.
+/// (one fact, one name — the name is the index and calibration key)
+/// while `stem_is_the_name`, a `basis` outside the vocabulary is
+/// refused, a `tier` outside the three speeds is refused, a
+/// `recall-count` that is not a non-negative integer is refused, and an
+/// absent `basis` defaults to `inferred` — a fact the session merely
+/// produced is a guess until someone confirms it. An absent `tier`
+/// defaults to `durable`: the corpus's own facts were written before
+/// the tier field existed.
+///
+/// `stem_is_the_name` is what every live-corpus read enforces and the
+/// archive's read relaxes: an archived collision copy is named
+/// `<name>.<serial>.md` on disk while its frontmatter still carries the
+/// fact's own name.
 fn fact(
     document: Document,
     stem: &str,
     path: PathBuf,
     stamp: Option<String>,
+    stem_is_the_name: bool,
 ) -> Result<Fact, String> {
     let name = document.required("name")?;
-    if name != stem {
+    if stem_is_the_name && name != stem {
         return Err(format!(
             "frontmatter name `{name}` does not match the file `{stem}.md`"
         ));
@@ -510,6 +517,24 @@ fn file_stamp(path: &Path) -> Option<String> {
 /// no facts, not an error. A file that does not read as a fact is
 /// skipped by name with one logged line; the others still load.
 pub fn load_facts(root: &Path) -> Vec<Fact> {
+    load_facts_matching(root, true)
+}
+
+/// The archive's read of the same shape: every `.md` under the archive
+/// directory, with the stem-equals-name rule relaxed. A collision
+/// copy's file name carries its serial (`<name>.2.md`) while its
+/// frontmatter still names the fact, so the archive's surface cards it
+/// by the name the frontmatter carries. A file that does not read as a
+/// fact is skipped by name exactly as the live corpus's is.
+fn load_facts_archived(root: &Path) -> Vec<Fact> {
+    load_facts_matching(root, false)
+}
+
+/// The read itself: `*.md` at one level under `root`, sorted by name,
+/// with `stem_is_the_name` deciding whether the frontmatter's `name`
+/// must equal the file's stem — every live-corpus read enforces it,
+/// the archive's read does not.
+fn load_facts_matching(root: &Path, stem_is_the_name: bool) -> Vec<Fact> {
     let Ok(entries) = fs::read_dir(root) else { return Vec::new() };
     let mut paths: Vec<PathBuf> = entries
         .flatten()
@@ -535,7 +560,8 @@ pub fn load_facts(root: &Path) -> Vec<Fact> {
             }
         };
         let stamp = file_stamp(&path);
-        match parse_document(&text).and_then(|document| fact(document, &stem, path.clone(), stamp))
+        match parse_document(&text)
+            .and_then(|document| fact(document, &stem, path.clone(), stamp, stem_is_the_name))
         {
             Ok(fact) => facts.push(fact),
             Err(reason) => skip_line(&stem, &reason),
@@ -1382,7 +1408,9 @@ impl Memory {
 
     /// Add one to the fact's `recall-count`: in memory first (so the
     /// next recall in this process re-ranks), then in its file. Returns
-    /// whether the file rewrite landed.
+    /// whether the file rewrite landed — best-effort by design: the
+    /// count is a rank signal, not an audit record, and a hit the model
+    /// saw is not un-seen by a failed rewrite (the row still lands).
     fn bump_recall_count(&self, name: &str) -> bool {
         let (path, count) = {
             let mut facts = lock_facts(&self.facts);
@@ -1392,7 +1420,7 @@ impl Memory {
             fact.recall_count += 1;
             (fact.path.clone(), fact.recall_count)
         };
-        rewrite_field(&path, "recall-count", &count.to_string())
+        rewrite_field(&path, "recall-count", &count.to_string()).is_ok()
     }
 }
 
@@ -1414,13 +1442,19 @@ pub struct ScoredFact {
 /// stamp — because a second rewrite path would drift from this one's
 /// bound and its atomicity. A line the fact does not carry is inserted
 /// as the last frontmatter line rather than appended anywhere else.
-fn rewrite_field(path: &Path, key: &str, value: &str) -> bool {
+///
+/// The failure is a typed error, not a swallowed `bool`: the
+/// supersession path records its action only once its stamp has
+/// actually landed, so the audit trail cannot claim a retirement the
+/// file never took. The best-effort callers (the recall-count bump,
+/// the cycle's stamps) keep their own logging and their own
+/// consequence for a failed rewrite.
+fn rewrite_field(path: &Path, key: &str, value: &str) -> Result<(), WriteError> {
     let Ok(text) = fs::read_to_string(path) else {
-        eprintln!(
-            "fleet: memories: could not re-read {} to rewrite its `{key}`",
-            path.display()
-        );
-        return false;
+        let reason =
+            format!("could not re-read {} to rewrite its `{key}`", path.display());
+        eprintln!("fleet: memories: {reason}");
+        return Err(WriteError::Io(reason));
     };
     let lines: Vec<&str> = text.lines().collect();
     let mut closing: Option<usize> = None;
@@ -1431,11 +1465,12 @@ fn rewrite_field(path: &Path, key: &str, value: &str) -> bool {
         }
     }
     let Some(closing) = closing else {
-        eprintln!(
-            "fleet: memories: {} lost its frontmatter fence; `{key}` was not rewritten",
+        let reason = format!(
+            "{} lost its frontmatter fence; `{key}` was not rewritten",
             path.display()
         );
-        return false;
+        eprintln!("fleet: memories: {reason}");
+        return Err(WriteError::Io(reason));
     };
     let mut out_lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
     let rendered = format!("{key}: {value}");
@@ -1462,19 +1497,20 @@ fn rewrite_field(path: &Path, key: &str, value: &str) -> bool {
     match fs::write(&temp, &out) {
         Ok(()) => {
             if fs::rename(&temp, path).is_ok() {
-                true
+                Ok(())
             } else {
                 let _ = fs::remove_file(&temp);
-                eprintln!(
-                    "fleet: memories: could not replace {} with its new `{key}`",
-                    path.display()
-                );
-                false
+                let reason =
+                    format!("could not replace {} with its new `{key}`", path.display());
+                eprintln!("fleet: memories: {reason}");
+                Err(WriteError::Io(reason))
             }
         }
         Err(error) => {
-            eprintln!("fleet: memories: could not write {}: {error}", temp.display());
-            false
+            let _ = fs::remove_file(&temp);
+            let reason = format!("could not write {}: {error}", temp.display());
+            eprintln!("fleet: memories: {reason}");
+            Err(WriteError::Io(reason))
         }
     }
 }
@@ -1482,14 +1518,15 @@ fn rewrite_field(path: &Path, key: &str, value: &str) -> bool {
 /// Append one note to a fact's body, preserving everything already
 /// there. The forget path's record of why a fact was retired: the file
 /// is the record, and a retirement with no note is a fact that looks
-/// like it expired on its own.
-fn append_note(path: &Path, note: &str) -> bool {
+/// like it expired on its own. The failure is typed like
+/// [`rewrite_field`]'s, for the same reason: the forget path records
+/// its action only once both the stamp and the note have landed.
+fn append_note(path: &Path, note: &str) -> Result<(), WriteError> {
     let Ok(mut text) = fs::read_to_string(path) else {
-        eprintln!(
-            "fleet: memories: could not re-read {} to append its retirement note",
-            path.display()
-        );
-        return false;
+        let reason =
+            format!("could not re-read {} to append its retirement note", path.display());
+        eprintln!("fleet: memories: {reason}");
+        return Err(WriteError::Io(reason));
     };
     if !text.ends_with('\n') && !text.is_empty() {
         text.push('\n');
@@ -1505,19 +1542,20 @@ fn append_note(path: &Path, note: &str) -> bool {
     match fs::write(&temp, &text) {
         Ok(()) => {
             if fs::rename(&temp, path).is_ok() {
-                true
+                Ok(())
             } else {
                 let _ = fs::remove_file(&temp);
-                eprintln!(
-                    "fleet: memories: could not replace {} with its retirement note",
-                    path.display()
-                );
-                false
+                let reason =
+                    format!("could not replace {} with its retirement note", path.display());
+                eprintln!("fleet: memories: {reason}");
+                Err(WriteError::Io(reason))
             }
         }
         Err(error) => {
-            eprintln!("fleet: memories: could not write {}: {error}", temp.display());
-            false
+            let _ = fs::remove_file(&temp);
+            let reason = format!("could not write {}: {error}", temp.display());
+            eprintln!("fleet: memories: {reason}");
+            Err(WriteError::Io(reason))
         }
     }
 }
@@ -1787,6 +1825,12 @@ pub enum WriteError {
     /// approval — the permission model, enforced at the module seam so
     /// a programmatic caller cannot bypass it either.
     NeedsApproval(String),
+    /// A lifecycle stamp or a retirement note failed to land: the
+    /// replacement fact is on disk but the old one is not retired, or
+    /// the forget's expiry landed and its note did not. The audit
+    /// cannot claim an action that did not happen, so the supersession
+    /// fails with what landed and what did not, both named.
+    Stamp(String),
     /// The write itself failed.
     Io(String),
 }
@@ -1807,6 +1851,7 @@ impl std::fmt::Display for WriteError {
             WriteError::UnknownFact(reason) => write!(f, "{reason}"),
             WriteError::Retired(reason) => write!(f, "{reason}"),
             WriteError::NeedsApproval(reason) => write!(f, "{reason}"),
+            WriteError::Stamp(reason) => write!(f, "{reason}"),
             WriteError::Io(reason) => write!(f, "{reason}"),
         }
     }
@@ -2228,6 +2273,13 @@ impl Memory {
     /// The file is never deleted: a supersession stamps `superseded-by`
     /// and a forget stamps `valid-until`, both reversible, both
     /// git-tracked.
+    ///
+    /// A stamp that fails to land fails the whole supersession with
+    /// [`WriteError::Stamp`] and records no calibration row: the audit
+    /// trail cannot claim an action the files did not take. The modify
+    /// path writes the replacement first and stamps after, so its
+    /// error names the replacement that landed beside the stamp that
+    /// did not; the forget path lands both its writes before the row.
     pub fn supersede(
         &self,
         request: &Supersede,
@@ -2298,7 +2350,16 @@ impl Memory {
                     body,
                 };
                 write_document(&self.root, &replacement_request, &today, true)?;
-                rewrite_field(&fact.path, "superseded-by", replacement);
+                // The replacement is on disk; the old fact must now be
+                // stamped retired or both stay live — and a row here
+                // would claim a retirement the file never took. The
+                // error names what landed and what did not.
+                if let Err(error) = rewrite_field(&fact.path, "superseded-by", replacement) {
+                    return Err(WriteError::Stamp(format!(
+                        "the replacement `{replacement}` was written, but stamping `{}` superseded-by it did not land ({error}), so both facts are still live",
+                        fact.name
+                    )));
+                }
                 if let Some(stream) = stream {
                     stream.record(calib::Row::Consolidate(calib::ConsolidateRow {
                         ts: calib::stamp(),
@@ -2313,13 +2374,27 @@ impl Memory {
                 // Forget: the fact's validity ends the day before the
                 // retirement, so the loader retires it now and the
                 // cycle's next pass archives the file. The note in the
-                // body is the human record of why.
+                // body is the human record of why. Both writes land
+                // before the row is recorded — a row for a retirement
+                // that did not happen is the bug this ordering
+                // prevents.
                 let last_valid_day = shift_day(&today, -1).unwrap_or_else(|| today.clone());
-                rewrite_field(&fact.path, "valid-until", &last_valid_day);
+                rewrite_field(&fact.path, "valid-until", &last_valid_day).map_err(|error| {
+                    WriteError::Stamp(format!(
+                        "`{}` was not expired, so nothing was recorded: {error}",
+                        fact.name
+                    ))
+                })?;
                 append_note(
                     &fact.path,
                     &format!("Retired {today}: {}\n", request.justification),
-                );
+                )
+                .map_err(|error| {
+                    WriteError::Stamp(format!(
+                        "`{}` was expired (valid-until {last_valid_day}) but its retirement note did not land, so the retirement was not recorded: {error}",
+                        fact.name
+                    ))
+                })?;
                 if let Some(stream) = stream {
                     stream.record(calib::Row::Consolidate(calib::ConsolidateRow {
                         ts: calib::stamp(),
@@ -2526,7 +2601,11 @@ pub fn consolidate(
 
     for fact in &compress {
         if let Some(summary) = &summary {
-            rewrite_field(&fact.path, "superseded-by", summary);
+            // Best-effort, and logged by the rewriter itself: a stamp
+            // the cycle could not land leaves the fact live and names
+            // the reason on stderr, and the cycle's pass is advisory
+            // rather than a gated action.
+            let _ = rewrite_field(&fact.path, "superseded-by", summary);
         }
         let reason = if fact.forgotten(today) {
             format!("working memory past its valid-until {}", fact.valid_until)
@@ -2542,7 +2621,7 @@ pub fn consolidate(
     }
     for fact in &supersede {
         if let Some(summary) = &summary {
-            rewrite_field(&fact.path, "superseded-by", summary);
+            let _ = rewrite_field(&fact.path, "superseded-by", summary);
         }
         let reason =
             format!("inferred, never recalled, older than {STALE_AFTER_DAYS} days");
@@ -2634,8 +2713,40 @@ fn write_summary(root: &Path, today: &str, compressed: &[Fact], superseded: &[Fa
     name
 }
 
+/// The archive's collision shape: the fact's own name for the first
+/// copy, then a serial — `.archive/<name>.md`, `.archive/<name>.2.md`,
+/// `.archive/<name>.3.md`. A fact name is re-usable (a fact expires,
+/// the name is written again, it expires again), and the second copy
+/// must not clobber the first: the archive is the record of what the
+/// cycle forgot, and git is a backstop only for what was committed.
+/// The serial rather than the day: two copies retired the same day
+/// would collide on a day-stamp, and each copy's own `valid-until` and
+/// body already date it.
+///
+/// The name is claimed with `create_new`, so the collision check and
+/// the move are one step rather than a check that can drift from the
+/// rename that follows it.
+fn archive_target(archive: &Path, fact: &Fact) -> Result<PathBuf, std::io::Error> {
+    let mut serial = 1;
+    loop {
+        let candidate = if serial == 1 {
+            archive.join(format!("{}.md", fact.name))
+        } else {
+            archive.join(format!("{}.{serial}.md", fact.name))
+        };
+        match fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(_) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => serial += 1,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 /// Move one expired fact into [`ARCHIVE_DIR`]. A rename, not a delete:
-/// the file stays, reversible, and out of the loader's read.
+/// the file stays, reversible, and out of the loader's read. A name the
+/// archive already holds takes the next serial (see
+/// [`archive_target`]), so a re-used fact name never overwrites the
+/// copy already there.
 fn archive_fact(root: &Path, fact: &Fact) -> bool {
     let archive = root.join(ARCHIVE_DIR);
     if fs::create_dir_all(&archive).is_err() {
@@ -2646,9 +2757,22 @@ fn archive_fact(root: &Path, fact: &Fact) -> bool {
         );
         return false;
     }
-    match fs::rename(&fact.path, archive.join(format!("{}.md", fact.name))) {
+    let target = match archive_target(&archive, fact) {
+        Ok(target) => target,
+        Err(error) => {
+            eprintln!(
+                "fleet: memories: could not claim an archive name for `{}`: {error}",
+                fact.name
+            );
+            return false;
+        }
+    };
+    match fs::rename(&fact.path, &target) {
         Ok(()) => true,
         Err(error) => {
+            // The claim is dropped rather than left behind as an empty
+            // file the archive surface would skip by name.
+            let _ = fs::remove_file(&target);
             eprintln!(
                 "fleet: memories: could not archive {}: {error}",
                 fact.path.display()
@@ -2997,9 +3121,11 @@ fn untouched_line(untouched: &[String]) -> String {
 
 /// Render the archive as cards: the facts the cycle's forget action
 /// moved out of the working tree. Nothing here is deleted — a move
-/// back restores a fact, and git remembers the move.
+/// back restores a fact, and git remembers the move. The read is the
+/// archive's own: a collision copy's file name carries its serial
+/// suffix, so the card names the fact its frontmatter carries.
 pub fn render_archive(root: &Path) -> String {
-    let facts = load_facts(&root.join(ARCHIVE_DIR));
+    let facts = load_facts_archived(&root.join(ARCHIVE_DIR));
     let mut out = String::new();
     out.push_str(&format!(
         "{BOLD}fleet memories --archive{RESET} {DIM}\u{2014} {} forgotten fact{} from {}/{}/{RESET}\n\n",
@@ -3069,6 +3195,26 @@ mod tests {
         let path = root.join(format!("{name}.md"));
         fs::write(&path, text).unwrap();
         path
+    }
+
+    /// Make one fact file immutable so its rewrite cannot land: the
+    /// read still works and the file still loads, so a supersession
+    /// reaches its stamp and fails exactly at the rewrite's rename —
+    /// the deterministic seam the stamp-failure tests need (a
+    /// read-only file would not do: the rewrite is a temp write plus a
+    /// rename, and a rename replaces a read-only file without
+    /// consulting its mode). macOS's `chflags uchg`. The helper fails
+    /// the test when the flag could not be set, so a machine without
+    /// `chflags` fails loudly rather than passing a supersession that
+    /// actually landed.
+    fn set_immutable(path: &Path, immutable: bool) {
+        let flag = if immutable { "uchg" } else { "nouchg" };
+        let status = std::process::Command::new("chflags")
+            .arg(flag)
+            .arg(path)
+            .status()
+            .expect("`chflags` is available on this machine");
+        assert!(status.success(), "`chflags {flag}` failed on {}", path.display());
     }
 
     /// A well-formed fact in the writer's field order.
@@ -4569,6 +4715,96 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn an_expired_working_fact_is_compressed_and_archived_in_the_same_pass() {
+        let root = scratch("cycle-order");
+        write_fact(
+            &root,
+            "expired-note",
+            &working_fact("expired-note", "a working note whose time has passed", &days_ago(10), &days_ago(1)),
+        );
+
+        let result = consolidate(&root, &calib::today(), None);
+        let summary = result.summary.clone().expect("the pass wrote a summary");
+
+        // The ordering this pins: compress stamps the fact, and the
+        // forget loop — which reads the pass's pre-pass snapshot, where
+        // the stamp is not yet in memory — archives the very file the
+        // stamp just landed on. The archived copy therefore carries
+        // `superseded-by`, and both actions name the fact.
+        let archived = fs::read_to_string(root.join(".archive").join("expired-note.md")).unwrap();
+        assert!(archived.contains(&format!("superseded-by: {summary}")), "{archived}");
+        assert!(!root.join("expired-note.md").exists());
+        let facts: Vec<&str> = result
+            .actions
+            .iter()
+            .filter(|action| action.fact == "expired-note")
+            .map(|action| action.action)
+            .collect();
+        assert_eq!(
+            facts,
+            vec![calib::ACTION_COMPRESS, calib::ACTION_FORGET],
+            "{result:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_re_used_fact_name_archives_both_copies_and_the_loader_ignores_the_archive() {
+        let root = scratch("archive-collision");
+        // First life of the name: it expires, and the cycle archives it.
+        write_fact(
+            &root,
+            "reused",
+            &working_fact("reused", "the first fact of this name", &days_ago(10), &days_ago(1)),
+        );
+        let first = consolidate(&root, &calib::today(), None);
+        assert!(
+            first
+                .actions
+                .iter()
+                .any(|action| action.action == calib::ACTION_FORGET && action.fact == "reused"),
+            "{first:?}"
+        );
+        assert!(root.join(".archive").join("reused.md").exists());
+
+        // Second life: the name is written again, expires again, and is
+        // archived beside the first copy rather than over it.
+        write_fact(
+            &root,
+            "reused",
+            &working_fact("reused", "the second fact of this name", &days_ago(10), &days_ago(1)),
+        );
+        let second = consolidate(&root, &calib::today(), None);
+        assert!(
+            second
+                .actions
+                .iter()
+                .any(|action| action.action == calib::ACTION_FORGET && action.fact == "reused"),
+            "{second:?}"
+        );
+
+        // Both versions survive under distinct names, each with its own
+        // content — the archive is the record, and git is not the only
+        // backstop.
+        assert!(root.join(".archive").join("reused.md").exists());
+        assert!(root.join(".archive").join("reused.2.md").exists());
+        let first_copy = fs::read_to_string(root.join(".archive").join("reused.md")).unwrap();
+        let second_copy = fs::read_to_string(root.join(".archive").join("reused.2.md")).unwrap();
+        assert!(first_copy.contains("the first fact of this name"), "{first_copy}");
+        assert!(second_copy.contains("the second fact of this name"), "{second_copy}");
+
+        // The loader reads `memories/*.md` and never a subdirectory:
+        // neither archived copy is a live fact, and the archive surface
+        // cards both by the name their frontmatter carries.
+        let live = load_facts(&root);
+        assert!(live.iter().all(|fact| fact.name != "reused"), "{live:?}");
+        let rendered = render_archive(&root);
+        assert!(rendered.contains("2 forgotten facts"), "{rendered}");
+        assert!(rendered.matches("reused").count() >= 2, "{rendered}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
     // --- provenance as the permission model ---
 
     /// A corpus with one confirmed-by fact and one inferred fact, both
@@ -4721,6 +4957,80 @@ mod tests {
         assert_eq!(row.action, calib::ACTION_FORGET);
         assert_eq!(row.fact, "a-guess");
         assert_eq!(row.reason, "the guess turned out to be wrong");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&stream_root);
+    }
+
+    #[test]
+    fn a_modify_whose_stamp_cannot_land_names_what_landed_and_records_no_row() {
+        let root = scratch("provenance-stamp-modify");
+        provenance_corpus(&root);
+        let stream_root = scratch("stamp-modify-stream");
+        let stream = calib::Stream::open(&stream_root);
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "a-guess",
+            "justification": "the deploy moved to per-branch builds",
+            "replacement": "a-better-guess",
+            "description": "an inferred fact about the per-branch deploy",
+        }))
+        .unwrap();
+
+        // The stamp cannot land: the fact is immutable, so the
+        // rewrite's rename is refused while every read still works.
+        let fact_path = root.join("a-guess.md");
+        set_immutable(&fact_path, true);
+        let outcome = memory.supersede(&request, false, Some(&stream));
+        set_immutable(&fact_path, false);
+
+        let error = outcome.unwrap_err();
+        assert!(matches!(&error, WriteError::Stamp(reason) if reason.contains("a-better-guess") && reason.contains("a-guess")), "{error}");
+        // What landed and what did not, on disk as in the message: the
+        // replacement exists, the old fact is not retired.
+        assert!(root.join("a-better-guess.md").exists());
+        let old = fs::read_to_string(&fact_path).unwrap();
+        assert!(!old.contains("superseded-by: a-better-guess"), "{old}");
+        // No row: the audit cannot claim a retirement that did not
+        // land.
+        drop(stream);
+        let rows = calib::read_day(&stream_root, &calib::today(), 64);
+        assert!(rows.is_empty(), "{rows:?}");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&stream_root);
+    }
+
+    #[test]
+    fn a_forget_whose_stamp_cannot_land_records_no_row() {
+        let root = scratch("provenance-stamp-forget");
+        provenance_corpus(&root);
+        let stream_root = scratch("stamp-forget-stream");
+        let stream = calib::Stream::open(&stream_root);
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "a-guess",
+            "justification": "the guess turned out to be wrong",
+        }))
+        .unwrap();
+
+        let fact_path = root.join("a-guess.md");
+        set_immutable(&fact_path, true);
+        let outcome = memory.supersede(&request, false, Some(&stream));
+        set_immutable(&fact_path, false);
+
+        // The forget's first write is its expiry stamp, so nothing
+        // landed at all: no expiry, no note, no row.
+        let error = outcome.unwrap_err();
+        assert!(
+            matches!(&error, WriteError::Stamp(reason) if reason.contains("a-guess")),
+            "{error}"
+        );
+        let text = fs::read_to_string(&fact_path).unwrap();
+        let yesterday = days_ago(1);
+        assert!(!text.contains(&format!("valid-until: {yesterday}")), "{text}");
+        assert!(!text.contains("Retired "), "{text}");
+        drop(stream);
+        let rows = calib::read_day(&stream_root, &calib::today(), 64);
+        assert!(rows.is_empty(), "{rows:?}");
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&stream_root);
     }
