@@ -116,13 +116,29 @@ B11), then vendored — fleet does not fork lane cores.
   by key — the corpus's write path, the TinyFish-sourced facts' door).
   Project resolution follows the lane's own rule (param >
   `BLEND1_PROJECT` > cwd repo name > legacy).
-- **B13 — the scheduled corpus refresh, wired.** A cron job per project
-  runs the refresh on its schedule (`auto_approve: true` — it is
-  declared, idempotent, and hash-gated); the job's shape, the missed-
-  window behavior, and the projects list are derived, created, and
-  smoke-proven. Fleet's `memories/` and blend1's corpus stay separate
-  stores with separate jobs (the agent's durable facts vs the project's
-  facts) — the division is documented, not merged.
+- **B13 — the scheduled corpus refresh, wired (the derived shape).** The
+  plan originally said "a cron job per project"; the derivation changed
+  the shape twice and the result is: **fourteen per-project jobs**
+  (`corpus-refresh-<project>`), daily at staggered minutes from 00:10 to
+  01:15 UTC, `auto_approve: true` — declared, idempotent, hash-gated.
+  Per-project rather than one aggregate job because fourteen refreshes
+  in one run would exceed the 20-turn cap, and per-project jobs give
+  per-project outcomes in `fleet cron` (the drift signal PS3 wants).
+  The task text carries **explicit absolute source globs** per project
+  because the refresh derives its sources from globs, not from the
+  project's location — a job fired from any cwd must index the right
+  repo's docs. Smoke-proven end to end through the real binary against
+  the pinned mock and the real lane: the lane joined (5 tools), the
+  refresh ran (`{"source_files": 2, "items": 2, "changed": true,
+  "action": "rebuilt"}`), the store landed
+  (`vectors/mini/embeddinggemma-2/{vectors.bin,manifest.json}`), the
+  report rode back, and a second fire reported `unchanged` in 0.6s.
+  **The first fire's bound is logged, not papered over (KI-148):** the
+  first build embeds every chunk (the fleet docs → 319 entries,
+  minutes), which exceeds the lane call's 60s bound — so the parent
+  pre-built the fourteen corpora directly through the lane's own path
+  (background, the local embedder), and the scheduled jobs' first fire
+  finds them hash-gated. The bound itself stays a logged gap.
 - **B14 — the eval scenarios.** Deterministic scenarios (scripted seams,
   no paid live calls) for: the grounded path (a tabular fact reaches the
   answer unaltered), the escalation (an inconclusive validation
