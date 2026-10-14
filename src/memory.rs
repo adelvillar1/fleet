@@ -4271,6 +4271,76 @@ mod tests {
     }
 
     #[test]
+    fn the_writer_refuses_a_body_past_its_byte_bound() {
+        // KI-060's body rule is a refusal, not a cut: the body is the
+        // fact's full content, and silently truncating it would change
+        // what the fact says.
+        let root = scratch("body-bound");
+        let _memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let error = Remember::parse(&serde_json::json!({
+            "name": "huge",
+            "description": "a fact with an enormous body",
+            "basis": "inferred",
+            "body": "x".repeat(MAX_BODY_BYTES + 1),
+        }))
+        .unwrap_err();
+        assert!(matches!(error, WriteError::Body(_)), "{error}");
+        assert!(error.to_string().contains(&MAX_BODY_BYTES.to_string()), "{error}");
+        // Nothing landed: a refused write leaves no file behind.
+        assert!(load_facts(&root).is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_writer_bounds_the_type_and_the_justification() {
+        // The description's bound was pinned first; the same
+        // sanitize_line rule covers the type at write time and the
+        // justification at supersede time — control characters
+        // stripped, length bounded with a marked cut.
+        let root = scratch("type-justification");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Remember::parse(&serde_json::json!({
+            "name": "typed",
+            "description": "a fact whose type is long and carries a newline",
+            "basis": "inferred",
+            "type": format!("{}\n{}", "t".repeat(MAX_TYPE_CHARS + 10), "control"),
+        }))
+        .unwrap();
+        let written = memory.remember(&request).unwrap();
+        assert!(
+            !written.fact_type.chars().any(|character| character.is_control()),
+            "{:?}",
+            written.fact_type
+        );
+        assert!(
+            written.fact_type.chars().count() <= MAX_TYPE_CHARS + 1,
+            "{}",
+            written.fact_type.chars().count()
+        );
+        assert!(written.fact_type.ends_with('\u{2026}'), "{}", written.fact_type);
+
+        // The justification rides supersede, bounded the same way where
+        // the calibration row and the retirement note read it.
+        let stream_root = scratch("type-justification-stream");
+        let stream = calib::Stream::open(&stream_root);
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "typed",
+            "justification": format!("{}\n{}", "j".repeat(MAX_JUSTIFICATION_CHARS + 10), "tail"),
+        }))
+        .unwrap();
+        memory.supersede(&request, false, Some(&stream)).unwrap();
+        let retired = fs::read_to_string(root.join("typed.md")).unwrap();
+        let note = retired
+            .lines()
+            .find(|line| line.contains("Retired"))
+            .expect("the retirement note carries the justification");
+        assert!(!note.chars().any(|character| character.is_control()), "{note}");
+        assert!(note.ends_with('\u{2026}'), "{note}");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&stream_root);
+    }
+
+    #[test]
     fn a_working_fact_past_its_valid_until_is_retired_by_the_loader() {
         let root = scratch("working-expiry");
         write_fact(
