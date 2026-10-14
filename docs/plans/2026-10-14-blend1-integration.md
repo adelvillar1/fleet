@@ -1,6 +1,6 @@
 # Slice 16 — blend1: the grounded lane, and the Liquid provider (2026-10-14)
 
-status: landed-pending-review
+status: landed-pushed (2026-10-14; reviews closed, the fix round in b8762cc, the recap in docs/recaps/2026-10-14-fleet-slice-16-blend1.md)
 
 ## Goal
 
