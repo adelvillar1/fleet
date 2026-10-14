@@ -4,6 +4,12 @@
 //! appends `end`; a log without `end` was interrupted. Every message the
 //! model sees or produces is logged as it happens, so a replayed log
 //! reproduces the conversation exactly.
+//!
+//! A `compaction` record is the one record that *replaces* messages
+//! rather than adding one: the turns it names stay in the log, because a
+//! log is append-only, and replay materializes the compacted shape by
+//! standing the summary in for them. That is what keeps
+//! model-visible ⟺ logged true across a fold (hard rule 5).
 
 use crate::api::{Message, Role, ToolCall};
 use serde::{Deserialize, Serialize};
@@ -102,6 +108,34 @@ pub enum Record {
     End {
         stop_reason: String,
         turns: u64,
+    },
+    /// One compaction: the summary that stands in for a range of turns,
+    /// the range it replaces, and what the context cost before and after.
+    ///
+    /// The turns it names stay in the log — a log is append-only — and
+    /// replay stands the summary in their place, which is what makes the
+    /// requests that followed reconstructable byte for byte. The
+    /// compaction request itself is reconstructable the same way: the
+    /// messages it replaced are the records before this one, the system
+    /// prompt is the compiled-in constant, and the instruction is
+    /// `compaction::COMPACTION_INSTRUCTION`.
+    ///
+    /// The record replays to exactly one message — the framed summary —
+    /// and the tail it keeps rides along beside it.
+    Compaction {
+        /// The model's own words: the summary that replaces the range.
+        summary: String,
+        /// The first turn the summary replaces.
+        first_turn: u64,
+        /// The last turn the summary replaces, inclusive.
+        last_turn: u64,
+        /// Tokens the conversation carried when it crossed the budget:
+        /// the API's own count when the last response reported one, the
+        /// chars/4 estimate when it did not.
+        tokens_before: u64,
+        /// Tokens the compacted conversation carries: the estimate of the
+        /// framed summary plus the verbatim tail.
+        tokens_after: u64,
     },
 }
 
@@ -214,6 +248,11 @@ pub struct SessionSummary {
     /// marker beside the row — a child is an ordinary session with a
     /// parent, not a second class of thing.
     pub kind: Option<String>,
+    /// True when the log carries a `compaction` record: the conversation
+    /// outgrew the window and was folded at least once. The picker and
+    /// `fleet sessions` mark it, because a compacted session's replay is
+    /// a compacted shape and a reader deserves to know before opening it.
+    pub compacted: bool,
     pub path: PathBuf,
 }
 
@@ -249,6 +288,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     created: String::new(),
                     ended: false,
                     kind: None,
+                    compacted: false,
                     path,
                 });
                 continue;
@@ -263,7 +303,8 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
             _ => None,
         };
         let ended = matches!(records.last(), Some(Record::End { .. }));
-        entries.push(SessionSummary { id, model, created, ended, kind, path });
+        let compacted = records.iter().any(|record| matches!(record, Record::Compaction { .. }));
+        entries.push(SessionSummary { id, model, created, ended, kind, compacted, path });
     }
     entries.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(entries)
@@ -281,27 +322,105 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
 /// `memory` is the third: the shape and fact names the assembled block
 /// carried, recorded because the block is dynamic and only the log can
 /// reconstruct the prompt the model saw.
+///
+/// A `compaction` record is the one record that replaces messages
+/// instead of adding them, and it is what makes the compacted shape
+/// reconstructable: the summary stands in for the turns it names and the
+/// recent tail stays verbatim, so the message list a compacted log
+/// replays to is exactly the one the next request carried. See
+/// [`conversation`].
 pub fn messages(records: &[Record]) -> Vec<Message> {
-    records
-        .iter()
-        .filter_map(|record| match record {
-            Record::User { content } => Some(Message::text(Role::User, content.clone())),
-            Record::Assistant { content, tool_calls } => Some(Message {
-                role: Role::Assistant,
-                content: content.clone(),
-                tool_calls: tool_calls.clone(),
-                tool_call_id: None,
-            }),
+    conversation(records).messages
+}
+
+/// What a log replays to: the wire messages, the turn number of the
+/// request that first carried each one, and the turn the next request
+/// would be.
+///
+/// The turn numbers are what a compaction record names, so the agent
+/// needs them to write a range a reader can check, and a resumed run
+/// needs `next_turn` so the turns it appends continue the log's own
+/// numbering rather than restarting it.
+#[derive(Debug, Clone)]
+pub struct Conversation {
+    pub messages: Vec<Message>,
+    /// One entry per message: the turn of the request that first carried
+    /// it. A user message and the assistant answer that follows it share
+    /// a turn; a tool result belongs to the turn whose request carried it.
+    pub turns: Vec<u64>,
+    /// The turn the next request would be: one past the last assistant
+    /// answer in the log, or 1 for a log with none.
+    pub next_turn: u64,
+}
+
+/// Rebuild the conversation a log represents, with turn numbers.
+///
+/// The turn rule is the one the agent's own `push_message` applies, so a
+/// live conversation and a replayed one number their turns identically:
+/// a `user` record takes the upcoming turn, an `assistant` record takes
+/// it and advances it, and a `tool_result` takes the turn the request
+/// after it will carry.
+///
+/// A `compaction` record folds what came before it: everything except
+/// the most recent [`crate::compaction::COMPACTION_TAIL_TURNS`] turns is
+/// dropped from the replay and the framed summary takes its place at the
+/// front, carrying the record's own `first_turn`. The tail's records sit
+/// *before* the compaction record in the log — they happened before the
+/// fold — so the split is the same structural one the agent made when it
+/// compacted, computed by the same function
+/// ([`crate::compaction::tail_start`]) over the same message list.
+pub fn conversation(records: &[Record]) -> Conversation {
+    let mut messages: Vec<Message> = Vec::new();
+    let mut turns: Vec<u64> = Vec::new();
+    let mut next_turn: u64 = 1;
+    for record in records {
+        match record {
+            Record::User { content } => {
+                messages.push(Message::text(Role::User, content.clone()));
+                turns.push(next_turn);
+            }
+            Record::Assistant { content, tool_calls } => {
+                messages.push(Message {
+                    role: Role::Assistant,
+                    content: content.clone(),
+                    tool_calls: tool_calls.clone(),
+                    tool_call_id: None,
+                });
+                turns.push(next_turn);
+                next_turn += 1;
+            }
             Record::ToolResult { call_id, output, .. } => {
-                Some(Message::tool_result(call_id.clone(), output.clone()))
+                messages.push(Message::tool_result(call_id.clone(), output.clone()));
+                turns.push(next_turn);
+            }
+            Record::Compaction { summary, first_turn, last_turn, .. } => {
+                let tail = crate::compaction::tail_start(&messages);
+                messages = messages.split_off(tail);
+                turns = turns.split_off(tail);
+                messages.insert(
+                    0,
+                    Message::text(
+                        Role::User,
+                        crate::compaction::summary_frame(*first_turn, *last_turn, summary),
+                    ),
+                );
+                turns.insert(0, *first_turn);
             }
             Record::Start { .. }
             | Record::End { .. }
             | Record::LaneTools { .. }
             | Record::Skills { .. }
-            | Record::Memory { .. } => None,
-        })
-        .collect()
+            | Record::Memory { .. } => {}
+        }
+    }
+    let next_turn = turns
+        .iter()
+        .zip(&messages)
+        .filter(|(_, message)| message.role == Role::Assistant)
+        .map(|(turn, _)| *turn)
+        .max()
+        .map_or(next_turn, |last| last + 1);
+    Conversation { messages, turns, next_turn }
 }
 
 /// Resolve a `--session` id to its log path under `home`.
@@ -743,5 +862,223 @@ mod tests {
         let error = replay(&path).unwrap_err();
         assert!(error.to_string().contains("line 2"), "{error}");
         fs::remove_dir_all(&home).ok();
+    }
+
+    // --- compaction -------------------------------------------------------
+
+    /// One `compaction` record, as the agent writes it when the window
+    /// check fires: the summary, the range it replaces, and the counts
+    /// either side of the fold.
+    fn compaction_record() -> Record {
+        Record::Compaction {
+            summary: "- did the thing\n- then the other thing".to_string(),
+            first_turn: 1,
+            last_turn: 2,
+            tokens_before: 120_000,
+            tokens_after: 900,
+        }
+    }
+
+    /// Six turns of a tool-using conversation: a task, then per turn one
+    /// assistant call and one tool result.
+    fn six_turns() -> Vec<Record> {
+        let mut records = vec![Record::User { content: "the task".to_string() }];
+        for index in 0..6 {
+            records.push(Record::Assistant {
+                content: None,
+                tool_calls: vec![crate::api::ToolCall {
+                    id: format!("call-{index}"),
+                    kind: "function".to_string(),
+                    function: crate::api::FunctionCall {
+                        name: "bash".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                }],
+            });
+            records.push(Record::ToolResult {
+                call_id: format!("call-{index}"),
+                name: "bash".to_string(),
+                output: format!("output {index}"),
+                truncated: false,
+                approved: true,
+            });
+        }
+        records
+    }
+
+    #[test]
+    fn a_compaction_record_replays_to_the_summary_plus_the_verbatim_tail() {
+        // The fold: the summary stands in for the turns it names, the
+        // most recent four turns stay exactly as they happened, and
+        // nothing else survives.
+        let mut records = six_turns();
+        records.push(compaction_record());
+        let conversation = conversation(&records);
+        let messages = messages(&records);
+        assert_eq!(messages, conversation.messages);
+
+        // One summary message, then the tail's four turns verbatim.
+        assert_eq!(messages.len(), 1 + 4 * 2, "{messages:?}");
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(
+            messages[0].content.as_deref(),
+            Some(
+                "Summary of turns 1 through 2, compacted to fit the window:\n\n- did the thing\n- then the other thing"
+            )
+        );
+        // The tail opens on an assistant message, so the sequence stays
+        // valid for the API (KI-016's failure in a new shape).
+        assert_eq!(messages[1].role, Role::Assistant);
+        assert_eq!(messages[1].tool_calls[0].id, "call-2");
+        assert_eq!(messages[2].role, Role::Tool);
+        assert_eq!(messages[2].tool_call_id.as_deref(), Some("call-2"));
+        // The last turn is there whole, and nothing before turn 3 is.
+        assert_eq!(messages[messages.len() - 1].content.as_deref(), Some("output 5"));
+        assert!(
+            !messages.iter().any(|message| message.content.as_deref() == Some("output 0")),
+            "{messages:?}"
+        );
+        assert!(!messages.iter().any(|message| message.content.as_deref() == Some("the task")));
+    }
+
+    #[test]
+    fn a_compaction_record_numbers_the_turns_a_resumed_run_continues() {
+        let mut records = six_turns();
+        records.push(compaction_record());
+        // The tail is turns 3 through 6, so the next request is turn 7 —
+        // the resumed run appends to the log's own numbering rather than
+        // restarting it.
+        let conversation = conversation(&records);
+        assert_eq!(conversation.next_turn, 7);
+        assert_eq!(
+            conversation.turns,
+            vec![1, 3, 4, 4, 5, 5, 6, 6, 7],
+            "{:?}",
+            conversation.turns
+        );
+        // The summary carries the range's first turn, which is what makes
+        // a second compaction's range readable.
+        assert_eq!(conversation.turns[0], 1);
+    }
+
+    #[test]
+    fn a_second_compaction_folds_the_first_summary_into_a_new_one() {
+        // A conversation that outgrows the window twice: the second
+        // record replaces the first summary and the tail it kept, and
+        // the replay holds one summary and one tail.
+        let mut records = six_turns();
+        records.push(compaction_record());
+        for index in 6..10 {
+            records.push(Record::Assistant {
+                content: Some(format!("answer {index}")),
+                tool_calls: Vec::new(),
+            });
+        }
+        records.push(Record::Compaction {
+            summary: "the consolidated summary".to_string(),
+            first_turn: 1,
+            last_turn: 6,
+            tokens_before: 140_000,
+            tokens_after: 800,
+        });
+        let messages = messages(&records);
+        // One summary plus the last four assistant answers.
+        assert_eq!(messages.len(), 5, "{messages:?}");
+        assert_eq!(messages[0].content.as_deref(), Some(
+            "Summary of turns 1 through 6, compacted to fit the window:\n\nthe consolidated summary"
+        ));
+        assert_eq!(messages[1].content.as_deref(), Some("answer 6"));
+        assert_eq!(messages[4].content.as_deref(), Some("answer 9"));
+        let conversation = conversation(&records);
+        assert_eq!(conversation.next_turn, 11);
+    }
+
+    #[test]
+    fn a_log_with_no_compaction_replays_byte_for_byte_as_it_always_did() {
+        // The record is additive: an ordinary log's shape does not change.
+        let records = six_turns();
+        let messages = messages(&records);
+        assert_eq!(messages.len(), 13, "{messages:?}");
+        assert_eq!(messages[0].content.as_deref(), Some("the task"));
+        assert_eq!(messages[1].tool_calls[0].id, "call-0");
+        assert_eq!(messages[12].content.as_deref(), Some("output 5"));
+        let conversation = conversation(&records);
+        assert_eq!(conversation.turns.len(), messages.len());
+        // Every assistant answer advances the turn; the tool result after
+        // it belongs to the next request.
+        assert_eq!(conversation.turns[0], 1);
+        assert_eq!(conversation.turns[1], 1);
+        assert_eq!(conversation.turns[2], 2);
+        assert_eq!(conversation.next_turn, 7);
+    }
+
+    #[test]
+    fn a_compaction_line_round_trips_through_the_log_file() {
+        // The record's own line, written the way the log writes it and
+        // read back by a reader that only knows the vocabulary.
+        let home = temp_home("compaction-line");
+        let mut session = Session::create(&home, "m").unwrap();
+        session.record(&compaction_record()).unwrap();
+        let line = fs::read_to_string(session.path()).unwrap();
+        let recorded = line.lines().nth(1).expect("the compaction line");
+        assert!(recorded.starts_with("{\"type\":\"compaction\""), "{recorded}");
+        assert!(recorded.contains("\"first_turn\":1"), "{recorded}");
+        assert!(recorded.contains("\"last_turn\":2"), "{recorded}");
+        assert!(recorded.contains("\"tokens_before\":120000"), "{recorded}");
+        assert!(recorded.contains("\"tokens_after\":900"), "{recorded}");
+
+        let records = replay(session.path()).unwrap();
+        match &records[1] {
+            Record::Compaction { summary, first_turn, last_turn, tokens_before, tokens_after } => {
+                assert_eq!(summary, "- did the thing\n- then the other thing");
+                assert_eq!(*first_turn, 1);
+                assert_eq!(*last_turn, 2);
+                assert_eq!(*tokens_before, 120_000);
+                assert_eq!(*tokens_after, 900);
+            }
+            other => panic!("expected a compaction record, got {other:?}"),
+        }
+        // And the log still lists, marked compacted.
+        let summaries = list(&home).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert!(summaries[0].compacted);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_log_without_a_compaction_lists_unmarked() {
+        let home = temp_home("no-compaction");
+        let mut session = Session::create(&home, "m").unwrap();
+        session.record(&Record::User { content: "hi".into() }).unwrap();
+        let summaries = list(&home).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert!(!summaries[0].compacted);
+        // The other markers are untouched.
+        assert_eq!(summaries[0].kind, None);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn an_interrupted_log_after_a_compaction_still_replays_its_compacted_shape() {
+        // A log without `end` was interrupted; the compaction before the
+        // interruption still folds, and the turn numbering continues from
+        // the last assistant answer rather than from the last message.
+        let mut records = six_turns();
+        records.push(compaction_record());
+        // The interrupted turn's call landed and its result did not.
+        records.push(Record::Assistant { content: None, tool_calls: Vec::new() });
+        records.push(Record::ToolResult {
+            call_id: "call-9".to_string(),
+            name: "bash".to_string(),
+            output: "partial".to_string(),
+            truncated: false,
+            approved: true,
+        });
+        let conversation = conversation(&records);
+        assert_eq!(conversation.next_turn, 8);
+        assert_eq!(conversation.turns.last().copied(), Some(8));
+        // The summary, the tail's eight messages, and the interrupted
+        // turn's own two.
+        assert_eq!(conversation.messages.len(), 11);
     }
 }

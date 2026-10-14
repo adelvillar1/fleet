@@ -270,6 +270,37 @@ fn tool_call_stream(id: &str, name: &str, arguments: &str) -> ScriptedResponse {
     ])
 }
 
+/// One tool-calling turn that reports `prompt` prompt tokens: the shape a
+/// provider sends when the conversation is genuinely large, which is the
+/// only way a compaction can be driven from the API's own count.
+fn tool_call_stream_counting(
+    id: &str,
+    name: &str,
+    arguments: &str,
+    prompt: u64,
+) -> ScriptedResponse {
+    let (head, tail) = arguments.split_at(arguments.len() / 2);
+    stream(vec![
+        tool_call_delta(0, id, name, head),
+        tool_call_delta(0, "", "", tail),
+        finish_frame("tool_calls"),
+        usage_frame(prompt, 5),
+        "data: [DONE]".to_string(),
+    ])
+}
+
+/// One tool-calling turn that reports no usage at all — a provider that
+/// sends nothing, which is the case the chars/4 estimate exists for.
+fn tool_call_stream_uncounted(id: &str, name: &str, arguments: &str) -> ScriptedResponse {
+    let (head, tail) = arguments.split_at(arguments.len() / 2);
+    stream(vec![
+        tool_call_delta(0, id, name, head),
+        tool_call_delta(0, "", "", tail),
+        finish_frame("tool_calls"),
+        "data: [DONE]".to_string(),
+    ])
+}
+
 /// A progress sink that remembers what had already been delivered at every
 /// write, so a test can observe the stream mid-run instead of only its end.
 struct Probe {
@@ -4194,5 +4225,505 @@ async fn a_child_inherits_the_parents_declared_skills() {
         "{child_records:?}"
     );
 
+    std::fs::remove_dir_all(&home).ok();
+}
+
+// --- compaction (slice 10) -------------------------------------------------
+
+/// The messages one recorded request carried, as the wire type.
+fn request_messages(mock: &MockApi, index: usize) -> Vec<Message> {
+    mock.bodies()
+        .remove(index)
+        .get("messages")
+        .and_then(|messages| messages.as_array())
+        .expect("the request carried messages")
+        .iter()
+        .map(|message| serde_json::from_value(message.clone()).expect("one wire message"))
+        .collect()
+}
+
+/// One full agent run whose progress sink the caller owns, so a test can
+/// read the headless progress lines a compaction writes.
+async fn run_capturing(
+    mock: &MockApi,
+    session: &mut Session,
+    approver: Box<dyn Approver>,
+    max_turns: usize,
+    task: &str,
+    progress: &mut Vec<u8>,
+) -> Result<RunReport, AgentError> {
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        memory: None,
+        scope: None,
+    };
+    let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
+    agent.run(task).await
+}
+
+/// The records as they stood when the run's last request was built:
+/// everything before the final answer's own record. A request is built
+/// before the answer it provokes is recorded, so this is the slice of the
+/// log a request's message list must equal.
+fn before_final_answer(records: &[Record]) -> &[Record] {
+    let cut = records
+        .iter()
+        .rposition(|record| {
+            matches!(
+                record,
+                Record::Assistant { content, tool_calls } if tool_calls.is_empty() && content.is_some()
+            )
+        })
+        .expect("the final answer's record");
+    &records[..cut]
+}
+
+/// The messages one compaction request replaced, read back off the log:
+/// the records before the fold, split by the same tail function the agent
+/// applied when it compacted. That the two splits agree is the whole
+/// claim — the log's preceding records are the compaction request's
+/// messages.
+fn replaced_by(records: &[Record], last_turn: u64) -> Vec<Message> {
+    let fold = records
+        .iter()
+        .position(|record| matches!(record, Record::Compaction { last_turn: named, .. } if *named == last_turn))
+        .expect("the compaction record");
+    let seeded = session::conversation(&records[..fold]);
+    let cut = fleet::compaction::tail_start(&seeded.messages);
+    assert!(cut > 0, "a fold replaces something");
+    seeded.messages[..cut].to_vec()
+}
+
+/// A tool-calling turn that reports `prompt` prompt tokens — the shape a
+/// provider sends when the conversation is genuinely large, which is the
+/// only way a fold can be driven from the API's own count.
+fn counting_turn(index: u32, prompt: u64) -> ScriptedResponse {
+    tool_call_stream_counting(
+        &format!("call-{index}"),
+        "bash",
+        &format!(r#"{{"command":"echo {index}"}}"#),
+        prompt,
+    )
+}
+
+/// Five ordinary tool-calling turns, then a sixth whose API-reported
+/// prompt count crosses the budget, then the compaction request, then the
+/// answer: the script a run that outgrows the window walks. Six turns is
+/// the first point a fold has anything to replace — the tail is four, so
+/// the fold lands between turn 6 and the next request and replaces
+/// turns 1 through 2.
+fn crossing_script(summary: &str) -> Vec<ScriptedResponse> {
+    let mut script: Vec<ScriptedResponse> = (1..=5)
+        .map(|index| {
+            tool_call_stream(
+                &format!("call-{index}"),
+                "bash",
+                &format!(r#"{{"command":"echo {index}"}}"#),
+            )
+        })
+        .collect();
+    script.push(counting_turn(6, 120_000));
+    // The compaction request: its answer is the summary.
+    script.push(assistant_stream(summary));
+    // The turn after the fold.
+    script.push(assistant_stream("All done."));
+    script
+}
+
+#[tokio::test]
+async fn a_conversation_past_the_budget_compacts_and_the_next_request_carries_the_summary() {
+    // The acceptance shape end to end: the API's own count crosses the
+    // budget, the fold happens, and the request that follows carries the
+    // framed summary plus the verbatim tail.
+    let home = temp_home("compaction-e2e");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mock = MockApi::start(crossing_script("- the summary of the early turns"));
+    let mut progress: Vec<u8> = Vec::new();
+    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
+
+    // The headless progress line.
+    assert!(written.contains("compacted: 2 turns → 1 summary"), "{written}");
+    assert!(written.contains("~120000 → ~"), "{written}");
+
+    // Eight requests: six turns, the compaction, and the final answer.
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 8, "{} requests", bodies.len());
+
+    // The compaction request itself: the system prompt, the messages being
+    // replaced, and the compaction instruction — and no tools, because a
+    // compaction request has nothing to execute.
+    let compaction_request = request_messages(&mock, 6);
+    assert_eq!(compaction_request.len(), 1 + 5 + 1, "{compaction_request:?}");
+    assert_eq!(compaction_request[0].role, Role::System);
+    assert_eq!(compaction_request[1].role, Role::User);
+    assert_eq!(compaction_request[1].content.as_deref(), Some("the task"));
+    assert_eq!(
+        compaction_request[compaction_request.len() - 1].content.as_deref(),
+        Some(fleet::compaction::COMPACTION_INSTRUCTION)
+    );
+    assert!(bodies[6].get("tools").is_none(), "a compaction request carries no tools");
+
+    // The next request carries the summary and the verbatim tail.
+    let after = request_messages(&mock, 7);
+    assert_eq!(after.len(), 1 + 1 + 4 * 2, "{after:?}");
+    assert_eq!(after[0].role, Role::System);
+    assert_eq!(
+        after[1].content.as_deref(),
+        Some(
+            "Summary of turns 1 through 2, compacted to fit the window:\n\n- the summary of the early turns"
+        )
+    );
+    // The tail opens on an assistant message, so the sequence stays valid
+    // for the API (KI-016's failure in a new shape), and it holds the last
+    // four turns' calls and results verbatim.
+    assert_eq!(after[2].role, Role::Assistant);
+    assert_eq!(after[2].tool_calls[0].id, "call-3");
+    assert_eq!(after[3].role, Role::Tool);
+    assert_eq!(after[3].tool_call_id.as_deref(), Some("call-3"));
+    assert_eq!(after[after.len() - 1].content.as_deref(), Some("exit 0\n--- stdout ---\n6\n"));
+
+    // The log reconstructs that request byte for byte: replay's message
+    // list is exactly what was sent after the system prompt.
+    let records = session::replay(&session.path()).unwrap();
+    let replayed = session::messages(before_final_answer(&records));
+    assert_eq!(replayed, after[1..].to_vec(), "replay equals what was sent");
+
+    // The compaction record, with its range and its counts.
+    match records.iter().find(|record| matches!(record, Record::Compaction { .. })) {
+        Some(Record::Compaction {
+            summary,
+            first_turn,
+            last_turn,
+            tokens_before,
+            tokens_after,
+        }) => {
+            assert_eq!(summary, "- the summary of the early turns");
+            assert_eq!(*first_turn, 1);
+            assert_eq!(*last_turn, 2);
+            assert_eq!(*tokens_before, 120_000);
+            assert!(*tokens_after > 0 && *tokens_after < *tokens_before);
+        }
+        other => panic!("expected a compaction record, got {other:?}"),
+    }
+    assert!(records.iter().any(|record| matches!(record, Record::End { .. })));
+    // And the session lists as compacted.
+    assert!(session::list(&home).unwrap()[0].compacted);
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn the_measure_is_the_apis_own_count_when_it_reports_one() {
+    // A conversation whose chars/4 estimate is far past the budget while
+    // the API reports a prompt that fits: no fold. The two paths are
+    // separated by scripting the usage, not by fudging the messages.
+    let home = temp_home("compaction-api-measure");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let big = "x".repeat(400_000);
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "bash", &format!(r#"{{"command":"echo {big}"}}"#)),
+        assistant_stream("done"),
+    ]);
+    let mut progress: Vec<u8> = Vec::new();
+    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 5, "the task", &mut progress)
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    // Two requests only: no compaction request was made.
+    assert_eq!(mock.bodies().len(), 2);
+    let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
+    assert!(!written.contains("compacted"), "{written}");
+    assert!(
+        !session::replay(&session.path())
+            .unwrap()
+            .iter()
+            .any(|record| matches!(record, Record::Compaction { .. }))
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn the_measure_falls_back_to_the_estimate_when_usage_is_absent() {
+    // The same shape with the usage frames removed: the estimate is what
+    // crosses, and the fold happens. Five uncounted turns carry enough
+    // characters for the estimate to pass the budget on its own, and five
+    // assistant turns is the first point a fold has anything to replace —
+    // so the tail is four turns and the fold replaces turn 1.
+    let home = temp_home("compaction-estimate-measure");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let big = "x".repeat(400_000);
+    let mut script: Vec<ScriptedResponse> = (1..=5)
+        .map(|index| {
+            tool_call_stream_uncounted(
+                &format!("call-{index}"),
+                "bash",
+                &format!(r#"{{"command":"echo {big}"}}"#),
+            )
+        })
+        .collect();
+    // The compaction request, itself uncounted, then the final answer.
+    script.push(stream(vec![
+        content_delta("- the estimated summary"),
+        finish_frame("stop"),
+        "data: [DONE]".to_string(),
+    ]));
+    script.push(assistant_stream("done"));
+    let mock = MockApi::start(script);
+    let mut progress: Vec<u8> = Vec::new();
+    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
+    assert!(written.contains("compacted: 1 turn → 1 summary"), "{written}");
+    // Seven requests: five turns, the compaction, and the final answer.
+    assert_eq!(mock.bodies().len(), 7);
+    // The record's `tokens_before` is the estimate, which is what the
+    // absence of usage forces — and it is at least the budget, because
+    // that is what made it fire.
+    match session::replay(&session.path())
+        .unwrap()
+        .iter()
+        .find(|record| matches!(record, Record::Compaction { .. }))
+    {
+        Some(Record::Compaction { tokens_before, .. }) => {
+            assert!(*tokens_before >= fleet::compaction::COMPACTION_TOKEN_BUDGET);
+        }
+        other => panic!("expected a compaction record, got {other:?}"),
+    }
+    // And the request after the fold is the compacted shape.
+    let after = request_messages(&mock, 6);
+    assert_eq!(after.len(), 1 + 1 + 4 * 2, "{after:?}");
+    let records = session::replay(&session.path()).unwrap();
+    assert_eq!(
+        session::messages(before_final_answer(&records)),
+        after[1..].to_vec(),
+        "replay equals what was sent"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn one_compaction_per_crossing_and_the_tool_loop_survives_it() {
+    // The turns after a fold do not fold again, and the calls after it
+    // still execute and log.
+    let home = temp_home("compaction-once");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut script = crossing_script("- the summary");
+    // Two more tool-calling turns after the fold, still reporting a count
+    // past the budget: neither of them folds again.
+    script.pop();
+    script.push(counting_turn(7, 130_000));
+    script.push(counting_turn(8, 140_000));
+    script.push(assistant_stream("done"));
+    let mock = MockApi::start(script);
+    let mut progress: Vec<u8> = Vec::new();
+    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    let records = session::replay(&session.path()).unwrap();
+    assert_eq!(
+        records.iter().filter(|record| matches!(record, Record::Compaction { .. })).count(),
+        1,
+        "{records:?}"
+    );
+    let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
+    assert_eq!(written.matches("compacted:").count(), 1, "{written}");
+    // The tool loop's integrity across the fold: every call the model made
+    // executed and logged, before and after.
+    assert_eq!(
+        records.iter().filter(|record| matches!(record, Record::ToolResult { .. })).count(),
+        8
+    );
+    // The final request carries the summary, the tail's four turns, and
+    // the two post-fold turns — the fold is not repeated.
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 10);
+    let after = request_messages(&mock, 9);
+    assert_eq!(after.len(), 1 + 1 + 4 * 2 + 2 * 2, "{after:?}");
+    assert_eq!(
+        after[after.len() - 1].content.as_deref(),
+        Some("exit 0\n--- stdout ---\n8\n")
+    );
+    assert_eq!(
+        session::messages(before_final_answer(&records)),
+        after[1..].to_vec(),
+        "replay equals what was sent"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn a_compacted_session_resumes_from_disk_and_continues_coherently() {
+    // The resumed run's first request carries the summary the earlier run
+    // logged, and its turns continue the log's own numbering.
+    let home = temp_home("compaction-resume");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let id = session.id().to_string();
+    let mock = MockApi::start(crossing_script("- the summary of the early turns"));
+    let mut progress: Vec<u8> = Vec::new();
+    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert!(String::from_utf8(std::mem::take(&mut progress)).unwrap().contains("compacted:"));
+    drop(mock);
+
+    // Resume from disk and ask for more.
+    let path = session::session_path(&home, &id);
+    let mut resumed = Session::open(&path).unwrap();
+    let mock = MockApi::start(vec![assistant_stream("carried on coherently")]);
+    let mut progress: Vec<u8> = Vec::new();
+    let report = run_capturing(&mock, &mut resumed, Box::new(ApproveAll), 20, "keep going", &mut progress)
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.final_message.as_deref(), Some("carried on coherently"));
+    // The resumed run is well under the budget already, so it folds
+    // nothing: one compaction in the log's life, not one per resume.
+    let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
+    assert!(!written.contains("compacted"), "{written}");
+
+    // The first request of the resumed run carries the summary, the tail,
+    // the earlier run's own final answer, and the new task after it —
+    // which is what "continues coherently" means: nothing the earlier run
+    // said is lost, and nothing it folded is repeated.
+    let first = request_messages(&mock, 0);
+    assert_eq!(first.len(), 1 + 1 + 4 * 2 + 2, "{first:?}");
+    assert_eq!(
+        first[1].content.as_deref(),
+        Some(
+            "Summary of turns 1 through 2, compacted to fit the window:\n\n- the summary of the early turns"
+        )
+    );
+    assert_eq!(first[first.len() - 2].content.as_deref(), Some("All done."));
+    assert_eq!(first[first.len() - 1].content.as_deref(), Some("keep going"));
+
+    // The log still holds exactly one compaction, and its turn numbering
+    // continues from the log's own last answer: the fold's turn, the
+    // answer after it, and the resumed run's own turn.
+    let records = session::replay(&path).unwrap();
+    assert_eq!(
+        records.iter().filter(|record| matches!(record, Record::Compaction { .. })).count(),
+        1,
+        "{records:?}"
+    );
+    let conversation = session::conversation(&records);
+    assert_eq!(conversation.next_turn, 9);
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn an_empty_summary_skips_the_fold_rather_than_dropping_the_conversation() {
+    // A compaction request that answers with nothing is a fold that would
+    // replace the conversation with nothing. It is skipped: the run keeps
+    // its context, no record is written, and the next request is the one
+    // it would have been anyway.
+    let home = temp_home("compaction-empty-summary");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut script = crossing_script("");
+    script.pop();
+    script.push(assistant_stream("done"));
+    let mock = MockApi::start(script);
+    let mut progress: Vec<u8> = Vec::new();
+    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
+    assert!(written.contains("compaction skipped"), "{written}");
+    assert!(!written.contains("compacted:"), "{written}");
+    let records = session::replay(&session.path()).unwrap();
+    assert!(
+        !records.iter().any(|record| matches!(record, Record::Compaction { .. })),
+        "{records:?}"
+    );
+    // The final request still carries the whole conversation.
+    let after = request_messages(&mock, 7);
+    assert_eq!(after.len(), 1 + 1 + 6 * 2, "{after:?}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn a_run_under_the_budget_logs_no_compaction_record() {
+    // The ordinary run, byte for byte: the record is additive, so a log
+    // without one is the log it has always been.
+    let home = temp_home("compaction-ordinary");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "bash", r#"{"command":"echo hello"}"#),
+        assistant_stream("All done."),
+    ]);
+    let mut progress = Vec::new();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say hello").await.unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
+    assert!(!written.contains("compacted"), "{written}");
+    assert!(!written.contains("compaction skipped"), "{written}");
+    // Two requests, the log's own shape, and no compaction marker.
+    assert_eq!(mock.bodies().len(), 2);
+    let records = session::replay(&session.path()).unwrap();
+    assert_eq!(records.len(), 6, "{records:?}");
+    assert!(!session::list(&home).unwrap()[0].compacted);
+    // Every message the second request carried is reconstructable from the
+    // log, and the log holds the final answer after it.
+    let second = request_messages(&mock, 1);
+    let replayed = session::messages(&records);
+    assert!(replayed.starts_with(&second[1..]), "{replayed:?}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn the_compaction_request_is_reconstructable_from_the_log() {
+    // Hard rule 5, applied to the compaction request itself: the messages
+    // it carried are the records before the compaction record, the system
+    // prompt is the compiled-in constant, and the instruction is the
+    // compiled-in constant beside it.
+    let home = temp_home("compaction-reconstructable");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mock = MockApi::start(crossing_script("- the summary"));
+    let mut progress: Vec<u8> = Vec::new();
+    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert!(String::from_utf8(std::mem::take(&mut progress)).unwrap().contains("compacted:"));
+    let records = session::replay(&session.path()).unwrap();
+    let fold = records
+        .iter()
+        .position(|record| matches!(record, Record::Compaction { .. }))
+        .expect("the compaction record");
+    let Record::Compaction { first_turn, last_turn, .. } = &records[fold] else { unreachable!() };
+    // The records before the fold, split by the same tail function the
+    // agent applied, are exactly the messages the request replaced.
+    let replaced = replaced_by(&records, *last_turn);
+    let wanted = request_messages(&mock, 6);
+    assert_eq!(replaced.len() + 2, wanted.len(), "{replaced:?}");
+    assert_eq!(
+        replaced,
+        wanted[1..wanted.len() - 1].to_vec(),
+        "the log's preceding records are the compaction request's messages"
+    );
+    assert_eq!(wanted[0].content.as_deref(), Some(fleet::agent::SYSTEM_PROMPT));
+    assert_eq!(
+        wanted[wanted.len() - 1].content.as_deref(),
+        Some(fleet::compaction::COMPACTION_INSTRUCTION)
+    );
+    // And the range the record names is the range the log holds: five
+    // messages spanning turns 1 and 2.
+    assert_eq!(*first_turn, 1);
+    assert_eq!(*last_turn, 2);
+    assert_eq!(replaced.len(), 5);
     std::fs::remove_dir_all(&home).ok();
 }

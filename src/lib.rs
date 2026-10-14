@@ -7,6 +7,7 @@ pub mod agent;
 pub mod api;
 pub mod calib;
 pub mod cli;
+pub mod compaction;
 pub mod doctor;
 pub mod home;
 pub mod lanes;

@@ -20,6 +20,9 @@ pub enum Entry {
     Tool(ToolCard),
     /// One lane joining the run, with the tools it brought.
     Lane(LaneCard),
+    /// One compaction: the turns it folded into a summary, and what the
+    /// context cost before and after.
+    Compaction(CompactionCard),
 }
 
 /// One tool call as a card: name, one-line summary, a status dot, and the
@@ -38,6 +41,16 @@ pub struct ToolCard {
 pub struct LaneCard {
     pub lane: String,
     pub tool_count: usize,
+}
+
+/// One compaction as a card, in the same family as a tool card: how many
+/// turns became one summary, and what the context cost either side of
+/// the fold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionCard {
+    pub turns: usize,
+    pub tokens_before: u64,
+    pub tokens_after: u64,
 }
 
 /// Where a tool call stands.
@@ -394,6 +407,19 @@ impl App {
                 self.status.provider = Some(provider);
                 self.status.route_how = Some(how);
             }
+            UiEvent::Compacted { turns, tokens_before, tokens_after } => {
+                // A compaction is a fact about the run, not something the
+                // model said: it flushes the streaming tail and lands as
+                // its own block, exactly like a lane joining. The summary
+                // it produced is in the next request, and the log's
+                // `compaction` record carries it.
+                self.flush_streaming();
+                self.entries.push(Entry::Compaction(CompactionCard {
+                    turns,
+                    tokens_before,
+                    tokens_after,
+                }));
+            }
             UiEvent::Memory { shape, facts } => {
                 // What the run's assembled memory carried: the status bar
                 // shows the shape and the fact count, the live half of the
@@ -728,6 +754,17 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // so the tool cards that follow read as the lane's own.
         Record::LaneTools { lane, tools } => {
             Some(Entry::Lane(LaneCard { lane: lane.clone(), tool_count: tools.len() }))
+        }
+        // A `compaction` record replays to one card: the turns it folded,
+        // rebuilt from the range it names. The summary itself is not the
+        // conversation's text — it stands in for turns the log still
+        // holds — so the card names the fold rather than repeating it.
+        Record::Compaction { first_turn, last_turn, tokens_before, tokens_after, .. } => {
+            Some(Entry::Compaction(CompactionCard {
+                turns: crate::compaction::turns_in_range(*first_turn, *last_turn),
+                tokens_before: *tokens_before,
+                tokens_after: *tokens_after,
+            }))
         }
         // The skills record is bookkeeping about the system prompt, like
         // `start` and `end`: it replays to no conversation block. A
@@ -1416,7 +1453,72 @@ mod tests {
             created: "2026-10-13T00:00:00Z".to_string(),
             ended: false,
             kind: None,
+            compacted: false,
             path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),
         }
+    }
+
+    /// A compaction lands as its own block in the house card family: a
+    /// dot, what happened, and what it cost — never the summary's prose,
+    /// which belongs to the request it rides in.
+    #[test]
+    fn a_compaction_lands_as_its_own_card() {
+        let mut app = app();
+        app.apply_ui_event(UiEvent::Turn(3));
+        app.apply_ui_event(UiEvent::Token("half a thought".to_string()));
+        app.apply_ui_event(UiEvent::Compacted {
+            turns: 6,
+            tokens_before: 120_000,
+            tokens_after: 900,
+        });
+        // The streaming tail flushed when the card landed, and the run's
+        // own turn counter is untouched: a compaction is a fact about the
+        // conversation, not a turn of it.
+        assert_eq!(
+            app.entries,
+            vec![
+                Entry::Assistant("half a thought".to_string()),
+                Entry::Compaction(CompactionCard {
+                    turns: 6,
+                    tokens_before: 120_000,
+                    tokens_after: 900,
+                }),
+            ]
+        );
+        assert_eq!(app.status.turn, 3);
+        assert!(app.status.working);
+    }
+
+    /// A resumed conversation shows the compactions its earlier runs
+    /// performed, rebuilt from the range each record names.
+    #[test]
+    fn seeding_a_log_shows_the_compactions_it_performed() {
+        let mut app = app();
+        app.seed(&[
+            Record::User { content: "the task".to_string() },
+            Record::Assistant { content: None, tool_calls: Vec::new() },
+            Record::Compaction {
+                summary: "- did the thing".to_string(),
+                first_turn: 1,
+                last_turn: 2,
+                tokens_before: 120_000,
+                tokens_after: 900,
+            },
+            Record::Assistant { content: Some("carried on".to_string()), tool_calls: Vec::new() },
+        ]);
+        assert_eq!(
+            app.entries,
+            vec![
+                Entry::User("the task".to_string()),
+                // The summary stands in for turns 1 through 2; the card
+                // names the fold rather than repeating the summary.
+                Entry::Compaction(CompactionCard {
+                    turns: 2,
+                    tokens_before: 120_000,
+                    tokens_after: 900,
+                }),
+                Entry::Assistant("carried on".to_string()),
+            ]
+        );
     }
 }

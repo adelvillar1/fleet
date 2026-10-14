@@ -316,6 +316,11 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
         if summary.kind.as_deref() == Some(crate::session::SUBAGENT_KIND) {
             spans.push(Span::styled("  subagent", Style::new().fg(palette::DIM)));
         }
+        // A compacted session replays as a compacted shape, so the picker
+        // marks it before it is opened rather than after.
+        if summary.compacted {
+            spans.push(Span::styled("  compacted", Style::new().fg(palette::DIM)));
+        }
         lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -474,6 +479,37 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                     Style::new().fg(palette::DIM),
                 ),
             ])]
+        }
+        Entry::Compaction(card) => {
+            // A compaction is the same family as a tool card, rendered in
+            // the same two-line shape: the dot, the bold accent name, the
+            // dim detail, and the settled state — with the token counts
+            // underneath, wrapped, exactly as a tool card wraps its
+            // preview. The summary itself is in the next request, not
+            // something to render here.
+            let mut lines = vec![Line::from(vec![
+                Span::styled(" \u{2713} ", Style::new().fg(palette::DONE)),
+                Span::styled(
+                    "compacted",
+                    Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ", Style::new()),
+                Span::styled(
+                    format!("{} turns \u{2192} 1 summary", card.turns),
+                    Style::new().fg(palette::DIM),
+                ),
+                Span::styled("  done", Style::new().fg(palette::DONE)),
+            ])];
+            for chunk in wrap(
+                &format!("~{} \u{2192} ~{} tokens", card.tokens_before, card.tokens_after),
+                width.saturating_sub(4).max(8),
+            ) {
+                lines.push(Line::from(vec![
+                    Span::styled("   \u{2514} ", Style::new().fg(palette::DIM)),
+                    Span::styled(chunk, Style::new().fg(palette::DIM)),
+                ]));
+            }
+            lines
         }
     }
 }
@@ -691,6 +727,7 @@ mod tests {
             created: "2026-10-13T10:10:10Z".to_string(),
             ended: true,
             kind: None,
+            compacted: false,
             path: std::path::PathBuf::from("/tmp/x.jsonl"),
         }]);
         let picker = draw(&app, 80, 24);
@@ -698,6 +735,8 @@ mod tests {
         assert!(picker.contains("20261013T101010Z-abcdef"), "{picker}");
         assert!(picker.contains("ended"), "{picker}");
         assert!(picker.contains("(current)"), "{picker}");
+        // An ordinary session carries no compaction marker.
+        assert!(!picker.contains("compacted"), "{picker}");
 
         // A delegated child's log is an ordinary session with a marker:
         // the picker names the kind beside the row.
@@ -708,11 +747,28 @@ mod tests {
             created: "2026-10-13T11:11:11Z".to_string(),
             ended: true,
             kind: Some(crate::session::SUBAGENT_KIND.to_string()),
+            compacted: false,
             path: std::path::PathBuf::from("/tmp/child.jsonl"),
         }]);
         let child_picker = draw(&children, 80, 24);
         assert!(child_picker.contains("subagent"), "{child_picker}");
         assert!(child_picker.contains("20261013T111111Z-fedcba"), "{child_picker}");
+
+        // A compacted session replays as a compacted shape, so the picker
+        // marks it before it is opened.
+        let mut folded = fresh();
+        folded.open_sessions(vec![SessionSummary {
+            id: "20261013T121212Z-cabbag".to_string(),
+            model: "deepseek-chat".to_string(),
+            created: "2026-10-13T12:12:12Z".to_string(),
+            ended: true,
+            kind: None,
+            compacted: true,
+            path: std::path::PathBuf::from("/tmp/folded.jsonl"),
+        }]);
+        let folded_picker = draw(&folded, 80, 24);
+        assert!(folded_picker.contains("compacted"), "{folded_picker}");
+        assert!(folded_picker.contains("20261013T121212Z-cabbag"), "{folded_picker}");
 
         // The approval modal.
         let mut approving = fresh();
@@ -976,5 +1032,35 @@ mod tests {
         let (lines, cursor) = input_lines(&app.input, app.cursor, 12, 3);
         assert_eq!(cursor, Some((2, 2)));
         assert!(lines[2].to_string().contains("dd"), "{lines:?}");
+    }
+
+    /// The compaction card renders in the house card style: the tool
+    /// card's two-line shape — a dot, the bold accent name, the dim
+    /// detail, the settled state — with the token counts wrapped
+    /// underneath, so nothing is cut off at the pane's edge.
+    #[test]
+    fn the_compaction_card_renders_in_the_house_card_style() {
+        let mut app = fresh();
+        app.apply_ui_event(UiEvent::Turn(3));
+        app.apply_ui_event(UiEvent::Compacted {
+            turns: 6,
+            tokens_before: 120_000,
+            tokens_after: 900,
+        });
+        let chat = draw(&app, 80, 24);
+        assert!(chat.contains("compacted"), "{chat}");
+        assert!(chat.contains("6 turns → 1 summary"), "{chat}");
+        assert!(chat.contains("done"), "{chat}");
+        // The token counts ride the wrapped detail line, whole.
+        assert!(chat.contains("~120000 → ~900 tokens"), "{chat}");
+        // A one-turn fold never says "1 turns".
+        let mut single = fresh();
+        single.apply_ui_event(UiEvent::Compacted {
+            turns: 1,
+            tokens_before: 100_001,
+            tokens_after: 40,
+        });
+        let rendered = draw(&single, 80, 24);
+        assert!(rendered.contains("1 turns → 1 summary"), "{rendered}");
     }
 }

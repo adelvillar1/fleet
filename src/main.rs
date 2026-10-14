@@ -522,15 +522,18 @@ fn sessions_command() -> ExitCode {
     println!("{:44} {:20} {:16} state", "id", "created", "model");
     for summary in summaries {
         // A delegated child's log is an ordinary session with a marker:
-        // the listing names the kind beside the state.
+        // the listing names the kind beside the state, and a compacted
+        // session is marked the same way — its replay is a compacted
+        // shape, which a reader deserves to know before opening it.
         let kind = summary.kind.as_deref().unwrap_or("session");
+        let markers = if summary.compacted { format!("{kind} compacted") } else { kind.to_string() };
         println!(
             "{:44} {:20} {:16} {} {}",
             summary.id,
             summary.created,
             summary.model,
             if summary.ended { "ended" } else { "open" },
-            kind
+            markers
         );
     }
     ExitCode::SUCCESS

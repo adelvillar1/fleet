@@ -5,10 +5,11 @@
 //! always contains exactly what the model saw.
 
 use crate::api::{ChatRequest, Client, ClientError, Message, Role, StreamEvent, ToolCall, Usage};
+use crate::compaction;
 use crate::lanes;
 use crate::mcp::{CallResult, McpServer, ServerSpec, ToolInfo};
 use crate::memory::{self, Memory};
-use crate::session::{Record, Session};
+use crate::session::{Conversation, Record, Session};
 use crate::tools::{self, LaneTool, LaneTools, Tool, ToolOutcome};
 use std::collections::HashMap;
 use std::io::Write;
@@ -121,6 +122,12 @@ pub enum UiEvent {
     /// routed run; a plain single-endpoint client emits nothing, so the
     /// unrouted and headless paths are unchanged.
     Routed { provider: String, how: String },
+    /// The conversation outgrew the window and was compacted: `turns`
+    /// turns became one summary, and the context went from
+    /// `tokens_before` to `tokens_after`. Emitted once per crossing,
+    /// beside the `compaction` record the log carries; a run that never
+    /// crosses the budget emits nothing, so the ordinary run is unchanged.
+    Compacted { turns: usize, tokens_before: u64, tokens_after: u64 },
     /// What this run's assembled memory carried: the shape the
     /// instruction routed under (empty when unclassified — the
     /// documented fallback) and how many facts entered the turn's
@@ -390,6 +397,28 @@ pub struct Agent<'a> {
     scope: Option<crate::subagents::Scope>,
     /// The calibration stream this run records to, when it has one.
     calib: Option<crate::calib::Stream>,
+    /// One turn number per message in `messages`: the turn of the request
+    /// that first carried it. A compaction record names a turn range, so
+    /// the range has to be a fact about the conversation rather than a
+    /// guess, and a resumed run has to continue the log's own numbering.
+    message_turns: Vec<u64>,
+    /// The turn the next request will be. Seeded from the log on a resume
+    /// so a compacted session's later turns number from where its earlier
+    /// ones stopped.
+    next_turn: u64,
+    /// The token count the last window check measured. A compaction
+    /// resets it to the post-compaction size, which is what makes one
+    /// compaction per crossing rather than one per turn.
+    window_size: u64,
+    /// True from a compaction until a measurement comes in under the
+    /// budget. The latch is the second half of the same guarantee: a
+    /// tail that is itself over the window cannot make the loop compact
+    /// every turn.
+    compaction_latch: bool,
+    /// The API-reported `prompt_tokens` of the last response, or `None`
+    /// when it reported none — in which case the window check falls back
+    /// to the chars/4 estimate of the assembled messages.
+    last_prompt_tokens: Option<u64>,
 }
 
 impl<'a> Agent<'a> {
@@ -412,11 +441,17 @@ impl<'a> Agent<'a> {
         // its named reason when it cannot launch.
         let lanes = LaneRoster::new(options.lane_specs.clone().unwrap_or_default());
         let calib = options.calib.clone();
+        // A resumed run seeds its conversation from the log, and the log's
+        // own turn numbering with it: the compacted shape is materialized
+        // here, so a compacted session resumes as the compacted
+        // conversation it is rather than as the raw records.
+        let Conversation { messages, turns, next_turn } =
+            crate::session::conversation(&records);
         Ok(Agent {
             client,
             options,
             session,
-            messages: crate::session::messages(&records),
+            messages,
             approver,
             progress,
             ui_tx,
@@ -427,6 +462,11 @@ impl<'a> Agent<'a> {
             memory,
             scope,
             calib,
+            message_turns: turns,
+            next_turn,
+            window_size: 0,
+            compaction_latch: false,
+            last_prompt_tokens: None,
         })
     }
 
@@ -767,6 +807,11 @@ impl<'a> Agent<'a> {
                 .map_err(AgentError::Api)?;
             self.usage.prompt_tokens += response.usage.prompt_tokens;
             self.usage.completion_tokens += response.usage.completion_tokens;
+            // The API's own count of this request's prompt, when it
+            // reported one. A provider that reports nothing leaves this
+            // `None`, and the window check falls back to the estimate.
+            self.last_prompt_tokens =
+                (response.usage.prompt_tokens > 0).then_some(response.usage.prompt_tokens);
             let choice = response.choices.into_iter().next().ok_or_else(|| {
                 AgentError::Api(ClientError::Decode("response had no choices".to_string()))
             })?;
@@ -815,6 +860,12 @@ impl<'a> Agent<'a> {
                 // only recursion this loop has, and depth one caps it.
                 Box::pin(self.execute_call(&call)).await?;
             }
+            // Between turns: the window check. It runs after the last
+            // response landed and before the next request is built, so
+            // the message list it measures is the one the next request
+            // would carry — and a compaction it performs is already in
+            // place by the time that request is assembled.
+            self.maybe_compact(&system_prompt).await?;
         }
 
         let turns = self.turns;
@@ -826,6 +877,150 @@ impl<'a> Agent<'a> {
             usage: self.usage,
             final_message: None,
         })
+    }
+
+    /// The window check, run between turns: after the last response landed
+    /// and before the next request is built.
+    ///
+    /// The measure is the API-reported `prompt_tokens` of the last
+    /// response when it carried one — the streamed usage does, so this is
+    /// the ordinary case — and the chars/4 estimate of the assembled
+    /// messages when it did not. A conversation under
+    /// [`compaction::COMPACTION_TOKEN_BUDGET`] costs one comparison and
+    /// nothing else, so the run that never approaches the window is
+    /// byte-for-byte the run it has always been.
+    ///
+    /// One compaction per crossing: the counter resets to the
+    /// post-compaction size, and the latch keeps a conversation whose
+    /// tail is itself over the window from being folded every turn.
+    async fn maybe_compact(&mut self, system_prompt: &str) -> Result<(), AgentError> {
+        let measured = self
+            .last_prompt_tokens
+            .unwrap_or_else(|| compaction::estimate_tokens(&self.messages));
+        if measured < compaction::COMPACTION_TOKEN_BUDGET {
+            self.window_size = measured;
+            self.compaction_latch = false;
+            return Ok(());
+        }
+        // Over the budget. Nothing to replace means nothing to compact:
+        // the whole conversation is the verbatim tail already.
+        let tail_start = compaction::tail_start(&self.messages);
+        if self.compaction_latch || tail_start == 0 {
+            self.window_size = measured;
+            return Ok(());
+        }
+        self.compact(system_prompt, tail_start, measured).await
+    }
+
+    /// Summarize-and-continue: one request through this run's own client
+    /// — the same routed path every other request takes, no separate
+    /// provider and no separate model — carrying the messages being
+    /// replaced plus the compaction instruction. The model's answer is
+    /// the summary.
+    ///
+    /// The request is model-visible, so it is logged like any other
+    /// request (hard rule 5): the `compaction` record names the range it
+    /// replaces, and those records are in the log before it, so the
+    /// request itself is reconstructable — system prompt (the compiled-in
+    /// constant), the replaced messages (the preceding records), the
+    /// instruction ([`compaction::COMPACTION_INSTRUCTION`]).
+    ///
+    /// The summary rides as a user-role message framed by
+    /// [`compaction::summary_frame`], the most recent
+    /// [`compaction::COMPACTION_TAIL_TURNS`] turns stay verbatim after
+    /// it, and the record carries the counts either side of the fold.
+    async fn compact(
+        &mut self,
+        system_prompt: &str,
+        tail_start: usize,
+        tokens_before: u64,
+    ) -> Result<(), AgentError> {
+        // The range the summary replaces: from the first message's turn to
+        // the last assistant answer before the tail. A tool result is
+        // numbered for the request that carried it, so the last *assistant*
+        // is the honest end of the range.
+        let first_turn = self.message_turns.first().copied().unwrap_or(1);
+        let last_turn = self.message_turns[..tail_start]
+            .iter()
+            .zip(&self.messages[..tail_start])
+            .filter(|(_, message)| message.role == Role::Assistant)
+            .map(|(turn, _)| *turn)
+            .last()
+            .unwrap_or(first_turn);
+        let turns = compaction::turns_in_range(first_turn, last_turn);
+
+        let mut request_messages = Vec::with_capacity(tail_start + 2);
+        request_messages.push(Message::text(Role::System, system_prompt));
+        request_messages.extend(self.messages[..tail_start].iter().cloned());
+        request_messages.push(Message::text(Role::User, compaction::COMPACTION_INSTRUCTION));
+        // No tools: a compaction request has nothing to execute, and a
+        // declaration on it would invite a call with no context to run in.
+        let request = ChatRequest {
+            model: &self.options.model,
+            messages: &request_messages,
+            tools: Vec::new(),
+        };
+        // The deltas are transport, not content: the summary arrives whole
+        // in the response, and streaming it to the progress sink would
+        // put a second model's prose in the middle of the run's output.
+        let client = self.client;
+        let response = client
+            .chat_stream(&request, |_| {})
+            .await
+            .map_err(AgentError::Api)?;
+        self.usage.prompt_tokens += response.usage.prompt_tokens;
+        self.usage.completion_tokens += response.usage.completion_tokens;
+        let summary = response
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|choice| choice.message.content)
+            .unwrap_or_default();
+        // An empty summary would replace the conversation with nothing.
+        // The fold is skipped rather than performed: the run keeps its
+        // context and its next request, and the log records no compaction
+        // that did not happen.
+        if summary.trim().is_empty() {
+            let _ = writeln!(
+                self.progress,
+                "\u{2014} compaction skipped: the model returned no summary"
+            );
+            let _ = self.progress.flush();
+            self.window_size = tokens_before;
+            return Ok(());
+        }
+
+        let mut compacted = Vec::with_capacity(self.messages.len() - tail_start + 1);
+        compacted.push(Message::text(
+            Role::User,
+            compaction::summary_frame(first_turn, last_turn, &summary),
+        ));
+        compacted.extend_from_slice(&self.messages[tail_start..]);
+        let tokens_after = compaction::estimate_tokens(&compacted);
+        self.messages = compacted;
+        self.message_turns =
+            std::iter::once(first_turn).chain(self.message_turns[tail_start..].iter().copied())
+                .collect();
+
+        self.record(&Record::Compaction {
+            summary: summary.clone(),
+            first_turn,
+            last_turn,
+            tokens_before,
+            tokens_after,
+        })?;
+        let _ = writeln!(
+            self.progress,
+            "\u{2014} compacted: {turns} turn{} \u{2192} 1 summary (~{tokens_before} \u{2192} ~{tokens_after} tokens)",
+            if turns == 1 { "" } else { "s" },
+        );
+        let _ = self.progress.flush();
+        self.emit(UiEvent::Compacted { turns, tokens_before, tokens_after });
+        // The counter resets to the post-compaction size, and the latch
+        // holds until a measurement comes back under the budget.
+        self.window_size = tokens_after;
+        self.compaction_latch = true;
+        Ok(())
     }
 
     /// Execute one call behind the approval gate and record what the model
@@ -929,6 +1124,10 @@ impl<'a> Agent<'a> {
             truncated,
             approved,
         })?;
+        // The same turn rule `push_message` applies: a tool result belongs
+        // to the turn whose request carried it, and it does not advance the
+        // turn.
+        self.message_turns.push(self.next_turn);
         self.messages.push(Message::tool_result(call.id.clone(), output));
         Ok(())
     }
@@ -1141,7 +1340,8 @@ impl<'a> Agent<'a> {
     }
 
     fn push_message(&mut self, message: Message) -> Result<(), AgentError> {
-        let record = match message.role {
+        let role = message.role;
+        let record = match role {
             Role::User => Record::User {
                 content: message.content.clone().unwrap_or_default(),
             },
@@ -1159,6 +1359,14 @@ impl<'a> Agent<'a> {
             Role::System => return Ok(()),
         };
         self.record(&record)?;
+        // The turn rule, the same one `session::conversation` applies when
+        // it replays a log: a user message and the assistant answer that
+        // follows it share a turn, a tool result belongs to the turn whose
+        // request carried it, and an assistant answer advances the turn.
+        self.message_turns.push(self.next_turn);
+        if role == Role::Assistant {
+            self.next_turn += 1;
+        }
         self.messages.push(message);
         Ok(())
     }
@@ -2193,5 +2401,126 @@ mod tests {
                     .unwrap()
                     .file_name(),
             )
+    }
+
+    // --- compaction -------------------------------------------------------
+
+    /// An agent over a session log at `path`, for the bookkeeping tests.
+    /// Its client is never called.
+    fn agent_over_log(path: &std::path::Path) -> Agent<'static> {
+        let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
+        let session = Box::leak(Box::new(crate::session::Session::open(path).unwrap()));
+        let options = AgentOptions {
+            model: "m".to_string(),
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            memory: None,
+            scope: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        Agent::new(client, options, session, Box::new(ApproveAll), progress).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_resumed_agent_numbers_its_turns_from_the_logs_own() {
+        // A log with no compaction: the seeded conversation's turn
+        // numbering is the one the log itself implies, so a resumed run's
+        // turns continue rather than restart.
+        let home = scratch("compaction-turns");
+        let mut written = crate::session::Session::create(&home, "m").unwrap();
+        written.record(&Record::User { content: "the task".into() }).unwrap();
+        written
+            .record(&Record::Assistant {
+                content: Some("first".into()),
+                tool_calls: Vec::new(),
+            })
+            .unwrap();
+        written
+            .record(&Record::Assistant {
+                content: Some("second".into()),
+                tool_calls: Vec::new(),
+            })
+            .unwrap();
+        let path = written.path().to_path_buf();
+
+        let mut agent = agent_over_log(&path);
+        assert_eq!(agent.next_turn, 3, "two answers have landed");
+        assert_eq!(agent.message_turns, vec![1, 1, 2]);
+        // The next push takes turn 3, and an assistant answer advances it.
+        agent.push_message(Message::text(Role::User, "keep going")).unwrap();
+        assert_eq!(agent.message_turns.last().copied(), Some(3));
+        assert_eq!(agent.next_turn, 3);
+        agent
+            .push_message(Message {
+                role: Role::Assistant,
+                content: Some("third".into()),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+            })
+            .unwrap();
+        assert_eq!(agent.message_turns.last().copied(), Some(3));
+        assert_eq!(agent.next_turn, 4);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test]
+    async fn a_compacted_log_seeds_the_compacted_shape_and_its_numbering() {
+        // The log a fold leaves behind replays to the framed summary plus
+        // the verbatim tail, and the turns continue from the log's own
+        // last answer — which is what a second compaction's range names.
+        let home = scratch("compaction-seed");
+        let mut written = crate::session::Session::create(&home, "m").unwrap();
+        written.record(&Record::User { content: "the task".into() }).unwrap();
+        for index in 0..6 {
+            written
+                .record(&Record::Assistant {
+                    content: None,
+                    tool_calls: vec![crate::api::ToolCall {
+                        id: format!("call-{index}"),
+                        kind: "function".to_string(),
+                        function: crate::api::FunctionCall {
+                            name: "bash".to_string(),
+                            arguments: "{}".to_string(),
+                        },
+                    }],
+                })
+                .unwrap();
+            written
+                .record(&Record::ToolResult {
+                    call_id: format!("call-{index}"),
+                    name: "bash".to_string(),
+                    output: format!("output {index}"),
+                    truncated: false,
+                    approved: true,
+                })
+                .unwrap();
+        }
+        written
+            .record(&Record::Compaction {
+                summary: "- the summary".to_string(),
+                first_turn: 1,
+                last_turn: 2,
+                tokens_before: 120_000,
+                tokens_after: 900,
+            })
+            .unwrap();
+        let path = written.path().to_path_buf();
+
+        let agent = agent_over_log(&path);
+        // The compacted shape: the framed summary, then the tail.
+        assert_eq!(agent.messages.len(), 1 + 4 * 2, "{:?}", agent.messages);
+        assert_eq!(
+            agent.messages[0].content.as_deref(),
+            Some("Summary of turns 1 through 2, compacted to fit the window:\n\n- the summary")
+        );
+        assert_eq!(agent.messages[1].tool_calls[0].id, "call-2");
+        // Turn 6 was the last answer, so the next request is turn 7.
+        assert_eq!(agent.next_turn, 7);
+        assert_eq!(agent.message_turns.len(), agent.messages.len());
+        assert_eq!(agent.message_turns[0], 1, "the summary carries the range's first turn");
+        std::fs::remove_dir_all(&home).ok();
     }
 }
