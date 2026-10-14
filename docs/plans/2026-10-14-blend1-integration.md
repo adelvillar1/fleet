@@ -129,16 +129,69 @@ B11), then vendored — fleet does not fork lane cores.
   escalates and the answer is flagged), the reprocess (a sys1-wrong
   score reprocesses and the corrected answer ships), and the corpus
   recall (a seeded fact is retrieved and quoted unaltered).
-- **B15 — the derived use cases, documented.**
-  `docs/features/blend1.md` carries the derived use cases with their
-  wiring: (1) the grounded ask in-run — the agent calls the lane when
-  reasoning must stand on facts; (2) project-fact recall — the agent
-  searches the project's corpus mid-run; (3) the scheduled corpus
-  refresh — the project's facts stay current without a manual step;
-  (4) the escalation — an inconclusive answer costs one larger call, not
-  a silently weaker one; (5) the reprocess — a wrong answer is corrected
-  before it ships, not after. Each names its fleet surface (the tool,
-  the cron job, the eval scenario, the card).
+- **B15 — the derived use cases, problem-shape first.** The use cases
+  are derived from the problem shapes that recur in the owner's work —
+  each shape names the naive path that fails today, the pieces that
+  solve it (including the combinations), and its fleet surface.
+  `docs/features/blend1.md` is structured the same way:
+  - **PS1 — the cold-context question.** "What does project X say
+    about Y?" asked of a repo whose docs haven't been read this month.
+    The naive path fails by inventing (an ungrounded model) or doesn't
+    scale (reading 20 repos' docs by hand). *Solution:* the per-project
+    corpus + the grounded ask (semantic recall grounds the answer; d1
+    gates whether synthesis is needed at all — a direct answer from
+    retrieved facts costs nothing); `search` when a quote is enough.
+  - **PS2 — the number that must be right.** "How many / what rate /
+    which segment / what's the forecast?" — the answer is a computed
+    fact, and LLMs do not do math: the naive path is confident, plausible,
+    wrong. *Solution:* the tabular lane (TabPFN computes; the number
+    rides into the synthesis prompt as a given the model may not alter)
+    + the sys1-scored reprocess (if the model altered it anyway, the
+    score catches it and reprocesses) + the validation gate's number
+    check. **Combination with PS4:** the computed fact with the
+    confidence ladder behind it.
+  - **PS3 — the docs that drifted.** Derived knowledge (CLAUDE.md,
+    recaps, plans) drifting from its source (the code), discovered at
+    the worst moment — a warmup that reads a stale recap. *Solution:*
+    the scheduled corpus refresh per project (hash-checked staleness —
+    the steady state is file reads; a rebuild names what changed) + the
+    tower board's per-project git facts (the drift beside the commits
+    that caused it). **Combination with PS1:** the cold question
+    answered from a corpus that stays current.
+  - **PS4 — the cheap answer that might be wrong.** Routine questions
+    that mostly don't need a frontier model — except when they do, and
+    you don't know which until you've looked. Paying frontier prices
+    for everything is waste; shipping maybe-right is worse. *Solution:*
+    the ladder — the router gate (the direct path costs $0), the GLiDE
+    gate with its bounded retry, the sys1-scored reprocess (wrong →
+    corrected before it ships), the escalation (inconclusive → one
+    larger call, flagged). The combination is the point: cheap by
+    default, correct on exception, every exception named in the result.
+  - **PS5 — the ecosystem's currency.** ~20 repos, the lanes and the
+    kit moving under him; "what changed, and does it affect me" is not
+    answerable by watching. *Solution:* a corpus per repo (the refresh
+    keeps each current) + the web lane (TinyFish search + fetch for
+    what's outside the local docs) + the project-resolved search.
+    **Combination with PS4:** cross-repo currency, cheap unless it
+    isn't.
+  - **PS6 — the claim that must be checked.** The standing rule:
+    'done' means tool-verified. A claim about a system ("the gate is
+    green", "the lane serves") must be checked against evidence — and
+    the checker's own answer must be grounded, or the verification is
+    theater. *Solution:* the grounded ask over the project's corpus +
+    the tabular lane for the counts + the reprocess when the answer
+    contradicts the evidence + the escalation when the evidence is
+    thin. **Combination with PS2:** verification where the number is
+    the claim.
+  - **PS7 — the context that doesn't survive.** Every session starts
+    cold; the agent re-reads or invents. Durable project knowledge must
+    survive session boundaries — and the agent's own history and the
+    project's facts are different things with different homes.
+    *Solution:* fleet's `memories/` (the agent's durable facts,
+    git-tracked, provenance) + the corpus (the project's facts,
+    semantically indexed) + the scheduled refresh (the project's half
+    stays current without a session). The division is documented, not
+    merged.
 
 ## Design decisions
 
