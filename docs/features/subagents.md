@@ -235,3 +235,10 @@ so its requests are already inside the parent's decision row's
 - **Not a spawner.** Depth one, enforced twice.
 - **Not concurrent.** The parent's turn waits. A child that takes twenty
   turns takes twenty turns of the parent's turn.
+- **Not evidence.** The summary is the child's own report. The result
+  returns the means to check it — the session id, the log path, the turn
+  count, the outcome — and the tool's description tells the parent to
+  verify any external side effect the child claims (a file it wrote, a
+  command it ran) before reporting that claim as fact. The verification
+  is the parent's, by design: a mechanism that "verified" would be the
+  child grading its own homework.

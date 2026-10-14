@@ -81,7 +81,7 @@ pub fn subagent_call_prefix() -> String {
 pub fn subagent_spec() -> ToolSpec {
     ToolSpec::function(
         SUBAGENT_TOOL,
-        "Spawn a subagent that runs one delegated task in its own session, with its own context and no knowledge of this conversation. The goal must be self-contained: state the whole task, every path, and every constraint, because the subagent sees nothing else. It runs on this same model, and its tool calls still ask for approval. Its admitted tools default to bash, read_file, write_file, list_dir, and use_skill; pass `tools` to narrow that list, and nothing outside it is callable — remember, supersede, lane tools, and subagent itself are never admitted. It stops at `max-turns` (default 20, at most 50) and returns its final answer, its session id and log path, its turn count, and its outcome (completed, max-turns, or failed) — a failure returns the partial result and the reason, never silence. Delegate a self-contained piece of work whose intermediate steps would not help you; do the work yourself when you need what you learn along the way.",
+        "Spawn a subagent that runs one delegated task in its own session, with its own context and no knowledge of this conversation. The goal must be self-contained: state the whole task, every path, and every constraint, because the subagent sees nothing else. It runs on this same model, and its tool calls still ask for approval. Its admitted tools default to bash, read_file, write_file, list_dir, and use_skill; pass `tools` to narrow that list, and nothing outside it is callable — remember, supersede, lane tools, and subagent itself are never admitted. It stops at `max-turns` (default 20, at most 50) and returns its final answer, its session id and log path, its turn count, and its outcome (completed, max-turns, or failed) — a failure returns the partial result and the reason, never silence. The summary is the subagent's own report, not evidence: verify any external side effect it claims — a file it wrote, a command it ran — before you report that claim as fact. Delegate a self-contained piece of work whose intermediate steps would not help you; do the work yourself when you need what you learn along the way.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -812,7 +812,11 @@ mod tests {
             .iter()
             .map(|value| value.as_str().unwrap())
             .collect();
-        assert_eq!(admitted, vec!["bash", "read_file", "write_file", "list_dir", "use_skill"]);
+        assert_eq!(
+            admitted,
+            crate::subagents::ADMISSIBLE_TOOLS.to_vec(),
+            "the schema enum and ADMISSIBLE_TOOLS are one set — the comment's coupling is this assertion"
+        );
         for excluded in [REMEMBER_TOOL, SUPERSEDE_TOOL, SUBAGENT_TOOL, "mcp__sem1__probe"] {
             assert!(!admitted.contains(&excluded), "{excluded} must not be admissible");
         }
