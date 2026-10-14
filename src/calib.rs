@@ -180,6 +180,15 @@ pub struct ProposeRow {
     /// The gate's per-step evidence, in the order the steps ran. Empty
     /// for a `waiting` verdict, which never reached the gate.
     pub gate: Vec<GateStepRow>,
+    /// The judged artifact's identity: the 16 hex characters of the
+    /// sha256 over the content this change stages, in the devdec join
+    /// shape. It is what makes the verdict explainable — the
+    /// explanation beat keys its prose to the exact input the gate
+    /// judged, and a drifted artifact is refused rather than explained
+    /// (slice 17). `None` for a row written before the field existed,
+    /// and for a change that stages no content of its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_sha256: Option<String>,
 }
 
 /// One scenario's verdict inside an `eval_corpus` run: the scenario's
@@ -214,6 +223,91 @@ pub struct EvalCorpusRow {
     pub score: f64,
     /// Every scenario's verdict, in corpus order.
     pub scenarios: Vec<EvalScenarioRow>,
+    /// The judged artifact's identity: the 16 hex characters of the
+    /// sha256 over the corpus's own fixed definition — every scenario's
+    /// name and family in corpus order, under the crate's version. The
+    /// corpus is code, so its artifact is its definition: an explanation
+    /// keyed to it names the exact suite that graded the run, and a
+    /// corpus that changed since the row was written is a drift the
+    /// explanation refuses rather than papers over (slice 17).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_sha256: Option<String>,
+}
+
+/// One explanation beat's row: the verdict that was explained, the
+/// artifact it was keyed to, and the ask's telemetry — and never the
+/// prose. The explanation text lands on disk at
+/// `<home>/explanations/<input_sha256>.md` and is recoverable by its
+/// sha; this row is the redacted index of it, the shape
+/// dev-decisions' synthesis lane writes (op/input_sha256/explained_op/
+/// route/validation/explanation_sha256/explanation_chars/cost_usd/
+/// latency_ms) plus Fleet's own selector and the eval-only marker.
+///
+/// The marker is not decoration: `eval_only: true` is the row saying,
+/// in the stream every gate reads, that nothing here gates, blocks, or
+/// applies anything. No verdict reads this op — there is no code path
+/// by which an explanation changes a gate's outcome.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExplainRow {
+    pub ts: String,
+    /// Always `true`. The discipline's own marker: an explanation is
+    /// eval-only prose, never a second verdict.
+    pub eval_only: bool,
+    /// The op of the verdict this explains: `propose` or `eval_corpus`.
+    pub explained_op: String,
+    /// What was selected: the proposal's name, or the scenario's.
+    pub selector: String,
+    /// The judged artifact's sha, the 16 hex characters the explained
+    /// row carries — the join key, and the explanation file's name.
+    pub input_sha256: String,
+    /// The sha of the explanation text on disk, so the file's integrity
+    /// is checkable without reading it into a log.
+    pub explanation_sha256: String,
+    /// The explanation's length in characters.
+    pub explanation_chars: usize,
+    /// The ask's route telemetry, as the lane reported it.
+    pub route: ExplainRouteRow,
+    /// The ask's validation telemetry, as the lane reported it.
+    pub validation: ExplainValidationRow,
+    /// What the ask cost, when the path spent anything. Absent on the
+    /// direct path, which costs nothing: the reader's zero is the same
+    /// fact, and a `null` would break the flat reader that shares this
+    /// file with dev-decisions' own rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// The ask's latency in milliseconds, when the lane reported one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    /// The lane that answered: `blend1`.
+    pub lane: String,
+}
+
+/// The route half of an explanation row's telemetry.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExplainRouteRow {
+    /// The router's generation score, when it reported one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs_generation: Option<f64>,
+    /// The path the ask took: `synthesized`, `direct`, or the lane's
+    /// own word for it.
+    pub path: String,
+    /// The answer shape the router picked.
+    pub answer_shape: String,
+}
+
+/// The validation half of an explanation row's telemetry.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExplainValidationRow {
+    /// The gate's outcome word: `passed`, `failed`, or the lane's own.
+    pub outcome: String,
+    /// Whether the answer answers the question, when the gate rated it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answers_the_question: Option<bool>,
+    /// Whether the answer contradicts recorded facts, when rated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contradicts_facts: Option<bool>,
+    /// The number check's word, when the gate ran one.
+    pub number_check: String,
 }
 
 /// One row in the stream, tagged by its op the way devdec's rows are: the
@@ -228,6 +322,7 @@ pub enum Row {
     Consolidate(ConsolidateRow),
     Propose(ProposeRow),
     EvalCorpus(EvalCorpusRow),
+    Explain(ExplainRow),
 }
 
 impl Row {
@@ -241,6 +336,7 @@ impl Row {
             Row::Consolidate(_) => OP_CONSOLIDATE,
             Row::Propose(_) => OP_PROPOSE,
             Row::EvalCorpus(_) => OP_EVAL_CORPUS,
+            Row::Explain(_) => OP_EXPLAIN,
         }
     }
 
@@ -254,6 +350,7 @@ impl Row {
             Row::Consolidate(row) => &row.ts,
             Row::Propose(row) => &row.ts,
             Row::EvalCorpus(row) => &row.ts,
+            Row::Explain(row) => &row.ts,
         }
     }
 }
@@ -277,8 +374,13 @@ pub const OP_PROPOSE: &str = "propose";
 /// its own performance, and the row the improve gate reads a regression
 /// from.
 pub const OP_EVAL_CORPUS: &str = "eval_corpus";
+/// The explanation op: one verdict explained through the blend1 lane,
+/// eval-only and keyed to the judged artifact's sha. No gate reads it —
+/// the row exists so the prose is auditable beside the verdict, not so
+/// anything can act on it.
+pub const OP_EXPLAIN: &str = "explain";
 /// The ops this slice emits, in the order `fleet calib` groups them.
-pub const OPS: [&str; 7] = [
+pub const OPS: [&str; 8] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -286,6 +388,7 @@ pub const OPS: [&str; 7] = [
     OP_CONSOLIDATE,
     OP_PROPOSE,
     OP_EVAL_CORPUS,
+    OP_EXPLAIN,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -1001,6 +1104,74 @@ pub struct ReadRow {
     /// Empty for every other op.
     #[serde(default)]
     pub scenarios: Vec<ReadEvalScenario>,
+    /// The judged artifact's sha a `propose` or `eval_corpus` row
+    /// carries, and the key an `explain` row joins on — one field, three
+    /// ops, the devdec join shape. Empty for every other op and for a
+    /// row written before the field existed.
+    #[serde(default)]
+    pub input_sha256: String,
+    /// The op an `explain` row explains: `propose` or `eval_corpus`.
+    /// Empty for every other op.
+    #[serde(default)]
+    pub explained_op: String,
+    /// What an `explain` row selected: the proposal's name, or the
+    /// scenario's. Empty for every other op.
+    #[serde(default)]
+    pub selector: String,
+    /// The sha of the explanation text an `explain` row indexes, which
+    /// is also its file's name under `<home>/explanations/`. Empty for
+    /// every other op.
+    #[serde(default)]
+    pub explanation_sha256: String,
+    /// The explanation's length in characters, as an `explain` row
+    /// recorded it. Zero for every other op.
+    #[serde(default)]
+    pub explanation_chars: usize,
+    /// The eval-only marker an `explain` row carries. False for every
+    /// other op, which is what makes the marker mean something: no
+    /// verdict-bearing row claims it.
+    #[serde(default)]
+    pub eval_only: bool,
+    /// What an `explain` row's ask cost. Zero for a direct-path ask and
+    /// for every other op.
+    #[serde(default)]
+    pub cost_usd: f64,
+    /// The ask's latency in milliseconds an `explain` row recorded. Zero
+    /// for every other op.
+    #[serde(default)]
+    pub latency_ms: u64,
+    /// The ask's route telemetry an `explain` row carries, nested the
+    /// way the row writes it. Empty for every other op.
+    #[serde(default)]
+    pub route: ReadExplainRoute,
+    /// The ask's validation telemetry an `explain` row carries. Empty
+    /// for every other op.
+    #[serde(default)]
+    pub validation: ReadExplainValidation,
+}
+
+/// One `explain` row's route half, as the reader keeps it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReadExplainRoute {
+    #[serde(default)]
+    pub needs_generation: Option<f64>,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub answer_shape: String,
+}
+
+/// One `explain` row's validation half, as the reader keeps it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReadExplainValidation {
+    #[serde(default)]
+    pub outcome: String,
+    #[serde(default)]
+    pub answers_the_question: Option<bool>,
+    #[serde(default)]
+    pub contradicts_facts: Option<bool>,
+    #[serde(default)]
+    pub number_check: String,
 }
 
 /// One scenario's verdict as an `eval_corpus` row carries it: the name,
@@ -1196,6 +1367,7 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
         OP_CONSOLIDATE => consolidate_detail(&op_rows),
         OP_PROPOSE => propose_detail(&op_rows),
         OP_EVAL_CORPUS => eval_detail(&op_rows),
+        OP_EXPLAIN => explain_detail(&op_rows),
         _ => Vec::new(),
     };
     let header_right = format!("{} row{}", op_rows.len(), plural(op_rows.len()));
@@ -1388,6 +1560,34 @@ fn eval_detail(rows: &[&ReadRow]) -> Vec<String> {
         lines.push("every scenario passed".to_string());
     } else {
         lines.push(format!("failed: {}", failed.join(" \u{b7} ")));
+    }
+    lines
+}
+
+/// The explanation op's facts: how many verdicts were explained, the
+/// ops they came from, and the last one — what it explained, the path
+/// its ask took, and what it cost. The eval-only marker rides in the
+/// card's first line: the surface that shows the op also says what the
+/// op is not.
+fn explain_detail(rows: &[&ReadRow]) -> Vec<String> {
+    let Some(last) = rows.last() else {
+        return Vec::new();
+    };
+    let mut lines = vec![format!(
+        "{} explained \u{b7} eval-only, no gate reads this op",
+        rows.len()
+    )];
+    let ops: Vec<&str> = rows.iter().map(|row| row.explained_op.as_str()).collect();
+    if !ops.is_empty() {
+        lines.push(format!("explained ops: {}", ops.join(" \u{b7} ")));
+    }
+    let cost = rows.iter().map(|row| row.cost_usd).sum::<f64>();
+    lines.push(format!(
+        "last {} `{}` \u{2192} {} \u{b7} {} chars \u{b7} cost_usd {cost:.4}",
+        last.explained_op, last.selector, last.route.path, last.explanation_chars
+    ));
+    if !last.validation.outcome.is_empty() {
+        lines.push(format!("validation: {}", last.validation.outcome));
     }
     lines
 }
@@ -1974,6 +2174,7 @@ mod tests {
                     detail: "error: test failed: the_ranker".to_string(),
                 },
             ],
+            input_sha256: Some("a1b2c3d4e5f60718".to_string()),
         }))
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&row).unwrap();
@@ -1984,6 +2185,9 @@ mod tests {
         assert_eq!(value["basis"], "inferred");
         assert_eq!(value["verdict"], "refused");
         assert_eq!(value["reason"], "the gate refused the change: test failed");
+        // The judged artifact's identity rides beside the verdict: the
+        // join key an explanation attaches to (slice 17).
+        assert_eq!(value["input_sha256"], "a1b2c3d4e5f60718");
         assert_eq!(value["gate"][0]["step"], "fmt");
         assert_eq!(value["gate"][0]["ok"], true);
         assert_eq!(value["gate"][1]["step"], "test");
@@ -2007,6 +2211,7 @@ mod tests {
                     ok: false,
                     detail: "the_ranker".to_string(),
                 }],
+                input_sha256: Some("a1b2c3d4e5f60718".to_string()),
             })],
         );
         let rows = read_day(&root, "2026-10-14", 512);
@@ -2014,6 +2219,7 @@ mod tests {
         assert_eq!(rows[0].op, OP_PROPOSE);
         assert_eq!(rows[0].proposal, "fix-the-ranker");
         assert_eq!(rows[0].verdict, "refused");
+        assert_eq!(rows[0].input_sha256, "a1b2c3d4e5f60718");
         assert_eq!(rows[0].gate.len(), 1);
         assert_eq!(rows[0].gate[0].step, "test");
         assert!(!rows[0].gate[0].ok);
@@ -2029,7 +2235,8 @@ mod tests {
                 "recall_hit",
                 "consolidate",
                 "propose",
-                "eval_corpus"
+                "eval_corpus",
+                "explain"
             ]
         );
     }
@@ -2238,6 +2445,7 @@ mod tests {
             failed,
             score,
             scenarios,
+            input_sha256: Some("0f1e2d3c4b5a6978".to_string()),
         })
     }
 
@@ -2329,6 +2537,89 @@ mod tests {
         assert!(rendered.contains("1 passed \u{b7} 1 failed \u{b7} score 0.50"), "{rendered}");
         // The failing scenario is named on the card, not just counted.
         assert!(rendered.contains("failed: conversation-fold"), "{rendered}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the explain op ---
+
+    fn explain_row(explained_op: &str, selector: &str, sha: &str) -> Row {
+        Row::Explain(ExplainRow {
+            ts: "2026-10-14T13:00:00Z".to_string(),
+            eval_only: true,
+            explained_op: explained_op.to_string(),
+            selector: selector.to_string(),
+            input_sha256: sha.to_string(),
+            explanation_sha256: "5a6b7c8d9e0f1123".to_string(),
+            explanation_chars: 812,
+            route: ExplainRouteRow {
+                needs_generation: Some(0.978),
+                path: "synthesized".to_string(),
+                answer_shape: "synthesized".to_string(),
+            },
+            validation: ExplainValidationRow {
+                outcome: "passed".to_string(),
+                answers_the_question: Some(true),
+                contradicts_facts: Some(false),
+                number_check: "ok".to_string(),
+            },
+            cost_usd: Some(0.0018),
+            latency_ms: Some(15_400),
+            lane: "blend1".to_string(),
+        })
+    }
+
+    #[test]
+    fn the_explain_row_is_redacted_and_carries_the_join_key_and_the_telemetry() {
+        let row = serde_json::to_string(&explain_row("propose", "fix-the-ranker", "a1b2c3d4e5f60718"))
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&row).unwrap();
+        assert_eq!(value["op"], "explain");
+        // The eval-only marker is the row's first claim about itself.
+        assert_eq!(value["eval_only"], true);
+        assert_eq!(value["explained_op"], "propose");
+        assert_eq!(value["selector"], "fix-the-ranker");
+        assert_eq!(value["input_sha256"], "a1b2c3d4e5f60718");
+        assert_eq!(value["explanation_sha256"], "5a6b7c8d9e0f1123");
+        assert_eq!(value["explanation_chars"], 812);
+        assert_eq!(value["route"]["needs_generation"], 0.978);
+        assert_eq!(value["validation"]["outcome"], "passed");
+        assert_eq!(value["cost_usd"], 0.0018);
+        assert_eq!(value["latency_ms"], 15_400);
+        assert_eq!(value["lane"], "blend1");
+        // Redacted by shape: no prompt text and no answer text rides in
+        // the row, under any key a reader might look for.
+        for key in ["prompt", "answer", "text", "explanation", "final_answer", "body"] {
+            assert!(value.get(key).is_none(), "the row carries `{key}`: {row}");
+        }
+    }
+
+    #[test]
+    fn the_reader_keeps_explain_rows_and_the_surface_cards_the_op() {
+        let root = scratch("read-explain");
+        write_rows(
+            &root,
+            "2026-10-14",
+            &[
+                explain_row("propose", "fix-the-ranker", "a1b2c3d4e5f60718"),
+                explain_row("eval_corpus", "conversation-fold", "0f1e2d3c4b5a6978"),
+            ],
+        );
+        let rows = read_day(&root, "2026-10-14", 512);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].op, OP_EXPLAIN);
+        assert_eq!(rows[0].explained_op, "propose");
+        assert_eq!(rows[0].selector, "fix-the-ranker");
+        assert_eq!(rows[0].input_sha256, "a1b2c3d4e5f60718");
+        assert!(rows[0].eval_only);
+        assert_eq!(rows[0].explanation_chars, 812);
+        assert_eq!(rows[0].route.path, "synthesized");
+        assert_eq!(rows[0].route.needs_generation, Some(0.978));
+        assert_eq!(rows[0].validation.outcome, "passed");
+        // The card names the op and says what it is not.
+        let rendered = render(&root, "2026-10-14");
+        assert!(rendered.contains("explain"), "{rendered}");
+        assert!(rendered.contains("2 explained"), "{rendered}");
+        assert!(rendered.contains("eval-only, no gate reads this op"), "{rendered}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

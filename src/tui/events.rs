@@ -36,6 +36,15 @@ pub fn action_for(app: &App, key: &KeyEvent) -> Option<Action> {
             KeyCode::Char('q') if !control => Some(Action::Quit),
             _ => None,
         },
+        // The explanation card is information with a cursor too: it
+        // scrolls, it closes, and it never types.
+        Mode::Explain => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Char('q') if !control => Some(Action::Quit),
+            _ => None,
+        },
         // The modal answers or denies on any key, like the console prompt.
         Mode::Approval => Some(match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => Action::Approve(Approval::Once),
@@ -72,6 +81,8 @@ fn chat_action(app: &App, key: &KeyEvent, control: bool, alt: bool) -> Option<Ac
         KeyCode::PageDown => Some(Action::Scroll(-10)),
         KeyCode::Char('o') if control => Some(Action::OpenSessions),
         KeyCode::Char('l') if control => Some(Action::OpenLanes),
+        // The latest explanation card, in the lanes' own ctrl-key family.
+        KeyCode::Char('x') if control => Some(Action::OpenExplain),
         // The board pane's cycle, in the lanes' own ctrl-key family.
         KeyCode::Char('b') if control => Some(Action::CycleBoard),
         KeyCode::Char(character) => {
@@ -132,7 +143,7 @@ mod tests {
         assert_eq!(action_for(&app, &control(KeyCode::Char('c'))), Some(Action::Quit));
         assert_eq!(action_for(&app, &control(KeyCode::Char('o'))), Some(Action::OpenSessions));
         // Other control combinations are not text.
-        assert_eq!(action_for(&app, &control(KeyCode::Char('x'))), None);
+        assert_eq!(action_for(&app, &control(KeyCode::Char('z'))), None);
     }
 
     #[test]
@@ -184,6 +195,34 @@ mod tests {
             action_for(&app, &control(KeyCode::Char('l'))),
             Some(Action::OpenLanes)
         );
+    }
+
+    #[test]
+    fn ctrl_x_opens_the_latest_explanation_card() {
+        let app = app();
+        assert_eq!(
+            action_for(&app, &control(KeyCode::Char('x'))),
+            Some(Action::OpenExplain)
+        );
+        // A bare `x` is still a letter.
+        assert_eq!(action_for(&app, &key(KeyCode::Char('x'))), Some(Action::Input('x')));
+    }
+
+    #[test]
+    fn the_explanation_card_scrolls_and_closes_but_never_types() {
+        let mut app = app();
+        app.open_explain(vec!["a card line".to_string()]);
+        assert_eq!(action_for(&app, &key(KeyCode::Down)), Some(Action::Move(1)));
+        assert_eq!(action_for(&app, &key(KeyCode::Char('j'))), Some(Action::Move(1)));
+        assert_eq!(action_for(&app, &key(KeyCode::Up)), Some(Action::Move(-1)));
+        assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::CloseOverlay));
+        assert_eq!(action_for(&app, &key(KeyCode::Char('q'))), Some(Action::Quit));
+        // Enter picks nothing here, and letters are not text.
+        assert_eq!(action_for(&app, &key(KeyCode::Enter)), None);
+        assert_eq!(action_for(&app, &key(KeyCode::Char('e'))), None);
+        // Escape leaves the card and returns to the conversation.
+        app.apply(Action::CloseOverlay);
+        assert_eq!(app.mode, Mode::Chat);
     }
 
     #[test]

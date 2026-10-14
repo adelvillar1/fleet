@@ -299,6 +299,56 @@ impl Change {
             _ => String::new(),
         }
     }
+
+    /// The content this change stages, as one string: the artifact the
+    /// gate judges. A write-shaped change carries the file's full new
+    /// content; every other op carries the identity it acts on — the
+    /// skill's name, the fact's name, the config entry's JSON, the
+    /// provider id — so every change has one stable artifact and the
+    /// verdict row can key an explanation to it (slice 17). The exact
+    /// shape matters less than that it is deterministic: the same
+    /// change always hashes the same way, so a row written today still
+    /// joins tomorrow.
+    pub fn artifact_text(&self) -> String {
+        match self {
+            Change::WriteSkill { content } => content.clone(),
+            Change::Patch { path, content } => format!("{path}\n{content}"),
+            Change::RetireSkill { name } => format!("retire-skill:{name}"),
+            Change::Supersede(request) => format!(
+                "supersede:{}:{}",
+                request.name,
+                request.replacement.clone().unwrap_or_default()
+            ),
+            Change::Forget { name, justification } => format!("forget:{name}:{justification}"),
+            Change::Config { entry } => {
+                format!("config:{}", serde_json::to_string(entry).unwrap_or_default())
+            }
+            Change::ConfigRemove { id } => format!("config-remove:{id}"),
+            Change::Unsupported { reason } => format!("unsupported:{reason}"),
+        }
+    }
+
+    /// The judged artifact's identity: the 16 hex characters of the
+    /// sha256 over [`Change::artifact_text`], the devdec join shape.
+    /// This is what the `propose` row carries, and what an explanation
+    /// checks the artifact against before it spends an ask.
+    pub fn artifact_sha(&self) -> String {
+        crate::calib::hash16(&self.artifact_text())
+    }
+
+    /// The repo-relative paths this change touches, in the order a
+    /// draft stamps them. A `patch` names its file; the memory ops name
+    /// the fact file they rewrite. Everything else touches no repo
+    /// file — a skill lives in the home, a config entry in the home's
+    /// `config.json` — so it stamps nothing and guards nothing.
+    pub fn target_paths(&self) -> Vec<String> {
+        match self {
+            Change::Patch { path, .. } => vec![path.clone()],
+            Change::Supersede(request) => vec![format!("{MEMORIES_DIR}/{}.md", request.name)],
+            Change::Forget { name, .. } => vec![format!("{MEMORIES_DIR}/{name}.md")],
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// Parse one change object. A missing or unknown `op`, or a field of
@@ -371,6 +421,92 @@ pub struct Proposal {
     /// The last gate result, stamped at verdict time: `fmt ok · clippy
     /// FAILED · …`. Empty when the gate has not run.
     pub gate: String,
+    /// The target files' content shas as they were when the draft was
+    /// filed — the drift guard (slice 17, PS-C). A proposal is written
+    /// against the files as they stand; if a target changes before the
+    /// apply, the change was reasoned about a different file, and the
+    /// apply refuses by name rather than writing it anyway. Empty for a
+    /// proposal filed before the field existed, which simply carries no
+    /// guard — the guard is additive, never a reason to refuse an old
+    /// proposal that still applies cleanly.
+    pub target_shas: Vec<TargetSha>,
+}
+
+/// One target file's identity at draft time: its repo-relative path and
+/// the 16 hex characters of the sha256 over its content, the devdec
+/// join shape. Carried in the proposal's frontmatter as
+/// `target-shas: <path>=<sha>[,<path>=<sha>…]` — the frontmatter parser
+/// is flat `key: value`, so the list rides one line rather than as
+/// nested YAML it would refuse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetSha {
+    pub path: String,
+    pub sha256: String,
+}
+
+impl TargetSha {
+    /// Parse the `target-shas` frontmatter value. A pair that is not
+    /// `path=sha`, or a sha that is not 16 hex characters, is dropped
+    /// rather than guessed at: a guard that cannot read its own value
+    /// guards nothing, and a malformed pair must not read as a match.
+    pub fn parse_list(value: &str) -> Vec<TargetSha> {
+        value
+            .split(',')
+            .filter_map(|pair| {
+                let (path, sha) = pair.trim().split_once('=')?;
+                let path = path.trim();
+                let sha = sha.trim();
+                let hex = sha.len() == 16 && sha.chars().all(|c| c.is_ascii_hexdigit());
+                (!path.is_empty() && hex).then(|| TargetSha { path: path.to_string(), sha256: sha.to_string() })
+            })
+            .collect()
+    }
+
+    /// The frontmatter line's value for `shas`, or `None` when there is
+    /// nothing to write — a proposal whose change touches no repo file
+    /// carries no line at all.
+    pub fn render_list(shas: &[TargetSha]) -> Option<String> {
+        (!shas.is_empty()).then(|| {
+            shas
+                .iter()
+                .map(|sha| format!("{}={}", sha.path, sha.sha256))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+    }
+}
+
+/// The 16 hex characters of the sha256 over `path`'s content under
+/// `root`, or `None` when the file is absent or unreadable. A draft
+/// stamps what exists; a guard then treats an absent file as the drift
+/// it is.
+pub fn file_sha(root: &Path, path: &str) -> Option<String> {
+    let bytes = fs::read(root.join(path)).ok()?;
+    Some(crate::calib::hash16(&String::from_utf8_lossy(&bytes)))
+}
+
+/// Stamp every repo-relative path `change` touches with its current
+/// sha under `root`. A path that does not exist yet — a `patch` that
+/// creates a file — is skipped: there is nothing to drift from.
+pub fn stamp_target_shas(root: &Path, change: &Change) -> Vec<TargetSha> {
+    change
+        .target_paths()
+        .iter()
+        .filter_map(|path| {
+            file_sha(root, path).map(|sha256| TargetSha { path: path.clone(), sha256 })
+        })
+        .collect()
+}
+
+/// The target shas in `proposal` that no longer match `root`: the
+/// drift the apply refuses. A path the proposal stamped that has since
+/// changed — or vanished — is named; a path the proposal never stamped
+/// guards nothing.
+pub fn drifted_targets(root: &Path, shas: &[TargetSha]) -> Vec<TargetSha> {
+    shas.iter()
+        .filter(|stamped| file_sha(root, &stamped.path).as_deref() != Some(stamped.sha256.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// A bare proposal name: not empty, no path separator, not `.` or `..`.
@@ -472,6 +608,10 @@ fn parse_proposal(text: &str, path: &Path, store: Store) -> Result<Proposal, Str
         .unwrap_or(Status::Pending);
     let commit = document.get("commit").map(str::to_string);
     let gate = document.get("gate").unwrap_or("").to_string();
+    let target_shas = document
+        .get("target-shas")
+        .map(TargetSha::parse_list)
+        .unwrap_or_default();
     let body = &document.body;
     let change_text = change_block(body)
         .ok_or_else(|| "the body carries no fenced change block under `## Change`".to_string())?;
@@ -493,6 +633,7 @@ fn parse_proposal(text: &str, path: &Path, store: Store) -> Result<Proposal, Str
         path: path.to_path_buf(),
         commit,
         gate,
+        target_shas,
     })
 }
 
@@ -563,6 +704,10 @@ fn draft_proposal(path: &Path) -> Option<Proposal> {
         path: path.to_path_buf(),
         commit: None,
         gate: String::new(),
+        // A slice-7 draft is not filed against the repo's files — the
+        // drafter writes a SKILL.md — so it stamps nothing and guards
+        // nothing.
+        target_shas: Vec::new(),
     })
 }
 
@@ -638,7 +783,7 @@ pub fn load_one(home: &Path, name: &str) -> Option<Proposal> {
 ///
 /// The result is the model-visible confirmation or the typed refusal,
 /// in the same shape a built-in's output takes.
-pub fn file_from_tool(home: &Path, arguments: &serde_json::Value) -> String {
+pub fn file_from_tool(home: &Path, repo: &Path, arguments: &serde_json::Value) -> String {
     let field = |key: &str| -> Result<String, String> {
         arguments
             .get(key)
@@ -706,6 +851,13 @@ pub fn file_from_tool(home: &Path, arguments: &serde_json::Value) -> String {
             proposals_dir(home).display()
         );
     }
+    // The change is validated above, so it parses here: the draft
+    // stamps its targets' content shas as they stand right now, which
+    // is what lets the apply refuse a target that drifted while the
+    // proposal waited (slice 17, PS-C).
+    let parsed = parse_change(&serde_json::from_str::<serde_json::Value>(&change).unwrap_or_default())
+        .unwrap_or_else(|_| Change::Unsupported { reason: String::new() });
+    let shas = stamp_target_shas(repo, &parsed);
     let text = render_proposal(
         &name,
         target,
@@ -715,6 +867,7 @@ pub fn file_from_tool(home: &Path, arguments: &serde_json::Value) -> String {
         &acceptance,
         &effect,
         &change,
+        &shas,
     );
     if let Err(error) = fs::create_dir_all(proposals_dir(home)).and_then(|()| fs::write(&path, &text)) {
         return format!("error: could not file the proposal: {error}");
@@ -729,7 +882,7 @@ pub fn file_from_tool(home: &Path, arguments: &serde_json::Value) -> String {
 
 /// One proposal file's text: the frontmatter the skills parser reads,
 /// then the four body sections with the change as a fenced JSON block.
-fn render_proposal(
+pub(crate) fn render_proposal(
     name: &str,
     target: Target,
     target_name: &str,
@@ -738,6 +891,7 @@ fn render_proposal(
     acceptance: &str,
     effect: &str,
     change: &str,
+    shas: &[TargetSha],
 ) -> String {
     let mut out = String::new();
     out.push_str("---\n");
@@ -747,6 +901,12 @@ fn render_proposal(
     out.push_str(&format!("basis: {}\n", basis.label()));
     out.push_str(&format!("created: {}\n", calib::today()));
     out.push_str("status: pending\n");
+    // The drift guard's line, written only when the change touches a
+    // repo file that exists: a proposal whose targets stamped nothing
+    // carries no line, and the apply guards nothing.
+    if let Some(line) = TargetSha::render_list(shas) {
+        out.push_str(&format!("target-shas: {line}\n"));
+    }
     out.push_str("---\n\n");
     out.push_str("## Justification\n\n");
     out.push_str(justification.trim());
@@ -1213,6 +1373,10 @@ fn finish(proposal: &Proposal, verdict: Verdict, steps: &[GateStep], ctx: &Apply
             verdict: verdict.word().to_string(),
             reason: verdict.reason(),
             gate: steps.iter().map(GateStep::row).collect(),
+            // The judged artifact's identity, so the verdict is
+            // explainable: the explanation beat joins on exactly this
+            // sha (slice 17).
+            input_sha256: Some(proposal.change.artifact_sha()),
         }));
     }
     let commit = match &verdict {
@@ -1235,6 +1399,28 @@ fn stage(proposal: &Proposal, ctx: &Apply<'_>) -> Result<Landed, Hold> {
             proposal.name,
             proposal.change.destroys(),
             proposal.name
+        )));
+    }
+    // PS-C's drift guard, beside the dirty-tree guard: the draft was
+    // filed against the targets as they stood, and a target that
+    // changed while the proposal waited is a different file than the
+    // one the change was reasoned about. A clean tree is not the same
+    // as the same file — the sha is what tells the two apart — so the
+    // apply refuses by name rather than writing a change reasoned
+    // about a file that no longer exists in that shape.
+    let drifted = drifted_targets(&ctx.repo, &proposal.target_shas);
+    if !drifted.is_empty() {
+        let named = drifted
+            .iter()
+            .map(|stamped| {
+                let now = file_sha(&ctx.repo, &stamped.path)
+                    .unwrap_or_else(|| "absent".to_string());
+                format!("`{}` (drafted at {}, now {now})", stamped.path, stamped.sha256)
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(Hold::Refused(format!(
+            "the proposal's target drifted since the draft: {named} — re-file the proposal against the current file rather than applying a change reasoned about a different one"
         )));
     }
     match &proposal.change {
@@ -1949,6 +2135,7 @@ mod tests {
             "the skill loads and its body carries the correction",
             "the correction is in context next time",
             body,
+            &[],
         );
         let path = proposals_dir(home).join(format!("{name}.md"));
         fs::create_dir_all(proposals_dir(home)).unwrap();
@@ -2200,6 +2387,95 @@ mod tests {
         assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), "pub fn one() -> u32 { 99 }\n");
         // The gate never ran.
         assert!(!log.exists(), "the gate ran: {}", fs::read_to_string(&log).unwrap_or_default());
+    }
+
+    #[test]
+    fn a_patch_whose_target_drifted_since_the_draft_is_refused_by_name() {
+        // PS-C's guard, beside the dirty-tree one. The draft was filed
+        // against the file as it stood; the file then changed and was
+        // committed — a clean tree, so the dirty guard has nothing to
+        // say — and the change was reasoned about a different file. The
+        // apply refuses by name, naming both shas, and the target is
+        // left exactly as it now stands.
+        let home = scratch("apply-drift");
+        let repo = scratch_repo("apply-drift-repo");
+        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let stamped = file_sha(&repo, "src/lib.rs").expect("the target exists at draft time");
+        let text = render_proposal(
+            "drifted-target",
+            Target::Source,
+            "src/lib.rs",
+            Basis::Inferred,
+            "the session's evidence",
+            "the gate is green",
+            "the function returns 2",
+            change,
+            &[TargetSha { path: "src/lib.rs".to_string(), sha256: stamped.clone() }],
+        );
+        fs::create_dir_all(proposals_dir(&home)).unwrap();
+        fs::write(proposals_dir(&home).join("drifted-target.md"), text).unwrap();
+        // The target drifts, and the drift is committed: the tree is
+        // clean, so only the sha can see it.
+        fs::write(repo.join("src/lib.rs"), "pub fn one() -> u32 { 42 }\n").unwrap();
+        git(&repo, &["add", "-A"]).unwrap();
+        git(&repo, &["-c", "user.email=a@b.c", "-c", "user.name=t", "commit", "-m", "drift"]).unwrap();
+        let status = git(&repo, &["status", "--porcelain"]).unwrap();
+        assert!(status.trim().is_empty(), "the tree is not clean: {status}");
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 0, "", &log);
+        let gate = fake_gate(&repo, &bin);
+        let stream = calib::Stream::open(scratch("apply-drift-calib"));
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let verdict = apply("drifted-target", &ctx);
+        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        assert!(reason.contains("drifted since the draft"), "{reason}");
+        assert!(reason.contains(&stamped), "{reason}");
+        // The target is exactly as it now stands, and the gate never ran.
+        assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), "pub fn one() -> u32 { 42 }\n");
+        assert!(!log.exists(), "the gate ran: {}", fs::read_to_string(&log).unwrap_or_default());
+    }
+
+    #[test]
+    fn a_proposal_whose_targets_still_match_applies_through_the_drift_guard() {
+        // The guard is additive, not a new way to refuse: a proposal
+        // whose stamped shas still match walks straight past it.
+        let home = scratch("apply-no-drift");
+        let repo = scratch_repo("apply-no-drift-repo");
+        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let stamped = file_sha(&repo, "src/lib.rs").expect("the target exists at draft time");
+        let text = render_proposal(
+            "undrifted-target",
+            Target::Source,
+            "src/lib.rs",
+            Basis::Inferred,
+            "the session's evidence",
+            "the gate is green",
+            "the function returns 2",
+            change,
+            &[TargetSha { path: "src/lib.rs".to_string(), sha256: stamped.clone() }],
+        );
+        fs::create_dir_all(proposals_dir(&home)).unwrap();
+        fs::write(proposals_dir(&home).join("undrifted-target.md"), text).unwrap();
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 0, "", &log);
+        let gate = fake_gate(&repo, &bin);
+        let stream = calib::Stream::open(scratch("apply-no-drift-calib"));
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let verdict = apply("undrifted-target", &ctx);
+        assert!(matches!(verdict, Verdict::Applied { .. }), "{verdict:?}");
+        // The gate ran, and the row carries the judged artifact's sha.
+        assert!(log.exists(), "the gate never ran");
+        settle(&stream);
+        let root = stream.root().to_path_buf();
+        let rows = calib::read_day(&root, &calib::today(), 64);
+        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        assert_eq!(row.verdict, calib::VERDICT_APPLIED);
+        let expected = parse_change(&serde_json::from_str::<serde_json::Value>(change).unwrap())
+            .expect("the change parses")
+            .artifact_sha();
+        assert_eq!(row.input_sha256, expected);
     }
 
     #[test]
@@ -2555,6 +2831,7 @@ mod tests {
                 "recall ranks the replacement",
                 "the corpus stops carrying the stale fact",
                 change,
+                &[],
             ),
         )
         .unwrap();
@@ -2626,7 +2903,8 @@ mod tests {
             "effect": "the next session recovers without the failure",
             "change": r#"{"op": "write-skill", "content": "---\nname: bash-recovery\ndescription: recover from a failed call\n---\n\nthe correction\n"}"#,
         });
-        let result = file_from_tool(&home, &arguments);
+        let repo = scratch("tool-file-repo");
+        let result = file_from_tool(&home, &repo, &arguments);
         assert!(result.contains("filed proposal `session-lesson`"), "{result}");
         assert!(result.contains("fleet improve apply session-lesson"), "{result}");
         let proposal = load_one(&home, "session-lesson").expect("the filed proposal loads");
@@ -2634,7 +2912,7 @@ mod tests {
         assert_eq!(proposal.target_name, "bash-recovery");
         assert_eq!(proposal.status, Status::Pending);
         // A second filing of the same name is refused by name.
-        let again = file_from_tool(&home, &arguments);
+        let again = file_from_tool(&home, &repo, &arguments);
         assert!(again.contains("already waiting"), "{again}");
     }
 
@@ -2651,7 +2929,8 @@ mod tests {
             "effect": "effect",
             "change": "not json at all",
         });
-        let result = file_from_tool(&home, &arguments);
+        let repo = scratch("tool-file-repo");
+        let result = file_from_tool(&home, &repo, &arguments);
         assert!(result.contains("not valid JSON"), "{result}");
         assert!(!proposals_dir(&home).join("bad.md").exists());
     }

@@ -448,6 +448,8 @@ pub enum ScenarioFamily {
     Subagent,
     /// A memory recall enters the turn's context (slice 8).
     Memory,
+    /// The explanation beat's discipline, graded end to end (slice 17).
+    Explain,
     /// A lane call whose result must carry a computed fact into the final
     /// answer unaltered — the grounded path blend1 exists for.
     GroundedLane,
@@ -463,6 +465,7 @@ impl ScenarioFamily {
             ScenarioFamily::ToolLoop => "tool-loop",
             ScenarioFamily::Subagent => "subagent",
             ScenarioFamily::Memory => "memory",
+            ScenarioFamily::Explain => "explain",
             ScenarioFamily::GroundedLane => "grounded-lane",
         }
     }
@@ -590,7 +593,28 @@ pub fn corpus() -> Vec<Scenario> {
         Scenario::new("blend1-corpus-recall", ScenarioFamily::GroundedLane, |bin| {
             Box::pin(blend1_corpus_recall(bin))
         }),
+        Scenario::new("explain-the-verdict", ScenarioFamily::Explain, |bin| {
+            Box::pin(explain_the_verdict(bin))
+        }),
     ]
+}
+
+/// The judged artifact's identity for an `eval_corpus` row: the 16 hex
+/// characters of the sha256 over the corpus's own fixed definition —
+/// every scenario's name and family in corpus order, under the crate's
+/// version. The corpus is code, so its artifact is its definition: an
+/// explanation keyed to it names the exact suite that graded the run,
+/// and a corpus that changed since the row was written is a drift the
+/// explanation refuses rather than papers over (slice 17).
+pub fn corpus_identity() -> String {
+    let mut text = format!("fleet-eval-corpus/{}", env!("CARGO_PKG_VERSION"));
+    for scenario in corpus() {
+        text.push('\n');
+        text.push_str(scenario.name);
+        text.push(' ');
+        text.push_str(scenario.family.label());
+    }
+    crate::calib::hash16(&text)
 }
 
 // --- the report -----------------------------------------------------------
@@ -654,6 +678,10 @@ impl EvalReport {
                     failure: scenario.failure.clone(),
                 })
                 .collect(),
+            // The judged artifact's identity: the corpus's own fixed
+            // definition, so an explanation can key to the exact suite
+            // that graded this run and refuse a drifted one.
+            input_sha256: Some(corpus_identity()),
         }
     }
 }
@@ -1759,6 +1787,200 @@ fn blend1_result(extra: serde_json::Value) -> serde_json::Value {
     result
 }
 
+// --- the explanation beat (slice 17) --------------------------------------
+
+/// The prose the scripted lane answers an explain ask with.
+const EXPLANATION: &str = "The gate refused the change at the `test` step: the ranking \
+assertion `the_ranker_orders_a_corpus` no longer holds, because the patched comparator \
+sorts on the score's absolute value rather than its rank. Restore the rank comparison, or \
+update the assertion to the ordering the patch intends — the rest of the gate is green.";
+
+/// The explanation beat, graded end to end through the scripted lane: a
+/// failed verdict is explained beside itself, the verdict stands exactly
+/// as recorded, the row is redacted, the text is recoverable by its sha,
+/// the day's spend is recorded, and `--dry-run` spends nothing. No paid
+/// call: the lane is the scripted MCP child, the same seam the blend1
+/// scenarios drive.
+async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "explain-the-verdict";
+    let family = ScenarioFamily::Explain;
+    let Some(mcp_bin) = mock_mcp_binary() else {
+        return ScenarioOutcome::fail(
+            NAME,
+            family,
+            "the mock-mcp binary was not found beside the fleet executable; the lane seam cannot run",
+        );
+    };
+    let (home, root) = match scratch_dir("explain-home").and_then(|home| {
+        scratch_dir("explain-calib").map(|root| (home, root))
+    }) {
+        Ok(pair) => pair,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    // A scratch repo the proposal is filed against, so the draft stamps
+    // its target's sha the way the real tool does.
+    let repo = match scratch_dir("explain-repo") {
+        Ok(repo) => repo,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    if let Err(error) = std::fs::create_dir_all(repo.join("src"))
+        .and_then(|()| std::fs::write(repo.join("src/lib.rs"), "pub fn one() -> u32 { 1 }\n"))
+    {
+        return ScenarioOutcome::fail(NAME, family, format!("the scratch repo: {error}"));
+    }
+    // The proposal the gate refused: filed through the tool's own path,
+    // so the drift guard's stamping is the real one.
+    let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+    let filed = crate::improve::file_from_tool(
+        &home,
+        &repo,
+        &serde_json::json!({
+            "name": "fix-the-ranker",
+            "target": "source",
+            "target-name": "src/lib.rs",
+            "basis": "inferred",
+            "justification": "the ranking assertion failed after the comparator changed",
+            "acceptance": "the corpus's ranking assertion holds",
+            "effect": "the ranker orders a corpus again",
+            "change": change,
+        }),
+    );
+    if !filed.contains("filed proposal") {
+        return ScenarioOutcome::fail(NAME, family, format!("the proposal did not file: {filed}"));
+    }
+    let artifact_sha = crate::improve::parse_change(
+        &serde_json::from_str::<serde_json::Value>(change).unwrap_or_default(),
+    )
+    .map(|change| change.artifact_sha())
+    .unwrap_or_default();
+    // The verdict row, exactly as the gate's writer lands it: refused,
+    // with the per-step evidence and the judged artifact's sha.
+    let stream = crate::calib::Stream::open(&root);
+    stream.record(Row::Propose(calib::ProposeRow {
+        ts: calib::stamp(),
+        proposal: "fix-the-ranker".to_string(),
+        target: "source".to_string(),
+        target_name: "src/lib.rs".to_string(),
+        basis: "inferred".to_string(),
+        verdict: calib::VERDICT_REFUSED.to_string(),
+        reason: "test failed: the_ranker_orders_a_corpus".to_string(),
+        gate: vec![
+            calib::GateStepRow { step: "fmt".to_string(), ok: true, detail: "ok".to_string() },
+            calib::GateStepRow {
+                step: "test".to_string(),
+                ok: false,
+                detail: "error: test failed: the_ranker_orders_a_corpus".to_string(),
+            },
+        ],
+        input_sha256: Some(artifact_sha.clone()),
+    }));
+    drop(stream);
+    let selector = crate::explain::Selector::Proposal("fix-the-ranker".to_string());
+    let verdict_before = crate::explain::recorded_verdict(&root, &selector);
+
+    // The scripted lane: one ask, answered with the BlendResult's own
+    // keys plus the explanation's text and its cost.
+    let lane = match ScriptedLane::start(
+        &mcp_bin,
+        blend1_lane_entries(
+            &blend1_result(serde_json::json!({
+                "path": "synthesized",
+                "route": { "status": "ok", "provider": "liquid", "needs_generation": 0.978,
+                           "answer_shape": "synthesized", "latency_ms": 900 },
+                "generated": { "status": "ok", "model": "lfm2.5-24b-a2b", "text": EXPLANATION,
+                               "cost_usd": 0.0018 },
+                "validation": { "status": "ok", "provider": "glide", "passed": true,
+                                "outcome": "passed", "number_check": "ok",
+                                "answers_the_question": true, "contradicts_facts": false },
+                "final_answer": EXPLANATION,
+                "total_latency_ms": 15_400,
+            }))
+            .to_string(),
+        ),
+    ) {
+        Ok(lane) => lane,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+
+    let outcome = crate::explain::explain(crate::explain::ExplainRequest {
+        root: &root,
+        home: &home,
+        selector: selector.clone(),
+        dry_run: false,
+        lane: crate::explain::LaneSource::Scripted(lane.spec()),
+    })
+    .await;
+
+    let mut checks: Vec<(&str, bool)> = Vec::new();
+    checks.push(("the beat explained the verdict", outcome.explained()));
+    checks.push((
+        "the verdict stands exactly as recorded",
+        crate::explain::recorded_verdict(&root, &selector) == verdict_before,
+    ));
+    let Some(row) = outcome.row.as_ref() else {
+        return grade(NAME, family, &checks);
+    };
+    // The row is redacted: no prompt text and no answer text rides in
+    // it, under any key a reader might look for.
+    let row_text = serde_json::to_string(row).unwrap_or_default();
+    checks.push((
+        "the row is redacted",
+        !row_text.contains(EXPLANATION) && !row_text.contains("GATE OP") && !row_text.contains("ARTIFACT"),
+    ));
+    checks.push(("the row carries the eval-only marker", row.eval_only));
+    checks.push(("the row joins on the artifact's sha", row.input_sha256 == artifact_sha));
+    // The text is recoverable by its sha: the file the row indexes
+    // hashes to the sha the row recorded.
+    let path = crate::explain::explanation_path(&home, &row.input_sha256);
+    let recovered = std::fs::read_to_string(&path).unwrap_or_default();
+    checks.push(("the text is recoverable by its sha", {
+        !recovered.is_empty() && crate::calib::hash16(&recovered) == row.explanation_sha256
+    }));
+    // The card names the verdict and the cost, and never reads as a
+    // plain-text dump.
+    checks.push((
+        "the card carries the verdict and the cost",
+        outcome.card.contains("refused") && outcome.card.contains("$0.0018"),
+    ));
+    // The day's spend is recorded from the row, and the ask's telemetry
+    // rode with it.
+    checks.push((
+        "the day's spend is recorded",
+        (crate::explain::day_spend(&root, &calib::today()) - 0.0018).abs() < 1e-9,
+    ));
+    checks.push((
+        "the route and validation telemetry rode the row",
+        row.route.path == "synthesized" && row.validation.outcome == "passed",
+    ));
+
+    // The dry-run leg: no ask, no row, no file. The stream still holds
+    // exactly the one explanation the first leg landed, and the card
+    // says so.
+    let dry = crate::explain::explain(crate::explain::ExplainRequest {
+        root: &root,
+        home: &home,
+        selector,
+        dry_run: true,
+        lane: crate::explain::LaneSource::Scripted(lane.spec()),
+    })
+    .await;
+    checks.push(("the dry run spends nothing", dry.row.is_none() && dry.refusal.is_none()));
+    checks.push((
+        "the dry run's card shows what would be asked",
+        dry.card.contains("dry run") && dry.card.contains("no ask, no row, no file"),
+    ));
+    checks.push((
+        "the dry run lands no row and no file",
+        crate::explain::explain_rows(&root).len() == 1
+            && std::fs::read_to_string(&path).unwrap_or_default() == recovered,
+    ));
+
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&repo);
+    grade(NAME, family, &checks)
+}
+
 /// The tool message one recorded request carried: the lane's answer as
 /// the model read it (the fourth message — system, user, assistant,
 /// tool).
@@ -2165,7 +2387,31 @@ mod tests {
         assert_eq!(ScenarioFamily::ToolLoop.label(), "tool-loop");
         assert_eq!(ScenarioFamily::Subagent.label(), "subagent");
         assert_eq!(ScenarioFamily::Memory.label(), "memory");
+        assert_eq!(ScenarioFamily::Explain.label(), "explain");
         assert_eq!(ScenarioFamily::GroundedLane.label(), "grounded-lane");
+    }
+
+    #[test]
+    fn the_corpus_identity_is_stable_and_names_every_scenario() {
+        // The judged artifact an `eval_corpus` row carries: the corpus's
+        // own fixed definition, hashed. Stable across calls, 16 hex
+        // characters, and different from any other corpus's — the join
+        // key an explanation attaches to.
+        let first = corpus_identity();
+        assert_eq!(first, corpus_identity());
+        assert_eq!(first.len(), 16);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, crate::calib::hash16("fleet-eval-corpus"));
+        // Every scenario in the corpus rides the identity, so a corpus
+        // that gains or loses a scenario changes its own artifact.
+        let mut text = format!("fleet-eval-corpus/{}", env!("CARGO_PKG_VERSION"));
+        for scenario in corpus() {
+            text.push('\n');
+            text.push_str(scenario.name);
+            text.push(' ');
+            text.push_str(scenario.family.label());
+        }
+        assert_eq!(first, crate::calib::hash16(&text));
     }
 
     #[test]
@@ -2184,6 +2430,7 @@ mod tests {
                 "blend1-escalation",
                 "blend1-reprocess",
                 "blend1-corpus-recall",
+                "explain-the-verdict",
             ]
         );
     }

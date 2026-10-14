@@ -104,6 +104,8 @@ pub enum Mode {
     Approval,
     /// The lane health view is open over the conversation.
     Lanes,
+    /// The latest explanation card is open over the conversation.
+    Explain,
 }
 
 /// One key press, translated for the current mode.
@@ -133,6 +135,8 @@ pub enum Action {
     OpenSessions,
     /// Open the lane health view.
     OpenLanes,
+    /// Open the latest explanation card.
+    OpenExplain,
     /// Cycle the board pane to the next board.
     CycleBoard,
     /// Close whatever overlay is open.
@@ -241,6 +245,10 @@ pub struct App {
     /// The three read-only boards: which one the pane shows, and each
     /// one's last snapshot with its named refusal.
     pub boards: Boards,
+    /// The latest explanation card's lines, or `None` when today's
+    /// stream holds no explanation — the headless card, read back from
+    /// the file it indexed, so the two surfaces agree by construction.
+    pub explain: Option<Vec<String>>,
     pub should_quit: bool,
 }
 
@@ -257,6 +265,7 @@ impl App {
             lanes: Vec::new(),
             lanes_loading: false,
             lanes_probe: 0,
+            explain: None,
             selected: 0,
             approval: None,
             status: Status {
@@ -327,6 +336,24 @@ impl App {
                     Some(Effect::Quit)
                 }
                 // The lanes are information, not a menu: nothing to pick.
+                _ => None,
+            },
+            // The explanation card is information too: it scrolls and it
+            // closes, and it never types into the conversation.
+            Mode::Explain => match action {
+                Action::Move(delta) => {
+                    let rows = self.explain.as_ref().map(|lines| lines.len()).unwrap_or(0);
+                    self.move_selection(delta, rows);
+                    None
+                }
+                Action::CloseOverlay => {
+                    self.mode = Mode::Chat;
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
                 _ => None,
             },
             Mode::Chat => match action {
@@ -559,6 +586,16 @@ impl App {
         self.sessions = sessions;
         self.selected = 0;
         self.mode = Mode::Sessions;
+    }
+
+    /// Open the explanation card over the conversation, with the lines
+    /// the headless card rendered. The lines are the same text
+    /// `fleet explain` prints — the surface reads the file the beat
+    /// wrote, so the two cannot drift.
+    pub fn open_explain(&mut self, lines: Vec<String>) {
+        self.explain = Some(lines);
+        self.selected = 0;
+        self.mode = Mode::Explain;
     }
 
     /// Open the lane health view. The rows arrive asynchronously from the

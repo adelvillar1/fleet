@@ -44,6 +44,10 @@ pub enum Command {
     /// The eval corpus: run the fixed, graded suite headless and land a
     /// row, or read the last run back with `--last`.
     Eval(EvalOptions),
+    /// Explain one verdict the crate recorded — the improve gate's, or
+    /// the corpus's — through the blend1 lane. Eval-only, batch-only,
+    /// `--dry-run` spends nothing.
+    Explain(ExplainOptions),
     /// Print the version.
     Version,
     /// Print help.
@@ -170,6 +174,21 @@ pub struct EvalOptions {
     pub last: bool,
 }
 
+/// Options for `fleet explain`: one verdict selector, and the dry run
+/// that spends nothing. `--proposal` and `--eval` do not combine — one
+/// verdict is explained per call, and the parser says so rather than
+/// picking one.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ExplainOptions {
+    /// The improve gate's verdict for this proposal.
+    pub proposal: Option<String>,
+    /// The eval corpus's failed scenario.
+    pub eval: Option<String>,
+    /// Resolve the row and check the artifact only: no ask, no row, no
+    /// file. The card shows what would be asked.
+    pub dry_run: bool,
+}
+
 /// Options for `fleet cron`. The bare command lists the jobs as cards;
 /// each subcommand mutates the persistent store by name, and every
 /// mutation validates through the same parser the scheduler matches
@@ -291,6 +310,14 @@ usage:
   fleet eval                     run the fixed eval corpus headless and land a
                                 row in the calibration stream
   fleet eval --last              the last run's per-scenario scores
+  fleet explain --proposal <name> [--dry-run]
+  fleet explain --eval <scenario> [--dry-run]
+                                explain one verdict the crate recorded — the
+                                improve gate's, or the corpus's — through the
+                                blend1 lane: eval-only prose beside the verdict,
+                                never a second verdict. --dry-run resolves the
+                                row and checks the artifact only: no ask, no
+                                row, no file
   fleet install [--lanes]        create the home layout (sessions, memories,
                                 skills, cron, proposals) and the config
                                 scaffold, then run the doctor gate — the
@@ -350,6 +377,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "doctor" => parse_doctor(rest),
         "install" => parse_install(rest),
         "eval" => parse_eval(rest),
+        "explain" => parse_explain(rest),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
         other => Err(format!("unknown command `{other}` — try `fleet help`")),
@@ -804,6 +832,55 @@ fn parse_eval(args: &[String]) -> Result<Command, String> {
     Ok(Command::Eval(EvalOptions { last }))
 }
 
+/// `fleet explain --proposal <name> | --eval <scenario> [--dry-run]`.
+/// Exactly one selector: the parser refuses a combination rather than
+/// picking one, and refuses none at all rather than guessing. A selector
+/// that names nothing is the beat's own named refusal at run time — the
+/// parser's job is the grammar, not the stream.
+fn parse_explain(args: &[String]) -> Result<Command, String> {
+    let mut proposal: Option<String> = None;
+    let mut eval: Option<String> = None;
+    let mut dry_run = false;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--dry-run" => dry_run = true,
+            "--proposal" | "--eval" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| format!("`{arg}` needs a name: `fleet explain {arg} <name>`"))?;
+                let slot = if arg == "--proposal" { &mut proposal } else { &mut eval };
+                if slot.is_some() {
+                    return Err(format!("`{arg}` was given twice"));
+                }
+                *slot = Some(value.clone());
+                index += 1;
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown explain option `{other}`"));
+            }
+            other => {
+                return Err(format!(
+                    "`{other}` takes no value here; explain names one verdict with --proposal or --eval"
+                ));
+            }
+        }
+        index += 1;
+    }
+    match (&proposal, &eval) {
+        (Some(_), Some(_)) => {
+            Err("explain takes one selector: --proposal or --eval, not both".to_string())
+        }
+        (None, None) => {
+            Err("explain needs a selector: --proposal <name> or --eval <scenario>".to_string())
+        }
+        _ => Ok(Command::Explain(ExplainOptions { proposal, eval, dry_run })),
+    }
+}
+
 /// A real calendar check on an already-`YYYY-MM-DD`-shaped string: the
 /// month is 1-12 and the day is within that month's own length (leap
 /// years included). Without it, `--day 2026-13-45` reads as "Fleet did
@@ -1035,6 +1112,35 @@ mod tests {
     fn missing_values_fail_with_the_flag_named() {
         let error = parse(&args(&["run", "--model"])).unwrap_err();
         assert!(error.contains("--model"));
+    }
+
+    #[test]
+    fn explain_parses_one_selector_and_the_dry_run() {
+        assert_eq!(
+            parse(&args(&["explain", "--proposal", "fix-the-ranker"])).unwrap(),
+            Command::Explain(ExplainOptions {
+                proposal: Some("fix-the-ranker".to_string()),
+                eval: None,
+                dry_run: false,
+            })
+        );
+        assert_eq!(
+            parse(&args(&["explain", "--eval", "conversation-fold", "--dry-run"])).unwrap(),
+            Command::Explain(ExplainOptions {
+                proposal: None,
+                eval: Some("conversation-fold".to_string()),
+                dry_run: true,
+            })
+        );
+        // No selector, two selectors, a missing value, and junk are all
+        // named refusals rather than a guess.
+        assert!(parse(&args(&["explain"])).is_err());
+        assert!(parse(&args(&["explain", "--dry-run"])).is_err());
+        let both = parse(&args(&["explain", "--proposal", "a", "--eval", "b"])).unwrap_err();
+        assert!(both.contains("one selector"), "{both}");
+        assert!(parse(&args(&["explain", "--proposal"])).is_err());
+        assert!(parse(&args(&["explain", "--json"])).is_err());
+        assert!(parse(&args(&["explain", "--proposal", "a", "--proposal", "b"])).is_err());
     }
 
     #[test]

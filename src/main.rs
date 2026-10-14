@@ -47,6 +47,7 @@ async fn main() -> ExitCode {
         Ok(Command::Doctor(options)) => doctor_command(&options),
         Ok(Command::Install(options)) => install_command(&options),
         Ok(Command::Eval(options)) => eval_command(&options).await,
+        Ok(Command::Explain(options)) => explain_command(&options).await,
         Err(message) => {
             eprintln!("fleet: {message}");
             eprint!("{}", cli::HELP);
@@ -1097,6 +1098,48 @@ async fn eval_command(options: &cli::EvalOptions) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// `fleet explain`: one verdict, explained. Eval-only and batch-only by
+/// construction — the command spends at most one bounded lane ask, lands
+/// a redacted row beside the verdict it explains, and writes the
+/// recoverable prose under the home. The exit code is success when the
+/// beat answered (including a dry run, which answers by rehearsing) and
+/// failure when it refused: an unknown selector, a drifted artifact, an
+/// over-budget day, or a lane that cannot answer. A refusal is a named
+/// outcome on the card, never a silent absence and never a fabricated
+/// explanation.
+async fn explain_command(options: &cli::ExplainOptions) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let selector = match (&options.proposal, &options.eval) {
+        (Some(name), _) => fleet::explain::Selector::Proposal(name.clone()),
+        (None, Some(scenario)) => fleet::explain::Selector::Scenario(scenario.clone()),
+        (None, None) => {
+            eprintln!(
+                "fleet: explain: needs a selector: --proposal <name> or --eval <scenario>"
+            );
+            return ExitCode::from(2);
+        }
+    };
+    let user_home = std::env::var("HOME").ok();
+    let root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    let outcome = fleet::explain::explain(fleet::explain::ExplainRequest {
+        root: &root,
+        home: &home,
+        selector,
+        dry_run: options.dry_run,
+        lane: fleet::explain::LaneSource::Vendored,
+    })
+    .await;
+    print!("{}", outcome.card);
+    if outcome.refusal.is_some() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 

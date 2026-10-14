@@ -252,6 +252,14 @@ fn dispatch_key(
         open_lanes_view(app, lanes_tx);
         return;
     }
+    // The explanation card is a read of the beat's own artifact — the
+    // file its row indexes — so the loop reads it and hands the state
+    // machine the lines. No lane call: the card is what was already
+    // spent, never a new ask.
+    if matches!(action, Action::OpenExplain) {
+        open_explanation(app, home);
+        return;
+    }
     if let Some(effect) = app.apply(action) {
         apply_effect(home, app, effect, command_tx, pending);
     }
@@ -269,6 +277,22 @@ fn open_picker(home: &Path, app: &mut App) {
         Err(error) => {
             app.error = Some(format!("could not list the sessions: {error}"));
         }
+    }
+}
+
+/// Open the latest explanation card over the conversation. A day with
+/// no explanation says so rather than rendering an empty card, and a
+/// home the read cannot reach names the reason — the same named
+/// refusals the headless surface carries.
+fn open_explanation(app: &mut App, home: &Path) {
+    let user_home = std::env::var("HOME").ok();
+    let root = crate::calib::resolve_root(home, user_home.as_deref());
+    match crate::explain::latest_card(&root, home) {
+        Some(card) => app.open_explain(card.lines().map(str::to_string).collect()),
+        None => app.error = Some(
+            "no explanation recorded today yet \u{b7} `fleet explain --proposal <name>` writes one"
+                .to_string(),
+        ),
     }
 }
 

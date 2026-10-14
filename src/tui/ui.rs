@@ -63,6 +63,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Mode::Sessions => render_picker(frame, app),
         Mode::Approval => render_approval(frame, app),
         Mode::Lanes => render_lanes(frame, app),
+        Mode::Explain => render_explain(frame, app),
     }
 }
 
@@ -927,7 +928,7 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
 /// The key hints.
 fn render_footer(frame: &mut Frame<'_>, area: Rect) {
     let hints =
-        "enter send · alt+enter newline · ctrl+o sessions · ctrl+l lanes · ctrl+b board · q quit";
+        "enter send · ctrl+o sessions · ctrl+l lanes · ctrl+x explain · ctrl+b board · q quit";
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hints, Style::new().fg(palette::TEXT)))),
         area,
@@ -1050,6 +1051,59 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
 fn lanes_height(lines: usize) -> u16 {
     let wanted = (lines as u16).saturating_add(4);
     wanted.clamp(4, 20)
+}
+
+/// The explanation modal's width, as a share of the frame: the card is
+/// 72 columns wide, so the modal takes the whole frame rather than a
+/// share — a card clipped by its own modal is the failure the boards
+/// learned from.
+const EXPLAIN_MODAL_PERCENT: u16 = 96;
+
+/// The explanation modal's height: one row per card line, the border,
+/// and a line of headroom — clamped, so a small frame cannot push the
+/// modal off screen, and a card longer than the pane names what it is
+/// holding back rather than silently cutting its tail.
+fn explain_height(lines: usize) -> u16 {
+    (lines as u16).saturating_add(4).clamp(4, 30)
+}
+
+/// The latest explanation card over the conversation: the headless
+/// card's own lines, drawn verbatim in a modal that scrolls. The two
+/// surfaces agree because they are the same text — the loop reads the
+/// file the beat wrote and hands the state machine its lines.
+fn render_explain(frame: &mut Frame<'_>, app: &App) {
+    let [columns] = Layout::horizontal([Constraint::Percentage(EXPLAIN_MODAL_PERCENT)])
+        .flex(Flex::Center)
+        .areas(frame.area());
+    let width = columns.width.saturating_sub(2).max(1) as usize;
+    let Some(card) = app.explain.as_ref() else {
+        return;
+    };
+    let mut lines: Vec<Line<'static>> = card
+        .iter()
+        .map(|line| line_of(vec![(line.clone(), Style::new().fg(palette::TEXT))], width))
+        .collect();
+    let area = centered_sized(EXPLAIN_MODAL_PERCENT, explain_height(lines.len()), frame.area());
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .title(" explain — esc close ")
+        .title_style(title_style())
+        .border_style(Style::new().fg(palette::ACCENT));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
+    let visible = inner.height as usize;
+    if lines.len() > visible {
+        let hidden = lines.len() - visible + 1;
+        lines.truncate(visible.saturating_sub(1));
+        lines.push(Line::from(Span::styled(
+            format!(" +{hidden} more"),
+            Style::new().fg(palette::DIM),
+        )));
+    }
+    frame.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 /// The lanes modal's width, as a share of the frame. Wide enough for a

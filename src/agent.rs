@@ -1181,8 +1181,14 @@ impl<'a> Agent<'a> {
                         (format!("error: arguments were not valid JSON: {error}"), false)
                     }
                     Ok(arguments) => {
+                        // The draft stamps its targets against the
+                        // working tree this process runs in — the same
+                        // repo `fleet improve apply` resolves — so the
+                        // apply can refuse a target that drifted while
+                        // the proposal waited.
+                        let repo = std::env::current_dir().unwrap_or_default();
                         let outcome = tools::bound(ToolOutcome {
-                            output: crate::improve::file_from_tool(&home, &arguments),
+                            output: crate::improve::file_from_tool(&home, &repo, &arguments),
                             truncated: false,
                         });
                         (outcome.output, outcome.truncated)
