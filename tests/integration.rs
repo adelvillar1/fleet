@@ -4123,7 +4123,7 @@ async fn a_childs_call_crosses_the_parents_approver_labelled() {
     std::fs::remove_dir_all(&home).ok();
 }
 
-/// A delegation whose arguments are wrong is a typed refusal the parent's
+/// A malformed delegation whose arguments are wrong is a typed refusal the parent's
 /// model can read and react to — no child session, no silence.
 #[tokio::test]
 async fn a_malformed_delegation_is_a_typed_refusal() {
@@ -4140,6 +4140,59 @@ async fn a_malformed_delegation_is_a_typed_refusal() {
     assert!(output.contains("goal"), "{output}");
     // No child was created: the refusal happened before any session.
     assert!(session::list(&home).unwrap().iter().all(|summary| summary.kind.is_none()));
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The child inherits the parent's declared skills: `use_skill` is in its
+/// admitted scope, so a child that declares no skills would carry a tool
+/// whose every call fails. The child's prompt and its `skills` record are
+/// the parent's own, reconstructed in the child's log (hard rule 5).
+#[tokio::test]
+async fn a_child_inherits_the_parents_declared_skills() {
+    let home = skills_home(
+        "subagent-skills",
+        "demo-skill",
+        "Recover a failed bash call",
+        "# demo\n\nread the error, fix one thing, rerun",
+    );
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "subagent", &delegation_arguments("recover from it")),
+        tool_call_stream("child-1", "use_skill", r#"{"name":"demo-skill"}"#),
+        assistant_stream("The skill is loaded; I will read the error first."),
+        assistant_stream("the child loaded the skill"),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_with_skills(&mock, &mut session, fleet::skills::load(&home), "delegate the recovery")
+        .await
+        .unwrap();
+
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 4, "{bodies:?}");
+    // The child's system prompt carries the same name+description list the
+    // parent's does, and still nothing of the body.
+    let child_prompt = bodies[1]["messages"][0]["content"].as_str().unwrap();
+    assert!(child_prompt.starts_with(fleet::agent::SYSTEM_PROMPT), "{child_prompt}");
+    assert!(child_prompt.contains("demo-skill"), "{child_prompt}");
+    assert!(child_prompt.contains("Recover a failed bash call"), "{child_prompt}");
+    assert!(!child_prompt.contains("fix one thing"), "{child_prompt}");
+    // `use_skill` is declared to the child, and the body it fetches rides
+    // the child's own tool_result path.
+    assert!(declared_tools(&bodies[1]).contains(&"use_skill".to_string()));
+    let child = child_summary(&home);
+    let (body, approved) = tool_result(&session::replay(&child.path).unwrap(), "use_skill");
+    assert!(approved, "{body}");
+    assert_eq!(body, "# demo\n\nread the error, fix one thing, rerun");
+    // The child's own log records the skills it declared, so its prompt
+    // stays reconstructable from its log alone.
+    let child_records = session::replay(&child.path).unwrap();
+    assert!(
+        child_records.iter().any(|record| matches!(
+            record,
+            Record::Skills { skills } if skills.iter().any(|skill| skill.name == "demo-skill")
+        )),
+        "{child_records:?}"
+    );
 
     std::fs::remove_dir_all(&home).ok();
 }
