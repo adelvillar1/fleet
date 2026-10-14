@@ -1,8 +1,9 @@
 //! The install's acceptance, driven through the real binary: the
 //! idempotent layout and the exact scaffold, the per-lane bootstrap's
-//! three behaviors (present, installed, skipped-without), the doctor
-//! gate's exit-code contract, and the README quick start's sequence
-//! against a scratch home.
+//! three behaviors (present, installed, skipped-without), the venv
+//! receipt that keeps an interrupted run's half-built venv from
+//! reading present, the doctor gate's exit-code contract, and the
+//! README quick start's sequence against a scratch home.
 //!
 //! No network beyond loopback: the doctor's API-reachability probe is
 //! pointed at a local TCP listener the test holds open for the run's
@@ -14,6 +15,11 @@
 //! `#[cfg(unix)]`; the release binary and `fleet chat` halves of the
 //! quick start are proven by hand against the live roster, because the
 //! chat half is not deterministic and does not belong in a suite.
+//!
+//! The lane subprocess bound is not drivable through the CLI — its
+//! production value is fifteen minutes, not a test's wait — so the
+//! hung-tool and streaming cases are unit tests in `src/install.rs`,
+//! which drive the bound-injecting seam directly.
 
 use std::fs;
 use std::net::TcpListener;
@@ -287,6 +293,130 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
         assert!(again.contains(&format!("= {lane}")), "{lane} is named present: {again}");
     }
     assert_eq!(fs::read_to_string(&log).unwrap(), argv, "no tool ran twice");
+    // The summary names the run's shape: nothing skipped, so the
+    // report itself carries the green rather than leaving it to the
+    // per-lane lines.
+    assert!(
+        again.contains("= lanes        0 of 4 lanes installed, 4 present, 0 skipped"),
+        "{again}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_lane_installed_this_run_carries_its_receipt_and_a_second_run_reads_present() {
+    let root = scratch("receipt");
+    let home = root.join("home");
+    let tools = root.join("tools");
+    let log = root.join("uv-argv.log");
+    fake_tool_dir(&tools, &log, false);
+    let probe = Probe::listen();
+
+    let (stdout, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
+    assert_eq!(code, 0, "the first run is green: {stdout}{stderr}");
+    // The receipt beside the venv's python: the lane's package list and
+    // the UTC minute it landed.
+    let venv = home.join("venvs").join("sem1");
+    let receipt = fs::read_to_string(venv.join(".fleet-lane")).unwrap();
+    assert!(receipt.contains("lane sem1"), "{receipt}");
+    assert!(receipt.contains("packages sentence-transformers"), "{receipt}");
+    let installed = receipt
+        .lines()
+        .find(|line| line.starts_with("installed "))
+        .expect("the receipt names its minute");
+    assert_eq!(installed.trim_start_matches("installed ").len(), 16, "{installed}");
+    assert!(
+        stdout.contains("= lanes        4 of 4 lanes installed, 0 present, 0 skipped"),
+        "{stdout}"
+    );
+
+    // The receipt is what the second run reads Present off.
+    let argv = fs::read_to_string(&log).unwrap();
+    let (again, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
+    assert_eq!(code, 0, "the second run is green: {again}{stderr}");
+    assert!(again.contains("= sem1"), "{again}");
+    assert_eq!(fs::read_to_string(&log).unwrap(), argv, "no tool ran twice");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_partial_venv_without_the_receipt_is_rebuilt_never_read_present() {
+    let root = scratch("partial");
+    let home = root.join("home");
+    let tools = root.join("tools");
+    let log = root.join("uv-argv.log");
+    fake_tool_dir(&tools, &log, false);
+    let probe = Probe::listen();
+    // An interrupted prior run: `uv venv` created the venv's python and
+    // the packages never landed, so no receipt was written. The
+    // presence check is the python *and* the receipt, so this venv
+    // reads not-built.
+    let venv = home.join("venvs").join("sem1");
+    fs::create_dir_all(venv.join("bin")).unwrap();
+    fs::write(venv.join("bin").join("python"), "#!/bin/sh\n").unwrap();
+
+    let (stdout, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
+    assert_eq!(code, 0, "the rebuild does not fail the install: {stdout}{stderr}");
+    assert!(stdout.contains("+ sem1"), "{lane} is rebuilt: {stdout}", lane = "sem1");
+    assert!(!stdout.contains("= sem1"), "never read present: {stdout}");
+    assert!(venv.join(".fleet-lane").is_file(), "the receipt landed");
+    let argv = fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        argv.lines().filter(|line| line.starts_with("venv ")).count(),
+        4,
+        "every lane was rebuilt: {argv}"
+    );
+
+    // With the receipt in place the next run reads Present, and the
+    // venv is not rebuilt again.
+    let (again, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
+    assert_eq!(code, 0, "the run after the rebuild is green: {again}{stderr}");
+    assert!(again.contains("= sem1"), "{again}");
+    assert_eq!(fs::read_to_string(&log).unwrap(), argv, "no tool ran twice");
+}
+
+#[test]
+fn a_file_where_a_directory_belongs_is_a_named_failure() {
+    let root = scratch("wrong-kind");
+    let home = root.join("home");
+    fs::create_dir_all(&home).unwrap();
+    // A regular file where the sessions directory belongs: the install
+    // names the failure and exits 1 rather than overwriting the file
+    // or pretending the step succeeded.
+    fs::write(home.join("sessions"), "not a directory\n").unwrap();
+    let probe = Probe::listen();
+
+    let (stdout, stderr, code) = install(&home, &[], Some(&probe), None);
+    assert_eq!(code, 1, "a wrong-kind path is a named failure: {stdout}{stderr}");
+    assert!(stderr.contains("sessions"), "the path is named: {stderr}");
+    assert_eq!(
+        fs::read_to_string(home.join("sessions")).unwrap(),
+        "not a directory\n",
+        "the file is left exactly as it was"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_config_symlink_is_named_and_nothing_is_written_through_it() {
+    let root = scratch("dangling");
+    let home = root.join("home");
+    fs::create_dir_all(&home).unwrap();
+    // `exists()` follows the link, so a dangling one reads absent and
+    // the scaffold would be written through it into the target.
+    let target = root.join("elsewhere").join("config.json");
+    std::os::unix::fs::symlink(&target, home.join("config.json")).unwrap();
+    let probe = Probe::listen();
+
+    let (stdout, stderr, code) = install(&home, &[], Some(&probe), None);
+    assert_eq!(code, 0, "a named symlink does not fail the install: {stdout}{stderr}");
+    assert!(stdout.contains("symlink"), "the symlink is named: {stdout}");
+    assert!(stdout.contains("never written through"), "{stdout}");
+    assert!(!target.exists(), "nothing was written through the link");
+    assert!(
+        home.join("config.json").read_link().is_ok(),
+        "the link stands exactly as it was"
+    );
 }
 
 #[cfg(unix)]
@@ -311,6 +441,12 @@ fn install_lanes_degrades_without_a_venv_tool() {
     assert!(
         stdout.contains("not on PATH"),
         "the reason names the missing tool: {stdout}"
+    );
+    // The degradation is visible in the report's own summary line, not
+    // only in each lane's line — and it is a report line, not a gate.
+    assert!(
+        stdout.contains("! lanes        0 of 4 lanes installed, 0 present, 4 skipped"),
+        "{stdout}"
     );
     // No venv was left behind: the lane stays declared and dead, which
     // is slice 4's dead-lane behavior.
@@ -337,6 +473,11 @@ fn a_lane_whose_packages_fail_is_skipped_and_leaves_nothing_behind() {
     assert!(
         stdout.contains("did not install"),
         "the reason names the failing step: {stdout}"
+    );
+    // And the summary line carries the degradation too.
+    assert!(
+        stdout.contains("! lanes        0 of 4 lanes installed, 0 present, 4 skipped"),
+        "{stdout}"
     );
     // The half-built venv was removed, so the lane's state stays
     // honestly absent and a later run retries rather than reading

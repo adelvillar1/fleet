@@ -948,20 +948,26 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    print!(
+        "{}",
+        fleet::install::render_head(&home, &layout, (config_step, &config_path), options.lanes)
+    );
+    // The lanes bootstrap, with each tool's own lines streaming to the
+    // operator as they arrive — a multi-minute `uv pip install` cannot
+    // look frozen, and a tool that passes its bound is killed rather
+    // than hanging the install.
     let lanes = if options.lanes {
-        Some(
-            fleet::install::LANES
-                .iter()
-                .map(|lane| (lane, fleet::install::bootstrap_lane(&home, lane, None)))
-                .collect::<Vec<_>>(),
-        )
+        let mut results: Vec<fleet::install::LaneResult> = Vec::new();
+        let mut progress = std::io::stdout();
+        for lane in fleet::install::LANES.iter() {
+            let outcome = fleet::install::bootstrap_lane(&home, lane, None, &mut progress);
+            results.push((lane, outcome));
+        }
+        Some(results)
     } else {
         None
     };
-    print!(
-        "{}",
-        fleet::install::render(&home, &layout, (config_step, &config_path), lanes.as_deref())
-    );
+    print!("{}", fleet::install::render_tail(&home, lanes.as_deref()));
     // The gate: the doctor's own checks, unchanged. The install's exit
     // code is the doctor's.
     doctor_checks()

@@ -16,11 +16,24 @@
 //! runs the per-lane bootstrap. Either way the command ends on the
 //! doctor's own checks: the install adds no new check and its exit
 //! code is the doctor's.
+//!
+//! Every lane subprocess runs under
+//! [`LANE_INSTALL_TIMEOUT_SECS`], and its lines stream to the operator
+//! as they arrive — a multi-minute `uv pip install` of the torch stack
+//! cannot look frozen, and a tool that has not finished within the
+//! bound is killed: the lane is skipped naming the bound, never a hung
+//! install. A lane's venv carries the installer's receipt
+//! ([`LANE_RECEIPT`]) once its packages land, so an interrupted run's
+//! half-built venv reads not-built and is retried rather than misread
+//! as Present.
 
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
 use palette::{ACCENT, BOLD, DIM, OK, RESET, TEXT};
 
@@ -61,6 +74,23 @@ pub const CONFIG_SCAFFOLD: &str = "{\n  \"pin\": null,\n  \"providers\": []\n}\n
 /// appears in either.
 pub const CREDENTIAL_ENV: &str = "DEEPSEEK_API_KEY";
 
+/// The bound every lane subprocess runs under. The torch stack the
+/// sys1 lane installs legitimately takes minutes, so the bound is
+/// generous — but forever is not a bound: a wedged download, a tool
+/// that waits on a terminal, a child that never exits is killed at
+/// the bound and the lane is skipped naming it, rather than hanging
+/// the install for the operator's whole session.
+pub const LANE_INSTALL_TIMEOUT_SECS: u64 = 900;
+
+/// The same bound as a [`Duration`], the form the tool runner takes.
+const LANE_INSTALL_TIMEOUT: Duration = Duration::from_secs(LANE_INSTALL_TIMEOUT_SECS);
+
+/// The grace a tool gets to exit once its output pipes have closed:
+/// the tools close their pipes as they finish, so anything past this
+/// is a child that will not end — killed and named, never an
+/// unbounded wait (the eval probe's own grace).
+const TOOL_EXIT_GRACE: Duration = Duration::from_secs(5);
+
 // --- the home layout --------------------------------------------------------
 
 /// What one layout step found.
@@ -91,19 +121,42 @@ pub enum ConfigStep {
     Written,
     /// The file was already there; it was named and left untouched.
     Present,
+    /// A symlink sits at the config path — dangling or not. It is
+    /// named and left exactly as it is: `exists()` follows the link,
+    /// so a dangling one reads absent and the scaffold would be
+    /// written *through* it into whatever the link points at.
+    Symlink,
 }
 
 /// Write the config scaffold when absent; name and never rewrite an
 /// existing file, whatever it holds — an owner's hand-edited config is
 /// theirs, and the install is not the place it gets clobbered.
+///
+/// The absence test is [`fs::symlink_metadata`], which does not follow
+/// the final component: a symlink at the config path is a named
+/// [`ConfigStep::Symlink`] and is never written through, so a dangling
+/// link is left dangling rather than becoming a scaffold silently
+/// planted in the link's target.
 /// @return the step's outcome and the config file's path.
 pub fn config_step(home: &Path) -> std::io::Result<(ConfigStep, PathBuf)> {
     let path = home.join(CONFIG_FILE);
-    if path.exists() {
-        return Ok((ConfigStep::Present, path));
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            let step = if metadata.file_type().is_symlink() {
+                ConfigStep::Symlink
+            } else {
+                ConfigStep::Present
+            };
+            Ok((step, path))
+        }
+        // Absent — and only genuinely absent: a dangling symlink
+        // resolves its metadata above and never reaches this arm.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::write(&path, CONFIG_SCAFFOLD)?;
+            Ok((ConfigStep::Written, path))
+        }
+        Err(error) => Err(error),
     }
-    fs::write(&path, CONFIG_SCAFFOLD)?;
-    Ok((ConfigStep::Written, path))
 }
 
 // --- the heavy lanes ---------------------------------------------------------
@@ -211,9 +264,68 @@ pub fn venv_dir(home: &Path, lane: &Lane) -> PathBuf {
     venvs_dir(home).join(lane.name)
 }
 
-/// The venv's python — the presence check's whole test.
+/// The venv's python — one half of the presence check.
 fn venv_python(venv: &Path) -> PathBuf {
     venv.join("bin").join("python")
+}
+
+/// The receipt file's name inside a lane's venv: the installer's own
+/// record that the venv's packages landed. It sits beside the venv's
+/// python, so it travels with the venv.
+pub const LANE_RECEIPT: &str = ".fleet-lane";
+
+/// The receipt's path inside one lane's venv.
+fn receipt_path(venv: &Path) -> PathBuf {
+    venv.join(LANE_RECEIPT)
+}
+
+/// Whether the venv is a finished lane: its python exists **and** the
+/// installer's receipt names the lane. The python alone is created by
+/// `uv venv` before the packages are installed, so it is not evidence
+/// of a finished lane — a Ctrl-C or an OOM-kill mid-install leaves it
+/// in place, and without the receipt the next run would read Present
+/// over a venv whose packages never landed.
+fn venv_is_finished(venv: &Path, lane: &Lane) -> bool {
+    venv_python(venv).exists() && receipt_names(venv, lane)
+}
+
+/// Whether the receipt beside the venv's python names this lane. A
+/// receipt is written by the installer, so a venv without one is a
+/// half-built venv — an interrupted prior run, a hand-made directory,
+/// a venv built by a pre-receipt version of the installer — and is
+/// treated as not-built: rebuilt or skipped, never misread as Present.
+fn receipt_names(venv: &Path, lane: &Lane) -> bool {
+    fs::read_to_string(receipt_path(venv))
+        .map(|text| {
+            text.lines()
+                .any(|line| line.trim() == format!("lane {}", lane.name))
+        })
+        .unwrap_or(false)
+}
+
+/// Write the lane's receipt once its packages have landed: the lane's
+/// name and role, its package list, and the UTC minute it finished.
+/// The file is the only thing separating a venv whose packages are in
+/// from one an interrupted run left half-built, so a failure to write
+/// it is a failure of the lane and is named by the caller.
+fn write_receipt(venv: &Path, lane: &Lane, finished: &str) -> std::io::Result<()> {
+    let text = format!(
+        "lane {}\nrole {}\npackages {}\ninstalled {}\n",
+        lane.name,
+        lane.role,
+        lane.packages.join(" "),
+        finished
+    );
+    fs::write(receipt_path(venv), text)
+}
+
+/// The UTC minute, the resolution a receipt carries: a venv lands over
+/// minutes, so the minute is the honest stamp. A clock that cannot be
+/// read names itself rather than inventing a time.
+fn utc_minute() -> String {
+    crate::session::iso_utc_stamp(SystemTime::now())
+        .map(|stamp| stamp.chars().take(16).collect())
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 /// The wiring line a lane's core reads once its venv exists: the
@@ -243,6 +355,10 @@ enum ToolError {
     /// The program ran and exited non-zero. The detail is its last
     /// output line — the fork's `run()` convention.
     Failed { detail: String },
+    /// The bound expired: the child was killed, so the install cannot
+    /// hang on a wedged tool. The bound is part of the name, so a
+    /// test's short bound and production's long one both read truly.
+    TimedOut { program: String, bound: Duration },
 }
 
 impl ToolError {
@@ -251,22 +367,81 @@ impl ToolError {
         match self {
             ToolError::NotFound { program } => format!("{program} is not on PATH"),
             ToolError::Failed { detail } => detail.clone(),
+            ToolError::TimedOut { program, bound } => {
+                format!("{program} did not finish within {bound:?} and was killed")
+            }
         }
     }
 }
 
-/// Run one tool, with `path` as the child's PATH when given — the seam
-/// a test drives a deterministic failure through — and the caller's
-/// environment otherwise. `Ok(())` on a zero exit; otherwise the named
-/// reason.
-fn run_tool(program: &str, args: &[&str], path: Option<&OsStr>) -> Result<(), ToolError> {
+/// One lane's subprocess run: the child's PATH seam, the lane's name
+/// for the progress prefix, the sink the child's lines stream to, and
+/// the bound every tool runs under. Built once per lane and handed to
+/// each of its tools.
+struct LaneRun<'a> {
+    /// The child's PATH when given — the seam a test drives a
+    /// deterministic outcome through — and the caller's environment
+    /// otherwise.
+    path: Option<&'a OsStr>,
+    /// The lane's name, so a streamed line says which lane it is from.
+    lane: &'a str,
+    /// Where the child's lines go as they arrive.
+    progress: &'a mut (dyn std::io::Write + Send),
+    /// The bound every tool in this run is held to.
+    bound: Duration,
+}
+
+/// One line from a lane subprocess, on its way to the operator. The
+/// stream it came from is kept, so a failure's named last line still
+/// prefers stderr — the fork's `run()` convention.
+enum ToolLine {
+    Out(String),
+    Err(String),
+}
+
+/// One reader thread: every line the child writes on one pipe, sent
+/// on as it arrives. A reader owns its pipe and nothing else, so the
+/// parent stays free to enforce the bound and to do the writing — the
+/// sink is never shared between threads.
+fn pump(pipe: impl std::io::Read, tx: mpsc::Sender<ToolLine>, line: impl Fn(String) -> ToolLine) {
+    use std::io::BufRead as _;
+    for text in std::io::BufReader::new(pipe).lines() {
+        match text {
+            Ok(text) => {
+                if tx.send(line(text)).is_err() {
+                    return;
+                }
+            }
+            // An unreadable pipe: the child's output ends here.
+            Err(_) => return,
+        }
+    }
+}
+
+/// Run one tool under the run's bound, streaming its lines to the
+/// operator as they arrive and capturing them for the failure's named
+/// last line.
+///
+/// One reader thread per pipe drains the child's output — a chatty
+/// child (a `uv pip install` of the torch stack writes to both pipes)
+/// cannot deadlock the wait — and the parent waits with a deadline.
+/// A tool that has not finished within the bound is killed and the
+/// lane above is skipped naming it, so the install never hangs.
+/// `Ok(())` on a zero exit; otherwise the named reason.
+fn run_tool(program: &str, args: &[&str], run: &mut LaneRun<'_>) -> Result<(), ToolError> {
     let mut command = Command::new(program);
     command.args(args);
-    if let Some(path) = path {
+    // Null stdin: a tool that reads the terminal must not be able to
+    // hold the install open, piped or not.
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(path) = run.path {
         command.env("PATH", path);
     }
-    let output = match command.output() {
-        Ok(output) => output,
+    let mut child = match command.spawn() {
+        Ok(child) => child,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(ToolError::NotFound { program: program.to_string() });
         }
@@ -274,20 +449,104 @@ fn run_tool(program: &str, args: &[&str], path: Option<&OsStr>) -> Result<(), To
             return Err(ToolError::Failed { detail: format!("{program}: {error}") });
         }
     };
-    if output.status.success() {
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let (tx, rx) = mpsc::channel::<ToolLine>();
+    let out_tx = tx.clone();
+    let err_tx = tx;
+    // Detached readers rather than scoped ones: killing the child does
+    // not kill its grandchildren, and a pipe one of them still holds
+    // open keeps that reader alive until it exits. A scoped reader
+    // would hold the install open for exactly as long, so the readers
+    // are fire-and-forget and the bound above is the only thing that
+    // bounds the install.
+    if let Some(pipe) = stdout {
+        thread::spawn(move || pump(pipe, out_tx, ToolLine::Out));
+    }
+    if let Some(pipe) = stderr {
+        thread::spawn(move || pump(pipe, err_tx, ToolLine::Err));
+    }
+    let deadline = Instant::now() + run.bound;
+    let mut out = String::new();
+    let mut err = String::new();
+    let status = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(ToolLine::Out(text)) => {
+                out.push_str(&text);
+                out.push('\n');
+                let _ = writeln!(run.progress, "  {} | {text}", run.lane);
+            }
+            Ok(ToolLine::Err(text)) => {
+                err.push_str(&text);
+                err.push('\n');
+                let _ = writeln!(run.progress, "  {} | {text}", run.lane);
+            }
+            // Both pipes closed: the child's output is complete.
+            Err(RecvTimeoutError::Disconnected) => {
+                break Some(wait_for_exit(&mut child, program))
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                // The bound expired. Kill the child, which closes the
+                // pipes it owns and ends the readers it does not share
+                // with a grandchild.
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let status = match status {
+        Some(Ok(status)) => status,
+        Some(Err(failure)) => return Err(failure),
+        None => return Err(ToolError::TimedOut { program: program.to_string(), bound: run.bound }),
+    };
+    if status.success() {
         return Ok(());
     }
-    let code = output.status.code().unwrap_or(-1);
-    let detail = last_line(&output.stderr)
-        .or_else(|| last_line(&output.stdout))
+    let code = status.code().unwrap_or(-1);
+    let detail = last_line(&err)
+        .or_else(|| last_line(&out))
         .unwrap_or_else(|| format!("{program} produced no output"));
     Err(ToolError::Failed { detail: format!("{program} exited {code}: {detail}") })
 }
 
+/// Wait for the child to exit once its output pipes have closed, with
+/// a short grace: the tools close their pipes as they finish, so a
+/// child that will not end past the grace is killed and named rather
+/// than hanging the install.
+fn wait_for_exit(
+    child: &mut std::process::Child,
+    program: &str,
+) -> Result<ExitStatus, ToolError> {
+    let deadline = Instant::now() + TOOL_EXIT_GRACE;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ToolError::Failed {
+                    detail: format!("{program} did not exit after its output closed"),
+                });
+            }
+            Err(error) => {
+                // A child that cannot be waited on is a named failure,
+                // not a hang: its pipes are already closed.
+                return Err(ToolError::Failed {
+                    detail: format!("{program} could not be waited on: {error}"),
+                });
+            }
+        }
+    }
+}
+
 /// The last non-empty line of a tool's output, trimmed.
-fn last_line(bytes: &[u8]) -> Option<String> {
-    String::from_utf8_lossy(bytes)
-        .lines()
+fn last_line(text: &str) -> Option<String> {
+    text.lines()
         .rev()
         .find(|line| !line.trim().is_empty())
         .map(|line| line.trim().to_string())
@@ -306,15 +565,17 @@ enum VenvTool {
 const UV_PYTHON: &str = "3.12";
 
 /// Create the venv: `uv` first (the fork's vocabulary), `python3 -m venv`
-/// when uv does not resolve on PATH. A tool that runs and fails is a
-/// named error, not a silent second attempt — the failure is the
-/// lane's, and it is named.
-fn create_venv(venv: &Path, path: Option<&OsStr>) -> Result<VenvTool, ToolError> {
+/// when uv does not resolve on PATH. A tool that runs and fails — or
+/// that runs past the bound — is a named error, not a silent second
+/// attempt: the failure is the lane's, and it is named.
+fn create_venv(venv: &Path, run: &mut LaneRun<'_>) -> Result<VenvTool, ToolError> {
     let venv_arg = venv.to_string_lossy().into_owned();
-    match run_tool("uv", &["venv", &venv_arg, "--python", UV_PYTHON], path) {
+    match run_tool("uv", &["venv", &venv_arg, "--python", UV_PYTHON], run) {
         Ok(()) => Ok(VenvTool::Uv),
+        // Only an absent uv falls back: a uv that ran and failed, or
+        // one that was killed at the bound, is the lane's own answer.
         Err(ToolError::NotFound { .. }) => {
-            run_tool("python3", &["-m", "venv", &venv_arg], path).map(|()| VenvTool::Python)
+            run_tool("python3", &["-m", "venv", &venv_arg], run).map(|()| VenvTool::Python)
         }
         Err(failure) => Err(failure),
     }
@@ -327,7 +588,7 @@ fn install_packages(
     tool: VenvTool,
     venv: &Path,
     packages: &[&str],
-    path: Option<&OsStr>,
+    run: &mut LaneRun<'_>,
 ) -> Result<(), ToolError> {
     let python = venv_python(venv).to_string_lossy().into_owned();
     let (program, mut args): (&str, Vec<&str>) = match tool {
@@ -335,41 +596,97 @@ fn install_packages(
         VenvTool::Python => (python.as_str(), vec!["-m", "pip", "install"]),
     };
     args.extend_from_slice(packages);
-    run_tool(program, &args, path)
+    run_tool(program, &args, run)
 }
 
 /// Bootstrap one lane under `home`: idempotent, and never a failure of
-/// the install. `path` is the child's PATH when given — the seam a
-/// test drives a deterministic failure through — and inherited
-/// otherwise.
+/// the install.
 ///
-/// An existing venv is detected and named, not rebuilt. A venv that
-/// cannot be built — no tool on PATH, a failing create, a failing
-/// install — leaves the lane [`LaneOutcome::Skipped`] with its reason
-/// named; the lane stays declared and dead, which is slice 4's
-/// dead-lane behavior, and the install carries on.
-pub fn bootstrap_lane(home: &Path, lane: &Lane, path: Option<&OsStr>) -> LaneOutcome {
+/// A finished venv — its python **and** its receipt — is detected and
+/// named, not rebuilt. A venv that cannot be built — no tool on PATH,
+/// a failing create, a failing install, a tool killed at the bound —
+/// leaves the lane [`LaneOutcome::Skipped`] with its reason named; the
+/// lane stays declared and dead, which is slice 4's dead-lane
+/// behavior, and the install carries on. `path` is the child's PATH
+/// when given — the seam a test drives a deterministic outcome
+/// through — and inherited otherwise. The child's lines stream to
+/// `progress` as they arrive, so a multi-minute install cannot look
+/// frozen.
+pub fn bootstrap_lane(
+    home: &Path,
+    lane: &Lane,
+    path: Option<&OsStr>,
+    progress: &mut (dyn std::io::Write + Send),
+) -> LaneOutcome {
+    bootstrap_lane_bounded(home, lane, path, progress, LANE_INSTALL_TIMEOUT)
+}
+
+/// Bootstrap one lane under an explicit subprocess bound — the seam a
+/// test drives a hung tool through, at 300ms rather than
+/// [`LANE_INSTALL_TIMEOUT_SECS`]. [`bootstrap_lane`] is this with the
+/// production bound.
+fn bootstrap_lane_bounded(
+    home: &Path,
+    lane: &Lane,
+    path: Option<&OsStr>,
+    progress: &mut (dyn std::io::Write + Send),
+    bound: Duration,
+) -> LaneOutcome {
     let venv = venv_dir(home, lane);
-    // The presence check's whole test: the venv's python exists.
-    if venv_python(&venv).exists() {
+    // The presence check's whole test: the venv's python exists AND
+    // the installer's receipt names the lane. A venv with one and not
+    // the other is a half-built venv — an interrupted prior run, a
+    // hand-made directory, a pre-receipt build — and is rebuilt or
+    // skipped below, never misread as Present.
+    if venv_is_finished(&venv, lane) {
         return LaneOutcome::Present;
     }
-    let tool = match create_venv(&venv, path) {
+    // Whether this run is the venv's author. The removal below takes
+    // only the artifact this run created: a directory that was already
+    // there — an interrupted prior run's half-built venv, a user's own
+    // junk — is retried over or skipped, never removed. Without the
+    // receipt it can never read as Present either way.
+    let created_here = !venv.exists();
+    let mut run = LaneRun { path, lane: lane.name, progress, bound };
+    let tool = match create_venv(&venv, &mut run) {
         Ok(tool) => tool,
-        Err(failure) => return LaneOutcome::Skipped { reason: failure.describe() },
+        Err(failure) => {
+            if created_here {
+                let _ = fs::remove_dir_all(&venv);
+            }
+            return LaneOutcome::Skipped { reason: failure.describe() };
+        }
     };
-    if let Err(failure) = install_packages(tool, &venv, lane.packages, path) {
-        // The venv this run just created is incomplete. Remove it
+    if let Err(failure) = install_packages(tool, &venv, lane.packages, &mut run) {
+        // The venv this run created is incomplete. Remove it
         // best-effort so the lane's state stays honestly absent and a
         // later run retries, rather than reading "present" over a venv
         // whose packages never landed. Only this run's own artifact is
-        // removed — an existing venv is never touched.
-        let _ = fs::remove_dir_all(&venv);
-        return LaneOutcome::Skipped {
-            reason: format!(
+        // removed — a directory that was already there is left for the
+        // receipt guard to keep reading not-built.
+        if created_here {
+            let _ = fs::remove_dir_all(&venv);
+        }
+        let reason = match &failure {
+            // The bound expired and the child was killed: name the
+            // bound and the kill, not the step that was mid-flight.
+            ToolError::TimedOut { .. } => failure.describe(),
+            _ => format!(
                 "the venv at {} was created but its packages did not install: {}",
                 venv.display(),
                 failure.describe()
+            ),
+        };
+        return LaneOutcome::Skipped { reason };
+    }
+    // The packages landed: the receipt is what makes the venv read as
+    // finished on every later run. A receipt that cannot be written is
+    // a failure of the lane, named — never a silent Present-over-nothing.
+    if let Err(error) = write_receipt(&venv, lane, &utc_minute()) {
+        return LaneOutcome::Skipped {
+            reason: format!(
+                "the packages installed but the receipt at {} could not be written: {error}",
+                receipt_path(&venv).display()
             ),
         };
     }
@@ -378,17 +695,35 @@ pub fn bootstrap_lane(home: &Path, lane: &Lane, path: Option<&OsStr>) -> LaneOut
 
 // --- the report --------------------------------------------------------------
 
-/// Render the install's report: the header, the home, one line per
-/// layout step, the config step, the lane step, the credential note,
-/// and the doctor-gate separator — the fork's `+`/`=`/`!` vocabulary
-/// in the house card-line style. `lanes` is `Some` when `--lanes` ran
-/// the bootstrap and `None` when the bare install named the lane step
-/// as available.
+/// Render the install's report: [`render_head`] then [`render_tail`],
+/// the one call a test — or any caller that is not streaming — makes.
+/// `lanes` is `Some` when `--lanes` ran the bootstrap and `None` when
+/// the bare install named the lane step as available.
 pub fn render(
     home: &Path,
     layout: &[(&'static str, LayoutStep)],
     config: (ConfigStep, &Path),
     lanes: Option<&[LaneResult]>,
+) -> String {
+    let mut out = render_head(home, layout, config, lanes.is_some());
+    out.push_str(&render_tail(home, lanes));
+    out
+}
+
+/// The report's opening: the header, the home, one line per layout
+/// step, the config step, and — when `--lanes` is running — the venvs
+/// header the lanes' streamed output lands under.
+///
+/// It is its own function so the command can print it *before* the
+/// lane bootstrap: the operator sees the install begin, and each
+/// tool's own lines arrive under the venvs header as they come,
+/// rather than the whole report waiting behind a multi-minute
+/// `uv pip install`.
+pub fn render_head(
+    home: &Path,
+    layout: &[(&'static str, LayoutStep)],
+    config: (ConfigStep, &Path),
+    lanes: bool,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -426,21 +761,43 @@ pub fn render(
             "present",
             format!("{} — left untouched", config_path.display()),
         ),
+        ConfigStep::Symlink => (
+            "!",
+            TEXT,
+            "symlink",
+            format!(
+                "{} — left exactly as it is, never written through",
+                config_path.display()
+            ),
+        ),
     };
     out.push_str(&format!(
         "  {color}{glyph}{RESET} {TEXT}{:<12}{RESET} {color}{verb}{RESET} {DIM}{detail}{RESET}\n",
         CONFIG_FILE
     ));
+    if lanes {
+        out.push_str(&format!(
+            "  {DIM}{:<12}{RESET} {DIM}{} — one venv per core, idempotent, degrade-without{RESET}\n",
+            "venvs",
+            venvs_dir(home).display()
+        ));
+    }
+    out
+}
+
+/// The report's close: the lane section — one line per lane and the
+/// summary that names the skips — or the bare install's note that the
+/// lane step is available, then the credential note and the
+/// doctor-gate separator. Printed once the lanes are done, so every
+/// line it names is a finished answer.
+pub fn render_tail(home: &Path, lanes: Option<&[LaneResult]>) -> String {
+    let mut out = String::new();
     match lanes {
         Some(results) => {
-            out.push_str(&format!(
-                "  {DIM}{:<12}{RESET} {DIM}{} — one venv per core, idempotent, degrade-without{RESET}\n",
-                "venvs",
-                venvs_dir(home).display()
-            ));
             for (lane, outcome) in results {
                 out.push_str(&render_lane_line(lane, outcome, &venv_dir(home, lane)));
             }
+            out.push_str(&render_lane_summary(results));
         }
         None => out.push_str(&format!(
             "  {DIM}!{RESET} {TEXT}{:<12}{RESET} {DIM}optional heavy lanes — `fleet install --lanes` builds {}/<lane>/; a lane that cannot build is skipped by name{RESET}\n",
@@ -453,6 +810,29 @@ pub fn render(
         "\n{DIM}── doctor ── the install's exit code is the doctor's ──{RESET}\n"
     ));
     out
+}
+
+/// The lane section's summary line: how many lanes are ready and how
+/// many were skipped, so a degraded `--lanes` run is visible in the
+/// report itself and not only in the skipped lane's own line. It is a
+/// report line, not a gate: a skipped lane still leaves the install
+/// green, because the lane is declared and dead, not broken.
+fn render_lane_summary(results: &[LaneResult]) -> String {
+    let total = results.len();
+    let installed = results
+        .iter()
+        .filter(|(_, outcome)| matches!(outcome, LaneOutcome::Installed))
+        .count();
+    let present = results
+        .iter()
+        .filter(|(_, outcome)| matches!(outcome, LaneOutcome::Present))
+        .count();
+    let skipped = total - installed - present;
+    let (glyph, color) = if skipped == 0 { ("=", DIM) } else { ("!", TEXT) };
+    format!(
+        "  {color}{glyph}{RESET} {TEXT}{:<12}{RESET} {color}{installed} of {total} lanes installed, {present} present, {skipped} skipped{RESET}\n",
+        "lanes"
+    )
 }
 
 /// One lane's line under the venvs header: the outcome, the venv's
@@ -538,6 +918,36 @@ mod tests {
             }
         }
         out
+    }
+
+    /// A controlled PATH holding a fake `uv`: it materializes the venv
+    /// layout `uv venv` is asked for, then answers the package step
+    /// the way `hang` says. Not hanging, it prints one line on each
+    /// pipe and exits zero — the streaming driver. Hanging, it prints
+    /// and `exec`s a sleep, so the process the installer holds is the
+    /// one that never finishes — the hung-tool driver.
+    /// `#[cfg(unix)]` because the stand-in is a shell script, and
+    /// `/bin/mkdir` is absolute because a bare `mkdir` would not
+    /// resolve on the controlled PATH.
+    #[cfg(unix)]
+    fn fake_uv(dir: &Path, hang: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::create_dir_all(dir).unwrap();
+        let package_step = if hang {
+            "echo 'fake uv: wedged' >&2; exec /bin/sleep 30"
+        } else {
+            "echo 'fake uv: resolving one package'; echo 'fake uv: installed one package' >&2"
+        };
+        let script = format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = \"venv\" ]; then /bin/mkdir -p \"$2/bin\" && : > \"$2/bin/python\"; exit 0; fi\n\
+             if [ \"$1\" = \"pip\" ]; then {package_step}; fi\n\
+             exit 0\n"
+        );
+        let uv = dir.join("uv");
+        fs::write(&uv, script).unwrap();
+        fs::set_permissions(&uv, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]
@@ -664,14 +1074,179 @@ mod tests {
 
     #[test]
     fn a_present_venv_is_detected_without_rebuilding() {
-        // The presence check is the venv python's existence; the
-        // bootstrap answers Present before any tool runs.
+        // The presence check is the venv python's existence together
+        // with the installer's receipt; the bootstrap answers Present
+        // before any tool runs.
         let home = scratch("present");
         let sem1 = LANES.iter().find(|lane| lane.name == "sem1").unwrap();
         let venv = venv_dir(&home, sem1);
         fs::create_dir_all(venv.join("bin")).unwrap();
         fs::write(venv.join("bin").join("python"), "#!/bin/sh\n").unwrap();
-        assert_eq!(bootstrap_lane(&home, sem1, None), LaneOutcome::Present);
+        write_receipt(&venv, sem1, "2026-10-14T18:04").unwrap();
+        assert_eq!(bootstrap_lane(&home, sem1, None, &mut Vec::new()), LaneOutcome::Present);
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_receipt_names_the_lane_its_packages_and_the_utc_minute() {
+        let home = scratch("receipt");
+        let sem1 = LANES.iter().find(|lane| lane.name == "sem1").unwrap();
+        let venv = venv_dir(&home, sem1);
+        fs::create_dir_all(venv.join("bin")).unwrap();
+        fs::write(venv.join("bin").join("python"), "#!/bin/sh\n").unwrap();
+        // The exact bytes: the lane's name and role, its package list,
+        // and the UTC minute it landed.
+        write_receipt(&venv, sem1, "2026-10-14T18:04").unwrap();
+        assert_eq!(
+            fs::read_to_string(receipt_path(&venv)).unwrap(),
+            "lane sem1\nrole embeddings\npackages sentence-transformers\ninstalled 2026-10-14T18:04\n"
+        );
+        // And the presence check reads it back.
+        assert!(venv_is_finished(&venv, sem1));
+        // A receipt that does not name this lane does not vouch for
+        // this venv: the python alone is not a finished lane, and
+        // neither is a receipt belonging to a different lane or one
+        // that names no lane at all.
+        fs::write(receipt_path(&venv), "lane sdm1\n").unwrap();
+        assert!(!venv_is_finished(&venv, sem1));
+        fs::write(receipt_path(&venv), "packages sentence-transformers\n").unwrap();
+        assert!(!venv_is_finished(&venv, sem1));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_partial_venv_without_the_receipt_is_not_present() {
+        // An interrupted prior run: `uv venv` has created bin/python
+        // and the packages never landed. The presence check must not
+        // read it as Present, or every later run would name a dead
+        // venv as installed. The PATH carries no venv tool, so the
+        // lane is skipped — never Present, and never rebuilt silently
+        // by the machine's own uv.
+        let home = scratch("partial");
+        let sem1 = LANES.iter().find(|lane| lane.name == "sem1").unwrap();
+        let venv = venv_dir(&home, sem1);
+        fs::create_dir_all(venv.join("bin")).unwrap();
+        fs::write(venv.join("bin").join("python"), "#!/bin/sh\n").unwrap();
+        let bare = scratch("bare-path");
+        let outcome = bootstrap_lane(&home, sem1, Some(bare.as_os_str()), &mut Vec::new());
+        assert!(
+            matches!(outcome, LaneOutcome::Skipped { .. }),
+            "a venv without the receipt is not-built: {outcome:?}"
+        );
+        assert!(!venv_is_finished(&venv, sem1));
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&bare);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_progress_sink_receives_the_tools_lines_as_they_arrive() {
+        // The streaming half of the bound: a tool that prints is seen
+        // by the operator while it runs, not after every lane has
+        // finished. The sink is a Vec here — the shape a test drives.
+        let home = scratch("stream");
+        let sem1 = LANES.iter().find(|lane| lane.name == "sem1").unwrap();
+        let tools = scratch("stream-tools");
+        fake_uv(&tools, false);
+        let mut sink: Vec<u8> = Vec::new();
+        let outcome = bootstrap_lane(&home, sem1, Some(tools.as_os_str()), &mut sink);
+        assert_eq!(outcome, LaneOutcome::Installed);
+        let streamed = String::from_utf8(sink).unwrap();
+        // Both pipes' lines arrive, each named under its lane.
+        assert!(
+            streamed.contains("sem1 | fake uv: resolving one package"),
+            "{streamed}"
+        );
+        assert!(
+            streamed.contains("sem1 | fake uv: installed one package"),
+            "{streamed}"
+        );
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&tools);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hung_tool_is_killed_at_the_bound_and_the_lane_is_skipped() {
+        // A tool that never finishes: killed at the bound, the
+        // half-built venv removed, and the lane skipped naming the
+        // bound. The bound here is 300ms rather than
+        // LANE_INSTALL_TIMEOUT_SECS, which is the seam this test
+        // drives — production's 900s is not a test's wait.
+        let home = scratch("hung");
+        let sem1 = LANES.iter().find(|lane| lane.name == "sem1").unwrap();
+        let tools = scratch("hung-tools");
+        fake_uv(&tools, true);
+        let venv = venv_dir(&home, sem1);
+        let mut sink: Vec<u8> = Vec::new();
+        let started = Instant::now();
+        let outcome = bootstrap_lane_bounded(
+            &home,
+            sem1,
+            Some(tools.as_os_str()),
+            &mut sink,
+            Duration::from_millis(300),
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the bound bounds the wait: {:?}",
+            started.elapsed()
+        );
+        let LaneOutcome::Skipped { reason } = outcome else {
+            panic!("a hung tool is a skipped lane: {outcome:?}");
+        };
+        assert!(reason.contains("did not finish within 300ms"), "{reason}");
+        assert!(reason.contains("was killed"), "{reason}");
+        // The half-built venv is gone, so a later run retries rather
+        // than reading present over a venv whose packages never landed.
+        assert!(!venv.exists(), "the half-built venv was removed");
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&tools);
+    }
+
+    #[test]
+    fn the_config_scaffold_is_never_written_through_a_dangling_symlink() {
+        // `exists()` follows the link, so a dangling one reads absent —
+        // and `fs::write` would write the scaffold *through* it into
+        // whatever the link points at. The step names the symlink and
+        // leaves it exactly as it is.
+        let home = scratch("dangling");
+        fs::create_dir_all(&home).unwrap();
+        let target = home.join("elsewhere").join("config.json");
+        std::os::unix::fs::symlink(&target, home.join(CONFIG_FILE)).unwrap();
+        let (step, path) = config_step(&home).unwrap();
+        assert_eq!(step, ConfigStep::Symlink);
+        assert_eq!(path, home.join(CONFIG_FILE));
+        assert!(!target.exists(), "nothing was written through the link");
+        assert!(home.join(CONFIG_FILE).read_link().is_ok(), "the link stands");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_report_names_the_skips_in_its_summary_line() {
+        // The degradation is visible in the report itself, not only in
+        // the skipped lane's own line — and it is a report line, not a
+        // gate: a skipped lane leaves the install green.
+        let home = scratch("summary");
+        let layout = vec![("sessions", LayoutStep::Created)];
+        let sys1 = LANES.iter().find(|lane| lane.name == "sys1").unwrap();
+        let sem1 = LANES.iter().find(|lane| lane.name == "sem1").unwrap();
+        let gen1 = LANES.iter().find(|lane| lane.name == "gen1").unwrap();
+        let results = vec![
+            (sys1, LaneOutcome::Installed),
+            (sem1, LaneOutcome::Present),
+            (gen1, LaneOutcome::Skipped { reason: "no network".to_string() }),
+        ];
+        let report = strip_ansi(&render(
+            &home,
+            &layout,
+            (ConfigStep::Written, &home.join(CONFIG_FILE)),
+            Some(&results),
+        ));
+        assert!(
+            report.contains("! lanes        1 of 3 lanes installed, 1 present, 1 skipped"),
+            "{report}"
+        );
         let _ = fs::remove_dir_all(&home);
     }
 

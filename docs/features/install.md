@@ -37,8 +37,49 @@ home        ok   writable (/Users/x/.fleet)
 ```
 
 The bare install never blocks on a network: it names the lane step as
-available and moves to the gate. `--lanes` is the only step that
-touches the network (the package installs), and it degrades without.
+available and moves to the gate. `--lanes` streams each tool's own
+output under the venvs header as it arrives — a multi-minute
+`uv pip install` of the torch stack cannot look frozen — and then
+names each lane's outcome and a summary line:
+
+```
+fleet install — the home layout, the config scaffold, and the doctor gate
+
+  home            /Users/x/.fleet
+  + sessions      created /Users/x/.fleet/sessions
+  = memories      present /Users/x/.fleet/memories
+  + skills        created /Users/x/.fleet/skills
+  = cron          present /Users/x/.fleet/cron
+  + proposals     created /Users/x/.fleet/proposals
+  + config.json   written /Users/x/.fleet/config.json — the roster's override seam: {"pin": null, "providers": []}
+  venvs           /Users/x/.fleet/venvs — one venv per core, idempotent, degrade-without
+  sys1 | Resolved 12 packages in 1m 04s
+  sys1 | Installed 12 packages in 1m 04s
+  + sys1          installed /Users/x/.fleet/venvs/sys1 — point ~/.config/sys1/config.toml at it: [providers] local_venv = "/Users/x/.fleet/venvs/sys1"
+  ! sem1          skipped /Users/x/.fleet/venvs/sem1 — uv did not finish within 900s and was killed
+  = lanes         3 of 4 lanes installed, 0 present, 1 skipped
+  ! credentials   DEEPSEEK_API_KEY: process env → /Users/x/.fleet/.env → the harness refs (~/.dsh/.credentials.yaml, read-only)
+
+── doctor ── the install's exit code is the doctor's ──
+credentials ok   set (…abcd)
+home        ok   writable (/Users/x/.fleet)
+…
+```
+
+The summary line is where a degraded `--lanes` run shows: a skipped
+lane is counted in the report itself, not only in its own line. It is
+a report line and not a gate — a skipped lane leaves the install
+green, because the lane is declared and dead, not broken.
+
+**What touches the network.** The install's own steps are
+filesystem-only — the layout, the config scaffold, and the lane venvs
+are local writes, and the bare install performs no network I/O at
+all. The network the command does perform is the gate's: it ends on
+`fleet doctor`'s own checks, which include the API-reachability
+probe (a TCP connect to the configured `DEEPSEEK_BASE_URL`) and the
+recall probe (a real embeddings round trip against the local
+endpoint). `--lanes` adds one network step of its own, the package
+installs, and degrades without it.
 
 ## The home layout
 
@@ -74,6 +115,15 @@ It is written only when absent. An existing file — whatever it holds,
 including a hand-edited one that is not valid JSON — is named and left
 byte-for-byte untouched: the install is not the place an owner's config
 gets clobbered.
+
+The absence test is `symlink_metadata`, which does not follow the
+final component. A **symlink** at the config path — dangling or not —
+is named as such and left exactly as it is: `exists()` follows the
+link, so a dangling one reads absent, and a plain write would send the
+scaffold *through* the link into whatever it points at. Nothing is
+ever written through a symlink, and a file where a directory belongs
+(`<home>/sessions` as a regular file, say) is a named failure with a
+nonzero exit, never a silent overwrite.
 
 Credentials are not configured by the install and no key material is
 written anywhere. The resolution chain is named in the install's output
@@ -113,19 +163,43 @@ with `ModuleNotFoundError: No module named 'torch'`. The lane installs
 
 The three behaviors, each named in the output:
 
-- **Present** — the venv's `bin/python` exists: the lane is detected
-  and named, not rebuilt. This is the whole presence check, the fork's
-  own rule.
-- **Installed** — the venv was created and its packages installed; the
-  line names the wiring the core reads (the export, or sys1's config
-  key with the real path).
+- **Present** — the venv's `bin/python` exists **and** the
+  installer's receipt (`venvs/<lane>/.fleet-lane`, naming the lane,
+  its package list, and the UTC minute it landed) sits beside it: the
+  lane is detected and named, not rebuilt. The receipt is what makes
+  the check honest. `uv venv` creates `bin/python` *before* the
+  packages are installed, so the python alone is not evidence of a
+  finished lane — a Ctrl-C or an OOM-kill mid-install leaves it in
+  place, and a presence check on the python alone would read Present
+  over a venv whose packages never landed. A venv without the receipt
+  — an interrupted prior run, a hand-made directory, a venv built by
+  a pre-receipt version of the installer — reads not-built: rebuilt or
+  skipped, never misread as Present. (A pre-receipt venv therefore
+  rebuilds once; that is the honest migration.)
+- **Installed** — the venv was created and its packages installed;
+  the receipt is written once they land, and the line names the wiring
+  the core reads (the export, or sys1's config key with the real
+  path).
 - **Skipped** — the venv could not be built: no `uv`/`python3` on
-  PATH, a failing create, or a failing package install (no network).
-  The reason is named, the install still succeeds, and the lane stays
-  declared and dead — slice 4's existing dead-lane behavior, never a
-  hard failure. A half-built venv from a failed install is removed
-  best-effort, so the lane's state stays honestly absent and a later
-  run retries instead of reading "present" over a dead venv.
+  PATH, a failing create, a failing package install (no network), or a
+  tool killed at the bound. The reason is named, the install still
+  succeeds, and the lane stays declared and dead — slice 4's existing
+  dead-lane behavior, never a hard failure. A half-built venv this run
+  created is removed best-effort, so the lane's state stays honestly
+  absent and a later run retries instead of reading "present" over a
+  dead venv; a directory that was already there is retried over or
+  skipped, never removed, and the receipt keeps it reading not-built
+  either way.
+
+Every lane subprocess runs under `LANE_INSTALL_TIMEOUT_SECS` (900
+seconds — the torch stack legitimately takes minutes, but forever is
+not a bound), and its lines stream to the operator as they arrive.
+Two reader threads drain the child's pipes so a chatty child cannot
+deadlock the wait, the parent waits with a deadline, and a tool that
+has not finished within the bound is killed: the lane is skipped
+naming the bound and the half-built venv is removed. A wedged
+download, a tool waiting on a terminal, or a child that never exits
+is therefore a named skip rather than a hung install.
 
 The exports are printed, not written: the lanes read the ambient
 environment through slice 4's passthrough, so the owner puts the named
@@ -146,6 +220,13 @@ informational calib and recall lines — and its exit code is the
 doctor's: green 0, a named failure nonzero. `fleet doctor` and the
 install's gate are one function (`doctor_checks` in `src/main.rs`), so
 the two surfaces cannot drift.
+
+A pre-existing defect rides along with that gate and is deliberately
+untouched here: the doctor's **roster** check prints `FAIL` for an
+invalid config without setting the gate's failure flag, so such a
+config prints FAIL and still exits 0. Slice 15's refactor preserved
+the behavior and its test locks the green exit. It is recorded in the
+ledger — see `docs/known-issues.md` — and is not a slice-15 defect.
 
 ## Release binaries
 
@@ -180,7 +261,10 @@ only — no key material):
 - idempotence — a second run names every step present, recreates
   nothing, and leaves the scaffold's bytes untouched;
 - an existing `config.json` is named and never rewritten, even when it
-  is not valid JSON;
+  is not valid JSON, and a **dangling symlink** at the config path is
+  named and left dangling — nothing is written through it;
+- a **file where a directory belongs** is a named failure with exit 1,
+  never a silent overwrite;
 - the exit-code contract — a green doctor is a green install, a red
   doctor (dead API port) is a red install with the failing check named;
 - the quick start's deterministic core — install, then `fleet doctor`
@@ -190,7 +274,25 @@ only — no key material):
   second run rebuilds none (the argv log is unchanged); a PATH with no
   venv tool skips every lane by name and the install stays green; a
   failing package step skips the lane by name and leaves no half-built
-  venv behind.
+  venv behind;
+- the **receipt** — a lane installed this run carries
+  `venvs/<lane>/.fleet-lane` naming its packages and its UTC minute,
+  and a second run reads Present off it; a partial venv with
+  `bin/python` and no receipt is rebuilt rather than read present;
+- the **skip summary** — a degraded `--lanes` run names the skips in
+  the report's own summary line (`! lanes  0 of 4 lanes installed, 0
+  present, 4 skipped`) and still exits 0.
+
+The subprocess **bound** and the **streaming** are unit tests in
+`src/install.rs`, because the production bound is fifteen minutes —
+not a test's wait. They drive the bound-injecting seam
+(`bootstrap_lane_bounded`) with a fake `uv` on a controlled PATH:
+`a_hung_tool_is_killed_at_the_bound_and_the_lane_is_skipped` proves a
+tool that sleeps is killed at 300ms, the lane is skipped naming the
+bound, and the half-built venv is removed;
+`the_progress_sink_receives_the_tools_lines_as_they_arrive` proves a
+tool's lines reach the sink as they arrive (a `Vec` in the test,
+stdout for the operator).
 
 The release-binary and `fleet chat` halves of the quick start are
 proven by hand against the live roster (the chat half is not
