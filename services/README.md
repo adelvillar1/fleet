@@ -105,3 +105,9 @@ until the lane exists:
 change: copy the lane's `src/` and `service/` at the new sha, update
 `VENDOR.json`, re-run `fleet lanes` plus the integration test, and record the
 move in the ledger if anything about the launch changed.
+
+**blend1 carries two fleet-authored files that a delete-syncing copy would
+remove** — the MCP adapter (`service/mcp_server.py`, absent upstream) and
+`service/README.md` (fleet's own note on the adapter, also absent upstream).
+Re-apply both after the copy; `VENDOR.json`'s `fleetAddition` record names
+them.

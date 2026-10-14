@@ -270,9 +270,12 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
     assert!(stdout.contains("export SDM1_MODELS_VENV="), "{stdout}");
     assert!(stdout.contains("export GEN1_KOKORO_PYTHON="), "{stdout}");
     assert!(stdout.contains("local_venv"), "{stdout}");
-    // blend1's wiring rides beside them: its venv export, and the note
-    // naming the sibling cores path-wired rather than pip-installed.
-    assert!(stdout.contains("export BLEND1_PYTHONPATH="), "{stdout}");
+    // blend1's wiring rides beside them: no export at all — the launch
+    // spec sets every BLEND1_*_PYTHONPATH at spawn, and BLEND1_PYTHONPATH
+    // locates the core's src, not a venv root — and the note naming the
+    // cores path-wired rather than pip-installed.
+    assert!(stdout.contains("the path wiring is automatic at spawn"), "{stdout}");
+    assert!(!stdout.contains("export BLEND1_PYTHONPATH="), "{stdout}");
     assert!(stdout.contains("BLEND1_SYS1_PYTHONPATH"), "{stdout}");
     assert!(stdout.contains("BLEND1_SEM1_PYTHONPATH"), "{stdout}");
     assert!(stdout.contains("BLEND1_SDM1_PYTHONPATH"), "{stdout}");

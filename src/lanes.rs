@@ -162,6 +162,12 @@ pub const LANES: &[Lane] = &[
         // BLEND1_ESCALATION_BASE (its OpenAI-compatible base) and
         // BLEND1_ESCALATION_KEY_ENV (naming the key variable, default
         // BLEND1_ESCALATION_API_KEY — so that name rides too). The
+        // critic chain's per-critic overrides are
+        // BLEND1_CRITIC_<N>_BASE / _MODEL / _KEY_ENV (N = 1..2, in
+        // chain order) — the core reads them directly, so without them
+        // an owner's override of a critic is unreachable under fleet's
+        // launch. BLEND1_LOG_DIR is the telemetry root, the locator
+        // rule every sibling lane's log dir already carries. The
         // corpus tools read BLEND1_VECTORS_DIR (the store-root override,
         // the locator rule) and BLEND1_PROJECT (the project-resolution
         // input: param > env > cwd repo name > legacy). The sibling
@@ -182,6 +188,13 @@ pub const LANES: &[Lane] = &[
             "BLEND1_ESCALATION_BASE",
             "BLEND1_ESCALATION_KEY_ENV",
             "BLEND1_ESCALATION_API_KEY",
+            "BLEND1_LOG_DIR",
+            "BLEND1_CRITIC_1_BASE",
+            "BLEND1_CRITIC_1_MODEL",
+            "BLEND1_CRITIC_1_KEY_ENV",
+            "BLEND1_CRITIC_2_BASE",
+            "BLEND1_CRITIC_2_MODEL",
+            "BLEND1_CRITIC_2_KEY_ENV",
             "BLEND1_VECTORS_DIR",
             "BLEND1_PROJECT",
         ],
@@ -870,6 +883,22 @@ mod tests {
         // The corpus tools' locators beside them.
         assert!(lane("blend1").passthrough.contains(&"BLEND1_VECTORS_DIR"));
         assert!(lane("blend1").passthrough.contains(&"BLEND1_PROJECT"));
+        // The critic chain's per-critic overrides and the telemetry
+        // root: the core reads BLEND1_CRITIC_<N>_{BASE,MODEL,KEY_ENV}
+        // and BLEND1_LOG_DIR directly, so without these names an
+        // owner's override (or a relocated log root) is unreachable
+        // under fleet's launch — every sibling lane already carries
+        // its own log dir.
+        for n in [1, 2] {
+            for suffix in ["BASE", "MODEL", "KEY_ENV"] {
+                let name = format!("BLEND1_CRITIC_{n}_{suffix}");
+                assert!(
+                    lane("blend1").passthrough.contains(&name.as_str()),
+                    "{name} rides through"
+                );
+            }
+        }
+        assert!(lane("blend1").passthrough.contains(&"BLEND1_LOG_DIR"));
     }
 
     #[test]

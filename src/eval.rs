@@ -1737,11 +1737,16 @@ fn blend1_result(extra: serde_json::Value) -> serde_json::Value {
         "voice": {},
         "web": {},
         "total_latency_ms": 15_400,
-        // `escalated_answer` flags the SHIPPED answer as escalated — a
-        // separate key from `escalated`, whose meaning stays exactly "a
-        // lane failed open", so the escalation leg succeeding is not a
-        // lane failure. The adapter adds `escalated` and `failed_lanes`
-        // beside the result's own keys.
+        // `escalated_answer` flags the SHIPPED answer as the escalated
+        // one. `escalated` is the library's own property and means "a
+        // lane failed open" — which includes a gate whose verdict did
+        // not clear, because the core computes the gate as `not passed`
+        // and `None` (an inconclusive verdict) is not truthy. So the
+        // escalation leg, which fires only on an unresolved gate, always
+        // sets BOTH keys: `escalated` from the gate, `escalated_answer`
+        // to say the shipped answer is the escalation's. The adapter
+        // adds `escalated` and `failed_lanes` beside the result's own
+        // keys.
         "escalated_answer": false,
         "escalated": false,
         "failed_lanes": [],
@@ -1936,12 +1941,14 @@ async fn blend1_grounded_fact(mock_bin: PathBuf) -> ScenarioOutcome {
 /// The escalation: the validation gate lands inconclusive (`passed`
 /// null — no critic answered), the answer escalates to a larger
 /// configured model with the same givens, and the escalated answer ships
-/// **flagged** under the result's own `escalated_answer` key — beside
-/// `escalated`, whose meaning stays exactly "a lane failed open", so the
-/// leg succeeding is not a lane failure. The gate never blocks: the
-/// pre-escalation answer is retained in the result, and an escalation
-/// that is unconfigured, keyless, or failed is named with the original
-/// answer shipping.
+/// **flagged** under the result's own `escalated_answer` key. The gate's
+/// unresolved verdict is itself what sets `escalated` (the core computes
+/// the gate as `not passed`, and `None` is not truthy), so the two keys
+/// **always co-occur** on this path — `escalated_answer` is what says the
+/// shipped answer is the escalation's rather than the pre-escalation
+/// one. The gate never blocks: the pre-escalation answer is retained in
+/// the result, and an escalation that is unconfigured, keyless, or
+/// failed is named with the original answer shipping.
 async fn blend1_escalation(mock_bin: PathBuf) -> ScenarioOutcome {
     const NAME: &str = "blend1-escalation";
     let family = ScenarioFamily::GroundedLane;
@@ -1962,6 +1969,10 @@ async fn blend1_escalation(mock_bin: PathBuf) -> ScenarioOutcome {
             "escalation": { "status": "ok", "provider": "escalation-target",
                             "model": "qwen3.8-flash", "text": escalated, "shipped": true },
             "escalated_answer": true,
+            // The real contract: the unresolved gate sets `escalated`
+            // too — the core reads the gate as failed when `passed` is
+            // not truthy, and `None` is not truthy.
+            "escalated": true,
             "final_answer": escalated,
         }))
         .to_string(),
@@ -1996,8 +2007,14 @@ async fn blend1_escalation(mock_bin: PathBuf) -> ScenarioOutcome {
                 run.lane_answer.contains("\"escalated_answer\":true"),
             ),
             (
-                "the escalation succeeding is not read as a lane failure",
-                run.lane_answer.contains("\"escalated\":false"),
+                // The real contract, pinned: the escalation fires only on
+                // an unresolved gate, and the gate's unresolved verdict is
+                // itself what sets `escalated` — so the two keys always
+                // co-occur. `escalated_answer` is what says the SHIPPED
+                // answer is the escalation's.
+                "the unresolved gate and the escalated answer both flag",
+                run.lane_answer.contains("\"escalated\":true")
+                    && run.lane_answer.contains("\"escalated_answer\":true"),
             ),
             (
                 "the pre-escalation answer is retained, not silently dropped",

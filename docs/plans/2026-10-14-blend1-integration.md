@@ -5,7 +5,9 @@ status: landed-pending-review
 ## Goal
 
 The owner added a fifth lane to the specialist lanes — `blend1`
-(`~/Projects/blend1`, `main`, clean, v0.1.0, Apache-2.0) — and a provider that
+(`~/Projects/blend1`, branch `feature/escalation-and-sys1-score` — the
+tip commit `ab4ac55`, NOT merged to `main`, and merging requires the
+owner's approval — clean, v0.1.0, Apache-2.0) — and a provider that
 complements the sys1 lane. blend1 is the blended lane of the sys1 house
 pattern: one `ask()` that runs the d1 router (sys1), the local
 EmbeddingGemma-2 semantic lane (sem1), and the Prior Labs TabPFN
@@ -246,4 +248,11 @@ B11), then vendored — fleet does not fork lane cores.
   to the owner's config, and moving it into the chain is a one-line
   config change whenever the owner wants it.
 - The vendored tree matches the sibling lanes' shape; the upstream's
-  own tests stay upstream (fleet's suite covers the lane).
+  own tests stay upstream. **The coverage boundary is stated honestly:
+  fleet's suite guards the adapter and the plumbing** — the MCP surface,
+  the launch spec, the env scrubbing, the install and probe tables —
+  while **the upstream's own suite is the vendored core's guard**. The
+  `blend1` eval scenarios grade fleet's side through scripted seams (the
+  lane's replies are fixtures), so they pin the contract fleet depends
+  on, not the core's own escalation/reprocess semantics: a re-vendor
+  that changed those would produce no fleet-side failure.

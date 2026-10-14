@@ -249,13 +249,19 @@ pub const LANES: &[Lane] = &[
         // its lanes compose — sys1's classifier stack, sdm1's tabular
         // stack, sem1's sentence-transformers — not blend1 itself.
         packages: &["gliner2[local]", "structured-data-models", "sentence-transformers"],
-        env_var: Some("BLEND1_PYTHONPATH"),
+        // No export, and that is the fix: BLEND1_PYTHONPATH is the
+        // adapter's sys.path locator for the CORE (services/blend1/src),
+        // not a venv root, so an `export BLEND1_PYTHONPATH=<venv>` line
+        // here would send a hand-run adapter at a venv with no blend1
+        // package in it. The launch spec (src/lanes.rs) sets the whole
+        // path wiring at spawn, so nothing needs exporting at all.
+        env_var: None,
         env_target: EnvTarget::Root,
-        // The cores are path-wired, not installed here: the sibling
-        // `<SVC>_PYTHONPATH` names point at the repo's vendored
-        // `services/<svc>/src`, the house mechanism sem1's adapter
-        // already reads.
-        note: "the sibling cores are path-wired, not installed here: BLEND1_SYS1_PYTHONPATH / BLEND1_SEM1_PYTHONPATH / BLEND1_SDM1_PYTHONPATH / BLEND1_GEN1_PYTHONPATH point at the repo's vendored services/<svc>/src",
+        // The path wiring is automatic at spawn: blend1's own core and
+        // the four siblings' resolve through the launch spec's
+        // `<SVC>_PYTHONPATH` names — never a pip install here, and never
+        // an export the owner has to remember.
+        note: "the path wiring is automatic at spawn: BLEND1_PYTHONPATH / BLEND1_SYS1_PYTHONPATH / BLEND1_SEM1_PYTHONPATH / BLEND1_SDM1_PYTHONPATH / BLEND1_GEN1_PYTHONPATH point at the repo's vendored services/<svc>/src — only a hand-run adapter needs the names, and BLEND1_PYTHONPATH is the core's src, never this venv",
     },
 ];
 
@@ -1064,8 +1070,12 @@ mod tests {
             blend1.packages,
             &["gliner2[local]", "structured-data-models", "sentence-transformers"]
         );
-        assert_eq!(blend1.env_var, Some("BLEND1_PYTHONPATH"));
-        assert_eq!(blend1.env_target, EnvTarget::Root);
+        // No export: BLEND1_PYTHONPATH locates the CORE
+        // (services/blend1/src), not a venv root, and the launch spec
+        // sets the whole wiring at spawn — so an export line here would
+        // be a wrong value for a hand-run adapter, not a convenience.
+        assert_eq!(blend1.env_var, None);
+        assert!(blend1.note.contains("BLEND1_PYTHONPATH"), "{}", blend1.note);
         assert!(blend1.note.contains("BLEND1_SYS1_PYTHONPATH"), "{}", blend1.note);
         assert!(blend1.note.contains("services/<svc>/src"), "{}", blend1.note);
     }
@@ -1106,16 +1116,22 @@ mod tests {
             "point ~/.config/sys1/config.toml at it: [providers] local_venv = \"/home/x/.fleet/venvs/sem1\""
         );
         let blend1 = LANES.iter().find(|lane| lane.name == "blend1").unwrap();
-        // blend1's venv export rides beside its sibling path-wiring
-        // note: the cores resolve through the <SVC>_PYTHONPATH names,
-        // not through a pip install.
+        // blend1 prints no export at all: its wiring line is the note
+        // naming the `<SVC>_PYTHONPATH` mechanism, because the launch
+        // spec sets those at spawn and BLEND1_PYTHONPATH would be the
+        // wrong value for a venv root.
         let blend1_wiring = lane_wiring(blend1, venv);
         assert!(
-            blend1_wiring.starts_with("export BLEND1_PYTHONPATH=/home/x/.fleet/venvs/sem1; "),
-            "{blend1_wiring}"
+            !blend1_wiring.starts_with("export "),
+            "blend1 exports nothing: {blend1_wiring}"
         );
+        assert!(!blend1_wiring.contains("BLEND1_PYTHONPATH=/home"), "{blend1_wiring}");
         assert!(blend1_wiring.contains("BLEND1_SEM1_PYTHONPATH"), "{blend1_wiring}");
         assert!(blend1_wiring.contains("services/<svc>/src"), "{blend1_wiring}");
+        assert!(
+            blend1_wiring.starts_with("the path wiring is automatic at spawn"),
+            "{blend1_wiring}"
+        );
     }
 
     #[test]

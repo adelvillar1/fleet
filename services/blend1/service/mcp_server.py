@@ -133,7 +133,9 @@ SEARCH_TOOL = {
         "returns the scored entries [{key, score, text}], best first. An "
         "unseeded store returns []. The project resolves by the lane's own "
         "rule (explicit param > BLEND1_PROJECT env > cwd git-repo name > "
-        "None/legacy), through the library's own resolve_project."
+        "None/legacy), through the library's own resolve_project — and "
+        "over MCP the cwd is the lane's home, so an omitted project "
+        "resolves to the repo hosting services/."
     ),
     "inputSchema": {
         "type": "object",
@@ -146,7 +148,9 @@ SEARCH_TOOL = {
                 "type": "string",
                 "description": (
                     "Corpus project (default: $BLEND1_PROJECT or the cwd "
-                    "repo name; None is the legacy store)."
+                    "repo name — over MCP the cwd is the lane's home, so "
+                    "the default resolves to the repo hosting services/; "
+                    "None is the legacy store)."
                 ),
             },
             "k": {
@@ -166,7 +170,10 @@ REFRESH_TOOL = {
         "the text hashes changed — the steady state is file reads, no "
         "embedding. The report names what happened (action: rebuilt | "
         "unchanged | no-source). CLAUDE.local.md is never in a corpus (the "
-        "library's guard, inherited)."
+        "library's guard, inherited). Over MCP the child's cwd is the "
+        "lane's home (services/blend1/), so an omitted `project` resolves "
+        "to the repo hosting services/ and an omitted `sources` derives "
+        "nothing there (no-source): pass both explicitly."
     ),
     "inputSchema": {
         "type": "object",
@@ -175,7 +182,9 @@ REFRESH_TOOL = {
                 "type": "string",
                 "description": (
                     "Corpus project (default: $BLEND1_PROJECT or the cwd "
-                    "repo name; None is the legacy store)."
+                    "repo name — over MCP the cwd is the lane's home, so "
+                    "the default resolves to the repo hosting services/; "
+                    "None is the legacy store)."
                 ),
             },
             "sources": {
@@ -217,7 +226,9 @@ SEED_TOOL = {
                 "type": "string",
                 "description": (
                     "Corpus project (default: $BLEND1_PROJECT or the cwd "
-                    "repo name; None is the legacy store)."
+                    "repo name — over MCP the cwd is the lane's home, so "
+                    "the default resolves to the repo hosting services/; "
+                    "None is the legacy store)."
                 ),
             },
         },

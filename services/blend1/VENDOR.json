@@ -22,16 +22,19 @@
     "*.egg-info",
     "uv.lock"
   ],
-  "pythonLoc": 2532,
+  "pythonLoc": 2939,
   "syncRule": "upstream repos stay the development home; re-vendor by copying src/ and service/ at a recorded sha",
   "fleetVendor": {
-    "source": "~/Projects/blend1 working tree (branch main, clean at the pinned sha)",
+    "source": "~/Projects/blend1 working tree (branch feature/escalation-and-sys1-score, clean at the pinned sha; NOT merged to main — merging requires owner approval)",
     "vendoredAt": "2026-10-14",
     "note": "Copied byte-exact from the upstream repo at the pinned commit; the working tree was clean at that sha. The core is stdlib-only and composes the three sibling lane cores as path dependencies \u2014 the fleet launch wires BLEND1_SYS1_PYTHONPATH / BLEND1_SEM1_PYTHONPATH / BLEND1_SDM1_PYTHONPATH (and BLEND1_GEN1_PYTHONPATH for the voice lane) beside BLEND1_PYTHONPATH. Boot-verified from this copy over a real stdio handshake: 5 tools (ask, doctor, search, refresh, seed)."
   },
   "fleetAddition": {
-    "path": "service/mcp_server.py",
-    "note": "NEW in this vendored copy \u2014 the upstream has no MCP server (it ships a library plus the FastAPI service/main.py). The adapter is fleet's carry: the MCP stdio path is fleet's lane contract. To be logged upstream."
+    "paths": [
+      "service/mcp_server.py",
+      "service/README.md"
+    ],
+    "note": "NEW in this vendored copy — the upstream has no MCP server (it ships a library plus the FastAPI service/main.py), and no service-level README. The adapter is fleet's carry: the MCP stdio path is fleet's lane contract, and service/README.md documents it for whoever re-vendors. Both are fleet-authored and must be re-applied after any re-vendor copy (see services/README.md's vendoring discipline). To be logged upstream."
   },
   "licenseNote": "The vendoring brief and the slice-16 plan named the upstream license MIT; the upstream repo is Apache-2.0 (LICENSE file, pyproject license = { file = \"LICENSE\" }, README 'Apache-2.0. See [LICENSE](LICENSE).'). This record and the vendored LICENSE follow the upstream's actual license; the brief's MIT is recorded as a discrepancy for the parent.",
   "branch": "feature/escalation-and-sys1-score (not merged to main; merging requires owner approval)"

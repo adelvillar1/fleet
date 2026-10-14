@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use fleet::install::{self, EnvTarget, LANES};
+use fleet::install::{self, LANES};
 use fleet::lanes::{self, Lane, LaneHome, LaneState};
 use fleet::mcp::{McpServer, ServerSpec};
 
@@ -32,7 +32,8 @@ use fleet::mcp::{McpServer, ServerSpec};
 /// the d1 router, the 24B generative lane and the sys1-score leg;
 /// Fastino's GLiDE gate; the critic chain; the optional web and voice
 /// legs; the tabular leg); the rest are the escalation leg's wiring
-/// (upstream ab4ac55) and the corpus tools' locators.
+/// (upstream ab4ac55), the telemetry root, the critic chain's
+/// per-critic overrides, and the corpus tools' locators.
 const BLEND1_KEYS: &[&str] = &[
     "LIQUID_API_KEY",
     "FASTINO_API_KEY",
@@ -46,6 +47,13 @@ const BLEND1_KEYS: &[&str] = &[
     "BLEND1_ESCALATION_BASE",
     "BLEND1_ESCALATION_KEY_ENV",
     "BLEND1_ESCALATION_API_KEY",
+    "BLEND1_LOG_DIR",
+    "BLEND1_CRITIC_1_BASE",
+    "BLEND1_CRITIC_1_MODEL",
+    "BLEND1_CRITIC_1_KEY_ENV",
+    "BLEND1_CRITIC_2_BASE",
+    "BLEND1_CRITIC_2_MODEL",
+    "BLEND1_CRITIC_2_KEY_ENV",
     "BLEND1_VECTORS_DIR",
     "BLEND1_PROJECT",
 ];
@@ -64,6 +72,23 @@ const BLEND1_ESCALATION: &[&str] = &[
 /// The sibling cores the blended lane composes, path-wired beside its
 /// own at launch.
 const BLEND1_SIBLINGS: &[&str] = &["sys1", "sem1", "sdm1", "gen1"];
+
+/// The critic chain's per-critic overrides and the telemetry root, named
+/// separately so the assertion that they ride through reads on its own
+/// line: the core reads `BLEND1_CRITIC_<N>_{BASE,MODEL,KEY_ENV}` (N =
+/// 1..2, in chain order) and `BLEND1_LOG_DIR` directly, so without these
+/// names an owner's critic override — or a relocated telemetry root — is
+/// unreachable under fleet's launch, even though every sibling lane
+/// already carries its own log dir.
+const BLEND1_CRITICS_AND_LOG: &[&str] = &[
+    "BLEND1_LOG_DIR",
+    "BLEND1_CRITIC_1_BASE",
+    "BLEND1_CRITIC_1_MODEL",
+    "BLEND1_CRITIC_1_KEY_ENV",
+    "BLEND1_CRITIC_2_BASE",
+    "BLEND1_CRITIC_2_MODEL",
+    "BLEND1_CRITIC_2_KEY_ENV",
+];
 
 /// The sub-lanes a `doctor` report carries for the card: the five an
 /// `ask()` composes its answer from.
@@ -212,6 +237,79 @@ async fn the_blend1_adapter_handshakes_through_fleets_own_client() {
     server.close().await.expect("clean teardown");
 }
 
+/// The adapter's validation branches, driven through fleet's own client
+/// over a real handshake: every malformed argument is a **named** refusal
+/// — a `-32602` naming the offending field, or a `-32601` for a tool
+/// that does not exist — never a traceback and never a hang. These fire
+/// before the core is touched, so they hold on any machine, with or
+/// without the sibling lanes' providers.
+#[tokio::test]
+async fn every_malformed_argument_is_a_named_refusal_never_a_traceback() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the blend1 validation refusals");
+        return;
+    }
+    let server = McpServer::spawn(&blend1_spec()).expect("spawn the blend1 lane");
+    server.initialize().await.expect("initialize");
+    server.list_tools().await.expect("tools/list");
+
+    // (tool, arguments, the JSON-RPC code, the words the refusal names).
+    let refusals: &[(&str, serde_json::Value, i64, &str)] = &[
+        // A table with no target: the column TabPFN predicts is required.
+        (
+            "ask",
+            serde_json::json!({"prompt": "will customer 1042 churn?", "table": [{"tenure_months": 4}]}),
+            -32602,
+            "target",
+        ),
+        // A task type outside the enum the schema declares.
+        (
+            "ask",
+            serde_json::json!({"prompt": "hi", "task_type": "clustering"}),
+            -32602,
+            "task_type",
+        ),
+        // A k that is not a positive integer.
+        (
+            "search",
+            serde_json::json!({"query": "churn playbook", "k": 0}),
+            -32602,
+            "positive integer",
+        ),
+        // A seed item with no text.
+        (
+            "seed",
+            serde_json::json!({"items": [{"key": "churn-playbook"}]}),
+            -32602,
+            "text",
+        ),
+        // A sources entry that is blank.
+        (
+            "refresh",
+            serde_json::json!({"sources": ["   "]}),
+            -32602,
+            "sources",
+        ),
+        // A tool the adapter does not declare.
+        ("nope", serde_json::json!({}), -32601, "Unknown tool"),
+    ];
+    for (tool, arguments, code, names) in refusals {
+        let error = server
+            .call_tool(tool, arguments.clone())
+            .await
+            .expect_err("a malformed argument must be refused, not answered");
+        match error {
+            fleet::mcp::McpError::Rpc { code: got, message } => {
+                assert_eq!(got, *code, "{tool} with {arguments} names its code: {message}");
+                assert!(message.contains(names), "{tool} names {names}: {message}");
+            }
+            other => panic!("expected an Rpc error for {tool} with {arguments}, got {other:?}"),
+        }
+    }
+
+    server.close().await.expect("clean teardown");
+}
+
 /// A `doctor` call answers the per-lane availability with named
 /// reasons — the siblings' deps and keys may be uninstalled or unset,
 /// and unavailable-with-reason is the correct answer. The budget is
@@ -322,7 +420,7 @@ fn the_blend1_launch_spec_carries_its_keys_and_scrubs_fleets_own() {
     assert_eq!(spec.cwd, Some(home.clone()));
     // Its own core first, then the four siblings — five wired paths.
     assert_eq!(spec.env.len(), 1 + BLEND1_SIBLINGS.len(), "{:?}", spec.env);
-    // The eight keys are declared; Fleet's own are not.
+    // Every declared name rides through; Fleet's own are not.
     for key in BLEND1_KEYS {
         assert!(spec.passthrough.iter().any(|name| name == key), "{key} rides through");
     }
@@ -366,6 +464,16 @@ fn the_blend1_launch_spec_carries_its_keys_and_scrubs_fleets_own() {
     }
     assert_eq!(carried("BLEND1_VECTORS_DIR").as_deref(), Some("a-lane-key"));
     assert_eq!(carried("BLEND1_PROJECT").as_deref(), Some("a-lane-key"));
+    // The critic chain's per-critic overrides and the telemetry root
+    // pass, named on their own line: the core reads them directly, so
+    // without them an owner's override is unreachable under this launch.
+    for name in BLEND1_CRITICS_AND_LOG {
+        assert_eq!(
+            carried(name).as_deref(),
+            Some("a-lane-key"),
+            "{name} reaches the child"
+        );
+    }
     // The path wiring rides last, so the lane's own declaration wins.
     let own_src = home.join("src").to_string_lossy().into_owned();
     assert_eq!(carried("BLEND1_PYTHONPATH").as_deref(), Some(own_src.as_str()));
@@ -398,22 +506,31 @@ fn both_lane_tables_carry_blend1_as_the_fifth_entry() {
         blend1.packages,
         &["gliner2[local]", "structured-data-models", "sentence-transformers"]
     );
-    assert_eq!(blend1.env_var, Some("BLEND1_PYTHONPATH"));
-    assert_eq!(blend1.env_target, EnvTarget::Root);
+    // No export: BLEND1_PYTHONPATH locates the core's src
+    // (services/blend1/src), not this venv root, and the launch spec
+    // sets the whole wiring at spawn.
+    assert_eq!(blend1.env_var, None);
     // The note names the sibling path-wiring: the cores resolve through
     // the `<SVC>_PYTHONPATH` names, never a pip install here.
     for wired in ["BLEND1_SYS1_PYTHONPATH", "BLEND1_SEM1_PYTHONPATH", "BLEND1_SDM1_PYTHONPATH"] {
         assert!(blend1.note.contains(wired), "{} names {wired}", blend1.note);
     }
     assert!(blend1.note.contains("services/<svc>/src"), "{}", blend1.note);
-    // The wiring line the install prints rides beside that note.
+    // The wiring line the install prints is the note itself: no export,
+    // because an `export BLEND1_PYTHONPATH=<venv>` would be a wrong
+    // value for a hand-run adapter.
     let venv = PathBuf::from("/home/x/.fleet/venvs/blend1");
     let wiring = install::lane_wiring(blend1, &venv);
     assert!(
-        wiring.starts_with("export BLEND1_PYTHONPATH=/home/x/.fleet/venvs/blend1; "),
+        !wiring.starts_with("export "),
+        "blend1 exports nothing: {wiring}"
+    );
+    assert!(!wiring.contains("BLEND1_PYTHONPATH=/home"), "{wiring}");
+    assert!(wiring.contains("BLEND1_SDM1_PYTHONPATH"), "{wiring}");
+    assert!(
+        wiring.starts_with("the path wiring is automatic at spawn"),
         "{wiring}"
     );
-    assert!(wiring.contains("BLEND1_SDM1_PYTHONPATH"), "{wiring}");
 
     // The registry's table: the launch identity the probe and the
     // agent's tool loop resolve.

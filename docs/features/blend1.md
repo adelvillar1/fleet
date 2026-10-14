@@ -17,7 +17,9 @@ The lane composes its three siblings; it does not reimplement them. Its
 own core is stdlib-only, and the siblings resolve as path dependencies
 through the house `<SVC>_PYTHONPATH` mechanism.
 
-Upstream: `~/Projects/blend1` (`main`, Apache-2.0), vendored here at
+Upstream: `~/Projects/blend1` (branch
+`feature/escalation-and-sys1-score`, **not merged to `main`** — merging
+requires the owner's approval, Apache-2.0), vendored here at
 commit `ab4ac55` — *"feat: escalation leg + sys1-scored reprocess — two
 bounded legs beside the gate"* — under `services/blend1/` with the core,
 the service, the LICENSE, and `VENDOR.json` recording that commit: the
@@ -45,6 +47,17 @@ Project resolution is the lane's own rule, applied once per call:
 explicit parameter > `BLEND1_PROJECT` > the cwd git-repo name > `None`
 (the legacy store). The library validates the name itself (one path
 component, no separators) and its `ValueError` is the wire's named error.
+
+**Over MCP the cwd is the lane's home, not the caller's.** The launch
+spec sets the child's working directory to `services/blend1/`, so
+`resolve_project(None)` there resolves to **`fleet`** — the repo hosting
+`services/` — never the legacy store. An omitted `project` on `search`,
+`refresh` or `seed` therefore indexes or queries fleet's own corpus; a
+different project's corpus needs its name passed explicitly (or
+`BLEND1_PROJECT` set). Likewise `refresh`'s default globs resolve against
+that same cwd, where `services/blend1/` holds no docs, so an omitted
+`sources` list derives nothing and reports `action: "no-source"` — the
+scheduled jobs carry explicit absolute globs for exactly this reason.
 
 `ask`'s result is the `BlendResult`'s fields **as they are** (structured
 content), so a result key added upstream rides through without an
@@ -113,6 +126,16 @@ semantic      tabular [if table]    web [if the router fires
    ships flagged. Neither leg blocks.
 6. **The result.** One shape regardless of which lanes answered.
 
+**The two legs' order is a named limitation.** The score leg runs
+*after* the gate and can replace `generated`, while the escalation
+re-synthesizes from the givens with **only the gate's feedback** — it
+never sees the sys1 verdict. So an escalation can replace an answer the
+score had already corrected, and the reprocessed answer is never
+re-gated. The spend is bounded and both outcomes are flagged in the
+result (`escalated_answer`, `score.shipped`), so nothing is hidden; the
+ordering itself is a design limitation of the vendored core, not a
+fleet-side choice.
+
 ### The result keys
 
 `prompt_sha256`, `prompt_chars`, `path` (`direct` \| `synthesized` \|
@@ -126,13 +149,18 @@ Two keys deserve their meaning spelled out, because they are easy to
 conflate:
 
 - **`escalated`** means exactly **"a lane failed open"** — any lane report
-  whose status is `error`, or a validation gate that failed the answer
-  even after retry. The answer ships, but the caller deserves to know it
-  rests on fewer lanes than requested.
-- **`escalated_answer`** flags the **shipped** answer as escalated. The
-  escalation leg *succeeding* is not a lane failure, so it does not set
-  `escalated`; it sets `escalated_answer`, and the gate's unresolved
-  verdict rides beside the answer in `escalation`.
+  whose status is `error`, or a validation gate whose verdict did not
+  clear. The gate's own computation is `not passed`, so a **definitive
+  fail after the retry** and an **inconclusive verdict** (`passed: null`
+  — no critic answered) both set it: `None` is not truthy. The answer
+  ships, but the caller deserves to know it rests on fewer lanes than
+  requested, or on a verdict the gate never reached.
+- **`escalated_answer`** flags the **shipped** answer as the escalated
+  one. The escalation leg fires only on an unresolved gate, so in
+  practice the two keys **always co-occur**: the gate's unresolved
+  verdict is what sets `escalated`, and `escalated_answer` is what says
+  the answer that shipped is the escalation's rather than the
+  pre-escalation one — which rides on, retained, in `generated`.
 
 The two legs the plan names as B10 and B11 are in the vendored core:
 
@@ -165,9 +193,11 @@ The two legs the plan names as B10 and B11 are in the vendored core:
 Every lane fails open. A lane that cannot answer records its reason in
 its own lane report, and the orchestrator composes the best answer from
 the lanes that did answer. `BlendResult.escalated` is `true` when any
-lane errored, **or** when the validation gate failed the answer (even
-after retry) — the answer ships, but the caller deserves to know it was
-rated unsatisfactory.
+lane errored, **or** when the validation gate's verdict did not clear —
+a definitive fail after the retry, **or an inconclusive verdict** (`None`
+is not truthy, so the gate reads as failed) — the answer ships, but the
+caller deserves to know it was rated unsatisfactory or never rated at
+all.
 
 Nothing degrades silently. The adapter's `failed_lanes` names every lane
 report whose status is `error`; a generative lane that is down produces a
@@ -201,16 +231,30 @@ lane with the reason named; only blend1's own core is mandatory):
 | `BLEND1_SDM1_PYTHONPATH` | `services/sdm1/src` — the tabular core |
 | `BLEND1_GEN1_PYTHONPATH` | `services/gen1/src` — the media core (the voice leg) |
 
-The install's line names the wiring rather than performing it: the lanes
-read the ambient environment through the registry's passthrough, so the
-owner puts the named exports in the shell that boots fleet. blend1's
-passthrough is the union of its legs' credentials — `LIQUID_API_KEY`
-(one vendor, one key: the d1 router and the 24B generative lane),
-`FASTINO_API_KEY` (the GLiDE gate), `TOKEN_PLAN_API_KEY` and
-`OLLAMA_API_KEY` (the critic chain), `TINYFISH_API_KEY` (the optional
-web leg), `DASHSCOPE_API_KEY` / `STEPFUN_API_KEY` (the optional voice
-leg), and `TABPFN_API_KEY` (the tabular leg). `DEEPSEEK_API_KEY` is on
-no lane's list.
+The install prints **no export line for blend1**, and that is
+deliberate: the path wiring is not ambient state the owner exports. The
+launch spec sets every `BLEND1_*_PYTHONPATH` at spawn — blend1's own
+core beside the four siblings' — so a lane launched by fleet (through
+`fleet lanes`, the probe, or the agent's tool loop) is wired correctly
+with nothing in the shell. What the install's line names instead is the
+mechanism, for the one case that needs it: a **hand-run** adapter, where
+the owner supplies the names themselves (and where a venv root would be
+the wrong value for `BLEND1_PYTHONPATH` — it addresses
+`services/blend1/src`, not `~/.fleet/venvs/blend1`).
+
+What does ride through the passthrough is the **credential names** — the
+ambient variables the lane's providers read, copied only when present:
+blend1's passthrough is the union of its legs' credentials —
+`LIQUID_API_KEY` (one vendor, one key: the d1 router and the 24B
+generative lane), `FASTINO_API_KEY` (the GLiDE gate), `TOKEN_PLAN_API_KEY`
+and `OLLAMA_API_KEY` (the critic chain), `TINYFISH_API_KEY` (the
+optional web leg), `DASHSCOPE_API_KEY` / `STEPFUN_API_KEY` (the
+optional voice leg), and `TABPFN_API_KEY` (the tabular leg) — beside the
+escalation leg's wiring (`BLEND1_ESCALATION_MODEL` / `_BASE` / `_KEY_ENV`
+/ `_API_KEY`), the per-critic overrides
+(`BLEND1_CRITIC_1/2_{BASE,MODEL,KEY_ENV}`), the telemetry root
+(`BLEND1_LOG_DIR`) and the corpus locators (`BLEND1_VECTORS_DIR`,
+`BLEND1_PROJECT`). `DEEPSEEK_API_KEY` is on no lane's list.
 
 ## The doctor card
 
@@ -336,6 +380,12 @@ if the model altered the number anyway, `score.correct` is `false`, the
 answer is re-synthesized with the verdict as feedback, and the corrected
 answer ships (`score.shipped: "reprocessed"`).
 
+**One honest limit on the reprocess:** `SCORE_FLOOR` (0.70) is
+**unfitted** until sys1 has feedback rows to calibrate against — the
+repo's own gate-floor convention, and the value rides in the result
+either way. So the score is a judgment signal, not a calibrated
+probability, until the lane has history.
+
 **Combination with PS4:** the computed fact with the confidence ladder
 behind it.
 
@@ -360,12 +410,28 @@ cheap — and a rebuild names what changed. Beside it, the **tower board's
 per-project git facts** put the drift next to the commits that caused it:
 dirty count, head commit, trailing-thirty-day count, ahead/behind.
 
+**One honest limit on the staleness check:** the hash comparison is over
+**text** only. If the embedding server's model or dims change behind the
+fixed store slug, the hashes still match and the refresh reports
+`unchanged` — model drift is undetectable without an embedding call. A
+model change therefore needs an **explicit re-seed** (`blend1 seed`), not
+a refresh.
+
 **Combination with PS1:** the cold question answered from a corpus that
 stays current.
 
 **Fleet surface.** `mcp__blend1__refresh` under a `fleet cron` job
 (`auto_approve: true` — declared, idempotent, hash-gated), and the tower
 board in the TUI's board pane (Ctrl+B).
+
+**Where the jobs live.** The fourteen per-project refresh jobs
+(`corpus-refresh-<project>`, daily at staggered minutes from 00:10 to
+01:15 UTC, `auto_approve: true`) are **machine state, not repo state**:
+the parent created them on this machine with `fleet cron add`, and their
+shape is recorded in the slice-16 plan's B13. No repo file or test pins
+them, so a **fresh `FLEET_HOME` has no refresh jobs** — re-create them
+from that record. Declaring them repo-side is out of scope for this
+slice.
 
 ### PS4 — the cheap answer that might be wrong
 
