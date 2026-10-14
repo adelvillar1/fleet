@@ -1,0 +1,37 @@
+{
+  "name": "blend1",
+  "upstream": "~/Projects/blend1",
+  "commit": "d9c703c822d4c256e291225595183e08deef531b",
+  "committedAt": "2026-10-14",
+  "commitSubject": "docs: CLAUDE.md code map — six lanes, corpus per-project/refresh/search, cli+service surfaces",
+  "license": "Apache-2.0",
+  "upstreamAuthor": "adelvillar1 (Alejandro Del Villar; Apache-2.0)",
+  "vendored": [
+    "src/",
+    "service/main.py",
+    "service/pyproject.toml",
+    "service/mcp_server.py",
+    "LICENSE"
+  ],
+  "excluded": [
+    "tests/",
+    "docs/",
+    "scripts/",
+    ".venv/",
+    "__pycache__/",
+    "*.egg-info",
+    "uv.lock"
+  ],
+  "pythonLoc": 2532,
+  "syncRule": "upstream repos stay the development home; re-vendor by copying src/ and service/ at a recorded sha",
+  "fleetVendor": {
+    "source": "~/Projects/blend1 working tree (branch main, clean at the pinned sha)",
+    "vendoredAt": "2026-10-14",
+    "note": "Copied byte-exact from the upstream repo at the pinned commit; the working tree was clean at that sha. The core is stdlib-only and composes the three sibling lane cores as path dependencies — the fleet launch wires BLEND1_SYS1_PYTHONPATH / BLEND1_SEM1_PYTHONPATH / BLEND1_SDM1_PYTHONPATH (and BLEND1_GEN1_PYTHONPATH for the voice lane) beside BLEND1_PYTHONPATH. Boot-verified from this copy over a real stdio handshake: 5 tools (ask, doctor, search, refresh, seed)."
+  },
+  "fleetAddition": {
+    "path": "service/mcp_server.py",
+    "note": "NEW in this vendored copy — the upstream has no MCP server (it ships a library plus the FastAPI service/main.py). The adapter is fleet's carry: the MCP stdio path is fleet's lane contract. To be logged upstream."
+  },
+  "licenseNote": "The vendoring brief and the slice-16 plan named the upstream license MIT; the upstream repo is Apache-2.0 (LICENSE file, pyproject license = { file = \"LICENSE\" }, README 'Apache-2.0. See [LICENSE](LICENSE).'). This record and the vendored LICENSE follow the upstream's actual license; the brief's MIT is recorded as a discrepancy for the parent."
+}
