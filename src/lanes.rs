@@ -1,4 +1,4 @@
-//! The lane registry: the four vendored service cores, where each one
+//! The lane registry: the five vendored service cores, where each one
 //! launches from, and the live health probe behind `fleet lanes`.
 //!
 //! Launch details are replicated faithfully from the fork's
@@ -18,6 +18,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use serde_json::json;
+
 use crate::mcp::{McpError, McpServer, ServerSpec};
 
 use palette::{ACCENT, BOLD, DIM, RESET, TEXT};
@@ -28,6 +30,13 @@ pub const SERVICES_ROOT_ENV: &str = "FLEET_SERVICES_ROOT";
 /// How many ancestors above the executable the services-root walk checks.
 /// Twelve covers any real install depth, matching the fork's bound.
 const ROOT_WALK_DEPTH: usize = 12;
+
+/// The sibling cores the blended lane composes as path dependencies,
+/// wired beside its own `<SVC>_PYTHONPATH` at launch: the judgment,
+/// embeddings, tabular and media lanes, in the blend's own order. The
+/// vendored copies sit beside the lane under the services root; the
+/// cores are locators, never pip-installed into blend1's venv.
+const BLEND1_SIBLINGS: &[&str] = &["sys1", "sem1", "sdm1", "gen1"];
 
 /// One lane's static identity: its name, its role in the house pattern,
 /// and the two environment variables that address it.
@@ -51,7 +60,7 @@ pub struct Lane {
     pub passthrough: &'static [&'static str],
 }
 
-/// The four lanes, in launch order.
+/// The five lanes, in launch order.
 pub const LANES: &[Lane] = &[
     Lane {
         name: "sys1",
@@ -136,6 +145,47 @@ pub const LANES: &[Lane] = &[
             "GEN1_TELEMETRY_FILE",
         ],
     },
+    Lane {
+        name: "blend1",
+        role: "grounded",
+        python_path_env: "BLEND1_PYTHONPATH",
+        home_env: "FLEET_LANE_BLEND1_HOME",
+        // The blended lane's own keys and locators — the union of its
+        // legs': Liquid's LIQUID_API_KEY (one vendor, one key: the d1
+        // router, the LFM2.5-24B generative lane, and the sys1-score
+        // leg), Fastino's FASTINO_API_KEY (the GLiDE validation gate),
+        // the critic chain's TOKEN_PLAN_API_KEY and OLLAMA_API_KEY, the
+        // optional web leg's TINYFISH_API_KEY, the optional voice leg's
+        // DASHSCOPE_API_KEY / STEPFUN_API_KEY, and the tabular leg's
+        // TABPFN_API_KEY. The escalation leg (upstream ab4ac55) reads
+        // BLEND1_ESCALATION_MODEL (the larger model id — arms the leg),
+        // BLEND1_ESCALATION_BASE (its OpenAI-compatible base) and
+        // BLEND1_ESCALATION_KEY_ENV (naming the key variable, default
+        // BLEND1_ESCALATION_API_KEY — so that name rides too). The
+        // corpus tools read BLEND1_VECTORS_DIR (the store-root override,
+        // the locator rule) and BLEND1_PROJECT (the project-resolution
+        // input: param > env > cwd repo name > legacy). The sibling
+        // cores resolve through the adapter's own BLEND1_<SVC>_PYTHONPATH
+        // path wiring — locators beside the lane in services/, not
+        // ambient machine state — so those names are not passthrough
+        // entries.
+        passthrough: &[
+            "LIQUID_API_KEY",
+            "FASTINO_API_KEY",
+            "TINYFISH_API_KEY",
+            "DASHSCOPE_API_KEY",
+            "STEPFUN_API_KEY",
+            "TOKEN_PLAN_API_KEY",
+            "OLLAMA_API_KEY",
+            "TABPFN_API_KEY",
+            "BLEND1_ESCALATION_MODEL",
+            "BLEND1_ESCALATION_BASE",
+            "BLEND1_ESCALATION_KEY_ENV",
+            "BLEND1_ESCALATION_API_KEY",
+            "BLEND1_VECTORS_DIR",
+            "BLEND1_PROJECT",
+        ],
+    },
 ];
 
 /// Where a resolved lane home came from.
@@ -178,11 +228,30 @@ pub struct LaneHealth {
     pub server_version: Option<String>,
     /// The tool names `tools/list` returned, when it answered.
     pub tools: Vec<String>,
+    /// The per-lane availability the lane's own `doctor` tool reported,
+    /// for a lane that exposes one (blend1): each of its lanes — route,
+    /// semantic, tabular, generate, validate — available or not, with
+    /// its named reason. Empty for the other four lanes, which expose
+    /// no `doctor` tool.
+    pub doctor: Vec<LaneAvailability>,
     /// The launch command when the lane is ok; the failure reason when it
     /// is not.
     pub detail: String,
     /// How long the whole probe took.
     pub elapsed_ms: u128,
+}
+
+/// One lane's availability as a lane's own `doctor` tool reported it:
+/// the sub-lane's name, whether it can answer, its named reason, and
+/// the provider that backs it. The reason is named either way — an
+/// available lane says what backs it, an unavailable one says what is
+/// missing — so the card never renders a bare dot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneAvailability {
+    pub lane: String,
+    pub available: bool,
+    pub reason: String,
+    pub provider: String,
 }
 
 /// Where one lane stands.
@@ -340,21 +409,54 @@ pub fn services_root() -> Result<PathBuf, RootError> {
 
 /// The launch spec for one lane, or the reason it cannot launch.
 pub fn launch_spec(lane: &Lane, home: &Path) -> ServerSpec {
+    let mut env = vec![(
+        lane.python_path_env.to_string(),
+        home.join("src").to_string_lossy().into_owned(),
+    )];
+    // The blended lane composes its siblings as path dependencies: the
+    // vendored cores beside it under the services root, wired through
+    // the house `<SVC>_PYTHONPATH` mechanism its adapter reads
+    // (`BLEND1_SYS1_PYTHONPATH` / `BLEND1_SEM1_PYTHONPATH` /
+    // `BLEND1_SDM1_PYTHONPATH` / `BLEND1_GEN1_PYTHONPATH` beside
+    // `BLEND1_PYTHONPATH`) — the same mechanism sem1's adapter already
+    // reads, extended to the blend's siblings. Every other lane's spec
+    // is exactly what it was: the one path var and nothing more.
+    env.extend(sibling_paths(lane, home));
     ServerSpec {
         program: "python3".to_string(),
         args: vec![
             "-u".to_string(),
             home.join("service").join("mcp_server.py").to_string_lossy().into_owned(),
         ],
-        env: vec![(
-            lane.python_path_env.to_string(),
-            home.join("src").to_string_lossy().into_owned(),
-        )],
+        env,
         // The lane's declared ambient names, and nothing else: the child
         // starts from `mcp::BASE_ENV` plus this plus the entry above.
         passthrough: lane.passthrough.iter().map(|name| name.to_string()).collect(),
         cwd: Some(home.to_path_buf()),
     }
+}
+
+/// The sibling cores the blended lane path-wires beside its own —
+/// `BLEND1_<SVC>_PYTHONPATH` → `<services root>/<svc>/src` — resolved
+/// from the lane's own home, so a `FLEET_LANE_BLEND1_HOME` override
+/// outside the bundled tree wires the siblings beside that copy. An
+/// empty list for every other lane: they compose no siblings.
+fn sibling_paths(lane: &Lane, home: &Path) -> Vec<(String, String)> {
+    if lane.name != "blend1" {
+        return Vec::new();
+    }
+    let Some(root) = home.parent() else {
+        return Vec::new();
+    };
+    BLEND1_SIBLINGS
+        .iter()
+        .map(|sibling| {
+            (
+                format!("BLEND1_{}_PYTHONPATH", sibling.to_uppercase()),
+                root.join(sibling).join("src").to_string_lossy().into_owned(),
+            )
+        })
+        .collect()
 }
 
 /// The launch command as one readable line, for the health detail.
@@ -383,7 +485,7 @@ pub fn spec_for(name: &str) -> Result<ServerSpec, String> {
 }
 
 /// Probe every lane in order, tearing each child down before the next.
-/// Sequential on purpose: four small children under a loaded machine is
+/// Sequential on purpose: five small children under a loaded machine is
 /// where parallel spawns flake (KI-027), and the order stays the
 /// registry's.
 pub async fn health_all() -> Vec<LaneHealth> {
@@ -407,6 +509,7 @@ pub fn unavailable_all(reason: &str) -> Vec<LaneHealth> {
             state: LaneState::Unavailable,
             server_version: None,
             tools: Vec::new(),
+            doctor: Vec::new(),
             detail: reason.to_string(),
             elapsed_ms: 0,
         })
@@ -428,6 +531,7 @@ pub async fn probe_lane(lane: &Lane) -> LaneHealth {
                 state: LaneState::Unavailable,
                 server_version: None,
                 tools: Vec::new(),
+                doctor: Vec::new(),
                 detail: reason,
                 elapsed_ms: started.elapsed().as_millis(),
             };
@@ -447,6 +551,7 @@ pub async fn probe_lane(lane: &Lane) -> LaneHealth {
                 state: LaneState::Unavailable,
                 server_version: None,
                 tools: Vec::new(),
+                doctor: Vec::new(),
                 detail: error.to_string(),
                 elapsed_ms: started.elapsed().as_millis(),
             };
@@ -455,6 +560,20 @@ pub async fn probe_lane(lane: &Lane) -> LaneHealth {
     // Every exit path below tears the child down first, so a failed probe
     // never leaks a Python process.
     let outcome = probe_handshake(&mut server).await;
+    // A lane that exposes a `doctor` tool gets its report called before
+    // teardown: the per-lane availability its card renders. A call that
+    // fails — or a lane that exposes no such tool — is an empty report,
+    // never a failed probe: the handshake already answered, and a
+    // doctor that cannot answer is not a lane that broke.
+    let doctor = match &outcome {
+        Ok((_, tools)) if tools.iter().any(|tool| tool.name == DOCTOR_TOOL) => {
+            match server.call_tool(DOCTOR_TOOL, json!({})).await {
+                Ok(call) => parse_doctor(&call.text()),
+                Err(_) => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    };
     let _ = server.close().await;
     match outcome {
         Ok((initialize, tools)) => LaneHealth {
@@ -465,6 +584,7 @@ pub async fn probe_lane(lane: &Lane) -> LaneHealth {
             state: LaneState::Ok,
             server_version: Some(initialize.server_version),
             tools: tools.iter().map(|tool| tool.name.clone()).collect(),
+            doctor,
             detail: launch,
             elapsed_ms: started.elapsed().as_millis(),
         },
@@ -476,10 +596,58 @@ pub async fn probe_lane(lane: &Lane) -> LaneHealth {
             state: LaneState::Error,
             server_version: None,
             tools: Vec::new(),
+            doctor: Vec::new(),
             detail: error.to_string(),
             elapsed_ms: started.elapsed().as_millis(),
         },
     }
+}
+
+/// The tool name a lane's own per-lane availability report answers on.
+/// A lane that lists it in `tools/list` gets it called by the probe.
+const DOCTOR_TOOL: &str = "doctor";
+
+/// The sub-lanes a `doctor` report renders, in the blend's own order:
+/// the five lanes an `ask()` composes its answer from. The report also
+/// carries `escalation` and `score` (the escalation and sys1-score legs,
+/// upstream ab4ac55) beside `critics`, `voice` and `web`; the card
+/// renders these five.
+const DOCTOR_LANES: &[&str] = &["route", "semantic", "tabular", "generate", "validate"];
+
+/// Read a `doctor` tool's answer into the per-lane availability the
+/// card renders. The answer's text is a JSON object keyed by lane
+/// name, each value `{available, reason, provider}` — a lane missing
+/// from the object, or a value without an `available` boolean, is
+/// skipped rather than guessed at. A report that cannot be read at all
+/// is an empty list: the card renders without it and the probe stays
+/// Ok, because a doctor that cannot answer is not a broken handshake.
+fn parse_doctor(text: &str) -> Vec<LaneAvailability> {
+    let Ok(report) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Vec::new();
+    };
+    let Some(report) = report.as_object() else {
+        return Vec::new();
+    };
+    DOCTOR_LANES
+        .iter()
+        .filter_map(|lane| {
+            let entry = report.get(*lane)?.as_object()?;
+            Some(LaneAvailability {
+                lane: (*lane).to_string(),
+                available: entry.get("available")?.as_bool()?,
+                reason: entry
+                    .get("reason")
+                    .and_then(|reason| reason.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                provider: entry
+                    .get("provider")
+                    .and_then(|provider| provider.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            })
+        })
+        .collect()
 }
 
 /// The handshake half of a probe, kept separate so the caller owns
@@ -510,11 +678,14 @@ const CARD_WIDTH: usize = 72;
 
 /// Render the health report as cards: one bordered card per lane, a status
 /// dot, the role and tool count, the tool names, and the launch command —
-/// never a plain-text table.
+/// never a plain-text table. A lane that exposes a `doctor` tool (blend1)
+/// also renders its per-lane availability, one dot-and-reason line per
+/// sub-lane, inside its card.
 pub fn render(health: &[LaneHealth]) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "{BOLD}fleet lanes{RESET} {DIM}— the four house lanes, probed live{RESET}\n\n"
+        "{BOLD}fleet lanes{RESET} {DIM}— the {} house lanes, probed live{RESET}\n\n",
+        health.len()
     ));
     for lane in health {
         out.push_str(&render_card(lane));
@@ -559,6 +730,27 @@ fn render_card(lane: &LaneHealth) -> String {
             "{DIM}│{RESET} {TEXT}{tools}{RESET}",
             tools = lane.tools.join(" · ")
         ));
+    }
+    // The lane's own `doctor` report, when it exposed one: one line per
+    // sub-lane — a status dot and its named reason — at the house visual
+    // bar, never a plain-text table. A wrapped continuation indents under
+    // the body, so a long reason reads as one line broken, not two.
+    for availability in &lane.doctor {
+        let (dot, color) = if availability.available {
+            ("\u{2713}", palette::OK)
+        } else {
+            ("\u{25cb}", palette::DIM)
+        };
+        let named = if availability.reason.is_empty() {
+            availability.provider.as_str()
+        } else {
+            availability.reason.as_str()
+        };
+        let body = format!("{dot} {} — {named}", availability.lane);
+        for (index, chunk) in wrap_detail(&body, CARD_WIDTH - 4).iter().enumerate() {
+            let indent = if index == 0 { "" } else { "  " };
+            lines.push(format!("{DIM}│{RESET} {color}{indent}{chunk}{RESET}"));
+        }
     }
     if let Some(source) = &lane.source {
         lines.push(format!(
@@ -646,12 +838,38 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_names_the_four_lanes_in_launch_order() {
+    fn the_registry_names_the_five_lanes_in_launch_order() {
         let names: Vec<&str> = LANES.iter().map(|lane| lane.name).collect();
-        assert_eq!(names, vec!["sys1", "sdm1", "sem1", "gen1"]);
+        assert_eq!(names, vec!["sys1", "sdm1", "sem1", "gen1", "blend1"]);
         // Each lane's env names follow the fork's convention.
         assert_eq!(lane("sem1").python_path_env, "SEM1_PYTHONPATH");
         assert_eq!(lane("sem1").home_env, "FLEET_LANE_SEM1_HOME");
+        // blend1 is the fifth: the blended lane, its own path var and
+        // per-lane home override beside it.
+        assert_eq!(lane("blend1").python_path_env, "BLEND1_PYTHONPATH");
+        assert_eq!(lane("blend1").home_env, "FLEET_LANE_BLEND1_HOME");
+        assert_eq!(lane("blend1").role, "grounded");
+        // Its keys ride through; Fleet's own never does (the allowlist
+        // test below walks every lane, blend1 included).
+        assert!(lane("blend1").passthrough.contains(&"LIQUID_API_KEY"));
+        assert!(lane("blend1").passthrough.contains(&"TABPFN_API_KEY"));
+        // The escalation leg's wiring (upstream ab4ac55): the target's
+        // model, base and key-env names, and the default key variable
+        // the key-env name falls back to.
+        for escalation in [
+            "BLEND1_ESCALATION_MODEL",
+            "BLEND1_ESCALATION_BASE",
+            "BLEND1_ESCALATION_KEY_ENV",
+            "BLEND1_ESCALATION_API_KEY",
+        ] {
+            assert!(
+                lane("blend1").passthrough.contains(&escalation),
+                "{escalation} rides through"
+            );
+        }
+        // The corpus tools' locators beside them.
+        assert!(lane("blend1").passthrough.contains(&"BLEND1_VECTORS_DIR"));
+        assert!(lane("blend1").passthrough.contains(&"BLEND1_PROJECT"));
     }
 
     #[test]
@@ -703,6 +921,42 @@ mod tests {
             launch_command(&lane("sem1"), &home),
             "SEM1_PYTHONPATH=/opt/services/sem1/src python3 -u /opt/services/sem1/service/mcp_server.py"
         );
+    }
+
+    #[test]
+    fn blend1s_launch_spec_wires_the_sibling_cores_beside_its_own() {
+        let home = PathBuf::from("/opt/services/blend1");
+        let spec = launch_spec(&lane("blend1"), &home);
+        assert_eq!(spec.program, "python3");
+        assert_eq!(spec.args, vec!["-u".to_string(), "/opt/services/blend1/service/mcp_server.py".to_string()]);
+        // Its own core first, then the three siblings the ask() composes
+        // (plus the voice lane's), each resolved beside the lane under
+        // the services root — the house path mechanism, not a pip
+        // install into blend1's venv.
+        assert_eq!(
+            spec.env,
+            vec![
+                ("BLEND1_PYTHONPATH".to_string(), "/opt/services/blend1/src".to_string()),
+                ("BLEND1_SYS1_PYTHONPATH".to_string(), "/opt/services/sys1/src".to_string()),
+                ("BLEND1_SEM1_PYTHONPATH".to_string(), "/opt/services/sem1/src".to_string()),
+                ("BLEND1_SDM1_PYTHONPATH".to_string(), "/opt/services/sdm1/src".to_string()),
+                ("BLEND1_GEN1_PYTHONPATH".to_string(), "/opt/services/gen1/src".to_string()),
+            ]
+        );
+        // The blended lane's own keys ride through; Fleet's own never
+        // does — the allowlist test above walks every lane, blend1
+        // included, and this names the eight beside it.
+        assert_eq!(
+            spec.passthrough,
+            lane("blend1").passthrough.iter().map(|name| name.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(spec.cwd, Some(home.clone()));
+        // Every other lane's spec stays exactly one path var: the
+        // sibling wiring is the blend's alone.
+        for other in LANES.iter().filter(|other| other.name != "blend1") {
+            let spec = launch_spec(other, Path::new("/opt/services/other"));
+            assert_eq!(spec.env.len(), 1, "{} carries one path var", other.name);
+        }
     }
 
     #[test]
@@ -823,6 +1077,7 @@ mod tests {
                 state: LaneState::Ok,
                 server_version: Some("0.1.0".to_string()),
                 tools: vec!["sem1_embed".to_string(), "sem1_probe".to_string()],
+                doctor: Vec::new(),
                 detail: "SEM1_PYTHONPATH=/repo/services/sem1/src python3 -u /repo/services/sem1/service/mcp_server.py".to_string(),
                 elapsed_ms: 412,
             },
@@ -834,6 +1089,7 @@ mod tests {
                 state: LaneState::Unavailable,
                 server_version: None,
                 tools: Vec::new(),
+                doctor: Vec::new(),
                 detail: "no services root found (set FLEET_SERVICES_ROOT or FLEET_LANE_GEN1_HOME)".to_string(),
                 elapsed_ms: 0,
             },
@@ -863,12 +1119,130 @@ mod tests {
             state: LaneState::Error,
             server_version: None,
             tools: Vec::new(),
+            doctor: Vec::new(),
             detail: "`tools/list` timed out after 10s".to_string(),
             elapsed_ms: 10_000,
         }];
         let rendered = render(&health);
         assert!(rendered.contains(&format!("{}✕ error{RESET}", palette::ERROR)), "{rendered}");
         assert!(rendered.contains("timed out"), "{rendered}");
+    }
+
+    #[test]
+    fn parse_doctor_reads_the_five_lanes_with_their_reasons() {
+        // A doctor answer as the adapter returns it: the five lanes an
+        // ask() composes from, plus the report's other keys (critics,
+        // voice, web) that the card does not render.
+        let report = parse_doctor(
+            r#"{
+                "route": {"available": true, "reason": null, "provider": "liquid (d1) via sys1"},
+                "semantic": {"available": false, "reason": "endpoint unreachable", "provider": "llama-server (EmbeddingGemma-2)"},
+                "tabular": {"available": false, "reason": "not configured — set TABPFN_API_KEY", "provider": "tabpfn-hosted (Prior Labs)"},
+                "generate": {"available": false, "reason": "missing LIQUID_API_KEY", "provider": "lfm2.5-24b-a2b via api.liquid.ai"},
+                "validate": {"available": false, "reason": "missing FASTINO_API_KEY", "provider": "glide → d1"},
+                "critics": [{"critic": "qwen3.8-flash", "configured": false}],
+                "voice": {"available": false, "reason": "missing DASHSCOPE_API_KEY"},
+                "web": {"available": false, "reason": "missing TINYFISH_API_KEY"}
+            }"#,
+        );
+        // The five lanes, in the blend's own order — the report's extra
+        // keys ride along unrendered, never as rows.
+        let lanes: Vec<&str> = report.iter().map(|entry| entry.lane.as_str()).collect();
+        assert_eq!(lanes, vec!["route", "semantic", "tabular", "generate", "validate"]);
+        assert!(report[0].available);
+        // A null reason reads as the empty string, and the card falls
+        // back to the provider for an available lane.
+        assert!(report[0].reason.is_empty());
+        assert_eq!(report[0].provider, "liquid (d1) via sys1");
+        for entry in &report[1..] {
+            assert!(!entry.available, "{} must be unavailable", entry.lane);
+            assert!(!entry.reason.is_empty(), "{} names its reason", entry.lane);
+        }
+        // A report that cannot be read is empty, never a panic: the card
+        // renders without it and the probe stays Ok.
+        assert!(parse_doctor("not json").is_empty());
+        assert!(parse_doctor("[]").is_empty());
+        // A lane missing from the object, or one whose `available` is
+        // not a boolean, is skipped rather than guessed at.
+        let partial = parse_doctor(r#"{"route": {"available": "yes"}, "generate": {}}"#);
+        assert!(partial.is_empty(), "{partial:?}");
+    }
+
+    #[test]
+    fn a_doctor_report_renders_status_dots_and_named_reasons_never_a_table() {
+        let health = vec![LaneHealth {
+            name: "blend1".to_string(),
+            role: "grounded".to_string(),
+            home: Some(PathBuf::from("/repo/services/blend1")),
+            source: Some(HomeSource::Bundled),
+            state: LaneState::Ok,
+            server_version: Some("0.1.0".to_string()),
+            tools: vec!["ask".to_string(), "doctor".to_string()],
+            doctor: vec![
+                LaneAvailability {
+                    lane: "route".to_string(),
+                    available: true,
+                    reason: String::new(),
+                    provider: "liquid (d1) via sys1".to_string(),
+                },
+                LaneAvailability {
+                    lane: "semantic".to_string(),
+                    available: false,
+                    reason: "endpoint unreachable".to_string(),
+                    provider: "llama-server (EmbeddingGemma-2)".to_string(),
+                },
+                LaneAvailability {
+                    lane: "tabular".to_string(),
+                    available: false,
+                    reason: "not configured — set TABPFN_API_KEY".to_string(),
+                    provider: "tabpfn-hosted (Prior Labs)".to_string(),
+                },
+                LaneAvailability {
+                    lane: "generate".to_string(),
+                    available: false,
+                    reason: "missing LIQUID_API_KEY (set it in ~/.config/blend1/env)".to_string(),
+                    provider: "lfm2.5-24b-a2b via api.liquid.ai".to_string(),
+                },
+                LaneAvailability {
+                    lane: "validate".to_string(),
+                    available: false,
+                    reason: "missing FASTINO_API_KEY — the gate would ship ungated".to_string(),
+                    provider: "glide → d1 (oversized states)".to_string(),
+                },
+            ],
+            detail: "BLEND1_PYTHONPATH=/repo/services/blend1/src python3 -u /repo/services/blend1/service/mcp_server.py".to_string(),
+            elapsed_ms: 812,
+        }];
+        let rendered = render(&health);
+        // Status dots, colored by availability: green for the lane that
+        // can answer, dim for the ones naming what they are missing.
+        assert!(
+            rendered.contains(&format!("{}✓ route — liquid (d1) via sys1{RESET}", palette::OK)),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!(
+                "{}○ semantic — endpoint unreachable{RESET}",
+                palette::DIM
+            )),
+            "{rendered}"
+        );
+        // Every unavailable lane names its reason.
+        for reason in [
+            "endpoint unreachable",
+            "not configured — set TABPFN_API_KEY",
+            "missing LIQUID_API_KEY",
+            "missing FASTINO_API_KEY",
+        ] {
+            assert!(rendered.contains(reason), "{reason} is named: {rendered}");
+        }
+        // The five lanes render in the blend's own order.
+        let route_at = rendered.find("route").expect("the route lane renders");
+        let validate_at = rendered.find("validate").expect("the validate lane renders");
+        assert!(route_at < validate_at, "{rendered}");
+        // A card, never a plain-text table.
+        assert_eq!(rendered.matches('┌').count(), 1, "{rendered}");
+        assert!(!rendered.contains("| lane |"), "{rendered}");
     }
 
     #[test]

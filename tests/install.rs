@@ -26,6 +26,8 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use fleet::install::LANES;
+
 /// The fleet binary under test.
 const FLEET: &str = env!("CARGO_BIN_EXE_fleet");
 
@@ -254,11 +256,11 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
     fake_tool_dir(&tools, &log, false);
     let probe = Probe::listen();
 
-    // The first --lanes run installs all four lanes and the install
+    // The first --lanes run installs all five lanes and the install
     // still ends green on the doctor gate.
     let (stdout, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
     assert_eq!(code, 0, "a lane that builds does not fail the install: {stdout}{stderr}");
-    for lane in ["sys1", "sdm1", "sem1", "gen1"] {
+    for lane in ["sys1", "sdm1", "sem1", "gen1", "blend1"] {
         assert!(stdout.contains(&format!("+ {lane}")), "{lane} is named installed: {stdout}");
         let venv = home.join("venvs").join(lane);
         assert!(venv.join("bin").join("python").is_file(), "{lane} has its venv");
@@ -268,13 +270,20 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
     assert!(stdout.contains("export SDM1_MODELS_VENV="), "{stdout}");
     assert!(stdout.contains("export GEN1_KOKORO_PYTHON="), "{stdout}");
     assert!(stdout.contains("local_venv"), "{stdout}");
+    // blend1's wiring rides beside them: its venv export, and the note
+    // naming the sibling cores path-wired rather than pip-installed.
+    assert!(stdout.contains("export BLEND1_PYTHONPATH="), "{stdout}");
+    assert!(stdout.contains("BLEND1_SYS1_PYTHONPATH"), "{stdout}");
+    assert!(stdout.contains("BLEND1_SEM1_PYTHONPATH"), "{stdout}");
+    assert!(stdout.contains("BLEND1_SDM1_PYTHONPATH"), "{stdout}");
+    assert!(stdout.contains("BLEND1_GEN1_PYTHONPATH"), "{stdout}");
     // The fork's command shapes: `uv venv <path> --python 3.12`, then
     // `uv pip install --python <venv python> <packages>`.
     let argv = fs::read_to_string(&log).unwrap();
-    assert_eq!(argv.lines().filter(|line| line.starts_with("venv ")).count(), 4);
+    assert_eq!(argv.lines().filter(|line| line.starts_with("venv ")).count(), LANES.len());
     assert_eq!(
         argv.lines().filter(|line| line.starts_with("pip install ")).count(),
-        4
+        LANES.len()
     );
     for package in [
         "gliner2[local]",
@@ -284,12 +293,20 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
     ] {
         assert!(argv.contains(package), "{package} was installed: {argv}");
     }
+    // blend1's own install carries the union of the three siblings'
+    // package sets — its core is stdlib-only, so the venv exists to
+    // serve the cores its lanes compose.
+    let blend1_install = argv
+        .lines()
+        .find(|line| line.contains("pip install ") && line.contains("sentence-transformers") && line.contains("structured-data-models"))
+        .unwrap_or_else(|| panic!("blend1's union install is named: {argv}"));
+    assert!(blend1_install.contains("gliner2[local]"), "{blend1_install}");
 
     // A second run detects every venv and names it, rebuilding none:
     // the argv log is unchanged, which is what "not rebuilt" means.
     let (again, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
     assert_eq!(code, 0, "the second --lanes run is green: {again}{stderr}");
-    for lane in ["sys1", "sdm1", "sem1", "gen1"] {
+    for lane in ["sys1", "sdm1", "sem1", "gen1", "blend1"] {
         assert!(again.contains(&format!("= {lane}")), "{lane} is named present: {again}");
     }
     assert_eq!(fs::read_to_string(&log).unwrap(), argv, "no tool ran twice");
@@ -297,7 +314,11 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
     // report itself carries the green rather than leaving it to the
     // per-lane lines.
     assert!(
-        again.contains("= lanes        0 of 4 lanes installed, 4 present, 0 skipped"),
+        again.contains(&format!(
+            "= lanes        0 of {} lanes installed, {} present, 0 skipped",
+            LANES.len(),
+            LANES.len()
+        )),
         "{again}"
     );
 }
@@ -325,8 +346,22 @@ fn a_lane_installed_this_run_carries_its_receipt_and_a_second_run_reads_present(
         .find(|line| line.starts_with("installed "))
         .expect("the receipt names its minute");
     assert_eq!(installed.trim_start_matches("installed ").len(), 16, "{installed}");
+    // blend1's receipt carries the union of its three siblings' sets:
+    // its own core is stdlib-only, so the package line names the deps
+    // its lanes compose.
+    let blend1_receipt = fs::read_to_string(home.join("venvs").join("blend1").join(".fleet-lane")).unwrap();
+    assert!(blend1_receipt.contains("lane blend1"), "{blend1_receipt}");
+    assert!(blend1_receipt.contains("role grounded"), "{blend1_receipt}");
     assert!(
-        stdout.contains("= lanes        4 of 4 lanes installed, 0 present, 0 skipped"),
+        blend1_receipt.contains("packages gliner2[local] structured-data-models sentence-transformers"),
+        "{blend1_receipt}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "= lanes        {} of {} lanes installed, 0 present, 0 skipped",
+            LANES.len(),
+            LANES.len()
+        )),
         "{stdout}"
     );
 
@@ -363,7 +398,7 @@ fn a_partial_venv_without_the_receipt_is_rebuilt_never_read_present() {
     let argv = fs::read_to_string(&log).unwrap();
     assert_eq!(
         argv.lines().filter(|line| line.starts_with("venv ")).count(),
-        4,
+        LANES.len(),
         "every lane was rebuilt: {argv}"
     );
 
@@ -435,7 +470,7 @@ fn install_lanes_degrades_without_a_venv_tool() {
     // The install still succeeds: a lane that cannot build is skipped
     // with a named line, never a hard failure.
     assert_eq!(code, 0, "degrade-without keeps the install green: {stdout}{stderr}");
-    for lane in ["sys1", "sdm1", "sem1", "gen1"] {
+    for lane in ["sys1", "sdm1", "sem1", "gen1", "blend1"] {
         assert!(stdout.contains(&format!("! {lane}")), "{lane} is named skipped: {stdout}");
     }
     assert!(
@@ -445,7 +480,11 @@ fn install_lanes_degrades_without_a_venv_tool() {
     // The degradation is visible in the report's own summary line, not
     // only in each lane's line — and it is a report line, not a gate.
     assert!(
-        stdout.contains("! lanes        0 of 4 lanes installed, 0 present, 4 skipped"),
+        stdout.contains(&format!(
+            "! lanes        0 of {} lanes installed, 0 present, {} skipped",
+            LANES.len(),
+            LANES.len()
+        )),
         "{stdout}"
     );
     // No venv was left behind: the lane stays declared and dead, which
@@ -467,7 +506,7 @@ fn a_lane_whose_packages_fail_is_skipped_and_leaves_nothing_behind() {
 
     let (stdout, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
     assert_eq!(code, 0, "a failing lane is skipped, not fatal: {stdout}{stderr}");
-    for lane in ["sys1", "sdm1", "sem1", "gen1"] {
+    for lane in ["sys1", "sdm1", "sem1", "gen1", "blend1"] {
         assert!(stdout.contains(&format!("! {lane}")), "{lane} is named skipped: {stdout}");
     }
     assert!(
@@ -476,7 +515,11 @@ fn a_lane_whose_packages_fail_is_skipped_and_leaves_nothing_behind() {
     );
     // And the summary line carries the degradation too.
     assert!(
-        stdout.contains("! lanes        0 of 4 lanes installed, 0 present, 4 skipped"),
+        stdout.contains(&format!(
+            "! lanes        0 of {} lanes installed, 0 present, {} skipped",
+            LANES.len(),
+            LANES.len()
+        )),
         "{stdout}"
     );
     // The half-built venv was removed, so the lane's state stays

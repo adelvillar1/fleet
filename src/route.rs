@@ -5,10 +5,13 @@
 //! The roster is a list of [`Candidate`]s in the owner's declared order
 //! (directive 2026-10-13): the router kit at `127.0.0.1:8300` FIRST, then
 //! Z.ai Coding Plan, Xiaomi MiMo, StepFun, the Qwen Token plan, and
-//! DeepSeek direct LAST — DeepSeek is a working account held in reserve.
-//! Every fact in the compiled-in defaults is sourced from the fork's
-//! `agnostic-router-kit` `roster.json` (endpoints, key env-var *names*,
-//! model ids); no key value is ever stored here.
+//! DeepSeek direct last — DeepSeek is a working account held in reserve.
+//! Liquid is declared after DeepSeek and enters no declared position: it
+//! is available to the owner's config (a pin or a chain entry), and
+//! moving it into the chain is the owner's one-line config change, never
+//! this table's. Every fact in the compiled-in defaults is sourced from
+//! the fork's `agnostic-router-kit` `roster.json` (endpoints, key
+//! env-var *names*, model ids); no key value is ever stored here.
 //!
 //! The three moving parts:
 //!
@@ -83,6 +86,11 @@ pub struct Candidate {
 /// `agnostic-router-kit` `roster.json` (the spec), except DeepSeek's model,
 /// which stays Fleet's own `deepseek-chat` default for consistency with the
 /// existing client and credential resolution.
+///
+/// Liquid is appended at the END and declared only: the chain order above
+/// is the owner's standing directive, and this table does not reorder it.
+/// The owner's config (a pin, or a chain entry) decides Liquid's real
+/// position whenever they want it there.
 fn default_roster() -> Vec<Candidate> {
     vec![
         Candidate {
@@ -135,6 +143,25 @@ fn default_roster() -> Vec<Candidate> {
             base_url: crate::api::DEFAULT_BASE_URL.into(),
             key_env: "DEEPSEEK_API_KEY".into(),
             model: crate::api::DEFAULT_MODEL.into(),
+            enabled: true,
+            key_required: true,
+            disabled_reason: None,
+        },
+        // Liquid's own API — the blend1 generative lane's endpoint
+        // (lfm2.5-24b-a2b), declared here so the owner's config can pin
+        // or chain it. Appended at the END of the default order on
+        // purpose: the declared chain above is the owner's standing
+        // directive (router kit → z.ai → mimo → stepfun → token plan →
+        // deepseek) and this slice does not reorder it; the owner's
+        // config decides liquid's real position. Note the base URL's
+        // shape: Liquid's chat completions live under `/openai/v1`,
+        // not `/v1` (a `/v1` path 404s), and one key — LIQUID_API_KEY —
+        // serves both the d1 router and the 24B generative lane.
+        Candidate {
+            id: "liquid".into(),
+            base_url: "https://api.liquid.ai/openai/v1".into(),
+            key_env: "LIQUID_API_KEY".into(),
+            model: "lfm2.5-24b-a2b".into(),
             enabled: true,
             key_required: true,
             disabled_reason: None,
@@ -1458,9 +1485,13 @@ mod tests {
         let home = std::env::temp_dir().join(format!("fleet-route-nocfg-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&home);
         let roster = load_roster(&home).unwrap();
-        assert_eq!(roster.candidates.len(), 6);
+        assert_eq!(roster.candidates.len(), 7);
         assert_eq!(roster.candidates[0].id, HEAD_ID);
         assert_eq!(roster.candidates[5].id, "deepseek");
+        // Liquid is declared after DeepSeek and enters no declared
+        // position: it is available to the owner's config, and moving it
+        // into the chain is that config's one-line change.
+        assert_eq!(roster.candidates[6].id, "liquid");
         assert_eq!(roster.pin, None);
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -1629,12 +1660,17 @@ mod tests {
         // No keys are set in this process, so the remote plans read `no key`
         // and the loopback kit reads `absent (optional)`.
         let rendered = render(&resolved);
-        assert_eq!(rendered.matches('\u{250c}').count(), 6, "{rendered}");
+        assert_eq!(rendered.matches('\u{250c}').count(), 7, "{rendered}");
         // The head is marked and named.
         assert!(rendered.contains("head router-kit"), "{rendered}");
         // Key env-var NAMES appear; no value ever does.
         assert!(rendered.contains("ZAI_CODING_API_KEY"), "{rendered}");
         assert!(rendered.contains("DEEPSEEK_API_KEY"), "{rendered}");
+        // Liquid rides as the seventh card: declared, available to the
+        // owner's config, its endpoint and model named.
+        assert!(rendered.contains("LIQUID_API_KEY"), "{rendered}");
+        assert!(rendered.contains("https://api.liquid.ai/openai/v1"), "{rendered}");
+        assert!(rendered.contains("model lfm2.5-24b-a2b"), "{rendered}");
         // The endpoints and the models ride along.
         assert!(rendered.contains("https://api.z.ai/api/coding/paas/v4"), "{rendered}");
         assert!(rendered.contains("model deepseek-chat"), "{rendered}");
@@ -1646,12 +1682,29 @@ mod tests {
     fn the_declared_chain_is_the_owners_order() {
         let roster = default_roster();
         let ids: Vec<&str> = roster.iter().map(|candidate| candidate.id.as_str()).collect();
+        // Liquid is appended at the END and asserted here because it
+        // changes the compiled-in list — but it enters no declared
+        // position: the chain's order is the owner's standing directive
+        // and this table does not reorder it. The owner's config (a pin,
+        // or a chain entry) decides liquid's real position.
         assert_eq!(
             ids,
-            vec!["router-kit", "zai-coding-plan", "xiaomi-mimo", "stepfun", "token-plan", "deepseek"]
+            vec![
+                "router-kit",
+                "zai-coding-plan",
+                "xiaomi-mimo",
+                "stepfun",
+                "token-plan",
+                "deepseek",
+                "liquid"
+            ]
         );
-        // The kit is the head and needs no key; DeepSeek is last and does.
+        // The kit is the head and needs no key; DeepSeek is the
+        // declared order's last and does; Liquid is declared beside it
+        // with its own key required.
         assert!(!roster[0].key_required);
         assert!(roster[5].key_required);
+        assert_eq!(roster[6].id, "liquid");
+        assert!(roster[6].key_required);
     }
 }

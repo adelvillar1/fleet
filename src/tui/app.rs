@@ -1428,6 +1428,7 @@ mod tests {
             state,
             server_version: Some("0.1.0".to_string()),
             tools: (0..tools).map(|index| format!("tool_{index}")).collect(),
+            doctor: Vec::new(),
             detail: "SEM1_PYTHONPATH=…/src python3 -u …/service/mcp_server.py".to_string(),
             elapsed_ms: 53,
         }

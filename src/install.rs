@@ -175,7 +175,7 @@ pub enum EnvTarget {
 /// One heavy lane: the vendored core it serves, the packages its venv
 /// carries, and the wiring the core reads to find the venv. The
 /// vocabulary is the fork's `services/bootstrap.mjs` ported to the
-/// four vendored cores; the venvs live at `<home>/venvs/<name>/`.
+/// vendored cores; the venvs live at `<home>/venvs/<name>/`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lane {
     /// The vendored core's name — also the venv directory's name.
@@ -195,7 +195,7 @@ pub struct Lane {
     pub note: &'static str,
 }
 
-/// The four lanes, one per vendored core, in the fork's order.
+/// The five lanes, one per vendored core, in the fork's order.
 ///
 /// The package sets are the fork's, with one fix at the vendoring
 /// boundary: `gliner2` declares its local-model stack — torch,
@@ -203,6 +203,11 @@ pub struct Lane {
 /// and `gliner2/models/base.py` imports torch at module load, so the
 /// bare package the fork (and sys1's own setup note) names produces a
 /// venv that cannot serve. The lane installs `gliner2[local]`.
+///
+/// blend1's own core is stdlib-only, so its venv carries the union of
+/// its three siblings' package sets — the deps its lanes compose — and
+/// the cores themselves are path-wired through the sibling
+/// `<SVC>_PYTHONPATH` names its note names, never pip-installed.
 pub const LANES: &[Lane] = &[
     Lane {
         name: "sys1",
@@ -235,6 +240,22 @@ pub const LANES: &[Lane] = &[
         env_var: Some("GEN1_KOKORO_PYTHON"),
         env_target: EnvTarget::Python,
         note: "the ONNX weights (~/.cache/gen1/tts/kokoro-v1.0.onnx and voices-v1.0.bin) are machine-owner downloads, not installed here",
+    },
+    Lane {
+        name: "blend1",
+        role: "grounded",
+        // The union of the three siblings' sets: blend1's own core is
+        // stdlib-only, and its venv exists to serve the sibling cores
+        // its lanes compose — sys1's classifier stack, sdm1's tabular
+        // stack, sem1's sentence-transformers — not blend1 itself.
+        packages: &["gliner2[local]", "structured-data-models", "sentence-transformers"],
+        env_var: Some("BLEND1_PYTHONPATH"),
+        env_target: EnvTarget::Root,
+        // The cores are path-wired, not installed here: the sibling
+        // `<SVC>_PYTHONPATH` names point at the repo's vendored
+        // `services/<svc>/src`, the house mechanism sem1's adapter
+        // already reads.
+        note: "the sibling cores are path-wired, not installed here: BLEND1_SYS1_PYTHONPATH / BLEND1_SEM1_PYTHONPATH / BLEND1_SDM1_PYTHONPATH / BLEND1_GEN1_PYTHONPATH point at the repo's vendored services/<svc>/src",
     },
 ];
 
@@ -1011,9 +1032,9 @@ mod tests {
     }
 
     #[test]
-    fn the_lane_table_is_the_four_vendored_cores() {
+    fn the_lane_table_is_the_five_vendored_cores() {
         let names: Vec<&str> = LANES.iter().map(|lane| lane.name).collect();
-        assert_eq!(names, vec!["sys1", "sdm1", "sem1", "gen1"]);
+        assert_eq!(names, vec!["sys1", "sdm1", "sem1", "gen1", "blend1"]);
         // The fork's vocabulary, ported: each lane names the packages
         // its venv carries and the environment name its core reads.
         let sem1 = LANES.iter().find(|lane| lane.name == "sem1").unwrap();
@@ -1033,6 +1054,20 @@ mod tests {
         assert_eq!(sys1.packages, &["gliner2[local]"]);
         assert_eq!(sys1.env_var, None);
         assert!(sys1.note.contains("local_venv"));
+        // blend1's own core is stdlib-only: its venv carries the union
+        // of the three siblings' package sets, and the cores themselves
+        // are path-wired through the sibling `<SVC>_PYTHONPATH` names
+        // rather than pip-installed here.
+        let blend1 = LANES.iter().find(|lane| lane.name == "blend1").unwrap();
+        assert_eq!(blend1.role, "grounded");
+        assert_eq!(
+            blend1.packages,
+            &["gliner2[local]", "structured-data-models", "sentence-transformers"]
+        );
+        assert_eq!(blend1.env_var, Some("BLEND1_PYTHONPATH"));
+        assert_eq!(blend1.env_target, EnvTarget::Root);
+        assert!(blend1.note.contains("BLEND1_SYS1_PYTHONPATH"), "{}", blend1.note);
+        assert!(blend1.note.contains("services/<svc>/src"), "{}", blend1.note);
     }
 
     #[test]
@@ -1070,6 +1105,17 @@ mod tests {
             lane_wiring(sys1, venv),
             "point ~/.config/sys1/config.toml at it: [providers] local_venv = \"/home/x/.fleet/venvs/sem1\""
         );
+        let blend1 = LANES.iter().find(|lane| lane.name == "blend1").unwrap();
+        // blend1's venv export rides beside its sibling path-wiring
+        // note: the cores resolve through the <SVC>_PYTHONPATH names,
+        // not through a pip install.
+        let blend1_wiring = lane_wiring(blend1, venv);
+        assert!(
+            blend1_wiring.starts_with("export BLEND1_PYTHONPATH=/home/x/.fleet/venvs/sem1; "),
+            "{blend1_wiring}"
+        );
+        assert!(blend1_wiring.contains("BLEND1_SEM1_PYTHONPATH"), "{blend1_wiring}");
+        assert!(blend1_wiring.contains("services/<svc>/src"), "{blend1_wiring}");
     }
 
     #[test]
