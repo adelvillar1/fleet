@@ -167,6 +167,26 @@ gate alone. A proposal left waiting is unblocked by the approval and by
 nothing else; a second apply without approval is the named guard, not a
 second row.
 
+## What the apply refuses
+
+Two refusals are structural, not policy:
+
+- **A patch under `memories/`.** The `patch` op writes any repo-relative
+  path, and a path under `memories/` would rewrite a fact while
+  consulting no basis — the provenance rule bypassed in one line of
+  JSON. A fact changes through the `supersede` op, which asks the fact's
+  basis before it writes; that is the only door, and a patch aimed at
+  the corpus is refused naming it.
+- **A dirty target.** The apply overwrites the target before the gate
+  runs and a red gate's revert restores HEAD, so pre-existing
+  uncommitted work in the target path would be silently destroyed. A
+  target carrying uncommitted work is refused, naming it, on both the
+  patch path and the memory path — commit or stash first. (KI-103.)
+
+An applied change commits with explicit paths and a message prefixed
+`fleet improve:`, so a machine-made commit is self-describing in the
+history it lands in.
+
 ## The surface
 
 - **`fleet improve`** — every proposal in both stores as house-style

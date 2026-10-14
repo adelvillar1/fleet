@@ -1060,7 +1060,7 @@ impl Landed {
         }
         let paths: Vec<&str> = self.repo_paths.iter().map(String::as_str).collect();
         git_paths(repo, &["add", "--"], &paths, &[])?;
-        git_paths(repo, &["commit", "-m", &self.summary, "--"], &paths, &[])?;
+        git_paths(repo, &["commit", "-m", &format!("fleet improve: {}", self.summary), "--"], &paths, &[])?;
         git(repo, &["rev-parse", "HEAD"]).map(Some)
     }
 
@@ -1307,6 +1307,17 @@ fn stage_memory(
             fact.name, proposal.name
         )));
     }
+    // The same dirty-tree guard the patch path carries: the supersede
+    // rewrites the fact files, and a red gate's revert restores HEAD
+    // over them.
+    let dirty = dirty_paths(&ctx.repo, &[&format!("{MEMORIES_DIR}/{}.md", fact.name)]);
+    if !dirty.is_empty() {
+        return Err(Hold::Refused(format!(
+            "`{MEMORIES_DIR}/{}.md` carries uncommitted work ({}) — commit or stash it first; the apply's revert would restore HEAD over it",
+            fact.name,
+            dirty.join(", ")
+        )));
+    }
     let memory = Memory::load_with(&root, Box::new(memory::KeywordOnly));
     match memory.supersede(request, ctx.approved, None) {
         Err(memory::WriteError::NeedsApproval(reason)) => Err(Hold::Waiting(reason)),
@@ -1420,6 +1431,26 @@ fn stage_patch(proposal: &Proposal, path: &str, content: &str, ctx: &Apply<'_>) 
             "`{path}` is not a repo-relative path inside the repository"
         )));
     }
+    // The memory substrate's changes go through `supersede`, whose
+    // provenance rule is the permission model: a confirmed-by fact
+    // cannot be rewritten by a path the guards above never consulted.
+    // A patch aimed at `memories/` is that bypass in one line of JSON,
+    // so it is refused here — the proposal's `supersede` op is the only
+    // door, and it asks the fact's basis before it writes.
+    if relative.components().next().and_then(|component| component.as_os_str().to_str())
+        == Some(MEMORIES_DIR)
+    {
+        return Err(Hold::Refused(format!(
+            "`{path}` is under `{MEMORIES_DIR}/`: a fact changes through the `supersede` op, whose provenance rule is the permission model — a patch would bypass it"
+        )));
+    }
+    let dirty = dirty_paths(&ctx.repo, &[path]);
+    if !dirty.is_empty() {
+        return Err(Hold::Refused(format!(
+            "`{path}` carries uncommitted work ({}) — the apply overwrites the target before the gate runs, and a red gate's revert restores HEAD over it, so the work would be silently destroyed; commit or stash it first",
+            dirty.join(", ")
+        )));
+    }
     let target = ctx.repo.join(relative);
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
@@ -1432,6 +1463,32 @@ fn stage_patch(proposal: &Proposal, path: &str, content: &str, ctx: &Apply<'_>) 
         restore: None,
         summary: format!("patched {} (proposal `{}`)", target.display(), proposal.name),
     })
+}
+
+/// The paths among `paths` carrying uncommitted work in `repo`. The
+/// apply overwrites a target before the gate runs and a red gate's
+/// revert restores HEAD, so pre-existing uncommitted work in a target
+/// would be silently destroyed — the apply refuses instead. An
+/// unreadable or absent git answers "nothing dirty": the gate is the
+/// authority on what lands, not this guard.
+fn dirty_paths(repo: &Path, paths: &[&str]) -> Vec<String> {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--"])
+        .args(paths)
+        .current_dir(repo)
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.get(3..))
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .collect()
 }
 
 /// Write `bytes` to the pre-image store, creating it when missing.
@@ -2020,6 +2077,66 @@ mod tests {
         assert!(stamped.gate.contains("fmt ok"), "{}", stamped.gate);
         // Exactly one row for the one verdict.
         assert_eq!(rows.iter().filter(|row| row.op == calib::OP_PROPOSE).count(), 1);
+    }
+
+    #[test]
+    fn a_patch_under_memories_is_refused_because_it_would_bypass_the_provenance_rule() {
+        // The Critical the quality review found: a patch op whose path
+        // is under `memories/` passed every guard, was classified
+        // non-destructive, never consulted the fact's basis, and landed
+        // on a green gate — a model-filed proposal could rewrite a
+        // confirmed-by fact with no human in the loop. The patch op now
+        // refuses the path; `supersede` is the only door.
+        let home = scratch("apply-memories-bypass");
+        let repo = scratch_repo("apply-memories-bypass-repo");
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 0, "", &log);
+        let gate = fake_gate(&repo, &bin);
+        let change = r#"{"op": "patch", "path": "memories/load-bearing.md", "content": "rewritten\n"}"#;
+        skill_proposal(&home, "bypass-the-fact", "memories/load-bearing.md", change);
+        let stream = calib::Stream::open(scratch("apply-memories-bypass-calib"));
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let verdict = apply("bypass-the-fact", &ctx);
+        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        assert!(reason.contains("memories/"), "{reason}");
+        assert!(reason.contains("supersede"), "{reason}");
+        assert!(reason.contains("provenance"), "{reason}");
+        // Nothing was written, and the gate never ran.
+        assert!(!repo.join("memories/load-bearing.md").exists());
+        assert!(!log.exists(), "the gate ran: {}", fs::read_to_string(&log).unwrap_or_default());
+        settle(&stream);
+        let root = stream.root().to_path_buf();
+        let rows = calib::read_day(&root, &calib::today(), 64);
+        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        assert_eq!(row.verdict, calib::VERDICT_REFUSED);
+        assert!(row.gate.is_empty(), "the gate never ran: {:?}", row.gate);
+    }
+
+    #[test]
+    fn a_patch_into_a_dirty_target_is_refused_rather_than_destroying_the_work() {
+        // The apply overwrites the target before the gate runs, and a
+        // red gate's revert restores HEAD — so pre-existing uncommitted
+        // work in the target would be silently destroyed. The apply
+        // refuses instead, and the work survives.
+        let home = scratch("apply-dirty-target");
+        let repo = scratch_repo("apply-dirty-target-repo");
+        fs::write(repo.join("src/lib.rs"), "pub fn one() -> u32 { 99 }\n").unwrap();
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 1, "error: test failed", &log);
+        let gate = fake_gate(&repo, &bin);
+        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        skill_proposal(&home, "overwrite-the-work", "src/lib.rs", change);
+        let stream = calib::Stream::open(scratch("apply-dirty-target-calib"));
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let verdict = apply("overwrite-the-work", &ctx);
+        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        assert!(reason.contains("uncommitted work"), "{reason}");
+        // The operator's work is exactly as they left it.
+        assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), "pub fn one() -> u32 { 99 }\n");
+        // The gate never ran.
+        assert!(!log.exists(), "the gate ran: {}", fs::read_to_string(&log).unwrap_or_default());
     }
 
     #[test]
