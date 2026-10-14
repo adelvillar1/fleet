@@ -803,6 +803,23 @@ impl Stream {
     pub fn pending(&self) -> usize {
         self.inner.counters.pending.load(Ordering::Relaxed)
     }
+
+    /// Consume the handle, drain the queue, and report what the writer
+    /// did with the rows it was given: `(written, failed)`. The last
+    /// handle's drop already drains; this names the outcome at the call
+    /// site, so a caller whose row did not reach disk (a full or
+    /// unwritable root) can act on it rather than assume success. The
+    /// counters are read through a clone of their own `Arc`, which does
+    /// not keep the writer's `Inner` alive, so the drain still runs and
+    /// the counts read back are final.
+    pub fn finish(self) -> (usize, usize) {
+        let counters = Arc::clone(&self.inner.counters);
+        drop(self);
+        (
+            counters.written.load(Ordering::Relaxed),
+            counters.failed.load(Ordering::Relaxed),
+        )
+    }
 }
 
 impl Drop for Stream {

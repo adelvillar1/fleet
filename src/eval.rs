@@ -599,14 +599,15 @@ pub fn corpus() -> Vec<Scenario> {
     ]
 }
 
-/// The judged artifact's identity for an `eval_corpus` row: the 16 hex
-/// characters of the sha256 over the corpus's own fixed definition —
-/// every scenario's name and family in corpus order, under the crate's
-/// version. The corpus is code, so its artifact is its definition: an
-/// explanation keyed to it names the exact suite that graded the run,
-/// and a corpus that changed since the row was written is a drift the
-/// explanation refuses rather than papers over (slice 17).
-pub fn corpus_identity() -> String {
+/// The judged artifact's definition for an `eval_corpus` row: the
+/// corpus's own fixed text — every scenario's name and family in
+/// corpus order, under the crate's version. The corpus is code, so its
+/// artifact is its definition: an explanation keyed to it names the
+/// exact suite that graded the run, and a corpus that changed since the
+/// row was written is a drift the explanation refuses rather than
+/// papers over (slice 17). The one construction both the corpus row and
+/// the explanation beat key on, so the two cannot diverge.
+pub fn corpus_definition() -> String {
     let mut text = format!("fleet-eval-corpus/{}", env!("CARGO_PKG_VERSION"));
     for scenario in corpus() {
         text.push('\n');
@@ -614,7 +615,14 @@ pub fn corpus_identity() -> String {
         text.push(' ');
         text.push_str(scenario.family.label());
     }
-    crate::calib::hash16(&text)
+    text
+}
+
+/// The judged artifact's identity for an `eval_corpus` row: the 16 hex
+/// characters of the sha256 over the corpus's own fixed definition (see
+/// [`corpus_definition`]).
+pub fn corpus_identity() -> String {
+    crate::calib::hash16(&corpus_definition())
 }
 
 // --- the report -----------------------------------------------------------
@@ -884,8 +892,9 @@ fn run_eval_subprocess(
 
 /// Strip ANSI escape sequences from text: the surface's cards carry
 /// color, and a name greped out of a card must not carry the trailing
-/// reset into the gate step's detail.
-fn strip_ansi(text: &str) -> String {
+/// reset into the gate step's detail. Shared with the TUI, so the
+/// explanation modal's width budget is spent on visible columns only.
+pub(crate) fn strip_ansi(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {
@@ -1946,7 +1955,7 @@ async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
     // rode with it.
     checks.push((
         "the day's spend is recorded",
-        (crate::explain::day_spend(&root, &calib::today()) - 0.0018).abs() < 1e-9,
+        (crate::explain::day_spend(&root, &home, &calib::today()) - 0.0018).abs() < 1e-9,
     ));
     checks.push((
         "the route and validation telemetry rode the row",
@@ -1971,6 +1980,45 @@ async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
     ));
     checks.push((
         "the dry run lands no row and no file",
+        crate::explain::explain_rows(&root).len() == 1
+            && std::fs::read_to_string(&path).unwrap_or_default() == recovered,
+    ));
+
+    // The fail-open leg: a lane whose generative leg failed open — the
+    // vendored core's LIQUID-unset shape (generated.status error, the
+    // fallback prose shipped as final_answer) — is a named refusal, not
+    // an explanation. The verdict stands, no second row, no fallback
+    // file written under the artifact's sha.
+    let fallback_reply = blend1_result(serde_json::json!({
+        "path": "synthesized",
+        "generated": { "status": "error",
+                       "error": "generate lane is not configured: set LIQUID_API_KEY (the same key the d1 lane uses) in ~/.config/blend1/env",
+                       "model": "lfm2.5-24b-a2b" },
+        "final_answer": "Generative lane unavailable: generate lane is not configured: set LIQUID_API_KEY (the same key the d1 lane uses) in ~/.config/blend1/env",
+    }))
+    .to_string();
+    let fail_lane = match ScriptedLane::start(&mcp_bin, blend1_lane_entries(&fallback_reply)) {
+        Ok(lane) => lane,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let fail = crate::explain::explain(crate::explain::ExplainRequest {
+        root: &root,
+        home: &home,
+        selector: crate::explain::Selector::Proposal("fix-the-ranker".to_string()),
+        dry_run: false,
+        lane: crate::explain::LaneSource::Scripted(fail_lane.spec()),
+    })
+    .await;
+    checks.push((
+        "a lane that fails open is refused by name, not shipped as the explanation",
+        fail.refusal.is_some() && fail.row.is_none(),
+    ));
+    checks.push((
+        "the fail-open refusal carries the lane's own error",
+        fail.refusal.as_deref().is_some_and(|reason| reason.contains("LIQUID_API_KEY")),
+    ));
+    checks.push((
+        "the fail-open lands no second row and no fallback file",
         crate::explain::explain_rows(&root).len() == 1
             && std::fs::read_to_string(&path).unwrap_or_default() == recovered,
     ));

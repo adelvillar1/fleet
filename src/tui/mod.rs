@@ -284,11 +284,25 @@ fn open_picker(home: &Path, app: &mut App) {
 /// no explanation says so rather than rendering an empty card, and a
 /// home the read cannot reach names the reason — the same named
 /// refusals the headless surface carries.
+///
+/// This is the one read-only reach into the explanation beat the
+/// socket-guard test allows: it reads the beat's own artifact (the
+/// file its row indexes) and hands the state machine its lines. It
+/// never constructs a row, never makes an ask, and never runs on a
+/// synchronous per-turn path — the modal opens on an explicit Ctrl+X.
 fn open_explanation(app: &mut App, home: &Path) {
     let user_home = std::env::var("HOME").ok();
     let root = crate::calib::resolve_root(home, user_home.as_deref());
     match crate::explain::latest_card(&root, home) {
-        Some(card) => app.open_explain(card.lines().map(str::to_string).collect()),
+        // The card rides ANSI escapes for the terminal; the modal's
+        // width budget must be spent on visible columns only, so the
+        // escapes are stripped before the lines enter the state machine
+        // — a named reason cut in half by its own color codes is not a
+        // named one (KI-140's class).
+        Some(card) => {
+            let lines = crate::eval::strip_ansi(&card).lines().map(str::to_string).collect();
+            app.open_explain(lines);
+        }
         None => app.error = Some(
             "no explanation recorded today yet \u{b7} `fleet explain --proposal <name>` writes one"
                 .to_string(),

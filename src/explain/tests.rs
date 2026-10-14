@@ -167,6 +167,67 @@ async fn explain_over(
     explain(ExplainRequest { root, home, selector, dry_run, lane: LaneSource::Scripted(lane) }).await
 }
 
+/// One explain call over a scripted lane whose `tools/call` answers
+/// with `reply` — the seam for a leg that needs a specific lane shape.
+async fn explain_reply(home: &Path, root: &Path, selector: Selector, reply: &str) -> ExplainOutcome {
+    let lane = scripted_lane(reply).expect("the scripted lane");
+    explain(ExplainRequest {
+        root,
+        home,
+        selector,
+        dry_run: false,
+        lane: LaneSource::Scripted(lane),
+    })
+    .await
+}
+
+/// The vendored core's fail-open answer: a synthesized ask whose
+/// generative lane could not answer (LIQUID_API_KEY unset) ships its
+/// fallback prose as the `final_answer` and names why in
+/// `generated.status`/`generated.error`.
+fn fallback_lane_reply() -> String {
+    serde_json::json!({
+        "path": "synthesized",
+        "route": { "status": "ok", "provider": "liquid", "needs_generation": 0.978,
+                   "answer_shape": "synthesized", "latency_ms": 900 },
+        "generated": { "status": "error",
+                       "error": "generate lane is not configured: set LIQUID_API_KEY (the same key the d1 lane uses) in ~/.config/blend1/env",
+                       "model": "lfm2.5-24b-a2b" },
+        "final_answer": "Generative lane unavailable: generate lane is not configured: set LIQUID_API_KEY (the same key the d1 lane uses) in ~/.config/blend1/env",
+        "total_latency_ms": 900,
+    })
+    .to_string()
+}
+
+/// An `eval_corpus` row carrying one failed scenario, keyed to `sha` —
+/// the shape `fleet eval` lands, which the `--eval` selector explains.
+fn failed_scenario_row(root: &Path, failed: &str, sha: &str) {
+    let stream = calib::Stream::open(root);
+    stream.record(Row::EvalCorpus(calib::EvalCorpusRow {
+        ts: calib::stamp(),
+        passed: 11,
+        failed: 1,
+        score: 11.0 / 12.0,
+        scenarios: vec![
+            calib::EvalScenarioRow {
+                scenario: "conversation-fold".to_string(),
+                family: "session-corpus".to_string(),
+                passed: true,
+                failure: None,
+            },
+            calib::EvalScenarioRow {
+                scenario: failed.to_string(),
+                family: "agent-continuation".to_string(),
+                passed: false,
+                failure: Some("the fold did not hold".to_string()),
+            },
+        ],
+        input_sha256: Some(sha.to_string()),
+    }));
+    // The last handle's drop drains the queue before this returns.
+    drop(stream);
+}
+
 // --- the discipline's pure layer ---
 
 #[test]
@@ -287,6 +348,64 @@ fn a_lane_answer_parses_with_every_field_optional() {
     assert_eq!(BlendReply::parse(&Value::Null).final_answer, "");
 }
 
+#[test]
+fn a_lanes_fail_open_parses_its_status_and_names_its_reason() {
+    // The vendored core's fail-open shape: a synthesized ask whose
+    // generative lane could not answer (LIQUID_API_KEY unset) ships its
+    // fallback prose as the `final_answer` and names why in
+    // `generated.status`/`generated.error`. The parse carries all three
+    // through, and `fail_open()` names the lane's error — the signal the
+    // beat refuses on rather than ship the fallback as the explanation.
+    let fallback = "Generative lane unavailable: generate lane is not configured: \
+                    set LIQUID_API_KEY (the same key the d1 lane uses) in ~/.config/blend1/env";
+    let value: Value = serde_json::from_str(
+        &serde_json::json!({
+            "path": "synthesized",
+            "route": { "status": "ok", "needs_generation": 0.978, "answer_shape": "synthesized" },
+            "generated": { "status": "error",
+                           "error": "generate lane is not configured: set LIQUID_API_KEY (the same key the d1 lane uses) in ~/.config/blend1/env",
+                           "model": "lfm2.5-24b-a2b" },
+            "final_answer": fallback,
+            "total_latency_ms": 900,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let reply = BlendReply::parse(&value);
+    assert_eq!(reply.path, "synthesized");
+    assert_eq!(reply.generated_status, "error");
+    assert_eq!(reply.route_status, "ok");
+    assert_eq!(
+        reply.generated_error.as_deref(),
+        Some("generate lane is not configured: set LIQUID_API_KEY (the same key the d1 lane uses) in ~/.config/blend1/env")
+    );
+    assert_eq!(reply.final_answer, fallback);
+    let reason = reply.fail_open().expect("the fail-open is named");
+    assert!(reason.contains("LIQUID_API_KEY"), "{reason}");
+
+    // A synthesized ask whose generative lane answered is not a
+    // fail-open.
+    let full: Value = serde_json::from_str(&lane_reply("the cause", 0.0018)).unwrap();
+    assert_eq!(BlendReply::parse(&full).fail_open(), None);
+    // The direct path never ran the generative lane, so an absent
+    // generated status is not a fail-open either.
+    let direct: Value =
+        serde_json::from_str(r#"{"final_answer": "the direct quote", "path": "direct"}"#).unwrap();
+    assert_eq!(BlendReply::parse(&direct).fail_open(), None);
+    // A lean answer that reports no path and no generated status said
+    // nothing about generation — an answer, not a fail-open.
+    let lean: Value = serde_json::from_str(r#"{"final_answer": "the direct path's quote"}"#).unwrap();
+    assert_eq!(BlendReply::parse(&lean).fail_open(), None);
+    // A synthesized ask whose generative lane failed with no error
+    // string still fails open, named by its status.
+    let mute: Value = serde_json::from_str(
+        r#"{"final_answer": "fallback", "path": "synthesized", "generated": {"status": "error"}}"#,
+    )
+    .unwrap();
+    let reason = BlendReply::parse(&mute).fail_open().expect("named by its status");
+    assert!(reason.contains("error"), "{reason}");
+}
+
 // --- the batch-only proof ---
 
 #[test]
@@ -312,6 +431,40 @@ fn no_synchronous_path_references_the_explanation_beat() {
         assert!(!source.contains("explain::"), "{name} names the explanation beat");
         assert!(!source.contains("crate::explain"), "{name} names the explanation beat");
         assert!(!source.contains("EXPLAIN_LANE"), "{name} names the explanation beat");
+    }
+    // Two modules reach the beat by design, and each names why at its
+    // call site: the TUI surface reads the beat's own artifact (the
+    // Ctrl+X card, `latest_card`, read-only) and the corpus drives the
+    // scripted scenario (`explain::explain`, rehearsed against the
+    // seam). Neither writes a row: the beat's `Row::Explain` is
+    // constructed in exactly two modules — `calib`, which defines the
+    // type, and `explain`, which writes it. Scan the reachable surface
+    // and every writer both: nothing outside those two constructs one.
+    for (name, source) in [
+        ("calib.rs", include_str!("../calib.rs")),
+        ("explain.rs", include_str!("../explain.rs")),
+        ("main.rs", include_str!("../main.rs")),
+        ("tui/mod.rs", include_str!("../tui/mod.rs")),
+        ("tui/app.rs", include_str!("../tui/app.rs")),
+        ("tui/ui.rs", include_str!("../tui/ui.rs")),
+        ("tui/events.rs", include_str!("../tui/events.rs")),
+        ("eval.rs", include_str!("../eval.rs")),
+        ("doctor.rs", include_str!("../doctor.rs")),
+        ("memory.rs", include_str!("../memory.rs")),
+        ("agent.rs", include_str!("../agent.rs")),
+        ("tools.rs", include_str!("../tools.rs")),
+        ("session.rs", include_str!("../session.rs")),
+        ("route.rs", include_str!("../route.rs")),
+        ("compaction.rs", include_str!("../compaction.rs")),
+        ("cron.rs", include_str!("../cron.rs")),
+        ("improve.rs", include_str!("../improve.rs")),
+        ("boards.rs", include_str!("../boards.rs")),
+    ] {
+        let allowed = name == "calib.rs" || name == "explain.rs";
+        assert!(
+            allowed || !source.contains("Row::Explain("),
+            "{name} constructs an explain row — only calib and explain may"
+        );
     }
     // The beat's own row is the only new op, and no verdict reads it:
     // the ops that grade a run are the ones that were there before.
@@ -407,7 +560,7 @@ async fn a_refused_verdict_is_explained_beside_itself_with_the_text_recoverable(
     assert_eq!(row.validation.outcome, "passed");
     assert_eq!(row.cost_usd, Some(0.0018));
     assert_eq!(explain_rows(&root).len(), 1);
-    assert!((day_spend(&root, &calib::today()) - 0.0018).abs() < 1e-9);
+    assert!((day_spend(&root, &home, &calib::today()) - 0.0018).abs() < 1e-9);
     // The card carries the verdict, the prose, the cost, and the
     // eval-only line — and it is a card, not a dump.
     let text = plain(&outcome.card);
@@ -458,7 +611,7 @@ async fn a_dry_run_spends_nothing_and_shows_what_would_be_asked() {
     assert!(outcome.explanation_path.is_none());
     assert!(explain_rows(&root).is_empty());
     assert!(!explanation_path(&home, &sha).exists());
-    assert!((day_spend(&root, &calib::today())).abs() < 1e-9);
+    assert!((day_spend(&root, &home, &calib::today())).abs() < 1e-9);
     // The card shows what would be asked.
     let prompt = outcome.dry_run_prompt.expect("the prompt is rehearsed");
     assert!(prompt.contains("GATE OP: propose"));
@@ -586,5 +739,264 @@ async fn an_over_budget_day_is_refused_naming_the_spend() {
     assert!(dry.row.is_none());
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn a_lane_that_fails_open_is_refused_by_name() {
+    // The vendored lane's own fail-open (LIQUID_API_KEY unset): the lane
+    // answers, but its generative leg failed and the answer is the
+    // fallback prose. The beat refuses by name carrying the lane's
+    // error, treats the fallback as no answer — no file, no row — and
+    // the verdict stands. This is the live reproduction: a real
+    // vendored lane with no key never wrote its fallback as prose.
+    let home = scratch("failopen-home");
+    let root = scratch("failopen-calib");
+    let sha = change_sha();
+    proposal_file(&home, "fix-the-ranker", CHANGE);
+    refused_proposal_row(&root, "fix-the-ranker", &sha);
+    let outcome = explain_reply(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        &fallback_lane_reply(),
+    )
+    .await;
+
+    let refusal = outcome.refusal.clone().expect("a named refusal");
+    assert!(refusal.contains("failed open"), "{refusal}");
+    assert!(refusal.contains("LIQUID_API_KEY"), "{refusal}");
+    assert!(outcome.row.is_none());
+    // No explanation file: the fallback is never written under the sha.
+    assert!(!explanation_path(&home, &sha).exists());
+    assert!(explain_rows(&root).is_empty());
+    // The verdict stands, and the card says so.
+    assert!(
+        plain(&outcome.card).contains("the verdict stands exactly as recorded"),
+        "{}",
+        outcome.card
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn re_explaining_the_same_artifact_refuses_rather_than_overwriting() {
+    // A second ask on the same artifact: the recoverable text is not
+    // silently overwritten. A re-explain that would change the indexed
+    // text is refused, so the first row's sha keeps indexing the bytes
+    // it indexed; an identical re-ask is idempotent, its bytes already
+    // correct.
+    let home = scratch("reexplain-home");
+    let root = scratch("reexplain-calib");
+    let sha = change_sha();
+    proposal_file(&home, "fix-the-ranker", CHANGE);
+    refused_proposal_row(&root, "fix-the-ranker", &sha);
+    let path = explanation_path(&home, &sha);
+
+    // The first ask lands and its text is recoverable by its sha.
+    let first = explain_reply(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        &lane_reply(ANSWER, 0.0018),
+    )
+    .await;
+    assert!(first.refusal.is_none(), "{:?}", first.refusal);
+    let first_sha = first.row.as_ref().expect("the first row").explanation_sha256.clone();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), ANSWER);
+
+    // A second ask with different prose is refused, and the first file
+    // is untouched: its bytes still hash to the first row's sha.
+    let other = "A wholly different explanation of the very same verdict, in different words.";
+    let second = explain_reply(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        &lane_reply(other, 0.0018),
+    )
+    .await;
+    let refusal = second.refusal.clone().expect("a named refusal");
+    assert!(refusal.contains("already exists"), "{refusal}");
+    assert!(second.row.is_none());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), ANSWER);
+    assert_eq!(calib::hash16(&std::fs::read_to_string(&path).unwrap()), first_sha);
+
+    // An identical re-ask is idempotent: the bytes are already correct,
+    // so it lands another row against the same, unchanged file.
+    let again = explain_reply(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        &lane_reply(ANSWER, 0.0018),
+    )
+    .await;
+    assert!(again.refusal.is_none(), "{:?}", again.refusal);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), ANSWER);
+    assert_eq!(calib::hash16(&std::fs::read_to_string(&path).unwrap()), first_sha);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn a_crash_shaped_partial_file_is_refused_not_overwritten() {
+    // A truncated file at the artifact's path — the shape a crash
+    // mid-write left before the atomic write — is refused, not silently
+    // replaced. The beat treats a file whose bytes do not hash to this
+    // ask's sha as text it must not overwrite, and refuses by name,
+    // leaving the bytes exactly as they were.
+    let home = scratch("partial-home");
+    let root = scratch("partial-calib");
+    let sha = change_sha();
+    proposal_file(&home, "fix-the-ranker", CHANGE);
+    refused_proposal_row(&root, "fix-the-ranker", &sha);
+    let path = explanation_path(&home, &sha);
+    std::fs::create_dir_all(explanations_dir(&home)).unwrap();
+    let partial = "The `test` step refused the change: the ra";
+    std::fs::write(&path, partial).unwrap();
+
+    let outcome = explain_reply(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        &lane_reply(ANSWER, 0.0018),
+    )
+    .await;
+    let refusal = outcome.refusal.clone().expect("a named refusal");
+    assert!(refusal.contains("already exists"), "{refusal}");
+    assert!(outcome.row.is_none());
+    // The partial file is left exactly as it was.
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), partial);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn a_failed_scenario_is_explained_beside_its_corpus_row() {
+    // The --eval path, end to end over the scripted lane: a failed
+    // scenario explained beside the corpus row, the verdict untouched,
+    // and the join key the corpus's own identity — the one construction
+    // the beat and the corpus row share, so the two cannot diverge.
+    let home = scratch("scenario-home");
+    let root = scratch("scenario-calib");
+    let corpus_sha = crate::eval::corpus_identity();
+    failed_scenario_row(&root, "ranker-regression", &corpus_sha);
+    let before = recorded_verdict(&root, &Selector::Scenario("ranker-regression".to_string()));
+    let outcome = explain_reply(
+        &home,
+        &root,
+        Selector::Scenario("ranker-regression".to_string()),
+        &lane_reply(ANSWER, 0.0018),
+    )
+    .await;
+
+    assert!(outcome.refusal.is_none(), "{:?}", outcome.refusal);
+    let row = outcome.row.clone().expect("the row landed");
+    assert_eq!(row.explained_op, "eval_corpus");
+    assert_eq!(row.selector, "ranker-regression");
+    // The join key is the corpus's own identity, read from the one
+    // construction — the same string the corpus row carries.
+    assert_eq!(row.input_sha256, corpus_sha);
+    assert_eq!(row.input_sha256, crate::eval::corpus_identity());
+    // The verdict stands exactly as recorded.
+    assert_eq!(
+        recorded_verdict(&root, &Selector::Scenario("ranker-regression".to_string())),
+        before
+    );
+    // The text is recoverable at the corpus-keyed path.
+    let path = explanation_path(&home, &corpus_sha);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), ANSWER);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn a_drifted_corpus_is_refused_by_name() {
+    // A corpus row keyed to a sha that is not the current corpus's
+    // identity: the corpus changed since the row was written, and the
+    // beat refuses to explain a drifted artifact.
+    let home = scratch("drift-corpus-home");
+    let root = scratch("drift-corpus-calib");
+    failed_scenario_row(&root, "ranker-regression", "ffffffffffffffff");
+    let outcome = explain_reply(
+        &home,
+        &root,
+        Selector::Scenario("ranker-regression".to_string()),
+        &lane_reply(ANSWER, 0.0018),
+    )
+    .await;
+
+    let refusal = outcome.refusal.clone().expect("a named refusal");
+    assert!(refusal.contains("drifted artifact"), "{refusal}");
+    assert!(refusal.contains(&crate::eval::corpus_identity()), "{refusal}");
+    assert!(outcome.row.is_none());
+    assert!(!explanation_path(&home, &crate::eval::corpus_identity()).exists());
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn a_dry_run_never_prints_a_negative_zero_spend() {
+    // An empty day's spend sums to a negative zero in f64; the dry-run
+    // card normalizes it, so it prints "$0.0000", never "$-0.0000".
+    let home = scratch("negzero-home");
+    let root = scratch("negzero-calib");
+    let sha = change_sha();
+    proposal_file(&home, "fix-the-ranker", CHANGE);
+    refused_proposal_row(&root, "fix-the-ranker", &sha);
+    let outcome =
+        explain_over(&home, &root, Selector::Proposal("fix-the-ranker".to_string()), true).await;
+
+    assert!(outcome.refusal.is_none(), "{:?}", outcome.refusal);
+    let text = plain(&outcome.card);
+    assert!(text.contains("$0.0000"), "{text}");
+    assert!(!text.contains("$-0.0000"), "the card printed a negative zero: {text}");
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_card_with_unbounded_fields_stays_inside_the_house_width() {
+    // A lane-reported route path, answer shape, and validation outcome,
+    // and a selector the operator never bounded, are cut at the house
+    // width, not run past it: every plain line of the card stays inside
+    // 72 columns.
+    let verdict = VerdictView {
+        op: "propose".to_string(),
+        selector: "a-very-long-proposal-name-".repeat(20),
+        verdict: "refused".to_string(),
+        reason: "test failed: the_ranker_orders_a_corpus".to_string(),
+        steps: vec![(
+            "a-step-name-that-is-far-too-long-to-fit-on-one-line".to_string(),
+            false,
+            "error: something the gate recorded".to_string(),
+        )],
+        input_sha256: Some("a1b2c3d4e5f60718".to_string()),
+    };
+    let reply = BlendReply {
+        final_answer: ANSWER.to_string(),
+        needs_generation: Some(0.978),
+        path: "a-route-path-the-lane-reported-that-is-far-too-long".to_string(),
+        answer_shape: "an-answer-shape-the-lane-reported-that-is-far-too-long".to_string(),
+        validation_outcome: "a-validation-outcome-the-lane-reported-that-is-far-too-long"
+            .to_string(),
+        answers_the_question: Some(true),
+        contradicts_facts: Some(false),
+        number_check: "ok".to_string(),
+        cost_usd: Some(0.0018),
+        latency_ms: Some(15_400),
+        generated_status: "ok".to_string(),
+        route_status: "ok".to_string(),
+        generated_error: None,
+    };
+    let card = explained_card(
+        &verdict,
+        "a1b2c3d4e5f60718",
+        &reply,
+        Path::new("/x/explanations/a1b2c3d4e5f60718.md"),
+    );
+    for line in card.lines() {
+        let width = plain(line).chars().count();
+        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+    }
 }
 

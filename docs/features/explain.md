@@ -23,6 +23,20 @@ same card for the latest explained verdict. An unknown selector is a
 named refusal; an answer or a dry run exits 0, a named refusal exits
 nonzero.
 
+Two bounds are named rather than hidden. **The read is today-only:**
+the beat resolves the verdict from today's stream, so a verdict from an
+earlier day is unexplainable today and the refusal says so ("no
+`propose` row for `<name>` in today's stream"). **A lane that cannot
+generate is a named refusal, not an explanation:** the vendored blend1
+lane fails open by contract — an unconfigured generative lane
+(`LIQUID_API_KEY` unset), a Liquid outage — and ships its fallback
+prose ("Generative lane unavailable: …") as the answer. The beat
+recognizes that fail-open (a synthesized ask whose generative leg did
+not answer `ok`) and refuses by name carrying the lane's own error,
+treating the fallback as no answer: no file, no row, the verdict
+stands. The fallback is never written under the artifact's sha and
+called the explanation.
+
 The verdicts covered today: the improve gate's verdict per proposal —
 the failing or refused step with the per-step evidence, including the
 refusal that fires most on a machine without rustfmt (KI-097) — and
@@ -59,7 +73,15 @@ sibling's rules, in the sibling's spirit:
   telemetry, the cost, and the linked `input_sha256`. The session log
   and the calib row stay redacted: no prompt or answer text ever enters
   either — the model-visible record stays reconstructable without the
-  lane's prose riding in it.
+  lane's prose riding in it. The write is atomic (a temp file and a
+  rename, so a crash leaves the old bytes or none, never a truncated
+  file), and the bytes on disk are hashed and checked against the
+  row's `explanation_sha256` before the row lands — a row never indexes
+  bytes that are not there. A second ask on the same artifact **never
+  silently overwrites** the indexed text: a re-ask whose prose differs
+  from the file already at the path is refused by name (the first row's
+  sha keeps indexing the bytes it indexed), and an identical re-ask is
+  idempotent. To replace an explanation, delete the file and re-ask.
 - **budget.** `EXPLAIN_BUDGET_USD_DAY = 0.50` (roughly 275 synthesized
   asks at the sibling's measured rate), with `FLEET_EXPLAIN_BUDGET_USD_DAY`
   able only to **lower** it. Exceeding the day's budget is a named
@@ -88,6 +110,15 @@ a proposal whose target drifted since the draft — a named refusal
 beside the existing dirty-tree guard (KI-103). Two regression tests
 pin it: a drifted target is refused by name, and a still-matching
 target applies through.
+
+**The stamp covers repo files only.** A `patch` names its file and the
+memory ops (`supersede`, `forget`) name the fact file they rewrite, so
+those changes are stamped and guarded. A skill write or retire lives in
+the home, and a config entry lives in the home's `config.json` — no
+repo file — so such a change stamps nothing and guards nothing: a
+skill or config op carries no drift guard. `improve` states this
+honestly in `Change::target_paths`, and this doc records it rather than
+implying the guard is universal.
 
 ## The problem shape (PS-A) and its combinations
 

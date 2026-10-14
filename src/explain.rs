@@ -83,6 +83,15 @@ pub const EXPLANATIONS_DIR: &str = "explanations";
 /// `doctor` all draw at.
 const CARD_WIDTH: usize = 72;
 
+/// The bounds the card draws the lane-reported words at: a route path,
+/// an answer shape, a step name, and a validation outcome are the
+/// lane's own words, and a lane's word is not bounded by the layout —
+/// so the card bounds them. A name cut at the house width is better
+/// than a card that runs past it (KI-140's class).
+const ROUTE_FIELD_CAP: usize = 20;
+const STEP_NAME_CAP: usize = 24;
+const OUTCOME_CAP: usize = 30;
+
 /// How much of the ask's prompt the dry-run card shows. The prompt
 /// carries the artifact's own content, which can be a whole file; the
 /// card names the rest rather than flooding the terminal.
@@ -95,6 +104,11 @@ const ARTIFACT_CHARS: usize = 8_000;
 
 /// The verdict evidence cap inside the ask's prompt.
 const EVIDENCE_CHARS: usize = 4_000;
+
+/// The path word the vendored core reports when the router chose not
+/// to generate: the direct path composes from computed facts, costs
+/// nothing, and its answer is a real explanation — never a fail-open.
+const DIRECT_PATH: &str = "direct";
 
 /// The verdicts this beat explains, and how a selector names one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,15 +249,63 @@ pub fn explanation_path(home: &Path, input_sha256: &str) -> PathBuf {
     explanations_dir(home).join(format!("{input_sha256}.md"))
 }
 
+/// The home-side spend ledger: one JSON line per ask whose row never
+/// landed — an explanation write that failed, or a calib append the
+/// writer dropped. Money the lane already spent is money spent, so it
+/// is counted here even when the prose did not land, and
+/// [`day_spend`] sums this beside the stream's own `explain` rows. The
+/// home is a location independent of both the explanations file and
+/// the calibration root, so it survives a failure in either.
+fn spend_sidecar(home: &Path) -> PathBuf {
+    home.join(".fleet-explain-spend.jsonl")
+}
+
+/// Append one failed ask's cost to the home-side spend ledger. Best
+/// effort: a ledger that cannot be written (an unwritable home) is not
+/// a second failure to report — the beat's own refusal names the ask
+/// that could not complete.
+fn record_failed_spend(home: &Path, cost: Option<f64>) {
+    // The direct path spent nothing, so there is nothing to record.
+    let Some(cost) = cost else { return };
+    let line = json!({ "ts": calib::stamp(), "cost_usd": cost }).to_string();
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(spend_sidecar(home))
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// The day's spend recorded only to the home-side ledger: asks whose
+/// row never reached the calibration stream. An absent or unreadable
+/// ledger spends nothing, which is the honest reading.
+fn sidecar_spend(home: &Path, day: &str) -> f64 {
+    let Ok(text) = std::fs::read_to_string(spend_sidecar(home)) else {
+        return 0.0;
+    };
+    text.lines()
+        .filter_map(|line| {
+            let value: Value = serde_json::from_str(line).ok()?;
+            let ts = value.get("ts").and_then(Value::as_str)?;
+            ts.starts_with(day).then(|| value.get("cost_usd")?.as_f64())?
+        })
+        .sum()
+}
+
 /// The day's recorded explain spend, summed from today's `explain`
-/// rows. A stream that cannot be read spends nothing, which is the
-/// honest reading: no rows, no spend.
-pub fn day_spend(root: &Path, day: &str) -> f64 {
-    read_day(root, day)
+/// rows and the home-side spend ledger. A stream that cannot be read
+/// spends nothing, which is the honest reading: no rows, no spend.
+pub fn day_spend(root: &Path, home: &Path, day: &str) -> f64 {
+    let stream_spend: f64 = read_day(root, day)
         .iter()
         .filter(|row| row.op == calib::OP_EXPLAIN)
         .map(|row| row.cost_usd)
-        .sum()
+        .sum();
+    // The ledger reads `+0.0` when absent, which also folds the
+    // stream's negative-zero sum (an empty day) back to a plain zero.
+    stream_spend + sidecar_spend(home, day)
 }
 
 /// Today's rows of the stream, bounded by the reader's own cap.
@@ -320,14 +382,18 @@ pub fn compose_prompt(verdict: &VerdictView, artifact_text: &str) -> String {
     parts.join("\n\n")
 }
 
-/// Truncate `text` at `cap` characters with a marker, never mid-word
-/// silently.
+/// Truncate `text` to at most `cap` characters with a marker, never
+/// mid-word silently. The marker counts against `cap`, so the result
+/// is never longer than `cap` — a caller that sizes a line around
+/// `bound(x, cap)` can rely on `cap` being the whole width.
 fn bound(text: &str, cap: usize) -> String {
+    const MARKER: &str = " …[truncated]";
     if text.chars().count() <= cap {
         return text.to_string();
     }
-    let kept: String = text.chars().take(cap).collect();
-    format!("{kept} …[truncated]")
+    let keep = cap.saturating_sub(MARKER.chars().count());
+    let kept: String = text.chars().take(keep).collect();
+    format!("{kept}{MARKER}")
 }
 
 // --- the lane ask ---------------------------------------------------------
@@ -357,9 +423,50 @@ pub struct BlendReply {
     pub cost_usd: Option<f64>,
     /// The ask's latency in milliseconds.
     pub latency_ms: Option<u64>,
+    /// The generative sub-lane's status word as the lane reported it:
+    /// `ok`, `error`, or empty when the answer carries no `generated`
+    /// report (the direct path, which never ran the generative lane).
+    pub generated_status: String,
+    /// The router sub-lane's status word, when the answer carries one.
+    pub route_status: String,
+    /// The generative lane's own error, when it failed open — the
+    /// reason the fallback shipped, carried so the beat can refuse by
+    /// name rather than ship the fallback as the explanation.
+    pub generated_error: Option<String>,
 }
 
 impl BlendReply {
+    /// The fail-open signal, named. When the ask took a path that
+    /// needed the generative lane (not the direct path) and that lane
+    /// did not answer `ok`, the shipped `final_answer` is the lane's
+    /// fallback prose — "Generative lane unavailable: …" — not an
+    /// explanation. This returns the lane's own error so the beat can
+    /// refuse by name and treat the fallback as no answer.
+    ///
+    /// `None` when the generative lane answered, when the direct path
+    /// needed no generation, or when the lane reported nothing about
+    /// generation at all (a lean answer) — those are answers, not
+    /// fail-opens. Only a lane that explicitly tried to generate and
+    /// failed fails open.
+    pub fn fail_open(&self) -> Option<String> {
+        if self.path == DIRECT_PATH || self.generated_status == "ok" {
+            return None;
+        }
+        // An answer that reports neither a path nor a generative
+        // status said nothing about generation: a lean direct-ish
+        // answer, not a fail-open.
+        if self.path.is_empty() && self.generated_status.is_empty() {
+            return None;
+        }
+        let reason = self.generated_error.clone().unwrap_or_else(|| {
+            format!(
+                "the generative lane reported status `{}` and shipped the fallback as the answer",
+                if self.generated_status.is_empty() { "absent" } else { &self.generated_status }
+            )
+        });
+        Some(reason)
+    }
+
     /// Read one lane answer out of the structured content a
     /// `tools/call` returned. Every field is optional on the wire: a
     /// lane that reports less still answers, and the row records what
@@ -385,6 +492,9 @@ impl BlendReply {
             number_check: string_field(&validation, "number_check").unwrap_or_default(),
             cost_usd: number_field(&generated, "cost_usd"),
             latency_ms: number_field(&object, "total_latency_ms").map(|ms| ms as u64),
+            generated_status: string_field(&generated, "status").unwrap_or_default(),
+            route_status: string_field(&route, "status").unwrap_or_default(),
+            generated_error: string_field(&generated, "error"),
         }
     }
 }
@@ -454,6 +564,18 @@ async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<BlendReply, Strin
     let value: Value = serde_json::from_str(&text)
         .map_err(|error| format!("the lane's answer was not the structured content it promises: {error}"))?;
     let reply = BlendReply::parse(&value);
+    // The lane's own fail-open, named: a generative path whose
+    // generative lane did not answer ships its fallback prose as the
+    // `final_answer`, and that fallback is not an explanation. The
+    // vendored core fails open by contract (LIQUID_API_KEY unset, a
+    // Liquid outage); the beat refuses by name carrying the lane's
+    // error rather than writing "Generative lane unavailable: …" to
+    // the recoverable file and calling it the explanation.
+    if let Some(reason) = reply.fail_open() {
+        return Err(format!(
+            "the generative lane failed open and its fallback is not an explanation: {reason}"
+        ));
+    }
     if reply.final_answer.trim().is_empty() {
         let reason = value
             .get("generated")
@@ -556,18 +678,67 @@ fn proposal_artifact(home: &Path, name: &str) -> Result<(String, String), String
 
 /// The judged artifact for a corpus scenario: the corpus's own fixed
 /// definition. The corpus is code, so its artifact is its definition —
-/// recomputed here, in the process that is explaining, so a corpus that
-/// changed since the row was written is a drift the beat refuses.
+/// read from the one construction in [`crate::eval`] rather than
+/// recomputed here, so the beat's key and the corpus row's key cannot
+/// diverge. A corpus that changed since the row was written is a drift
+/// the beat refuses.
 fn corpus_artifact() -> (String, String) {
-    let mut text = format!("fleet-eval-corpus/{}", env!("CARGO_PKG_VERSION"));
-    for scenario in crate::eval::corpus() {
-        text.push('\n');
-        text.push_str(scenario.name);
-        text.push(' ');
-        text.push_str(scenario.family.label());
+    (crate::eval::corpus_definition(), crate::eval::corpus_identity())
+}
+
+// --- the recoverable text -------------------------------------------------
+
+/// Write `text` to `path` through a temp file and a rename, so a
+/// reader never sees a half-written file and a crash leaves the old
+/// bytes (or none), never a truncated file whose bytes no longer hash
+/// to the row's sha. The same shape `doctor` and `improve` use.
+fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    let mut temp = path.as_os_str().to_os_string();
+    temp.push(format!(".{}.tmp", std::process::id()));
+    let temp = PathBuf::from(temp);
+    std::fs::write(&temp, text)
+        .map_err(|error| format!("could not write {}: {error}", temp.display()))?;
+    std::fs::rename(&temp, path).map_err(|error| {
+        let _ = std::fs::remove_file(&temp);
+        format!("could not replace {}: {error}", path.display())
+    })
+}
+
+/// Land the recoverable text at `path`, keyed to `sha` (the sha the
+/// row will carry). Atomic, verified, and never a silent overwrite:
+///
+/// - a file already at the path is the first explanation's text. A
+///   re-ask that would change it is refused, so the first row's sha
+///   keeps indexing the bytes it indexed; an identical re-ask is
+///   idempotent, its bytes already correct.
+/// - a fresh write goes through temp + rename, then the bytes on disk
+///   are read back and hashed: a row never indexes bytes that are not
+///   there.
+fn land_explanation(path: &Path, text: &str, sha: &str) -> Result<(), String> {
+    if path.exists() {
+        let existing = std::fs::read(path)
+            .map_err(|error| format!("the existing explanation at {} could not be read: {error}", path.display()))?;
+        if calib::hash16(&String::from_utf8_lossy(&existing)) != sha {
+            return Err(format!(
+                "an explanation for this artifact already exists at {} and differs from this one — refusing to overwrite the indexed text; delete it to re-explain",
+                path.display()
+            ));
+        }
+        return Ok(());
     }
-    let sha = calib::hash16(&text);
-    (text, sha)
+    write_atomic(path, text)?;
+    let written = std::fs::read(path)
+        .map_err(|error| format!("the explanation at {} could not be read back: {error}", path.display()))?;
+    if calib::hash16(&String::from_utf8_lossy(&written)) != sha {
+        return Err(format!(
+            "the explanation written to {} does not hash to the sha the row carries — refusing to land a row that indexes different bytes",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 // --- the beat -------------------------------------------------------------
@@ -643,7 +814,7 @@ pub async fn explain(request: ExplainRequest<'_>) -> ExplainOutcome {
     // The day's spend and the effective cap, read once: the dry-run
     // card names them, and the budget check below spends against them.
     let day = calib::today();
-    let spent = day_spend(root, &day);
+    let spent = day_spend(root, home, &day);
     let cap = budget_usd_day();
 
     if dry_run {
@@ -694,11 +865,18 @@ pub async fn explain(request: ExplainRequest<'_>) -> ExplainOutcome {
         }
     };
     let elapsed = started.elapsed().as_millis() as u64;
-
     let path = explanation_path(home, &input_sha256);
-    if let Err(reason) = std::fs::create_dir_all(explanations_dir(home))
-        .and_then(|()| std::fs::write(&path, &reply.final_answer))
-    {
+    let explanation_sha256 = calib::hash16(&reply.final_answer);
+    // The recoverable text: written atomically (temp + rename, so a
+    // crash leaves the old bytes or none, never a truncated file whose
+    // bytes no longer hash to the row's sha), the on-disk bytes
+    // verified against the sha the row will carry, and a second ask
+    // that would overwrite a different explanation refused by name
+    // rather than silently replacing the indexed text. When it cannot
+    // land, the ask still spent: record the cost to the home-side
+    // ledger so the day's cap moves, then refuse.
+    if let Err(reason) = land_explanation(&path, &reply.final_answer, &explanation_sha256) {
+        record_failed_spend(home, reply.cost_usd);
         let reason = format!("the explanation could not be written to {}: {reason}", path.display());
         return ExplainOutcome {
             card: refusal_card(&verdict, &reason),
@@ -716,7 +894,7 @@ pub async fn explain(request: ExplainRequest<'_>) -> ExplainOutcome {
         explained_op: verdict.op.clone(),
         selector: verdict.selector.clone(),
         input_sha256: input_sha256.clone(),
-        explanation_sha256: calib::hash16(&reply.final_answer),
+        explanation_sha256,
         explanation_chars: reply.final_answer.chars().count(),
         route: ExplainRouteRow {
             needs_generation: reply.needs_generation,
@@ -735,9 +913,28 @@ pub async fn explain(request: ExplainRequest<'_>) -> ExplainOutcome {
     };
     let stream = calib::Stream::open(root);
     stream.record(Row::Explain(row_value.clone()));
-    // The last handle's drop drains the queue before this returns, so
-    // the row is on disk when a caller reads it back.
-    drop(stream);
+    // The writer's own counters say whether the row actually reached
+    // disk. A row the writer could not append (a full or unwritable
+    // calib root) is money spent with no audit: record the cost to the
+    // home-side ledger so the day's cap still moves, and refuse by
+    // name rather than report a success whose row is not there.
+    let (_, failed) = stream.finish();
+    if failed > 0 {
+        record_failed_spend(home, reply.cost_usd);
+        let reason = format!(
+            "the explanation's row could not be recorded to the calibration stream — the ask spent {} but its row did not land; the spend is recorded to {} and the verdict stands unexplained",
+            reply.cost_usd.map(|cost| format!("${cost:.4}")).unwrap_or_else(|| "nothing".to_string()),
+            spend_sidecar(home).display()
+        );
+        return ExplainOutcome {
+            card: refusal_card(&verdict, &reason),
+            verdict,
+            row: None,
+            explanation_path: None,
+            refusal: Some(reason),
+            dry_run_prompt: None,
+        };
+    }
 
     ExplainOutcome {
         card: explained_card(&verdict, &input_sha256, &reply, &path),
@@ -791,6 +988,12 @@ pub fn latest_card(root: &Path, home: &Path) -> Option<String> {
         number_check: row.validation.number_check.clone(),
         cost_usd: (row.cost_usd > 0.0).then_some(row.cost_usd),
         latency_ms: (row.latency_ms > 0).then_some(row.latency_ms),
+        // A row that landed is a row whose generative lane answered:
+        // the fail-open path refuses before a row is ever written, so a
+        // read-back row is never a fail-open.
+        generated_status: "ok".to_string(),
+        route_status: String::new(),
+        generated_error: None,
     };
     Some(explained_card(&verdict, &row.input_sha256, &reply, &path))
 }
@@ -815,7 +1018,11 @@ use palette::{ACCENT, BOLD, DIM, ERROR, OK, RESET, TEXT, WARN};
 /// same width `calib` and `eval` draw at — so the explanation reads as
 /// one more Fleet surface rather than a debug dump.
 fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String {
-    let right = subtitle.to_string();
+    // The right edge is bounded so the header never runs past the house
+    // width: a selector the operator never bounded costs its tail, not
+    // the layout. The bound leaves room for the frame's own corners and
+    // the dash run, so the drawn header stays inside 72 columns.
+    let right = bound(subtitle, CARD_WIDTH.saturating_sub(title.chars().count() + 8));
     let dashes = dashes_for(title, &right);
     let mut out = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{title}{RESET} {DIM}{dashes} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}\n"
@@ -877,10 +1084,16 @@ fn verdict_lines(verdict: &VerdictView) -> Vec<String> {
         "waiting" => ("waiting", WARN),
         _ => ("refused", ERROR),
     };
+    // The selector is bounded to the room the verdict line has left, so
+    // an over-long proposal or scenario name costs its tail rather than
+    // the card's width. The line is a body line, drawn under the frame's
+    // `│ ` prefix, so its content fits `CARD_WIDTH - 2`; the `+ 3`
+    // reserves that prefix and the closing backtick.
+    let head = format!("verdict {state} \u{b7} {op} `", op = verdict.op);
+    let selector = bound(&verdict.selector, CARD_WIDTH.saturating_sub(head.chars().count() + 3));
     let mut lines = vec![format!(
         "{BOLD}verdict{RESET} {color}{state}{RESET} {DIM}\u{b7}{RESET} {TEXT}{op} `{selector}`{RESET}",
         op = verdict.op,
-        selector = verdict.selector,
     )];
     if !verdict.reason.is_empty() {
         for line in wrap_detail(&verdict.reason, CARD_WIDTH - 12) {
@@ -889,9 +1102,10 @@ fn verdict_lines(verdict: &VerdictView) -> Vec<String> {
     }
     for (step, ok, detail) in &verdict.steps {
         let (mark, color) = if *ok { ("ok", OK) } else { ("FAILED", ERROR) };
-        // The detail is bounded by the width the line actually has left,
-        // so a step's evidence never pushes the card past the house
-        // width at 80 columns.
+        // The step name is bounded, and the detail is bounded by the
+        // width the line actually has left, so a step's evidence never
+        // pushes the card past the house width at 80 columns.
+        let step = bound(step, STEP_NAME_CAP);
         let room = CARD_WIDTH
             .saturating_sub(4 + step.chars().count() + 1 + mark.chars().count() + 3 + 14);
         let detail = bound(detail, room);
@@ -912,7 +1126,7 @@ fn artifact_line(input_sha256: &str) -> String {
 
 /// The explained card: the verdict, the prose, the ask's telemetry, the
 /// cost, and where the text lives.
-fn explained_card(
+pub(crate) fn explained_card(
     verdict: &VerdictView,
     input_sha256: &str,
     reply: &BlendReply,
@@ -929,21 +1143,31 @@ fn explained_card(
         body.push(format!("{TEXT}{line}{RESET}"));
     }
     body.push(inner_rule());
+    // The lane-reported route path and answer shape are the lane's own
+    // words; the card bounds them so a lane that reports a long one
+    // costs its tail, not the layout.
+    let route_path =
+        bound(if reply.path.is_empty() { "unreported" } else { &reply.path }, ROUTE_FIELD_CAP);
+    let route_shape = bound(
+        if reply.answer_shape.is_empty() { "unreported" } else { &reply.answer_shape },
+        ROUTE_FIELD_CAP,
+    );
     body.push(format!(
-        "{BOLD}the ask{RESET} {DIM}\u{b7}{RESET} {TEXT}{lane}{RESET} {DIM}route{RESET} {TEXT}{path}{RESET} \
-         {DIM}shape{RESET} {TEXT}{shape}{RESET}",
+        "{BOLD}the ask{RESET} {DIM}\u{b7}{RESET} {TEXT}{lane}{RESET} {DIM}route{RESET} {TEXT}{route_path}{RESET} \
+         {DIM}shape{RESET} {TEXT}{route_shape}{RESET}",
         lane = EXPLAIN_LANE,
-        path = if reply.path.is_empty() { "unreported" } else { &reply.path },
-        shape = if reply.answer_shape.is_empty() { "unreported" } else { &reply.answer_shape },
     ));
     if let Some(needs) = reply.needs_generation {
-        body.push(format!(
-            "{DIM}\u{b7}{RESET} {TEXT}needs_generation {needs:.2}{RESET} {DIM}\u{b7} validation {outcome}{RESET}",
-            outcome = if reply.validation_outcome.is_empty() {
+        let outcome = bound(
+            if reply.validation_outcome.is_empty() {
                 "unreported"
             } else {
                 &reply.validation_outcome
             },
+            OUTCOME_CAP,
+        );
+        body.push(format!(
+            "{DIM}\u{b7}{RESET} {TEXT}needs_generation {needs:.2}{RESET} {DIM}\u{b7} validation {outcome}{RESET}",
         ));
     }
     let cost = match reply.cost_usd {
@@ -985,6 +1209,10 @@ fn dry_run_card(
         body.push(format!("{TEXT}{line}{RESET}"));
     }
     body.push(inner_rule());
+    // Normalize the day's spend before it is drawn: an empty day sums
+    // to a negative zero, which would print "$-0.0000". `+ 0.0` folds
+    // it to a plain zero.
+    let spent = spent + 0.0;
     body.push(format!(
         "{DIM}\u{b7}{RESET} {TEXT}day's spend ${spent:.4} of the ${cap:.2} budget{RESET} {DIM}\u{b7} nothing spent here{RESET}"
     ));

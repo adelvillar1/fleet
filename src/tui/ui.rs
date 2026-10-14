@@ -1767,6 +1767,89 @@ mod tests {
     }
 
     #[test]
+    fn the_explain_modal_renders_a_real_cards_full_width_at_80_columns() {
+        // The explanation modal's width budget is spent on visible
+        // columns only: the card rides ANSI escapes for the terminal, and
+        // the loop strips them before the lines enter the state machine,
+        // so a real card's widest line survives intact at 80 columns
+        // instead of being cut mid-escape (KI-140's class). The card is
+        // the one `explained_card` builds — the same function the beat
+        // and the TUI surface both render through.
+        let verdict = crate::explain::VerdictView {
+            op: "propose".to_string(),
+            selector: "fix-the-ranker".to_string(),
+            verdict: "refused".to_string(),
+            reason: "test failed: the_ranker_orders_a_corpus".to_string(),
+            steps: vec![
+                ("fmt".to_string(), true, "ok".to_string()),
+                (
+                    "test".to_string(),
+                    false,
+                    "error: test failed: the_ranker_orders_a_corpus".to_string(),
+                ),
+            ],
+            input_sha256: Some("a1b2c3d4e5f60718".to_string()),
+        };
+        // A long answer so the prose wraps to the card's full inner
+        // width — the line most at risk of a mid-escape cut when the
+        // escapes are counted as visible columns.
+        let answer = "The `test` step refused the change because the patched comparator sorts \
+                      on the score's absolute value rather than its rank, so the ranking \
+                      assertion no longer holds and the corpus regresses on every ordering \
+                      check that depends on the rank comparison the patch replaced."
+            .to_string();
+        let reply = crate::explain::BlendReply {
+            final_answer: answer,
+            needs_generation: Some(0.978),
+            path: "synthesized".to_string(),
+            answer_shape: "synthesized".to_string(),
+            validation_outcome: "passed".to_string(),
+            answers_the_question: Some(true),
+            contradicts_facts: Some(false),
+            number_check: "ok".to_string(),
+            cost_usd: Some(0.0018),
+            latency_ms: Some(15_400),
+            generated_status: "ok".to_string(),
+            route_status: "ok".to_string(),
+            generated_error: None,
+        };
+        let card = crate::explain::explained_card(
+            &verdict,
+            "a1b2c3d4e5f60718",
+            &reply,
+            std::path::Path::new("/x/explanations/a1b2c3d4e5f60718.md"),
+        );
+        // The loop strips ANSI before the lines enter the state machine —
+        // the same transformation `open_explanation` applies.
+        let lines: Vec<String> =
+            crate::eval::strip_ansi(&card).lines().map(str::to_string).collect();
+        let widest = lines
+            .iter()
+            .max_by_key(|line| line.chars().count())
+            .expect("the card has lines")
+            .clone();
+
+        let mut app = fresh();
+        app.open_explain(lines);
+        app.mode = Mode::Explain;
+        let drawn = draw(&app, 80, 40);
+
+        // Every drawn row fits the 80-column frame: the modal is 96% of
+        // it, so its inner width is under 80 and no row overflows.
+        for row in drawn.lines() {
+            assert!(row.chars().count() <= 80, "a modal row overflows 80 columns: {row:?}");
+        }
+        // The card's widest plain line survives intact — proof the width
+        // budget was spent on visible columns, not eaten by the escapes
+        // that would have been counted had they not been stripped.
+        assert!(
+            drawn.contains(widest.as_str()),
+            "the modal cut the card's widest line ({}) — the escapes were not stripped",
+            widest.chars().count()
+        );
+    }
+
+    #[test]
     fn the_lanes_view_renders_dots_names_and_tool_counts() {
         let mut app = fresh();
         app.apply(crate::tui::app::Action::OpenLanes);
