@@ -2,13 +2,15 @@
 //!
 //! One `events.jsonl` per UTC day under the dev-decisions log root, in
 //! `devdec`'s row vocabulary, written through a bounded non-blocking queue
-//! that one background thread drains. Four ops are emitted today —
+//! that one background thread drains. Five ops are emitted today —
 //! `route` (slice 5's decision row, shape unchanged), `tool_screen` (one
 //! approval decision), `turn` (one run ending, graded ok/failed with
-//! the partial endings named), and `recall_hit` (slice 8's memory
+//! the partial endings named), `recall_hit` (slice 8's memory
 //! feedback: one fact retrieval surfaced, the shape it routed under,
-//! and the score it ranked at) — and `eval_corpus` is reserved for
-//! slice 13's scores.
+//! and the score it ranked at), and `consolidate` (slice 8 part 2's
+//! memory lifecycle: one compress, supersede, or forget action, the
+//! fact it touched, and the reason) — and `eval_corpus` is reserved
+//! for slice 13's scores.
 //!
 //! The contract is dev-decisions' own: it **gates the operations, grades
 //! the outcomes, and earns autonomy on evidence**. Fleet's rows land in
@@ -114,6 +116,25 @@ pub struct RecallHitRow {
     pub score: f64,
 }
 
+/// One consolidation action: what the memory lifecycle did to one
+/// fact, and why. Three actions — `compress` folds old working memory
+/// into an episodic summary, `supersede` retires a stale inferred fact
+/// from recall, `forget` archives an expired one — and every one of
+/// them lands here, so the loop's effect on the corpus is auditable
+/// rather than asserted. The `reason` carries the justification a
+/// `supersede` proposal required, which is what makes it slice 12's
+/// guardrail input.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConsolidateRow {
+    pub ts: String,
+    /// `compress`, `supersede`, or `forget` — see [`ACTION_COMPRESS`].
+    pub action: String,
+    /// The fact the action touched, the file stem under `memories/`.
+    pub fact: String,
+    /// Why: the cycle's named bound, or the proposal's justification.
+    pub reason: String,
+}
+
 /// One row in the stream, tagged by its op the way devdec's rows are: the
 /// tag is a field of the JSON object, not a wrapper.
 #[derive(Debug, Clone, Serialize)]
@@ -123,6 +144,7 @@ pub enum Row {
     ToolScreen(ToolScreenRow),
     Turn(TurnRow),
     RecallHit(RecallHitRow),
+    Consolidate(ConsolidateRow),
 }
 
 impl Row {
@@ -133,6 +155,7 @@ impl Row {
             Row::ToolScreen(_) => OP_TOOL_SCREEN,
             Row::Turn(_) => OP_TURN,
             Row::RecallHit(_) => OP_RECALL_HIT,
+            Row::Consolidate(_) => OP_CONSOLIDATE,
         }
     }
 
@@ -143,6 +166,7 @@ impl Row {
             Row::ToolScreen(row) => &row.ts,
             Row::Turn(row) => &row.ts,
             Row::RecallHit(row) => &row.ts,
+            Row::Consolidate(row) => &row.ts,
         }
     }
 }
@@ -155,12 +179,27 @@ pub const OP_TOOL_SCREEN: &str = "tool_screen";
 pub const OP_TURN: &str = "turn";
 /// The memory-recall op: one hit per fact a recall surfaced.
 pub const OP_RECALL_HIT: &str = "recall_hit";
+/// The memory-lifecycle op: one compress, supersede, or forget action.
+pub const OP_CONSOLIDATE: &str = "consolidate";
 /// Reserved for slice 13's eval-corpus scores. Nothing emits it yet; the
 /// name is claimed here so the reader and `fleet calib` need no format
 /// change when it lands.
 pub const OP_EVAL_CORPUS: &str = "eval_corpus";
 /// The ops this slice emits, in the order `fleet calib` groups them.
-pub const OPS: [&str; 4] = [OP_ROUTE, OP_TOOL_SCREEN, OP_TURN, OP_RECALL_HIT];
+pub const OPS: [&str; 5] =
+    [OP_ROUTE, OP_TOOL_SCREEN, OP_TURN, OP_RECALL_HIT, OP_CONSOLIDATE];
+
+/// The consolidation action that folds old working memory into an
+/// episodic summary. The vocabulary lives here, beside the op, so the
+/// writer and the reader name the same three words.
+pub const ACTION_COMPRESS: &str = "compress";
+/// The consolidation action that retires a stale inferred fact from
+/// recall without deleting it.
+pub const ACTION_SUPERSEDE: &str = "supersede";
+/// The consolidation action that archives an expired fact.
+pub const ACTION_FORGET: &str = "forget";
+/// Every consolidation action, in the order the surface tallies them.
+pub const ACTIONS: [&str; 3] = [ACTION_COMPRESS, ACTION_SUPERSEDE, ACTION_FORGET];
 
 /// One approval decision's verdict, as the row names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -797,7 +836,9 @@ pub struct ReadRow {
     pub input_hash: String,
     /// The failure class a `failed` turn row names, which is what makes
     /// the drafter's failed-turn lesson class-specific rather than
-    /// generic.
+    /// generic — and the reason a `consolidate` row carries: the
+    /// justification a supersession was required to record, or the
+    /// named bound the cycle acted on.
     #[serde(default)]
     pub reason: String,
     /// The fact a `recall_hit` row names — slice 8's memory feedback.
@@ -810,6 +851,10 @@ pub struct ReadRow {
     /// The composite score a `recall_hit` row ranked at.
     #[serde(default)]
     pub score: f64,
+    /// The action a `consolidate` row names: `compress`, `supersede`,
+    /// or `forget`. Empty for every other op.
+    #[serde(default)]
+    pub action: String,
 }
 
 /// One attempt as a row carries it: the provider and its outcome, which is
@@ -982,6 +1027,7 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
         OP_TOOL_SCREEN => screen_detail(&op_rows),
         OP_TURN => turn_detail(&op_rows),
         OP_RECALL_HIT => recall_detail(&op_rows),
+        OP_CONSOLIDATE => consolidate_detail(&op_rows),
         _ => Vec::new(),
     };
     let header_right = format!("{} row{}", op_rows.len(), plural(op_rows.len()));
@@ -1095,6 +1141,25 @@ fn recall_detail(rows: &[&ReadRow]) -> Vec<String> {
     ]
 }
 
+/// The consolidation card's facts: the action tally and the last
+/// action — the fact it touched and the reason it carried.
+fn consolidate_detail(rows: &[&ReadRow]) -> Vec<String> {
+    let Some(last) = rows.last() else {
+        return Vec::new();
+    };
+    let tally = ACTIONS
+        .iter()
+        .filter_map(|action| {
+            let count = rows.iter().filter(|row| row.action == *action).count();
+            (count > 0).then(|| format!("{count} {action}"))
+        })
+        .collect::<Vec<_>>();
+    vec![
+        format!("actions: {}", tally.join(" \u{b7} ")),
+        format!("last {} `{}` \u{2014} {}", last.action, last.fact, last.reason),
+    ]
+}
+
 /// The dash run that pads a card header so its right edge aligns.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
@@ -1192,6 +1257,10 @@ fn row_summary(row: &ReadRow) -> String {
             if row.shape.is_empty() { "unclassified" } else { &row.shape },
             row.score
         ),
+        OP_CONSOLIDATE => format!(
+            "{}  consolidate  {}  {}  {}",
+            row.ts, row.action, row.fact, row.reason
+        ),
         _ => format!("{}  {}", row.ts, row.op),
     }
 }
@@ -1277,6 +1346,15 @@ mod tests {
             fact: fact.to_string(),
             shape: shape.to_string(),
             score,
+        })
+    }
+
+    fn consolidate_row(action: &str, fact: &str, reason: &str) -> Row {
+        Row::Consolidate(ConsolidateRow {
+            ts: "2026-10-13T12:00:04Z".to_string(),
+            action: action.to_string(),
+            fact: fact.to_string(),
+            reason: reason.to_string(),
         })
     }
 
@@ -1636,7 +1714,10 @@ mod tests {
         assert_eq!(value["fact"], "fleet-gate-is-local");
         assert_eq!(value["shape"], "build");
         assert_eq!(value["score"], 0.42);
-        assert_eq!(OPS, ["route", "tool_screen", "turn", "recall_hit"]);
+        assert_eq!(
+            OPS,
+            ["route", "tool_screen", "turn", "recall_hit", "consolidate"]
+        );
     }
 
     #[test]
@@ -1672,6 +1753,76 @@ mod tests {
         assert!(rendered.contains("score 0.31"), "{rendered}");
         // The verbatim tail carries the row's own facts.
         assert!(rendered.contains("recall_hit  b-fact  unclassified  0.31"), "{rendered}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the consolidate op ---
+
+    #[test]
+    fn the_consolidate_row_carries_the_action_the_fact_and_the_reason() {
+        let row = serde_json::to_string(&consolidate_row(
+            ACTION_SUPERSEDE,
+            "stale-fact",
+            "inferred, never recalled, older than 180 days",
+        ))
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&row).unwrap();
+        assert_eq!(value["op"], "consolidate");
+        assert_eq!(value["action"], "supersede");
+        assert_eq!(value["fact"], "stale-fact");
+        assert_eq!(value["reason"], "inferred, never recalled, older than 180 days");
+        // The three actions are the vocabulary the writer emits and the
+        // reader tallies — one home, beside the op.
+        assert_eq!(ACTIONS, ["compress", "supersede", "forget"]);
+        assert_eq!(OP_CONSOLIDATE, "consolidate");
+    }
+
+    #[test]
+    fn the_reader_keeps_consolidate_rows_with_their_action() {
+        let root = scratch("read-consolidate");
+        write_rows(
+            &root,
+            "2026-10-13",
+            &[
+                consolidate_row(ACTION_COMPRESS, "old-note", "working memory past its valid-until"),
+                consolidate_row(ACTION_FORGET, "expired-fact", "expired 2026-09-01"),
+            ],
+        );
+        let rows = read_day(&root, "2026-10-13", 512);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].op, OP_CONSOLIDATE);
+        assert_eq!(rows[0].action, "compress");
+        assert_eq!(rows[0].fact, "old-note");
+        assert_eq!(rows[1].action, "forget");
+        assert_eq!(rows[1].reason, "expired 2026-09-01");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_surface_cards_the_consolidate_op_with_its_action_tally() {
+        let root = scratch("render-consolidate");
+        write_rows(
+            &root,
+            "2026-10-13",
+            &[
+                consolidate_row(ACTION_COMPRESS, "old-note", "working memory older than 7 days"),
+                consolidate_row(
+                    ACTION_SUPERSEDE,
+                    "stale-fact",
+                    "the owner's justified proposal",
+                ),
+                consolidate_row(ACTION_COMPRESS, "older-note", "working memory past its valid-until"),
+            ],
+        );
+        let rendered = render(&root, "2026-10-13");
+        assert!(rendered.contains("consolidate"), "{rendered}");
+        assert!(rendered.contains("2 compress \u{b7} 1 supersede"), "{rendered}");
+        // The last action's own facts ride the card and the verbatim tail.
+        assert!(rendered.contains("last compress `older-note`"), "{rendered}");
+        assert!(
+            rendered.contains("consolidate  compress  older-note  working memory past its valid-until"),
+            "{rendered}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

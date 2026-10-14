@@ -321,6 +321,7 @@ async fn run_on(
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        memory: None,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -342,6 +343,7 @@ async fn run_on_probe(
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        memory: None,
     };
     let mut agent =
         Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
@@ -367,6 +369,7 @@ async fn run_with_lanes(
         lane_specs,
         calib: None,
         skills: Vec::new(),
+        memory: None,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
@@ -888,6 +891,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        memory: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -947,6 +951,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        memory: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -979,6 +984,7 @@ async fn a_denied_call_reports_its_result_event() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        memory: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1031,6 +1037,7 @@ async fn a_failed_run_reports_a_failure_event() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        memory: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1935,6 +1942,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             lane_specs: Some(lane_specs(&fake)),
             calib: None,
             skills: Vec::new(),
+            memory: None,
         };
         let report = {
             let mut agent =
@@ -2270,6 +2278,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        memory: None,
     };
     let mut progress = Vec::new();
     let report = {
@@ -2426,6 +2435,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         lane_specs: None,
         calib: Some(stream.clone()),
         skills: Vec::new(),
+        memory: None,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2481,6 +2491,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         lane_specs: None,
         calib: Some(stream.clone()),
         skills: Vec::new(),
+        memory: None,
     };
     let outcome = {
         let mut progress = Vec::new();
@@ -2521,6 +2532,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         lane_specs: None,
         calib: Some(stream.clone()),
         skills: Vec::new(),
+        memory: None,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2561,6 +2573,7 @@ async fn a_run_without_a_stream_records_nothing() {
             lane_specs: None,
             calib: None,
             skills: Vec::new(),
+            memory: None,
         },
         &mut session,
         Box::new(ApproveAll),
@@ -2677,6 +2690,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
         skills: Vec::new(),
+        memory: None,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2752,6 +2766,7 @@ async fn run_with_skills(
         lane_specs: None,
         calib: None,
         skills,
+        memory: None,
     };
     let mut progress = Vec::new();
     let mut agent =
@@ -3328,4 +3343,306 @@ async fn live_api_completes_a_tool_task() {
         "{report:?}"
     );
     std::fs::remove_dir_all(&home).ok();
+}
+
+// --- memory: the write path, the turn wiring (slice 8, part 2) --------------
+
+/// A scratch corpus root with `facts` written into it, unique per call.
+fn memory_corpus(tag: &str, facts: &[(&str, String)]) -> PathBuf {
+    let dir = temp_home(&format!("memory-{tag}"));
+    for (name, text) in facts {
+        std::fs::write(dir.join(format!("{name}.md")), text).unwrap();
+    }
+    dir
+}
+
+/// One durable fact in the writer's field order.
+fn fact_file(name: &str, description: &str, basis: &str, fact_type: &str, shape: &str) -> String {
+    format!(
+        "---\nname: {name}\ndescription: \"{description}\"\ntype: {fact_type}\ndate: {today}\nbasis: {basis}\ntier: durable\nshape: [{shape}]\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe body of {name}.\n",
+        today = fleet::calib::today()
+    )
+}
+
+/// One full agent run with an optional corpus wired in.
+async fn run_with_memory(
+    mock: &MockApi,
+    session: &mut Session,
+    approver: Box<dyn Approver>,
+    memory: Option<std::sync::Arc<fleet::memory::Memory>>,
+    calib: Option<fleet::calib::Stream>,
+    task: &str,
+) -> Result<RunReport, AgentError> {
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib,
+        skills: Vec::new(),
+        memory,
+    };
+    let mut progress = Vec::new();
+    let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
+    agent.run(task).await
+}
+
+#[tokio::test]
+async fn a_runs_request_carries_the_assembled_memory_block() {
+    let mock = MockApi::start(vec![assistant_stream("Done.")]);
+    let home = temp_home("memory-turn");
+    let root = memory_corpus(
+        "turn",
+        &[
+            (
+                "identity",
+                fact_file("identity", "the owner's standing rule about the gate", "confirmed-by", "feedback", ""),
+            ),
+            (
+                "top",
+                fact_file("top", "the railway deploy is failing per branch", "inferred", "project", "deploy"),
+            ),
+        ],
+    );
+    let calib_root = temp_home("memory-turn-calib");
+    let stream = fleet::calib::Stream::open(&calib_root);
+    let memory =
+        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(memory),
+        Some(stream.clone()),
+        "the railway deploy is failing",
+    )
+    .await
+    .unwrap();
+
+    // The request the model saw carries the assembled block: the
+    // protected tier, then the shape-routed recall, in the frame that
+    // says how to read it.
+    let bodies = mock.bodies();
+    let system = bodies[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(system.starts_with(fleet::agent::SYSTEM_PROMPT), "{system}");
+    assert!(system.contains("## Memory"), "{system}");
+    assert!(system.contains("Standing context (protected"), "{system}");
+    assert!(system.contains("shape-routed recall for `deploy`"), "{system}");
+    assert!(system.contains("the railway deploy is failing per branch"), "{system}");
+    // The write path rides beside the closed four.
+    assert_eq!(
+        declared_tools(&bodies[0]),
+        vec!["bash", "read_file", "write_file", "list_dir", "remember", "supersede"]
+    );
+
+    // The `memory` record keeps the prompt reconstructable (hard rule
+    // 5): the shape and every fact name, in block order.
+    let records = session::replay(&session.path()).unwrap();
+    match records.iter().find(|record| matches!(record, Record::Memory { .. })) {
+        Some(Record::Memory { shape, facts }) => {
+            assert_eq!(shape, "deploy");
+            assert_eq!(facts, &vec!["identity".to_string(), "top".to_string()]);
+        }
+        other => panic!("expected a memory record, got {other:?}"),
+    }
+
+    // The recall hits: one row for the fact that entered, and none for
+    // the protected tier, which did not compete for its place.
+    drop(stream);
+    let rows = fleet::calib::read_day(&calib_root, &fleet::calib::today(), 64);
+    let hits: Vec<&str> = rows
+        .iter()
+        .filter(|row| row.op == fleet::calib::OP_RECALL_HIT)
+        .map(|row| row.fact.as_str())
+        .collect();
+    assert_eq!(hits, vec!["top"]);
+}
+
+#[tokio::test]
+async fn a_memory_less_run_is_byte_for_byte_unchanged() {
+    let mock = MockApi::start(vec![assistant_stream("Done.")]);
+    let home = temp_home("memory-less");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_with_memory(&mock, &mut session, Box::new(ApproveAll), None, None, "say done")
+        .await
+        .unwrap();
+
+    // No memory wired: the system prompt is the compiled-in constant,
+    // byte for byte, and the declarations are the closed four.
+    let bodies = mock.bodies();
+    assert_eq!(bodies[0]["messages"][0]["content"], fleet::agent::SYSTEM_PROMPT);
+    assert_eq!(declared_tools(&bodies[0]), vec!["bash", "read_file", "write_file", "list_dir"]);
+    let records = session::replay(&session.path()).unwrap();
+    assert!(
+        !records.iter().any(|record| matches!(record, Record::Memory { .. })),
+        "{records:?}"
+    );
+
+    // An empty corpus is the same run with a place to write: no block,
+    // no record, the same constant prompt — the write path declared.
+    let mock = MockApi::start(vec![assistant_stream("Done.")]);
+    let root = memory_corpus("empty-turn", &[]);
+    let memory =
+        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_with_memory(&mock, &mut session, Box::new(ApproveAll), Some(memory), None, "say done")
+        .await
+        .unwrap();
+    let bodies = mock.bodies();
+    assert_eq!(bodies[0]["messages"][0]["content"], fleet::agent::SYSTEM_PROMPT);
+    assert_eq!(
+        declared_tools(&bodies[0]),
+        vec!["bash", "read_file", "write_file", "list_dir", "remember", "supersede"]
+    );
+    let records = session::replay(&session.path()).unwrap();
+    assert!(
+        !records.iter().any(|record| matches!(record, Record::Memory { .. })),
+        "{records:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_remember_tool_writes_a_fact_inside_a_run() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "remember",
+            r#"{"name":"a-new-fact","description":"a fact the model learned","basis":"inferred","tier":"working","valid-until":"2099-01-01","body":"The full content."}"#,
+        ),
+        // A write without its basis is a model-visible error, not a
+        // file — the required rule, enforced where the model meets it.
+        tool_call_stream(
+            "call-2",
+            "remember",
+            r#"{"name":"no-basis","description":"a fact with no provenance"}"#,
+        ),
+        assistant_stream("Remembered."),
+    ]);
+    let home = temp_home("remember-run");
+    let root = memory_corpus("remember-run", &[]);
+    let memory =
+        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_with_memory(&mock, &mut session, Box::new(ApproveAll), Some(memory), None, "remember this")
+        .await
+        .unwrap();
+
+    // The fact is on disk, in the shape the loader reads back.
+    let loaded = fleet::memory::load_facts(&root);
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].name, "a-new-fact");
+    assert_eq!(loaded[0].description, "a fact the model learned");
+    assert_eq!(loaded[0].basis, fleet::memory::Basis::Inferred);
+    assert_eq!(loaded[0].tier, fleet::memory::Tier::Working);
+    assert_eq!(loaded[0].valid_until, "2099-01-01");
+    assert_eq!(loaded[0].body, "The full content.");
+
+    // Both results rode the log: the confirmation and the refusal.
+    let records = session::replay(&session.path()).unwrap();
+    let results: Vec<(String, String)> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "remember" => {
+                Some((name.clone(), output.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 2, "{results:?}");
+    assert!(results[0].1.contains("remembered `a-new-fact`"), "{results:?}");
+    assert!(results[1].1.starts_with("error:"), "{results:?}");
+    assert!(results[1].1.contains("basis"), "{results:?}");
+}
+
+#[tokio::test]
+async fn a_confirmed_by_supersede_lands_with_approval_and_is_refused_without_it() {
+    let arguments = r#"{"name":"load-bearing","justification":"the owner restated the rule","replacement":"load-bearing-v2","description":"the owner's new standing rule about the gate"}"#;
+
+    // Approved (`--yes`): the supersession lands, and its justification
+    // rides the calibration row — slice 12's guardrail input.
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "supersede", arguments),
+        assistant_stream("Superseded."),
+    ]);
+    let home = temp_home("supersede-approved");
+    let root = memory_corpus(
+        "supersede-approved",
+        &[(
+            "load-bearing",
+            fact_file("load-bearing", "the owner's standing rule about the gate", "confirmed-by", "feedback", ""),
+        )],
+    );
+    let calib_root = temp_home("supersede-calib");
+    let stream = fleet::calib::Stream::open(&calib_root);
+    let memory =
+        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(memory),
+        Some(stream.clone()),
+        "restate the rule",
+    )
+    .await
+    .unwrap();
+
+    assert!(root.join("load-bearing-v2.md").exists());
+    let replacement = std::fs::read_to_string(root.join("load-bearing-v2.md")).unwrap();
+    assert!(
+        replacement.contains("Supersedes `load-bearing` \u{2014} the owner restated the rule"),
+        "{replacement}"
+    );
+    let old = std::fs::read_to_string(root.join("load-bearing.md")).unwrap();
+    assert!(old.contains("superseded-by: load-bearing-v2"), "{old}");
+    drop(stream);
+    let rows = fleet::calib::read_day(&calib_root, &fleet::calib::today(), 64);
+    let row = rows
+        .iter()
+        .find(|row| row.op == fleet::calib::OP_CONSOLIDATE)
+        .expect("the consolidate row");
+    assert_eq!(row.action, "supersede");
+    assert_eq!(row.fact, "load-bearing");
+    assert_eq!(row.reason, "the owner restated the rule");
+
+    // Denied: nothing moves, and the model reads the denial.
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "supersede", arguments),
+        assistant_stream("Denied."),
+    ]);
+    let home = temp_home("supersede-denied");
+    let root = memory_corpus(
+        "supersede-denied",
+        &[(
+            "load-bearing",
+            fact_file("load-bearing", "the owner's standing rule about the gate", "confirmed-by", "feedback", ""),
+        )],
+    );
+    let memory =
+        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_with_memory(&mock, &mut session, Box::new(DenyAll), Some(memory), None, "restate the rule")
+        .await
+        .unwrap();
+
+    assert!(!root.join("load-bearing-v2.md").exists());
+    let old = std::fs::read_to_string(root.join("load-bearing.md")).unwrap();
+    // The file still carries its bare (unset) `superseded-by:` line —
+    // what must be absent is the stamp naming the replacement.
+    assert!(!old.contains("superseded-by: load-bearing-v2"), "{old}");
+    let records = session::replay(&session.path()).unwrap();
+    let denial = records
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { name, output, approved, .. } if name == "supersede" => {
+                Some((output.clone(), *approved))
+            }
+            _ => None,
+        })
+        .expect("the supersede tool_result");
+    assert!(!denial.1, "the call was not approved");
+    assert!(denial.0.contains("denied"), "{denial:?}");
 }

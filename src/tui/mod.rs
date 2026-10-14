@@ -311,6 +311,16 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let AgentConfig { home, model, session_id, ui_tx, status_tx, approval_tx, command_rx } =
             config;
+        // The scheduled consolidation cycle: one pass now, then one
+        // every hour for the life of the process — the timer the live
+        // system never had. Its own stream, because the cycle must run
+        // even when routing never produced one; two writer threads in
+        // one process are safe by the stream's own construction.
+        let user_home = std::env::var("HOME").ok();
+        let calib_root = crate::calib::resolve_root(&home, user_home.as_deref());
+        let memories_root =
+            crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+        crate::memory::spawn_consolidator(memories_root, crate::calib::Stream::open(&calib_root));
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -365,6 +375,20 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                         let prepared = prepared.as_ref().expect("prepared on the first run");
                         let client = Client::routed(prepared.router.clone());
                         let path = session::session_path(&home, &current_session);
+                        // The corpus is loaded per run, off the async
+                        // worker: the files can change between runs, and
+                        // a fact an earlier run of this session
+                        // remembered is on disk by the time this one
+                        // assembles. A load that cannot complete leaves
+                        // the run memory-less rather than failing it.
+                        let memory = tokio::task::spawn_blocking(|| {
+                            let root = crate::memory::resolve_root(
+                                &std::env::current_dir().unwrap_or_default(),
+                            );
+                            std::sync::Arc::new(crate::memory::Memory::load(&root))
+                        })
+                        .await
+                        .ok();
                         // One agent per task over a freshly opened log: the
                         // replay seeds the conversation exactly as a resumed
                         // headless run is seeded.
@@ -384,6 +408,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             lane_specs: None,
                             calib: Some(prepared.calib.clone()),
                             skills: skills.clone(),
+                            memory,
                         };
                         let approver: Box<dyn Approver> =
                             Box::new(TuiApprover::new(approval_tx.clone()));

@@ -174,6 +174,19 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
             spans.push(Span::styled(format!(" ({how})"), Style::new().fg(palette::DIM)));
         }
     }
+    // What the last run's assembled memory carried: the shape the
+    // instruction routed under and the fact count. Slice 8 part 2's
+    // half of the turn-path surfacing — the `memory` record's live
+    // counterpart, and absent on a run whose assembly was empty.
+    if let Some((shape, facts)) = &status.memory {
+        spans.push(Span::styled("  memory ", Style::new().fg(palette::DIM)));
+        let named = if shape.is_empty() { "no shape".to_string() } else { shape.clone() };
+        let plural = if *facts == 1 { "" } else { "s" };
+        spans.push(Span::styled(
+            format!("{named} \u{b7} {facts} fact{plural}"),
+            Style::new().fg(palette::ACCENT),
+        ));
+    }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 

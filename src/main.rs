@@ -41,6 +41,7 @@ async fn main() -> ExitCode {
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
+        Ok(Command::Remember(options)) => remember_command(&options),
         Ok(Command::Doctor) => doctor_command(),
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -177,6 +178,17 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         }
     };
     println!("fleet chat — model {}, session {} (/exit to quit)", options.model, session.id());
+    // The scheduled consolidation cycle: one pass now, then one every
+    // hour for the life of the session. The live system's episodic
+    // store went dormant because its consolidation was manual — the
+    // timer is the fix. The stream is the cycle's own, so the cycle
+    // runs even before routing has produced one.
+    let user_home = std::env::var("HOME").ok();
+    let calib_root =
+        fleet::calib::resolve_root(&home, user_home.as_deref());
+    let memories_root =
+        fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+    fleet::memory::spawn_consolidator(memories_root, fleet::calib::Stream::open(&calib_root));
     // The skills are loaded once per chat session and declared on every
     // run in it: the files can change between runs, and the per-run
     // `skills` record is what pins what each run actually saw.
@@ -310,19 +322,50 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
 }
 
 /// `fleet memories`: the durable facts as cards, the ranked assembly for
-/// one instruction (`--recall`), or the cards filtered by structure
-/// shape (`--shape`). A read surface over the repo's own git-tracked
-/// files, like `fleet calib` and `fleet skills`: the exit code is always
-/// success, and a corpus with no facts says so rather than failing.
+/// one instruction (`--recall`), the cards filtered by structure
+/// shape (`--shape`), the consolidation cycle on demand
+/// (`--consolidate`), or the archive of forgotten facts (`--archive`).
+/// A read surface over the repo's own git-tracked files, like
+/// `fleet calib` and `fleet skills`: the exit code is always success,
+/// and a corpus with no facts says so rather than failing.
 ///
 /// The corpus is the nearest `memories/` at or above the working
 /// directory — the repo root in everyday use, the fork's
 /// `resolveMemoryRoot` rule. The vector path is probed at load and the
 /// surface's header names which backend serves; `--recall` is a dry run
-/// that writes nothing, because the turn path that records hits is
-/// part 2's.
+/// that writes nothing, because the turn path that records hits is the
+/// agent's.
+///
+/// `--consolidate` is the one writing flag: it runs one pass of the
+/// cycle — the same pass the scheduled thread runs hourly in a chat or
+/// the TUI — and prints what it did before the cards, with every
+/// action's row in the calibration stream.
 fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
     let root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+    if options.archive {
+        print!("{}", fleet::memory::render_archive(&root));
+        return ExitCode::SUCCESS;
+    }
+    if options.consolidate {
+        // The cycle needs a stream to record into, so this is the one
+        // memories surface that resolves the home. A root that cannot
+        // resolve leaves the pass row-less, never failed.
+        let stream = fleet_home().ok().map(|home| {
+            let user_home = std::env::var("HOME").ok();
+            fleet::calib::Stream::open(fleet::calib::resolve_root(
+                &home,
+                user_home.as_deref(),
+            ))
+        });
+        let result = fleet::memory::consolidate(
+            &root,
+            &fleet::calib::today(),
+            stream.as_ref(),
+        );
+        print!("{}\n", fleet::memory::render_consolidation(&result));
+    }
+    // The corpus is loaded after the cycle, so the cards show what the
+    // pass left behind — the new summary in, the archived facts out.
     let memory = fleet::memory::Memory::load(&root);
     if let Some(instruction) = &options.recall {
         print!("{}", fleet::memory::render_recall(&memory, instruction));
@@ -330,6 +373,47 @@ fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
         print!("{}", fleet::memory::render(&memory, options.shape.as_deref()));
     }
     ExitCode::SUCCESS
+}
+
+/// `fleet remember`: write one fact into the corpus, in the house card
+/// style. The CLI form of the `remember` tool — the user typing the
+/// write is the approval, so there is no gate here — and the same
+/// validator, so the two surfaces cannot drift. A typed refusal (a
+/// taken name, a missing basis, a working fact with no `valid-until`)
+/// prints its reason and exits 1.
+fn remember_command(options: &cli::RememberOptions) -> ExitCode {
+    let root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+    let memory = fleet::memory::Memory::load(&root);
+    // The flags map onto the frontmatter's own field names, and an
+    // absent optional flag is left out of the object entirely so the
+    // writer's defaults apply.
+    let mut arguments = serde_json::json!({
+        "name": options.name,
+        "description": options.description,
+        "basis": options.basis,
+    });
+    let object = arguments.as_object_mut().expect("a fresh object");
+    for (flag, value) in [
+        ("type", &options.fact_type),
+        ("shape", &options.shape),
+        ("tier", &options.tier),
+        ("valid-until", &options.valid_until),
+        ("body", &options.body),
+    ] {
+        if !value.is_empty() {
+            object.insert(flag.to_string(), serde_json::Value::String(value.clone()));
+        }
+    }
+    match fleet::memory::Remember::parse(&arguments).and_then(|request| memory.remember(&request)) {
+        Ok(fact) => {
+            print!("{}", fleet::memory::render_one(&fact));
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// `fleet calib`: one day of the calibration stream as cards — the rows
@@ -365,6 +449,18 @@ async fn drive(
     skills: Vec<fleet::skills::Skill>,
 ) -> Result<RunReport, AgentError> {
     let client = Client::routed(prepared.router.clone());
+    // The corpus is loaded per run, off the async worker: the files can
+    // change between runs, and a fact an earlier run remembered is on
+    // disk by the time this one assembles. The load is the turn path's
+    // whole cost — one probe round trip plus the cached index — and a
+    // load that cannot complete leaves the run memory-less rather than
+    // failing it.
+    let memory = tokio::task::spawn_blocking(|| {
+        let root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+        std::sync::Arc::new(fleet::memory::Memory::load(&root))
+    })
+    .await
+    .ok();
     let options = AgentOptions {
         model,
         max_turns,
@@ -372,6 +468,7 @@ async fn drive(
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
         skills,
+        memory,
     };
     let approver: Box<dyn Approver> =
         if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };

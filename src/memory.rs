@@ -51,6 +51,25 @@
 //! the `recall_hit` calibration row), [`Memory::assemble`] takes the
 //! working-memory tier as an input slice part 2 fills, and
 //! `fleet memories --recall` is a dry run that writes nothing.
+//!
+//! **Part 2, landed.** [`Remember`] is the write path: a
+//! `brain_remember`-shaped structured request with `basis` required on
+//! every write and `valid-until` required for the session-scoped tier,
+//! rendered in the fork's field order through an atomic temp-and-rename
+//! write. Three tiers ride the `tier` frontmatter field — `working`
+//! (session-scoped, expires on its `valid-until`), `durable`
+//! (basis-recorded), `episodic` (consolidated summaries, written by the
+//! cycle only). [`Memory::supersede`] is the modify/forget path and
+//! doubles as the permission model: a `confirmed-by` fact is refused
+//! without approval, an `inferred` one is supersedable on a recorded
+//! justification. [`consolidate`] is the scheduled cycle — compress old
+//! working memory into an episodic summary, supersede stale inferred
+//! facts, forget expired ones by archiving them — with every action
+//! logged as a `consolidate` calibration row; [`spawn_consolidator`]
+//! runs it on its timer in the long-lived processes, and
+//! `fleet memories --consolidate` runs one pass on demand. The turn path
+//! calls [`Memory::assemble`] with [`Memory::working`] and records the
+//! hits the assembly surfaced through [`Memory::record_hits`].
 
 use std::collections::HashMap;
 use std::fs;
@@ -114,6 +133,45 @@ impl Basis {
     }
 }
 
+/// How long a fact lives: the three speeds of the semantic layer.
+///
+/// - `Working` is session-scoped: it expires on its `valid-until`, the
+///   consolidation cycle compresses it into an episodic summary, and it
+///   enters a turn through the working tier rather than the ranking.
+/// - `Durable` is basis-recorded and does not expire; it is the tier the
+///   corpus's own facts are, and the default when the frontmatter
+///   carries no `tier` at all.
+/// - `Episodic` is a consolidated summary, written by the cycle and
+///   never by the write path; it is durable-shaped and recallable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    Working,
+    Durable,
+    Episodic,
+}
+
+impl Tier {
+    /// The word the frontmatter carries.
+    pub fn label(self) -> &'static str {
+        match self {
+            Tier::Working => "working",
+            Tier::Durable => "durable",
+            Tier::Episodic => "episodic",
+        }
+    }
+
+    /// Parse the vocabulary, or `None` for anything else — a tier
+    /// outside the three words is a malformed fact, the basis rule.
+    fn parse(text: &str) -> Option<Tier> {
+        match text.trim() {
+            "working" => Some(Tier::Working),
+            "durable" => Some(Tier::Durable),
+            "episodic" => Some(Tier::Episodic),
+            _ => None,
+        }
+    }
+}
+
 /// One durable fact: its frontmatter, its body, and where it came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fact {
@@ -127,6 +185,10 @@ pub struct Fact {
     /// ISO date, `YYYY-MM-DD`.
     pub date: String,
     pub basis: Basis,
+    /// How long this fact lives: the three speeds. Absent from the
+    /// frontmatter reads as [`Tier::Durable`], so the corpus's own
+    /// pre-tier facts load unchanged.
+    pub tier: Tier,
     /// Structure tags from the fork's shape vocabulary.
     pub shape: Vec<String>,
     /// Times recall has surfaced this fact; the importance channel reads
@@ -357,10 +419,12 @@ fn skip_line(name: &str, reason: &str) {
 /// The memory rules on top of the shared parse: `name` and `description`
 /// are required, the frontmatter's `name` must equal the file's stem
 /// (one fact, one name — the name is the index and calibration key), a
-/// `basis` outside the vocabulary is refused, a `recall-count` that is
-/// not a non-negative integer is refused, and an absent `basis` defaults
-/// to `inferred` — a fact the session merely produced is a guess until
-/// someone confirms it.
+/// `basis` outside the vocabulary is refused, a `tier` outside the three
+/// speeds is refused, a `recall-count` that is not a non-negative integer
+/// is refused, and an absent `basis` defaults to `inferred` — a fact the
+/// session merely produced is a guess until someone confirms it. An
+/// absent `tier` defaults to `durable`: the corpus's own facts were
+/// written before the tier field existed.
 fn fact(
     document: Document,
     stem: &str,
@@ -379,6 +443,11 @@ fn fact(
             .ok_or_else(|| format!("unknown basis `{text}` (expected confirmed-by or inferred)"))?,
         None => Basis::Inferred,
     };
+    let tier = match document.get("tier") {
+        Some(text) => Tier::parse(text)
+            .ok_or_else(|| format!("unknown tier `{text}` (expected working, durable, or episodic)"))?,
+        None => Tier::Durable,
+    };
     let recall_count = match document.get("recall-count") {
         Some(text) => text
             .trim()
@@ -392,6 +461,7 @@ fn fact(
         fact_type: document.get("type").unwrap_or("").to_string(),
         date: document.get("date").unwrap_or("").to_string(),
         basis,
+        tier,
         shape: shape_tags(document.get("shape")),
         recall_count,
         superseded_by: document.get("superseded-by").unwrap_or("").to_string(),
@@ -1061,6 +1131,20 @@ fn lock_facts(facts: &Mutex<Vec<Fact>>) -> std::sync::MutexGuard<'_, Vec<Fact>> 
     facts.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// The corpus's `Debug`: the root, the backend, and the fact count —
+/// what a log line or a test failure wants to see, and never the
+/// vectors. Hand-written because the embedder is a trait object with
+/// no `Debug` of its own, and a derived `Debug` would demand one.
+impl std::fmt::Debug for Memory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Memory")
+            .field("root", &self.root)
+            .field("backend", &self.embedder.name())
+            .field("facts", &lock_facts(&self.facts).len())
+            .finish()
+    }
+}
+
 impl Memory {
     /// Load the corpus under `root` with the vector path probed: the
     /// real local-model backend when it answers, keyword-only otherwise.
@@ -1178,9 +1262,11 @@ impl Memory {
     /// Ranked recall for one instruction: the hybrid score with the
     /// shape-routing boost, protected facts excluded (they are assembled
     /// through [`Memory::protected`] — no fact enters a turn twice),
-    /// forgotten facts excluded, and everything below
-    /// [`MIN_RECALL_SCORE`] dropped as noise for this instruction.
-    /// Strongest first, name as the deterministic tie-break.
+    /// working-tier facts excluded (they are assembled through
+    /// [`Memory::working`], the same rule one tier over), forgotten
+    /// facts excluded, and everything below [`MIN_RECALL_SCORE`]
+    /// dropped as noise for this instruction. Strongest first, name as
+    /// the deterministic tie-break.
     pub fn recall(&self, instruction: &str) -> Vec<ScoredFact> {
         let shape = classify_shape(instruction);
         let query_vector = self.embedder.embed(instruction);
@@ -1190,7 +1276,11 @@ impl Memory {
         let facts = lock_facts(&self.facts);
         let mut hits: Vec<ScoredFact> = facts
             .iter()
-            .filter(|fact| !fact.protected() && !fact.forgotten(&today))
+            .filter(|fact| {
+                !fact.protected()
+                    && fact.tier != Tier::Working
+                    && !fact.forgotten(&today)
+            })
             .map(|fact| ScoredFact {
                 fact: fact.clone(),
                 score: self.score(fact, &query_vector, &query_tokens, shape, today_days),
@@ -1207,18 +1297,57 @@ impl Memory {
         hits
     }
 
-    /// The feedback entry point — part 2's turn path calls this where
-    /// part 1 has no caller. Every hit updates the fact's `recall-count`
-    /// in its file (a bounded, frontmatter-preserving rewrite), re-ranks
-    /// on the next recall, and appends one `recall_hit` calibration row
-    /// naming the fact, the shape, and the score. The rewrite is
-    /// best-effort: a file that cannot be rewritten logs one line and
-    /// the hit is still recorded — the audit trail must not depend on
-    /// the corpus being writable.
+    /// The working tier: every non-forgotten working fact that is not
+    /// already protected (a protected fact enters through the protected
+    /// tier — no fact enters a turn twice), most recent first. This is
+    /// the slice the turn path hands [`Memory::assemble`], which places
+    /// it after the protected tier and ranked recall and bounds it by
+    /// the budget like everything else.
+    pub fn working(&self) -> Vec<Fact> {
+        let today = calib::today();
+        let mut facts: Vec<Fact> = lock_facts(&self.facts)
+            .iter()
+            .filter(|fact| {
+                fact.tier == Tier::Working && !fact.protected() && !fact.forgotten(&today)
+            })
+            .cloned()
+            .collect();
+        // Most recent first: recent working memory is the point of the
+        // tier, and the name is the deterministic tie-break.
+        facts.sort_by(|left, right| {
+            right.date.cmp(&left.date).then_with(|| left.name.cmp(&right.name))
+        });
+        facts
+    }
+
+    /// The feedback entry point — the turn path's per-instruction call
+    /// in the shape that also ranks: every hit updates the fact's
+    /// `recall-count` in its file (a bounded, frontmatter-preserving
+    /// rewrite), re-ranks on the next recall, and appends one
+    /// `recall_hit` calibration row naming the fact, the shape, and the
+    /// score. The rewrite is best-effort: a file that cannot be
+    /// rewritten logs one line and the hit is still recorded — the
+    /// audit trail must not depend on the corpus being writable.
     pub fn recall_hits(&self, instruction: &str, stream: Option<&calib::Stream>) -> Vec<ScoredFact> {
         let hits = self.recall(instruction);
-        let shape = classify_shape(instruction).unwrap_or_default().to_string();
-        for hit in &hits {
+        self.record_hits(&hits, classify_shape(instruction), stream);
+        hits
+    }
+
+    /// Record the hits an assembly actually surfaced — the turn path's
+    /// call, with the assembly's `recalled` slice. One ranking per
+    /// turn, and the row's score is the score the fact entered the
+    /// turn at, which is what makes the stream's numbers mean the same
+    /// thing the assembled block does. A fact the budget dropped never
+    /// reached the model, so it is not a hit.
+    pub fn record_hits(
+        &self,
+        hits: &[ScoredFact],
+        shape: Option<&str>,
+        stream: Option<&calib::Stream>,
+    ) {
+        let shape = shape.unwrap_or_default().to_string();
+        for hit in hits {
             self.bump_recall_count(&hit.fact.name);
             if let Some(stream) = stream {
                 stream.record(calib::Row::RecallHit(calib::RecallHitRow {
@@ -1229,7 +1358,6 @@ impl Memory {
                 }));
             }
         }
-        hits
     }
 
     /// One fact's score against a query. The vector channel needs both
@@ -1264,7 +1392,7 @@ impl Memory {
             fact.recall_count += 1;
             (fact.path.clone(), fact.recall_count)
         };
-        rewrite_recall_count(&path, count)
+        rewrite_field(&path, "recall-count", &count.to_string())
     }
 }
 
@@ -1276,14 +1404,20 @@ pub struct ScoredFact {
     pub score: Score,
 }
 
-/// The bounded, frontmatter-preserving recall-count rewrite: the one
-/// line the rewrite owns is re-rendered, and every other byte — the
-/// body above all — is preserved. The write lands through a unique temp
-/// file and a rename, so a reader never sees a half-written fact.
-fn rewrite_recall_count(path: &Path, count: u64) -> bool {
+/// The bounded, frontmatter-preserving field rewrite: the one line the
+/// rewrite owns is re-rendered, and every other byte — the body above
+/// all — is preserved. The write lands through a unique temp file and a
+/// rename, so a reader never sees a half-written fact.
+///
+/// One rewriter for every in-place edit the module makes — the
+/// recall-count bump, the `superseded-by` stamp, the `valid-until`
+/// stamp — because a second rewrite path would drift from this one's
+/// bound and its atomicity. A line the fact does not carry is inserted
+/// as the last frontmatter line rather than appended anywhere else.
+fn rewrite_field(path: &Path, key: &str, value: &str) -> bool {
     let Ok(text) = fs::read_to_string(path) else {
         eprintln!(
-            "fleet: memories: could not re-read {} to bump its recall-count",
+            "fleet: memories: could not re-read {} to rewrite its `{key}`",
             path.display()
         );
         return false;
@@ -1298,26 +1432,24 @@ fn rewrite_recall_count(path: &Path, count: u64) -> bool {
     }
     let Some(closing) = closing else {
         eprintln!(
-            "fleet: memories: {} lost its frontmatter fence; the recall-count was not bumped",
+            "fleet: memories: {} lost its frontmatter fence; `{key}` was not rewritten",
             path.display()
         );
         return false;
     };
     let mut out_lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+    let rendered = format!("{key}: {value}");
     let mut written = false;
     for line in out_lines.iter_mut().take(closing).skip(1) {
-        let key = line.split_once(':').map(|(key, _)| key.trim()).unwrap_or_default();
-        if key == "recall-count" {
-            *line = format!("recall-count: {count}");
+        let field = line.split_once(':').map(|(field, _)| field.trim()).unwrap_or_default();
+        if field == key {
+            *line = rendered.clone();
             written = true;
             break;
         }
     }
     if !written {
-        // A fact the sleep cycle never touched carries no recall-count
-        // line; insert one as the last frontmatter line rather than
-        // appending anywhere else.
-        out_lines.insert(closing, format!("recall-count: {count}"));
+        out_lines.insert(closing, rendered);
     }
     let mut out = out_lines.join("\n");
     if text.ends_with('\n') {
@@ -1334,7 +1466,7 @@ fn rewrite_recall_count(path: &Path, count: u64) -> bool {
             } else {
                 let _ = fs::remove_file(&temp);
                 eprintln!(
-                    "fleet: memories: could not replace {} with its bumped recall-count",
+                    "fleet: memories: could not replace {} with its new `{key}`",
                     path.display()
                 );
                 false
@@ -1347,8 +1479,51 @@ fn rewrite_recall_count(path: &Path, count: u64) -> bool {
     }
 }
 
-/// A per-write serial for the rewrite's temp name, so two bumps in one
-/// process never share a temp file.
+/// Append one note to a fact's body, preserving everything already
+/// there. The forget path's record of why a fact was retired: the file
+/// is the record, and a retirement with no note is a fact that looks
+/// like it expired on its own.
+fn append_note(path: &Path, note: &str) -> bool {
+    let Ok(mut text) = fs::read_to_string(path) else {
+        eprintln!(
+            "fleet: memories: could not re-read {} to append its retirement note",
+            path.display()
+        );
+        return false;
+    };
+    if !text.ends_with('\n') && !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(note);
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    let serial = REWRITE_SERIAL.fetch_add(1, Ordering::Relaxed);
+    let mut temp = path.to_path_buf().into_os_string();
+    temp.push(format!(".{}.{}.tmp", std::process::id(), serial));
+    let temp = PathBuf::from(temp);
+    match fs::write(&temp, &text) {
+        Ok(()) => {
+            if fs::rename(&temp, path).is_ok() {
+                true
+            } else {
+                let _ = fs::remove_file(&temp);
+                eprintln!(
+                    "fleet: memories: could not replace {} with its retirement note",
+                    path.display()
+                );
+                false
+            }
+        }
+        Err(error) => {
+            eprintln!("fleet: memories: could not write {}: {error}", temp.display());
+            false
+        }
+    }
+}
+
+/// A per-write serial for the rewrite's temp name, so two rewrites in
+/// one process never share a temp file.
 static REWRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
 
 // --- assembly --------------------------------------------------------------
@@ -1537,6 +1712,986 @@ pub fn render_assembly(assembly: &Assembly) -> String {
     out
 }
 
+// --- the write path --------------------------------------------------------
+
+/// The description's bound: the one-sentence fact an assembled turn
+/// carries and a card renders. KI-060's fix — the fork's writer emits
+/// one sanitized sentence, and a description with neither bound rides
+/// control characters into the turn context and the surface and
+/// inflates the assembly's token estimate without limit. The cut is
+/// marked, so a truncated description says so.
+pub const MAX_DESCRIPTION_CHARS: usize = 512;
+
+/// The body's bound. A fact's full content is the file's, not the
+/// context's, but an unbounded body is an unbounded write: past this
+/// the write is refused rather than silently cut, because a fact that
+/// lost its tail would read as whole.
+pub const MAX_BODY_BYTES: usize = 64 * 1024;
+
+/// The name's bound. The name is the file stem and the key every
+/// surface and every calibration row addresses, so it is short by
+/// construction.
+pub const MAX_NAME_CHARS: usize = 64;
+
+/// The type's bound. The type rides the assembled line and the card,
+/// so it is bounded like the description.
+pub const MAX_TYPE_CHARS: usize = 32;
+
+/// How many shape tags the writer emits — part 1's reader reads
+/// whatever the file carries; the cap is the writer's rule.
+pub const MAX_SHAPE_TAGS: usize = 3;
+
+/// The justification's bound: it rides the calibration row and the
+/// replacement fact's body, so it is bounded like the description.
+pub const MAX_JUSTIFICATION_CHARS: usize = 512;
+
+/// The type a write defaults to: the corpus's common kind, and a
+/// deliberately unprotected one. A fact that marks identity or a
+/// standing preference says so — the protected tier is never a
+/// default.
+pub const DEFAULT_TYPE: &str = "project";
+
+/// Why a write was refused. A typed error, not a string: the tool
+/// relays it to the model verbatim and the CLI prints it, and both
+/// should name the same rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteError {
+    /// The name is unusable as a file stem.
+    Name(String),
+    /// The description is missing or unusable.
+    Description(String),
+    /// The type is unusable.
+    Type(String),
+    /// A shape tag is outside the taxonomy, or there are too many.
+    Shape(String),
+    /// The basis is missing or outside the vocabulary.
+    Basis(String),
+    /// The tier is outside the three speeds — `episodic` included,
+    /// which only the consolidation cycle writes.
+    Tier(String),
+    /// `valid-until` is missing where the tier requires it, or is not
+    /// a real day.
+    ValidUntil(String),
+    /// The body is past its bound.
+    Body(String),
+    /// The justification is missing.
+    Justification(String),
+    /// A fact of this name already exists — `remember` never
+    /// overwrites; the modify path is `supersede`.
+    Exists(String),
+    /// No fact of this name exists.
+    UnknownFact(String),
+    /// The fact is already retired, so there is nothing to modify.
+    Retired(String),
+    /// A `confirmed-by` fact cannot be modified or forgotten without
+    /// approval — the permission model, enforced at the module seam so
+    /// a programmatic caller cannot bypass it either.
+    NeedsApproval(String),
+    /// The write itself failed.
+    Io(String),
+}
+
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WriteError::Name(reason) => write!(f, "{reason}"),
+            WriteError::Description(reason) => write!(f, "{reason}"),
+            WriteError::Type(reason) => write!(f, "{reason}"),
+            WriteError::Shape(reason) => write!(f, "{reason}"),
+            WriteError::Basis(reason) => write!(f, "{reason}"),
+            WriteError::Tier(reason) => write!(f, "{reason}"),
+            WriteError::ValidUntil(reason) => write!(f, "{reason}"),
+            WriteError::Body(reason) => write!(f, "{reason}"),
+            WriteError::Justification(reason) => write!(f, "{reason}"),
+            WriteError::Exists(reason) => write!(f, "{reason}"),
+            WriteError::UnknownFact(reason) => write!(f, "{reason}"),
+            WriteError::Retired(reason) => write!(f, "{reason}"),
+            WriteError::NeedsApproval(reason) => write!(f, "{reason}"),
+            WriteError::Io(reason) => write!(f, "{reason}"),
+        }
+    }
+}
+
+impl std::error::Error for WriteError {}
+
+/// Sanitize one line of a write: control characters removed — not
+/// replaced, so a stripped escape sequence leaves its payload visible
+/// and inert — then trimmed, then bounded with a marked cut. KI-060's
+/// mechanism, in the writer where the fork's writer owns the
+/// rendering.
+fn sanitize_line(text: &str, bound: usize) -> String {
+    let cleaned: String = text.chars().filter(|character| !character.is_control()).collect();
+    let cleaned = cleaned.trim();
+    if cleaned.chars().count() > bound {
+        let cut: String = cleaned.chars().take(bound).collect();
+        format!("{cut}\u{2026}")
+    } else {
+        cleaned.to_string()
+    }
+}
+
+/// Whether `name` is usable as a fact's file stem: lowercase letters,
+/// digits, and hyphens, bounded, with no leading or trailing hyphen.
+/// The rule is what keeps a name a key — no path separator, no `.` or
+/// `..`, no dotfile, no space — so a write can never address a file
+/// outside the corpus.
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().count() <= MAX_NAME_CHARS
+        && name
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+}
+
+/// One structured write: the `brain_remember` shape the fork's writer
+/// speaks, mechanism over prose. `basis` is required on every write and
+/// `valid-until` on every working-tier one, because those two rules are
+/// what make the corpus's provenance and lifecycle mean something.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Remember {
+    pub name: String,
+    pub description: String,
+    pub fact_type: String,
+    pub shape: Vec<String>,
+    pub basis: Basis,
+    pub tier: Tier,
+    /// ISO date after which the fact is stale; empty for a durable
+    /// fact, which is the writer's default and means no expiry.
+    pub valid_until: String,
+    pub body: String,
+}
+
+impl Remember {
+    /// Parse and validate the tool's (or the CLI's) arguments object.
+    /// The keys are the frontmatter's own names — `name`, `description`,
+    /// `type`, `shape`, `basis`, `tier`, `valid-until`, `body` — so one
+    /// validator serves the model-visible tool and the CLI form.
+    pub fn parse(arguments: &serde_json::Value) -> Result<Remember, WriteError> {
+        let name = string_argument(arguments, "name")?
+            .map(|name| name.to_ascii_lowercase())
+            .unwrap_or_default();
+        if !valid_name(&name) {
+            return Err(WriteError::Name(format!(
+                "`{name}` is not a fact name: lowercase letters, digits, and hyphens, up to {MAX_NAME_CHARS} characters, no leading or trailing hyphen"
+            )));
+        }
+        let description = sanitize_line(&string_argument(arguments, "description")?.unwrap_or_default(), MAX_DESCRIPTION_CHARS);
+        if description.is_empty() {
+            return Err(WriteError::Description(
+                "the `description` argument is required: the fact as one sentence".to_string(),
+            ));
+        }
+        let fact_type = match string_argument(arguments, "type")? {
+            Some(text) => sanitize_line(&text, MAX_TYPE_CHARS),
+            None => DEFAULT_TYPE.to_string(),
+        };
+        if fact_type.is_empty() {
+            return Err(WriteError::Type(
+                "the `type` argument is empty; omit it for the default".to_string(),
+            ));
+        }
+        let shape = parse_shape(&string_argument(arguments, "shape")?)?;
+        let basis = match string_argument(arguments, "basis")? {
+            Some(text) => Basis::parse(&text.to_ascii_lowercase()).ok_or_else(|| {
+                WriteError::Basis(format!(
+                    "`{text}` is not a basis: `basis` is required on every write and is confirmed-by or inferred"
+                ))
+            })?,
+            None => {
+                return Err(WriteError::Basis(
+                    "the `basis` argument is required on every write: confirmed-by when the user stated or verified the fact, inferred when the session merely produced it".to_string(),
+                ));
+            }
+        };
+        let tier = match string_argument(arguments, "tier")? {
+            Some(text) => {
+                let parsed = Tier::parse(&text.to_ascii_lowercase()).ok_or_else(|| {
+                    WriteError::Tier(format!(
+                        "`{text}` is not a tier: `tier` is working or durable — episodic summaries are written by the consolidation cycle, never by a write"
+                    ))
+                })?;
+                // Episodic is the cycle's tier: a hand-written summary
+                // would put an unaudited fact in the recallable store
+                // with no cycle pass behind it.
+                if parsed == Tier::Episodic {
+                    return Err(WriteError::Tier(
+                        "`episodic` facts are written by the consolidation cycle, never by a write"
+                            .to_string(),
+                    ));
+                }
+                parsed
+            }
+            None => Tier::Durable,
+        };
+        let valid_until = match string_argument(arguments, "valid-until")? {
+            Some(text) => {
+                if !crate::cli::valid_calendar_day(&text) {
+                    return Err(WriteError::ValidUntil(format!(
+                        "`{text}` is not a day; use valid-until YYYY-MM-DD"
+                    )));
+                }
+                text
+            }
+            None => String::new(),
+        };
+        if tier == Tier::Working && valid_until.is_empty() {
+            return Err(WriteError::ValidUntil(
+                "a working-tier fact is session-scoped, so `valid-until` is required: the day it stops being true".to_string(),
+            ));
+        }
+        let body = string_argument(arguments, "body")?.unwrap_or_default();
+        if body.len() > MAX_BODY_BYTES {
+            return Err(WriteError::Body(format!(
+                "the `body` argument is {} bytes, past the {MAX_BODY_BYTES}-byte bound",
+                body.len()
+            )));
+        }
+        Ok(Remember { name, description, fact_type, shape, basis, tier, valid_until, body })
+    }
+}
+
+/// One string argument read off the arguments object: `None` when the
+/// key is absent or null — the caller decides whether that is required
+/// — and a typed error when the key is present but is not a string, so
+/// a number where a sentence belongs is never a silent default.
+fn string_argument(
+    arguments: &serde_json::Value,
+    key: &str,
+) -> Result<Option<String>, WriteError> {
+    match arguments.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(text)) => Ok(Some(text.clone())),
+        Some(_) => Err(WriteError::Name(format!("the `{key}` argument must be a string"))),
+    }
+}
+
+/// Parse the comma-separated shape list: each tag lowercased and
+/// checked against the Wave-D taxonomy, duplicates dropped, the count
+/// capped. A tag outside the taxonomy is refused with the taxonomy
+/// named — a typo'd tag is dead weight in the routing boost.
+fn parse_shape(value: &Option<String>) -> Result<Vec<String>, WriteError> {
+    let Some(value) = value else { return Ok(Vec::new()) };
+    let mut tags: Vec<String> = Vec::new();
+    for tag in value.split(',') {
+        let tag = unquote(tag.trim()).trim().to_ascii_lowercase();
+        if tag.is_empty() {
+            continue;
+        }
+        if !SHAPES.contains(&tag.as_str()) {
+            return Err(WriteError::Shape(format!(
+                "`{tag}` is not a structure shape; the shapes are {}",
+                SHAPES.join(", ")
+            )));
+        }
+        if !tags.iter().any(|seen| seen == &tag) {
+            tags.push(tag);
+        }
+    }
+    if tags.len() > MAX_SHAPE_TAGS {
+        return Err(WriteError::Shape(format!(
+            "{} shape tags is past the {MAX_SHAPE_TAGS}-tag bound",
+            tags.len()
+        )));
+    }
+    Ok(tags)
+}
+
+/// Render one fact in the fork's field order: `name`, `description`,
+/// `type`, `date`, `basis`, `tier`, `shape`, `recall-count`,
+/// `superseded-by`, `valid-until` — the order part 1's reader reads
+/// back, with `tier` beside `basis`. An unset optional field renders
+/// bare, the fork writer's own "unset" rendering, which the parser
+/// accepts.
+fn render_document(request: &Remember, today: &str) -> String {
+    let mut out = String::from("---\n");
+    out.push_str(&format!("name: {}\n", request.name));
+    out.push_str(&format!("description: \"{}\"\n", request.description));
+    out.push_str(&format!("type: {}\n", request.fact_type));
+    out.push_str(&format!("date: {today}\n"));
+    out.push_str(&format!("basis: {}\n", request.basis.label()));
+    out.push_str(&format!("tier: {}\n", request.tier.label()));
+    if request.shape.is_empty() {
+        out.push_str("shape: []\n");
+    } else {
+        out.push_str(&format!("shape: [{}]\n", request.shape.join(", ")));
+    }
+    out.push_str("recall-count: 0\n");
+    out.push_str("superseded-by:\n");
+    if request.valid_until.is_empty() {
+        out.push_str("valid-until:\n");
+    } else {
+        out.push_str(&format!("valid-until: {}\n", request.valid_until));
+    }
+    out.push_str("---\n\n");
+    out.push_str(&request.body);
+    if !request.body.is_empty() && !request.body.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// Write one fact document under `root` through a unique temp file and
+/// a rename, so a reader never sees a half-written fact. With
+/// `refuse_existing`, a name that is already taken is a typed error —
+/// the modify path is `supersede`, never a silent overwrite.
+fn write_document(
+    root: &Path,
+    request: &Remember,
+    today: &str,
+    refuse_existing: bool,
+) -> Result<PathBuf, WriteError> {
+    fs::create_dir_all(root).map_err(|error| {
+        WriteError::Io(format!("could not create {}: {error}", root.display()))
+    })?;
+    let path = root.join(format!("{}.md", request.name));
+    if refuse_existing && path.exists() {
+        return Err(WriteError::Exists(format!(
+            "`{}` already exists; the modify path is `supersede`, which records why",
+            request.name
+        )));
+    }
+    let text = render_document(request, today);
+    let serial = DOCUMENT_WRITE_SERIAL.fetch_add(1, Ordering::Relaxed);
+    let mut temp = path.clone().into_os_string();
+    temp.push(format!(".{}.{}.tmp", std::process::id(), serial));
+    let temp = PathBuf::from(temp);
+    match fs::write(&temp, &text) {
+        Ok(()) => {
+            if fs::rename(&temp, &path).is_ok() {
+                Ok(path)
+            } else {
+                let _ = fs::remove_file(&temp);
+                Err(WriteError::Io(format!("could not replace {}", path.display())))
+            }
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            Err(WriteError::Io(format!("could not write {}: {error}", temp.display())))
+        }
+    }
+}
+
+/// A per-write serial for the document temp name, so two writes in one
+/// process never share a temp file.
+static DOCUMENT_WRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
+
+impl Memory {
+    /// Write one fact into the corpus and return it. The write is the
+    /// whole record: one file per fact, git-tracked, in the frontmatter
+    /// shape part 1's parser reads back — which is what makes a bad
+    /// fact a revert. A name that already exists is refused rather
+    /// than overwritten: the modify path is [`Memory::supersede`], and
+    /// a silent overwrite would erase a confirmed-by fact's provenance.
+    pub fn remember(&self, request: &Remember) -> Result<Fact, WriteError> {
+        let today = calib::today();
+        let path = write_document(&self.root, request, &today, true)?;
+        let stamp = file_stamp(&path);
+        Ok(Fact {
+            name: request.name.clone(),
+            description: request.description.clone(),
+            fact_type: request.fact_type.clone(),
+            date: today,
+            basis: request.basis,
+            tier: request.tier,
+            shape: request.shape.clone(),
+            recall_count: 0,
+            superseded_by: String::new(),
+            valid_until: request.valid_until.clone(),
+            body: request.body.clone(),
+            path,
+            stamp,
+        })
+    }
+}
+
+/// One structured supersession: the modify/forget path. The
+/// justification is required either way — it is the proposal's whole
+/// provenance, and it is recorded in the calibration row and in the
+/// replacement's body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Supersede {
+    /// The fact being retired.
+    pub name: String,
+    pub justification: String,
+    /// The replacement fact's name, for the modify path. Omit it to
+    /// forget: the fact is expired, and the cycle archives it.
+    pub replacement: Option<String>,
+    /// The replacement's one-sentence fact; required with a
+    /// replacement.
+    pub description: String,
+    /// The replacement's full content; defaults to the supersession
+    /// note.
+    pub body: String,
+    /// The replacement's type and shape; both default to the
+    /// superseded fact's own.
+    pub fact_type: Option<String>,
+    pub shape: Option<String>,
+    /// The replacement's `valid-until`; defaults to the superseded
+    /// fact's own, and is required when that is a working fact with
+    /// none.
+    pub valid_until: Option<String>,
+}
+
+impl Supersede {
+    /// Parse and validate the arguments object, the same key vocabulary
+    /// [`Remember::parse`] reads.
+    pub fn parse(arguments: &serde_json::Value) -> Result<Supersede, WriteError> {
+        let name = string_argument(arguments, "name")?
+            .map(|name| name.to_ascii_lowercase())
+            .unwrap_or_default();
+        if !valid_name(&name) {
+            return Err(WriteError::Name(format!(
+                "`{name}` is not a fact name: lowercase letters, digits, and hyphens, up to {MAX_NAME_CHARS} characters, no leading or trailing hyphen"
+            )));
+        }
+        let justification =
+            sanitize_line(&string_argument(arguments, "justification")?.unwrap_or_default(), MAX_JUSTIFICATION_CHARS);
+        if justification.is_empty() {
+            return Err(WriteError::Justification(
+                "the `justification` argument is required: why this fact is being retired, recorded in the calibration row and the replacement's body".to_string(),
+            ));
+        }
+        let replacement = match string_argument(arguments, "replacement")? {
+            Some(text) => {
+                let text = text.to_ascii_lowercase();
+                if !valid_name(&text) {
+                    return Err(WriteError::Name(format!(
+                        "`{text}` is not a replacement fact name: lowercase letters, digits, and hyphens, up to {MAX_NAME_CHARS} characters"
+                    )));
+                }
+                Some(text)
+            }
+            None => None,
+        };
+        let description =
+            sanitize_line(&string_argument(arguments, "description")?.unwrap_or_default(), MAX_DESCRIPTION_CHARS);
+        if replacement.is_some() && description.is_empty() {
+            return Err(WriteError::Description(
+                "the `description` argument is required with a replacement: the new fact as one sentence".to_string(),
+            ));
+        }
+        let fact_type = string_argument(arguments, "type")?.map(|text| sanitize_line(&text, MAX_TYPE_CHARS));
+        let shape = string_argument(arguments, "shape")?;
+        let valid_until = match string_argument(arguments, "valid-until")? {
+            Some(text) => {
+                if !crate::cli::valid_calendar_day(&text) {
+                    return Err(WriteError::ValidUntil(format!(
+                        "`{text}` is not a day; use valid-until YYYY-MM-DD"
+                    )));
+                }
+                Some(text)
+            }
+            None => None,
+        };
+        let body = string_argument(arguments, "body")?.unwrap_or_default();
+        if body.len() > MAX_BODY_BYTES {
+            return Err(WriteError::Body(format!(
+                "the `body` argument is {} bytes, past the {MAX_BODY_BYTES}-byte bound",
+                body.len()
+            )));
+        }
+        Ok(Supersede {
+            name,
+            justification,
+            replacement,
+            description,
+            body,
+            fact_type,
+            shape,
+            valid_until,
+        })
+    }
+}
+
+/// What one supersession did, so the caller can say so and the
+/// calibration row can name it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Superseded {
+    /// The fact was folded into a replacement; the file stays, retired
+    /// from recall.
+    By { from: String, into: String },
+    /// The fact was forgotten: expired, with the retirement noted in
+    /// its body, and archived by the cycle's next pass.
+    Forgotten { fact: String },
+}
+
+impl Memory {
+    /// The modify/forget path, and the permission model part 2 lands
+    /// for slice 12: a `confirmed-by` fact is refused without
+    /// approval, an `inferred` one is supersedable on the recorded
+    /// justification. The rule lives here, at the module seam, so a
+    /// programmatic caller gets the same refusal an interactive one
+    /// does — provenance is the guardrail's input, not a prompt string.
+    ///
+    /// The file is never deleted: a supersession stamps `superseded-by`
+    /// and a forget stamps `valid-until`, both reversible, both
+    /// git-tracked.
+    pub fn supersede(
+        &self,
+        request: &Supersede,
+        approved: bool,
+        stream: Option<&calib::Stream>,
+    ) -> Result<Superseded, WriteError> {
+        let today = calib::today();
+        let facts = load_facts(&self.root);
+        let Some(fact) = facts.iter().find(|fact| fact.name == request.name).cloned() else {
+            return Err(WriteError::UnknownFact(format!(
+                "no fact named `{}` in {}",
+                request.name,
+                self.root.display()
+            )));
+        };
+        if !fact.superseded_by.trim().is_empty() {
+            return Err(WriteError::Retired(format!(
+                "`{}` is already superseded by `{}`",
+                fact.name, fact.superseded_by
+            )));
+        }
+        if fact.forgotten(&today) {
+            return Err(WriteError::Retired(format!(
+                "`{}` is already expired (valid-until {})",
+                fact.name, fact.valid_until
+            )));
+        }
+        // The permission model: provenance decides what a write may do
+        // without an approval in hand.
+        if fact.basis == Basis::ConfirmedBy && !approved {
+            return Err(WriteError::NeedsApproval(format!(
+                "`{}` is confirmed-by \u{2014} a load-bearing fact \u{2014} so it cannot be modified or forgotten without approval",
+                fact.name
+            )));
+        }
+        match &request.replacement {
+            Some(replacement) => {
+                let valid_until = match &request.valid_until {
+                    Some(day) => day.clone(),
+                    None => fact.valid_until.clone(),
+                };
+                if fact.tier == Tier::Working && valid_until.is_empty() {
+                    return Err(WriteError::ValidUntil(
+                        "the superseded fact is working-tier, so the replacement needs a `valid-until`".to_string(),
+                    ));
+                }
+                let body = if request.body.is_empty() {
+                    format!("Supersedes `{}` \u{2014} {}\n", fact.name, request.justification)
+                } else {
+                    request.body.clone()
+                };
+                let replacement_request = Remember {
+                    name: replacement.clone(),
+                    description: request.description.clone(),
+                    fact_type: request
+                        .fact_type
+                        .clone()
+                        .unwrap_or_else(|| fact.fact_type.clone()),
+                    shape: match &request.shape {
+                        Some(text) => parse_shape(&Some(text.clone()))?,
+                        None => fact.shape.clone(),
+                    },
+                    // A supersession is a proposal: the replacement is
+                    // inferred until someone confirms it.
+                    basis: Basis::Inferred,
+                    tier: fact.tier,
+                    valid_until,
+                    body,
+                };
+                write_document(&self.root, &replacement_request, &today, true)?;
+                rewrite_field(&fact.path, "superseded-by", replacement);
+                if let Some(stream) = stream {
+                    stream.record(calib::Row::Consolidate(calib::ConsolidateRow {
+                        ts: calib::stamp(),
+                        action: calib::ACTION_SUPERSEDE.to_string(),
+                        fact: fact.name.clone(),
+                        reason: request.justification.clone(),
+                    }));
+                }
+                Ok(Superseded::By { from: fact.name, into: replacement.clone() })
+            }
+            None => {
+                // Forget: the fact's validity ends the day before the
+                // retirement, so the loader retires it now and the
+                // cycle's next pass archives the file. The note in the
+                // body is the human record of why.
+                let last_valid_day = shift_day(&today, -1).unwrap_or_else(|| today.clone());
+                rewrite_field(&fact.path, "valid-until", &last_valid_day);
+                append_note(
+                    &fact.path,
+                    &format!("Retired {today}: {}\n", request.justification),
+                );
+                if let Some(stream) = stream {
+                    stream.record(calib::Row::Consolidate(calib::ConsolidateRow {
+                        ts: calib::stamp(),
+                        action: calib::ACTION_FORGET.to_string(),
+                        fact: fact.name.clone(),
+                        reason: request.justification.clone(),
+                    }));
+                }
+                Ok(Superseded::Forgotten { fact: fact.name })
+            }
+        }
+    }
+}
+
+/// Shift a `YYYY-MM-DD` day by `delta` days, or `None` when the day is
+/// unreadable. The calendar arithmetic is the session log's own — one
+/// implementation in the crate, not two.
+fn shift_day(day: &str, delta: i64) -> Option<String> {
+    let days = parse_day(day)? + delta;
+    let (year, month, day_of_month) = crate::session::civil_from_days(days);
+    Some(format!("{year:04}-{month:02}-{day_of_month:02}"))
+}
+
+/// One line naming the fact a `remember` call would write, for the
+/// approval prompt and the progress line: the fact and its basis, the
+/// two facts a user needs to answer "may this run?".
+pub fn remember_summary(arguments: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
+        return "remember".to_string();
+    };
+    let name = value.get("name").and_then(|value| value.as_str()).unwrap_or_default();
+    if name.is_empty() {
+        return "remember".to_string();
+    }
+    let basis = value.get("basis").and_then(|value| value.as_str()).unwrap_or("inferred");
+    let tier = value.get("tier").and_then(|value| value.as_str()).unwrap_or("durable");
+    format!("remember {name} ({basis} {tier})")
+}
+
+/// One line naming the fact a `supersede` call would retire, its basis
+/// when the corpus carries one, and the justification: the facts a user
+/// needs to answer "may this run?" — and, for a confirmed-by target,
+/// the prompt the provenance guard asks again with.
+pub fn supersede_summary(arguments: &str, basis: Option<Basis>) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
+        return "supersede".to_string();
+    };
+    let name = value.get("name").and_then(|value| value.as_str()).unwrap_or_default();
+    if name.is_empty() {
+        return "supersede".to_string();
+    }
+    let justification = sanitize_line(
+        value.get("justification").and_then(|value| value.as_str()).unwrap_or_default(),
+        MAX_JUSTIFICATION_CHARS,
+    );
+    let basis = basis.map(Basis::label);
+    let mut summary = match basis {
+        Some(basis) => format!("supersede {name} ({basis})"),
+        None => format!("supersede {name}"),
+    };
+    if !justification.is_empty() {
+        summary.push_str(&format!(" \u{2014} {justification}"));
+    }
+    summary
+}
+
+// --- the consolidation cycle ------------------------------------------------
+
+/// How often the scheduled cycle runs. Hourly: the live system's
+/// episodic store went dormant because its consolidation was manual,
+/// and an hourly pass is often enough to keep working memory from
+/// outliving its session without being so frequent that it churns the
+/// corpus.
+pub const CONSOLIDATE_INTERVAL: Duration = Duration::from_secs(3_600);
+
+/// Working memory older than this is compressed even when its
+/// `valid-until` has not passed: a session-scoped fact nobody renewed
+/// is a fact the session is done with.
+pub const WORKING_MAX_AGE_DAYS: i64 = 7;
+
+/// A durable inferred fact that recall has never surfaced and that is
+/// older than this is stale, and the cycle supersedes it. Confirmed-by
+/// facts are never stale in this sense: provenance decides, not age.
+pub const STALE_AFTER_DAYS: i64 = 180;
+
+/// Where the cycle's forget action moves an expired fact: a directory
+/// beside the corpus, not a delete. The file stays — reversible by a
+/// move back, and diffable in git — it simply leaves the loader's
+/// read, which takes `memories/*.md` and never a subdirectory.
+pub const ARCHIVE_DIR: &str = ".archive";
+
+/// One thing the cycle did to one fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CycleAction {
+    /// `compress`, `supersede`, or `forget` — [`calib::ACTIONS`].
+    pub action: &'static str,
+    pub fact: String,
+    /// Why: the named bound the cycle acted on, or the proposal's
+    /// justification.
+    pub reason: String,
+}
+
+/// What one consolidation pass did — the shape the surface renders and
+/// the test asserts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Consolidation {
+    /// Every action, in the order the pass took them.
+    pub actions: Vec<CycleAction>,
+    /// Confirmed-by facts the pass left alone: the provenance rule,
+    /// named rather than silently skipped.
+    pub untouched: Vec<String>,
+    /// The episodic summary this pass wrote, when it wrote one.
+    pub summary: Option<String>,
+}
+
+impl Consolidation {
+    /// Whether the pass changed nothing.
+    pub fn is_empty(&self) -> bool {
+        self.actions.is_empty()
+    }
+}
+
+/// Whether `fact`'s date is more than `days` before `today_days`. An
+/// unreadable date is not aged out: the cycle cannot prove a fact is
+/// old, so it leaves it alone.
+fn aged_out(fact: &Fact, today_days: Option<i64>, days: i64) -> bool {
+    matches!(day_age(&fact.date, today_days), Some(age) if age > days)
+}
+
+/// One consolidation pass over the corpus under `root`, against the
+/// day `today` names — the seam a test injects a fixed day through, so
+/// the cycle is deterministic rather than sleep-dependent.
+///
+/// Three actions. A fact that is past its `valid-until` gets two of
+/// them, in order: **compress** folds its content into the pass's
+/// summary, then **forget** archives the expired original — the
+/// content lives on in the recallable summary, and the file leaves the
+/// working tree. A fact that is old but not expired is compressed
+/// only, and its file stays as the record of what was folded.
+///
+/// - **compress** — a working fact that is past its `valid-until` or
+///   older than [`WORKING_MAX_AGE_DAYS`] is folded into the pass's
+///   episodic summary and stamped `superseded-by` it. The file stays;
+///   the summary carries its content.
+/// - **supersede** — a durable `inferred` fact recall has never
+///   surfaced, older than [`STALE_AFTER_DAYS`], is folded into the
+///   same summary and stamped. A `confirmed-by` fact in that shape is
+///   left alone and named in [`Consolidation::untouched`] — the
+///   permission model, applied to the cycle itself.
+/// - **forget** — a fact whose `valid-until` has passed and that no
+///   summary carries is moved to [`ARCHIVE_DIR`]. Nothing is deleted.
+///
+/// Every action appends one `consolidate` calibration row.
+pub fn consolidate(
+    root: &Path,
+    today: &str,
+    stream: Option<&calib::Stream>,
+) -> Consolidation {
+    let facts = load_facts(root);
+    let today_days = parse_day(today);
+    let mut out = Consolidation::default();
+
+    let compress: Vec<Fact> = facts
+        .iter()
+        .filter(|fact| {
+            fact.tier == Tier::Working
+                && fact.superseded_by.trim().is_empty()
+                && (fact.forgotten(today) || aged_out(fact, today_days, WORKING_MAX_AGE_DAYS))
+        })
+        .cloned()
+        .collect();
+    let supersede: Vec<Fact> = facts
+        .iter()
+        .filter(|fact| {
+            fact.tier == Tier::Durable
+                && fact.basis == Basis::Inferred
+                && fact.superseded_by.trim().is_empty()
+                && !fact.forgotten(today)
+                && fact.recall_count == 0
+                && aged_out(fact, today_days, STALE_AFTER_DAYS)
+        })
+        .cloned()
+        .collect();
+    // The provenance rule, from the cycle's side: a confirmed-by fact
+    // in the stale shape is named and left exactly as it is.
+    out.untouched = facts
+        .iter()
+        .filter(|fact| {
+            fact.tier == Tier::Durable
+                && fact.basis == Basis::ConfirmedBy
+                && fact.superseded_by.trim().is_empty()
+                && !fact.forgotten(today)
+                && fact.recall_count == 0
+                && aged_out(fact, today_days, STALE_AFTER_DAYS)
+        })
+        .map(|fact| fact.name.clone())
+        .collect();
+
+    let summary = if compress.is_empty() && supersede.is_empty() {
+        None
+    } else {
+        Some(write_summary(root, today, &compress, &supersede))
+    };
+
+    for fact in &compress {
+        if let Some(summary) = &summary {
+            rewrite_field(&fact.path, "superseded-by", summary);
+        }
+        let reason = if fact.forgotten(today) {
+            format!("working memory past its valid-until {}", fact.valid_until)
+        } else {
+            format!("working memory older than {WORKING_MAX_AGE_DAYS} days")
+        };
+        record_cycle(stream, calib::ACTION_COMPRESS, &fact.name, &reason);
+        out.actions.push(CycleAction {
+            action: calib::ACTION_COMPRESS,
+            fact: fact.name.clone(),
+            reason,
+        });
+    }
+    for fact in &supersede {
+        if let Some(summary) = &summary {
+            rewrite_field(&fact.path, "superseded-by", summary);
+        }
+        let reason =
+            format!("inferred, never recalled, older than {STALE_AFTER_DAYS} days");
+        record_cycle(stream, calib::ACTION_SUPERSEDE, &fact.name, &reason);
+        out.actions.push(CycleAction {
+            action: calib::ACTION_SUPERSEDE,
+            fact: fact.name.clone(),
+            reason,
+        });
+    }
+
+    for fact in &facts {
+        let expired = matches!(day_age(&fact.valid_until, today_days), Some(age) if age > 0);
+        if !expired || !fact.superseded_by.trim().is_empty() {
+            continue;
+        }
+        if archive_fact(root, fact) {
+            let reason = format!("expired {}", fact.valid_until);
+            record_cycle(stream, calib::ACTION_FORGET, &fact.name, &reason);
+            out.actions.push(CycleAction {
+                action: calib::ACTION_FORGET,
+                fact: fact.name.clone(),
+                reason,
+            });
+        }
+    }
+
+    out.summary = summary;
+    out
+}
+
+/// Append one `consolidate` row, best-effort like every row.
+fn record_cycle(stream: Option<&calib::Stream>, action: &str, fact: &str, reason: &str) {
+    if let Some(stream) = stream {
+        stream.record(calib::Row::Consolidate(calib::ConsolidateRow {
+            ts: calib::stamp(),
+            action: action.to_string(),
+            fact: fact.to_string(),
+            reason: reason.to_string(),
+        }));
+    }
+}
+
+/// Write the pass's episodic summary: one fact naming everything the
+/// pass folded, so a compression preserves the content it removes from
+/// the working tier. The name is the day, numbered past any earlier
+/// pass the same day already wrote — `consolidation-2026-10-13`,
+/// then `-2`, so two passes never collide on one file.
+fn write_summary(root: &Path, today: &str, compressed: &[Fact], superseded: &[Fact]) -> String {
+    let folded = compressed.len() + superseded.len();
+    let mut body = format!("What the consolidation cycle folded on {today}.\n");
+    if !compressed.is_empty() {
+        body.push_str("\n## Compressed working memory\n\n");
+        for fact in compressed {
+            body.push_str(&format!("- `{}` ({}): {}\n", fact.name, fact.date, fact.description));
+        }
+    }
+    if !superseded.is_empty() {
+        body.push_str("\n## Superseded stale facts\n\n");
+        for fact in superseded {
+            body.push_str(&format!("- `{}` ({}): {}\n", fact.name, fact.date, fact.description));
+        }
+    }
+    let base = format!("consolidation-{today}");
+    let mut name = base.clone();
+    let mut serial = 2;
+    while root.join(format!("{name}.md")).exists() {
+        name = format!("{base}-{serial}");
+        serial += 1;
+    }
+    let request = Remember {
+        name: name.clone(),
+        description: sanitize_line(
+            &format!(
+                "the consolidation cycle's {today} pass \u{2014} {folded} fact{} folded",
+                if folded == 1 { "" } else { "s" }
+            ),
+            MAX_DESCRIPTION_CHARS,
+        ),
+        fact_type: "episodic".to_string(),
+        shape: Vec::new(),
+        basis: Basis::Inferred,
+        tier: Tier::Episodic,
+        valid_until: String::new(),
+        body,
+    };
+    // The name is free by construction, so the existence check is off.
+    let _ = write_document(root, &request, today, false);
+    name
+}
+
+/// Move one expired fact into [`ARCHIVE_DIR`]. A rename, not a delete:
+/// the file stays, reversible, and out of the loader's read.
+fn archive_fact(root: &Path, fact: &Fact) -> bool {
+    let archive = root.join(ARCHIVE_DIR);
+    if fs::create_dir_all(&archive).is_err() {
+        eprintln!(
+            "fleet: memories: could not create {}; `{}` was not archived",
+            archive.display(),
+            fact.name
+        );
+        return false;
+    }
+    match fs::rename(&fact.path, archive.join(format!("{}.md", fact.name))) {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!(
+                "fleet: memories: could not archive {}: {error}",
+                fact.path.display()
+            );
+            false
+        }
+    }
+}
+
+/// Spawn the scheduled consolidation thread: one pass at once, then one
+/// every [`CONSOLIDATE_INTERVAL`], for the life of the process. This is
+/// the timer the live system never had — the thread is detached, so it
+/// costs a long-lived process nothing to end, and a pass that finds
+/// nothing writes nothing.
+///
+/// The stream is the thread's own: the cycle must run even when
+/// routing never produced one, and two writer threads in one process
+/// are safe by the stream's own construction (one `O_APPEND` write per
+/// row).
+pub fn spawn_consolidator(root: PathBuf, stream: calib::Stream) {
+    std::thread::spawn(move || loop {
+        let today = calib::today();
+        let result = consolidate(&root, &today, Some(&stream));
+        if !result.is_empty() {
+            let tally = calib::ACTIONS
+                .iter()
+                .filter_map(|action| {
+                    let count =
+                        result.actions.iter().filter(|one| one.action == *action).count();
+                    (count > 0).then(|| format!("{count} {action}"))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!(
+                "fleet: memories: consolidated {} fact{} ({tally}) \u{2014} see `fleet calib`",
+                result.actions.len(),
+                if result.actions.len() == 1 { "" } else { "s" },
+            );
+        }
+        std::thread::sleep(CONSOLIDATE_INTERVAL);
+    });
+}
+
 // --- the surface -----------------------------------------------------------
 
 mod palette {
@@ -1638,8 +2793,9 @@ fn render_card(fact: &Fact) -> String {
         fact.valid_until.clone()
     };
     lines.push(format!(
-        "{DIM}\u{2502}{RESET} {DIM}shape: {shape} \u{b7} recalls: {} \u{b7} valid-until: {valid_until}{RESET}",
-        fact.recall_count
+        "{DIM}\u{2502}{RESET} {DIM}shape: {shape} \u{b7} recalls: {} \u{b7} valid-until: {valid_until}{tier}{RESET}",
+        fact.recall_count,
+        tier = tier_suffix(fact),
     ));
     lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{}{RESET}", fact.path.display()));
     let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
@@ -1755,6 +2911,113 @@ fn render_recall_card(hit: &ScoredFact) -> String {
     card.push_str(&bottom);
     card.push('\n');
     card
+}
+
+/// The card's tier suffix: named only when it is not `durable`, so a
+/// durable card reads exactly as it did before the tier field existed
+/// and a working or episodic one says so.
+fn tier_suffix(fact: &Fact) -> String {
+    if fact.tier == Tier::Durable {
+        String::new()
+    } else {
+        format!(" \u{b7} tier: {}", fact.tier.label())
+    }
+}
+
+/// One fact as a card — the `fleet remember` confirmation's body, so a
+/// write shows the fact it wrote in the house style.
+pub fn render_one(fact: &Fact) -> String {
+    render_card(fact)
+}
+
+/// Render one consolidation pass as cards: one per action that ran,
+/// with every fact it touched and the reason it carried, then the
+/// confirmed-by facts it left alone and the summary it folded into.
+/// An empty pass says so rather than rendering nothing.
+pub fn render_consolidation(result: &Consolidation) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{BOLD}fleet memories --consolidate{RESET} {DIM}\u{2014} the consolidation cycle{RESET}\n\n"
+    ));
+    if result.is_empty() {
+        out.push_str(&format!(
+            "{DIM}nothing to consolidate \u{b7} every fact is within its bounds{RESET}\n"
+        ));
+        if !result.untouched.is_empty() {
+            out.push_str(&untouched_line(&result.untouched));
+        }
+        return out;
+    }
+    for action in calib::ACTIONS {
+        let taken: Vec<&CycleAction> =
+            result.actions.iter().filter(|one| one.action == action).collect();
+        if taken.is_empty() {
+            continue;
+        }
+        let header_right = format!("{} fact{}", taken.len(), plural(taken.len()));
+        let header = format!(
+            "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{action}{RESET} {DIM}{dashes} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}",
+            dashes = dashes_for(&format!(" {action} "), &header_right),
+            right = header_right,
+        );
+        let mut lines: Vec<String> = Vec::new();
+        for one in &taken {
+            let text = format!("{} \u{2014} {}", one.fact, one.reason);
+            for chunk in wrap_detail(&text, CARD_WIDTH - 4) {
+                lines.push(format!("{DIM}\u{2502}{RESET} {TEXT}{chunk}{RESET}"));
+            }
+        }
+        let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+        let mut card = format!("{header}\n");
+        for line in lines {
+            card.push_str(&line);
+            card.push('\n');
+        }
+        card.push_str(&bottom);
+        card.push('\n');
+        out.push_str(&card);
+    }
+    if !result.untouched.is_empty() {
+        out.push_str(&untouched_line(&result.untouched));
+    }
+    if let Some(summary) = &result.summary {
+        out.push_str(&format!("{DIM}folded into: {summary}{RESET}\n"));
+    }
+    out
+}
+
+/// The one line naming the confirmed-by facts the cycle left alone:
+/// the provenance rule, visible rather than silent.
+fn untouched_line(untouched: &[String]) -> String {
+    format!(
+        "{DIM}left alone: {} \u{b7} confirmed-by, so the cycle never retires one without approval{RESET}\n",
+        untouched.join(", ")
+    )
+}
+
+/// Render the archive as cards: the facts the cycle's forget action
+/// moved out of the working tree. Nothing here is deleted — a move
+/// back restores a fact, and git remembers the move.
+pub fn render_archive(root: &Path) -> String {
+    let facts = load_facts(&root.join(ARCHIVE_DIR));
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{BOLD}fleet memories --archive{RESET} {DIM}\u{2014} {} forgotten fact{} from {}/{}/{RESET}\n\n",
+        facts.len(),
+        plural(facts.len()),
+        MEMORIES_DIR,
+        ARCHIVE_DIR,
+    ));
+    if facts.is_empty() {
+        out.push_str(&format!(
+            "{DIM}the archive is empty \u{b7} the cycle moves an expired fact here, and a move back restores it{RESET}\n"
+        ));
+        return out;
+    }
+    for fact in &facts {
+        out.push_str(&render_card(fact));
+    }
+    out
 }
 
 /// The dash run that pads a card header so its right edge aligns.
@@ -2747,6 +4010,736 @@ mod tests {
         assert!(rendered.contains("no facts yet"), "{rendered}");
         let recall = render_recall(&memory, "the railway deploy is failing");
         assert!(recall.contains("no facts to recall from"), "{recall}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // --- the write path ---
+
+    /// One working-tier fact in the writer's field order.
+    fn working_fact(name: &str, description: &str, date: &str, valid_until: &str) -> String {
+        format!(
+            "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {date}\nbasis: inferred\ntier: working\nshape: []\nrecall-count: 0\nsuperseded-by:\nvalid-until: {valid_until}\n---\n\nThe note's body.\n"
+        )
+    }
+
+    #[test]
+    fn a_written_fact_round_trips_through_the_loader() {
+        let root = scratch("write-round-trip");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Remember::parse(&serde_json::json!({
+            "name": "The-Gate-Is-Local",
+            "description": "Fleet's gate is local and its exit code is read, never piped",
+            "type": "feedback",
+            "shape": "build, change",
+            "basis": "confirmed-by",
+            "tier": "durable",
+            "body": "The full content, with a second line.",
+        }))
+        .unwrap();
+        let written = memory.remember(&request).unwrap();
+
+        // The file loads, and every field survives the round trip —
+        // the written document is the record the parser reads back.
+        let loaded = load_facts(&root);
+        assert_eq!(loaded.len(), 1);
+        let fact = &loaded[0];
+        assert_eq!(fact.name, "the-gate-is-local");
+        assert_eq!(fact.description, request.description);
+        assert_eq!(fact.fact_type, "feedback");
+        assert_eq!(fact.date, calib::today());
+        assert_eq!(fact.basis, Basis::ConfirmedBy);
+        assert_eq!(fact.tier, Tier::Durable);
+        assert_eq!(fact.shape, vec!["build".to_string(), "change".to_string()]);
+        assert_eq!(fact.recall_count, 0);
+        assert!(fact.superseded_by.is_empty());
+        assert!(fact.valid_until.is_empty());
+        assert_eq!(fact.body, "The full content, with a second line.");
+        assert_eq!(fact.path, root.join("the-gate-is-local.md"));
+        // The returned fact is the file's fact, stamp included.
+        assert_eq!(&written, fact);
+        // The document renders in the fork's field order, tier beside
+        // basis, with the unset optionals bare.
+        let text = fs::read_to_string(&fact.path).unwrap();
+        assert!(text.starts_with(
+            "---\nname: the-gate-is-local\ndescription: \"Fleet's gate is local and its exit code is read, never piped\"\ntype: feedback\ndate: "
+        ), "{text}");
+        assert!(text.contains("basis: confirmed-by\ntier: durable\n"), "{text}");
+        assert!(text.contains("shape: [build, change]\n"), "{text}");
+        assert!(text.contains("superseded-by:\nvalid-until:\n"), "{text}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_write_without_a_basis_is_a_typed_error() {
+        let root = scratch("write-basis");
+        let error = Remember::parse(&serde_json::json!({
+            "name": "no-basis",
+            "description": "a fact with no provenance",
+        }))
+        .unwrap_err();
+        assert!(
+            matches!(&error, WriteError::Basis(reason) if reason.contains("required on every write")),
+            "{error}"
+        );
+        // A basis outside the vocabulary is the same refusal, not a
+        // silent default.
+        let error = Remember::parse(&serde_json::json!({
+            "name": "bad-basis",
+            "description": "a fact with a made-up basis",
+            "basis": "guessed",
+        }))
+        .unwrap_err();
+        assert!(matches!(&error, WriteError::Basis(_)), "{error}");
+        // Nothing was written by either refusal.
+        assert!(load_facts(&root).is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_working_write_without_a_valid_until_is_a_typed_error() {
+        let root = scratch("write-valid-until");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let error = Remember::parse(&serde_json::json!({
+            "name": "no-expiry",
+            "description": "a session-scoped fact with no end",
+            "basis": "inferred",
+            "tier": "working",
+        }))
+        .unwrap_err();
+        assert!(
+            matches!(&error, WriteError::ValidUntil(reason) if reason.contains("required")),
+            "{error}"
+        );
+        // The durable tier's default is no expiry, and it says so by
+        // rendering the field bare.
+        let request = Remember::parse(&serde_json::json!({
+            "name": "durable-default",
+            "description": "a durable fact with no expiry",
+            "basis": "inferred",
+        }))
+        .unwrap();
+        assert_eq!(request.tier, Tier::Durable);
+        assert!(request.valid_until.is_empty());
+        memory.remember(&request).unwrap();
+        assert!(fs::read_to_string(root.join("durable-default.md"))
+            .unwrap()
+            .contains("valid-until:\n"));
+        // A day that is not real is refused, not written as one.
+        let error = Remember::parse(&serde_json::json!({
+            "name": "bad-day",
+            "description": "a fact with an impossible expiry",
+            "basis": "inferred",
+            "tier": "working",
+            "valid-until": "2026-02-30",
+        }))
+        .unwrap_err();
+        assert!(matches!(&error, WriteError::ValidUntil(_)), "{error}");
+        // Episodic is the cycle's tier, never a write's.
+        let error = Remember::parse(&serde_json::json!({
+            "name": "by-hand",
+            "description": "a hand-written episodic summary",
+            "basis": "inferred",
+            "tier": "episodic",
+        }))
+        .unwrap_err();
+        assert!(matches!(&error, WriteError::Tier(reason) if reason.contains("consolidation cycle")), "{error}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_writer_refuses_a_bad_name_and_a_taken_one() {
+        let root = scratch("write-names");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        // Five unusable names: a path, a parent, a dotfile, a space,
+        // and a leading hyphen — none of them may address a file
+        // outside the corpus.
+        for name in ["../escape", "..", ".hidden", "has space", "-lead"] {
+            let error = Remember::parse(&serde_json::json!({
+                "name": name,
+                "description": "a fact with an unusable name",
+                "basis": "inferred",
+            }))
+            .unwrap_err();
+            assert!(matches!(&error, WriteError::Name(_)), "{name}: {error}");
+        }
+        // A name is lowercased, not refused for its case: `UPPER`
+        // writes `upper`.
+        let upper = Remember::parse(&serde_json::json!({
+            "name": "UPPER",
+            "description": "a fact with a shouty name",
+            "basis": "inferred",
+        }))
+        .unwrap();
+        assert_eq!(upper.name, "upper");
+        // A name that is already taken is refused rather than
+        // overwritten: the modify path is `supersede`.
+        let request = Remember::parse(&serde_json::json!({
+            "name": "taken",
+            "description": "the first fact under this name",
+            "basis": "inferred",
+        }))
+        .unwrap();
+        memory.remember(&request).unwrap();
+        let again = Remember::parse(&serde_json::json!({
+            "name": "taken",
+            "description": "a second fact under the same name",
+            "basis": "confirmed-by",
+        }))
+        .unwrap();
+        let error = memory.remember(&again).unwrap_err();
+        assert!(
+            matches!(&error, WriteError::Exists(reason) if reason.contains("supersede")),
+            "{error}"
+        );
+        // The first fact is untouched.
+        let facts = load_facts(&root);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].description, "the first fact under this name");
+        // A shape outside the taxonomy is refused with the taxonomy
+        // named, and four tags are past the writer's cap.
+        let error = Remember::parse(&serde_json::json!({
+            "name": "bad-shape",
+            "description": "a fact with a typo'd shape",
+            "basis": "inferred",
+            "shape": "telemetry",
+        }))
+        .unwrap_err();
+        assert!(
+            matches!(&error, WriteError::Shape(reason) if reason.contains("rendering, state-sync")),
+            "{error}"
+        );
+        let error = Remember::parse(&serde_json::json!({
+            "name": "too-many-shapes",
+            "description": "a fact with too many tags",
+            "basis": "inferred",
+            "shape": "deploy, build, change, docs",
+        }))
+        .unwrap_err();
+        assert!(matches!(&error, WriteError::Shape(_)), "{error}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_writer_bounds_and_sanitizes_the_description() {
+        // KI-060: a description carrying newlines, tabs, an escape
+        // sequence, and two thousand characters. The writer strips the
+        // control characters — so no injected line can spoof a context
+        // block and no escape reaches the surface — and bounds the
+        // length with a marked cut.
+        let root = scratch("sanitize");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let nasty = format!(
+            "line one\nline two\twith an escape \u{1b}[31m and a bell \u{7} {}",
+            "x".repeat(2_000)
+        );
+        let request = Remember::parse(&serde_json::json!({
+            "name": "nasty",
+            "description": nasty,
+            "basis": "inferred",
+        }))
+        .unwrap();
+        let written = memory.remember(&request).unwrap();
+        assert!(!written.description.chars().any(|character| character.is_control()), "{:?}", written.description);
+        assert!(written.description.chars().count() <= MAX_DESCRIPTION_CHARS + 1, "{}", written.description.chars().count());
+        assert!(written.description.ends_with('\u{2026}'), "{}", written.description);
+        // It still round-trips: the sanitized description is what the
+        // loader reads back.
+        let loaded = load_facts(&root);
+        assert_eq!(loaded[0].description, written.description);
+        // And the assembled block — which carries no palette codes of
+        // its own — carries none of the description's either. The
+        // corpus is re-read, because a write lands on disk.
+        let reloaded = Memory::load_with(&root, Box::new(KeywordOnly));
+        let assembly = reloaded.assemble("line one", &[]);
+        let block = render_assembly(&assembly);
+        assert!(!block.is_empty(), "the fact assembled");
+        // The escape character is gone; its payload stays as visible,
+        // inert text — a stripped sequence cannot repaint a terminal.
+        assert!(!block.contains('\u{1b}'), "{block:?}");
+        assert!(block.contains("[31m"), "{block:?}");
+        // A working fact is bounded the same way.
+        let request = Remember::parse(&serde_json::json!({
+            "name": "nasty-working",
+            "description": "tab\there",
+            "basis": "inferred",
+            "tier": "working",
+            "valid-until": "2099-01-01",
+        }))
+        .unwrap();
+        assert_eq!(memory.remember(&request).unwrap().description, "tabhere");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_working_fact_past_its_valid_until_is_retired_by_the_loader() {
+        let root = scratch("working-expiry");
+        write_fact(
+            &root,
+            "expired-note",
+            &working_fact("expired-note", "a working note whose time has passed", &days_ago(3), &days_ago(1)),
+        );
+        write_fact(
+            &root,
+            "live-note",
+            &working_fact("live-note", "a working note still in its window", &days_ago(0), &days_ago(-1)),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        // The loader loads both — a retired fact is still a file — but
+        // only the live one is working memory.
+        assert_eq!(load_facts(&root).len(), 2);
+        let working = memory.working();
+        assert_eq!(fact_names(&working), vec!["live-note"]);
+        // The expired one is out of recall and out of the working tier.
+        let recalled: Vec<String> = memory
+            .recall("a working note whose time has passed")
+            .into_iter()
+            .map(|hit| hit.fact.name)
+            .collect();
+        assert!(!recalled.contains(&"expired-note".to_string()), "{recalled:?}");
+        let assembly = memory.assemble("a working note whose time has passed", &working);
+        assert!(assembly.working.iter().all(|fact| fact.name != "expired-note"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_working_tier_enters_the_assembly_and_stays_out_of_the_ranking() {
+        let root = scratch("working-tier");
+        write_fact(
+            &root,
+            "durable-one",
+            &good_fact("durable-one", "the railway deploy is failing per branch", "project", "deploy"),
+        );
+        write_fact(
+            &root,
+            "working-note",
+            &working_fact("working-note", "the railway deploy needs a re-check", &days_ago(0), &days_ago(-1)),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+
+        let working = memory.working();
+        assert_eq!(fact_names(&working), vec!["working-note"]);
+        // The ranking excludes it: a working fact enters through the
+        // working tier, so no fact enters a turn twice.
+        let ranked: Vec<String> = memory
+            .recall("the railway deploy is failing")
+            .into_iter()
+            .map(|hit| hit.fact.name)
+            .collect();
+        assert_eq!(ranked, vec!["durable-one".to_string()]);
+
+        let assembly = memory.assemble("the railway deploy is failing", &working);
+        let block = render_assembly(&assembly);
+        assert!(block.contains("Working memory (session-scoped):"), "{block}");
+        assert!(block.contains("the railway deploy needs a re-check"), "{block}");
+        // The tier renders last, after the protected block and the
+        // ranked section.
+        let ranked_at = block.find("[deploy ").expect("the ranked section renders");
+        let working_at = block.find("[working ").expect("the working tier renders");
+        assert!(ranked_at < working_at, "{block}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // --- the consolidation cycle ---
+
+    /// The cycle corpus: a working fact past its valid-until, a working
+    /// fact older than the age, a stale inferred fact, a stale
+    /// confirmed-by fact that must survive, an expired durable fact,
+    /// and a fresh one.
+    fn cycle_corpus(root: &Path) {
+        write_fact(
+            root,
+            "expired-note",
+            &working_fact("expired-note", "a working note whose time has passed", &days_ago(10), &days_ago(1)),
+        );
+        write_fact(
+            root,
+            "old-note",
+            &working_fact("old-note", "a working note nobody renewed", &days_ago(30), &days_ago(-30)),
+        );
+        write_fact(
+            root,
+            "stale-inferred",
+            &format!(
+                "---\nname: stale-inferred\ndescription: \"an inferred fact nobody ever recalled\"\ntype: project\ndate: {}\nbasis: inferred\ntier: durable\nshape: []\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe body.\n",
+                days_ago(200)
+            ),
+        );
+        write_fact(
+            root,
+            "stale-confirmed",
+            &format!(
+                "---\nname: stale-confirmed\ndescription: \"a confirmed-by fact nobody ever recalled\"\ntype: project\ndate: {}\nbasis: confirmed-by\ntier: durable\nshape: []\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe body.\n",
+                days_ago(200)
+            ),
+        );
+        write_fact(
+            root,
+            "expired-durable",
+            &format!(
+                "---\nname: expired-durable\ndescription: \"a durable fact whose time has passed\"\ntype: project\ndate: {}\nbasis: confirmed-by\ntier: durable\nshape: []\nrecall-count: 0\nsuperseded-by:\nvalid-until: {}\n---\n\nThe body.\n",
+                days_ago(60),
+                days_ago(1)
+            ),
+        );
+        write_fact(
+            root,
+            "fresh",
+            &good_fact("fresh", "a durable fact written today", "project", "deploy"),
+        );
+    }
+
+    #[test]
+    fn the_cycle_compresses_supersedes_and_forgets_with_their_rows() {
+        let root = scratch("cycle");
+        cycle_corpus(&root);
+        let stream_root = scratch("cycle-stream");
+        let stream = calib::Stream::open(&stream_root);
+
+        let result = consolidate(&root, &calib::today(), Some(&stream));
+        drop(stream);
+
+        // The summary: one episodic fact naming everything folded, and
+        // the stamp on every folded fact's file.
+        let summary = result.summary.clone().expect("the pass wrote a summary");
+        assert!(summary.starts_with("consolidation-"), "{summary}");
+        let summary_text = fs::read_to_string(root.join(format!("{summary}.md"))).unwrap();
+        assert!(summary_text.contains("tier: episodic"), "{summary_text}");
+        assert!(summary_text.contains("expired-note"), "{summary_text}");
+        assert!(summary_text.contains("old-note"), "{summary_text}");
+        assert!(summary_text.contains("stale-inferred"), "{summary_text}");
+
+        // Compress: the expired working note is folded and then
+        // archived — its content lives in the summary, the file leaves
+        // the working tree. The old-but-unexpired one is folded and
+        // stays as the record.
+        assert!(!root.join("expired-note.md").exists());
+        assert!(root.join(".archive").join("expired-note.md").exists());
+        let old = fs::read_to_string(root.join("old-note.md")).unwrap();
+        assert!(old.contains(&format!("superseded-by: {summary}")), "{old}");
+
+        // Supersede: the stale inferred fact is folded and stamped.
+        let stale = fs::read_to_string(root.join("stale-inferred.md")).unwrap();
+        assert!(stale.contains(&format!("superseded-by: {summary}")), "{stale}");
+
+        // Forget: the expired durable fact is archived, not deleted.
+        assert!(!root.join("expired-durable.md").exists());
+        assert!(root.join(".archive").join("expired-durable.md").exists());
+
+        // The fresh fact is untouched, and the confirmed-by stale fact
+        // survives — named in `untouched`, not silently skipped.
+        assert!(root.join("fresh.md").exists());
+        assert!(root.join("stale-confirmed.md").exists());
+        let confirmed = fs::read_to_string(root.join("stale-confirmed.md")).unwrap();
+        assert!(!confirmed.contains("superseded-by: consolidation"), "{confirmed}");
+        assert_eq!(result.untouched, vec!["stale-confirmed".to_string()]);
+
+        // Every action landed as a `consolidate` row with its reason.
+        let yesterday = days_ago(1);
+        let rows = calib::read_day(&stream_root, &calib::today(), 64);
+        let actions: Vec<(&str, &str, &str)> = rows
+            .iter()
+            .map(|row| (row.action.as_str(), row.fact.as_str(), row.reason.as_str()))
+            .collect();
+        assert!(
+            actions.contains(&("compress", "expired-note", &format!("working memory past its valid-until {yesterday}"))),
+            "{actions:?}"
+        );
+        assert!(
+            actions.contains(&("compress", "old-note", "working memory older than 7 days")),
+            "{actions:?}"
+        );
+        assert!(
+            actions.contains(&("supersede", "stale-inferred", "inferred, never recalled, older than 180 days")),
+            "{actions:?}"
+        );
+        assert!(
+            actions.contains(&("forget", "expired-durable", &format!("expired {yesterday}"))),
+            "{actions:?}"
+        );
+        assert_eq!(rows.len(), 5, "{actions:?}");
+
+        // The folded facts are retired from recall by their stamp.
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let recalled: Vec<String> = memory
+            .recall("an inferred fact nobody ever recalled")
+            .into_iter()
+            .map(|hit| hit.fact.name)
+            .collect();
+        assert!(!recalled.contains(&"stale-inferred".to_string()), "{recalled:?}");
+        assert!(!recalled.contains(&"expired-note".to_string()), "{recalled:?}");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&stream_root);
+    }
+
+    #[test]
+    fn a_second_pass_the_same_day_takes_a_numbered_summary() {
+        let root = scratch("cycle-twice");
+        write_fact(
+            &root,
+            "old-note",
+            &working_fact("old-note", "a working note nobody renewed", &days_ago(30), &days_ago(-30)),
+        );
+        let first = consolidate(&root, &calib::today(), None);
+        let first_summary = first.summary.clone().expect("the first pass wrote a summary");
+        // The pass stamped its fact, so a second pass finds nothing
+        // left to fold — and writes no second summary.
+        let second = consolidate(&root, &calib::today(), None);
+        assert!(second.is_empty(), "{second:?}");
+        assert_eq!(first_summary, format!("consolidation-{}", calib::today()));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_empty_corpus_consolidates_to_nothing() {
+        let root = scratch("cycle-empty");
+        let result = consolidate(&root, &calib::today(), None);
+        assert!(result.is_empty());
+        assert!(result.summary.is_none());
+        assert!(!root.join(".archive").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // --- provenance as the permission model ---
+
+    /// A corpus with one confirmed-by fact and one inferred fact, both
+    /// live.
+    fn provenance_corpus(root: &Path) {
+        write_fact(
+            root,
+            "load-bearing",
+            &good_fact("load-bearing", "the owner's standing rule about the gate", "feedback", ""),
+        );
+        write_fact(
+            root,
+            "a-guess",
+            &format!(
+                "---\nname: a-guess\ndescription: \"an inferred guess about the deploy\"\ntype: project\ndate: {}\nbasis: inferred\ntier: durable\nshape: [deploy]\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe body.\n",
+                calib::today()
+            ),
+        );
+    }
+
+    #[test]
+    fn a_confirmed_by_supersede_is_refused_without_approval() {
+        let root = scratch("provenance-refused");
+        provenance_corpus(&root);
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "load-bearing",
+            "justification": "the owner changed his mind",
+            "replacement": "load-bearing-v2",
+            "description": "the owner's new standing rule about the gate",
+        }))
+        .unwrap();
+
+        let error = memory.supersede(&request, false, None).unwrap_err();
+        assert!(
+            matches!(&error, WriteError::NeedsApproval(reason) if reason.contains("confirmed-by") && reason.contains("approval")),
+            "{error}"
+        );
+        // Nothing moved: no replacement, no stamp, the file is intact.
+        assert!(!root.join("load-bearing-v2.md").exists());
+        let text = fs::read_to_string(root.join("load-bearing.md")).unwrap();
+        assert!(!text.contains("superseded-by: load-bearing-v2"), "{text}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_confirmed_by_supersede_lands_with_approval_and_an_inferred_one_on_its_justification() {
+        let root = scratch("provenance-allowed");
+        provenance_corpus(&root);
+        let stream_root = scratch("provenance-stream");
+        let stream = calib::Stream::open(&stream_root);
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+
+        // Confirmed-by, with approval: the modify path writes the
+        // replacement and stamps the old fact into it.
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "load-bearing",
+            "justification": "the owner restated the rule on 2026-10-13",
+            "replacement": "load-bearing-v2",
+            "description": "the owner's new standing rule about the gate",
+        }))
+        .unwrap();
+        let outcome = memory.supersede(&request, true, Some(&stream)).unwrap();
+        assert_eq!(
+            outcome,
+            Superseded::By {
+                from: "load-bearing".to_string(),
+                into: "load-bearing-v2".to_string()
+            }
+        );
+        let replacement = fs::read_to_string(root.join("load-bearing-v2.md")).unwrap();
+        // The justification is recorded in the new fact's body, and the
+        // replacement is inferred — a supersession is a proposal.
+        assert!(replacement.contains("Supersedes `load-bearing` \u{2014} the owner restated the rule on 2026-10-13"), "{replacement}");
+        assert!(replacement.contains("basis: inferred"), "{replacement}");
+        let old = fs::read_to_string(root.join("load-bearing.md")).unwrap();
+        assert!(old.contains("superseded-by: load-bearing-v2"), "{old}");
+        // The superseded fact left the protected tier and the
+        // replacement took its place — no fact enters a turn twice.
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let protected: Vec<String> =
+            memory.protected().into_iter().map(|hit| hit.fact.name).collect();
+        assert_eq!(protected, vec!["load-bearing-v2".to_string()]);
+
+        // Inferred, with its justification: no approval needed, and the
+        // justification rides the row and the replacement's body.
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "a-guess",
+            "justification": "the deploy moved to per-branch builds",
+            "replacement": "a-better-guess",
+            "description": "an inferred fact about the per-branch deploy",
+        }))
+        .unwrap();
+        memory.supersede(&request, false, Some(&stream)).unwrap();
+        assert!(root.join("a-better-guess.md").exists());
+
+        // An inferred supersession without its justification is a typed
+        // error — the justification is the permission.
+        let error = Supersede::parse(&serde_json::json!({
+            "name": "a-guess",
+            "justification": "   ",
+        }))
+        .unwrap_err();
+        assert!(matches!(&error, WriteError::Justification(_)), "{error}");
+
+        drop(stream);
+        let rows = calib::read_day(&stream_root, &calib::today(), 64);
+        let supersede_rows: Vec<&calib::ReadRow> =
+            rows.iter().filter(|row| row.action == calib::ACTION_SUPERSEDE).collect();
+        assert_eq!(supersede_rows.len(), 2, "{rows:?}");
+        assert_eq!(supersede_rows[0].fact, "load-bearing");
+        assert_eq!(
+            supersede_rows[0].reason,
+            "the owner restated the rule on 2026-10-13"
+        );
+        assert_eq!(supersede_rows[1].fact, "a-guess");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&stream_root);
+    }
+
+    #[test]
+    fn the_supersede_forget_path_expires_the_fact_and_notes_why() {
+        let root = scratch("provenance-forget");
+        provenance_corpus(&root);
+        let stream_root = scratch("forget-stream");
+        let stream = calib::Stream::open(&stream_root);
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "a-guess",
+            "justification": "the guess turned out to be wrong",
+        }))
+        .unwrap();
+        let outcome = memory.supersede(&request, false, Some(&stream)).unwrap();
+        assert_eq!(outcome, Superseded::Forgotten { fact: "a-guess".to_string() });
+        drop(stream);
+
+        // The file stays — nothing is deleted — with its validity ended
+        // the day before the retirement and the reason in its body.
+        let text = fs::read_to_string(root.join("a-guess.md")).unwrap();
+        let yesterday = days_ago(1);
+        assert!(text.contains(&format!("valid-until: {yesterday}")), "{text}");
+        assert!(text.contains(&format!("Retired {}: the guess turned out to be wrong", calib::today())), "{text}");
+        // The loader retires it now.
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        assert!(memory.recall("an inferred guess about the deploy").is_empty());
+        // And the row names the forget.
+        let rows = calib::read_day(&stream_root, &calib::today(), 64);
+        let row = rows.last().expect("the forget row");
+        assert_eq!(row.action, calib::ACTION_FORGET);
+        assert_eq!(row.fact, "a-guess");
+        assert_eq!(row.reason, "the guess turned out to be wrong");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&stream_root);
+    }
+
+    #[test]
+    fn a_supersede_of_an_unknown_or_retired_fact_is_a_typed_error() {
+        let root = scratch("provenance-unknown");
+        provenance_corpus(&root);
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "no-such-fact",
+            "justification": "it was never there",
+        }))
+        .unwrap();
+        let error = memory.supersede(&request, true, None).unwrap_err();
+        assert!(matches!(&error, WriteError::UnknownFact(_)), "{error}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // --- the surfaces ---
+
+    #[test]
+    fn the_consolidation_surface_is_cards_and_names_an_empty_pass() {
+        let rendered = render_consolidation(&Consolidation::default());
+        assert!(rendered.contains("fleet memories --consolidate"), "{rendered}");
+        assert!(rendered.contains("nothing to consolidate"), "{rendered}");
+
+        let result = Consolidation {
+            actions: vec![
+                CycleAction {
+                    action: calib::ACTION_COMPRESS,
+                    fact: "old-note".to_string(),
+                    reason: "working memory older than 7 days".to_string(),
+                },
+                CycleAction {
+                    action: calib::ACTION_FORGET,
+                    fact: "expired-durable".to_string(),
+                    reason: "expired 2026-10-12".to_string(),
+                },
+            ],
+            untouched: vec!["stale-confirmed".to_string()],
+            summary: Some("consolidation-2026-10-13".to_string()),
+        };
+        let rendered = render_consolidation(&result);
+        assert_eq!(rendered.matches('\u{250c}').count(), 2, "{rendered}");
+        assert!(rendered.contains("old-note \u{2014} working memory older than 7 days"), "{rendered}");
+        assert!(rendered.contains("expired-durable \u{2014} expired 2026-10-12"), "{rendered}");
+        assert!(rendered.contains("left alone: stale-confirmed"), "{rendered}");
+        assert!(rendered.contains("folded into: consolidation-2026-10-13"), "{rendered}");
+    }
+
+    #[test]
+    fn the_archive_surface_lists_what_the_cycle_forgot() {
+        let root = scratch("archive-surface");
+        let empty = render_archive(&root);
+        assert!(empty.contains("the archive is empty"), "{empty}");
+        cycle_corpus(&root);
+        consolidate(&root, &calib::today(), None);
+        let rendered = render_archive(&root);
+        assert!(rendered.contains("fleet memories --archive"), "{rendered}");
+        assert!(rendered.contains("2 forgotten facts"), "{rendered}");
+        assert!(rendered.contains("expired-note"), "{rendered}");
+        assert!(rendered.contains("expired-durable"), "{rendered}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_card_names_a_non_durable_tier_and_leaves_a_durable_one_alone() {
+        let root = scratch("card-tier");
+        write_fact(
+            &root,
+            "durable-one",
+            &good_fact("durable-one", "a durable fact", "project", "deploy"),
+        );
+        write_fact(
+            &root,
+            "working-one",
+            &working_fact("working-one", "a working fact", &days_ago(0), &days_ago(-1)),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let rendered = render(&memory, None);
+        // The durable card reads exactly as it did before the tier
+        // field existed.
+        assert!(
+            rendered.contains("shape: deploy \u{b7} recalls: 0 \u{b7} valid-until: \u{2014}"),
+            "{rendered}"
+        );
+        // The working one names its tier.
+        assert!(rendered.contains("tier: working"), "{rendered}");
         let _ = fs::remove_dir_all(&root);
     }
 }

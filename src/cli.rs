@@ -22,8 +22,12 @@ pub enum Command {
     /// slice-12 gate, and the usage-scan curation.
     Skills(SkillsOptions),
     /// The memories surface: the durable facts as cards, the ranked
-    /// assembly for one instruction, or the cards filtered by shape.
+    /// assembly for one instruction, the cards filtered by shape, the
+    /// consolidation cycle, or the archive of forgotten facts.
     Memories(MemoriesOptions),
+    /// Write one fact into the memory corpus: the CLI form of the
+    /// `remember` tool, structured flags over the same field names.
+    Remember(RememberOptions),
     /// Environment and connectivity checks.
     Doctor,
     /// Print the version.
@@ -75,8 +79,10 @@ pub struct SkillsOptions {
 }
 
 /// Options for `fleet memories`. The bare command cards the live facts;
-/// each flag narrows to one of the slice's other two surfaces, and the
-/// two do not combine — one prints an assembly, the other filters cards.
+/// each flag narrows to one of the slice's other surfaces. `--recall`
+/// and `--shape` do not combine — one prints an assembly, the other
+/// filters cards — and `--archive` is its own surface over the facts
+/// the cycle has forgotten.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MemoriesOptions {
     /// Print the ranked assembly for this instruction — what would
@@ -84,6 +90,32 @@ pub struct MemoriesOptions {
     pub recall: Option<String>,
     /// Filter the cards to facts carrying this structure shape.
     pub shape: Option<String>,
+    /// Run the consolidation cycle first, then print the cards: one
+    /// pass on demand, with what it did named.
+    pub consolidate: bool,
+    /// List the facts the cycle's forget action archived, instead of
+    /// the live corpus.
+    pub archive: bool,
+}
+
+/// Options for `fleet remember`. The flags are the frontmatter's own
+/// field names, so the CLI and the model-visible tool validate through
+/// one parser — the CLI is the same write, typed by hand.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RememberOptions {
+    pub name: String,
+    pub description: String,
+    /// Optional; an empty value means the writer's default.
+    pub fact_type: String,
+    /// Optional; comma-separated structure shapes.
+    pub shape: String,
+    /// Required: `confirmed-by` or `inferred`.
+    pub basis: String,
+    /// Optional; an empty value means `durable`.
+    pub tier: String,
+    /// Optional for a durable fact, required for a working one.
+    pub valid_until: String,
+    pub body: String,
 }
 
 /// Turn cap when `--max-turns` is absent.
@@ -104,10 +136,18 @@ usage:
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
                                 proposals, --show prints one draft
-  fleet memories [--recall \"<instruction>\"] [--shape <name>]
+  fleet memories [--recall \"<instruction>\"] [--shape <name>] [--consolidate] [--archive]
                                 the durable facts as cards; --recall prints the
                                 ranked assembly for one instruction, --shape
-                                filters the cards by structure shape
+                                filters the cards by structure shape,
+                                --consolidate runs the consolidation cycle,
+                                --archive lists what the cycle forgot
+  fleet remember --name <name> --description \"<fact>\" --basis confirmed-by|inferred
+                                [--type <kind>] [--shape a,b] [--tier working|durable]
+                                [--valid-until <date>] [--body \"<text>\"]
+                                write one fact into the memory corpus — the CLI
+                                form of the remember tool; basis is required, and
+                                valid-until is required for a working-tier fact
   fleet doctor                   check credentials, home, API, shell
   fleet version                  print the version
   fleet help                     print this help
@@ -147,6 +187,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "calib" => parse_calib(rest),
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
+        "remember" => parse_remember(rest),
         "doctor" => no_flags(rest, Command::Doctor),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -275,12 +316,17 @@ fn parse_skills(args: &[String]) -> Result<Command, String> {
 /// `fleet memories`: the bare command cards the live facts;
 /// `--recall "<instruction>"` prints the ranked assembly for one
 /// instruction (a dry run — printing records no hit); `--shape <name>`
-/// filters the cards by structure shape. The two flags do not combine:
-/// one prints an assembly, the other filters cards, and a caller who
-/// wants both is asking two questions.
+/// filters the cards by structure shape; `--consolidate` runs the
+/// consolidation cycle and then cards the corpus; `--archive` lists
+/// what the cycle forgot. `--recall` and `--shape` do not combine: one
+/// prints an assembly, the other filters cards, and a caller who
+/// wants both is asking two questions. `--archive` is its own surface
+/// and combines with nothing.
 fn parse_memories(args: &[String]) -> Result<Command, String> {
     let mut recall: Option<String> = None;
     let mut shape: Option<String> = None;
+    let mut consolidate = false;
+    let mut archive = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -294,6 +340,8 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
                 recall = Some(value);
             }
             "--shape" => shape = Some(take_value(args, &mut index, arg)?),
+            "--consolidate" => consolidate = true,
+            "--archive" => archive = true,
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown memories option `{arg}`"));
             }
@@ -307,7 +355,70 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
                 .to_string(),
         );
     }
-    Ok(Command::Memories(MemoriesOptions { recall, shape }))
+    if archive && (recall.is_some() || shape.is_some() || consolidate) {
+        return Err(
+            "--archive lists what the cycle forgot; it is its own surface and combines with nothing"
+                .to_string(),
+        );
+    }
+    if consolidate && recall.is_some() {
+        return Err(
+            "--consolidate runs the cycle and then cards the corpus; --recall prints an assembly"
+                .to_string(),
+        );
+    }
+    Ok(Command::Memories(MemoriesOptions { recall, shape, consolidate, archive }))
+}
+
+/// `fleet remember`: the CLI form of the write tool. `--name`,
+/// `--description`, and `--basis` are required flags — a usage error
+/// names the missing one — and every value is validated by the same
+/// parser the model-visible tool uses, so the two surfaces cannot
+/// drift.
+fn parse_remember(args: &[String]) -> Result<Command, String> {
+    let mut name: Option<String> = None;
+    let mut description: Option<String> = None;
+    let mut fact_type: Option<String> = None;
+    let mut shape: Option<String> = None;
+    let mut basis: Option<String> = None;
+    let mut tier: Option<String> = None;
+    let mut valid_until: Option<String> = None;
+    let mut body: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--name" => name = Some(take_value(args, &mut index, arg)?),
+            "--description" => description = Some(take_value(args, &mut index, arg)?),
+            "--type" => fact_type = Some(take_value(args, &mut index, arg)?),
+            "--shape" => shape = Some(take_value(args, &mut index, arg)?),
+            "--basis" => basis = Some(take_value(args, &mut index, arg)?),
+            "--tier" => tier = Some(take_value(args, &mut index, arg)?),
+            "--valid-until" => valid_until = Some(take_value(args, &mut index, arg)?),
+            "--body" => body = Some(take_value(args, &mut index, arg)?),
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown remember option `{arg}`"));
+            }
+            _ => return Err(format!("`{arg}` takes no value here; see `fleet help`")),
+        }
+        index += 1;
+    }
+    let (Some(name), Some(description), Some(basis)) = (name, description, basis) else {
+        return Err(
+            "remember needs --name, --description, and --basis (see `fleet help`)".to_string(),
+        );
+    };
+    Ok(Command::Remember(RememberOptions {
+        name,
+        description,
+        fact_type: fact_type.unwrap_or_default(),
+        shape: shape.unwrap_or_default(),
+        basis,
+        tier: tier.unwrap_or_default(),
+        valid_until: valid_until.unwrap_or_default(),
+        body: body.unwrap_or_default(),
+    }))
 }
 
 /// A real calendar check on an already-`YYYY-MM-DD`-shaped string: the
@@ -315,7 +426,7 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
 /// years included). Without it, `--day 2026-13-45` reads as "Fleet did
 /// not run" rather than "that day does not exist" — the shape is numeric,
 /// but the day is not real.
-fn valid_calendar_day(day: &str) -> bool {
+pub(crate) fn valid_calendar_day(day: &str) -> bool {
     let year: i32 = day.get(0..4).and_then(|part| part.parse().ok()).unwrap_or(0);
     let month: u32 = day.get(5..7).and_then(|part| part.parse().ok()).unwrap_or(0);
     let day_of_month: u32 = day.get(8..10).and_then(|part| part.parse().ok()).unwrap_or(0);
@@ -491,18 +602,59 @@ mod tests {
     fn memories_parses_its_flags_and_rejects_junk() {
         assert_eq!(
             parse(&args(&["memories"])).unwrap(),
-            Command::Memories(MemoriesOptions { recall: None, shape: None })
+            Command::Memories(MemoriesOptions {
+                recall: None,
+                shape: None,
+                consolidate: false,
+                archive: false
+            })
         );
         assert_eq!(
             parse(&args(&["memories", "--recall", "the deploy is failing"])).unwrap(),
             Command::Memories(MemoriesOptions {
                 recall: Some("the deploy is failing".to_string()),
-                shape: None
+                shape: None,
+                consolidate: false,
+                archive: false
             })
         );
         assert_eq!(
             parse(&args(&["memories", "--shape", "deploy"])).unwrap(),
-            Command::Memories(MemoriesOptions { recall: None, shape: Some("deploy".to_string()) })
+            Command::Memories(MemoriesOptions {
+                recall: None,
+                shape: Some("deploy".to_string()),
+                consolidate: false,
+                archive: false
+            })
+        );
+        // The cycle and the archive are the part-2 surfaces: the cycle
+        // composes with the shape filter, the archive with nothing.
+        assert_eq!(
+            parse(&args(&["memories", "--consolidate"])).unwrap(),
+            Command::Memories(MemoriesOptions {
+                recall: None,
+                shape: None,
+                consolidate: true,
+                archive: false
+            })
+        );
+        assert_eq!(
+            parse(&args(&["memories", "--consolidate", "--shape", "deploy"])).unwrap(),
+            Command::Memories(MemoriesOptions {
+                recall: None,
+                shape: Some("deploy".to_string()),
+                consolidate: true,
+                archive: false
+            })
+        );
+        assert_eq!(
+            parse(&args(&["memories", "--archive"])).unwrap(),
+            Command::Memories(MemoriesOptions {
+                recall: None,
+                shape: None,
+                consolidate: false,
+                archive: true
+            })
         );
         // The two flags answer two different questions and do not
         // combine.
@@ -513,7 +665,69 @@ mod tests {
         assert!(parse(&args(&["memories", "--recall"])).is_err());
         assert!(parse(&args(&["memories", "--json"])).is_err());
         assert!(parse(&args(&["memories", "extra"])).is_err());
+        // The archive is its own surface; the cycle does not print an
+        // assembly.
+        assert!(parse(&args(&["memories", "--archive", "--recall", "x"])).is_err());
+        assert!(parse(&args(&["memories", "--archive", "--consolidate"])).is_err());
+        assert!(parse(&args(&["memories", "--consolidate", "--recall", "x"])).is_err());
         assert_eq!(parse(&args(&["memories", "--help"])).unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn remember_parses_its_structured_flags() {
+        let command = parse(&args(&[
+            "remember",
+            "--name", "the-gate-is-local",
+            "--description", "the gate is local and its exit code is read",
+            "--basis", "confirmed-by",
+        ]))
+        .unwrap();
+        assert_eq!(
+            command,
+            Command::Remember(RememberOptions {
+                name: "the-gate-is-local".to_string(),
+                description: "the gate is local and its exit code is read".to_string(),
+                fact_type: String::new(),
+                shape: String::new(),
+                basis: "confirmed-by".to_string(),
+                tier: String::new(),
+                valid_until: String::new(),
+                body: String::new(),
+            })
+        );
+        // Every flag parses in any position.
+        let command = parse(&args(&[
+            "remember",
+            "--tier", "working",
+            "--description", "a session-scoped note",
+            "--name", "a-note",
+            "--valid-until", "2026-10-20",
+            "--basis", "inferred",
+            "--type", "project",
+            "--shape", "deploy, build",
+            "--body", "The full content.",
+        ]))
+        .unwrap();
+        let Command::Remember(options) = command else { panic!("not a remember") };
+        assert_eq!(options.name, "a-note");
+        assert_eq!(options.basis, "inferred");
+        assert_eq!(options.tier, "working");
+        assert_eq!(options.valid_until, "2026-10-20");
+        assert_eq!(options.shape, "deploy, build");
+        assert_eq!(options.body, "The full content.");
+        // The three required flags are named when missing.
+        assert!(parse(&args(&["remember"])).is_err());
+        assert!(parse(&args(&["remember", "--name", "x"])).is_err());
+        assert!(parse(&args(&["remember", "--name", "x", "--description", "d"])).is_err());
+        let error = parse(&args(&["remember", "--name", "x", "--description", "d"])).unwrap_err();
+        assert!(error.contains("--basis"), "{error}");
+        assert!(parse(&args(&["remember", "--name"])).is_err());
+        assert!(parse(&args(&["remember", "--name", "x", "--description", "d", "--basis", "b", "--json"])).is_err());
+        assert_eq!(
+            parse(&args(&["remember", "--name", "x", "--description", "d", "--basis", "b", "--help"]))
+                .unwrap(),
+            Command::Help
+        );
     }
 
     #[test]

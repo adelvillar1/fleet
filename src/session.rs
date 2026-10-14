@@ -65,6 +65,23 @@ pub enum Record {
     Skills {
         skills: Vec<crate::skills::SkillRef>,
     },
+    /// The memory one run's turn context carried, recorded once at run
+    /// start. The assembled block is dynamic two ways over — the
+    /// corpus's files change between runs and the block depends on the
+    /// instruction — so this record is what makes the system prompt the
+    /// model saw reconstructable from the log (hard rule 5), the
+    /// `skills` record's precedent applied to the memory seam.
+    /// Bookkeeping, like `lane_tools` and `skills`: it replays to no
+    /// message, and the block itself is re-renderable from the corpus
+    /// and these names.
+    Memory {
+        /// The structure shape the instruction routed under, empty
+        /// when unclassified — the documented surface-alone fallback.
+        shape: String,
+        /// Every fact name the block carried, in block order: the
+        /// protected tier, then ranked recall, then working memory.
+        facts: Vec<String>,
+    },
     /// An orderly stop; a log without it was interrupted.
     End {
         stop_reason: String,
@@ -210,6 +227,9 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
 /// are dynamic and only the log can reconstruct them. `skills` is the
 /// same shape one seam over: the name+description list the system prompt
 /// carried, recorded because the files can change between runs.
+/// `memory` is the third: the shape and fact names the assembled block
+/// carried, recorded because the block is dynamic and only the log can
+/// reconstruct the prompt the model saw.
 pub fn messages(records: &[Record]) -> Vec<Message> {
     records
         .iter()
@@ -227,7 +247,8 @@ pub fn messages(records: &[Record]) -> Vec<Message> {
             Record::Start { .. }
             | Record::End { .. }
             | Record::LaneTools { .. }
-            | Record::Skills { .. } => None,
+            | Record::Skills { .. }
+            | Record::Memory { .. } => None,
         })
         .collect()
 }
@@ -269,7 +290,7 @@ fn civil_utc(at: SystemTime) -> io::Result<(i64, u32, u32, u32, u32, u32)> {
 
 /// Days since 1970-01-01 to `(year, month, day)`; Howard Hinnant's civil
 /// calendar algorithm, valid over the full range that matters here.
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let shifted = days + 719_468;
     let era = if shifted >= 0 { shifted } else { shifted - 146_096 } / 146_097;
     let day_of_era = (shifted - era * 146_097) as u64;
@@ -481,6 +502,74 @@ mod tests {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(20_454), (2026, 1, 1));
         assert_eq!(civil_from_days(20_685), (2026, 8, 20));
+    }
+
+    /// One `memory` record, as the agent writes it when a run's
+    /// assembly produced a block: the shape the instruction routed
+    /// under and the fact names the block carried, in block order.
+    fn memory_record() -> Record {
+        Record::Memory {
+            shape: "deploy".to_string(),
+            facts: vec![
+                "identity".to_string(),
+                "fleet-the-gate-is-local".to_string(),
+                "working-note".to_string(),
+            ],
+        }
+    }
+
+    #[test]
+    fn a_memory_record_replays_as_bookkeeping_not_conversation() {
+        // The assembled block is dynamic, so the record is what keeps
+        // the prompt reconstructable — and it must not become a
+        // message: it describes the system prompt, not anything the
+        // model said.
+        let records = vec![
+            Record::Start { v: 1, model: "m".into(), created: "c".into() },
+            memory_record(),
+            Record::User { content: "the deploy is failing".into() },
+            Record::Assistant { content: Some("checking".into()), tool_calls: Vec::new() },
+            Record::End { stop_reason: "completed".into(), turns: 1 },
+        ];
+        let messages = messages(&records);
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[1].role, Role::Assistant);
+    }
+
+    #[test]
+    fn a_memory_line_round_trips_through_the_log_file() {
+        // The record's own line, written the way the log writes it and
+        // read back by a reader that only knows the vocabulary: the
+        // tag is `memory`, and the shape and every fact name survive.
+        let home = temp_home("memory-record");
+        let mut session = Session::create(&home, "m").unwrap();
+        session.record(&memory_record()).unwrap();
+        let line = std::fs::read_to_string(session.path()).unwrap();
+        let recorded = line.lines().nth(1).expect("the memory line");
+        assert!(recorded.starts_with("{\"type\":\"memory\""), "{recorded}");
+        assert!(recorded.contains("\"shape\":\"deploy\""), "{recorded}");
+        assert!(recorded.contains("\"identity\""), "{recorded}");
+        assert!(recorded.contains("\"working-note\""), "{recorded}");
+
+        let records = replay(&session.path()).unwrap();
+        match &records[1] {
+            Record::Memory { shape, facts } => {
+                assert_eq!(shape, "deploy");
+                assert_eq!(
+                    facts,
+                    &vec![
+                        "identity".to_string(),
+                        "fleet-the-gate-is-local".to_string(),
+                        "working-note".to_string(),
+                    ]
+                );
+            }
+            other => panic!("expected a memory record, got {other:?}"),
+        }
+        // And the log still lists as a readable session.
+        assert_eq!(list(&home).unwrap().len(), 1);
+        fs::remove_dir_all(&home).ok();
     }
 
     #[test]

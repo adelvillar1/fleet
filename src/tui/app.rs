@@ -144,6 +144,12 @@ pub struct Status {
     /// reports one.
     pub provider: Option<String>,
     pub route_how: Option<String>,
+    /// What the last run's assembled memory carried: the shape the
+    /// instruction routed under (empty when unclassified) and how many
+    /// facts entered the turn's context. `None` until a run assembles
+    /// something, and reset when a resumed log is seeded — it describes
+    /// the conversation on screen.
+    pub memory: Option<(String, usize)>,
 }
 
 /// What the agent thread reports beside the `UiEvent` stream: exact token
@@ -217,6 +223,7 @@ impl App {
                 working: false,
                 provider: None,
                 route_how: None,
+                memory: None,
             },
             error: None,
             scrolled_back: 0,
@@ -387,6 +394,12 @@ impl App {
                 self.status.provider = Some(provider);
                 self.status.route_how = Some(how);
             }
+            UiEvent::Memory { shape, facts } => {
+                // What the run's assembled memory carried: the status bar
+                // shows the shape and the fact count, the live half of the
+                // `memory` record the log carries.
+                self.status.memory = Some((shape, facts));
+            }
             UiEvent::Finished { .. } => {
                 self.flush_streaming();
                 self.status.working = false;
@@ -463,6 +476,10 @@ impl App {
         // streamed through here, so the count restarts at zero.
         self.status.prompt_tokens = 0;
         self.status.completion_tokens = 0;
+        // The memory fact belongs to the view being replaced too: it
+        // describes the last run this window assembled, and a resumed
+        // log's earlier runs assembled theirs elsewhere.
+        self.status.memory = None;
         self.clamp_cursor();
     }
 
@@ -665,6 +682,11 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // seeded — there is deliberately no separate skills surface in
         // the TUI this slice.
         Record::Skills { .. } => None,
+        // The `memory` record is the same shape one seam over: the
+        // shape and fact names the assembled block carried, recorded
+        // because the prompt is dynamic. The run's memory line lives in
+        // the status bar, not in the conversation.
+        Record::Memory { .. } => None,
         Record::Start { .. } | Record::End { .. } => None,
     }
 }
@@ -1052,6 +1074,23 @@ mod tests {
         app.apply_ui_event(UiEvent::Failed("402 Insufficient Balance".to_string()));
         assert!(!app.status.working);
         assert_eq!(app.error.as_deref(), Some("402 Insufficient Balance"));
+    }
+
+    #[test]
+    fn the_status_bar_carries_what_the_last_run_assembled() {
+        let mut app = app();
+        // Absent until a run assembles something.
+        assert_eq!(app.status.memory, None);
+        app.apply_ui_event(UiEvent::Memory { shape: "deploy".to_string(), facts: 3 });
+        assert_eq!(app.status.memory, Some(("deploy".to_string(), 3)));
+        // An unclassified assembly says so with an empty shape.
+        app.apply_ui_event(UiEvent::Memory { shape: String::new(), facts: 1 });
+        assert_eq!(app.status.memory, Some((String::new(), 1)));
+        // Seeding a resumed log clears it: the fact describes the
+        // conversation on screen, and a resumed log's earlier runs
+        // assembled theirs elsewhere.
+        app.seed(&[Record::User { content: "old task".to_string() }]);
+        assert_eq!(app.status.memory, None);
     }
 
     #[test]

@@ -27,11 +27,25 @@ pub const MAX_DIR_ENTRIES: usize = 1_000;
 pub const MCP_NAMESPACE: &str = "mcp__";
 
 /// The model-visible name of the progressive-disclosure tool a run
-/// declares when it carries skills: `use_skill` fetches one skill's body
-/// on demand. It lives beside the lane namespace because it is tool-set
-/// vocabulary, but its semantics belong to `crate::skills` — the
-/// declaration is here so every tool name has one home.
+/// declares when it carries skills: `use_skill` fetches one skill's
+/// body on demand. It lives beside the lane namespace because it is
+/// tool-set vocabulary, but its semantics belong to `crate::skills` —
+/// the declaration is here so every tool name has one home.
 pub const USE_SKILL_TOOL: &str = "use_skill";
+
+/// The model-visible name of the memory write tool a run declares when
+/// it carries a corpus: `remember` appends one fact file in the
+/// frontmatter shape the loader reads back. It lives beside
+/// `use_skill` for the same reason — tool-set vocabulary whose
+/// semantics belong to `crate::memory`, with the name kept here so
+/// every tool has one home.
+pub const REMEMBER_TOOL: &str = "remember";
+
+/// The model-visible name of the memory modify/forget tool a run
+/// declares when it carries a corpus. A supersession retires a fact —
+/// folding it into a replacement, or expiring it — and records the
+/// justification that made it allowed.
+pub const SUPERSEDE_TOOL: &str = "supersede";
 
 /// The request declaration for `use_skill`. The skills themselves ride
 /// the system prompt as a name+description list; this declares the one
@@ -45,6 +59,107 @@ pub fn use_skill_spec() -> ToolSpec {
             "type": "object",
             "properties": { "name": { "type": "string" } },
             "required": ["name"],
+        }),
+    )
+}
+
+/// The request declaration for `remember`: the `brain_remember` shape,
+/// mechanism over prose. `basis` is required on every write and
+/// `valid-until` on every working-tier one, and the description says
+/// so, because those two rules are what make the corpus's provenance
+/// and lifecycle mean anything.
+pub fn remember_spec() -> ToolSpec {
+    ToolSpec::function(
+        REMEMBER_TOOL,
+        "Write one fact into the memory corpus. A fact is one file the harness reads back on later turns, so write what a future session needs: the fact as one sentence (description), what kind it is (type), its provenance (basis), and its full content (body). basis is required on every write: confirmed-by when the user stated or verified the fact, inferred when this session merely produced it. tier is working (session-scoped; valid-until is required and the consolidation cycle compresses it) or durable (the default; no expiry). shape takes comma-separated structure tags from rendering, state-sync, deploy, build, change, deps, docs.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The fact's name: lowercase letters, digits, and hyphens. It is the file name and the key every surface uses, and it must not already exist.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "The fact as one sentence: what an assembled turn carries.",
+                },
+                "type": {
+                    "type": "string",
+                    "description": "Free-form kind; user and feedback are the protected tier the budget never evicts. Defaults to project.",
+                },
+                "shape": {
+                    "type": "string",
+                    "description": "Comma-separated structure shapes from rendering, state-sync, deploy, build, change, deps, docs (at most three).",
+                },
+                "basis": {
+                    "type": "string",
+                    "enum": ["confirmed-by", "inferred"],
+                    "description": "Required. confirmed-by when the user stated or verified the fact; inferred when this session merely produced it.",
+                },
+                "tier": {
+                    "type": "string",
+                    "enum": ["working", "durable"],
+                    "description": "Defaults to durable. working is session-scoped and requires valid-until.",
+                },
+                "valid-until": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD, the day the fact stops being true. Required for the working tier; a durable fact carries none.",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "The fact's full content.",
+                },
+            },
+            "required": ["name", "description", "basis"],
+        }),
+    )
+}
+
+/// The request declaration for `supersede`: the modify/forget path,
+/// with the justification that is its whole provenance. The
+/// description names the permission model, because the model is the
+/// caller most likely to meet it.
+pub fn supersede_spec() -> ToolSpec {
+    ToolSpec::function(
+        SUPERSEDE_TOOL,
+        "Retire a fact from memory. justification is required and is recorded in the calibration row and the replacement's body. With replacement, the modify path: a new fact is written (description is required) and the old one is folded into it, staying on disk and out of recall. Without replacement, the forget path: the fact is expired with the retirement noted in its body, and the cycle archives its file. A confirmed-by fact cannot be modified or forgotten without the user's approval, which the harness asks for; an inferred one is supersedable on your justification.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The fact being retired.",
+                },
+                "justification": {
+                    "type": "string",
+                    "description": "Required. Why the fact is being retired.",
+                },
+                "replacement": {
+                    "type": "string",
+                    "description": "The new fact's name, for the modify path. Omit to forget.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "The replacement's one-sentence fact. Required with replacement.",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "The replacement's full content; defaults to the supersession note.",
+                },
+                "type": {
+                    "type": "string",
+                    "description": "The replacement's kind; defaults to the superseded fact's own.",
+                },
+                "shape": {
+                    "type": "string",
+                    "description": "The replacement's structure shapes; defaults to the superseded fact's own.",
+                },
+                "valid-until": {
+                    "type": "string",
+                    "description": "The replacement's YYYY-MM-DD expiry; defaults to the superseded fact's own.",
+                },
+            },
+            "required": ["name", "justification"],
         }),
     )
 }
@@ -574,6 +689,45 @@ mod tests {
         // The closed four stay closed: `use_skill` is declared beside
         // them by the agent when a run carries skills, never inside them.
         assert_eq!(Tool::from_name(USE_SKILL_TOOL), None);
+    }
+
+    #[test]
+    fn remember_declares_the_structured_shape_with_basis_required() {
+        let spec = serde_json::to_value(remember_spec()).unwrap();
+        assert_eq!(spec["function"]["name"], REMEMBER_TOOL);
+        let parameters = &spec["function"]["parameters"];
+        // The brain_remember shape: structured fields, mechanism over
+        // prose.
+        for field in ["name", "description", "type", "shape", "basis", "tier", "valid-until", "body"] {
+            assert!(parameters["properties"].get(field).is_some(), "remember lacks {field}");
+        }
+        // `basis` is required on every write; `valid-until` is required
+        // by the working tier, which the description names.
+        let required: Vec<&str> =
+            parameters["required"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(required, vec!["name", "description", "basis"]);
+        assert_eq!(parameters["properties"]["basis"]["enum"][0], "confirmed-by");
+        assert_eq!(parameters["properties"]["basis"]["enum"][1], "inferred");
+        assert_eq!(parameters["properties"]["tier"]["enum"][0], "working");
+        // The two memory tools are not part of the closed four either.
+        assert_eq!(Tool::from_name(REMEMBER_TOOL), None);
+        assert_eq!(Tool::from_name(SUPERSEDE_TOOL), None);
+    }
+
+    #[test]
+    fn supersede_declares_the_justification_as_required() {
+        let spec = serde_json::to_value(supersede_spec()).unwrap();
+        assert_eq!(spec["function"]["name"], SUPERSEDE_TOOL);
+        let parameters = &spec["function"]["parameters"];
+        let required: Vec<&str> =
+            parameters["required"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(required, vec!["name", "justification"]);
+        // The modify path's replacement and its description are named,
+        // and the permission model rides the description — the model
+        // is the caller most likely to meet it.
+        assert!(parameters["properties"].get("replacement").is_some());
+        assert!(parameters["properties"].get("description").is_some());
+        assert!(spec["function"]["description"].as_str().unwrap().contains("confirmed-by"));
     }
 
     /// One lane's roster as `tools/list` answers it, for the assembly
