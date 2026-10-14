@@ -125,7 +125,9 @@ fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
 /// The board pane: one of the three read-only surfaces, whichever is
 /// active. The pane's title names it, the status bar repeats the name, and
 /// a refused read keeps the last snapshot on screen with the reason on one
-/// named line beside the time of the last good read.
+/// named line beside the time of the last good read. A healthy board names
+/// its own read time on that same line, so the age of the data on screen
+/// is never a thing the operator has to guess at.
 fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let kind = app.boards.active;
     let slot = app.boards.slot(kind);
@@ -141,10 +143,16 @@ fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
     let width = inner.width as usize;
     let visible = inner.height as usize;
-    // The refusal rides the top of the pane: the reason, wrapped because a
-    // narrow pane clipping a named error is the same failure as not naming
-    // it, and the minute of the last good read beneath it.
-    let (error_lines, content_height) = match &slot.error {
+    // The header rides the top of the pane. A refused read names its
+    // reason there, wrapped because a narrow pane clipping a named error
+    // is the same failure as not naming it, with the minute of the last
+    // good read beneath it. A healthy board names its own read time on
+    // that same line: without it the operator cannot tell a second-old
+    // snapshot from a twelve-minute one, which is the whole difference
+    // between a live board and a stale one — and a scan the tower's
+    // budget cut short is exactly the case where the age of the data is
+    // the fact at issue.
+    let (header, content_height) = match &slot.error {
         Some(reason) => {
             let budget = width.saturating_mul(3).saturating_sub(3);
             let reason = boards::trim_to(reason, budget);
@@ -159,7 +167,19 @@ fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect) {
             lines.push(Line::from(Span::styled(stamp, Style::new().fg(palette::DIM))));
             (lines, visible.saturating_sub(4))
         }
-        None => (Vec::new(), visible),
+        None => match &slot.snapshot {
+            Some(snapshot) => (
+                vec![Line::from(Span::styled(
+                    format!("   read {}", snapshot.read_at()),
+                    Style::new().fg(palette::DIM),
+                ))],
+                visible.saturating_sub(2),
+            ),
+            // A board still on its opening read says it is reading; a
+            // board whose read was refused says so and names the reason.
+            // Neither has a read time to name yet.
+            None => (Vec::new(), visible),
+        },
     };
     let mut lines = board_lines(kind, slot, width);
     // A board longer than its pane names what it is holding back rather
@@ -172,14 +192,14 @@ fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect) {
             Style::new().fg(palette::DIM),
         )));
     }
-    if error_lines.is_empty() {
+    if header.is_empty() {
         frame.render_widget(Paragraph::new(Text::from(lines)), inner);
         return;
     }
     let [top, rest] =
-        Layout::vertical([Constraint::Length(error_lines.len() as u16), Constraint::Min(1)])
+        Layout::vertical([Constraint::Length(header.len() as u16), Constraint::Min(1)])
             .areas(inner);
-    frame.render_widget(Paragraph::new(Text::from(error_lines)), top);
+    frame.render_widget(Paragraph::new(Text::from(header)), top);
     frame.render_widget(Paragraph::new(Text::from(lines)), rest);
 }
 
@@ -235,18 +255,22 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
         .as_ref()
         .map(|(mode, _)| mode.clone())
         .unwrap_or_else(|| "\u{2014}".to_string());
-    let mut lines = vec![
-        line_of(
-            vec![
-                (" kit ".to_string(), Style::new().fg(palette::DIM)),
-                (host, Style::new().fg(palette::TEXT)),
-                (format!("  judge {judge}"), Style::new().fg(palette::DIM)),
-            ],
-            width,
-        ),
-        Line::from(""),
-        section("tiers"),
-    ];
+    let mut lines = vec![line_of(
+        vec![
+            (" kit ".to_string(), Style::new().fg(palette::DIM)),
+            (host, Style::new().fg(palette::TEXT)),
+            (format!("  judge {judge}"), Style::new().fg(palette::DIM)),
+        ],
+        width,
+    )];
+    // The shape drift rides the top of the board, under the kit line: a
+    // section the kit's payload no longer carries is named where the
+    // operator will see it, not under a fold.
+    for (route, note) in &snapshot.drift {
+        lines.extend(drift_lines(route, note, width));
+    }
+    lines.push(Line::from(""));
+    lines.push(section("tiers"));
     for chain in &snapshot.tiers {
         let extra = chain.candidates.len().saturating_sub(1);
         let tail = if extra > 0 { format!("+{extra}") } else { String::new() };
@@ -731,7 +755,35 @@ fn tower_lines(snapshot: &boards::TowerSnapshot, width: usize) -> Vec<Line<'stat
             width,
         ));
     }
+    // A scan the aggregate budget cut short names what it holds back, so
+    // a truncated scan never reads as a machine with fewer projects than
+    // it has.
+    if snapshot.unread > 0 {
+        let read = snapshot.projects.len() + snapshot.skipped.len();
+        lines.extend(truncated_lines(read, snapshot.unread, width));
+    }
     lines
+}
+
+/// A scan the aggregate budget cut short, named on two lines the way a
+/// refused read is: how many directories were read, and why the rest
+/// were not. Two lines rather than one because a composed sentence does
+/// not fit the 40 columns an 80-column terminal gives the pane, and a
+/// clipped name is not a named truncation.
+fn truncated_lines(read: usize, unread: usize, width: usize) -> Vec<Line<'static>> {
+    vec![
+        line_of(
+            vec![(
+                format!(" {read} of {} projects", read + unread),
+                Style::new().fg(palette::PENDING),
+            )],
+            width,
+        ),
+        line_of(
+            vec![("   the scan budget was spent".to_string(), Style::new().fg(palette::DIM))],
+            width,
+        ),
+    ]
 }
 
 /// A board section header.
@@ -752,6 +804,21 @@ fn refused_lines(name: &str, reason: &str, width: usize) -> Vec<Line<'static>> {
             width,
         ),
         line_of(vec![(format!("   {reason}"), Style::new().fg(palette::DIM))], width),
+    ]
+}
+
+/// One named shape drift on the router board: the route that carried the
+/// payload and what is absent from it, on the same two lines a refused
+/// read uses. A kit upgrade that renamed `resolved.workloads` or
+/// `judge.mode` would otherwise empty a section with no reason given —
+/// an upgrade must announce itself, not blank the board.
+fn drift_lines(route: &str, note: &str, width: usize) -> Vec<Line<'static>> {
+    vec![
+        line_of(
+            vec![(format!(" \u{25b3} {route} shape changed"), Style::new().fg(palette::PENDING))],
+            width,
+        ),
+        line_of(vec![(format!("   {note}"), Style::new().fg(palette::DIM))], width),
     ]
 }
 
@@ -1640,6 +1707,7 @@ mod tests {
             workloads: vec![("standard_code".to_string(), 10_557)],
             guidance: vec![("quick".to_string(), "the quick tier's head is exhausted".to_string())],
             refused: Vec::new(),
+            drift: Vec::new(),
         }
     }
 
@@ -1762,6 +1830,7 @@ mod tests {
             ],
             skipped: vec![("blend1".to_string(), "no .git".to_string())],
             beyond_bound: 0,
+            unread: 0,
         }
     }
 
@@ -1931,6 +2000,135 @@ mod tests {
         // The pane never overflows its frame: the last row is the marker.
         let rows: Vec<&str> = drawn.lines().collect();
         assert!(rows.len() <= 24, "{} rows", rows.len());
+    }
+
+    #[test]
+    fn a_healthy_board_names_its_read_time_at_both_widths() {
+        // The read time is the fact that tells a second-old snapshot from
+        // a twelve-minute one, so a healthy board names it too — not only
+        // a refused one.
+        for (width, height) in [(120, 40), (80, 24)] {
+            for (kind, snapshot) in [
+                (crate::boards::BoardKind::Router, crate::boards::BoardData::Router(router_snapshot())),
+                (crate::boards::BoardKind::Brain, crate::boards::BoardData::Brain(brain_snapshot())),
+                (crate::boards::BoardKind::Tower, crate::boards::BoardData::Tower(tower_snapshot())),
+            ] {
+                let app = board_app(kind, snapshot);
+                let drawn = draw(&app, width, height);
+                assert!(drawn.contains("read 2026-10-14T09:41Z"), "{width}x{height}: {drawn}");
+                // The pane never overflows its frame either.
+                let rows: Vec<&str> = drawn.lines().collect();
+                assert!(rows.len() <= height as usize, "{} rows at {width}", rows.len());
+            }
+        }
+    }
+
+    #[test]
+    fn the_boards_render_their_content_at_80_columns() {
+        // The pane is 42 columns wide, so an 80-column terminal is the
+        // narrowest the boards ever get: the composed cards must still
+        // carry their facts there (the KI-115 class).
+        let router = board_app(
+            crate::boards::BoardKind::Router,
+            crate::boards::BoardData::Router(router_snapshot()),
+        );
+        let drawn = draw(&router, 80, 24);
+        assert!(drawn.contains("board \u{2014} router"), "{drawn}");
+        assert!(drawn.contains("127.0.0.1:8300"), "{drawn}");
+        assert!(drawn.contains("standard_code"), "{drawn}");
+        assert!(drawn.contains("19,873"), "{drawn}");
+        assert!(drawn.contains("step-3.7-flash"), "{drawn}");
+
+        let brain = board_app(
+            crate::boards::BoardKind::Brain,
+            crate::boards::BoardData::Brain(brain_snapshot()),
+        );
+        let drawn = draw(&brain, 80, 24);
+        assert!(drawn.contains("board \u{2014} second-brain"), "{drawn}");
+        assert!(drawn.contains("plan-gate"), "{drawn}");
+        assert!(drawn.contains("9/20"), "{drawn}");
+        assert!(drawn.contains("zcode-gate"), "{drawn}");
+        assert!(drawn.contains("harness_state.json does not exist"), "{drawn}");
+        // The second-brain board is the longest of the three: at 24 rows
+        // it names what it holds back rather than clipping its tail.
+        assert!(drawn.contains("more"), "{drawn}");
+
+        let tower = board_app(
+            crate::boards::BoardKind::Tower,
+            crate::boards::BoardData::Tower(tower_snapshot()),
+        );
+        let drawn = draw(&tower, 80, 24);
+        assert!(drawn.contains("board \u{2014} tower"), "{drawn}");
+        assert!(drawn.contains("fleet"), "{drawn}");
+        assert!(drawn.contains("master"), "{drawn}");
+        assert!(drawn.contains("a421e82"), "{drawn}");
+        assert!(drawn.contains("2d"), "{drawn}");
+    }
+
+    #[test]
+    fn the_router_board_names_the_kits_shape_drift() {
+        // A kit whose payload renamed `resolved.workloads`: the tier
+        // section is empty and the drift is named, so an upgrade
+        // announces itself instead of blanking the board.
+        let mut snapshot = router_snapshot();
+        snapshot.tiers = Vec::new();
+        snapshot.judge = None;
+        snapshot.drift = vec![
+            ("/api/state".to_string(), "judge.mode is absent".to_string()),
+            ("/api/state".to_string(), "resolved.workloads is absent".to_string()),
+            ("/api/usage".to_string(), "0 of 1 model rows could not be read".to_string()),
+        ];
+        let app = board_app(
+            crate::boards::BoardKind::Router,
+            crate::boards::BoardData::Router(snapshot),
+        );
+        // Named at both widths: the drift rides the top of the board, so
+        // a short pane does not fold it out of sight.
+        for (width, height) in [(120, 40), (80, 24)] {
+            let drawn = draw(&app, width, height);
+            assert!(drawn.contains("/api/state shape changed"), "{width}: {drawn}");
+            assert!(drawn.contains("judge.mode is absent"), "{width}: {drawn}");
+            assert!(drawn.contains("resolved.workloads is absent"), "{width}: {drawn}");
+            assert!(drawn.contains("/api/usage shape changed"), "{width}: {drawn}");
+            assert!(drawn.contains("model rows could not be read"), "{width}: {drawn}");
+        }
+    }
+
+    #[test]
+    fn the_tower_names_a_scan_its_budget_cut_short() {
+        let mut snapshot = tower_snapshot();
+        snapshot.unread = 3;
+        let app = board_app(
+            crate::boards::BoardKind::Tower,
+            crate::boards::BoardData::Tower(snapshot),
+        );
+        for (width, height) in [(120, 40), (80, 24)] {
+            let drawn = draw(&app, width, height);
+            // Two projects and one skipped directory were read of six.
+            assert!(drawn.contains("3 of 6 projects"), "{drawn}");
+            assert!(drawn.contains("the scan budget was spent"), "{drawn}");
+        }
+    }
+
+    #[test]
+    fn the_rendered_board_carries_no_token() {
+        // The kit's localToken is a credential: it authorizes the
+        // operator API and appears nowhere in a snapshot or in the
+        // rendered board, at any width the pane is drawn at.
+        const TOKEN: &str = "kit-local-token-4f9c2b7e";
+        for (kind, snapshot) in [
+            (crate::boards::BoardKind::Router, crate::boards::BoardData::Router(router_snapshot())),
+            (crate::boards::BoardKind::Brain, crate::boards::BoardData::Brain(brain_snapshot())),
+            (crate::boards::BoardKind::Tower, crate::boards::BoardData::Tower(tower_snapshot())),
+        ] {
+            let app = board_app(kind, snapshot);
+            for (width, height) in [(120, 40), (80, 24)] {
+                let drawn = draw(&app, width, height);
+                assert!(!drawn.contains(TOKEN), "{width}x{height}: {drawn}");
+                assert!(!drawn.contains("Bearer"), "{width}x{height}: {drawn}");
+                assert!(!drawn.contains("authorization"), "{width}x{height}: {drawn}");
+            }
+        }
     }
 
     #[test]

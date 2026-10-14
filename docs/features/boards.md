@@ -58,7 +58,10 @@ the same environment-then-`<FLEET_HOME>/.env` chain every other credential
 in this crate uses, and the port the board dials is read out of the same
 config file the token comes from. **The token is never written into a
 snapshot, a log line, or this repository** — it rides the `Authorization`
-header of the request it authorizes and is dropped.
+header of the request it authorizes and is dropped, and two tests pin the
+invariant: one asserts the token string appears nowhere in a snapshot's
+serialization or in a refused read's named error, and one asserts it
+appears nowhere in the rendered board at either width.
 
 A bad or absent token is a **refused read**, not a crash: the kit answers
 401 with `router: bad local token`, the read names that sentence, and the
@@ -81,12 +84,34 @@ one line, with the minute of the last good read beneath it:
    last good read 2026-10-14T09:41Z
 ```
 
+A **healthy** board names its read time too, on the same line at the top
+of the pane (`   read 2026-10-14T09:41Z`). Without it the operator cannot
+tell a second-old snapshot from a twelve-minute one, which is the whole
+difference between a live board and a stale one.
+
 A board that has never read successfully shows ` no snapshot yet` and the
 reason. Inside a snapshot, one read that did not land names itself (the
 second-brain board's six files are independent reads: a missing
-`maturity_state.json` names that file and the other five still render), and
-the router board's `/api/usage` or `/api/suggest` refusal names its path
-while `/api/state` — the spine — still renders.
+`maturity_state.json` names that file and the other five still render),
+and the router board's `/api/usage` or `/api/suggest` refusal names its
+path while `/api/state` — the spine — still renders.
+
+**Shape drift is named, never silent.** The router board's parser reads
+`judge.mode`, `guard.allowPayg`, `resolved.workloads`, and `/api/usage`'s
+`totals` and rows out of the kit's payloads. A kit upgrade that renames
+one of those would otherwise empty the section with no reason given, so
+the read names each absence the way the second-brain board names a state
+file that is not the shape it claims, and it rides the top of the board:
+
+```
+ △ /api/state shape changed
+   resolved.workloads is absent
+ △ /api/usage shape changed
+   0 of 1 model rows could not be read
+```
+
+A row the board cannot read is named too (`N of M model rows could not be
+read`), rather than dropped in silence.
 
 ## The refresh
 
@@ -96,27 +121,54 @@ reads all three boards concurrently at start and every
 `BOARD_REFRESH_SECS = 30` seconds, and again the moment a
 `BoardCommand::Refresh` arrives. The reads run on the runtime's blocking
 pool, so the slowest source sets a refresh's cost rather than the sum of
-all three, and a read that overruns its cadence stretches the cadence
-rather than queueing a second read behind itself.
+all three.
 
-Every read is bounded: `READ_TIMEOUT_SECS = 8` per operator-API GET (the
-fork's carrier uses an 8s abort signal), `GIT_TIMEOUT_SECS = 5` per `git`
-call, and `MAX_PROJECTS = 64` immediate subdirectories per tower scan — a
-machine with more projects than that names the rest rather than spawning an
-unbounded number of children. A bounded `git` call that expires is killed
+A refresh asked for while a read is already running is **satisfied by
+that read** rather than queued behind it: the command channel is drained
+after every read and the cadence restarts from the end of the read, so N
+presses of Ctrl+B cost one read, not N — and a read that overruns its
+period stretches the cadence rather than firing a second read the moment
+the first lands.
+
+## The bounds
+
+Every read is bounded, per-read *and* per-scan, because a sum of bounded
+reads is not itself bounded:
+
+| Bound | Value | What it covers |
+|---|---|---|
+| `READ_TIMEOUT_SECS` | 8 | one operator-API GET (the fork's carrier uses an 8s abort signal) |
+| `GIT_TIMEOUT_SECS` | 5 | one `git` call |
+| `TOWER_SCAN_BUDGET_SECS` | 20 | the **whole tower scan** — thirty projects × five calls is up to ~12.5 minutes of wall time, and a hung `git` on one repository must not cost the cadence behind it |
+| `BRAIN_READ_BUDGET_SECS` | 10 | the **whole six-file second-brain read** |
+| `FILE_READ_TIMEOUT_SECS` | 5 | one state-file read, on its own thread, so a file on a hung mount is a named refusal rather than a stalled cycle |
+| `MAX_PROJECTS` | 64 | immediate subdirectories per tower scan — a machine with more projects than that names the rest rather than spawning an unbounded number of children |
+
+When the tower scan's budget is spent the scan stops, the projects read so
+far render, and the snapshot names the truncation (` 3 of 6 projects` /
+`   the scan budget was spent`) — a truncated scan never reads as a
+machine with fewer projects than it has. The second-brain read works the
+same way: once its budget is spent no further file is read, and each
+unread file names the budget. A bounded `git` call that expires is killed
 and named; the eval probe's drain-thread pattern keeps a chatty child from
 deadlocking the wait. The event loop only ever receives finished reads over
 a channel, so a slow or hung source cannot stall the interface.
 
+A read that panics on the blocking pool is **named, never swallowed**: the
+board keeps its last snapshot, the pane says the read could not run, and
+the refresher's own thread survives — the crate's CatchUnwind lesson from
+cron/eval, pinned by a test that drives a panicking read through the
+refresher and then asks it to read again.
+
 ## Read-only, everywhere
 
 The boards write nothing: the operator-API reads are GETs, the state files
-are read with `read_to_string`, and the tower's `git` calls are
-`symbolic-ref`, `log`, `rev-list`, and `status --porcelain` — all
-inspection. The ahead/behind comparison is `rev-list --left-right --count
-HEAD...@{upstream}`, a local comparison that never fetches. A test pins the
-contract by fingerprinting the scratch sources before and after a full
-read of all three boards.
+are read with `read_to_string` on a reader thread under a bound, and the
+tower's `git` calls are `symbolic-ref`, `log`, `rev-list`, and
+`status --porcelain` — all inspection. The ahead/behind comparison is
+`rev-list --left-right --count HEAD...@{upstream}`, a local comparison that
+never fetches. A test pins the contract by fingerprinting the scratch
+sources before and after a full read of all three boards.
 
 ## What is not built
 

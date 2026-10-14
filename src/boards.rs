@@ -23,9 +23,13 @@
 //! precedent — reads all three boards concurrently at start and every
 //! [`BOARD_REFRESH_SECS`], and reads again the moment a
 //! [`BoardCommand::Refresh`] arrives (the cycle keybinding). Every read is
-//! bounded by its own timeout, so a slow or hung source names itself
-//! instead of stalling the interface: the event loop only ever receives
-//! finished reads over a channel.
+//! bounded, so a slow or hung source names itself instead of stalling the
+//! interface: the event loop only ever receives finished reads over a
+//! channel. The bounds are per-read *and* per-scan —
+//! [`TOWER_SCAN_BUDGET_SECS`] caps a whole tower scan and
+//! [`BRAIN_READ_BUDGET_SECS`] the whole six-file second-brain read —
+//! because a sum of bounded reads is not itself bounded, and a hung `git`
+//! on one repository must not cost the whole cadence.
 //!
 //! **The token.** The router kit's operator API authenticates with its
 //! `localToken`, which lives in the kit's own rendered runtime config —
@@ -43,7 +47,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -64,6 +68,26 @@ pub const READ_TIMEOUT_SECS: u64 = 8;
 
 /// The bound on one `git` call. The fork's portfolio scan uses 5s.
 pub const GIT_TIMEOUT_SECS: u64 = 5;
+
+/// The aggregate bound on one whole tower scan. Each `git` call is
+/// bounded on its own, but thirty projects × five calls is a sum no
+/// single bound covers — up to twelve minutes of wall time on a machine
+/// whose `git` always spends its full bound. Once this budget is spent
+/// the scan stops: the projects read so far render, and the snapshot
+/// names how many it left unread, so a hung `git` on one repository
+/// costs the budget rather than the cadence behind it.
+pub const TOWER_SCAN_BUDGET_SECS: u64 = 20;
+
+/// The aggregate bound on the second-brain board's six-file read, on the
+/// same rule: a sum of bounded reads is not itself bounded. Once it is
+/// spent no further file is read, and each unread file names the budget
+/// rather than the cycle stalling behind a state file on a hung mount.
+pub const BRAIN_READ_BUDGET_SECS: u64 = 10;
+
+/// The bound on one state-file read. A file on a hung mount is a named
+/// refusal, not a stalled cycle: the read runs on its own thread and the
+/// bound expiring names it, the `git` helper's own drain-thread pattern.
+pub const FILE_READ_TIMEOUT_SECS: u64 = 5;
 
 /// The tower scan's bound: at most this many immediate subdirectories of
 /// the projects root are read for git facts. A machine with more projects
@@ -251,12 +275,20 @@ pub struct RouterSources {
 /// The bounds every bounded read runs under. `git_bin` is a path or a
 /// name resolved on `PATH`; the tests point it at a script so a hung or
 /// failing git is deterministic without touching the process
-/// environment.
+/// environment. The three durations are the per-read bounds; the two
+/// budgets are the aggregate ones, because a sum of bounded reads is not
+/// itself bounded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bounds {
     pub git_bin: String,
     pub git_timeout: Duration,
     pub max_projects: usize,
+    /// The aggregate bound on one whole tower scan.
+    pub scan_budget: Duration,
+    /// The aggregate bound on the six-file second-brain read.
+    pub brain_budget: Duration,
+    /// The bound on one second-brain state-file read.
+    pub file_read_timeout: Duration,
 }
 
 impl Default for Bounds {
@@ -265,6 +297,9 @@ impl Default for Bounds {
             git_bin: "git".to_string(),
             git_timeout: Duration::from_secs(GIT_TIMEOUT_SECS),
             max_projects: MAX_PROJECTS,
+            scan_budget: Duration::from_secs(TOWER_SCAN_BUDGET_SECS),
+            brain_budget: Duration::from_secs(BRAIN_READ_BUDGET_SECS),
+            file_read_timeout: Duration::from_secs(FILE_READ_TIMEOUT_SECS),
         }
     }
 }
@@ -410,6 +445,12 @@ pub struct RouterSnapshot {
     pub guidance: Vec<(String, String)>,
     /// The reads that did not land, each named with its path and reason.
     pub refused: Vec<String>,
+    /// The named shape drift: `(the route that carried it, what is
+    /// absent from it)`. A kit upgrade that renames `resolved.workloads`
+    /// or `judge.mode` would otherwise empty a section with no reason
+    /// given, the way a state file that is not the shape it claims is
+    /// named on the second-brain board.
+    pub drift: Vec<(String, String)>,
 }
 
 /// One workload's tier chain: what the kit resolves it to and the
@@ -499,11 +540,12 @@ pub fn read_router(sources: &RouterSources, timeout: Duration) -> Result<RouterS
     let suggest = get_json(&format!("{base}/api/suggest"), sources.token.as_deref(), timeout);
 
     let mut refused = Vec::new();
-    let (totals, models, recent, judge_counters, cascade, workloads) = match usage {
+    let mut drift = state_drift(&state);
+    let usage_read = match usage {
         Ok(usage) => parse_usage(&usage),
         Err(reason) => {
             refused.push(format!("/api/usage {reason}"));
-            (None, Vec::new(), Vec::new(), None, None, Vec::new())
+            UsageRead::default()
         }
     };
     let guidance = match suggest {
@@ -513,6 +555,7 @@ pub fn read_router(sources: &RouterSources, timeout: Duration) -> Result<RouterS
             Vec::new()
         }
     };
+    drift.extend(usage_read.drift);
 
     Ok(RouterSnapshot {
         read_at: now_stamp(),
@@ -521,14 +564,15 @@ pub fn read_router(sources: &RouterSources, timeout: Duration) -> Result<RouterS
         judge: parse_judge(&state),
         payg: parse_payg(&state),
         tiers: parse_tiers(&state),
-        totals,
-        models,
-        recent,
-        judge_counters,
-        cascade,
-        workloads,
+        totals: usage_read.totals,
+        models: usage_read.models,
+        recent: usage_read.recent,
+        judge_counters: usage_read.judge_counters,
+        cascade: usage_read.cascade,
+        workloads: usage_read.workloads,
         guidance,
         refused,
+        drift,
     })
 }
 
@@ -565,34 +609,101 @@ fn error_message(body: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The usage ledger's pieces. The fork parses this payload into totals,
-/// model rows, day rows, recent calls, and the counter block; the board
-/// renders the totals, the models, the recent calls, and the counters.
-fn parse_usage(usage: &Value) -> (Option<UsageTotals>, Vec<ModelRow>, Vec<RecentRow>, Option<JudgeCounters>, Option<CascadeCounters>, Vec<(String, u64)>) {
+/// What the usage ledger's read produced: the sections that landed and
+/// the shape drift it named on the way. The fork parses this payload
+/// into totals, model rows, day rows, recent calls, and the counter
+/// block; the board renders the totals, the models, the recent calls,
+/// and the counters.
+#[derive(Debug, Default)]
+struct UsageRead {
+    totals: Option<UsageTotals>,
+    models: Vec<ModelRow>,
+    recent: Vec<RecentRow>,
+    judge_counters: Option<JudgeCounters>,
+    cascade: Option<CascadeCounters>,
+    workloads: Vec<(String, u64)>,
+    /// The named shape drift: `(the route that carried it, what is
+    /// absent from it)`.
+    drift: Vec<(String, String)>,
+}
+
+fn parse_usage(usage: &Value) -> UsageRead {
+    let route = "/api/usage".to_string();
+    let mut drift = Vec::new();
     let totals = usage.get("totals").and_then(parse_totals);
+    if totals.is_none() {
+        drift.push((route.clone(), "totals is absent".to_string()));
+    }
+    // A row the board cannot read is named rather than dropped in
+    // silence: a payload whose model rows changed shape is an upgrade
+    // announcing itself, not an empty ledger.
+    let offered = rows(usage.get("models")).map(|rows| rows.len()).unwrap_or(0);
     let mut models: Vec<ModelRow> = rows(usage.get("models"))
         .into_iter()
         .flatten()
         .filter_map(parse_model)
         .collect();
     models.sort_by(|left, right| right.calls.cmp(&left.calls).then(left.key.cmp(&right.key)));
-    let recent: Vec<RecentRow> = rows(usage.get("recent"))
+    if models.len() < offered {
+        drift.push((
+            route.clone(),
+            format!("{} of {offered} model rows could not be read", models.len()),
+        ));
+    }
+    let offered_recent = rows(usage.get("recent")).map(|rows| rows.len()).unwrap_or(0);
+    let parsed_recent: Vec<RecentRow> = rows(usage.get("recent"))
         .into_iter()
         .flatten()
         .filter_map(parse_recent)
-        .take(12)
         .collect();
+    if parsed_recent.len() < offered_recent {
+        drift.push((
+            route.clone(),
+            format!("{} of {offered_recent} recent rows could not be read", parsed_recent.len()),
+        ));
+    }
+    let recent: Vec<RecentRow> = parsed_recent.into_iter().take(12).collect();
     let judge_counters = parse_judge_counters(usage.get("judge"));
     let cascade = parse_cascade_counters(usage.get("cascade"));
     let workloads = number_map(usage.get("workloads"));
-    (
+    UsageRead {
         totals,
         models,
         recent,
         judge_counters,
         cascade,
         workloads,
-    )
+        drift,
+    }
+}
+
+/// The `/api/state` payload's shape, named where a member the board
+/// renders is absent from it. An empty section with no reason given is
+/// the failure this names: a kit upgrade that renames `resolved.workloads`
+/// or `judge.mode` would otherwise blank part of the board in silence,
+/// which is the drift the second-brain board already names for a state
+/// file that is not the shape it claims.
+fn state_drift(state: &Value) -> Vec<(String, String)> {
+    let route = "/api/state".to_string();
+    let named = |field: &str| (route.clone(), format!("{field} is absent"));
+    let mut drift = Vec::new();
+    if state.get("judge").and_then(|judge| text(judge, "mode")).is_none() {
+        drift.push(named("judge.mode"));
+    }
+    if state.get("guard").and_then(|guard| guard.get("allowPayg")).is_none() {
+        drift.push(named("guard.allowPayg"));
+    }
+    let workloads = state.get("resolved").and_then(|resolved| resolved.get("workloads"));
+    match workloads {
+        None => drift.push(named("resolved.workloads")),
+        // Present but not the kit's own name-to-chain map: the tier
+        // chains cannot be read out of it at all.
+        Some(workloads) if workloads.as_object().is_none() => {
+            drift.push((route, "resolved.workloads is not the kit's own map".to_string()));
+        }
+        Some(_) => {}
+    }
+    drift
 }
 
 fn parse_totals(value: &Value) -> Option<UsageTotals> {    Some(UsageTotals {
@@ -889,15 +1000,27 @@ pub struct TimelineRow {
 }
 
 /// Read the six derived state files under `home`. The home itself being
-/// unreadable is the whole read's refusal; each file inside it is its own.
-pub fn read_brain(home: &Path) -> Result<BrainSnapshot, String> {
+/// unreadable is the whole read's refusal; each file inside it is its
+/// own, and the whole six-file read runs under an aggregate budget: a
+/// sum of bounded reads is not itself bounded, so once the budget is
+/// spent no further file is read and each unread file names the budget
+/// rather than the cycle stalling behind it.
+pub fn read_brain(home: &Path, bounds: &Bounds) -> Result<BrainSnapshot, String> {
     if !home.is_dir() {
         return Err(format!(
             "the second-brain board could not read {}: the directory does not exist",
             home.display()
         ));
     }
-    let read = |name: &str| read_state_file(&home.join(format!("{name}.json")));
+    let deadline = Instant::now() + bounds.brain_budget;
+    let read = |name: &str| -> Section<Value> {
+        if Instant::now() >= deadline {
+            return Section::Refused(format!(
+                "{name}.json was not read — the read budget was spent"
+            ));
+        }
+        read_state_file(&home.join(format!("{name}.json")), bounds.file_read_timeout)
+    };
     Ok(BrainSnapshot {
         read_at: now_stamp(),
         home: home.to_path_buf(),
@@ -910,10 +1033,29 @@ pub fn read_brain(home: &Path) -> Result<BrainSnapshot, String> {
     })
 }
 
-/// One state file, read and named: a missing file, an unreadable one, and
-/// a payload that does not validate are three different refusals and each
-/// names which.
-fn read_state_file(path: &Path) -> Section<Value> {
+/// One state file, read and named. The read runs on its own thread and
+/// the bound expiring names it — a state file on a hung mount is a named
+/// refusal, not a stalled cycle. The `git` helper's own drain pattern,
+/// without a child to kill: the reader thread is left to end on its own
+/// when the mount answers, which is the one case where an unbounded
+/// wait is the cheaper of two evils.
+fn read_state_file(path: &Path, timeout: Duration) -> Section<Value> {
+    let named = path.display().to_string();
+    let owned = path.to_path_buf();
+    let (tx, rx) = mpsc::channel::<Section<Value>>();
+    thread::spawn(move || {
+        let _ = tx.send(read_state_file_now(&owned));
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(section) => section,
+        Err(_) => Section::Refused(format!("{named} was not read — the read did not finish inside its bound")),
+    }
+}
+
+/// One state file, read and named on the reader thread: a missing file,
+/// an unreadable one, and a payload that does not validate are three
+/// different refusals and each names which.
+fn read_state_file_now(path: &Path) -> Section<Value> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1258,6 +1400,11 @@ pub struct TowerSnapshot {
     pub skipped: Vec<(String, String)>,
     /// How many directories the scan's bound left unread.
     pub beyond_bound: usize,
+    /// How many directories the scan's aggregate budget left unread.
+    /// Non-zero names a truncated scan: the projects read so far are
+    /// real and the rest were never read, which is a different fact
+    /// from a project having no git facts.
+    pub unread: usize,
 }
 
 /// One project's git facts. A `None` names what git could not answer; a
@@ -1282,8 +1429,12 @@ pub struct ProjectFacts {
 }
 
 /// Read the projects root's git facts. Every `git` call is bounded by
-/// `bounds.git_timeout`; a call that does not answer inside its bound is
-/// killed and named rather than stalling the scan.
+/// `bounds.git_timeout`, and the whole scan is bounded by
+/// `bounds.scan_budget`: thirty projects × five bounded calls is a sum
+/// no single bound covers, so once the budget is spent the scan stops,
+/// the projects read so far land, and the snapshot names how many
+/// directories it left unread. A call that does not answer inside its
+/// bound is killed and named rather than stalling the scan.
 pub fn read_tower(root: &Path, bounds: &Bounds) -> Result<TowerSnapshot, String> {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
@@ -1304,16 +1455,26 @@ pub fn read_tower(root: &Path, bounds: &Bounds) -> Result<TowerSnapshot, String>
     names.sort();
     let beyond_bound = names.len().saturating_sub(bounds.max_projects);
     names.truncate(bounds.max_projects);
+    // The aggregate deadline, checked between projects and before every
+    // `git` call: a hung git on one repository costs the budget, not the
+    // cadence behind the scan.
+    let deadline = Instant::now() + bounds.scan_budget;
 
+    let found = names.len();
     let mut projects = Vec::new();
     let mut skipped = Vec::new();
-    for name in names {
+    let mut unread = 0;
+    for (index, name) in names.into_iter().enumerate() {
+        if Instant::now() >= deadline {
+            unread = found - index;
+            break;
+        }
         let path = root.join(&name);
         if !path.join(".git").exists() {
             skipped.push((name, "no .git".to_string()));
             continue;
         }
-        projects.push(project_facts(&path, &name, bounds));
+        projects.push(project_facts(&path, &name, bounds, deadline));
     }
     // The dirtiest projects first: a scan of thirty repos shows a dozen
     // rows, and the ones with uncommitted work are the ones worth seeing.
@@ -1324,13 +1485,31 @@ pub fn read_tower(root: &Path, bounds: &Bounds) -> Result<TowerSnapshot, String>
             .then(right.commits_30d.cmp(&left.commits_30d))
             .then(left.name.cmp(&right.name))
     });
-    Ok(TowerSnapshot { read_at: now_stamp(), root: root.to_path_buf(), projects, skipped, beyond_bound })
+    Ok(TowerSnapshot {
+        read_at: now_stamp(),
+        root: root.to_path_buf(),
+        projects,
+        skipped,
+        beyond_bound,
+        unread,
+    })
 }
 
 /// One project's git facts, each call bounded and each failure named.
-fn project_facts(path: &Path, name: &str, bounds: &Bounds) -> ProjectFacts {
+/// The scan's aggregate deadline is checked before each call as well as
+/// between projects: a project whose every call spends its full bound
+/// would otherwise cost five bounds on its own, and the budget is what
+/// stops the scan rather than what merely bounds it.
+fn project_facts(path: &Path, name: &str, bounds: &Bounds, deadline: Instant) -> ProjectFacts {
     let mut notes = Vec::new();
-    let call = |args: &[&str]| git(path, &bounds.git_bin, args, bounds.git_timeout);
+    let mut spent = false;
+    let mut call = |args: &[&str]| {
+        if Instant::now() >= deadline {
+            spent = true;
+            return None;
+        }
+        git(path, &bounds.git_bin, args, bounds.git_timeout)
+    };
     let branch = call(&["symbolic-ref", "--short", "HEAD"])
         .map(|text| text.trim().to_string())
         .filter(|branch| !branch.is_empty());
@@ -1354,6 +1533,9 @@ fn project_facts(path: &Path, name: &str, bounds: &Bounds) -> ProjectFacts {
         Some(text) => parse_ahead_behind(&text),
         None => (None, None),
     };
+    if spent {
+        notes.push("the scan budget was spent".to_string());
+    }
     ProjectFacts {
         name: name.to_string(),
         branch,
@@ -1446,11 +1628,14 @@ pub struct BoardUpdate {
 /// Spawn the board refresher: one thread, its own current-thread runtime,
 /// an opening read of all three boards and one every
 /// [`BOARD_REFRESH_SECS`], plus one immediately per
-/// [`BoardCommand::Refresh`]. The reads run on the runtime's blocking
-/// pool, so the three boards are read concurrently and the slowest source
-/// sets a refresh's cost rather than the sum of all three. Every read is
-/// bounded, so a hung source names itself instead of stalling the
-/// interface: the event loop only ever receives finished reads.
+/// [`BoardCommand::Refresh`]. A refresh asked for while a read is already
+/// running is satisfied by that read rather than queued behind it, so N
+/// presses of the cycle key cost one read, not N. The reads run on the
+/// runtime's blocking pool, so the three boards are read concurrently and
+/// the slowest source sets a refresh's cost rather than the sum of all
+/// three. Every read is bounded, so a hung source names itself instead of
+/// stalling the interface: the event loop only ever receives finished
+/// reads.
 pub fn spawn_refresher(
     sources: Sources,
 ) -> (UnboundedSender<BoardCommand>, UnboundedReceiver<BoardUpdate>) {
@@ -1471,11 +1656,12 @@ pub fn spawn_refresher(
         };
         runtime.block_on(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(BOARD_REFRESH_SECS));
-            // A read that overruns its cadence stretches the cadence
-            // rather than queueing a second read behind itself.
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // The interval's first tick fires at once: the opening read.
             loop {
+                // The cadence or a refresh command, whichever comes
+                // first. No missed-tick behavior is set, because the
+                // reset below supersedes it: whatever woke this
+                // iteration, the next read is one period after the read
+                // it triggered has finished.
                 tokio::select! {
                     _ = ticker.tick() => {}
                     command = command_rx.recv() => {
@@ -1490,6 +1676,19 @@ pub fn spawn_refresher(
                         return;
                     }
                 }
+                // A refresh asked for while that read was running is
+                // satisfied by it, so the channel is drained here rather
+                // than read again: N presses of the cycle key cost one
+                // read, not N. Without this, a Ctrl+B mash queues a full
+                // tower scan behind every press.
+                while command_rx.try_recv().is_ok() {}
+                // The cadence restarts from the end of the read that just
+                // finished, and a tick that was still pending when a
+                // command woke this iteration is discarded with it: a
+                // read that overruns its period stretches the cadence
+                // rather than firing a second read the moment the first
+                // lands, which is what made one Ctrl+B cost two scans.
+                ticker.reset();
             }
         });
     });
@@ -1501,12 +1700,13 @@ async fn read_all(sources: &Sources) -> Vec<BoardUpdate> {
     let router = sources.router.clone();
     let brain_home = sources.brain_home.clone();
     let tower_root = sources.tower_root.clone();
-    let bounds = sources.bounds.clone();
+    let brain_bounds = sources.bounds.clone();
+    let tower_bounds = sources.bounds.clone();
     let timeout = Duration::from_secs(READ_TIMEOUT_SECS);
     let (router, brain, tower) = tokio::join!(
         tokio::task::spawn_blocking(move || read_router(&router, timeout)),
-        tokio::task::spawn_blocking(move || read_brain_source(&brain_home)),
-        tokio::task::spawn_blocking(move || read_tower(&tower_root, &bounds)),
+        tokio::task::spawn_blocking(move || read_brain_source(&brain_home, &brain_bounds)),
+        tokio::task::spawn_blocking(move || read_tower(&tower_root, &tower_bounds)),
     );
     // A read that panicked on the blocking pool is named, never swallowed:
     // the board keeps its last snapshot and the pane says the read died.
@@ -1531,9 +1731,12 @@ async fn read_all(sources: &Sources) -> Vec<BoardUpdate> {
 
 /// The second-brain read as the refresher drives it: a home that does not
 /// resolve is a named refusal, not a panic.
-fn read_brain_source(home: &Option<PathBuf>) -> Result<BrainSnapshot, String> {
+fn read_brain_source(
+    home: &Option<PathBuf>,
+    bounds: &Bounds,
+) -> Result<BrainSnapshot, String> {
     match home {
-        Some(home) => read_brain(home),
+        Some(home) => read_brain(home, bounds),
         None => Err(
             "the second-brain board could not read its state files: no second-brain home resolved; set SECOND_BRAIN_HOME"
                 .to_string(),
@@ -1991,6 +2194,64 @@ mod tests {
         assert!(snapshot.refused[0].contains("/api/usage"), "{}", snapshot.refused[0]);
     }
 
+    #[test]
+    fn the_router_board_names_the_kits_shape_drift() {
+        // A kit whose payload renamed the members the board reads. The
+        // sections that cannot be read come back empty, and each one
+        // names what it looked for: an upgrade announces itself instead
+        // of blanking part of the board.
+        let kit = ScriptedKit::start(&[
+            (
+                "/api/state",
+                200,
+                r#"{"port":8300,"judge":{"strategy":"cascade"},"guard":{"providers":["deepseek"]},"resolved":{"chains":{}}}"#,
+            ),
+            (
+                "/api/usage",
+                200,
+                r#"{"models":[{"key":"stepfun/step-3.7-flash","calls":1}],"recent":[]}"#,
+            ),
+        ]);
+        let snapshot = read_router(&sources(&kit.url()), Duration::from_secs(5))
+            .expect("the state read is the spine");
+
+        assert!(snapshot.judge.is_none());
+        assert!(snapshot.payg.is_none());
+        assert!(snapshot.tiers.is_empty());
+        assert!(snapshot.totals.is_none());
+        let routes: Vec<&str> = snapshot.drift.iter().map(|(route, _)| route.as_str()).collect();
+        assert_eq!(
+            routes,
+            vec!["/api/state", "/api/state", "/api/state", "/api/usage", "/api/usage"]
+        );
+        assert_eq!(snapshot.drift[0].1, "judge.mode is absent");
+        assert_eq!(snapshot.drift[1].1, "guard.allowPayg is absent");
+        assert_eq!(snapshot.drift[2].1, "resolved.workloads is absent");
+        assert_eq!(snapshot.drift[3].1, "totals is absent");
+        // A row the board cannot read is named too, rather than dropped.
+        assert_eq!(snapshot.drift[4].1, "0 of 1 model rows could not be read");
+    }
+
+    #[test]
+    fn the_kit_token_never_enters_a_snapshot_or_a_named_error() {
+        const TOKEN: &str = "kit-local-token-4f9c2b7e";
+        let kit = scripted_kit();
+        let source = RouterSources { base_url: kit.url(), token: Some(TOKEN.to_string()) };
+        let snapshot = read_router(&source, Duration::from_secs(5))
+            .expect("the scripted kit answers");
+        // The snapshot's serialization carries no credential...
+        assert!(!format!("{snapshot:?}").contains(TOKEN), "the snapshot carries the token");
+        // ...and neither does a read that refused: a hung kit names its
+        // URL and never the header it was sent.
+        let deaf = DeafKit::start();
+        let error = read_router(
+            &RouterSources { base_url: deaf.url(), token: Some(TOKEN.to_string()) },
+            Duration::from_millis(300),
+        )
+        .expect_err("the kit never answers");
+        assert!(!error.contains(TOKEN), "{error}");
+    }
+
     // --- the second-brain board ----------------------------------------------
 
     fn write_state(home: &Path, name: &str, body: &str) {
@@ -2087,7 +2348,7 @@ mod tests {
         write_state(home, "reports_state", REPORTS_FIXTURE);
         write_state(home, "tower_data", TOWER_DATA_FIXTURE);
 
-        let snapshot = read_brain(home).expect("the home is readable");
+        let snapshot = read_brain(home, &Bounds::default()).expect("the home is readable");
 
         let gates = snapshot.gates.landed().expect("the gates state landed");
         assert_eq!(gates.totals, GateTotals { events: 107, verdicts: 80, dispositions: 16 });
@@ -2144,7 +2405,7 @@ mod tests {
             write_state(home, name, body);
         }
 
-        let snapshot = read_brain(home).expect("the home is readable");
+        let snapshot = read_brain(home, &Bounds::default()).expect("the home is readable");
         assert_eq!(snapshot.maturity.reason().map(|reason| reason.contains("maturity_state.json does not exist")), Some(true));
         assert!(snapshot.gates.landed().is_some());
     }
@@ -2157,7 +2418,7 @@ mod tests {
         write_state(home, "gates_state", "[1, 2, 3]");
         write_state(home, "loops_state", LOOPS_FIXTURE);
 
-        let snapshot = read_brain(home).expect("the home is readable");
+        let snapshot = read_brain(home, &Bounds::default()).expect("the home is readable");
         assert_eq!(
             snapshot.gates.reason().map(|reason| reason.contains("gates_state")),
             Some(true)
@@ -2169,9 +2430,70 @@ mod tests {
     fn an_unreadable_state_home_is_the_reads_refusal() {
         let missing = std::env::temp_dir().join(format!("fleet-boards-absent-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&missing);
-        let error = read_brain(&missing).expect_err("the home does not exist");
+        let error = read_brain(&missing, &Bounds::default()).expect_err("the home does not exist");
         assert!(error.contains("the second-brain board could not read"), "{error}");
         assert!(error.contains("does not exist"), "{error}");
+    }
+
+    #[test]
+    fn the_second_brain_read_is_bounded_by_its_budget_and_names_the_unread_files() {
+        let scratch = Scratch::new("brain-budget");
+        let home = scratch.path();
+        for (name, body) in [
+            ("gates_state", GATES_FIXTURE),
+            ("harness_state", HARNESS_FIXTURE),
+            ("loops_state", LOOPS_FIXTURE),
+            ("reports_state", REPORTS_FIXTURE),
+            ("maturity_state", MATURITY_FIXTURE),
+            ("tower_data", TOWER_DATA_FIXTURE),
+        ] {
+            write_state(home, name, body);
+        }
+        // A named pipe with no writer: reading it blocks in `open` until
+        // a writer appears, which is what a state file on a hung mount
+        // does. It stands in for the unbounded read the module doc used
+        // to claim was bounded.
+        let hung = home.join("gates_state.json");
+        let _ = std::fs::remove_file(&hung);
+        let made = Command::new("mkfifo").arg(&hung).status().expect("mkfifo runs");
+        assert!(made.success(), "the named pipe was created");
+
+        // The per-file bound outlasts the aggregate budget, so the first
+        // file's bound is what spends it: the budget is a deadline
+        // checked before each read, and a read already running finishes
+        // against its own bound.
+        let bounds = Bounds {
+            file_read_timeout: Duration::from_millis(300),
+            brain_budget: Duration::from_millis(100),
+            ..Bounds::default()
+        };
+        let started = std::time::Instant::now();
+        let snapshot = read_brain(home, &bounds).expect("the home is readable");
+        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+
+        // The hung file names its own bound...
+        assert!(
+            snapshot.gates.reason().is_some_and(|reason| reason.contains("was not read")),
+            "{:?}",
+            snapshot.gates.reason()
+        );
+        // ...and the five behind it were never read, each naming the
+        // budget rather than the cycle stalling behind them.
+        let spent = |reason: Option<&str>| {
+            reason.map(|reason| reason.contains("the read budget was spent"))
+        };
+        assert_eq!(spent(snapshot.harness.reason()), Some(true), "{:?}", snapshot.harness.reason());
+        assert_eq!(spent(snapshot.loops.reason()), Some(true), "{:?}", snapshot.loops.reason());
+        assert_eq!(spent(snapshot.reports.reason()), Some(true), "{:?}", snapshot.reports.reason());
+        assert_eq!(spent(snapshot.maturity.reason()), Some(true), "{:?}", snapshot.maturity.reason());
+        assert_eq!(spent(snapshot.tower.reason()), Some(true), "{:?}", snapshot.tower.reason());
+        // Release the reader the bounded read left behind: a writer
+        // unblocks its `open`, so the thread ends instead of waiting for
+        // the process's whole life.
+        let release = hung.clone();
+        thread::spawn(move || {
+            let _ = std::fs::OpenOptions::new().write(true).open(release);
+        });
     }
 
     // --- the tower ------------------------------------------------------------
@@ -2290,13 +2612,10 @@ mod tests {
         assert_eq!(snapshot.skipped.len(), 0);
     }
 
-    #[test]
-    fn a_hung_git_call_is_bounded_by_its_own_timeout() {
-        let scratch = Scratch::new("tower-hung");
-        let root = scratch.path();
-        let project = root.join("hung");
-        std::fs::create_dir_all(project.join(".git")).expect("the project directory");
-        // A `git` that accepts its arguments and never answers.
+    /// A `git` that accepts its arguments and never answers, written into
+    /// `root` and made executable: the hung source the per-call bound and
+    /// the aggregate scan budget are both proven against.
+    fn hung_git(root: &Path) -> PathBuf {
         let bin = root.join("git");
         std::fs::write(&bin, "#!/bin/sh\nsleep 30\n").expect("the stand-in git");
         #[cfg(unix)]
@@ -2306,6 +2625,16 @@ mod tests {
             permissions.set_mode(0o755);
             std::fs::set_permissions(&bin, permissions).expect("the mode");
         }
+        bin
+    }
+
+    #[test]
+    fn a_hung_git_call_is_bounded_by_its_own_timeout() {
+        let scratch = Scratch::new("tower-hung");
+        let root = scratch.path();
+        let project = root.join("hung");
+        std::fs::create_dir_all(project.join(".git")).expect("the project directory");
+        let bin = hung_git(root);
         let bounds = Bounds {
             git_bin: bin.display().to_string(),
             git_timeout: Duration::from_millis(200),
@@ -2317,6 +2646,42 @@ mod tests {
         let project = &snapshot.projects[0];
         assert_eq!(project.branch, None);
         assert!(project.notes.iter().any(|note| note.contains("git could not")), "{:?}", project.notes);
+    }
+
+    #[test]
+    fn the_tower_scan_is_bounded_by_its_aggregate_budget() {
+        let scratch = Scratch::new("tower-budget");
+        let root = scratch.path();
+        for index in 0..4 {
+            std::fs::create_dir_all(root.join(format!("repo-{index}")).join(".git"))
+                .expect("the project directory");
+        }
+        let bin = hung_git(root);
+        // Every call spends its whole bound, so the only thing that can
+        // stop this scan is the aggregate budget.
+        let bounds = Bounds {
+            git_bin: bin.display().to_string(),
+            git_timeout: Duration::from_millis(200),
+            scan_budget: Duration::from_millis(400),
+            ..Bounds::default()
+        };
+        let started = std::time::Instant::now();
+        let snapshot = read_tower(root, &bounds).expect("the scan still lands");
+        let elapsed = started.elapsed();
+        // The bound held: four projects of five bounded calls each would
+        // have cost four seconds, and the scan stopped inside the budget.
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+        assert_eq!(snapshot.projects.len(), 1);
+        assert_eq!(snapshot.unread, 3);
+        assert!(snapshot.skipped.is_empty(), "{:?}", snapshot.skipped);
+        // The project the budget cut short says so, so its unanswered
+        // facts are not read as a project with no facts.
+        let project = &snapshot.projects[0];
+        assert!(
+            project.notes.iter().any(|note| note.contains("the scan budget was spent")),
+            "{:?}",
+            project.notes
+        );
     }
 
     // --- the snapshot contract ------------------------------------------------
@@ -2416,7 +2781,7 @@ mod tests {
         let before_brain = fingerprint(&brain);
 
         let _ = read_router(&sources(&kit.url()), Duration::from_secs(5)).expect("the router read");
-        let _ = read_brain(&brain).expect("the brain read");
+        let _ = read_brain(&brain, &Bounds::default()).expect("the brain read");
         let _ = read_tower(root, &Bounds::default()).expect("the tower read");
 
         assert_eq!(fingerprint(root), before_projects, "the tower's sources are untouched");
@@ -2464,6 +2829,117 @@ mod tests {
         assert_eq!(landed, BoardKind::ALL.to_vec(), "all three boards landed");
     }
 
+    /// A std channel fed by the refresher's own, so a test can wait for
+    /// an update that must not arrive rather than blocking on one that
+    /// never comes.
+    fn bridge(
+        mut rx: UnboundedReceiver<BoardUpdate>,
+    ) -> std::sync::mpsc::Receiver<BoardUpdate> {
+        let (tx, bridged) = std::sync::mpsc::channel::<BoardUpdate>();
+        thread::spawn(move || {
+            while let Some(update) = rx.blocking_recv() {
+                if tx.send(update).is_err() {
+                    return;
+                }
+            }
+        });
+        bridged
+    }
+
+    #[test]
+    fn the_refresher_survives_a_read_that_panics_and_keeps_reading() {
+        let kit = scripted_kit();
+        let scratch = Scratch::new("refresher-panic");
+        let brain = scratch.path().join("brain");
+        std::fs::create_dir_all(&brain).expect("the brain home");
+        write_state(&brain, "gates_state", GATES_FIXTURE);
+        scratch_repo(scratch.path(), "alpha");
+        // A scan budget no instant can hold makes the tower read's own
+        // deadline computation panic: the stand-in for any read that dies
+        // on the blocking pool, which is what the JoinError guard exists
+        // for. The crate's hard-won CatchUnwind lesson from cron/eval,
+        // pinned here rather than assumed.
+        let sources = Sources {
+            router: sources(&kit.url()),
+            brain_home: Some(brain),
+            tower_root: scratch.path().to_path_buf(),
+            bounds: Bounds { scan_budget: Duration::MAX, ..Bounds::default() },
+        };
+        let (tx, rx) = spawn_refresher(sources);
+        let bridged = bridge(rx);
+
+        let mut landed = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while landed.len() < 3 && std::time::Instant::now() < deadline {
+            let Ok(update) = bridged.recv() else { break };
+            match update.outcome {
+                Ok(_) => landed.push(update.kind),
+                Err(reason) => {
+                    // The panicking read is named, never swallowed.
+                    assert_eq!(update.kind, BoardKind::Tower, "{reason}");
+                    assert!(reason.contains("the tower read could not run"), "{reason}");
+                    landed.push(update.kind);
+                }
+            }
+        }
+        assert_eq!(landed.len(), 3, "{landed:?}");
+        assert!(landed.contains(&BoardKind::Router), "{landed:?}");
+        assert!(landed.contains(&BoardKind::Brain), "{landed:?}");
+
+        // The refresher's own thread is still alive: a refresh asked for
+        // now reads again instead of the loop being dead.
+        let _ = tx.send(BoardCommand::Refresh);
+        let mut again = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while again.len() < 3 && std::time::Instant::now() < deadline {
+            let Ok(update) = bridged.recv() else { break };
+            again.push(update.kind);
+        }
+        assert_eq!(again.len(), 3, "the refresher kept reading: {again:?}");
+    }
+
+    #[test]
+    fn refreshes_asked_for_during_a_read_are_not_queued_behind_it() {
+        let kit = scripted_kit();
+        let scratch = Scratch::new("refresher-dedupe");
+        let brain = scratch.path().join("brain");
+        std::fs::create_dir_all(&brain).expect("the brain home");
+        write_state(&brain, "gates_state", GATES_FIXTURE);
+        scratch_repo(scratch.path(), "alpha");
+        // A `git` that never answers: the opening read is still running
+        // when the refreshes arrive, which is the case the dedupe is for.
+        let bin = hung_git(scratch.path());
+        let sources = Sources {
+            router: sources(&kit.url()),
+            brain_home: Some(brain),
+            tower_root: scratch.path().to_path_buf(),
+            bounds: Bounds {
+                git_bin: bin.display().to_string(),
+                git_timeout: Duration::from_millis(100),
+                ..Bounds::default()
+            },
+        };
+        let (tx, rx) = spawn_refresher(sources);
+        let bridged = bridge(rx);
+        // Three presses of the cycle key, all inside one read's window.
+        for _ in 0..3 {
+            let _ = tx.send(BoardCommand::Refresh);
+        }
+
+        let mut landed = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while landed.len() < 3 && std::time::Instant::now() < deadline {
+            let Ok(update) = bridged.recv() else { break };
+            landed.push(update.kind);
+        }
+        assert_eq!(landed.len(), 3, "{landed:?}");
+        // Those three refreshes were satisfied by the read that was
+        // already running: nothing else arrives, where a queued refresh
+        // would have cost another full scan inside this window.
+        let queued = bridged.recv_timeout(Duration::from_millis(1500));
+        assert!(queued.is_err(), "a refresh asked for during a read ran anyway: {queued:?}");
+    }
+
     // --- the render vocabulary ------------------------------------------------
 
     #[test]
@@ -2503,6 +2979,11 @@ mod tests {
                 // The kit's own port, out of the kit's own rendered config.
                 assert_eq!(sources.router.base_url, "http://127.0.0.1:8300");
                 assert!(!snapshot.tiers.is_empty(), "the kit named no workload");
+                // The live canary for a kit upgrade: the payload still
+                // carries every member the board reads. An upgrade that
+                // renames one fails here, naming the drift, instead of
+                // quietly emptying a section on the board.
+                assert!(snapshot.drift.is_empty(), "the kit's shape drifted: {:?}", snapshot.drift);
             }
             // A kit that is not answering is the contract's named refusal,
             // not a failing test: the pane keeps its last snapshot.
@@ -2511,7 +2992,7 @@ mod tests {
 
         match sources.brain_home.as_ref() {
             Some(home) => {
-                let brain = read_brain(home).expect("the second-brain home is readable");
+                let brain = read_brain(home, &Bounds::default()).expect("the second-brain home is readable");
                 let landed = [
                     brain.gates.landed().is_some(),
                     brain.harness.landed().is_some(),
