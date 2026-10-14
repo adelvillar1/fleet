@@ -47,6 +47,68 @@ pub const REMEMBER_TOOL: &str = "remember";
 /// justification that made it allowed.
 pub const SUPERSEDE_TOOL: &str = "supersede";
 
+/// The model-visible name of the delegation tool a run declares beside
+/// the others: `subagent` runs one self-contained task in a child
+/// session with its own context and a scoped tool set. Its semantics
+/// belong to `crate::subagents`; the name lives here so every tool has
+/// one home.
+pub const SUBAGENT_TOOL: &str = "subagent";
+
+/// The arrow a forwarded subagent call's name carries. A subagent's own
+/// tool calls reach the owner's Approver through the parent's gate, and
+/// the gate must be able to say whose call it is: the forwarded call is
+/// named `subagent \u{2192} <tool>` so the prompt names both.
+pub const SUBAGENT_ARROW: &str = "\u{2192}";
+
+/// `subagent \u{2192} `, the prefix every forwarded child call's name
+/// carries. Built from [`SUBAGENT_TOOL`] so the two can never drift.
+pub fn subagent_call_prefix() -> String {
+    format!("{SUBAGENT_TOOL} {SUBAGENT_ARROW} ")
+}
+
+/// The request declaration for `subagent`: one delegated task, the
+/// child's admitted scope, and its turn cap.
+///
+/// Three things the description has to carry, because the model is the
+/// only caller that can get them wrong: the goal must be
+/// **self-contained** (the child sees nothing of this conversation), the
+/// child runs on **this same model** (there is no cheaper path and no
+/// model parameter), and the admitted scope is a **narrowing** of a
+/// default that already excludes the durable-write, lane, and
+/// delegation tools. `max-turns` is bounded in the schema and again at
+/// parse, because a bound the schema alone carries is a bound a
+/// non-conforming caller ignores.
+pub fn subagent_spec() -> ToolSpec {
+    ToolSpec::function(
+        SUBAGENT_TOOL,
+        "Spawn a subagent that runs one delegated task in its own session, with its own context and no knowledge of this conversation. The goal must be self-contained: state the whole task, every path, and every constraint, because the subagent sees nothing else. It runs on this same model, and its tool calls still ask for approval. Its admitted tools default to bash, read_file, write_file, list_dir, and use_skill; pass `tools` to narrow that list, and nothing outside it is callable — remember, supersede, lane tools, and subagent itself are never admitted. It stops at `max-turns` (default 20, at most 50) and returns its final answer, its session id and log path, its turn count, and its outcome (completed, max-turns, or failed) — a failure returns the partial result and the reason, never silence. Delegate a self-contained piece of work whose intermediate steps would not help you; do the work yourself when you need what you learn along the way.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "The delegated task, stated in full. The subagent sees nothing of this conversation, so every path, constraint, and definition of done belongs here.",
+                },
+                "tools": {
+                    "type": "array",
+                    "description": "The subagent's admitted tool names, narrowing the default (bash, read_file, write_file, list_dir, use_skill). An empty list admits no tool at all.",
+                    "items": {
+                        "type": "string",
+                        "enum": ["bash", "read_file", "write_file", "list_dir", "use_skill"],
+                    },
+                },
+                "max-turns": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "The subagent's turn cap. Defaults to 20 and is bounded at 50.",
+                },
+            },
+            "required": ["goal"],
+        }),
+    )
+}
+
 /// The request declaration for `use_skill`. The skills themselves ride
 /// the system prompt as a name+description list; this declares the one
 /// call that fetches a body. An unknown name is a typed error result the
@@ -728,6 +790,51 @@ mod tests {
         assert!(parameters["properties"].get("replacement").is_some());
         assert!(parameters["properties"].get("description").is_some());
         assert!(spec["function"]["description"].as_str().unwrap().contains("confirmed-by"));
+    }
+
+    #[test]
+    fn subagent_declares_the_goal_required_and_the_scope_narrowable() {
+        let spec = serde_json::to_value(subagent_spec()).unwrap();
+        assert_eq!(spec["function"]["name"], SUBAGENT_TOOL);
+        let parameters = &spec["function"]["parameters"];
+        // `goal` is the one required parameter: the child sees nothing of
+        // the parent's conversation, so a goal that is not self-contained
+        // is a task the child cannot do.
+        let required: Vec<&str> =
+            parameters["required"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(required, vec!["goal"]);
+        // `tools` narrows the admitted scope, and its enum is the whole
+        // admissible set: the durable-write, lane, and delegation tools
+        // are not in it, so a conforming caller cannot name them.
+        let admitted: Vec<&str> = parameters["properties"]["tools"]["items"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect();
+        assert_eq!(admitted, vec!["bash", "read_file", "write_file", "list_dir", "use_skill"]);
+        for excluded in [REMEMBER_TOOL, SUPERSEDE_TOOL, SUBAGENT_TOOL, "mcp__sem1__probe"] {
+            assert!(!admitted.contains(&excluded), "{excluded} must not be admissible");
+        }
+        // The turn cap is bounded in the schema as well as at parse.
+        let turns = &parameters["properties"]["max-turns"];
+        assert_eq!(turns["minimum"], 1);
+        assert_eq!(turns["maximum"], 50);
+        // The delegation tool is not one of the closed four either.
+        assert_eq!(Tool::from_name(SUBAGENT_TOOL), None);
+        // The description names the two facts the model most needs: the
+        // goal is self-contained, and the child runs on the same model.
+        let description = spec["function"]["description"].as_str().unwrap();
+        assert!(description.contains("self-contained"), "{description}");
+        assert!(description.contains("this same model"), "{description}");
+    }
+
+    #[test]
+    fn a_forwarded_subagent_call_is_named_for_whose_call_it_is() {
+        assert_eq!(subagent_call_prefix(), "subagent \u{2192} ");
+        // The prefix is derived from the tool's own name, so renaming one
+        // without the other is not possible.
+        assert!(subagent_call_prefix().starts_with(SUBAGENT_TOOL));
     }
 
     /// One lane's roster as `tools/list` answers it, for the assembly

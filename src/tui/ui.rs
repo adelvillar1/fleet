@@ -311,6 +311,11 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
         if current {
             spans.push(Span::styled("  (current)", Style::new().fg(palette::ACCENT)));
         }
+        // A delegated child's log is an ordinary session with a marker:
+        // the picker says so, so a resumed child reads as what it is.
+        if summary.kind.as_deref() == Some(crate::session::SUBAGENT_KIND) {
+            spans.push(Span::styled("  subagent", Style::new().fg(palette::DIM)));
+        }
         lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -685,6 +690,7 @@ mod tests {
             model: "deepseek-chat".to_string(),
             created: "2026-10-13T10:10:10Z".to_string(),
             ended: true,
+            kind: None,
             path: std::path::PathBuf::from("/tmp/x.jsonl"),
         }]);
         let picker = draw(&app, 80, 24);
@@ -692,6 +698,21 @@ mod tests {
         assert!(picker.contains("20261013T101010Z-abcdef"), "{picker}");
         assert!(picker.contains("ended"), "{picker}");
         assert!(picker.contains("(current)"), "{picker}");
+
+        // A delegated child's log is an ordinary session with a marker:
+        // the picker names the kind beside the row.
+        let mut children = fresh();
+        children.open_sessions(vec![SessionSummary {
+            id: "20261013T111111Z-fedcba".to_string(),
+            model: "deepseek-chat".to_string(),
+            created: "2026-10-13T11:11:11Z".to_string(),
+            ended: true,
+            kind: Some(crate::session::SUBAGENT_KIND.to_string()),
+            path: std::path::PathBuf::from("/tmp/child.jsonl"),
+        }]);
+        let child_picker = draw(&children, 80, 24);
+        assert!(child_picker.contains("subagent"), "{child_picker}");
+        assert!(child_picker.contains("20261013T111111Z-fedcba"), "{child_picker}");
 
         // The approval modal.
         let mut approving = fresh();

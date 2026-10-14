@@ -77,6 +77,12 @@ pub struct AgentOptions {
     /// with nothing in it adds no block and no record: a memory-less
     /// turn is byte-for-byte the run it has always been.
     pub memory: Option<Arc<Memory>>,
+    /// The tool set this run is admitted to. `None` is the run this
+    /// crate has always had: every declaration the run earns, and every
+    /// call it makes, goes through. `Some` is a subagent's own run — a
+    /// scope that decides both which declarations its requests carry and
+    /// which calls the loop refuses by name.
+    pub scope: Option<crate::subagents::Scope>,
 }
 
 impl Default for AgentOptions {
@@ -89,6 +95,7 @@ impl Default for AgentOptions {
             calib: None,
             skills: Vec::new(),
             memory: None,
+            scope: None,
         }
     }
 }
@@ -121,10 +128,34 @@ pub enum UiEvent {
     /// run whose assembly was empty emits nothing, so the memory-less
     /// run is unchanged.
     Memory { shape: String, facts: usize },
+    /// Where a delegated child run stands, reported to the parent's
+    /// live surface while the parent's turn waits for it.
+    ///
+    /// The child's own turn, token, and finish events deliberately do
+    /// NOT ride here: they belong to the child's conversation, and
+    /// landing them in the parent's would move its turn counter and
+    /// clear its working state mid-run. What crosses is the fact a
+    /// surface needs — a child exists, it is working, it stopped — so
+    /// the `subagent` call reads as one tool card that goes from
+    /// pending to done with the outcome on it.
+    Subagent { goal: String, session: String, stage: SubagentStage },
     /// The loop stopped orderly.
     Finished { stop_reason: String },
     /// The loop failed; the run is over.
     Failed(String),
+}
+
+/// Where a delegated child run stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubagentStage {
+    /// The child's session exists and its run is starting.
+    Spawned,
+    /// The child is working: `calls` of its tool calls have crossed the
+    /// parent's approval gate so far, the last one named `tool`.
+    Working { calls: u64, tool: String },
+    /// The child stopped, at `turns`, with `outcome` named in the session
+    /// log's own ending vocabulary (`completed`/`max-turns`/`failed`).
+    Done { outcome: String, turns: u64 },
 }
 
 /// Why the loop stopped.
@@ -353,6 +384,10 @@ pub struct Agent<'a> {
     /// lives behind an `Arc` because the agent borrows it for the run
     /// while the options that built it stay owned.
     memory: Option<Arc<Memory>>,
+    /// The tool set this run is admitted to, for a subagent's own run.
+    /// `None` is the ordinary run: every declaration the run earns, and
+    /// every call it makes, goes through.
+    scope: Option<crate::subagents::Scope>,
     /// The calibration stream this run records to, when it has one.
     calib: Option<crate::calib::Stream>,
 }
@@ -371,6 +406,7 @@ impl<'a> Agent<'a> {
         let ui_tx = options.ui_tx.clone();
         let skills = options.skills.clone();
         let memory = options.memory.clone();
+        let scope = options.scope.clone();
         // An injected spec map wins for the lanes it names; every other
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
@@ -389,6 +425,7 @@ impl<'a> Agent<'a> {
             lanes,
             skills,
             memory,
+            scope,
             calib,
         })
     }
@@ -450,16 +487,70 @@ impl<'a> Agent<'a> {
     /// closed four rather than inside them: the four are compiled in,
     /// and these exist only while the run has something to select or
     /// somewhere to write.
+    ///
+    /// A subagent's own run declares exactly its admitted scope instead:
+    /// the built-ins it admitted, in their fixed order, then `use_skill`
+    /// when it carries skills. The scope is what keeps the child's tool
+    /// set honest — a tool outside it is not merely uncallable, it is
+    /// absent from what the model saw.
     fn declarations(&self) -> Vec<crate::api::ToolSpec> {
-        let mut specs = self.lanes.declarations();
-        if !self.skills.is_empty() {
+        let mut specs: Vec<crate::api::ToolSpec> = match &self.scope {
+            Some(scope) => crate::tools::ALL_TOOLS
+                .iter()
+                .filter(|tool| scope.admits(tool.name()))
+                .map(|tool| tool.spec())
+                .collect(),
+            None => self.lanes.declarations(),
+        };
+        // A scope that admits nothing admits the beside-the-four tools
+        // either; the check is one place, not one per tool.
+        let admitted = |name: &str| {
+            self.scope.as_ref().is_none_or(|scope| scope.admits(name))
+        };
+        if !self.skills.is_empty() && admitted(tools::USE_SKILL_TOOL) {
             specs.push(tools::use_skill_spec());
         }
-        if self.memory.is_some() {
+        if self.memory.is_some() && admitted(tools::REMEMBER_TOOL) {
             specs.push(tools::remember_spec());
             specs.push(tools::supersede_spec());
         }
+        // `subagent` is declared on every run that is not itself a
+        // subagent: delegation is part of the tool set this crate ships,
+        // not a capability a run opts into. A child's scope never admits
+        // it, which is the depth cap in its declarative half.
+        if admitted(tools::SUBAGENT_TOOL) {
+            specs.push(tools::subagent_spec());
+        }
         specs
+    }
+
+    /// The typed refusal for a call outside this run's admitted scope,
+    /// or `None` for an unscoped run or an admitted name.
+    ///
+    /// The scope check sits after the approval gate rather than before
+    /// it, which is the order every other call takes: the owner sees a
+    /// subagent reach for something it was not given, and the harness
+    /// refuses it. A gate-first order also means the screening row the
+    /// stream carries is the gate's own verdict, not a second kind of
+    /// verdict invented here.
+    fn scope_refusal(&self, name: &str) -> Option<String> {
+        let scope = self.scope.as_ref()?;
+        if scope.admits(name) {
+            return None;
+        }
+        // The one refusal with a reason of its own: a subagent reaching
+        // for delegation is the depth cap, named.
+        if name == tools::SUBAGENT_TOOL {
+            return Some(format!(
+                "error: `{}` is outside this subagent's admitted scope: a subagent cannot spawn subagents (depth cap {})",
+                tools::SUBAGENT_TOOL,
+                crate::subagents::SUBAGENT_MAX_DEPTH
+            ));
+        }
+        Some(format!(
+            "error: `{name}` is outside this subagent's admitted scope ({}); ask for it in the task, or do it yourself",
+            scope.names().join(", ")
+        ))
     }
 
     /// Assemble this run's memory: the protected tier, shape-routed
@@ -715,7 +806,14 @@ impl<'a> Agent<'a> {
             let tool_calls = message.tool_calls.clone();
             self.push_message(message)?;
             for call in tool_calls {
-                self.execute_call(&call).await?;
+                // One `Box::pin` in the cycle, and only because the cycle
+                // now exists: `execute_call` → `subagents::run` →
+                // `Agent::run` → `run_task` → `execute_call`. A recursive
+                // `async fn` needs one indirection to have a finite future
+                // size, the same shape `api::chat_stream` needed when the
+                // router called back into it. The delegation path is the
+                // only recursion this loop has, and depth one caps it.
+                Box::pin(self.execute_call(&call)).await?;
             }
         }
 
@@ -746,6 +844,13 @@ impl<'a> Agent<'a> {
         let tool = Tool::from_name(&call.function.name);
         let (output, truncated) = if !approved {
             ("denied: the user did not approve this call.".to_string(), false)
+        } else if let Some(refusal) = self.scope_refusal(&call.function.name) {
+            // A subagent reaching outside its admitted scope. The
+            // declarations already excluded the tool; this is the
+            // refusal that meets a call that arrived anyway, and it
+            // names the tool and the scope so the model can correct
+            // itself rather than retry.
+            (refusal, false)
         } else if call.function.name == tools::USE_SKILL_TOOL {
             // A skill's body is model-visible content, so it crosses the
             // same approval gate every other tool crosses — approving a
@@ -780,6 +885,8 @@ impl<'a> Agent<'a> {
             }
         } else if call.function.name.starts_with(tools::SUPERSEDE_TOOL) {
             self.supersede(call, approved)
+        } else if call.function.name == tools::SUBAGENT_TOOL {
+            self.run_subagent(call).await?
         } else if let Some((lane, lane_tool)) = tools::lane_of(&call.function.name) {
             self.call_lane(call, lane, lane_tool).await?
         } else {
@@ -824,6 +931,76 @@ impl<'a> Agent<'a> {
         })?;
         self.messages.push(Message::tool_result(call.id.clone(), output));
         Ok(())
+    }
+
+    /// Run one delegated task in its own child session, on this run's
+    /// own client and this run's own model, and return what it produced.
+    ///
+    /// The parent's turn waits: a delegation is synchronous from the
+    /// parent's side. What the child gets is this run's resolved client
+    /// (so its requests cross the same roster with the same failover),
+    /// this run's model and active route decision (so "never downgrades"
+    /// is a property of the construction, not a rule the model follows),
+    /// this run's approver (so the owner sees a subagent's `bash` call
+    /// before it runs), this run's progress sink, this run's declared
+    /// skills, and this run's calibration stream. What it does not get
+    /// is this run's conversation, this run's memory, or this run's
+    /// lanes: the goal is the child's whole context.
+    ///
+    /// The child's log lives in this log's own directory and names this
+    /// session as its parent, so `fleet sessions`, the picker, and
+    /// replay treat it as an ordinary session with a marker.
+    ///
+    /// The result rides the same bounded `tool_result` path every other
+    /// tool's output rides, which is what puts the call and its outcome
+    /// in the parent's log (hard rule 5).
+    async fn run_subagent(&mut self, call: &ToolCall) -> Result<(String, bool), AgentError> {
+        let request = match crate::subagents::SubagentRequest::parse(&parse_arguments(
+            &call.function.arguments,
+        )) {
+            Err(error) => return Ok((format!("error: {error}"), false)),
+            Ok(request) => request,
+        };
+        // Every borrow the child needs is taken from a disjoint field, so
+        // the parent's approver and progress sink can be lent to it while
+        // the parent's own session, client, and options stay in hand.
+        let client = self.client;
+        let route = client.route_decision();
+        let model = self.options.model.clone();
+        let calib = self.options.calib.clone();
+        let skills = self.skills.clone();
+        let ui_tx = self.ui_tx.clone();
+        let Some(sessions_dir) = self.session.path().parent().map(std::path::Path::to_path_buf)
+        else {
+            return Ok((
+                "error: the session log has no directory to create a child session in".to_string(),
+                false,
+            ));
+        };
+        let parent_session = self.session.id().to_string();
+        // An ordinary parent's child sits at depth 1; a subagent's own
+        // child would sit at 2, which the cap refuses — and which the
+        // scope has already made unreachable by excluding the tool.
+        let depth = self.scope.as_ref().map_or(0, |scope| scope.depth) + 1;
+        let result = crate::subagents::run(crate::subagents::Delegation {
+            client,
+            route,
+            model,
+            sessions_dir,
+            parent_session,
+            goal: request.goal,
+            tools: request.tools,
+            max_turns: request.max_turns,
+            approver: &mut *self.approver,
+            progress: &mut *self.progress,
+            ui_tx,
+            calib,
+            skills,
+            depth,
+        })
+        .await;
+        let outcome = crate::subagents::bound_result(&result);
+        Ok((outcome.output, outcome.truncated))
     }
 
     /// Execute one `remember` call against this run's corpus. The
@@ -998,6 +1175,36 @@ fn parse_arguments(arguments: &str) -> serde_json::Value {
 
 /// One-line summary of what a call does, for prompts and UI events.
 fn call_summary(call: &ToolCall) -> String {
+    // A subagent's forwarded call: `subagent → <tool>`, carrying the goal
+    // beside the call's own arguments. The summary names the goal and the
+    // inner call, so an approval prompt answers "whose call is this, and
+    // what does it do?" in one line.
+    if let Some(inner) = call.function.name.strip_prefix(&tools::subagent_call_prefix()) {
+        let arguments = parse_arguments(&call.function.arguments);
+        let goal = arguments.get("goal").and_then(|goal| goal.as_str()).unwrap_or_default();
+        let inner_call = ToolCall {
+            id: call.id.clone(),
+            kind: call.kind.clone(),
+            function: crate::api::FunctionCall {
+                name: inner.to_string(),
+                arguments: arguments
+                    .get("arguments")
+                    .map(|arguments| arguments.to_string())
+                    .unwrap_or_default(),
+            },
+        };
+        let inner_summary = call_summary(&inner_call);
+        return if goal.is_empty() {
+            inner_summary
+        } else {
+            format!("{goal} \u{b7} {inner_summary}")
+        };
+    }
+    // The parent's own delegation: the goal is the whole summary, because
+    // the goal is the fact the owner needs to answer "may this run?".
+    if call.function.name == tools::SUBAGENT_TOOL {
+        return subagent_goal(&call.function.arguments);
+    }
     if call.function.name == tools::USE_SKILL_TOOL {
         // The skill a `use_skill` call would load: the fact the user
         // needs to answer "may this run?".
@@ -1051,6 +1258,9 @@ fn describe_call(call: &ToolCall) -> String {
     if call.function.name == tools::USE_SKILL_TOOL {
         return format!("{}: {}", tools::USE_SKILL_TOOL, call_summary(call));
     }
+    if call.function.name == tools::SUBAGENT_TOOL {
+        return format!("{}: {}", tools::SUBAGENT_TOOL, subagent_goal(&call.function.arguments));
+    }
     if call.function.name.starts_with(tools::REMEMBER_TOOL)
         || call.function.name.starts_with(tools::SUPERSEDE_TOOL)
         || tools::lane_of(&call.function.name).is_some()
@@ -1063,6 +1273,23 @@ fn describe_call(call: &ToolCall) -> String {
         Some(tool) => format!("{}: {}", tool.name(), tool.summarize(&arguments, 72)),
         None => format!("{}: (unknown tool)", call.function.name),
     }
+}
+
+/// The goal one `subagent` call delegates, bounded for one line. A
+/// missing or malformed goal reads as the empty string rather than a
+/// guess — the parse that follows names the real refusal.
+fn subagent_goal(arguments: &str) -> String {
+    let goal = serde_json::from_str::<serde_json::Value>(arguments)
+        .ok()
+        .and_then(|arguments| {
+            arguments.get("goal").and_then(|goal| goal.as_str()).map(str::to_string)
+        })
+        .unwrap_or_default();
+    let mut bounded: String = goal.chars().take(72).collect();
+    if goal.chars().count() > 72 {
+        bounded.push('\u{2026}');
+    }
+    bounded
 }
 
 /// First `limit` characters of `text`, first line only, for progress output.
@@ -1369,6 +1596,7 @@ mod tests {
             calib: None,
             skills,
             memory: None,
+            scope: None,
         };
         let mut progress = Vec::new();
         let agent =
@@ -1609,6 +1837,7 @@ mod tests {
             calib: None,
             skills: Vec::new(),
             memory: Some(memory),
+            scope: None,
         };
         Agent::new(client, options, session, approver, Box::leak(Box::new(Vec::new()))).unwrap()
     }
@@ -1628,11 +1857,20 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["bash", "read_file", "write_file", "list_dir", "remember", "supersede"]
+            vec![
+                "bash",
+                "read_file",
+                "write_file",
+                "list_dir",
+                "remember",
+                "supersede",
+                "subagent"
+            ]
         );
 
         // Without memory the run is the run this crate has always had:
-        // the same four declarations and the compiled-in prompt.
+        // the same four declarations plus the delegation tool, and the
+        // compiled-in prompt.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
@@ -1643,12 +1881,13 @@ mod tests {
             calib: None,
             skills: Vec::new(),
             memory: None,
+            scope: None,
         };
         let mut progress = Vec::new();
         let plain =
             Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
                 .unwrap();
-        assert_eq!(plain.declarations().len(), 4);
+        assert_eq!(plain.declarations().len(), 5);
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
@@ -1696,6 +1935,7 @@ mod tests {
             calib: Some(stream.clone()),
             skills: Vec::new(),
             memory: Some(memory),
+            scope: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent =

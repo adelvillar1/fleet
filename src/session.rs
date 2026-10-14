@@ -16,6 +16,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// same-version additions require tolerant readers.
 pub const SESSION_FORMAT_VERSION: u32 = 1;
 
+/// The `kind` a delegated child run's `start` record carries. An
+/// ordinary session's `start` record carries no `kind` at all, so an
+/// ordinary log's first line is byte-for-byte what it has always been
+/// and a reader learns a log is a child only when it says so.
+pub const SUBAGENT_KIND: &str = "subagent";
+
 /// One line of a session log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -25,6 +31,16 @@ pub enum Record {
         v: u32,
         model: String,
         created: String,
+        /// `subagent` for a delegated child run's log; absent for an
+        /// ordinary session. Bookkeeping about the log itself, like
+        /// `v` and `model`: it replays to no message.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        /// The delegating session's id, on a child's `start` record.
+        /// What makes a child's lineage readable from its own log
+        /// rather than only from the parent's `tool_result`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
     },
     User {
         content: String,
@@ -101,6 +117,29 @@ impl Session {
     /// clock's sub-second bits and the process id.
     pub fn create(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
+        Session::open_new(&dir, model, None, None)
+    }
+
+    /// Create a delegated child's log in `sessions_dir` — the sessions
+    /// directory itself, not a home to resolve one under — marked
+    /// `kind: subagent` and naming the session that delegated to it.
+    ///
+    /// A child's log lands beside its parent's, which is what makes the
+    /// picker, `fleet sessions`, and replay treat it as an ordinary
+    /// session with a marker: a child's work is real work in a real
+    /// session, not a side channel.
+    pub fn create_subagent(sessions_dir: &Path, model: &str, parent: &str) -> io::Result<Session> {
+        Session::open_new(sessions_dir, model, Some(SUBAGENT_KIND), Some(parent))
+    }
+
+    /// The one place a log is created: the id, the file, and the `start`
+    /// record.
+    fn open_new(
+        dir: &Path,
+        model: &str,
+        kind: Option<&str>,
+        parent: Option<&str>,
+    ) -> io::Result<Session> {
         let id = format!("{}-{:06x}", compact_utc_stamp(SystemTime::now())?, unique_suffix());
         let path = dir.join(format!("{id}.jsonl"));
         let log = OpenOptions::new().create_new(true).append(true).open(&path)?;
@@ -110,6 +149,8 @@ impl Session {
             v: SESSION_FORMAT_VERSION,
             model: model.to_string(),
             created,
+            kind: kind.map(str::to_string),
+            parent: parent.map(str::to_string),
         })?;
         Ok(session)
     }
@@ -168,6 +209,11 @@ pub struct SessionSummary {
     pub created: String,
     /// True when the log's last record is `end`.
     pub ended: bool,
+    /// `subagent` for a delegated child run's log; `None` for an
+    /// ordinary session's. The picker and `fleet sessions` show it as a
+    /// marker beside the row — a child is an ordinary session with a
+    /// parent, not a second class of thing.
+    pub kind: Option<String>,
     pub path: PathBuf,
 }
 
@@ -202,6 +248,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     model: "unreadable".to_string(),
                     created: String::new(),
                     ended: false,
+                    kind: None,
                     path,
                 });
                 continue;
@@ -211,8 +258,12 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
             Record::Start { model, created, .. } => (model.clone(), created.clone()),
             _ => (String::new(), String::new()),
         };
+        let kind = match &records[0] {
+            Record::Start { kind, .. } => kind.clone(),
+            _ => None,
+        };
         let ended = matches!(records.last(), Some(Record::End { .. }));
-        entries.push(SessionSummary { id, model, created, ended, path });
+        entries.push(SessionSummary { id, model, created, ended, kind, path });
     }
     entries.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(entries)
@@ -348,7 +399,7 @@ mod tests {
     #[test]
     fn messages_skip_bookkeeping_records() {
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into() },
+            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
             Record::User { content: "hi".into() },
             Record::Assistant { content: Some("running".into()), tool_calls: vec![] },
             Record::ToolResult {
@@ -388,7 +439,7 @@ mod tests {
         // message — it describes the tool set, not anything the model
         // said.
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into() },
+            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
             Record::User { content: "probe it".into() },
             lane_tools_record(),
             Record::Assistant { content: None, tool_calls: Vec::new() },
@@ -453,7 +504,7 @@ mod tests {
         // message — it describes the system prompt's skills list, not
         // anything the model said.
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into() },
+            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
             skills_record(),
             Record::User { content: "do it".into() },
             Record::Assistant { content: Some("done".into()), tool_calls: vec![] },
@@ -525,7 +576,7 @@ mod tests {
         // message: it describes the system prompt, not anything the
         // model said.
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into() },
+            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
             memory_record(),
             Record::User { content: "the deploy is failing".into() },
             Record::Assistant { content: Some("checking".into()), tool_calls: Vec::new() },
@@ -585,6 +636,100 @@ mod tests {
         assert!(!open.ended);
         let closed = summaries.iter().find(|summary| summary.model == "m").unwrap();
         assert!(closed.ended);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// One child log's `start` record, as the delegation path writes it:
+    /// the model, the `kind` marker, and the delegating session's id.
+    fn subagent_start() -> Record {
+        Record::Start {
+            v: 1,
+            model: "test-model".to_string(),
+            created: "2026-10-14T00:00:00Z".to_string(),
+            kind: Some(SUBAGENT_KIND.to_string()),
+            parent: Some("20261013T000000Z-abcdef".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_child_logs_start_record_carries_its_kind_and_its_parent() {
+        let home = temp_home("subagent-start");
+        let dir = crate::home::ensure_sessions_dir(&home).unwrap();
+        let mut child = Session::create_subagent(&dir, "test-model", "parent-session").unwrap();
+        child.record(&Record::User { content: "the delegated goal".into() }).unwrap();
+        child
+            .record(&Record::End { stop_reason: "completed".into(), turns: 2 })
+            .unwrap();
+
+        let line = fs::read_to_string(child.path()).unwrap();
+        let recorded = line.lines().next().expect("the start line");
+        // The marker and the lineage ride the log's own first line, and
+        // the format version is untouched.
+        assert!(recorded.starts_with("{\"type\":\"start\",\"v\":1"), "{recorded}");
+        assert!(recorded.contains("\"kind\":\"subagent\""), "{recorded}");
+        assert!(recorded.contains("\"parent\":\"parent-session\""), "{recorded}");
+
+        let records = replay(child.path()).unwrap();
+        match &records[0] {
+            Record::Start { v, model, kind, parent, .. } => {
+                assert_eq!(*v, SESSION_FORMAT_VERSION);
+                assert_eq!(model, "test-model");
+                assert_eq!(kind.as_deref(), Some("subagent"));
+                assert_eq!(parent.as_deref(), Some("parent-session"));
+            }
+            other => panic!("expected a start record, got {other:?}"),
+        }
+        // The marker is bookkeeping: the log still replays to exactly the
+        // conversation it holds, and it still lists as an ordinary session.
+        let messages = messages(&records);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, Role::User);
+        let summaries = list(&home).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].kind.as_deref(), Some("subagent"));
+        assert!(summaries[0].ended);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn an_ordinary_logs_start_record_carries_no_kind() {
+        // The ordinary run is byte-for-byte the run it has always been:
+        // no `kind`, no `parent`, and no marker in the listing.
+        let home = temp_home("ordinary-start");
+        let session = Session::create(&home, "m").unwrap();
+        let line = fs::read_to_string(session.path()).unwrap();
+        let recorded = line.lines().next().expect("the start line");
+        assert!(!recorded.contains("kind"), "{recorded}");
+        assert!(!recorded.contains("parent"), "{recorded}");
+        assert_eq!(list(&home).unwrap()[0].kind, None);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_childs_start_record_round_trips_from_a_reader_that_knows_the_vocabulary() {
+        // The record read back is the record written: the marker and the
+        // lineage both survive the round trip through the file.
+        let home = temp_home("subagent-round-trip");
+        let mut session = Session::create(&home, "m").unwrap();
+        session.record(&subagent_start()).unwrap();
+        let records = replay(session.path()).unwrap();
+        // The log's own first line is the create's `start`; the child
+        // record is the one this test appended.
+        assert_eq!(
+            serde_json::to_string(&records[1]).unwrap(),
+            serde_json::to_string(&subagent_start()).unwrap()
+        );
+        // A pre-slice-9 first line, with neither field, reads as an
+        // ordinary session rather than failing the whole log.
+        let legacy = "{\"type\":\"start\",\"v\":1,\"model\":\"m\",\"created\":\"c\"}\n";
+        let parsed: Record = serde_json::from_str(legacy).unwrap();
+        match parsed {
+            Record::Start { kind, parent, .. } => {
+                assert_eq!(kind, None);
+                assert_eq!(parent, None);
+            }
+            other => panic!("expected a start record, got {other:?}"),
+        }
         fs::remove_dir_all(&home).ok();
     }
 

@@ -4,7 +4,7 @@
 //! rendering only reads it. Keeping it pure is what makes the interaction
 //! testable without a terminal.
 
-use crate::agent::{Approval, UiEvent};
+use crate::agent::{Approval, SubagentStage, UiEvent};
 use crate::api::Usage;
 use crate::lanes::LaneHealth;
 use crate::session::{Record, SessionSummary};
@@ -399,6 +399,59 @@ impl App {
                 // shows the shape and the fact count, the live half of the
                 // `memory` record the log carries.
                 self.status.memory = Some((shape, facts));
+            }
+            UiEvent::Subagent { goal, session, stage } => {
+                // A delegated child run, reported while the parent's turn
+                // waits for it. It lands on the `subagent` call's own tool
+                // card — the same card the ordinary ToolCall event opened
+                // and the ordinary ToolResult event closes — so the
+                // conversation shows one card that goes pending, working,
+                // done, with the goal on it and the outcome at the end.
+                //
+                // These events own the card's detail, never its lifecycle:
+                // the status dot is the ordinary ToolCall/ToolResult pair's,
+                // exactly as it is for every other tool. A child that stops
+                // without its result arriving still leaves the outcome in
+                // the preview, which is the one case the pair cannot cover.
+                self.flush_streaming();
+                let card = self
+                    .entries
+                    .iter_mut()
+                    .rev()
+                    .find_map(|entry| match entry {
+                        Entry::Tool(card) if card.name == crate::tools::SUBAGENT_TOOL => Some(card),
+                        _ => None,
+                    })
+                    .filter(|card| {
+                        matches!(card.status, ToolStatus::Pending | ToolStatus::Approved)
+                    });
+                let detail = match stage {
+                    SubagentStage::Spawned => None,
+                    SubagentStage::Working { calls, tool } => {
+                        Some(format!("child {session} \u{b7} {calls} call(s) \u{b7} last {tool}"))
+                    }
+                    SubagentStage::Done { outcome, turns } => {
+                        Some(format!("child {session} \u{b7} {outcome} \u{b7} {turns} turn(s)"))
+                    }
+                };
+                match card {
+                    Some(card) => {
+                        if card.summary.is_empty() {
+                            card.summary = goal;
+                        }
+                        if let Some(detail) = detail {
+                            card.preview = detail;
+                        }
+                    }
+                    // No open card: a `Spawned` stage opens one, and any
+                    // other stage still belongs on screen.
+                    None => self.entries.push(Entry::Tool(ToolCard {
+                        name: crate::tools::SUBAGENT_TOOL.to_string(),
+                        summary: goal,
+                        status: ToolStatus::Pending,
+                        preview: detail.unwrap_or_default(),
+                    })),
+                }
             }
             UiEvent::Finished { .. } => {
                 self.flush_streaming();
@@ -911,6 +964,66 @@ mod tests {
         assert_eq!(card.summary, "ls -la");
     }
 
+    /// A delegated child run lands on the `subagent` call's own card: the
+    /// ordinary ToolCall event opens it, the child's progress fills it,
+    /// and the ordinary ToolResult event closes it — one card, in the
+    /// house style, with the goal on it and the outcome at the end.
+    #[test]
+    fn a_subagent_progress_lands_on_the_tool_card() {
+        let mut app = app();
+        app.apply_ui_event(UiEvent::Turn(1));
+        app.apply_ui_event(UiEvent::ToolCall {
+            name: "subagent".to_string(),
+            summary: "count the files".to_string(),
+        });
+        // Spawned with no open card still belongs on screen.
+        let mut fresh = crate::tui::app::App::new("deepseek-chat", "session-1");
+        fresh.apply_ui_event(UiEvent::Subagent {
+            goal: "count the files".to_string(),
+            session: "child-1".to_string(),
+            stage: SubagentStage::Spawned,
+        });
+        let Entry::Tool(card) = &fresh.entries[0] else { panic!("expected a tool card") };
+        assert_eq!(card.status, ToolStatus::Pending);
+        assert_eq!(card.summary, "count the files");
+
+        // With the card open, the child's progress updates it in place and
+        // never adds a second one.
+        app.apply_ui_event(UiEvent::Subagent {
+            goal: "count the files".to_string(),
+            session: "child-1".to_string(),
+            stage: SubagentStage::Working { calls: 2, tool: "bash".to_string() },
+        });
+        assert_eq!(app.entries.len(), 1, "{:?}", app.entries);
+        let Entry::Tool(card) = &app.entries[0] else { panic!("expected a tool card") };
+        assert_eq!(card.preview, "child child-1 \u{b7} 2 call(s) \u{b7} last bash");
+        // The status dot is the ordinary pair's, not the child's: a working
+        // child leaves its card pending until the call's own result lands.
+        assert_eq!(card.status, ToolStatus::Pending);
+
+        app.apply_ui_event(UiEvent::Subagent {
+            goal: "count the files".to_string(),
+            session: "child-1".to_string(),
+            stage: SubagentStage::Done { outcome: "completed".to_string(), turns: 3 },
+        });
+        app.apply_ui_event(UiEvent::ToolResult {
+            name: "subagent".to_string(),
+            preview: "subagent completed \u{b7} 3 turns".to_string(),
+            approved: true,
+        });
+        assert_eq!(app.entries.len(), 1, "{:?}", app.entries);
+        let Entry::Tool(card) = &app.entries[0] else { panic!("expected a tool card") };
+        assert_eq!(card.status, ToolStatus::Done);
+        assert_eq!(card.summary, "count the files");
+        // The result's own preview is what stays: the card reads like every
+        // other tool card's.
+        assert_eq!(card.preview, "subagent completed \u{b7} 3 turns");
+        // The parent's turn counter and working state are untouched by the
+        // child's own events.
+        assert_eq!(app.status.turn, 1);
+        assert!(app.status.working);
+    }
+
     /// A lane joining the run lands as its own block, between the call
     /// that triggered it and the result that follows.
     #[test]
@@ -1001,7 +1114,7 @@ mod tests {
     fn seeding_a_log_skips_the_skills_record() {
         let mut app = app();
         app.seed(&[
-            Record::Start { v: 1, model: "m".to_string(), created: "c".to_string() },
+            Record::Start { v: 1, model: "m".to_string(), created: "c".to_string(), kind: None, parent: None },
             Record::Skills {
                 skills: vec![crate::skills::SkillRef {
                     name: "bash-recovery".to_string(),
@@ -1269,7 +1382,7 @@ mod tests {
         app.apply_ui_event(UiEvent::Token("half a thought".to_string()));
         app.apply_ui_event(UiEvent::Failed("boom".to_string()));
         let records = vec![
-            Record::Start { v: 1, model: "m".to_string(), created: "c".to_string() },
+            Record::Start { v: 1, model: "m".to_string(), created: "c".to_string(), kind: None, parent: None },
             Record::User { content: "resumed task".to_string() },
             Record::Assistant { content: Some(String::new()), tool_calls: vec![] },
             Record::Assistant { content: Some("done".to_string()), tool_calls: vec![] },
@@ -1302,6 +1415,7 @@ mod tests {
             model: "deepseek-chat".to_string(),
             created: "2026-10-13T00:00:00Z".to_string(),
             ended: false,
+            kind: None,
             path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),
         }
     }

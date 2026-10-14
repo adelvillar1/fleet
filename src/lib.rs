@@ -16,5 +16,6 @@ pub mod net;
 pub mod route;
 pub mod session;
 pub mod skills;
+pub mod subagents;
 pub mod tools;
 pub mod tui;

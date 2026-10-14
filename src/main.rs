@@ -469,6 +469,7 @@ async fn drive(
         calib: Some(prepared.calib.clone()),
         skills,
         memory,
+        scope: None,
     };
     let approver: Box<dyn Approver> =
         if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };
@@ -520,12 +521,16 @@ fn sessions_command() -> ExitCode {
     }
     println!("{:44} {:20} {:16} state", "id", "created", "model");
     for summary in summaries {
+        // A delegated child's log is an ordinary session with a marker:
+        // the listing names the kind beside the state.
+        let kind = summary.kind.as_deref().unwrap_or("session");
         println!(
-            "{:44} {:20} {:16} {}",
+            "{:44} {:20} {:16} {} {}",
             summary.id,
             summary.created,
             summary.model,
-            if summary.ended { "ended" } else { "open" }
+            if summary.ended { "ended" } else { "open" },
+            kind
         );
     }
     ExitCode::SUCCESS

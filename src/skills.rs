@@ -1620,7 +1620,7 @@ mod tests {
     #[test]
     fn a_failure_that_was_corrected_drafts_a_create_with_the_records_cited() {
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into() },
+            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
             Record::User { content: "run it".into() },
             assistant(vec![tool_call("c1", "bash", "{}")]),
             result("c1", "bash", "error: exit 127"),

@@ -322,6 +322,7 @@ async fn run_on(
         calib: None,
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -344,6 +345,7 @@ async fn run_on_probe(
         calib: None,
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let mut agent =
         Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
@@ -370,6 +372,7 @@ async fn run_with_lanes(
         calib: None,
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
@@ -892,6 +895,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         calib: None,
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -952,6 +956,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         calib: None,
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -985,6 +990,7 @@ async fn a_denied_call_reports_its_result_event() {
         calib: None,
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1038,6 +1044,7 @@ async fn a_failed_run_reports_a_failure_event() {
         calib: None,
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1763,18 +1770,25 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     );
 
     // Lazy by construction: turn 1's request was built before the run had
-    // met the lane, so it declared only the four built-ins. Turn 2's
-    // request carries the lane's four tools under the namespace too.
+    // met the lane, so it declared only the four built-ins and the
+    // delegation tool. Turn 2's request carries the lane's four tools
+    // under the namespace too.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 2);
-    assert_eq!(declared_tools(&bodies[0]), vec!["bash", "read_file", "write_file", "list_dir"]);
+    assert_eq!(
+        declared_tools(&bodies[0]),
+        vec!["bash", "read_file", "write_file", "list_dir", "subagent"]
+    );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 8, "{second:?}");
+    assert_eq!(second.len(), 9, "{second:?}");
     assert_eq!(&second[..4], &["bash", "read_file", "write_file", "list_dir"]);
     assert_eq!(
-        &second[4..],
+        &second[4..8],
         &["mcp__sem1__embed", "mcp__sem1__probe", "mcp__sem1__index", "mcp__sem1__search"]
     );
+    // The delegation tool rides last, beside the four built-ins and every
+    // joined lane's tools.
+    assert_eq!(second.last().map(String::as_str), Some("subagent"), "{second:?}");
     // The tool result the model read rode back in the same request.
     let answer = bodies[1]["messages"][3]["content"].as_str().expect("the tool result");
     assert!(answer.contains("llama-server"), "{answer}");
@@ -1902,8 +1916,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     // model can still see them, and calling one is a typed failure.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 5);
-    assert_eq!(declared_tools(&bodies[2]).len(), 5);
+    assert_eq!(declared_tools(&bodies[1]).len(), 6);
+    assert_eq!(declared_tools(&bodies[2]).len(), 6);
     assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
 
     std::fs::remove_dir_all(&home).ok();
@@ -1943,6 +1957,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             calib: None,
             skills: Vec::new(),
             memory: None,
+            scope: None,
         };
         let report = {
             let mut agent =
@@ -2153,9 +2168,9 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
         other => panic!("expected a denied lane tool result, got {other:?}"),
     }
     // No lane joined, so the second request still declares only the
-    // built-ins.
+    // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 4);
+    assert_eq!(declared_tools(&bodies[1]).len(), 5);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -2217,9 +2232,10 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
         "the second call fails fast: {}",
         outputs[1]
     );
-    // A lane that never started never joined, so nothing was declared.
+    // A lane that never started never joined, so nothing was declared
+    // beyond the built-ins and the delegation tool.
     assert!(records.iter().all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 4);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 5);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -2279,6 +2295,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         calib: None,
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let mut progress = Vec::new();
     let report = {
@@ -2436,6 +2453,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         calib: Some(stream.clone()),
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2492,6 +2510,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         calib: Some(stream.clone()),
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let outcome = {
         let mut progress = Vec::new();
@@ -2533,6 +2552,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         calib: Some(stream.clone()),
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2574,6 +2594,7 @@ async fn a_run_without_a_stream_records_nothing() {
             calib: None,
             skills: Vec::new(),
             memory: None,
+            scope: None,
         },
         &mut session,
         Box::new(ApproveAll),
@@ -2691,6 +2712,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         calib: Some(prepared.calib.clone()),
         skills: Vec::new(),
         memory: None,
+        scope: None,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2767,6 +2789,7 @@ async fn run_with_skills(
         calib: None,
         skills,
         memory: None,
+        scope: None,
     };
     let mut progress = Vec::new();
     let mut agent =
@@ -2819,10 +2842,12 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     assert!(system.contains("demo-skill"), "{system}");
     assert!(system.contains("Recover a failed bash call"), "{system}");
     assert!(!system.contains("read the error, fix one thing"), "{system}");
-    // The declarations carry `use_skill` beside the four built-ins.
+    // The declarations carry `use_skill` beside the four built-ins, and
+    // the delegation tool beside that.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 5, "{declared:?}");
+    assert_eq!(declared.len(), 6, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
+    assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     // The body entered context as the call's ordinary tool result — the
     // same seam, the same message the model reads.
     let seen = bodies[1]["messages"][3]["content"].as_str().expect("the tool result");
@@ -3382,6 +3407,7 @@ async fn run_with_memory(
         calib,
         skills: Vec::new(),
         memory,
+        scope: None,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -3431,10 +3457,11 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
     assert!(system.contains("Standing context (protected"), "{system}");
     assert!(system.contains("shape-routed recall for `deploy`"), "{system}");
     assert!(system.contains("the railway deploy is failing per branch"), "{system}");
-    // The write path rides beside the closed four.
+    // The write path rides beside the closed four, and the delegation
+    // tool beside that.
     assert_eq!(
         declared_tools(&bodies[0]),
-        vec!["bash", "read_file", "write_file", "list_dir", "remember", "supersede"]
+        vec!["bash", "read_file", "write_file", "list_dir", "remember", "supersede", "subagent"]
     );
 
     // The `memory` record keeps the prompt reconstructable (hard rule
@@ -3470,10 +3497,14 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
         .unwrap();
 
     // No memory wired: the system prompt is the compiled-in constant,
-    // byte for byte, and the declarations are the closed four.
+    // byte for byte, and the declarations are the closed four plus the
+    // delegation tool.
     let bodies = mock.bodies();
     assert_eq!(bodies[0]["messages"][0]["content"], fleet::agent::SYSTEM_PROMPT);
-    assert_eq!(declared_tools(&bodies[0]), vec!["bash", "read_file", "write_file", "list_dir"]);
+    assert_eq!(
+        declared_tools(&bodies[0]),
+        vec!["bash", "read_file", "write_file", "list_dir", "subagent"]
+    );
     let records = session::replay(&session.path()).unwrap();
     assert!(
         !records.iter().any(|record| matches!(record, Record::Memory { .. })),
@@ -3481,7 +3512,8 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
     );
 
     // An empty corpus is the same run with a place to write: no block,
-    // no record, the same constant prompt — the write path declared.
+    // no record, the same constant prompt — the write path and the
+    // delegation tool declared.
     let mock = MockApi::start(vec![assistant_stream("Done.")]);
     let root = memory_corpus("empty-turn", &[]);
     let memory =
@@ -3494,7 +3526,7 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
     assert_eq!(bodies[0]["messages"][0]["content"], fleet::agent::SYSTEM_PROMPT);
     assert_eq!(
         declared_tools(&bodies[0]),
-        vec!["bash", "read_file", "write_file", "list_dir", "remember", "supersede"]
+        vec!["bash", "read_file", "write_file", "list_dir", "remember", "supersede", "subagent"]
     );
     let records = session::replay(&session.path()).unwrap();
     assert!(
@@ -3645,4 +3677,469 @@ async fn a_confirmed_by_supersede_lands_with_approval_and_is_refused_without_it(
         .expect("the supersede tool_result");
     assert!(!denial.1, "the call was not approved");
     assert!(denial.0.contains("denied"), "{denial:?}");
+}
+
+// --- subagents (slice 9) ---------------------------------------------------
+
+/// One `subagent` call's arguments as the model issues them.
+fn delegation_arguments(goal: &str) -> String {
+    serde_json::json!({ "goal": goal }).to_string()
+}
+
+/// A streamed answer carrying text AND one tool call: the shape a model
+/// uses when it narrates before it acts, which is what makes a partial
+/// result partial.
+fn narrated_tool_call_stream(
+    id: &str,
+    name: &str,
+    arguments: &str,
+    narration: &str,
+) -> ScriptedResponse {
+    let (head, tail) = arguments.split_at(arguments.len() / 2);
+    stream(vec![
+        content_delta(narration),
+        tool_call_delta(0, id, name, head),
+        tool_call_delta(0, "", "", tail),
+        finish_frame("tool_calls"),
+        usage_frame(10, 5),
+        "data: [DONE]".to_string(),
+    ])
+}
+
+/// The child session's summary, from a home that holds exactly one.
+fn child_summary(home: &Path) -> session::SessionSummary {
+    let summaries = session::list(home).unwrap();
+    let mut children: Vec<session::SessionSummary> = summaries
+        .into_iter()
+        .filter(|summary| summary.kind.as_deref() == Some("subagent"))
+        .collect();
+    assert_eq!(children.len(), 1, "exactly one child log: {children:?}");
+    children.remove(0)
+}
+
+/// One tool_result record from `records`, by tool name.
+fn tool_result(records: &[Record], name: &str) -> (String, bool) {
+    records
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { name: recorded, output, approved, .. } if recorded == name => {
+                Some((output.clone(), *approved))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no {name} tool_result in {records:?}"))
+}
+
+/// An approver that records every call it was asked about and refuses a
+/// subagent's own calls, so a test can watch a child's call cross the
+/// parent's gate and be refused there.
+struct GateSpy {
+    seen: Arc<std::sync::Mutex<Vec<ToolCall>>>,
+}
+
+impl Approver for GateSpy {
+    fn approve(&mut self, call: &ToolCall) -> bool {
+        self.seen.lock().unwrap().push(call.clone());
+        // The parent's own delegation goes through; the child's calls do
+        // not. The labelled name is what tells them apart.
+        !call.function.name.starts_with("subagent \u{2192}")
+    }
+}
+
+/// The headline of slice 9: a delegated task runs in its own session log,
+/// on the parent's own model, and the parent's log carries the call and
+/// its result.
+#[tokio::test]
+async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "subagent", &delegation_arguments("count the files in /tmp")),
+        tool_call_stream("child-1", "use_skill", r#"{"name":"demo-skill"}"#),
+        assistant_stream("there are three files"),
+        assistant_stream("the child counted three files"),
+    ]);
+    let home = temp_home("subagent-own-session");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the count")
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    // Two logs exist afterward: the parent's and the child's.
+    let summaries = session::list(&home).unwrap();
+    assert_eq!(summaries.len(), 2, "{summaries:?}");
+    let child = child_summary(&home);
+    assert_eq!(child.model, "test-model");
+    assert!(child.ended, "the child stopped orderly");
+
+    // The child's own start record carries its kind and its parent — the
+    // marker that survives a replay and the picker listing alike.
+    let child_records = session::replay(&child.path).unwrap();
+    match &child_records[0] {
+        Record::Start { kind, parent, model, .. } => {
+            assert_eq!(kind.as_deref(), Some("subagent"));
+            assert_eq!(parent.as_deref(), Some(session.id()));
+            assert_eq!(model, "test-model");
+        }
+        other => panic!("expected a start record, got {other:?}"),
+    }
+    // The child's conversation is the goal and its answer, nothing else:
+    // no trace of the parent's task or its turns.
+    let messages = session::messages(&child_records);
+    assert_eq!(messages.len(), 4, "{messages:?}");
+    assert_eq!(messages[0].role, Role::User);
+    assert_eq!(messages[0].content.as_deref(), Some("count the files in /tmp"));
+    assert_eq!(messages[1].role, Role::Assistant);
+    assert_eq!(messages[1].tool_calls[0].function.name, "use_skill");
+    assert_eq!(messages[2].role, Role::Tool);
+    assert_eq!(messages[2].content.as_deref(), Some("error: no skill named `demo-skill`"));
+    assert_eq!(messages[3].content.as_deref(), Some("there are three files"));
+    assert!(matches!(
+        child_records.last(),
+        Some(Record::End { stop_reason, .. }) if stop_reason == "completed"
+    ));
+
+    // Both sessions' requests carried the same model, and the child's
+    // carried the same compiled-in system prompt: the same loop, the same
+    // prompt, a different conversation.
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 4, "{bodies:?}");
+    for body in &bodies {
+        assert_eq!(body["model"], "test-model", "{body}");
+    }
+    assert_eq!(bodies[1]["messages"][0]["content"], fleet::agent::SYSTEM_PROMPT);
+    // The child's first user message is the goal, whole.
+    assert_eq!(bodies[1]["messages"][1]["content"], "count the files in /tmp");
+    // The child's tool set is its admitted scope. `use_skill` is admitted
+    // and undeclared here, exactly as on a skill-less parent's run: the
+    // scope decides what is callable, the run's skills decide what is
+    // declared. A call to an admitted-but-undeclared tool is the typed
+    // unknown the skills path returns, not a scope refusal.
+    assert_eq!(
+        declared_tools(&bodies[1]),
+        vec!["bash", "read_file", "write_file", "list_dir"]
+    );
+    let (skill_result, _) = tool_result(&child_records, "use_skill");
+    assert!(skill_result.starts_with("error:"), "{skill_result}");
+    assert!(!skill_result.contains("admitted scope"), "{skill_result}");
+    // The parent's request declared `subagent` beside its own four.
+    assert!(declared_tools(&bodies[0]).contains(&"subagent".to_string()));
+
+    // The parent's session log carries the call and its result: the
+    // outcome, the child's session, its log path, and its words.
+    let parent_records = session::replay(&session.path()).unwrap();
+    let (output, approved) = tool_result(&parent_records, "subagent");
+    assert!(approved, "the delegation was approved");
+    assert!(output.starts_with("subagent completed"), "{output}");
+    assert!(output.contains(child.id.as_str()), "{output}");
+    assert!(output.contains(&child.path.display().to_string()), "{output}");
+    assert!(output.contains("there are three files"), "{output}");
+    // The assistant turn that requested the call is logged with its call
+    // intact, so the replay stays a valid sequence.
+    assert!(parent_records.iter().any(|record| matches!(
+        record,
+        Record::Assistant { tool_calls, .. } if tool_calls.iter().any(|call| call.function.name == "subagent")
+    )));
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A routed parent's child runs on the routed candidate's model: the
+/// never-downgrade rule in its strongest form, because the child
+/// inherits the roster's choice rather than the nominal one.
+#[tokio::test]
+async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "subagent", &delegation_arguments("answer briefly")),
+        assistant_stream("answered on the routed model"),
+        assistant_stream("the child answered"),
+    ]);
+    let home = temp_home("subagent-routed");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let resolved = vec![resolved("cand-one", mock.url(), false, None)];
+    let decision = RouteDecision {
+        provider: "cand-one".to_string(),
+        how: How::Pinned,
+        workload: None,
+        verdict: None,
+        reason: "pinned for the test".to_string(),
+        start_index: 0,
+    };
+    let client = Client::routed(Arc::new(Router::new(resolved, decision)));
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        memory: None,
+        scope: None,
+    };
+    let mut progress = Vec::new();
+    let mut agent =
+        Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+    agent.run("delegate it").await.unwrap();
+
+    // Every request — the parent's two and the child's one — carries the
+    // roster candidate's model, not the nominal one the options name.
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 3, "{bodies:?}");
+    for body in &bodies {
+        assert_eq!(body["model"], "cand-one-model", "{body}");
+    }
+    // The child's log names the same nominal model the parent's does: a
+    // `start` record carries the run's model, and the route decides what
+    // serves — for both sessions alike.
+    let child = child_summary(&home);
+    assert_eq!(child.model, "test-model");
+    let parent = session::list(&home)
+        .unwrap()
+        .into_iter()
+        .find(|summary| summary.kind.is_none())
+        .expect("the parent's log");
+    assert_eq!(parent.model, "test-model");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The scope, from both ends: the declarations exclude a tool outside it,
+/// and the loop refuses a call that arrives anyway — by name.
+#[tokio::test]
+async fn a_tool_outside_the_childs_scope_is_refused_by_name() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &serde_json::json!({
+                "goal": "write the note",
+                "tools": ["bash"],
+            })
+            .to_string(),
+        ),
+        tool_call_stream("child-1", "write_file", r#"{"path":"/tmp/nope.txt","content":"x"}"#),
+        assistant_stream("I could not write the file"),
+        assistant_stream("the child could not write it"),
+    ]);
+    let home = temp_home("subagent-scope");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the write").await.unwrap();
+
+    let bodies = mock.bodies();
+    // The child's second request declared only what its scope admits.
+    assert_eq!(declared_tools(&bodies[2]), vec!["bash"], "{:?}", declared_tools(&bodies[2]));
+    // The refusal is a typed, model-visible result that names the tool and
+    // the scope it fell outside.
+    let child = child_summary(&home);
+    let (output, approved) = tool_result(&session::replay(&child.path).unwrap(), "write_file");
+    assert!(approved, "the call crossed the gate before the harness refused it");
+    assert!(output.contains("outside this subagent's admitted scope"), "{output}");
+    assert!(output.contains("`write_file`"), "{output}");
+    assert!(output.contains("bash"), "{output}");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The depth cap: a subagent reaching for `subagent` is refused by name,
+/// with the cap named — and the tool was never declared to it.
+#[tokio::test]
+async fn a_subagent_cannot_spawn_a_subagent() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "subagent", &delegation_arguments("delegate onward")),
+        tool_call_stream("child-1", "subagent", &delegation_arguments("delegate again")),
+        assistant_stream("I cannot delegate further"),
+        assistant_stream("the child could not delegate"),
+    ]);
+    let home = temp_home("subagent-depth");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the delegation").await.unwrap();
+
+    // The delegation tool was never in the child's declarations: the one
+    // request the child made is the second one recorded.
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 4, "{bodies:?}");
+    assert!(
+        !declared_tools(&bodies[1]).contains(&"subagent".to_string()),
+        "{:?}",
+        declared_tools(&bodies[1])
+    );
+    let child = child_summary(&home);
+    let (output, _) = tool_result(&session::replay(&child.path).unwrap(), "subagent");
+    assert!(output.contains("a subagent cannot spawn subagents"), "{output}");
+    assert!(output.contains("depth cap 1"), "{output}");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The turn cap: a child that keeps asking for tool calls stops at its
+/// cap with outcome `max-turns`, its partial log intact, and the parent
+/// still gets the partial result.
+#[tokio::test]
+async fn a_child_stops_at_its_turn_cap_with_its_partial_log_intact() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &serde_json::json!({
+                "goal": "check every file",
+                "max-turns": 2,
+            })
+            .to_string(),
+        ),
+        narrated_tool_call_stream(
+            "child-1",
+            "bash",
+            r#"{"command":"echo one"}"#,
+            "checked one of five",
+        ),
+        narrated_tool_call_stream(
+            "child-2",
+            "bash",
+            r#"{"command":"echo two"}"#,
+            "checked two of five",
+        ),
+        assistant_stream("the child ran out of turns"),
+    ]);
+    let home = temp_home("subagent-cap");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the check")
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed, "the parent carries on");
+
+    let child = child_summary(&home);
+    let child_records = session::replay(&child.path).unwrap();
+    // The child's own log ends at its cap, with both of its turns in it.
+    assert!(matches!(
+        child_records.last(),
+        Some(Record::End { stop_reason, turns }) if stop_reason == "max-turns" && *turns == 2
+    ), "{child_records:?}");
+    assert_eq!(child_records.iter().filter(|record| matches!(record, Record::ToolResult { .. })).count(), 2);
+
+    // The parent's result names the outcome and carries the child's last
+    // words — the partial result, not silence.
+    let (output, _) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
+    assert!(output.starts_with("subagent max-turns"), "{output}");
+    assert!(output.contains("2 turns"), "{output}");
+    assert!(output.contains("checked two of five"), "{output}");
+    assert!(output.contains(child.id.as_str()), "{output}");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A failure returns partial results, not silence: an API error mid-child
+/// yields outcome `failed` with the reason and the log path, and the
+/// parent's log carries the call and that result.
+#[tokio::test]
+async fn a_failed_child_returns_its_partial_result_and_its_reason() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "subagent", &delegation_arguments("check every file")),
+        narrated_tool_call_stream(
+            "child-1",
+            "bash",
+            r#"{"command":"echo one"}"#,
+            "checked one of five",
+        ),
+        ScriptedResponse {
+            status: "500 Internal Server Error".to_string(),
+            body: r#"{"error":{"message":"the child's model went away"}}"#.to_string(),
+            sse: Vec::new(),
+            delay_ms: 0,
+        },
+        assistant_stream("the child failed partway"),
+    ]);
+    let home = temp_home("subagent-failure");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the check")
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed, "the parent survives its child's failure");
+
+    let child = child_summary(&home);
+    let child_records = session::replay(&child.path).unwrap();
+    // The interrupted-log shape: the child's turns are there, its `end` is
+    // not — and its partial narration survived.
+    assert!(!matches!(child_records.last(), Some(Record::End { .. })), "{child_records:?}");
+    assert!(child_records.iter().any(|record| matches!(
+        record,
+        Record::Assistant { content: Some(text), .. } if text.contains("checked one of five")
+    )));
+
+    // The parent's result is the typed failure: the reason, the log path,
+    // and the child's last words.
+    let (output, approved) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
+    assert!(approved, "{output}");
+    assert!(output.starts_with("subagent failed (API error 500: the child's model went away)"), "{output}");
+    // One turn completed: the log's count, not the loop's counter, which
+    // would name the turn the child died on.
+    assert!(output.contains("1 turn"), "{output}");
+    assert!(output.contains(&child.path.display().to_string()), "{output}");
+    assert!(output.contains("checked one of five"), "{output}");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The same approver: a child's call crosses the parent's gate, labelled
+/// for whose call it is, and the gate's refusal reaches the child's log as
+/// an ordinary denial.
+#[tokio::test]
+async fn a_childs_call_crosses_the_parents_approver_labelled() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("run echo from-the-child"),
+        ),
+        tool_call_stream("child-1", "bash", r#"{"command":"echo from-the-child"}"#),
+        assistant_stream("my command was denied"),
+        assistant_stream("the child's command was denied"),
+    ]);
+    let home = temp_home("subagent-approver");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let spy = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let approver = Box::new(GateSpy { seen: Arc::clone(&spy) });
+    run_on(&mock, &mut session, approver, 5, "delegate the echo").await.unwrap();
+
+    let seen = spy.lock().unwrap();
+    // Two calls crossed the one gate: the parent's own delegation, then
+    // the child's bash — named for the subagent it came from.
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert_eq!(seen[0].function.name, "subagent");
+    assert_eq!(seen[1].function.name, "subagent \u{2192} bash");
+    // The forwarded call carries the goal beside the child's own
+    // arguments, so the prompt can name both.
+    let forwarded: serde_json::Value =
+        serde_json::from_str(&seen[1].function.arguments).unwrap();
+    assert_eq!(forwarded["goal"], "run echo from-the-child");
+    assert_eq!(forwarded["tool"], "bash");
+    assert_eq!(forwarded["arguments"]["command"], "echo from-the-child");
+
+    // The denial reached the child's log as an ordinary denied result, and
+    // the command never ran.
+    let child = child_summary(&home);
+    let (output, approved) = tool_result(&session::replay(&child.path).unwrap(), "bash");
+    assert!(!approved, "{output}");
+    assert!(output.contains("denied"), "{output}");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A delegation whose arguments are wrong is a typed refusal the parent's
+/// model can read and react to — no child session, no silence.
+#[tokio::test]
+async fn a_malformed_delegation_is_a_typed_refusal() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "subagent", r#"{"tools":["bash"]}"#),
+        assistant_stream("the goal was missing"),
+    ]);
+    let home = temp_home("subagent-refusal");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate nothing").await.unwrap();
+
+    let (output, _) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
+    assert!(output.starts_with("error:"), "{output}");
+    assert!(output.contains("goal"), "{output}");
+    // No child was created: the refusal happened before any session.
+    assert!(session::list(&home).unwrap().iter().all(|summary| summary.kind.is_none()));
+
+    std::fs::remove_dir_all(&home).ok();
 }

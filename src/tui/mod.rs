@@ -409,6 +409,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             calib: Some(prepared.calib.clone()),
                             skills: skills.clone(),
                             memory,
+                            scope: None,
                         };
                         let approver: Box<dyn Approver> =
                             Box::new(TuiApprover::new(approval_tx.clone()));
