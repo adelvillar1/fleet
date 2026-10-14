@@ -244,6 +244,21 @@ KI-118 (the tower scan's fixed background cost).
 - `services/` — the vendored cores with `VENDOR.json` (slice 4).
 - `tests/` — each slice's integration coverage at the current bar.
 
+## Converge pass (2026-10-14) — the plan's ACs against the landed code
+
+- **C1 — MET.** `fleet install` on a clean scratch home exits 0 with a green doctor; a second run names every step present with the scaffold's bytes untouched; a file where a directory belongs is a named failure. (Slice 15; `tests/install.rs`.)
+- **C2 — MET, with the disclosed environmental blocker.** `fleet chat` streams, routes across the roster with sys1 judgment and failover, and completed real tasks end to end through the live router kit (the quick start's proof; the slice-9 smoke's 19-turn live run). The live e2e against DeepSeek direct is blocked by the zero balance (KI-008).
+- **C3 — MET with one gap (KI-135).** The four lanes boot through fleet's own client with their tools declared and callable in-run; sem1 is proven end-to-end against its real service; sys1/sdm1/gen1's in-run calls are unverified.
+- **C4 — MET.** Skills load and are selected (slice 7); durable memory persists across sessions, recalls by shape with hybrid ranking, re-ranks on recall hits, and the provenance rule protects confirmed-by facts (slice 8, the memories bypass closed as KI-102).
+- **C5 — MET.** Subagents run isolated tasks in their own sessions on the parent's resolved model, and the tool's description instructs the parent to verify the child's claims (slice 9).
+- **C6 — MET.** Sessions survive compaction and resume with byte-exact reconstruction (slice 10); a scheduled task fires on time and after a missed window (slice 11).
+- **C7 — MET.** The three boards render real data read-only and visually, and a refused read keeps the last snapshot and names the error (slice 14; the live read against the machine's real sources).
+- **C8 — MET on macOS, unverified on Linux (KI-136).** The gate ran locally at every slice with exit codes read directly; the release binary installs and launches on this machine; no Linux run exists.
+- **C9 — MET.** The harness drafts the updates its outcomes justify, a justified update applies through the gate and lands in the ledger and reverts cleanly, and a gate-failing or destructive proposal is refused or waits (slice 12).
+- **C10 — MET.** A broken layer is named at boot with its reason; a failed run yields a classified diagnosis and an evidence-cited recap; the eval corpus runs on its schedule and a regressing self-edit is refused; every error and warning encountered during the build is logged with evidence and none is closed without it (134 rows, the closed ones carrying their fix's evidence).
+
+**Converge verdict: no ⚠/❌/🆕 items inside the slices' scope. The two open gaps (KI-135, KI-136) are verification gaps against live services and a second OS, both logged with their next actions; neither blocks the plan's completion.**
+
 ## Out of scope
 
 - Reimplementing the lanes natively (they are Python services by nature).
