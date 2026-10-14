@@ -406,14 +406,11 @@ pub struct Agent<'a> {
     /// so a compacted session's later turns number from where its earlier
     /// ones stopped.
     next_turn: u64,
-    /// The token count the last window check measured. A compaction
-    /// resets it to the post-compaction size, which is what makes one
-    /// compaction per crossing rather than one per turn.
-    window_size: u64,
-    /// True from a compaction until a measurement comes in under the
-    /// budget. The latch is the second half of the same guarantee: a
-    /// tail that is itself over the window cannot make the loop compact
-    /// every turn.
+    /// True from a compaction (or a failed or skipped one) until a
+    /// measurement comes in under the budget. The latch is what makes
+    /// one compaction per crossing rather than one per turn, and it is
+    /// also what keeps a tail that is itself over the window — or a
+    /// fold that keeps failing — from being retried every turn.
     compaction_latch: bool,
     /// The API-reported `prompt_tokens` of the last response, or `None`
     /// when it reported none — in which case the window check falls back
@@ -464,7 +461,6 @@ impl<'a> Agent<'a> {
             calib,
             message_turns: turns,
             next_turn,
-            window_size: 0,
             compaction_latch: false,
             last_prompt_tokens: None,
         })
@@ -890,15 +886,15 @@ impl<'a> Agent<'a> {
     /// nothing else, so the run that never approaches the window is
     /// byte-for-byte the run it has always been.
     ///
-    /// One compaction per crossing: the counter resets to the
-    /// post-compaction size, and the latch keeps a conversation whose
-    /// tail is itself over the window from being folded every turn.
+    /// One compaction per crossing: the latch holds from a compaction
+    /// (or a failed or skipped one) until a measurement comes back under
+    /// the budget, so a conversation whose tail is itself over the
+    /// window is not folded every turn.
     async fn maybe_compact(&mut self, system_prompt: &str) -> Result<(), AgentError> {
         let measured = self
             .last_prompt_tokens
             .unwrap_or_else(|| compaction::estimate_tokens(&self.messages));
         if measured < compaction::COMPACTION_TOKEN_BUDGET {
-            self.window_size = measured;
             self.compaction_latch = false;
             return Ok(());
         }
@@ -906,7 +902,6 @@ impl<'a> Agent<'a> {
         // the whole conversation is the verbatim tail already.
         let tail_start = compaction::tail_start(&self.messages);
         if self.compaction_latch || tail_start == 0 {
-            self.window_size = measured;
             return Ok(());
         }
         self.compact(system_prompt, tail_start, measured).await
@@ -964,10 +959,26 @@ impl<'a> Agent<'a> {
         // in the response, and streaming it to the progress sink would
         // put a second model's prose in the middle of the run's output.
         let client = self.client;
-        let response = client
-            .chat_stream(&request, |_| {})
-            .await
-            .map_err(AgentError::Api)?;
+        let response = match client.chat_stream(&request, |_| {}).await {
+            Ok(response) => response,
+            Err(error) => {
+                // The fold is an auxiliary call: its failure must not
+                // kill a healthy run. The conversation keeps its
+                // context, the failure is named on one line, and the
+                // latch holds so a failing fold is not retried every
+                // turn. The run then either finishes inside the
+                // window's headroom or dies at the API's own length
+                // refusal, which names the real limit — a more honest
+                // death than an auxiliary call's transport error.
+                let _ = writeln!(
+                    self.progress,
+                    "\u{2014} compaction failed: {error}; the run continues un-compacted"
+                );
+                let _ = self.progress.flush();
+                self.compaction_latch = true;
+                return Ok(());
+            }
+        };
         self.usage.prompt_tokens += response.usage.prompt_tokens;
         self.usage.completion_tokens += response.usage.completion_tokens;
         let summary = response
@@ -986,7 +997,9 @@ impl<'a> Agent<'a> {
                 "\u{2014} compaction skipped: the model returned no summary"
             );
             let _ = self.progress.flush();
-            self.window_size = tokens_before;
+            // The latch holds: a model that returns no summary
+            // deterministically would otherwise be asked once per turn.
+            self.compaction_latch = true;
             return Ok(());
         }
 
@@ -1016,9 +1029,8 @@ impl<'a> Agent<'a> {
         );
         let _ = self.progress.flush();
         self.emit(UiEvent::Compacted { turns, tokens_before, tokens_after });
-        // The counter resets to the post-compaction size, and the latch
-        // holds until a measurement comes back under the budget.
-        self.window_size = tokens_after;
+        // The latch holds until a measurement comes back under the
+        // budget, which is what keeps one compaction per crossing.
         self.compaction_latch = true;
         Ok(())
     }

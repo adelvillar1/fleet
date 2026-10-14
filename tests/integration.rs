@@ -4513,6 +4513,54 @@ async fn the_measure_falls_back_to_the_estimate_when_usage_is_absent() {
 }
 
 #[tokio::test]
+async fn a_failed_compaction_request_lets_the_run_continue_un_compacted() {
+    // The fold is an auxiliary call: its failure must not kill a healthy
+    // run. The conversation keeps its context, the failure is named on
+    // one line, the latch holds so a failing fold is not retried every
+    // turn, and the run finishes.
+    let home = temp_home("compaction-fold-failure");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut script = crossing_script("- the summary");
+    // The compaction request — the seventh response — fails.
+    script[6] = ScriptedResponse {
+        status: "500 Internal Server Error".to_string(),
+        body: r#"{"error":{"message":"the fold failed"}}"#.to_string(),
+        sse: Vec::new(),
+        delay_ms: 0,
+    };
+    let mock = MockApi::start(script);
+    let mut progress: Vec<u8> = Vec::new();
+    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
+        .await
+        .unwrap();
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    // No compaction happened, and the log records none that did not.
+    let records = session::replay(&session.path()).unwrap();
+    assert_eq!(
+        records.iter().filter(|record| matches!(record, Record::Compaction { .. })).count(),
+        0,
+        "{records:?}"
+    );
+    let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
+    assert!(written.contains("compaction failed"), "{written}");
+    assert!(written.contains("un-compacted"), "{written}");
+    // The failed fold was attempted exactly once: the run's requests are
+    // the six turns, the failed fold, and the final answer — no retry.
+    assert_eq!(mock.bodies().len(), 8, "{}", mock.bodies().len());
+    // And the final request is the whole conversation, un-folded: no
+    // summary frame rides in it.
+    let after = request_messages(&mock, 7);
+    assert!(
+        !after.iter().any(|message| message
+            .content
+            .as_deref()
+            .is_some_and(|content| content.contains("Summary of turns"))),
+        "{after:?}"
+    );
+}
+
+#[tokio::test]
 async fn one_compaction_per_crossing_and_the_tool_loop_survives_it() {
     // The turns after a fold do not fold again, and the calls after it
     // still execute and log.

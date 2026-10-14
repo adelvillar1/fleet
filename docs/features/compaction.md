@@ -34,11 +34,22 @@ enough that the request crossing it still fits, late enough that a run
 which never approaches the window pays one integer comparison per turn
 and nothing else.
 
-**One compaction per crossing.** After a fold the counter resets to the
-post-compaction size, and a latch holds until a measurement comes in under
-the budget. The second half matters: a conversation whose verbatim tail is
-itself over the window cannot be helped by folding, and without the latch
-the loop would fold every turn until the turn cap.
+**One compaction per crossing.** After a fold a latch holds until a
+measurement comes in under the budget. The second half matters: a
+conversation whose verbatim tail is itself over the window cannot be
+helped by folding, and without the latch the loop would fold every turn
+until the turn cap. The latch also holds after a **failed** or
+**skipped** fold, so a persistently failing or empty-summarizing model is
+not asked once per turn either.
+
+**A failed fold does not kill the run.** The fold is an auxiliary call:
+if its request errors, the run keeps its context, prints one named line
+(`— compaction failed: <reason>; the run continues un-compacted`), sets
+the latch, and continues. The run then either finishes inside the
+window's 28k headroom or dies at the API's own length refusal — which
+names the real limit, a more honest death than an auxiliary call's
+transport error. A skipped fold (the model returned no summary) is the
+same shape: the conversation is never replaced with nothing.
 
 ## The mechanism
 

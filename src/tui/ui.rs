@@ -495,7 +495,7 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                 ),
                 Span::styled("  ", Style::new()),
                 Span::styled(
-                    format!("{} turns \u{2192} 1 summary", card.turns),
+                    format!("{} turn{} \u{2192} 1 summary", card.turns, if card.turns == 1 { "" } else { "s" },),
                     Style::new().fg(palette::DIM),
                 ),
                 Span::styled("  done", Style::new().fg(palette::DONE)),
@@ -1061,6 +1061,6 @@ mod tests {
             tokens_after: 40,
         });
         let rendered = draw(&single, 80, 24);
-        assert!(rendered.contains("1 turns → 1 summary"), "{rendered}");
+        assert!(rendered.contains("1 turn → 1 summary"), "{rendered}");
     }
 }
