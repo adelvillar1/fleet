@@ -59,3 +59,45 @@ New ledger rows: KI-104 (the eval gate's production path is unexercised
 here until rustfmt/clippy land), KI-105 (the eval latch is in-memory), KI-106
 (the diagnose default ledger path is a cwd walk), KI-107 (sdm1's duration
 prediction deferred).
+
+## Review cycle
+
+- **Stage 1 (spec, step-5-preview): CHANGES-REQUIRED** — one must-fix: the
+  plan's Diagnosis clause promised "unimplemented action items surfaced
+  until closed" and neither the implementation nor the feature doc named
+  it. Everything else spec-exact (the corpus's grading, the row, the
+  schedule, the hook, the probes, the classification, the filing's key
+  and guard, all five ACs).
+- **Stage 2 (quality, step-5-preview): REQUEST_CHANGES** — one Critical,
+  five Importants, three minors, all fixed in `5329df8`:
+  1. **the Critical**: the eval cadence's fire lacked the `CatchUnwind`
+     guard every cron job fire has, so a panic in the corpus run killed
+     the scheduler thread permanently and silently — and the corpus's own
+     harness is the KI-027-known-flaky spawn/port pattern promoted into
+     `fleet eval`'s production path. The fire now runs through the same
+     guard (one named line, the minute stays claimed), and the drivers'
+     unwraps became graded failures naming the fault;
+  2. the subprocess probe failed OPEN: a `current_exe` error silently
+     unwired the eval step and a stale/installed binary could be graded
+     instead of the fresh build — a false green. It now refuses unless
+     the exe resolves under the gate root's `target/`, and the child is
+     bounded by `PROBE_TIMEOUT_SECS = 120` with a kill on expiry;
+  3. the ledger update re-rendered a matched row with status hardcoded
+     "open" and next-action "triage", silently reopening a human-closed
+     row — it now preserves both cells (evidence gathering is not
+     triage), pinned by a test;
+  4. `diagnose_session` returned a Diagnosis for a COMPLETED run, so a
+     healthy session filed a nonsense "unknown failure" row — it now
+     files nothing and says so;
+  5. a red cargo gate left the row with no eval step at all, so an
+     operator could not tell whether the corpus would have passed — the
+     row now records the step as not run, naming the reason;
+  6. the spec's must-fix: `fleet doctor --open [--ledger <path>]` cards
+     every open row with its next action, so an unclosed action item
+     stays visible until closed (KI-114, closed-fixed).
+- The fix round's seven ledger rows were filed `open` while their own
+  evidence named the fix; the parent corrected them to `closed-fixed`
+  (the status column must agree with its own evidence — KI-102/103's
+  convention).
+- **Both reviews dispatched in ONE parallel call** — the pattern's fifth
+  use.
