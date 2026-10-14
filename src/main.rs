@@ -45,6 +45,7 @@ async fn main() -> ExitCode {
         Ok(Command::Improve(options)) => improve_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
         Ok(Command::Doctor(options)) => doctor_command(&options),
+        Ok(Command::Install(options)) => install_command(&options),
         Ok(Command::Eval(options)) => eval_command(&options).await,
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -775,6 +776,16 @@ fn doctor_command(options: &cli::DoctorOptions) -> ExitCode {
         return open_command(options.ledger.as_deref());
     }
 
+    doctor_checks()
+}
+
+/// The doctor's boot checks: credentials, home, API reachability,
+/// shell, the roster layer, the ledger layer, one named line per MCP
+/// core, and the two informational lines. `fleet doctor` runs these
+/// directly; `fleet install` ends on this same function — the gate is
+/// the doctor's own checks, the install adds none, and the install's
+/// exit code is this function's.
+fn doctor_checks() -> ExitCode {
     let home = fleet_home().ok();
     let dotenv = read_dotenv();
     let key = setting("DEEPSEEK_API_KEY", &dotenv);
@@ -898,6 +909,62 @@ fn doctor_command(options: &cli::DoctorOptions) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// `fleet install`: the home layout, the config scaffold, the optional
+/// heavy-lane venvs, and the doctor gate.
+///
+/// Idempotent throughout: a second run changes nothing and names what
+/// exists, and an existing `config.json` is never rewritten — an
+/// owner's hand-edited config is theirs. The bare command names the
+/// lane step as available rather than building it, so a clean-machine
+/// install never blocks on a network; `--lanes` runs the per-lane
+/// bootstrap, where a lane that cannot be built is skipped with a
+/// named line and the install carries on. The command ends on the
+/// doctor's own checks — the install adds no new check — and its exit
+/// code is the doctor's: green 0, a named failure nonzero.
+fn install_command(options: &cli::InstallOptions) -> ExitCode {
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut layout: Vec<(&'static str, fleet::install::LayoutStep)> = Vec::new();
+    for name in fleet::install::LAYOUT_DIRS.iter().copied() {
+        match fleet::install::layout_step(&home, name) {
+            Ok(step) => layout.push((name, step)),
+            Err(error) => {
+                eprintln!("fleet: install: {name}: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let (config_step, config_path) = match fleet::install::config_step(&home) {
+        Ok(pair) => pair,
+        Err(error) => {
+            eprintln!("fleet: install: {}: {error}", fleet::install::CONFIG_FILE);
+            return ExitCode::FAILURE;
+        }
+    };
+    let lanes = if options.lanes {
+        Some(
+            fleet::install::LANES
+                .iter()
+                .map(|lane| (lane, fleet::install::bootstrap_lane(&home, lane, None)))
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        None
+    };
+    print!(
+        "{}",
+        fleet::install::render(&home, &layout, (config_step, &config_path), lanes.as_deref())
+    );
+    // The gate: the doctor's own checks, unchanged. The install's exit
+    // code is the doctor's.
+    doctor_checks()
 }
 
 /// `fleet doctor --diagnose <session>`: replay one session's log, classify

@@ -6,7 +6,7 @@ Fleet is based on DeepSeek Harness: the agent-loop discipline, the append-only s
 
 ## Status
 
-Alpha (crate version 0.2.0). Dependencies are `ureq` (HTTP), `serde`, and `serde_json`; everything else is standard library.
+Alpha (crate version 0.2.0). Dependencies are `tokio`, `ureq` (HTTP), `serde`/`serde_json`, and `ratatui`/`crossterm` (the TUI); everything else is standard library.
 
 ## Build and test
 
@@ -25,12 +25,29 @@ DEEPSEEK_API_KEY=sk-... cargo test --test integration -- --ignored
 ## Quick start
 
 ```sh
-export DEEPSEEK_API_KEY=sk-...
-fleet doctor
-fleet run "list the Rust files in this directory and say how many there are" --yes
+cd fleet
+cargo build --release                     # one static binary at target/release/fleet
+export DEEPSEEK_API_KEY=sk-...            # or add KEY=VALUE to ~/.fleet/.env
+target/release/fleet install              # creates the home, writes the config scaffold, runs the doctor gate
+target/release/fleet doctor               # the gate on its own: credentials, home, API, shell, roster, ledger, lanes
+target/release/fleet chat                 # the everyday surface — one session, many tasks, /exit to leave
 ```
 
+`fleet install` is idempotent. It creates the home (`FLEET_HOME`, else `~/.fleet`) with `sessions/`, `memories/`, `skills/`, `cron/`, and `proposals/`, writes the minimal `config.json` scaffold (`{"pin": null, "providers": []}` — the roster's override seam over the compiled-in defaults) only when absent, and ends on `fleet doctor`'s checks: the install's exit code is the doctor's, so a red gate fails the install. A second run changes nothing and names what exists; an existing `config.json` is named and left untouched.
+
+The four vendored lanes are Python services, and their heavy dependencies are an optional second step:
+
+```sh
+target/release/fleet install --lanes      # per-lane venvs under <home>/venvs/<lane>/
+```
+
+Each lane is idempotent and degrades without: a venv that cannot be built — no network, a failing pip, no `uv`/`python3` — is skipped with a named line and the install still succeeds; the lane stays declared and simply dead when its tools are called. No step of the quick start needs Node or a DeepSeek Harness checkout — the lanes are vendored in this repository under `services/`.
+
 ## Commands
+
+### `fleet install [--lanes]`
+
+Create the home layout (`sessions/`, `memories/`, `skills/`, `cron/`, `proposals/`) and the config scaffold, then run the doctor gate — the install's exit code is the doctor's. Idempotent: re-running names what exists and never rewrites an existing `config.json`. `--lanes` also bootstraps the heavy-lane venvs under `<home>/venvs/<lane>/` (sys1's GLiNER, sdm1's models, sem1's sentence-transformers, gen1's kokoro), each lane skipped by name when it cannot be built. See Quick start above.
 
 ### `fleet run "<task>" [options]`
 
@@ -50,7 +67,7 @@ List saved sessions: id, model, state (`completed`, `max-turns`, `interrupted`, 
 
 ### `fleet doctor`
 
-One line per check — credentials, home, API reachability, shell — exiting nonzero when any check fails.
+One line per check — credentials, home, API reachability, shell, the routing roster, the calibration ledger, and one named line per MCP core — exiting nonzero when any check fails. `--diagnose <session>` classifies one session's failure and drafts an evidence-cited recap; `--open` reads the ledger's open action items back.
 
 ### `fleet version`, `fleet help`
 
@@ -82,12 +99,16 @@ src/session.rs     JSONL session log: append, replay, list, resume
 src/home.rs        FLEET_HOME / ~/.fleet, sessions dir, .env fallback
 src/route.rs       multi-provider routing: roster, sys1-judged selection, failover
 src/calib.rs       the calibration stream: devdec-vocabulary rows, bounded writer
-src/doctor.rs      the four startup checks
+src/doctor.rs      the boot checks and the per-layer diagnosis
 src/net.rs         loopback probe used by doctor
+src/install.rs     fleet install: home layout, config scaffold, heavy-lane venvs
 src/bin/mock-server.rs   the scripted mock API the integration tests drive
 tests/integration.rs     end-to-end tests: parser, client, tool loop, log
+tests/install.rs         the install's acceptance: layout, lanes, the doctor gate
 ```
 
 ## Platform support
 
 macOS (arm64, x86_64), Linux (x86_64, arm64), and Windows (x86_64). The crate uses no platform-specific APIs beyond the per-OS shell probe (`sh -c true` / `cmd /C ver`) and compiles with the usual Rust targets.
+
+The release path is `cargo build --release` — one binary at `target/release/fleet`, which is what the quick start above runs. Per-OS cross-built release artifacts are a release-process step, not built in this repository (CI is disarmed by owner decision): the cross-build commands and the install story live in [docs/features/install.md](docs/features/install.md).

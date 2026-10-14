@@ -38,6 +38,9 @@ pub enum Command {
     /// Environment and connectivity checks; `--diagnose` classifies one
     /// session's failure and drafts an evidence-cited recap.
     Doctor(DoctorOptions),
+    /// The install: the idempotent home layout, the config scaffold,
+    /// the optional heavy-lane venvs, and the doctor gate.
+    Install(InstallOptions),
     /// The eval corpus: run the fixed, graded suite headless and land a
     /// row, or read the last run back with `--last`.
     Eval(EvalOptions),
@@ -147,6 +150,17 @@ pub struct DoctorOptions {
     /// Read the ledger's open action items back instead of running the
     /// boot checks. Mutually exclusive with `diagnose`.
     pub open: bool,
+}
+
+/// Options for `fleet install`. The bare command creates the home
+/// layout and the config scaffold and ends on the doctor gate;
+/// `--lanes` also bootstraps the heavy-lane venvs under
+/// `<home>/venvs/<lane>/`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct InstallOptions {
+    /// Bootstrap the heavy-lane venvs: per-lane, idempotent, and
+    /// degrade-without — a lane that cannot build is skipped by name.
+    pub lanes: bool,
 }
 
 /// Options for `fleet eval`. The bare command runs the whole corpus and
@@ -277,6 +291,14 @@ usage:
   fleet eval                     run the fixed eval corpus headless and land a
                                 row in the calibration stream
   fleet eval --last              the last run's per-scenario scores
+  fleet install [--lanes]        create the home layout (sessions, memories,
+                                skills, cron, proposals) and the config
+                                scaffold, then run the doctor gate — the
+                                install's exit code is the doctor's;
+                                --lanes also bootstraps the heavy-lane venvs
+                                under <home>/venvs/<lane>/ (per-lane,
+                                idempotent, degrade-without: a lane that
+                                cannot build is skipped by name, never fatal)
   fleet version                  print the version
   fleet help                     print this help
 
@@ -326,6 +348,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "improve" => parse_improve(rest),
         "remember" => parse_remember(rest),
         "doctor" => parse_doctor(rest),
+        "install" => parse_install(rest),
         "eval" => parse_eval(rest),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -732,6 +755,33 @@ fn parse_doctor(args: &[String]) -> Result<Command, String> {
     Ok(Command::Doctor(DoctorOptions { diagnose, ledger, open }))
 }
 
+/// `fleet install`: the bare command lays out the home and ends on the
+/// doctor gate; `--lanes` also bootstraps the heavy-lane venvs. The
+/// install is one sequence, not a toolkit: nothing else is accepted,
+/// and a stray flag or word is a usage error rather than a silently
+/// ignored one.
+fn parse_install(args: &[String]) -> Result<Command, String> {
+    let mut lanes = false;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--lanes" => lanes = true,
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown install option `{arg}`"));
+            }
+            _ => {
+                return Err(format!(
+                    "`{arg}` takes no value here; install takes only --lanes (see `fleet help`)"
+                ));
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Install(InstallOptions { lanes }))
+}
+
 /// `fleet eval`: the bare command runs the whole corpus and lands a row;
 /// `--last` reads the most recent run back without running. Nothing else
 /// is accepted — the corpus is fixed, so there is no scenario to name.
@@ -929,6 +979,25 @@ mod tests {
         assert!(parse(&args(&["eval", "--json"])).is_err());
         assert!(parse(&args(&["eval", "extra"])).is_err());
         assert_eq!(parse(&args(&["eval", "--help"])).unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn install_parses_the_bare_sequence_and_the_lanes_flag() {
+        // The bare command is the layout plus the gate; --lanes adds
+        // the venv bootstrap and nothing else.
+        assert_eq!(
+            parse(&args(&["install"])).unwrap(),
+            Command::Install(InstallOptions { lanes: false })
+        );
+        assert_eq!(
+            parse(&args(&["install", "--lanes"])).unwrap(),
+            Command::Install(InstallOptions { lanes: true })
+        );
+        // The install is one sequence: a stray flag and a stray word
+        // are each a usage error rather than a silently ignored one.
+        assert!(parse(&args(&["install", "--all"])).is_err());
+        assert!(parse(&args(&["install", "lanes"])).is_err());
+        assert_eq!(parse(&args(&["install", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]

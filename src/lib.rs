@@ -15,6 +15,7 @@ pub mod doctor;
 pub mod eval;
 pub mod home;
 pub mod improve;
+pub mod install;
 pub mod lanes;
 pub mod mcp;
 pub mod memory;
