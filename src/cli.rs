@@ -25,6 +25,9 @@ pub enum Command {
     /// assembly for one instruction, the cards filtered by shape, the
     /// consolidation cycle, or the archive of forgotten facts.
     Memories(MemoriesOptions),
+    /// The scheduled jobs: the bare command lists them, each subcommand
+    /// mutates the store by name.
+    Cron(CronOptions),
     /// Write one fact into the memory corpus: the CLI form of the
     /// `remember` tool, structured flags over the same field names.
     Remember(RememberOptions),
@@ -118,6 +121,35 @@ pub struct RememberOptions {
     pub body: String,
 }
 
+/// Options for `fleet cron`. The bare command lists the jobs as cards;
+/// each subcommand mutates the persistent store by name, and every
+/// mutation validates through the same parser the scheduler matches
+/// against.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CronOptions {
+    pub action: CronAction,
+}
+
+/// What `fleet cron` was asked to do.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CronAction {
+    /// List the jobs.
+    List,
+    /// Create one from structured flags.
+    Add {
+        name: String,
+        schedule: String,
+        task: String,
+        auto_approve: bool,
+    },
+    /// Turn a job back on.
+    Enable { name: String },
+    /// Turn a job off without removing it.
+    Disable { name: String },
+    /// Remove a job from the store.
+    Remove { name: String },
+}
+
 /// Turn cap when `--max-turns` is absent.
 pub const DEFAULT_MAX_TURNS: usize = 25;
 
@@ -142,6 +174,16 @@ usage:
                                 filters the cards by structure shape,
                                 --consolidate runs the consolidation cycle,
                                 --archive lists what the cycle forgot
+  fleet cron                     list the scheduled jobs: schedule, next fire,
+                                last run and outcome
+  fleet cron add --name <name> --schedule \"<expr>\" --task \"<goal>\" [--auto-approve]
+                                schedule a task; the expression is five fields,
+                                minute hour day-of-month month day-of-week,
+                                and --auto-approve lets its tool calls run
+                                unattended
+  fleet cron enable --name <name>
+  fleet cron disable --name <name>
+  fleet cron remove --name <name>
   fleet remember --name <name> --description \"<fact>\" --basis confirmed-by|inferred
                                 [--type <kind>] [--shape a,b] [--tier working|durable]
                                 [--valid-until <date>] [--body \"<text>\"]
@@ -160,6 +202,13 @@ options for run and chat:
 
 options for calib:
   --day <YYYY-MM-DD>  a past day's rows (default: today, UTC)
+
+options for cron:
+  --name <name>       the job to act on, for every subcommand
+  --schedule <expr>   the five-field cron expression, for add
+  --task <goal>       the self-contained goal, for add
+  --auto-approve      declare the job unattended: its tool calls run
+                      without anyone there to approve them (add)
 
 environment:
   DEEPSEEK_API_KEY    required; also read from ~/.fleet/.env and the
@@ -187,6 +236,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "calib" => parse_calib(rest),
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
+        "cron" => parse_cron(rest),
         "remember" => parse_remember(rest),
         "doctor" => no_flags(rest, Command::Doctor),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
@@ -368,6 +418,87 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
         );
     }
     Ok(Command::Memories(MemoriesOptions { recall, shape, consolidate, archive }))
+}
+
+/// `fleet cron`: the bare command lists the jobs; `add` creates one from
+/// structured flags; `enable`, `disable`, and `remove` mutate by name.
+/// Every subcommand addresses its job with `--name`, one grammar for the
+/// whole surface, and a missing flag is a named usage error rather than a
+/// silently wrong mutation.
+fn parse_cron(args: &[String]) -> Result<Command, String> {
+    let Some(subcommand) = args.first() else {
+        return Ok(Command::Cron(CronOptions { action: CronAction::List }));
+    };
+    if *subcommand == "--help" || *subcommand == "-h" {
+        return Ok(Command::Help);
+    }
+    let rest = &args[1..];
+    match subcommand.as_str() {
+        "add" => {
+            let mut name: Option<String> = None;
+            let mut schedule: Option<String> = None;
+            let mut task: Option<String> = None;
+            let mut auto_approve = false;
+            let mut index = 0;
+            while index < rest.len() {
+                let arg = rest[index].as_str();
+                match arg {
+                    "--help" | "-h" => return Ok(Command::Help),
+                    "--name" => name = Some(take_value(rest, &mut index, arg)?),
+                    "--schedule" => schedule = Some(take_value(rest, &mut index, arg)?),
+                    "--task" => task = Some(take_value(rest, &mut index, arg)?),
+                    "--auto-approve" => auto_approve = true,
+                    _ if arg.starts_with('-') && arg != "-" => {
+                        return Err(format!("unknown cron option `{arg}`"));
+                    }
+                    _ => {
+                        return Err(format!(
+                            "`{arg}` takes no value here; see `fleet help`"
+                        ));
+                    }
+                }
+                index += 1;
+            }
+            let (Some(name), Some(schedule), Some(task)) = (name, schedule, task) else {
+                return Err(
+                    "cron add needs --name, --schedule, and --task (see `fleet help`)".to_string(),
+                );
+            };
+            Ok(Command::Cron(CronOptions {
+                action: CronAction::Add { name, schedule, task, auto_approve },
+            }))
+        }
+        "enable" | "disable" | "remove" => {
+            let mut name: Option<String> = None;
+            let mut index = 0;
+            while index < rest.len() {
+                let arg = rest[index].as_str();
+                match arg {
+                    "--help" | "-h" => return Ok(Command::Help),
+                    "--name" => name = Some(take_value(rest, &mut index, arg)?),
+                    _ if arg.starts_with('-') && arg != "-" => {
+                        return Err(format!("unknown cron option `{arg}`"));
+                    }
+                    _ => {
+                        return Err(format!(
+                            "`{arg}` takes no value here; the job is named with --name"
+                        ));
+                    }
+                }
+                index += 1;
+            }
+            let Some(name) = name else {
+                return Err(format!("cron {subcommand} needs --name <name> (see `fleet help`)"));
+            };
+            let action = match subcommand.as_str() {
+                "enable" => CronAction::Enable { name },
+                "disable" => CronAction::Disable { name },
+                _ => CronAction::Remove { name },
+            };
+            Ok(Command::Cron(CronOptions { action }))
+        }
+        other => Err(format!("unknown cron subcommand `{other}` \u{2014} try `fleet help`")),
+    }
 }
 
 /// `fleet remember`: the CLI form of the write tool. `--name`,
@@ -728,6 +859,65 @@ mod tests {
                 .unwrap(),
             Command::Help
         );
+    }
+
+    #[test]
+    fn cron_parses_the_bare_list_and_every_subcommand() {
+        assert_eq!(
+            parse(&args(&["cron"])).unwrap(),
+            Command::Cron(CronOptions { action: CronAction::List })
+        );
+        assert_eq!(
+            parse(&args(&[
+                "cron", "add", "--name", "daily-digest", "--schedule", "0 7 * * *",
+                "--task", "Summarize the day.", "--auto-approve",
+            ]))
+            .unwrap(),
+            Command::Cron(CronOptions {
+                action: CronAction::Add {
+                    name: "daily-digest".to_string(),
+                    schedule: "0 7 * * *".to_string(),
+                    task: "Summarize the day.".to_string(),
+                    auto_approve: true,
+                }
+            })
+        );
+        // `--auto-approve` is optional and defaults off.
+        let command = parse(&args(&[
+            "cron", "add", "--name", "n", "--schedule", "* * * * *", "--task", "t",
+        ]))
+        .unwrap();
+        let Command::Cron(options) = command else { panic!("not a cron") };
+        let CronAction::Add { auto_approve, .. } = options.action else { panic!("not an add") };
+        assert!(!auto_approve);
+        // The mutations address the job by name, in any flag order.
+        assert_eq!(
+            parse(&args(&["cron", "enable", "--name", "daily-digest"])).unwrap(),
+            Command::Cron(CronOptions { action: CronAction::Enable { name: "daily-digest".to_string() } })
+        );
+        assert_eq!(
+            parse(&args(&["cron", "disable", "--name", "daily-digest"])).unwrap(),
+            Command::Cron(CronOptions { action: CronAction::Disable { name: "daily-digest".to_string() } })
+        );
+        assert_eq!(
+            parse(&args(&["cron", "remove", "--name", "daily-digest"])).unwrap(),
+            Command::Cron(CronOptions { action: CronAction::Remove { name: "daily-digest".to_string() } })
+        );
+        // The three required add flags are named when missing.
+        assert!(parse(&args(&["cron", "add"])).is_err());
+        assert!(parse(&args(&["cron", "add", "--name", "n"])).is_err());
+        let error = parse(&args(&["cron", "add", "--name", "n", "--schedule", "* * * * *"])).unwrap_err();
+        assert!(error.contains("--task"), "{error}");
+        // A mutation with no name is a usage error, not a no-op.
+        let error = parse(&args(&["cron", "enable"])).unwrap_err();
+        assert!(error.contains("--name"), "{error}");
+        // Junk is refused on every subcommand.
+        assert!(parse(&args(&["cron", "frobnicate"])).is_err());
+        assert!(parse(&args(&["cron", "add", "--name", "n", "--schedule", "s", "--task", "t", "--json"])).is_err());
+        assert!(parse(&args(&["cron", "enable", "daily-digest"])).is_err());
+        assert!(parse(&args(&["cron", "--name", "n"])).is_err());
+        assert_eq!(parse(&args(&["cron", "--help"])).unwrap(), Command::Help);
+        assert_eq!(parse(&args(&["cron", "add", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]

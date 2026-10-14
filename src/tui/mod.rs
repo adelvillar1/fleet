@@ -321,6 +321,15 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
         let memories_root =
             crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
         crate::memory::spawn_consolidator(memories_root, crate::calib::Stream::open(&calib_root));
+        // The scheduled jobs: the catch-up pass once at startup, then one
+        // tick per second for the life of the process. The scheduler owns
+        // its own thread and runtime — a fire is an ordinary headless run
+        // in its own session log, never a turn in the session this
+        // interface is driving — and it reads the job store fresh every
+        // tick, so `fleet cron add` from another shell lands within a
+        // second. Its named lines ride stderr, the consolidator's
+        // precedent.
+        crate::cron::Scheduler::spawn(home.clone());
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()

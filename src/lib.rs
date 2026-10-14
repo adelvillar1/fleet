@@ -8,6 +8,7 @@ pub mod api;
 pub mod calib;
 pub mod cli;
 pub mod compaction;
+pub mod cron;
 pub mod doctor;
 pub mod home;
 pub mod lanes;

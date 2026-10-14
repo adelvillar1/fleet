@@ -4775,3 +4775,283 @@ async fn the_compaction_request_is_reconstructable_from_the_log() {
     assert_eq!(replaced.len(), 5);
     std::fs::remove_dir_all(&home).ok();
 }
+
+// --- scheduled runs (slice 11) ----------------------------------------------
+
+/// One scheduled run's scheduler: the store under a scratch home, the
+/// runner the pass fires through, and the router every fire's client is
+/// built from. The runner is the production shape with the route
+/// preflight taken out — `cron::execute` over a mock-routed client — so a
+/// whole scheduler pass is driven deterministically against the scripted
+/// API, with no sys1 spawn and no clock.
+struct CronHarness {
+    home: PathBuf,
+    router: Arc<Router>,
+    /// The mock outlives the harness's own scope: it is dropped with the
+    /// harness, which kills the child and removes its scratch.
+    mock: MockApi,
+}
+
+impl CronHarness {
+    fn start(home_tag: &str, responses: Vec<ScriptedResponse>) -> CronHarness {
+        let home = temp_home(home_tag);
+        let mock = MockApi::start(responses);
+        let resolved = vec![resolved("cand-mock", mock.url(), false, None)];
+        let decision = RouteDecision {
+            provider: "cand-mock".to_string(),
+            how: How::Pinned,
+            workload: None,
+            verdict: None,
+            reason: "the mock is the only candidate".to_string(),
+            start_index: 0,
+        };
+        CronHarness { home, router: Arc::new(Router::new(resolved, decision)), mock }
+    }
+
+    /// A runner that executes a fire the way production does, minus the
+    /// route preflight.
+    fn runner(&self) -> fleet::cron::Runner {
+        let home = self.home.clone();
+        let router = self.router.clone();
+        // The corpus root is the scratch home's own, deliberately empty:
+        // the integration tests run with the crate root as their working
+        // directory, where the repo's own git-tracked `memories/` corpus
+        // resolves — and a scheduled run's recall hits would otherwise
+        // write into it, dirtying the tree the gate is meant to keep
+        // clean. `execute` takes the root as an input for exactly this.
+        let memory_root = home.join("memories");
+        std::fs::create_dir_all(&memory_root).unwrap();
+        Box::new(move |job, minute, catch_up| {
+            let home = home.clone();
+            let router = router.clone();
+            let memory_root = memory_root.clone();
+            Box::pin(async move {
+                let client = Client::routed(router);
+                fleet::cron::execute(&home, &client, None, &job, minute, catch_up, &memory_root)
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+        })
+    }
+
+    /// Write one job into the store directly, the way `fleet cron add`
+    /// leaves it.
+    fn seed_job(&self, name: &str, schedule: &str, last_run: Option<&str>, auto_approve: bool) {
+        let mut store = fleet::cron::Store::open(&self.home).unwrap();
+        store.add(name, schedule, "summarize the day", auto_approve).unwrap();
+        if let Some(stamp) = last_run {
+            let minute = fleet::cron::Minute::parse(stamp).unwrap();
+            store.record_run(name, minute, fleet::cron::Outcome::Completed).unwrap();
+        }
+    }
+
+    /// The session logs this home's scheduled runs wrote, oldest first.
+    /// A home whose runs never created the sessions directory reads as
+    /// no sessions, not as an error.
+    fn scheduled_sessions(&self) -> Vec<PathBuf> {
+        let Ok(entries) = std::fs::read_dir(fleet::home::sessions_dir(&self.home)) else {
+            return Vec::new();
+        };
+        let mut paths: Vec<PathBuf> = entries
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    fn store(&self) -> fleet::cron::Store {
+        fleet::cron::Store::open(&self.home).unwrap()
+    }
+
+    /// The request bodies the mock recorded: one per scheduled run's
+    /// turn, so a pass that ran nothing reached no provider.
+    fn requests(&self) -> Vec<serde_json::Value> {
+        self.mock.bodies()
+    }
+}
+
+#[tokio::test]
+async fn a_scheduled_task_fires_when_its_minute_matches_and_only_once() {
+    let harness = CronHarness::start("cron-fires", vec![assistant_stream("the digest")]);
+    harness.seed_job("every-minute", "* * * * *", None, true);
+    let mut scheduler = fleet::cron::Scheduler::new(harness.home.clone(), harness.runner());
+    let now = fleet::cron::Minute::parse("2026-10-14T12:00Z").unwrap();
+
+    let lines = scheduler.tick(now).await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("job `every-minute`"), "{}", lines[0]);
+    assert!(lines[0].contains("2026-10-14T12:00Z"), "{}", lines[0]);
+    assert!(lines[0].contains("completed"), "{}", lines[0]);
+
+    // The run happened in its own ordinary session log, and the store
+    // recorded the minute and the outcome.
+    let logs = harness.scheduled_sessions();
+    assert_eq!(logs.len(), 1, "{logs:?}");
+    let records = session::replay(&logs[0]).unwrap();
+    let task = records
+        .iter()
+        .find_map(|record| match record {
+            Record::User { content } => Some(content.clone()),
+            _ => None,
+        })
+        .expect("the framed task");
+    assert!(task.starts_with("[scheduled run"), "{task}");
+    assert!(task.contains("job `every-minute` at 2026-10-14T12:00Z"), "{task}");
+    assert!(task.ends_with("summarize the day"), "{task}");
+    let job = harness.store().job("every-minute").unwrap().clone();
+    assert_eq!(job.last_run.as_deref(), Some("2026-10-14T12:00Z"));
+    assert_eq!(job.last_outcome, Some(fleet::cron::Outcome::Completed));
+
+    // The latch: the same minute does not fire twice, and no second
+    // session was written.
+    let again = scheduler.tick(now).await;
+    assert!(again.is_empty(), "{again:?}");
+    assert_eq!(harness.scheduled_sessions().len(), 1);
+
+    // A job added a moment ago is picked up by the next tick: the store
+    // is re-read every time.
+    harness.seed_job("second-job", "* * * * *", None, true);
+    let next = fleet::cron::Minute::parse("2026-10-14T12:01Z").unwrap();
+    let fired = scheduler.tick(next).await;
+    assert_eq!(fired.len(), 2, "{fired:?}");
+    assert_eq!(harness.scheduled_sessions().len(), 3);
+    std::fs::remove_dir_all(&harness.home).ok();
+}
+
+#[tokio::test]
+async fn a_missed_window_catches_up_once_at_startup_and_the_catch_up_is_named() {
+    let harness = CronHarness::start("cron-catch-up", vec![assistant_stream("the digest")]);
+    // The job last ran at 11:00 and its schedule is hourly at :00, so the
+    // 12:00 window was missed while the process was down.
+    harness.seed_job("hourly", "0 * * * *", Some("2026-10-14T11:00Z"), true);
+    let mut scheduler = fleet::cron::Scheduler::new(harness.home.clone(), harness.runner());
+
+    let lines = scheduler.start(fleet::cron::Minute::parse("2026-10-14T12:30Z").unwrap()).await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("catch-up for 2026-10-14T12:00Z"), "{}", lines[0]);
+
+    // Exactly one run, and its own log names the window it served.
+    let logs = harness.scheduled_sessions();
+    assert_eq!(logs.len(), 1, "{logs:?}");
+    let records = session::replay(&logs[0]).unwrap();
+    let task = records
+        .iter()
+        .find_map(|record| match record {
+            Record::User { content } => Some(content.clone()),
+            _ => None,
+        })
+        .expect("the framed task");
+    assert!(task.contains("catch-up for job `hourly`"), "{task}");
+    assert!(task.contains("the 2026-10-14T12:00Z window was missed while fleet was down"), "{task}");
+    let job = harness.store().job("hourly").unwrap().clone();
+    assert_eq!(job.last_run.as_deref(), Some("2026-10-14T12:00Z"));
+
+    // A second startup pass serves nothing: the window is recorded.
+    assert!(scheduler
+        .start(fleet::cron::Minute::parse("2026-10-14T12:31Z").unwrap())
+        .await
+        .is_empty());
+    assert_eq!(harness.scheduled_sessions().len(), 1);
+    std::fs::remove_dir_all(&harness.home).ok();
+}
+
+#[tokio::test]
+async fn a_job_that_has_never_run_does_not_catch_up() {
+    let harness = CronHarness::start("cron-never-run", vec![assistant_stream("the digest")]);
+    // No last_run at all: the startup pass serves nothing, and the job's
+    // first fire is its first matching minute going forward.
+    harness.seed_job("hourly", "0 * * * *", None, true);
+    let mut scheduler = fleet::cron::Scheduler::new(harness.home.clone(), harness.runner());
+
+    assert!(scheduler
+        .start(fleet::cron::Minute::parse("2026-10-14T12:30Z").unwrap())
+        .await
+        .is_empty());
+    assert!(harness.scheduled_sessions().is_empty());
+    // Nothing reached the provider either: a startup pass that serves
+    // nothing spends nothing.
+    assert!(harness.requests().is_empty());
+    // The tick is the path that starts it, at the matching minute.
+    let fired = scheduler
+        .tick(fleet::cron::Minute::parse("2026-10-14T13:00Z").unwrap())
+        .await;
+    assert_eq!(fired.len(), 1, "{fired:?}");
+    assert!(!fired[0].contains("catch-up"), "{}", fired[0]);
+    assert_eq!(harness.scheduled_sessions().len(), 1);
+    assert_eq!(harness.requests().len(), 1);
+    std::fs::remove_dir_all(&harness.home).ok();
+}
+
+#[tokio::test]
+async fn a_job_that_is_not_declared_unattended_skips_its_tool_call_and_names_it() {
+    // The model reaches for a tool; the job is not declared
+    // auto-approve; nobody is there to approve it.
+    let harness = CronHarness::start(
+        "cron-needs-approval",
+        vec![
+            tool_call_stream("call-1", "bash", "{\"command\":\"ls\"}"),
+            assistant_stream("done without the tool"),
+        ],
+    );
+    harness.seed_job("careful", "* * * * *", None, false);
+    let mut scheduler = fleet::cron::Scheduler::new(harness.home.clone(), harness.runner());
+
+    let lines = scheduler
+        .tick(fleet::cron::Minute::parse("2026-10-14T12:00Z").unwrap())
+        .await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("skipped `bash`"), "{}", lines[0]);
+    assert!(lines[0].contains("no one is here to approve it"), "{}", lines[0]);
+
+    // The call never ran: the log carries the denial, and the outcome
+    // records the skip.
+    let logs = harness.scheduled_sessions();
+    assert_eq!(logs.len(), 1, "{logs:?}");
+    let records = session::replay(&logs[0]).unwrap();
+    let denied = records
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { name, approved, .. } if name == "bash" => Some(*approved),
+            _ => None,
+        })
+        .expect("the denied call's result");
+    assert!(!denied, "the unattended gate denied the call");
+    let job = harness.store().job("careful").unwrap().clone();
+    assert_eq!(job.last_outcome, Some(fleet::cron::Outcome::SkippedNeedsApproval));
+    assert_eq!(job.last_run.as_deref(), Some("2026-10-14T12:00Z"));
+    std::fs::remove_dir_all(&harness.home).ok();
+}
+
+#[tokio::test]
+async fn a_job_declared_unattended_lets_its_calls_run() {
+    let harness = CronHarness::start(
+        "cron-auto-approve",
+        vec![
+            tool_call_stream("call-1", "list_dir", "{\"path\":\".\"}"),
+            assistant_stream("listed"),
+        ],
+    );
+    harness.seed_job("trusted", "* * * * *", None, true);
+    let mut scheduler = fleet::cron::Scheduler::new(harness.home.clone(), harness.runner());
+
+    let lines = scheduler
+        .tick(fleet::cron::Minute::parse("2026-10-14T12:00Z").unwrap())
+        .await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("completed"), "{}", lines[0]);
+    let logs = harness.scheduled_sessions();
+    assert_eq!(logs.len(), 1, "{logs:?}");
+    let records = session::replay(&logs[0]).unwrap();
+    let approved = records
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { name, approved, .. } if name == "list_dir" => Some(*approved),
+            _ => None,
+        })
+        .expect("the approved call's result");
+    assert!(approved, "the declared-unattended gate let the call run");
+    let job = harness.store().job("trusted").unwrap().clone();
+    assert_eq!(job.last_outcome, Some(fleet::cron::Outcome::Completed));
+    std::fs::remove_dir_all(&harness.home).ok();
+}
