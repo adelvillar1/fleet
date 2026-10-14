@@ -35,11 +35,13 @@ target/release/fleet chat                 # the everyday surface — one session
 
 `fleet install` is idempotent. It creates the home (`FLEET_HOME`, else `~/.fleet`) with `sessions/`, `memories/`, `skills/`, `cron/`, and `proposals/`, writes the minimal `config.json` scaffold (`{"pin": null, "providers": []}` — the roster's override seam over the compiled-in defaults) only when absent, and ends on `fleet doctor`'s checks: the install's exit code is the doctor's, so a red gate fails the install. A second run changes nothing and names what exists; an existing `config.json` is named and left untouched.
 
-The four vendored lanes are Python services, and their heavy dependencies are an optional second step:
+The five vendored lanes are Python services, and their heavy dependencies are an optional second step:
 
 ```sh
 target/release/fleet install --lanes      # per-lane venvs under <home>/venvs/<lane>/
 ```
+
+The specialist lanes are **sys1** (judgment), **sdm1** (tabular), **sem1** (embeddings), **gen1** (media), and **blend1** (the grounded lane). blend1 is the blended lane of the sys1 house pattern: one `ask()` runs the d1 router, the semantic and tabular lanes in parallel, and synthesizes with Liquid's LFM2.5-24B-A2B only when the router clears its floor — a cheap model whose reasoning is grounded on TabPFN's computed facts rather than invented, because LLMs do not do math and TabPFN does. See [docs/features/blend1.md](docs/features/blend1.md).
 
 Each lane is idempotent and degrades without: a venv that cannot be built — no network, a failing pip, no `uv`/`python3` — is skipped with a named line and the install still succeeds; the lane stays declared and simply dead when its tools are called. No step of the quick start needs Node or a DeepSeek Harness checkout — the lanes are vendored in this repository under `services/`.
 
@@ -47,7 +49,7 @@ Each lane is idempotent and degrades without: a venv that cannot be built — no
 
 ### `fleet install [--lanes]`
 
-Create the home layout (`sessions/`, `memories/`, `skills/`, `cron/`, `proposals/`) and the config scaffold, then run the doctor gate — the install's exit code is the doctor's. Idempotent: re-running names what exists and never rewrites an existing `config.json`. `--lanes` also bootstraps the heavy-lane venvs under `<home>/venvs/<lane>/` (sys1's GLiNER, sdm1's models, sem1's sentence-transformers, gen1's kokoro), each lane skipped by name when it cannot be built. See Quick start above.
+Create the home layout (`sessions/`, `memories/`, `skills/`, `cron/`, `proposals/`) and the config scaffold, then run the doctor gate — the install's exit code is the doctor's. Idempotent: re-running names what exists and never rewrites an existing `config.json`. `--lanes` also bootstraps the heavy-lane venvs under `<home>/venvs/<lane>/` (sys1's GLiNER, sdm1's models, sem1's sentence-transformers, gen1's kokoro, blend1's union of the three siblings' sets), each lane skipped by name when it cannot be built. See Quick start above.
 
 ### `fleet run "<task>" [options]`
 

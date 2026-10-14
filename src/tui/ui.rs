@@ -1040,20 +1040,40 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
     frame.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
-/// The lanes modal's height in rows: two lines per lane, the border, and a
-/// line of headroom. Four two-line rows do not need 62% of the screen —
-/// the headless card renders the same facts in far less, and the surfaces
-/// are meant to read as one.
-fn lanes_height(rows: usize) -> u16 {
-    let wanted = (rows as u16).saturating_mul(2).saturating_add(4);
+/// The lanes modal's height in rows: one row per rendered line, the
+/// border, and a line of headroom. A lane that carries a `doctor` report
+/// (blend1) renders one line per sub-lane, so the modal is sized from the
+/// lines it actually drew rather than a fixed two-per-lane share — a
+/// card clipped by its own modal is the failure the boards already
+/// learned from. Clamped at both ends, so a small frame or an unexpected
+/// line count cannot push the modal off screen.
+fn lanes_height(lines: usize) -> u16 {
+    let wanted = (lines as u16).saturating_add(4);
     wanted.clamp(4, 20)
 }
 
+/// The lanes modal's width, as a share of the frame. Wide enough for a
+/// lane row plus a doctor row with its reason; the same share the
+/// sessions picker takes, so the two overlays read as one family.
+const LANES_MODAL_PERCENT: u16 = 78;
+
 /// The lane health view over the conversation: one card-like row per
 /// lane — status dot, name, role, version, tool count, state — with the
-/// tool names (or the failure reason) underneath, in registry order.
+/// tool names (or the failure reason) underneath, in registry order. A
+/// lane that exposes a `doctor` tool (blend1) also renders its per-lane
+/// availability as named rows with status dots, exactly as the headless
+/// card renders them — the two surfaces read as one.
 fn render_lanes(frame: &mut Frame<'_>, app: &App) {
-    let area = centered_sized(78, lanes_height(app.lanes.len()), frame.area());
+    // The modal's width comes from the frame, so every line is composed
+    // for the columns it will actually be drawn in — the same share
+    // `centered_sized` lays out, read off the frame independently of the
+    // height the lines then decide.
+    let [columns] = Layout::horizontal([Constraint::Percentage(LANES_MODAL_PERCENT)])
+        .flex(Flex::Center)
+        .areas(frame.area());
+    let width = columns.width.saturating_sub(2).max(1) as usize;
+    let lines = lane_modal_lines(app, width);
+    let area = centered_sized(LANES_MODAL_PERCENT, lanes_height(lines.len()), frame.area());
     frame.render_widget(Clear, area);
     let block = Block::bordered()
         .title(" lanes — esc close ")
@@ -1076,6 +1096,25 @@ fn render_lanes(frame: &mut Frame<'_>, app: &App) {
         return;
     }
 
+    // A modal longer than its pane names what it is holding back rather
+    // than silently cutting its tail — the boards' contract.
+    let visible = inner.height as usize;
+    let mut drawn = lines;
+    if drawn.len() > visible {
+        let hidden = drawn.len() - visible + 1;
+        drawn.truncate(visible.saturating_sub(1));
+        drawn.push(Line::from(Span::styled(
+            format!(" +{hidden} more"),
+            Style::new().fg(palette::DIM),
+        )));
+    }
+    frame.render_widget(Paragraph::new(Text::from(drawn)), inner);
+}
+
+/// Every line the lanes modal draws at `width`, in registry order. Built
+/// whole so the modal is sized from its own content, and so a test reads
+/// the same lines the frame draws.
+fn lane_modal_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'_>> = Vec::new();
     for (index, lane) in app.lanes.iter().enumerate() {
         let selected = index == app.selected;
@@ -1091,18 +1130,21 @@ fn render_lanes(frame: &mut Frame<'_>, app: &App) {
         } else {
             Style::new().fg(palette::TEXT)
         };
-        lines.push(Line::from(vec![
-            Span::styled(format!("{marker} "), Style::new().fg(palette::ACCENT)),
-            Span::styled(format!("{dot} "), Style::new().fg(color)),
-            Span::styled(lane.name.clone(), name_style),
-            Span::styled(format!("  {}  ", lane.role), Style::new().fg(palette::DIM)),
-            Span::styled(format!("v{version}"), Style::new().fg(palette::DIM)),
-            Span::styled(
-                format!("  {} tool{}", lane.tools.len(), if lane.tools.len() == 1 { "" } else { "s" }),
-                Style::new().fg(palette::TEXT),
-            ),
-            Span::styled(format!("  {}", lane.state.label()), Style::new().fg(color)),
-        ]));
+        lines.push(line_of(
+            vec![
+                (format!("{marker} "), Style::new().fg(palette::ACCENT)),
+                (format!("{dot} "), Style::new().fg(color)),
+                (lane.name.clone(), name_style),
+                (format!("  {}  ", lane.role), Style::new().fg(palette::DIM)),
+                (format!("v{version}"), Style::new().fg(palette::DIM)),
+                (
+                    format!("  {} tool{}", lane.tools.len(), if lane.tools.len() == 1 { "" } else { "s" }),
+                    Style::new().fg(palette::TEXT),
+                ),
+                (format!("  {}", lane.state.label()), Style::new().fg(color)),
+            ],
+            width,
+        ));
         // The latency, exactly as the headless card renders it — the two
         // surfaces are meant to read as one.
         if lane.source.is_some() {
@@ -1118,12 +1160,115 @@ fn render_lanes(frame: &mut Frame<'_>, app: &App) {
         } else {
             lane.tools.join(" · ")
         };
-        lines.push(Line::from(Span::styled(
-            format!("   {detail}"),
-            Style::new().fg(palette::DIM),
-        )));
+        lines.push(line_of(
+            vec![(format!("   {detail}"), Style::new().fg(palette::DIM))],
+            width,
+        ));
+        // The lane's own `doctor` report, when it exposed one: a named
+        // row per sub-lane with its status dot and its named reason. A
+        // lane whose probe was refused keeps its card and names the
+        // error rather than dropping the section silently.
+        if lane.name == DOCTOR_LANE {
+            lines.extend(doctor_lines(lane, width));
+        }
     }
-    frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+    lines
+}
+
+/// The one lane whose probe carries a `doctor` report: the blended lane's
+/// own per-lane availability. The other four expose no such tool, so
+/// their cards carry no doctor section.
+const DOCTOR_LANE: &str = "blend1";
+
+/// The sub-lane name's column width on a doctor row, so every reason
+/// starts in one column the way a card's facts do.
+const DOCTOR_NAME_COLUMN: usize = 10;
+
+/// The doctor section of blend1's card: a section header, one named row
+/// per sub-lane the probe parsed, and the section's own named state when
+/// the report did not land. Each row is a status dot, the sub-lane's
+/// name in one column, and its named reason — green and its backing
+/// provider when the lane can answer, dim and the reason it cannot when
+/// it cannot. A long reason wraps under its row rather than being
+/// clipped, because a clipped reason is not a named one.
+fn doctor_lines(lane: &crate::lanes::LaneHealth, width: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![section("doctor")];
+    if lane.doctor.is_empty() {
+        // A refused probe (or a report the parser could not read) keeps
+        // the card and names it: the snapshot-and-name contract the
+        // boards' refused reads already follow. The reason wraps rather
+        // than clipping, because a clipped reason is not a named one.
+        let named = if lane.tools.is_empty() {
+            lane.detail.clone()
+        } else {
+            "the probe's doctor report did not land".to_string()
+        };
+        lines.extend(wrapped("   ", &named, Style::new().fg(palette::DENIED), width));
+        return lines;
+    }
+    for availability in &lane.doctor {
+        let (dot, color) = if availability.available {
+            ("●", palette::DONE)
+        } else {
+            ("○", palette::DIM)
+        };
+        // The reason is named either way: an available lane says what
+        // backs it, an unavailable one says what is missing. A bare dot
+        // is never the whole row.
+        let named = if availability.reason.is_empty() {
+            availability.provider.clone()
+        } else {
+            availability.reason.clone()
+        };
+        let named_style = if availability.available {
+            Style::new().fg(palette::DIM)
+        } else {
+            Style::new().fg(palette::DENIED)
+        };
+        // The row's head keeps its shape at every width; the reason fills
+        // the room that is left and wraps under the row when it needs
+        // more, indented to the reason's own column.
+        let head = format!("   {dot} ");
+        let head_width = head.chars().count() + DOCTOR_NAME_COLUMN;
+        let room = width.saturating_sub(head_width + 1).max(8);
+        let chunks = wrap(&named, room);
+        let first = chunks.first().cloned().unwrap_or_default();
+        lines.push(Line::from(vec![
+            Span::styled(head, Style::new().fg(color)),
+            Span::styled(
+                format!("{:<column$}", availability.lane, column = DOCTOR_NAME_COLUMN),
+                Style::new().fg(palette::TEXT),
+            ),
+            Span::styled(first, named_style),
+        ]));
+        for chunk in chunks.into_iter().skip(1) {
+            lines.push(Line::from(Span::styled(
+                format!("{}{}", " ".repeat(head_width), chunk),
+                Style::new().fg(palette::DIM),
+            )));
+        }
+    }
+    lines
+}
+
+/// One reason as wrapped lines: the first carries `indent` and `style`,
+/// every continuation is indented to the reason's own column and dimmed.
+/// A reason is never clipped — a clipped reason is not a named one.
+fn wrapped(
+    indent: &str,
+    text: &str,
+    style: Style,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let room = width.saturating_sub(indent.chars().count()).max(8);
+    let chunks = wrap(text, room);
+    let mut out = Vec::with_capacity(chunks.len());
+    for (index, chunk) in chunks.into_iter().enumerate() {
+        let pad = if index == 0 { indent.to_string() } else { " ".repeat(indent.chars().count()) };
+        let style = if index == 0 { style } else { Style::new().fg(palette::DIM) };
+        out.push(Line::from(Span::styled(format!("{pad}{chunk}"), style)));
+    }
+    out
 }
 
 /// One conversation entry as wrapped lines: tool calls are cards with a
@@ -2135,13 +2280,141 @@ mod tests {
 
     #[test]
     fn the_lanes_modal_is_sized_from_its_rows_not_a_fixed_share() {
-        // Four two-line rows must not cost 62% of the screen.
-        assert_eq!(lanes_height(0), 4, "the probing view is one line plus its border");
-        assert_eq!(lanes_height(4), 12, "four rows: two lines each, plus four");
+        // A four-lane modal is eight two-line rows plus headroom; it must
+        // not keep a fixed 62% of the screen.
+        assert_eq!(lanes_height(1), 5, "one line plus the border and headroom");
+        assert_eq!(lanes_height(8), 12, "four two-line rows: the old shape's height");
         // Clamped at both ends, so a small frame or an unexpected row
         // count cannot push the modal off screen.
+        assert_eq!(lanes_height(0), 4);
         assert_eq!(lanes_height(40), 20);
-        assert!(lanes_height(4) < 62, "the modal must not keep the fixed share");
+        assert!(lanes_height(8) < 62, "the modal must not keep the fixed share");
+    }
+
+    /// blend1's card is the fifth one, and it renders at the house visual
+    /// bar: the lane's name and role, its probe status dot, and its
+    /// `doctor()` per-lane availability as named rows with status dots —
+    /// green with its backing provider when a lane can answer, dim with
+    /// the named reason when it cannot.
+    #[test]
+    fn blend1s_card_renders_its_doctor_rows_with_dots_and_named_reasons() {
+        let mut app = fresh();
+        app.apply(crate::tui::app::Action::OpenLanes);
+        app.set_lanes(app.lanes_probe, vec![blend1_health()]);
+        let drawn = draw(&app, 120, 40);
+        // The lane's name and its role, and its probe state.
+        assert!(drawn.contains("blend1"), "{drawn}");
+        assert!(drawn.contains("grounded"), "{drawn}");
+        assert!(drawn.contains("ok"), "{drawn}");
+        // The five sub-lanes, each named, each with its dot.
+        for lane in ["route", "semantic", "tabular", "generate", "validate"] {
+            assert!(drawn.contains(lane), "{lane} is missing from the card: {drawn}");
+        }
+        // An available lane names what backs it; an unavailable one names
+        // what is missing — never a bare dot.
+        assert!(drawn.contains("liquid (d1) via sys1"), "{drawn}");
+        assert!(drawn.contains("tabpfn-hosted (Prior Labs)"), "{drawn}");
+        assert!(
+            drawn.contains("missing LIQUID_API_KEY (set it in ~/.config/blend1/env)"),
+            "{drawn}"
+        );
+        // The lane's own tools, as the headless card names them.
+        assert!(drawn.contains("ask · doctor · search · refresh · seed"), "{drawn}");
+        // The card is genuinely visual: status dots, not a plain-text table.
+        assert!(!drawn.contains("| name |"), "{drawn}");
+        // At 80 columns the doctor rows still carry their facts.
+        let narrow = draw(&app, 80, 24);
+        for lane in ["route", "semantic", "tabular", "generate", "validate"] {
+            assert!(narrow.contains(lane), "{lane} is missing at 80 columns: {narrow}");
+        }
+        // A tiny frame still renders the modal without a panic.
+        let tiny = draw(&app, 20, 6);
+        assert!(tiny.contains("lanes"), "{tiny}");
+    }
+
+    /// A refused probe keeps blend1's card and names the error — the
+    /// boards' snapshot-and-name contract, on the lanes modal.
+    #[test]
+    fn a_refused_blend1_probe_keeps_its_card_and_names_the_error() {
+        let mut app = fresh();
+        app.apply(crate::tui::app::Action::OpenLanes);
+        app.set_lanes(app.lanes_probe, vec![crate::lanes::LaneHealth {
+            name: "blend1".to_string(),
+            role: "grounded".to_string(),
+            home: Some(std::path::PathBuf::from("/repo/services/blend1")),
+            source: Some(crate::lanes::HomeSource::Bundled),
+            state: LaneState::Error,
+            server_version: None,
+            tools: Vec::new(),
+            doctor: Vec::new(),
+            detail: "`tools/list` timed out after 10s".to_string(),
+            elapsed_ms: 10_000,
+        }]);
+        let drawn = draw(&app, 120, 40);
+        // The card is still there, with its dot and its state.
+        assert!(drawn.contains("blend1"), "{drawn}");
+        assert!(drawn.contains("grounded"), "{drawn}");
+        assert!(drawn.contains("error"), "{drawn}");
+        // And the reason is named, not swallowed.
+        assert!(drawn.contains("timed out"), "{drawn}");
+        // The doctor section names that its report did not land rather
+        // than rendering an empty section.
+        assert!(drawn.contains("doctor"), "{drawn}");
+    }
+
+    /// A blend1 health row with a full doctor report, as the probe's
+    /// `doctor` tool answers it.
+    fn blend1_health() -> crate::lanes::LaneHealth {
+        crate::lanes::LaneHealth {
+            name: "blend1".to_string(),
+            role: "grounded".to_string(),
+            home: Some(std::path::PathBuf::from("/repo/services/blend1")),
+            source: Some(crate::lanes::HomeSource::Bundled),
+            state: LaneState::Ok,
+            server_version: Some("0.1.0".to_string()),
+            tools: vec![
+                "ask".to_string(),
+                "doctor".to_string(),
+                "search".to_string(),
+                "refresh".to_string(),
+                "seed".to_string(),
+            ],
+            doctor: vec![
+                crate::lanes::LaneAvailability {
+                    lane: "route".to_string(),
+                    available: true,
+                    reason: "liquid (d1) via sys1".to_string(),
+                    provider: "liquid (d1) via sys1".to_string(),
+                },
+                crate::lanes::LaneAvailability {
+                    lane: "semantic".to_string(),
+                    available: true,
+                    reason: "768d, 60ms".to_string(),
+                    provider: "llama-server (EmbeddingGemma-2)".to_string(),
+                },
+                crate::lanes::LaneAvailability {
+                    lane: "tabular".to_string(),
+                    available: true,
+                    reason: "tabpfn-hosted (Prior Labs)".to_string(),
+                    provider: "tabpfn-hosted (Prior Labs)".to_string(),
+                },
+                crate::lanes::LaneAvailability {
+                    lane: "generate".to_string(),
+                    available: false,
+                    reason: "missing LIQUID_API_KEY (set it in ~/.config/blend1/env)"
+                        .to_string(),
+                    provider: "lfm2.5-24b-a2b via api.liquid.ai".to_string(),
+                },
+                crate::lanes::LaneAvailability {
+                    lane: "validate".to_string(),
+                    available: true,
+                    reason: "GLiDE (Fastino) key set; inconclusive verdicts escalate to the critic chain".to_string(),
+                    provider: "glide → d1 (oversized states)".to_string(),
+                },
+            ],
+            detail: "BLEND1_PYTHONPATH=/repo/services/blend1/src python3 -u /repo/services/blend1/service/mcp_server.py".to_string(),
+            elapsed_ms: 53,
+        }
     }
 
     #[test]

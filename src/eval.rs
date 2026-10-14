@@ -30,6 +30,17 @@
 //! and treats an empty request log after a served turn as a live-run
 //! alarm, the way the integration harness does.
 //!
+//! A lane scenario adds a second seam beside the mock API: the lane
+//! itself is the `mock-mcp` binary over a script ([`ScriptedLane`]), so
+//! the blend1 scenarios drive the lane through a **scripted reply** —
+//! the Rust-side form of the lane's own `_lane_overrides` test seam —
+//! and never a live paid call. The lane's `ask` reply is a BlendResult
+//! whose keys follow the vendored core's own additive contract
+//! (`escalation`, `score`, `escalated_answer` beside the rest), so a
+//! scenario grades fleet's side of the contract — the fact that reaches
+//! the model, the answer that ships, and the keys that name what
+//! happened — rather than the lane's internals.
+//!
 //! ## Failures are verdicts, never panics
 //!
 //! A driver touches the filesystem — a scratch dir, a session log,
@@ -322,10 +333,98 @@ fn wait_for_port(port_path: &Path, child: &mut Child) -> Result<u16, String> {
 /// The mock-server binary beside the fleet executable. `None` when it
 /// cannot be resolved, which the caller names rather than guessing at.
 pub fn mock_server_binary() -> Option<PathBuf> {
+    sibling_binary("mock-server")
+}
+
+/// A sibling cargo binary by name, resolved beside the current executable
+/// and then one directory up: cargo lays bin targets out at the profile
+/// root (`target/debug/mock-server`) and the test binaries that ask for
+/// them one directory down in `deps/`, so a corpus driven from a test
+/// binary finds the same child a `fleet eval` subprocess does. `None`
+/// when neither holds it, which the caller names rather than guessing at.
+fn sibling_binary(name: &str) -> Option<PathBuf> {
+    let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
     let exe = std::env::current_exe().ok()?;
-    let name = if cfg!(windows) { "mock-server.exe" } else { "mock-server" };
-    let path = exe.parent()?.join(name);
-    path.exists().then_some(path)
+    let mut dir = exe.parent().map(Path::to_path_buf);
+    // Three ancestors covers `deps/` under either profile and a binary
+    // launched from a nested directory, without an unbounded walk.
+    for _ in 0..3 {
+        let Some(candidate) = dir.clone() else { break };
+        let path = candidate.join(&file);
+        if path.exists() {
+            return Some(path);
+        }
+        dir = candidate.parent().map(Path::to_path_buf);
+    }
+    None
+}
+
+/// The `mock-mcp` binary beside the fleet executable — the scripted MCP
+/// child a lane scenario drives its lane through. Resolved the same way
+/// [`mock_server_binary`] is, and `None` when it cannot be, which the
+/// scenario grades as its own named failure rather than guessing at.
+pub fn mock_mcp_binary() -> Option<PathBuf> {
+    sibling_binary("mock-mcp")
+}
+
+// --- the scripted lane child -----------------------------------------------
+
+/// A scripted MCP lane in a child process: the `mock-mcp` binary over a
+/// script, standing in for a vendored lane core. Cross-process for the
+/// same reason the mock API is — the MCP client's reads misbehave when
+/// client and server share a process — and scripted rather than live, so
+/// no scenario can spend a paid call. Every fault is a named error the
+/// calling scenario grades.
+struct ScriptedLane {
+    child: Child,
+    /// The `mock-mcp` binary's path, so the launch spec names the same
+    /// child the scenario spawned.
+    program: String,
+    scratch: PathBuf,
+}
+
+impl ScriptedLane {
+    /// Start the lane over `entries` (one script entry per request the
+    /// client sends with an id: initialize, tools/list, then each call).
+    fn start(mcp_bin: &Path, entries: Vec<serde_json::Value>) -> Result<ScriptedLane, String> {
+        let scratch = scratch_dir("blend1-lane")?;
+        let script_path = scratch.join("script.jsonl");
+        let script = entries.iter().map(|entry| format!("{entry}\n")).collect::<String>();
+        std::fs::write(&script_path, script)
+            .map_err(|error| format!("the lane script could not be written: {error}"))?;
+        let child = Command::new(mcp_bin)
+            .arg(&script_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("the mock-mcp child could not be spawned: {error}"))?;
+        Ok(ScriptedLane {
+            child,
+            program: mcp_bin.to_string_lossy().into_owned(),
+            scratch,
+        })
+    }
+
+    /// The client-side launch spec: the child over its own script, with
+    /// no environment of its own — a scripted lane needs none.
+    fn spec(&self) -> crate::mcp::ServerSpec {
+        crate::mcp::ServerSpec {
+            program: self.program.clone(),
+            args: vec![self.scratch.join("script.jsonl").to_string_lossy().into_owned()],
+            env: Vec::new(),
+            passthrough: Vec::new(),
+            cwd: None,
+        }
+    }
+}
+
+impl Drop for ScriptedLane {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        std::fs::remove_dir_all(&self.scratch).ok();
+    }
 }
 
 // --- the vocabulary -------------------------------------------------------
@@ -349,6 +448,9 @@ pub enum ScenarioFamily {
     Subagent,
     /// A memory recall enters the turn's context (slice 8).
     Memory,
+    /// A lane call whose result must carry a computed fact into the final
+    /// answer unaltered — the grounded path blend1 exists for.
+    GroundedLane,
 }
 
 impl ScenarioFamily {
@@ -361,6 +463,7 @@ impl ScenarioFamily {
             ScenarioFamily::ToolLoop => "tool-loop",
             ScenarioFamily::Subagent => "subagent",
             ScenarioFamily::Memory => "memory",
+            ScenarioFamily::GroundedLane => "grounded-lane",
         }
     }
 }
@@ -475,6 +578,18 @@ pub fn corpus() -> Vec<Scenario> {
         Scenario::new("memory-recall", ScenarioFamily::Memory, |bin| {
             Box::pin(memory_recall(bin))
         }),
+        Scenario::new("blend1-grounded-fact", ScenarioFamily::GroundedLane, |bin| {
+            Box::pin(blend1_grounded_fact(bin))
+        }),
+        Scenario::new("blend1-escalation", ScenarioFamily::GroundedLane, |bin| {
+            Box::pin(blend1_escalation(bin))
+        }),
+        Scenario::new("blend1-reprocess", ScenarioFamily::GroundedLane, |bin| {
+            Box::pin(blend1_reprocess(bin))
+        }),
+        Scenario::new("blend1-corpus-recall", ScenarioFamily::GroundedLane, |bin| {
+            Box::pin(blend1_corpus_recall(bin))
+        }),
     ]
 }
 
@@ -579,7 +694,8 @@ pub fn last_row(root: &Path) -> Option<calib::ReadRow> {
 pub type EvalProbe = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 /// The bound the probe's `fleet eval` subprocess runs under: the
-/// corpus is six deterministic mock-server runs, so a child that has
+/// corpus is ten deterministic runs — six mock-server runs and four
+/// lane runs over a scripted MCP child — so a child that has
 /// not finished within this many seconds is a hung probe — killed
 /// and named, never a gate that hangs with it.
 pub const PROBE_TIMEOUT_SECS: u64 = 120;
@@ -667,7 +783,7 @@ fn grade_output(output: &std::process::Output) -> Result<(), String> {
 /// Run `fleet eval` as a bounded subprocess and collect its output. A
 /// reader thread drains both pipes, so a child that fills its pipe
 /// buffer cannot deadlock the wait; the parent keeps the child so it
-/// can kill it when the bound expires. The corpus is six
+/// can kill it when the bound expires. The corpus is ten
 /// deterministic mock-server runs — a child that has not finished
 /// within `timeout` is a hung probe, not a hung gate.
 fn run_eval_subprocess(
@@ -914,12 +1030,27 @@ async fn drive(
     memory: Option<Arc<Memory>>,
     task: &str,
 ) -> Result<RunReport, AgentError> {
+    drive_over(mock, session, approver, max_turns, memory, None, task).await
+}
+
+/// `drive` with lane specs injected: a lane scenario's run meets its
+/// scripted lane through this rather than through the vendored registry,
+/// exactly as the integration suite's `run_with_lanes` does.
+async fn drive_over(
+    mock: &MockApi,
+    session: &mut Session,
+    approver: Box<dyn Approver>,
+    max_turns: usize,
+    memory: Option<Arc<Memory>>,
+    lane_specs: Option<std::collections::HashMap<String, crate::mcp::ServerSpec>>,
+    task: &str,
+) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
         model: "test-model".to_string(),
         max_turns,
         ui_tx: None,
-        lane_specs: None,
+        lane_specs,
         calib: None,
         skills: Vec::new(),
         memory,
@@ -1523,6 +1654,479 @@ fn fact_file(name: &str, description: &str, basis: &str, fact_type: &str, shape:
     )
 }
 
+// --- blend1: the grounded lane --------------------------------------------
+
+/// The lane name every blend1 scenario addresses, and the namespace its
+/// tools ride under in the model's tool set.
+const BLEND1: &str = "blend1";
+
+/// The fact the tabular lane computes in every blend1 scenario: a TabPFN
+/// probability. "LLMs do not do math; TabPFN does" — the number reaches
+/// the synthesis model as a given, and the scenario's whole job is to
+/// prove nothing between the lane and the operator rewrites it.
+const FACT: &str = "0.924";
+
+/// The `ask` arguments every blend1 scenario's model turn calls with: one
+/// prompt, a three-row table whose third row is the query, and the target
+/// column TabPFN predicts.
+const ASK_ARGUMENTS: &str = r#"{"prompt":"will customer 1042 churn?","table":[{"tenure_months":4,"monthly_charges":89.5,"churned":true},{"tenure_months":52,"monthly_charges":21.0,"churned":false},{"tenure_months":7,"monthly_charges":95.2}],"target":"churned"}"#;
+
+/// The blend1 lane's five tools, as the vendored adapter declares them.
+/// The corpus tools ride beside `ask` and `doctor` (plan B12).
+fn blend1_tools() -> serde_json::Value {
+    serde_json::json!([
+        { "name": "ask", "description": "one blended ask", "inputSchema": { "type": "object" } },
+        { "name": "doctor", "description": "per-lane availability", "inputSchema": { "type": "object" } },
+        { "name": "search", "description": "semantic search over a project's corpus", "inputSchema": { "type": "object" } },
+        { "name": "refresh", "description": "docs-derived corpus refresh, hash-gated", "inputSchema": { "type": "object" } },
+        { "name": "seed", "description": "the corpus's write path", "inputSchema": { "type": "object" } },
+    ])
+}
+
+/// The scripted lane's three entries: initialize, tools/list, and the one
+/// `tools/call` whose text block is `reply`.
+fn blend1_lane_entries(reply: &str) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": { "listChanged": false } },
+                "serverInfo": { "name": "blend1", "version": "0.1.0" },
+            },
+        } }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "tools": blend1_tools() },
+        } }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "content": [{ "type": "text", "text": reply }], "isError": false },
+        } }),
+    ]
+}
+
+/// A BlendResult fixture with the wire contract's own keys, plus `extra`
+/// merged over it. The result-key contract is additive, so a leg built
+/// upstream rides in as an extra key without touching the base.
+fn blend1_result(extra: serde_json::Value) -> serde_json::Value {
+    let mut result = serde_json::json!({
+        "prompt_sha256": "9f2c1d4b6a8e0357",
+        "prompt_chars": 47,
+        "path": "synthesized",
+        "route": {
+            "status": "ok", "provider": "liquid",
+            "needs_generation": 0.978, "needs_live_facts": 0.0,
+            "answer_shape": "synthesized", "latency_ms": 900,
+        },
+        "semantic": {
+            "status": "ok", "provider": "llama-server", "dims": 768,
+            "neighbors": [{ "key": "churn-playbook", "score": 0.771,
+                            "text": "the churn playbook's threshold is p=0.90" }],
+        },
+        "tabular": {
+            "status": "ok", "model": "tabpfn-hosted", "verdict": "ok",
+            "predictions": [{ "label": "churned",
+                              "probabilities": { "churned": 0.924, "stayed": 0.076 } }],
+            "n_context_rows": 40, "n_query_rows": 1, "latency_ms": 11_800,
+        },
+        "generated": { "status": "ok", "model": "lfm2.5-24b-a2b" },
+        "validation": { "status": "ok", "provider": "glide" },
+        "escalation": {},
+        "score": {},
+        "voice": {},
+        "web": {},
+        "total_latency_ms": 15_400,
+        // `escalated_answer` flags the SHIPPED answer as escalated — a
+        // separate key from `escalated`, whose meaning stays exactly "a
+        // lane failed open", so the escalation leg succeeding is not a
+        // lane failure. The adapter adds `escalated` and `failed_lanes`
+        // beside the result's own keys.
+        "escalated_answer": false,
+        "escalated": false,
+        "failed_lanes": [],
+    });
+    if let (Some(base), Some(overlay)) = (result.as_object_mut(), extra.as_object()) {
+        for (key, value) in overlay {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+    result
+}
+
+/// The tool message one recorded request carried: the lane's answer as
+/// the model read it (the fourth message — system, user, assistant,
+/// tool).
+fn tool_message(mock: &MockApi, index: usize) -> String {
+    mock.bodies()
+        .get(index)
+        .and_then(|body| body.get("messages"))
+        .and_then(|messages| messages.as_array())
+        .and_then(|messages| messages.get(3))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// What one blend1 lane run produced: the pieces every blend1 scenario
+/// grades against.
+struct Blend1Run {
+    report: RunReport,
+    /// The lane's answer as the model read it.
+    lane_answer: String,
+    /// The assistant's tool call, as the log recorded it.
+    call_name: String,
+    call_arguments: String,
+    /// The `lane_tools` record's model-visible names, in declaration
+    /// order.
+    lane_tools: Vec<String>,
+    /// The reconstructed log.
+    records: Vec<Record>,
+}
+
+/// One blend1 lane run against a scripted seam: the mock API's two
+/// scripted turns (the model's call, then its answer) and the scripted
+/// lane child. Every fault — a missing binary, a scratch dir that will
+/// not make, a session that will not create, a run that fails — is a
+/// named error the scenario grades, never a panic.
+async fn run_blend1(
+    mock_bin: &Path,
+    tool_name: &str,
+    arguments: &str,
+    lane_reply: &str,
+    answer: &str,
+    task: &str,
+) -> Result<Blend1Run, String> {
+    let Some(mcp_bin) = mock_mcp_binary() else {
+        return Err(
+            "the mock-mcp binary was not found beside the fleet executable; the lane seam cannot run"
+                .to_string(),
+        );
+    };
+    let lane = ScriptedLane::start(&mcp_bin, blend1_lane_entries(lane_reply))?;
+    let mock = MockApi::start(
+        mock_bin,
+        vec![
+            tool_call_stream("call-1", tool_name, arguments),
+            assistant_stream(answer),
+        ],
+    )?;
+    let home = scratch_dir("blend1-turn")?;
+    let mut session = Session::create(&home, "test-model")
+        .map_err(|error| format!("the session could not be created: {error}"))?;
+    let mut specs = std::collections::HashMap::new();
+    specs.insert(BLEND1.to_string(), lane.spec());
+    let report = drive_over(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        None,
+        Some(specs),
+        task,
+    )
+    .await
+    .map_err(|error| format!("the run failed: {error}"))?;
+    let records = session::replay(&session.path()).unwrap_or_default();
+    let lane_answer = tool_message(&mock, 1);
+    let call = records.iter().find_map(|record| match record {
+        Record::Assistant { tool_calls, .. } => tool_calls.first().map(|call| {
+            (call.function.name.clone(), call.function.arguments.clone())
+        }),
+        _ => None,
+    });
+    let lane_tools = records
+        .iter()
+        .find_map(|record| match record {
+            Record::LaneTools { lane, tools } if lane == BLEND1 => {
+                Some(tools.iter().map(|tool| tool.name.clone()).collect())
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    let run = Blend1Run {
+        report,
+        lane_answer,
+        call_name: call.as_ref().map(|(name, _)| name.clone()).unwrap_or_default(),
+        call_arguments: call.as_ref().map(|(_, arguments)| arguments.clone()).unwrap_or_default(),
+        lane_tools,
+        records,
+    };
+    std::fs::remove_dir_all(&home).ok();
+    Ok(run)
+}
+
+/// The grounded path: the model asks the lane for a tabular fact, the
+/// lane's answer carries TabPFN's computed probability, and the final
+/// answer carries it **unaltered** — never invented, never rounded.
+/// "LLMs do not do math; TabPFN does."
+async fn blend1_grounded_fact(mock_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "blend1-grounded-fact";
+    let family = ScenarioFamily::GroundedLane;
+    let answer = format!(
+        "Customer 1042 will churn. TabPFN scores the row at p={FACT} against 40 labeled \
+         context rows; the semantic lane's closest neighbor is the churn playbook. \
+         The probability is {FACT} exactly, as the tabular lane computed it."
+    );
+    let run = match run_blend1(
+        &mock_bin,
+        "mcp__blend1__ask",
+        ASK_ARGUMENTS,
+        &blend1_result(serde_json::json!({
+            "generated": { "status": "ok", "model": "lfm2.5-24b-a2b", "text": answer },
+            "validation": { "status": "ok", "provider": "glide", "passed": true,
+                            "outcome": "passed", "number_check": "ok" },
+            "score": { "status": "ok", "provider": "liquid", "correct": true,
+                       "reprocessed": false, "shipped": "original" },
+            "final_answer": answer,
+        }))
+        .to_string(),
+        &answer,
+        "will customer 1042 churn? ground it in the tabular lane",
+    )
+    .await
+    {
+        Ok(run) => run,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let final_answer = run.report.final_message.clone().unwrap_or_default();
+    // Every metric-shaped rendering of the fact in the answer is the
+    // exact one the lane computed: a rounded 0.92 at a word boundary, or
+    // a bare percentage, is the fabrication the number check exists for.
+    let rounded = ["0.92,", "0.92 ", "0.92.", "0.92)", "92%", "0.9 "]
+        .iter()
+        .any(|shape| final_answer.contains(shape));
+    grade(
+        NAME,
+        family,
+        &[
+            ("the run completed", run.report.stop_reason == StopReason::Completed),
+            ("two turns", run.report.turns == 2),
+            (
+                "blend1 joined the run with its five tools",
+                run.lane_tools
+                    == vec![
+                        "mcp__blend1__ask".to_string(),
+                        "mcp__blend1__doctor".to_string(),
+                        "mcp__blend1__search".to_string(),
+                        "mcp__blend1__refresh".to_string(),
+                        "mcp__blend1__seed".to_string(),
+                    ],
+            ),
+            (
+                "the model asked the lane for the grounded path",
+                run.call_name == "mcp__blend1__ask"
+                    && run.call_arguments.contains("\"table\"")
+                    && run.call_arguments.contains("\"target\":\"churned\""),
+            ),
+            ("the tabular fact reached the model's context", run.lane_answer.contains(FACT)),
+            ("the final answer carries the fact", final_answer.contains(FACT)),
+            ("the fact was not rounded", !rounded),
+            (
+                "the grounded path names itself and did not escalate",
+                run.lane_answer.contains("\"path\":\"synthesized\"")
+                    && run.lane_answer.contains("\"escalated\":false"),
+            ),
+            ("the log reconstructs the turn", run.records.len() == 7),
+        ],
+    )
+}
+
+/// The escalation: the validation gate lands inconclusive (`passed`
+/// null — no critic answered), the answer escalates to a larger
+/// configured model with the same givens, and the escalated answer ships
+/// **flagged** under the result's own `escalated_answer` key — beside
+/// `escalated`, whose meaning stays exactly "a lane failed open", so the
+/// leg succeeding is not a lane failure. The gate never blocks: the
+/// pre-escalation answer is retained in the result, and an escalation
+/// that is unconfigured, keyless, or failed is named with the original
+/// answer shipping.
+async fn blend1_escalation(mock_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "blend1-escalation";
+    let family = ScenarioFamily::GroundedLane;
+    let original = "Customer 1042 will probably churn; the tabular lane scored the row.";
+    let escalated = format!(
+        "Customer 1042 will churn. TabPFN scores the row at p={FACT} against 40 labeled \
+         context rows, and the churn playbook is the closest semantic neighbor."
+    );
+    let run = match run_blend1(
+        &mock_bin,
+        "mcp__blend1__ask",
+        ASK_ARGUMENTS,
+        &blend1_result(serde_json::json!({
+            "generated": { "status": "ok", "model": "lfm2.5-24b-a2b", "text": original },
+            "validation": { "status": "ok", "provider": "glide", "answers_the_question": 0.71,
+                            "contradicts_facts": 0.28, "number_check": "ok",
+                            "passed": null, "outcome": "inconclusive" },
+            "escalation": { "status": "ok", "provider": "escalation-target",
+                            "model": "qwen3.8-flash", "text": escalated, "shipped": true },
+            "escalated_answer": true,
+            "final_answer": escalated,
+        }))
+        .to_string(),
+        &escalated,
+        "will customer 1042 churn? the gate could not rate the first answer",
+    )
+    .await
+    {
+        Ok(run) => run,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let final_answer = run.report.final_message.clone().unwrap_or_default();
+    grade(
+        NAME,
+        family,
+        &[
+            ("the run completed", run.report.stop_reason == StopReason::Completed),
+            ("two turns", run.report.turns == 2),
+            (
+                "the validation outcome is named inconclusive",
+                run.lane_answer.contains("\"outcome\":\"inconclusive\"")
+                    && run.lane_answer.contains("\"passed\":null"),
+            ),
+            (
+                "the escalation leg fired and shipped",
+                run.lane_answer.contains("\"escalation\"")
+                    && run.lane_answer.contains("\"shipped\":true"),
+            ),
+            ("the escalated answer shipped", final_answer == escalated),
+            (
+                "the shipped answer is flagged on its own key",
+                run.lane_answer.contains("\"escalated_answer\":true"),
+            ),
+            (
+                "the escalation succeeding is not read as a lane failure",
+                run.lane_answer.contains("\"escalated\":false"),
+            ),
+            (
+                "the pre-escalation answer is retained, not silently dropped",
+                run.lane_answer.contains(original),
+            ),
+            (
+                "the escalated answer still carries the computed fact",
+                final_answer.contains(FACT),
+            ),
+            ("the log reconstructs the turn", run.records.len() == 7),
+        ],
+    )
+}
+
+/// The reprocess: sys1 (d1) scores the generated answer's correctness
+/// against the givens, a wrong score reprocesses (re-synthesis with the
+/// score's feedback), and the corrected answer ships — the score carrying
+/// `reprocessed` and which answer shipped, and the wrong answer retained
+/// in the result rather than dropped. The score never blocks: a
+/// reprocess that fails ships the scored answer with the failure named.
+async fn blend1_reprocess(mock_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "blend1-reprocess";
+    let family = ScenarioFamily::GroundedLane;
+    let wrong = "Customer 1042 will churn; the tabular lane puts the probability at p=0.87.";
+    let corrected = format!(
+        "Customer 1042 will churn. TabPFN puts the probability at p={FACT} against 40 \
+         labeled context rows; the first attempt's figure was wrong and was reprocessed."
+    );
+    let run = match run_blend1(
+        &mock_bin,
+        "mcp__blend1__ask",
+        ASK_ARGUMENTS,
+        &blend1_result(serde_json::json!({
+            "generated": { "status": "ok", "model": "lfm2.5-24b-a2b", "text": wrong },
+            "score": { "status": "ok", "provider": "liquid", "is_correct": 0.12,
+                       "correctness": 1, "correct": false,
+                       "reprocessed": true, "shipped": "reprocessed" },
+            "final_answer": corrected,
+        }))
+        .to_string(),
+        &corrected,
+        "will customer 1042 churn? the first answer got the number wrong",
+    )
+    .await
+    {
+        Ok(run) => run,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let final_answer = run.report.final_message.clone().unwrap_or_default();
+    grade(
+        NAME,
+        family,
+        &[
+            ("the run completed", run.report.stop_reason == StopReason::Completed),
+            ("two turns", run.report.turns == 2),
+            (
+                "the sys1 score names the first answer wrong",
+                run.lane_answer.contains("\"score\"")
+                    && run.lane_answer.contains("\"correct\":false"),
+            ),
+            (
+                "the reprocess fired and is bounded",
+                run.lane_answer.contains("\"reprocessed\":true")
+                    && run.lane_answer.contains("\"shipped\":\"reprocessed\""),
+            ),
+            ("the corrected answer shipped", final_answer == corrected),
+            (
+                "the corrected answer carries the computed fact and not the wrong one",
+                final_answer.contains(FACT) && !final_answer.contains("0.87"),
+            ),
+            (
+                "the wrong answer is retained in the result, not dropped",
+                run.lane_answer.contains(wrong),
+            ),
+            ("the log reconstructs the turn", run.records.len() == 7),
+        ],
+    )
+}
+
+/// The corpus recall: a seeded project fact is retrieved by `search` and
+/// quoted **unaltered** — the project's facts, not the agent's durable
+/// ones, and the seam the cron refresh keeps current.
+async fn blend1_corpus_recall(mock_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "blend1-corpus-recall";
+    let family = ScenarioFamily::GroundedLane;
+    let fact = "the churn playbook's threshold is p=0.90, reviewed 2026-10-09";
+    let search_reply = serde_json::json!({
+        "project": "fleet",
+        "query": "what is the churn playbook's threshold?",
+        "k": 3,
+        "results": [{ "key": "churn-playbook", "score": 0.771, "text": fact }],
+    })
+    .to_string();
+    let answer = format!(
+        "The project's churn playbook sets the threshold at p=0.90 (\"{fact}\"), \
+         retrieved from the fleet corpus at cosine 0.771."
+    );
+    let run = match run_blend1(
+        &mock_bin,
+        "mcp__blend1__search",
+        r#"{"query":"what is the churn playbook's threshold?","project":"fleet","k":3}"#,
+        &search_reply,
+        &answer,
+        "what is the churn playbook's threshold? recall it from the project corpus",
+    )
+    .await
+    {
+        Ok(run) => run,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let final_answer = run.report.final_message.clone().unwrap_or_default();
+    grade(
+        NAME,
+        family,
+        &[
+            ("the run completed", run.report.stop_reason == StopReason::Completed),
+            ("two turns", run.report.turns == 2),
+            (
+                "the model asked the project's corpus",
+                run.call_name == "mcp__blend1__search"
+                    && run.call_arguments.contains("\"project\":\"fleet\""),
+            ),
+            ("the seeded fact reached the model's context", run.lane_answer.contains(fact)),
+            ("the final answer quotes the fact unaltered", final_answer.contains(fact)),
+            ("the log reconstructs the turn", run.records.len() == 7),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1544,6 +2148,7 @@ mod tests {
         assert_eq!(ScenarioFamily::ToolLoop.label(), "tool-loop");
         assert_eq!(ScenarioFamily::Subagent.label(), "subagent");
         assert_eq!(ScenarioFamily::Memory.label(), "memory");
+        assert_eq!(ScenarioFamily::GroundedLane.label(), "grounded-lane");
     }
 
     #[test]
@@ -1558,8 +2163,79 @@ mod tests {
                 "conversation-fold",
                 "subagent-delegation",
                 "memory-recall",
+                "blend1-grounded-fact",
+                "blend1-escalation",
+                "blend1-reprocess",
+                "blend1-corpus-recall",
             ]
         );
+    }
+
+    /// The four blend1 scenarios share one family: they all grade a lane
+    /// call whose result must survive the trip into the answer.
+    #[test]
+    fn the_blend1_scenarios_are_the_grounded_lane_family() {
+        let grounded: Vec<&str> = corpus()
+            .iter()
+            .filter(|scenario| scenario.family == ScenarioFamily::GroundedLane)
+            .map(|scenario| scenario.name)
+            .collect();
+        assert_eq!(
+            grounded,
+            vec![
+                "blend1-grounded-fact",
+                "blend1-escalation",
+                "blend1-reprocess",
+                "blend1-corpus-recall",
+            ]
+        );
+    }
+
+    /// The scripted lane's `tools/list` carries the adapter's five tools
+    /// in declaration order, so a scenario's `lane_tools` assertion names
+    /// what the lane really declares.
+    #[test]
+    fn the_scripted_lane_declares_the_adapters_five_tools() {
+        let names: Vec<String> = blend1_tools()
+            .as_array()
+            .expect("a tools array")
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(names, vec!["ask", "doctor", "search", "refresh", "seed"]);
+    }
+
+    /// The BlendResult fixture is additive: an extra key rides in beside
+    /// the wire contract's own without disturbing them, which is what
+    /// lets a leg added upstream be scripted before it is vendored.
+    #[test]
+    fn an_extra_result_key_rides_in_beside_the_contracts_own() {
+        let base = blend1_result(serde_json::json!({}));
+        // The contract's own keys, including the escalation and score legs.
+        assert_eq!(base["path"], "synthesized");
+        assert_eq!(base["escalated"], false);
+        assert_eq!(base["escalated_answer"], false);
+        assert_eq!(base["score"], serde_json::json!({}));
+        assert!(base.get("decompose").is_none());
+        let extended = blend1_result(serde_json::json!({ "decompose": { "status": "ok" } }));
+        // The contract's own keys are untouched.
+        assert_eq!(extended["path"], "synthesized");
+        assert_eq!(extended["escalated_answer"], false);
+        // And the new one rides beside them.
+        assert_eq!(extended["decompose"]["status"], "ok");
+    }
+
+    /// The scripted lane's frames are well-formed: three entries, each a
+    /// reply whose id echoes the request's, so any request order serves.
+    #[test]
+    fn the_scripted_lane_answers_initialize_list_and_one_call() {
+        let entries = blend1_lane_entries("{\"ok\":true}");
+        assert_eq!(entries.len(), 3);
+        for entry in &entries {
+            assert_eq!(entry["reply"]["id"], "$echo");
+        }
+        assert!(entries[1]["reply"]["result"]["tools"].is_array());
+        assert_eq!(entries[2]["reply"]["result"]["content"][0]["text"], "{\"ok\":true}");
     }
 
     #[test]
