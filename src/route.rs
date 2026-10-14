@@ -201,20 +201,39 @@ struct ConfigFile {
 /// hand-written config.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ProviderEntry {
-    id: String,
+pub struct ProviderEntry {
+    pub id: String,
     #[serde(default)]
-    base_url: Option<String>,
+    pub base_url: Option<String>,
     #[serde(default)]
-    key_env: Option<String>,
+    pub key_env: Option<String>,
     #[serde(default)]
-    model: Option<String>,
+    pub model: Option<String>,
     #[serde(default)]
-    enabled: Option<bool>,
+    pub enabled: Option<bool>,
     #[serde(default)]
-    key_required: Option<bool>,
+    pub key_required: Option<bool>,
     #[serde(default)]
-    disabled_reason: Option<String>,
+    pub disabled_reason: Option<String>,
+}
+
+impl ProviderEntry {
+    /// This entry's id, the key every merge and every surface addresses.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+/// Validate one config proposal's provider entry against the roster's
+/// own schema — the same `deny_unknown_fields` struct [`load_roster`]
+/// reads, so a proposal cannot introduce a field the roster would
+/// refuse and a misspelled key fails here, by name, before anything is
+/// written. Slice 12's gate calls this before applying a `config`
+/// proposal; the refusal names the offending field the way the roster's
+/// own parse error does.
+pub fn validate_provider_entry(value: &serde_json::Value) -> Result<ProviderEntry, String> {
+    serde_json::from_value::<ProviderEntry>(value.clone())
+        .map_err(|error| format!("the config entry is not a provider entry: {error}"))
 }
 
 /// The `calib` section: where the calibration stream lives when

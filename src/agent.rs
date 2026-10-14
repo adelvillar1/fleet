@@ -84,6 +84,14 @@ pub struct AgentOptions {
     /// scope that decides both which declarations its requests carry and
     /// which calls the loop refuses by name.
     pub scope: Option<crate::subagents::Scope>,
+    /// The home this run's `improve` tool files proposals into. `None`
+    /// is the run that cannot propose: the tool is not declared, the
+    /// way a memory-less run does not declare `remember`. `Some` is
+    /// every surface that knows its home — `run`, `chat`, the TUI. The
+    /// tool only *files*; applying is the owner's `fleet improve
+    /// apply`, through the same gate, so a session can propose a change
+    /// to the harness but never apply one.
+    pub improve_home: Option<std::path::PathBuf>,
 }
 
 impl Default for AgentOptions {
@@ -97,6 +105,7 @@ impl Default for AgentOptions {
             skills: Vec::new(),
             memory: None,
             scope: None,
+            improve_home: None,
         }
     }
 }
@@ -430,6 +439,9 @@ pub struct Agent<'a> {
     /// `None` is the ordinary run: every declaration the run earns, and
     /// every call it makes, goes through.
     scope: Option<crate::subagents::Scope>,
+    /// The home this run's `improve` tool files proposals into, when it
+    /// has one. The tool only files; applying is the owner's gate.
+    improve_home: Option<std::path::PathBuf>,
     /// The calibration stream this run records to, when it has one.
     calib: Option<crate::calib::Stream>,
     /// One turn number per message in `messages`: the turn of the request
@@ -468,6 +480,7 @@ impl<'a> Agent<'a> {
         let skills = options.skills.clone();
         let memory = options.memory.clone();
         let scope = options.scope.clone();
+        let improve_home = options.improve_home.clone();
         // An injected spec map wins for the lanes it names; every other
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
@@ -498,6 +511,7 @@ impl<'a> Agent<'a> {
             next_turn,
             compaction_latch: false,
             last_prompt_tokens: None,
+            improve_home,
         })
     }
 
@@ -591,6 +605,14 @@ impl<'a> Agent<'a> {
         // it, which is the depth cap in its declarative half.
         if admitted(tools::SUBAGENT_TOOL) {
             specs.push(tools::subagent_spec());
+        }
+        // `improve` is declared on every run that carries a home. It
+        // only files a proposal — the owner's `fleet improve apply` runs
+        // the gate — so a session can propose a change to the harness
+        // but never apply one, the way the fork's Creator installs
+        // through Plugin Manager rather than through a model tool.
+        if self.improve_home.is_some() && admitted(tools::IMPROVE_TOOL) {
+            specs.push(tools::improve_spec());
         }
         specs
     }
@@ -1140,6 +1162,33 @@ impl<'a> Agent<'a> {
             self.supersede(call, approved)
         } else if call.function.name == tools::SUBAGENT_TOOL {
             self.run_subagent(call).await?
+        } else if call.function.name == tools::IMPROVE_TOOL {
+            // A self-maintenance proposal is filed, never applied: the
+            // tool writes one markdown file into the home's proposals
+            // store and the owner's `fleet improve apply` runs the same
+            // gate. The call crosses the ordinary approval gate like
+            // every other tool — the summary names the proposal — and
+            // the confirmation rides the same bounded tool_result path,
+            // so model-visible stays model-visible (hard rule 5).
+            match self.improve_home.clone() {
+                None => (
+                    "error: no home is wired in this run, so there is nowhere to file a proposal"
+                        .to_string(),
+                    false,
+                ),
+                Some(home) => match serde_json::from_str(&call.function.arguments) {
+                    Err(error) => {
+                        (format!("error: arguments were not valid JSON: {error}"), false)
+                    }
+                    Ok(arguments) => {
+                        let outcome = tools::bound(ToolOutcome {
+                            output: crate::improve::file_from_tool(&home, &arguments),
+                            truncated: false,
+                        });
+                        (outcome.output, outcome.truncated)
+                    }
+                },
+            }
         } else if let Some((lane, lane_tool)) = tools::lane_of(&call.function.name) {
             self.call_lane(call, lane, lane_tool).await?
         } else {
@@ -1471,6 +1520,11 @@ fn call_summary(call: &ToolCall) -> String {
     if call.function.name == tools::SUBAGENT_TOOL {
         return subagent_goal(&call.function.arguments);
     }
+    if call.function.name == tools::IMPROVE_TOOL {
+        // The proposal an `improve` call would file: the fact the owner
+        // needs to answer "may this run?".
+        return improve_proposal(&call.function.arguments);
+    }
     if call.function.name == tools::USE_SKILL_TOOL {
         // The skill a `use_skill` call would load: the fact the user
         // needs to answer "may this run?".
@@ -1527,6 +1581,9 @@ fn describe_call(call: &ToolCall) -> String {
     if call.function.name == tools::SUBAGENT_TOOL {
         return format!("{}: {}", tools::SUBAGENT_TOOL, subagent_goal(&call.function.arguments));
     }
+    if call.function.name == tools::IMPROVE_TOOL {
+        return format!("{}: {}", tools::IMPROVE_TOOL, improve_proposal(&call.function.arguments));
+    }
     if call.function.name.starts_with(tools::REMEMBER_TOOL)
         || call.function.name.starts_with(tools::SUPERSEDE_TOOL)
         || tools::lane_of(&call.function.name).is_some()
@@ -1538,6 +1595,35 @@ fn describe_call(call: &ToolCall) -> String {
     match tool {
         Some(tool) => format!("{}: {}", tool.name(), tool.summarize(&arguments, 72)),
         None => format!("{}: (unknown tool)", call.function.name),
+    }
+}
+
+/// One line naming the proposal an `improve` call would file, for an
+/// approval prompt and a UI event: the proposal's name and its target,
+/// bounded. A missing or malformed name reads as the empty string
+/// rather than a guess — the parse that follows names the real refusal.
+fn improve_proposal(arguments: &str) -> String {
+    let parsed = serde_json::from_str::<serde_json::Value>(arguments).ok();
+    let name = parsed
+        .as_ref()
+        .and_then(|arguments| {
+            arguments.get("name").and_then(|name| name.as_str()).map(str::to_string)
+        })
+        .unwrap_or_default();
+    let target = parsed
+        .as_ref()
+        .and_then(|arguments| {
+            arguments.get("target").and_then(|target| target.as_str()).map(str::to_string)
+        })
+        .unwrap_or_default();
+    let mut bounded: String = name.chars().take(48).collect();
+    if name.chars().count() > 48 {
+        bounded.push('\u{2026}');
+    }
+    if target.is_empty() {
+        bounded
+    } else {
+        format!("{bounded} ({target})")
     }
 }
 
@@ -1863,6 +1949,7 @@ mod tests {
             skills,
             memory: None,
             scope: None,
+            improve_home: None,
         };
         let mut progress = Vec::new();
         let agent =
@@ -2104,6 +2191,7 @@ mod tests {
             skills: Vec::new(),
             memory: Some(memory),
             scope: None,
+            improve_home: None,
         };
         Agent::new(client, options, session, approver, Box::leak(Box::new(Vec::new()))).unwrap()
     }
@@ -2148,6 +2236,7 @@ mod tests {
             skills: Vec::new(),
             memory: None,
             scope: None,
+            improve_home: None,
         };
         let mut progress = Vec::new();
         let plain =
@@ -2202,6 +2291,7 @@ mod tests {
             skills: Vec::new(),
             memory: Some(memory),
             scope: None,
+            improve_home: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent =
@@ -2477,6 +2567,7 @@ mod tests {
             skills: Vec::new(),
             memory: None,
             scope: None,
+            improve_home: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         Agent::new(client, options, session, Box::new(ApproveAll), progress).unwrap()

@@ -176,21 +176,25 @@ impl UsageScan {
 
 /// One parsed SKILL.md document: its frontmatter fields, in order, and
 /// the body after the closing fence.
+///
+/// `pub(crate)`: slice 12's proposal files carry the same frontmatter
+/// subset (KI-057's sibling-parser discipline stops here — the subsets
+/// are identical, so the parser is shared rather than copied).
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Document {
-    fields: Vec<(String, String)>,
-    body: String,
+pub(crate) struct Document {
+    pub(crate) fields: Vec<(String, String)>,
+    pub(crate) body: String,
 }
 
 impl Document {
-    fn get(&self, key: &str) -> Option<&str> {
+    pub(crate) fn get(&self, key: &str) -> Option<&str> {
         self.fields
             .iter()
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.as_str())
     }
 
-    fn required(&self, key: &str) -> Result<String, String> {
+    pub(crate) fn required(&self, key: &str) -> Result<String, String> {
         self.get(key)
             .map(str::to_string)
             .filter(|value| !value.is_empty())
@@ -200,6 +204,9 @@ impl Document {
 
 /// Parse the frontmatter subset Fleet accepts: an opening `---` fence,
 /// `key: value` lines, a closing `---` fence, then the body.
+///
+/// `pub(crate)`: slice 12's proposal files are the same subset, and one
+/// parser serves both rather than a second copy that can drift.
 ///
 /// The subset is deliberately small and the rejections are deliberate
 /// too. Accepted: `key: value` pairs with surrounding whitespace
@@ -215,7 +222,7 @@ impl Document {
 /// that still fails names the BOM in its reason, so the complaint is
 /// not misdirected at the fence. The body is everything after the
 /// closing fence with one leading newline taken off.
-fn parse_document(text: &str) -> Result<Document, String> {
+pub(crate) fn parse_document(text: &str) -> Result<Document, String> {
     let (text, bom) = match text.strip_prefix('\u{feff}') {
         Some(rest) => (rest, true),
         None => (text, false),

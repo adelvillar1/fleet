@@ -2,15 +2,17 @@
 //!
 //! One `events.jsonl` per UTC day under the dev-decisions log root, in
 //! `devdec`'s row vocabulary, written through a bounded non-blocking queue
-//! that one background thread drains. Five ops are emitted today —
+//! that one background thread drains. Six ops are emitted today —
 //! `route` (slice 5's decision row, shape unchanged), `tool_screen` (one
 //! approval decision), `turn` (one run ending, graded ok/failed with
 //! the partial endings named), `recall_hit` (slice 8's memory
 //! feedback: one fact retrieval surfaced, the shape it routed under,
-//! and the score it ranked at), and `consolidate` (slice 8 part 2's
+//! and the score it ranked at), `consolidate` (slice 8 part 2's
 //! memory lifecycle: one compress, supersede, or forget action, the
-//! fact it touched, and the reason) — and `eval_corpus` is reserved
-//! for slice 13's scores.
+//! fact it touched, and the reason), and `propose` (slice 12's
+//! self-maintenance gate: one proposal's verdict — applied, refused, or
+//! left waiting — with the gate's per-step evidence) — and `eval_corpus`
+//! is reserved for slice 13's scores.
 //!
 //! The contract is dev-decisions' own: it **gates the operations, grades
 //! the outcomes, and earns autonomy on evidence**. Fleet's rows land in
@@ -135,6 +137,50 @@ pub struct ConsolidateRow {
     pub reason: String,
 }
 
+/// One gate step's evidence, as a `propose` row carries it: the step's
+/// name, whether it passed, and the bounded detail that names the
+/// failure when it did not. A step that could not run at all — an
+/// absent tool — carries `ok: false` with the reason in `detail`, so a
+/// gate step that cannot run is never a silent pass.
+#[derive(Debug, Clone, Serialize)]
+pub struct GateStepRow {
+    pub step: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
+/// One self-maintenance proposal's verdict: the proposal the slice-12
+/// gate disposed of, the target it addressed, the basis it carried, and
+/// the gate's per-step evidence. Three verdicts — `applied`, `refused`,
+/// `waiting` — and every proposal that reaches one lands here exactly
+/// once, so the loop's self-modification is auditable rather than
+/// asserted. A proposal left waiting (a destructive change, or a
+/// confirmed-by memory target, without approval in the current turn)
+/// lands a row with the gate not yet run, which is what distinguishes
+/// "waiting on the owner" from "refused by the gate".
+#[derive(Debug, Clone, Serialize)]
+pub struct ProposeRow {
+    pub ts: String,
+    /// The proposal's name, the file stem under `<FLEET_HOME>/proposals/`
+    /// or the slice-7 draft's name under `skills/proposals/`.
+    pub proposal: String,
+    /// The target kind: `skill`, `memory`, `source`, or `config`.
+    pub target: String,
+    /// The target's name or path, as the proposal names it.
+    pub target_name: String,
+    /// The proposal's basis: `inferred` or `confirmed-by`.
+    pub basis: String,
+    /// `applied`, `refused`, or `waiting` — see [`VERDICT_APPLIED`].
+    pub verdict: String,
+    /// Why, bounded: what landed for an apply, the named failure for a
+    /// refusal, and what will be destroyed (or which fact is
+    /// confirmed-by) for a wait.
+    pub reason: String,
+    /// The gate's per-step evidence, in the order the steps ran. Empty
+    /// for a `waiting` verdict, which never reached the gate.
+    pub gate: Vec<GateStepRow>,
+}
+
 /// One row in the stream, tagged by its op the way devdec's rows are: the
 /// tag is a field of the JSON object, not a wrapper.
 #[derive(Debug, Clone, Serialize)]
@@ -145,6 +191,7 @@ pub enum Row {
     Turn(TurnRow),
     RecallHit(RecallHitRow),
     Consolidate(ConsolidateRow),
+    Propose(ProposeRow),
 }
 
 impl Row {
@@ -156,6 +203,7 @@ impl Row {
             Row::Turn(_) => OP_TURN,
             Row::RecallHit(_) => OP_RECALL_HIT,
             Row::Consolidate(_) => OP_CONSOLIDATE,
+            Row::Propose(_) => OP_PROPOSE,
         }
     }
 
@@ -167,6 +215,7 @@ impl Row {
             Row::Turn(row) => &row.ts,
             Row::RecallHit(row) => &row.ts,
             Row::Consolidate(row) => &row.ts,
+            Row::Propose(row) => &row.ts,
         }
     }
 }
@@ -181,13 +230,35 @@ pub const OP_TURN: &str = "turn";
 pub const OP_RECALL_HIT: &str = "recall_hit";
 /// The memory-lifecycle op: one compress, supersede, or forget action.
 pub const OP_CONSOLIDATE: &str = "consolidate";
+/// The self-maintenance op: one proposal's verdict under the slice-12
+/// gate — applied, refused, or left waiting — with the gate's per-step
+/// evidence.
+pub const OP_PROPOSE: &str = "propose";
 /// Reserved for slice 13's eval-corpus scores. Nothing emits it yet; the
 /// name is claimed here so the reader and `fleet calib` need no format
 /// change when it lands.
 pub const OP_EVAL_CORPUS: &str = "eval_corpus";
 /// The ops this slice emits, in the order `fleet calib` groups them.
-pub const OPS: [&str; 5] =
-    [OP_ROUTE, OP_TOOL_SCREEN, OP_TURN, OP_RECALL_HIT, OP_CONSOLIDATE];
+pub const OPS: [&str; 6] = [
+    OP_ROUTE,
+    OP_TOOL_SCREEN,
+    OP_TURN,
+    OP_RECALL_HIT,
+    OP_CONSOLIDATE,
+    OP_PROPOSE,
+];
+
+/// The verdict a `propose` row carries when the change landed: the gate
+/// was green, the apply committed or wrote, and the row records it.
+pub const VERDICT_APPLIED: &str = "applied";
+/// The verdict a `propose` row carries when the gate refused the change
+/// (or a validation named a reason before the gate ran): nothing
+/// survived, and the row's gate evidence names the failure.
+pub const VERDICT_REFUSED: &str = "refused";
+/// The verdict a `propose` row carries when the proposal is sound but
+/// waits on the owner: a destructive change, or a confirmed-by memory
+/// target, without approval in the current turn. The gate has not run.
+pub const VERDICT_WAITING: &str = "waiting";
 
 /// The consolidation action that folds old working memory into an
 /// episodic summary. The vocabulary lives here, beside the op, so the
@@ -855,6 +926,35 @@ pub struct ReadRow {
     /// or `forget`. Empty for every other op.
     #[serde(default)]
     pub action: String,
+    /// The proposal a `propose` row names, the file stem under
+    /// `<FLEET_HOME>/proposals/` or the slice-7 draft's name.
+    #[serde(default)]
+    pub proposal: String,
+    /// The target kind a `propose` row names: `skill`, `memory`,
+    /// `source`, or `config`. Empty for every other op.
+    #[serde(default)]
+    pub target: String,
+    /// The target's name or path a `propose` row names. Empty for every
+    /// other op.
+    #[serde(default)]
+    pub target_name: String,
+    /// The basis a `propose` row names: `inferred` or `confirmed-by`.
+    #[serde(default)]
+    pub basis: String,
+    /// The gate's per-step evidence a `propose` row carries, in the
+    /// order the steps ran. Empty for a `waiting` verdict, which never
+    /// reached the gate, and for every other op.
+    #[serde(default)]
+    pub gate: Vec<ReadGateStep>,
+}
+
+/// One gate step as a `propose` row carries it: the step's name, whether
+/// it passed, and the bounded detail naming the failure when it did not.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReadGateStep {
+    pub step: String,
+    pub ok: bool,
+    pub detail: String,
 }
 
 /// One attempt as a row carries it: the provider and its outcome, which is
@@ -1028,6 +1128,7 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
         OP_TURN => turn_detail(&op_rows),
         OP_RECALL_HIT => recall_detail(&op_rows),
         OP_CONSOLIDATE => consolidate_detail(&op_rows),
+        OP_PROPOSE => propose_detail(&op_rows),
         _ => Vec::new(),
     };
     let header_right = format!("{} row{}", op_rows.len(), plural(op_rows.len()));
@@ -1160,6 +1261,44 @@ fn consolidate_detail(rows: &[&ReadRow]) -> Vec<String> {
     ]
 }
 
+/// The propose card's facts: the verdict tally and the last proposal —
+/// what it targeted, the basis it carried, and the gate steps it ran.
+/// A `waiting` verdict names the gate as not yet run, which is the
+/// distinction the row exists to carry.
+fn propose_detail(rows: &[&ReadRow]) -> Vec<String> {
+    let Some(last) = rows.last() else {
+        return Vec::new();
+    };
+    let tally = [VERDICT_APPLIED, VERDICT_REFUSED, VERDICT_WAITING]
+        .iter()
+        .filter_map(|verdict| {
+            let count = rows.iter().filter(|row| row.verdict == *verdict).count();
+            (count > 0).then(|| format!("{count} {verdict}"))
+        })
+        .collect::<Vec<_>>();
+    let mut lines = vec![
+        format!("verdicts: {}", tally.join(" \u{b7} ")),
+        format!(
+            "last `{}` \u{2192} {} {} ({}) \u{2014} {}",
+            last.proposal, last.target, last.target_name, last.basis, last.verdict
+        ),
+    ];
+    if !last.reason.is_empty() {
+        lines.push(format!("reason: {}", last.reason));
+    }
+    if !last.gate.is_empty() {
+        let steps = last
+            .gate
+            .iter()
+            .map(|step| format!("{} {}", step.step, if step.ok { "ok" } else { "FAILED" }))
+            .collect::<Vec<_>>();
+        lines.push(format!("gate: {}", steps.join(" \u{b7} ")));
+    } else if last.verdict == VERDICT_WAITING {
+        lines.push("gate: not yet run \u{b7} waiting on the owner".to_string());
+    }
+    lines
+}
+
 /// The dash run that pads a card header so its right edge aligns.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
@@ -1260,6 +1399,10 @@ fn row_summary(row: &ReadRow) -> String {
         OP_CONSOLIDATE => format!(
             "{}  consolidate  {}  {}  {}",
             row.ts, row.action, row.fact, row.reason
+        ),
+        OP_PROPOSE => format!(
+            "{}  propose  {}  {} {}  {}",
+            row.ts, row.proposal, row.target, row.target_name, row.verdict
         ),
         _ => format!("{}  {}", row.ts, row.op),
     }
@@ -1714,9 +1857,82 @@ mod tests {
         assert_eq!(value["fact"], "fleet-gate-is-local");
         assert_eq!(value["shape"], "build");
         assert_eq!(value["score"], 0.42);
+    }
+
+    #[test]
+    fn the_propose_row_carries_the_verdict_and_the_gates_per_step_evidence() {
+        let row = serde_json::to_string(&Row::Propose(ProposeRow {
+            ts: "2026-10-14T12:00:00Z".to_string(),
+            proposal: "fix-the-ranker".to_string(),
+            target: "source".to_string(),
+            target_name: "src/route.rs".to_string(),
+            basis: "inferred".to_string(),
+            verdict: VERDICT_REFUSED.to_string(),
+            reason: "the gate refused the change: test failed".to_string(),
+            gate: vec![
+                GateStepRow { step: "fmt".to_string(), ok: true, detail: "ok".to_string() },
+                GateStepRow {
+                    step: "test".to_string(),
+                    ok: false,
+                    detail: "error: test failed: the_ranker".to_string(),
+                },
+            ],
+        }))
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&row).unwrap();
+        assert_eq!(value["op"], "propose");
+        assert_eq!(value["proposal"], "fix-the-ranker");
+        assert_eq!(value["target"], "source");
+        assert_eq!(value["target_name"], "src/route.rs");
+        assert_eq!(value["basis"], "inferred");
+        assert_eq!(value["verdict"], "refused");
+        assert_eq!(value["reason"], "the gate refused the change: test failed");
+        assert_eq!(value["gate"][0]["step"], "fmt");
+        assert_eq!(value["gate"][0]["ok"], true);
+        assert_eq!(value["gate"][1]["step"], "test");
+        assert_eq!(value["gate"][1]["ok"], false);
+        assert_eq!(value["gate"][1]["detail"], "error: test failed: the_ranker");
+        // The reader keeps propose rows and reads their gate evidence back.
+        let root = scratch("read-propose");
+        write_rows(
+            &root,
+            "2026-10-14",
+            &[Row::Propose(ProposeRow {
+                ts: "2026-10-14T12:00:00Z".to_string(),
+                proposal: "fix-the-ranker".to_string(),
+                target: "source".to_string(),
+                target_name: "src/route.rs".to_string(),
+                basis: "inferred".to_string(),
+                verdict: VERDICT_REFUSED.to_string(),
+                reason: "test failed".to_string(),
+                gate: vec![GateStepRow {
+                    step: "test".to_string(),
+                    ok: false,
+                    detail: "the_ranker".to_string(),
+                }],
+            })],
+        );
+        let rows = read_day(&root, "2026-10-14", 512);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].op, OP_PROPOSE);
+        assert_eq!(rows[0].proposal, "fix-the-ranker");
+        assert_eq!(rows[0].verdict, "refused");
+        assert_eq!(rows[0].gate.len(), 1);
+        assert_eq!(rows[0].gate[0].step, "test");
+        assert!(!rows[0].gate[0].ok);
+        assert_eq!(rows[0].gate[0].detail, "the_ranker");
+        let _ = std::fs::remove_dir_all(&root);
+        // The op list names propose beside the rest.
         assert_eq!(
             OPS,
-            ["route", "tool_screen", "turn", "recall_hit", "consolidate"]
+            [
+                "route",
+                "tool_screen",
+                "turn",
+                "recall_hit",
+                "consolidate",
+                "propose"
+            ]
         );
     }
 

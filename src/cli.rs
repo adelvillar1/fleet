@@ -28,6 +28,10 @@ pub enum Command {
     /// The scheduled jobs: the bare command lists them, each subcommand
     /// mutates the store by name.
     Cron(CronOptions),
+    /// The self-maintenance surface: the bare command lists every
+    /// proposal in both stores; `apply` runs one through the gate and
+    /// `undo` reverts an applied one.
+    Improve(ImproveOptions),
     /// Write one fact into the memory corpus: the CLI form of the
     /// `remember` tool, structured flags over the same field names.
     Remember(RememberOptions),
@@ -150,6 +154,32 @@ pub enum CronAction {
     Remove { name: String },
 }
 
+/// Options for `fleet improve`. The bare command lists the proposals;
+/// each subcommand acts on one by name.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ImproveOptions {
+    pub action: ImproveAction,
+}
+
+/// What `fleet improve` was asked to do.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ImproveAction {
+    /// List every proposal in both stores, with its target, basis,
+    /// status, and last gate result.
+    List,
+    /// Run one proposal through the gate: validate, ask for approval
+    /// when the change is destructive, apply, gate, record.
+    Apply {
+        name: String,
+        /// Approval in the current turn, for a destructive change or a
+        /// confirmed-by memory target.
+        approve: bool,
+    },
+    /// Revert one applied change: structurally for a repo-side apply,
+    /// byte-for-byte from the pre-image for a home-side one.
+    Undo { name: String },
+}
+
 /// Turn cap when `--max-turns` is absent.
 pub const DEFAULT_MAX_TURNS: usize = 25;
 
@@ -184,6 +214,17 @@ usage:
   fleet cron enable --name <name>
   fleet cron disable --name <name>
   fleet cron remove --name <name>
+  fleet improve                list the proposals awaiting the gate: both
+                                stores, with target, basis, status, and
+                                the last gate result
+  fleet improve apply <name> [--approve]
+                                run one proposal through the gate — fmt,
+                                clippy, build, test — and record the
+                                verdict; --approve confirms a destructive
+                                change in this turn
+  fleet improve undo <name>    revert an applied change: structurally for
+                                a repo-side apply, byte-for-byte from the
+                                pre-image for a home-side one
   fleet remember --name <name> --description \"<fact>\" --basis confirmed-by|inferred
                                 [--type <kind>] [--shape a,b] [--tier working|durable]
                                 [--valid-until <date>] [--body \"<text>\"]
@@ -237,6 +278,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
+        "improve" => parse_improve(rest),
         "remember" => parse_remember(rest),
         "doctor" => no_flags(rest, Command::Doctor),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
@@ -499,6 +541,55 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
         }
         other => Err(format!("unknown cron subcommand `{other}` \u{2014} try `fleet help`")),
     }
+}
+
+/// `fleet improve`: the bare command lists every proposal in both
+/// stores; `apply <name>` runs one through the gate, with `--approve`
+/// confirming a destructive change in this turn; `undo <name>` reverts
+/// an applied one. The proposal is named positionally — one grammar
+/// for the whole surface — and a missing name is a named usage error.
+fn parse_improve(args: &[String]) -> Result<Command, String> {
+    let Some(subcommand) = args.first() else {
+        return Ok(Command::Improve(ImproveOptions { action: ImproveAction::List }));
+    };
+    if *subcommand == "--help" || *subcommand == "-h" {
+        return Ok(Command::Help);
+    }
+    let rest = &args[1..];
+    let verb = subcommand.as_str();
+    let mut name: Option<String> = None;
+    let mut approve = false;
+    let mut index = 0;
+    while index < rest.len() {
+        let arg = rest[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--approve" if verb == "apply" => approve = true,
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown improve option `{arg}`"));
+            }
+            _ if name.is_none() => name = Some(arg.to_string()),
+            _ => {
+                return Err(format!(
+                    "`{arg}` takes no value here; the proposal is named once (see `fleet help`)"
+                ));
+            }
+        }
+        index += 1;
+    }
+    let Some(name) = name else {
+        return Err(format!("fleet improve {verb} needs a proposal name (see `fleet help`)"));
+    };
+    let action = match verb {
+        "apply" => ImproveAction::Apply { name, approve },
+        "undo" => ImproveAction::Undo { name },
+        other => {
+            return Err(format!(
+                "unknown improve subcommand `{other}` \u{2014} try `fleet help`"
+            ))
+        }
+    };
+    Ok(Command::Improve(ImproveOptions { action }))
 }
 
 /// `fleet remember`: the CLI form of the write tool. `--name`,
@@ -918,6 +1009,42 @@ mod tests {
         assert!(parse(&args(&["cron", "--name", "n"])).is_err());
         assert_eq!(parse(&args(&["cron", "--help"])).unwrap(), Command::Help);
         assert_eq!(parse(&args(&["cron", "add", "--help"])).unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn improve_parses_the_bare_list_apply_and_undo() {
+        assert_eq!(
+            parse(&args(&["improve"])).unwrap(),
+            Command::Improve(ImproveOptions { action: ImproveAction::List })
+        );
+        assert_eq!(
+            parse(&args(&["improve", "apply", "fix-the-ranker"])).unwrap(),
+            Command::Improve(ImproveOptions {
+                action: ImproveAction::Apply { name: "fix-the-ranker".to_string(), approve: false }
+            })
+        );
+        // `--approve` is apply's own flag and defaults off.
+        assert_eq!(
+            parse(&args(&["improve", "apply", "retire-demo", "--approve"])).unwrap(),
+            Command::Improve(ImproveOptions {
+                action: ImproveAction::Apply { name: "retire-demo".to_string(), approve: true }
+            })
+        );
+        assert_eq!(
+            parse(&args(&["improve", "undo", "fix-the-ranker"])).unwrap(),
+            Command::Improve(ImproveOptions {
+                action: ImproveAction::Undo { name: "fix-the-ranker".to_string() }
+            })
+        );
+        // The proposal is named once; a second word or an unknown
+        // subcommand is a usage error, and `--approve` belongs to apply.
+        assert!(parse(&args(&["improve", "apply"])).is_err());
+        assert!(parse(&args(&["improve", "undo"])).is_err());
+        assert!(parse(&args(&["improve", "apply", "a", "b"])).is_err());
+        assert!(parse(&args(&["improve", "frobnicate", "a"])).is_err());
+        assert!(parse(&args(&["improve", "undo", "a", "--approve"])).is_err());
+        assert_eq!(parse(&args(&["improve", "--help"])).unwrap(), Command::Help);
+        assert_eq!(parse(&args(&["improve", "apply", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]

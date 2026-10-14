@@ -920,6 +920,10 @@ pub async fn execute(
         skills,
         memory,
         scope: None,
+        // The self-maintenance tool rides the surfaces where a session's
+        // owner is present; an unattended scheduled run does not carry
+        // it, so no proposal is filed by a run nobody is watching.
+        improve_home: None,
     };
     let gate = Gate::for_job(job);
     // The log's identity is read before the agent borrows the session

@@ -9,7 +9,7 @@ use fleet::agent::{
     RunReport, StopReason,
 };
 use fleet::api::{Client, DEFAULT_BASE_URL};
-use fleet::cli::{self, ChatOptions, Command, CronAction, RunOptions};
+use fleet::cli::{self, ChatOptions, Command, CronAction, ImproveAction, RunOptions};
 use fleet::doctor;
 use fleet::home::{self, resolve_setting};
 use fleet::net;
@@ -42,6 +42,7 @@ async fn main() -> ExitCode {
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
+        Ok(Command::Improve(options)) => improve_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
         Ok(Command::Doctor) => doctor_command(),
         Err(message) => {
@@ -136,6 +137,7 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         &mut session,
         &options.task,
         skills,
+        &home,
     )
     .await;
     prepared.record_route(&options.task);
@@ -242,6 +244,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
             &mut session,
             trimmed,
             skills.clone(),
+            &home,
         )
         .await;
         match outcome {
@@ -513,6 +516,72 @@ fn mutate(
     }
 }
 
+/// `fleet improve`: the self-maintenance surface. The bare command
+/// lists every proposal in both stores as cards. `apply` runs one
+/// proposal through the gate — the four steps, in order, in the
+/// working directory as the repository root — and records the verdict;
+/// a destructive change (or a confirmed-by memory target) waits for
+/// `--approve`, the approval in the current turn. `undo` reverts an
+/// applied change: structurally for a repo-side apply, byte-for-byte
+/// from the pre-image for a home-side one.
+///
+/// The listing is a read surface like `fleet calib` and `fleet skills`
+/// — always exit 0. `apply` and `undo` exit 0 only when the change
+/// landed or reverted; a refusal, a wait, and a failed revert each
+/// exit 1 with the reason named.
+fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    match &options.action {
+        ImproveAction::List => {
+            print!("{}", fleet::improve::render(&fleet::improve::load_all(&home)));
+            ExitCode::SUCCESS
+        }
+        ImproveAction::Apply { name, approve } => {
+            let repo = std::env::current_dir().unwrap_or_default();
+            let user_home = std::env::var("HOME").ok();
+            let stream = fleet::calib::Stream::open(fleet::calib::resolve_root(
+                &home,
+                user_home.as_deref(),
+            ));
+            let gate = fleet::improve::Gate::local(&repo);
+            let ctx = fleet::improve::Apply {
+                home: &home,
+                repo: &repo,
+                gate: &gate,
+                approved: *approve,
+                stream: Some(&stream),
+            };
+            let verdict = fleet::improve::apply(name, &ctx);
+            match &verdict {
+                fleet::improve::Verdict::Applied { .. } => {
+                    println!("fleet: improve: {name} {}", verdict.line());
+                    ExitCode::SUCCESS
+                }
+                _ => {
+                    eprintln!("fleet: improve: {name} {}", verdict.line());
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        ImproveAction::Undo { name } => {
+            let repo = std::env::current_dir().unwrap_or_default();
+            match fleet::improve::undo(name, &home, &repo) {
+                Ok(summary) => {
+                    println!("fleet: improve: {summary}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: improve: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+    }
+}
+
 /// `fleet calib`: one day of the calibration stream as cards — the rows
 /// grouped by op with their counts, the writer's counters, and the last
 /// few rows. No network, no lane spawn, no writer of its own: this is a
@@ -544,6 +613,7 @@ async fn drive(
     session: &mut Session,
     task: &str,
     skills: Vec<fleet::skills::Skill>,
+    home: &std::path::Path,
 ) -> Result<RunReport, AgentError> {
     let client = Client::routed(prepared.router.clone());
     // The corpus is loaded per run, off the async worker: the files can
@@ -567,6 +637,10 @@ async fn drive(
         skills,
         memory,
         scope: None,
+        // The self-maintenance tool rides every surface that knows its
+        // home: a session can file a proposal, and only the owner's
+        // `fleet improve apply` runs one.
+        improve_home: Some(home.to_path_buf()),
     };
     let approver: Box<dyn Approver> =
         if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };

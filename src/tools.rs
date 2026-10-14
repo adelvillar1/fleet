@@ -54,6 +54,16 @@ pub const SUPERSEDE_TOOL: &str = "supersede";
 /// one home.
 pub const SUBAGENT_TOOL: &str = "subagent";
 
+/// The model-visible name of the self-maintenance tool a run declares
+/// when it carries a home: `improve` files one proposal — a plan with
+/// acceptance criteria, a diff, and an expected effect — into
+/// `<FLEET_HOME>/proposals/`. It never applies anything: applying is
+/// the owner's `fleet improve apply`, through the same gate, the way
+/// the fork's Creator installs through Plugin Manager rather than
+/// through a model tool. The name lives here so every tool has one
+/// home; the semantics belong to `crate::improve`.
+pub const IMPROVE_TOOL: &str = "improve";
+
 /// The arrow a forwarded subagent call's name carries. A subagent's own
 /// tool calls reach the owner's Approver through the parent's gate, and
 /// the gate must be able to say whose call it is: the forwarded call is
@@ -222,6 +232,69 @@ pub fn supersede_spec() -> ToolSpec {
                 },
             },
             "required": ["name", "justification"],
+        }),
+    )
+}
+
+/// The request declaration for `improve`: file one self-maintenance
+/// proposal. The tool is the fork's proposal shape — a plan with
+/// acceptance criteria, a diff, and an expected effect — and it never
+/// applies anything: the owner's `fleet improve apply` runs the same
+/// gate the plan names, the way Creator mode installs through Plugin
+/// Manager rather than through a model tool. The description says so,
+/// because the model is the caller most likely to assume otherwise.
+///
+/// `target` is one of `skill`, `memory`, `source`, or `config`;
+/// `target-name` is the skill's name, the fact's name, the repo-
+/// relative source path, or the provider id. `basis` is required on
+/// every proposal, exactly as it is on every memory write: `inferred`
+/// when this session produced the change, `confirmed-by` when the user
+/// stated or verified it. `change` is the JSON change object the gate
+/// applies — its `op` is one of `write-skill`, `retire-skill`,
+/// `supersede`, `forget`, `config`, `config-remove`, or `patch`.
+pub fn improve_spec() -> ToolSpec {
+    ToolSpec::function(
+        IMPROVE_TOOL,
+        "File one self-maintenance proposal: a change to the harness's own skills, memory, or config, with the justification, the acceptance criteria, and the expected effect a reviewer needs. This tool only FILES the proposal into <FLEET_HOME>/proposals/ — it never applies anything. Applying is the owner's `fleet improve apply <name>`, which runs the local gate (fmt, clippy, build, test), asks for approval when the change is destructive, and records the verdict in the calibration ledger. Use it when a session's outcome justifies a change the harness should make to itself; state the evidence in the justification.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The proposal's name: lowercase letters, digits, and hyphens. It is the file name and the key every surface uses.",
+                },
+                "target": {
+                    "type": "string",
+                    "description": "What the change addresses: skill, memory, source, or config.",
+                    "enum": ["skill", "memory", "source", "config"],
+                },
+                "target-name": {
+                    "type": "string",
+                    "description": "The target's name or path: the skill's name, the fact's name, the repo-relative source path, or the provider id.",
+                },
+                "basis": {
+                    "type": "string",
+                    "description": "The proposal's provenance. Required on every proposal: inferred when this session produced the change, confirmed-by when the user stated or verified it.",
+                    "enum": ["inferred", "confirmed-by"],
+                },
+                "justification": {
+                    "type": "string",
+                    "description": "Why this change is justified: the session's evidence, the failing test, or the graded outcome behind it.",
+                },
+                "acceptance": {
+                    "type": "string",
+                    "description": "The acceptance criteria: what must be true for the change to count as done.",
+                },
+                "effect": {
+                    "type": "string",
+                    "description": "The expected effect: what changes for the harness when this lands.",
+                },
+                "change": {
+                    "type": "string",
+                    "description": "The change itself as a JSON object with an `op` field: write-skill ({op, content}), retire-skill ({op}), supersede ({op, name, justification, replacement?, description?, body?, type?, shape?, valid-until?}), forget ({op, name, justification}), config ({op, entry}), config-remove ({op, id}), or patch ({op, path, content, diff?}).",
+                },
+            },
+            "required": ["name", "target", "target-name", "basis", "justification", "acceptance", "effect", "change"],
         }),
     )
 }

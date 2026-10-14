@@ -420,6 +420,11 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             skills: skills.clone(),
                             memory,
                             scope: None,
+                            // The self-maintenance tool rides the
+                            // interactive surfaces: a session can file a
+                            // proposal, and only the owner's `fleet
+                            // improve apply` runs one.
+                            improve_home: Some(home.clone()),
                         };
                         let approver: Box<dyn Approver> =
                             Box::new(TuiApprover::new(approval_tx.clone()));

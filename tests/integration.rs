@@ -354,6 +354,7 @@ async fn run_on(
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -377,6 +378,7 @@ async fn run_on_probe(
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let mut agent =
         Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
@@ -404,6 +406,7 @@ async fn run_with_lanes(
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
@@ -927,6 +930,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -988,6 +992,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1022,6 +1027,7 @@ async fn a_denied_call_reports_its_result_event() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1076,6 +1082,7 @@ async fn a_failed_run_reports_a_failure_event() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1989,6 +1996,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             skills: Vec::new(),
             memory: None,
             scope: None,
+            improve_home: None,
         };
         let report = {
             let mut agent =
@@ -2327,6 +2335,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let mut progress = Vec::new();
     let report = {
@@ -2485,6 +2494,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2542,6 +2552,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let outcome = {
         let mut progress = Vec::new();
@@ -2584,6 +2595,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2626,6 +2638,7 @@ async fn a_run_without_a_stream_records_nothing() {
             skills: Vec::new(),
             memory: None,
             scope: None,
+            improve_home: None,
         },
         &mut session,
         Box::new(ApproveAll),
@@ -2744,6 +2757,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2821,6 +2835,7 @@ async fn run_with_skills(
         skills,
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let mut progress = Vec::new();
     let mut agent =
@@ -3439,6 +3454,7 @@ async fn run_with_memory(
         skills: Vec::new(),
         memory,
         scope: None,
+        improve_home: None,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -3710,6 +3726,117 @@ async fn a_confirmed_by_supersede_lands_with_approval_and_is_refused_without_it(
     assert!(denial.0.contains("denied"), "{denial:?}");
 }
 
+// --- self-maintenance (slice 12) -------------------------------------------
+
+/// One full agent run whose `improve` tool has a home to file into.
+async fn run_with_improve(
+    mock: &MockApi,
+    session: &mut Session,
+    approver: Box<dyn Approver>,
+    home: &Path,
+    task: &str,
+) -> Result<RunReport, AgentError> {
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        memory: None,
+        scope: None,
+        improve_home: Some(home.to_path_buf()),
+    };
+    let mut progress = Vec::new();
+    let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
+    agent.run(task).await
+}
+
+#[tokio::test]
+async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() {
+    // A session's justified skill update: the model calls `improve`,
+    // the proposal lands in the general store, and the tool_result the
+    // model reads names it — filing is all the tool ever does, and
+    // applying is the owner's `fleet improve apply`.
+    let change = serde_json::json!({
+        "op": "write-skill",
+        "content": "---\nname: bash-recovery\ndescription: recover from a failed call\n---\n\nthe correction\n"
+    })
+    .to_string();
+    let arguments = serde_json::json!({
+        "name": "bash-recovery-lesson",
+        "target": "skill",
+        "target-name": "bash-recovery",
+        "basis": "inferred",
+        "justification": "a failed bash call was corrected in this session",
+        "acceptance": "the skill's body carries the correction",
+        "effect": "the next session recovers without the failure",
+        "change": change,
+    })
+    .to_string();
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "improve", &arguments),
+        assistant_stream("Filed the proposal."),
+    ]);
+    let home = temp_home("improve-run");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_with_improve(&mock, &mut session, Box::new(ApproveAll), &home, "draft the session's lesson")
+        .await
+        .unwrap();
+
+    // The declaration rides the request beside the delegation tool,
+    // and only when the run carries a home.
+    let bodies = mock.bodies();
+    assert_eq!(
+        declared_tools(&bodies[0]),
+        vec!["bash", "read_file", "write_file", "list_dir", "subagent", "improve"]
+    );
+
+    // The proposal is on disk, in the shape the gate reads: frontmatter
+    // with the target and the basis, the four body sections, and the
+    // change as a fenced JSON block.
+    let filed = std::fs::read_to_string(
+        home.join("proposals").join("bash-recovery-lesson.md"),
+    )
+    .unwrap();
+    assert!(filed.contains("name: bash-recovery-lesson"), "{filed}");
+    assert!(filed.contains("target: skill"), "{filed}");
+    assert!(filed.contains("target-name: bash-recovery"), "{filed}");
+    assert!(filed.contains("basis: inferred"), "{filed}");
+    assert!(filed.contains("status: pending"), "{filed}");
+    assert!(filed.contains("## Justification"), "{filed}");
+    assert!(filed.contains("## Acceptance criteria"), "{filed}");
+    assert!(filed.contains("## Expected effect"), "{filed}");
+    assert!(filed.contains("## Change"), "{filed}");
+    assert!(filed.contains("\"op\":\"write-skill\""), "{filed}");
+
+    // The tool_result the model read names the filing and where it
+    // landed, and the live skills tree is untouched — nothing applied.
+    let records = session::replay(&session.path()).unwrap();
+    let (output, approved) = tool_result(&records, "improve");
+    assert!(approved);
+    assert!(output.contains("filed proposal `bash-recovery-lesson`"), "{output}");
+    assert!(output.contains("fleet improve apply bash-recovery-lesson"), "{output}");
+    assert!(!home.join("skills").join("bash-recovery").exists());
+}
+
+#[tokio::test]
+async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
+    // The tool exists only where a session can propose: a memory-less,
+    // home-less run is the run this crate has always had, byte for
+    // byte, and the declaration is absent from what the model saw.
+    let mock = MockApi::start(vec![assistant_stream("Done.")]);
+    let home = temp_home("improve-less");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say done").await.unwrap();
+    let bodies = mock.bodies();
+    assert_eq!(
+        declared_tools(&bodies[0]),
+        vec!["bash", "read_file", "write_file", "list_dir", "subagent"]
+    );
+}
+
 // --- subagents (slice 9) ---------------------------------------------------
 
 /// One `subagent` call's arguments as the model issues them.
@@ -3905,6 +4032,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let mut progress = Vec::new();
     let mut agent =
@@ -4262,6 +4390,7 @@ async fn run_capturing(
         skills: Vec::new(),
         memory: None,
         scope: None,
+        improve_home: None,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await

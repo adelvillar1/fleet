@@ -429,6 +429,10 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         skills,
         memory: None,
         scope: Some(Scope::child(tools, depth)),
+        // The child sees nothing of the parent: no memory, no lanes, no
+        // home to file proposals into. The scope excludes `improve`
+        // either way, so the declaration and the call agree.
+        improve_home: None,
     };
     let gate = InheritedApprover {
         inner: approver,
