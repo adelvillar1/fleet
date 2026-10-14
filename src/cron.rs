@@ -27,7 +27,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
-use std::io;
+use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35,8 +35,9 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::UnboundedSender;
 
-use crate::agent::{Agent, AgentError, AgentOptions, Approver, DEFAULT_MAX_TURNS, RunReport};
+use crate::agent::{Agent, AgentError, AgentOptions, Approver, DEFAULT_MAX_TURNS, RunReport, UiEvent};
 use crate::api::{Client, DEFAULT_MODEL};
 use crate::route;
 use crate::session::{self, Session};
@@ -123,6 +124,22 @@ impl Minute {
     fn previous_day(&self) -> Minute {
         let (year, month, day) = session::civil_from_days(days_from_civil(self.year, self.month, self.day) - 1);
         Minute { year, month, day, hour: 0, minute: 0 }
+    }
+
+    /// One minute earlier, carrying the borrow back across the hour,
+    /// day, month, and year boundaries. The passed-window walk's step
+    /// into the minute a job was first due, so that minute can itself
+    /// be named when it passed unserved.
+    fn previous_minute(&self) -> Minute {
+        if self.minute > 0 {
+            return Minute { minute: self.minute - 1, ..*self };
+        }
+        if self.hour > 0 {
+            return Minute { hour: self.hour - 1, minute: 59, ..*self };
+        }
+        let (year, month, day) =
+            session::civil_from_days(days_from_civil(self.year, self.month, self.day) - 1);
+        Minute { year, month, day, hour: 23, minute: 59 }
     }
 }
 
@@ -250,9 +267,13 @@ impl Schedule {
             .zip(FIELDS.iter())
             .map(|(text, spec)| parse_field(text, spec))
             .collect::<Result<Vec<Field>, ScheduleError>>()?;
-        let [minute, hour, day_of_month, month, day_of_week] = parsed.as_slice() else {
-            unreachable!("the five-field check bounds this slice")
-        };
+        // The five-field bound is structural: the length check above
+        // already returned for any other count, and destructuring a
+        // fixed-size array fails as a typed `FieldCount` error rather
+        // than as a panic the day a sixth field is added to `FIELDS`.
+        let [minute, hour, day_of_month, month, day_of_week]: [Field; 5] = parsed
+            .try_into()
+            .map_err(|parsed: Vec<Field>| ScheduleError::FieldCount { found: parsed.len() })?;
         Ok(Schedule {
             expression: trimmed.to_string(),
             minutes: minute.values.clone(),
@@ -807,6 +828,13 @@ impl Gate {
     fn denied_tool(&self) -> Option<String> {
         self.denied.lock().ok().and_then(|denied| denied.clone())
     }
+
+    /// The denial the model reads, naming the job's policy: this gate
+    /// denies precisely because nobody is present, so the loop's
+    /// ordinary "the user did not approve this call" would name a user
+    /// who is guaranteed absent in the one path where no user exists
+    /// (KI-088).
+    const DENIAL: &'static str = "denied: this scheduled job is not declared unattended (`auto_approve` off), so no one is here to approve this call";
 }
 
 impl Approver for Gate {
@@ -820,6 +848,10 @@ impl Approver for Gate {
             }
         }
         false
+    }
+
+    fn denial_reason(&self) -> Option<String> {
+        self.unattended.then(|| Gate::DENIAL.to_string())
     }
 
     fn latched(&self) -> bool {
@@ -863,7 +895,11 @@ pub async fn execute(
     memory_root: &Path,
 ) -> Result<RunOutcome, AgentError> {
     let task = frame_task(job, minute, catch_up);
-    let mut session = Session::create(home, DEFAULT_MODEL).map_err(AgentError::Io)?;
+    // A scheduled run's log is an ordinary session log marked
+    // `kind: scheduled`: the picker, `fleet sessions`, and replay treat
+    // it as real work in a real session, and the marker is what says a
+    // job started it rather than the owner.
+    let mut session = Session::create_scheduled(home, DEFAULT_MODEL).map_err(AgentError::Io)?;
     let skills = crate::skills::load(home);
     // The corpus is loaded per run, off the async worker, from the root
     // the caller resolved — exactly the way `fleet run` wires it: the
@@ -958,6 +994,18 @@ pub async fn run_job(home: &Path, job: &Job, minute: Minute, catch_up: bool) -> 
 /// enabled job, not a next-fire walk.
 pub const CRON_TICK_SECONDS: u64 = 1;
 
+/// How many passed windows one tick names before the rest are summed
+/// into one trailing count. A process that was suspended for a week
+/// would otherwise name a week of minutes, one line each, the first
+/// time it woke up.
+const MAX_NAMED_MISSED_WINDOWS: usize = 8;
+
+/// The label a panicking fire's outcome carries on the surfaces. Not
+/// one of the store's three outcomes: a panic is fleet's failure, not
+/// the job's, so the store records it as `failed` while the card and
+/// the named line say what actually happened.
+const PANICKED: &str = "panicked";
+
 /// What one fire does. The production implementation resolves the route
 /// and runs the job's ordinary agent loop; a test supplies its own, so a
 /// whole scheduler pass can be driven against a scripted client with no
@@ -974,6 +1022,103 @@ pub struct Due {
     pub catch_up: bool,
 }
 
+/// A future that catches its inner future's panic and hands it back as
+/// a value.
+///
+/// A panic inside a fire unwinds through the scheduler thread's
+/// `runtime.block_on` and kills the thread for the life of the process
+/// — the thread the tick loop lives on — leaving nothing on any surface
+/// but the default hook's stderr line, written over the TUI's alternate
+/// screen. Polling the inner future inside `catch_unwind` turns that
+/// into the error the fire's own named line carries, the way
+/// `futures::FutureExt::catch_unwind` does for the crates that carry
+/// the dependency. The inner future is pinned once here, which is what
+/// keeps the projection free of unsafe.
+struct CatchUnwind<F> {
+    inner: Pin<Box<F>>,
+}
+
+impl<F> CatchUnwind<F> {
+    fn new(inner: F) -> CatchUnwind<F> {
+        CatchUnwind { inner: Box::pin(inner) }
+    }
+}
+
+impl<F: Future> Future for CatchUnwind<F> {
+    /// The inner future's output, or the panic payload it raised.
+    type Output = Result<F::Output, Box<dyn std::any::Any + Send>>;
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        // `CatchUnwind` is `Unpin` by construction — its only field is
+        // a `Pin<Box<_>>` — so the field is reachable without unsafe.
+        let this = self.get_mut();
+        let polled =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.inner.as_mut().poll(cx)));
+        match polled {
+            Ok(std::task::Poll::Ready(output)) => std::task::Poll::Ready(Ok(output)),
+            Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
+            Err(payload) => std::task::Poll::Ready(Err(payload)),
+        }
+    }
+}
+
+/// The one-line name of a panic payload: the message when the payload
+/// is a string — the shape `panic!("…")` and every ordinary failed
+/// assertion raise — and a named fallback for anything else.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "a panic with no message".to_string()
+    }
+}
+
+/// How one fire ended, settled for the store and for every surface:
+/// the outcome the store records, the label a surface names, the
+/// one-line reason, and the session the run wrote when it got as far
+/// as one.
+struct Settled {
+    outcome: Outcome,
+    label: &'static str,
+    detail: String,
+    session: Option<String>,
+}
+
+/// Settle what one fire produced: an ordinary outcome, a failure, or a
+/// caught panic. A panic records as `failed` — the store's vocabulary
+/// has no fourth outcome, and the minute is spent either way — while
+/// the surfaces name it for what it was.
+fn settle(caught: Result<Result<RunOutcome, String>, Box<dyn std::any::Any + Send>>) -> Settled {
+    match caught {
+        Ok(Ok(outcome)) => Settled {
+            outcome: outcome.outcome,
+            label: outcome.outcome.label(),
+            detail: outcome.detail,
+            session: Some(outcome.session_id),
+        },
+        Ok(Err(error)) => Settled {
+            outcome: Outcome::Failed,
+            label: Outcome::Failed.label(),
+            detail: format!("failed: {error}"),
+            session: None,
+        },
+        Err(payload) => Settled {
+            outcome: Outcome::Failed,
+            label: PANICKED,
+            // `as_ref`, not `&payload`: coercing `&Box<dyn Any + Send>`
+            // to `&dyn Any + Send` would make the box itself the
+            // concrete type, and every downcast would miss.
+            detail: format!("the fire panicked: {}", panic_message(payload.as_ref())),
+            session: None,
+        },
+    }
+}
+
 /// The in-memory scheduler: the home the store and the runs live under,
 /// the per-job fired-minute latch, and the runner a fire goes through.
 pub struct Scheduler {
@@ -981,22 +1126,62 @@ pub struct Scheduler {
     /// A job fires at most once per matching minute, for the life of the
     /// process. The latch is claimed at decision time, so a job the tick
     /// has decided to fire is not decided again for that minute whether
-    /// its run succeeds or fails.
+    /// its run succeeds, fails, or panics — a panicking fire leaves its
+    /// minute claimed, because a retry inside the same minute could
+    /// spend a window whose run may already have spent.
     latch: HashMap<String, Minute>,
+    /// The minute each job was first seen enabled in the store. The
+    /// floor for a job that has never run: a window that came due
+    /// before the scheduler ever saw the job enabled — a job that did
+    /// not exist yet, or one that was disabled — is not a window the
+    /// scheduler dropped.
+    enabled_since: HashMap<String, Minute>,
+    /// The store's last unreadable complaint. The tick runs once a
+    /// second for the life of the process, so an unreadable store is
+    /// named once and then silenced until the reason changes, instead
+    /// of writing one line per second over whatever surface is
+    /// watching.
+    store_complaint: Option<String>,
+    /// Where a finished fire's card goes: the TUI's event channel when
+    /// this scheduler runs inside the interface. `None` is the headless
+    /// `chat` path, whose named lines ride stderr as they always have.
+    ui_tx: Option<UnboundedSender<UiEvent>>,
     runner: Runner,
 }
 
 impl Scheduler {
     /// A scheduler over `home`, firing through `runner`.
     pub fn new(home: PathBuf, runner: Runner) -> Scheduler {
-        Scheduler { home, latch: HashMap::new(), runner }
+        Scheduler {
+            home,
+            latch: HashMap::new(),
+            enabled_since: HashMap::new(),
+            store_complaint: None,
+            ui_tx: None,
+            runner,
+        }
+    }
+
+    /// Where this scheduler's finished-fire cards go.
+    pub fn with_ui(mut self, ui_tx: Option<UnboundedSender<UiEvent>>) -> Scheduler {
+        self.ui_tx = ui_tx;
+        self
     }
 
     /// Spawn the scheduler on its own thread and runtime: the catch-up
     /// pass once at startup, then one tick per [`CRON_TICK_SECONDS`] for
     /// the life of the process. The thread is detached, so a long-lived
     /// process costs nothing to end — the consolidator's precedent.
-    pub fn spawn(home: PathBuf) -> thread::JoinHandle<()> {
+    ///
+    /// `ui_tx` is the TUI's event channel when the interface starts the
+    /// scheduler: a finished fire then lands as a card instead of a
+    /// stderr line scratched over the alternate screen (KI-090). The
+    /// headless `chat` path passes `None`, and its named lines ride
+    /// stderr.
+    pub fn spawn(
+        home: PathBuf,
+        ui_tx: Option<UnboundedSender<UiEvent>>,
+    ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                 Ok(runtime) => runtime,
@@ -1011,7 +1196,7 @@ impl Scheduler {
                     let home = runner_home.clone();
                     Box::pin(async move { run_job(&home, &job, minute, catch_up).await })
                 });
-                let mut scheduler = Scheduler::new(home, runner);
+                let mut scheduler = Scheduler::new(home, runner).with_ui(ui_tx);
                 for line in scheduler.start(Minute::now()).await {
                     eprintln!("{line}");
                 }
@@ -1087,12 +1272,12 @@ impl Scheduler {
     /// The startup pass, run for real: the catch-up decision over the
     /// store as it stands, then the runs.
     pub async fn start(&mut self, now: Minute) -> Vec<String> {
-        let due = match Store::open(&self.home) {
-            Ok(store) => self.catch_up_due(store.jobs(), now),
-            Err(error) => {
-                return vec![format!("fleet: cron: the job store is unreadable: {error}")];
-            }
+        let store = match self.open_store() {
+            Ok(store) => store,
+            Err(lines) => return lines,
         };
+        self.note_jobs(store.jobs(), now);
+        let due = self.catch_up_due(store.jobs(), now);
         self.fire(due).await
     }
 
@@ -1100,56 +1285,255 @@ impl Scheduler {
     /// `fleet cron add` created a moment ago is picked up within one
     /// tick.
     pub async fn tick(&mut self, now: Minute) -> Vec<String> {
-        let due = match Store::open(&self.home) {
-            Ok(store) => self.tick_due(store.jobs(), now),
-            Err(error) => {
-                return vec![format!("fleet: cron: the job store is unreadable: {error}")];
-            }
+        let store = match self.open_store() {
+            Ok(store) => store,
+            Err(lines) => return lines,
         };
-        self.fire(due).await
+        self.note_jobs(store.jobs(), now);
+        // The windows that came due while the previous pass was in
+        // flight are named before this minute's decision: a busy
+        // scheduler is heard about, never a silent drop.
+        let mut lines = self.passed_lines(store.jobs(), now);
+        let due = self.tick_due(store.jobs(), now);
+        lines.extend(self.fire(due).await);
+        lines
     }
 
-    /// Run what a pass decided, one at a time: an unattended scheduler
-    /// has no reason to spend two providers' quota in parallel.
-    async fn fire(&mut self, due: Vec<Due>) -> Vec<String> {
-        let mut lines = Vec::new();
-        for one in due {
-            lines.push(self.fire_one(one).await);
+    /// Open the store, naming an unreadable one once: the first
+    /// complaint rides out as a line, and the same complaint again is
+    /// silence until the reason changes.
+    fn open_store(&mut self) -> Result<Store, Vec<String>> {
+        match Store::open(&self.home) {
+            Ok(store) => {
+                self.store_complaint = None;
+                Ok(store)
+            }
+            Err(error) => {
+                let complaint = error.to_string();
+                if self.store_complaint.as_deref() == Some(complaint.as_str()) {
+                    return Err(Vec::new());
+                }
+                self.store_complaint = Some(complaint);
+                Err(vec![format!("fleet: cron: the job store is unreadable: {error}")])
+            }
+        }
+    }
+
+    /// Remember which jobs the store holds enabled, and since when. A
+    /// job the scheduler has never seen enabled — one that did not
+    /// exist yet, or one that was disabled — has no floor to name
+    /// windows from, and a job that comes back enabled starts its
+    /// floor at the minute it came back.
+    fn note_jobs(&mut self, jobs: &[Job], now: Minute) {
+        for job in jobs {
+            if job.enabled {
+                self.enabled_since.entry(job.name.clone()).or_insert(now);
+            } else {
+                self.enabled_since.remove(&job.name);
+            }
+        }
+    }
+
+    /// The windows that passed while the scheduler was busy: every
+    /// matching minute that came due after the newest minute already
+    /// accounted for and strictly before `now`.
+    ///
+    /// The design runs one catch-up at startup and nothing mid-flight,
+    /// so a window a busy pass could not decide is a window the
+    /// operator hears about. A window at or before the floor — decided,
+    /// named, served, or never the scheduler's to begin with — is not a
+    /// drop and is not named.
+    fn passed_due(&self, jobs: &[Job], now: Minute) -> Vec<Due> {
+        let mut passed: Vec<Due> = Vec::new();
+        for job in jobs {
+            if !job.enabled {
+                continue;
+            }
+            let Ok(schedule) = Schedule::parse(&job.schedule) else { continue };
+            // The floor: the newest minute already accounted for — the
+            // latch's (decided or named), the store's (served), and for
+            // a job that has never run the minute before the scheduler
+            // first saw it enabled, so that minute can itself be named.
+            let floor = [
+                self.latch.get(&job.name).copied(),
+                job.last_run.as_deref().and_then(Minute::parse),
+                self.enabled_since.get(&job.name).map(|since| since.previous_minute()),
+            ]
+            .into_iter()
+            .flatten()
+            .max();
+            let Some(mut cursor) = floor else { continue };
+            while let Some(next) = schedule.next_after(cursor) {
+                if next >= now {
+                    break;
+                }
+                passed.push(Due { job: job.clone(), minute: next, catch_up: false });
+                cursor = next;
+            }
+        }
+        passed
+    }
+
+    /// The named lines for the windows that passed while the scheduler
+    /// was busy, one line per window with the minute claimed in the
+    /// latch as it is named — a window that passed is spent, and the
+    /// claim is what keeps the next tick from naming it again.
+    fn passed_lines(&mut self, jobs: &[Job], now: Minute) -> Vec<String> {
+        let windows = self.passed_due(jobs, now);
+        for window in &windows {
+            self.latch.insert(window.job.name.clone(), window.minute);
+        }
+        let named = windows.len().min(MAX_NAMED_MISSED_WINDOWS);
+        let mut lines: Vec<String> = windows[..named]
+            .iter()
+            .map(|window| {
+                format!(
+                    "fleet: cron: job `{}`'s {} window passed while the scheduler was running",
+                    window.job.name,
+                    window.minute.stamp()
+                )
+            })
+            .collect();
+        let more = windows.len() - named;
+        if more > 0 {
+            lines.push(format!(
+                "fleet: cron: \u{2026}and {more} more window{} passed while the scheduler was running",
+                plural(more)
+            ));
         }
         lines
     }
 
-    /// One fire: run the job, record the outcome against a freshly
-    /// loaded store, and name what happened.
-    async fn fire_one(&mut self, due: Due) -> String {
-        let name = due.job.name.clone();
-        let when = if due.catch_up {
-            format!("catch-up for {}", due.minute.stamp())
-        } else {
-            format!("at {}", due.minute.stamp())
-        };
-        let run = (self.runner)(due.job.clone(), due.minute, due.catch_up).await;
-        // The outcome is recorded against a freshly loaded store: a job
-        // removed while its run was in flight is not resurrected, and a
-        // store another process rewrote is not clobbered.
-        let recorded = match Store::open(&self.home) {
-            Ok(mut store) => {
-                let outcome = run.as_ref().map(|outcome| outcome.outcome).unwrap_or(Outcome::Failed);
-                store.record_run(&name, due.minute, outcome)
-            }
-            Err(error) => Err(error),
-        };
-        let tail = match recorded {
-            Ok(()) => String::new(),
-            Err(error) => format!("; the outcome could not be recorded: {error}"),
-        };
-        match run {
-            Ok(outcome) => format!(
-                "fleet: cron: job `{name}` {when} \u{2014} {} (session {}){tail}",
-                outcome.detail, outcome.session_id
-            ),
-            Err(error) => format!("fleet: cron: job `{name}` {when} \u{2014} failed: {error}{tail}"),
+    /// Run what a pass decided, concurrently: every due fire is spawned
+    /// onto the scheduler's runtime and the pass awaits them all.
+    ///
+    /// Spawning is what keeps one long run from serializing the fires
+    /// beside it, and the latch was claimed at decision time, so a
+    /// spawned fire's minute cannot be decided again while it runs. The
+    /// pass still awaits its own fires — the named line, the
+    /// `record_run` write, and the latch all belong to the tick loop's
+    /// single-threaded discipline — and a window that passes while the
+    /// pass is in flight is named by the next tick rather than dropped
+    /// silently.
+    async fn fire(&mut self, due: Vec<Due>) -> Vec<String> {
+        if due.is_empty() {
+            return Vec::new();
         }
+        // A fire's future is `!Send` — the agent holds a
+        // `Box<dyn Approver>` and a `&mut dyn Write`, neither of which
+        // is `Send` — so the fires are spawned onto a local set driven
+        // here. That needs no `Send` bound and works on whatever
+        // runtime this pass is running on, which is what lets a test
+        // drive a whole pass.
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let mut handles = Vec::with_capacity(due.len());
+                for one in due {
+                    // The runner is called here, synchronously, to build
+                    // the fire's future: the `Runner` type's own bound
+                    // makes that future `'static`, so the task that runs
+                    // it borrows nothing from this pass.
+                    let run = (self.runner)(one.job.clone(), one.minute, one.catch_up);
+                    let home = self.home.clone();
+                    let ui_tx = self.ui_tx.clone();
+                    let job = one.job.name.clone();
+                    handles.push((
+                        job,
+                        tokio::task::spawn_local(async move { fire_one(home, ui_tx, one, run).await }),
+                    ));
+                }
+                let mut lines = Vec::new();
+                for (job, handle) in handles {
+                    match handle.await {
+                        Ok(Some(line)) => lines.push(line),
+                        // The line went out as the TUI's card instead.
+                        Ok(None) => {}
+                        // A task that ended outside the fire's own
+                        // `catch_unwind` — cancelled, or a panic around
+                        // the harness. Named rather than dropped: a pass
+                        // that loses a fire silently is the shape this
+                        // whole seam exists to prevent.
+                        Err(error) => lines.push(format!(
+                            "fleet: cron: job `{job}`'s task ended without a result: {error}"
+                        )),
+                    }
+                }
+                lines
+            })
+            .await
+    }
+}
+
+/// One fire, end to end: the run with its panic caught, the outcome
+/// recorded against a freshly loaded store, and the named line.
+///
+/// A free function over owned values, because a fire is spawned: the
+/// latch was claimed at decision time, the store is re-read fresh here,
+/// and nothing the pass decided is touched again.
+async fn fire_one(
+    home: PathBuf,
+    ui_tx: Option<UnboundedSender<UiEvent>>,
+    due: Due,
+    run: Pin<Box<dyn Future<Output = Result<RunOutcome, String>>>>,
+) -> Option<String> {
+    let name = due.job.name.clone();
+    let when = if due.catch_up {
+        format!("catch-up for {}", due.minute.stamp())
+    } else {
+        format!("at {}", due.minute.stamp())
+    };
+    // The panic is caught here rather than unwinding through the
+    // scheduler thread's `block_on`: a panicking fire is one named line
+    // and the loop carries on, never a dead tick loop.
+    let settled = settle(CatchUnwind::new(run).await);
+    // The outcome is recorded against a freshly loaded store: a job
+    // removed while its run was in flight is not resurrected. The
+    // re-read narrows the lost-update window to the microseconds
+    // between this read and the rename inside `save` — it does not
+    // close it: a `fleet cron disable` that read the store before this
+    // read and writes after it is silently reverted, which brings a
+    // mid-run job back enabled with a `last_run` it did not earn. The
+    // fix is a lock beside `jobs.json`, deferred as KI-092.
+    let recorded = match Store::open(&home) {
+        Ok(mut store) => store.record_run(&name, due.minute, settled.outcome),
+        Err(error) => Err(error),
+    };
+    let tail = match recorded {
+        Ok(()) => String::new(),
+        Err(error) => format!("; the outcome could not be recorded: {error}"),
+    };
+    let line = if settled.label == PANICKED {
+        // The minute stays claimed: a retry inside it could spend a
+        // window whose run may already have spent.
+        format!(
+            "fleet: cron: job `{name}` {when} \u{2014} {}; the minute stays claimed (no retry this minute){tail}",
+            settled.detail
+        )
+    } else {
+        match &settled.session {
+            Some(session) => format!(
+                "fleet: cron: job `{name}` {when} \u{2014} {} (session {session}){tail}",
+                settled.detail
+            ),
+            None => format!("fleet: cron: job `{name}` {when} \u{2014} {}{tail}", settled.detail),
+        }
+    };
+    match ui_tx {
+        // The TUI's card carries the fire; a stderr line here would
+        // only scratch the alternate screen (KI-090).
+        Some(tx) => {
+            let _ = tx.send(UiEvent::CronFire {
+                job: name,
+                minute: due.minute.stamp(),
+                catch_up: due.catch_up,
+                outcome: settled.label.to_string(),
+                detail: settled.detail,
+                session: settled.session,
+            });
+            None
+        }
+        None => Some(line),
     }
 }
 
@@ -1171,15 +1555,15 @@ use palette::{ACCENT, BOLD, DIM, OK, RESET, TEXT, WARN};
 const CARD_WIDTH: usize = 72;
 
 /// Render the jobs as cards: one per job with its schedule, its task,
-/// its next fire, and its last run and outcome. Never a plain-text
-/// table.
-pub fn render(jobs: &[Job], now: Minute, path: &Path) -> String {
+/// its next fire, and its last run, outcome, and session. Never a
+/// plain-text table.
+pub fn render(home: &Path, jobs: &[Job], now: Minute) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "{BOLD}fleet cron{RESET} {DIM}\u{2014} {} job{} in {}{RESET}\n\n",
         jobs.len(),
         plural(jobs.len()),
-        path.display()
+        jobs_path(home).display()
     ));
     if jobs.is_empty() {
         out.push_str(&format!(
@@ -1188,7 +1572,7 @@ pub fn render(jobs: &[Job], now: Minute, path: &Path) -> String {
         return out;
     }
     for job in jobs {
-        out.push_str(&card(job, now));
+        out.push_str(&card(home, job, now));
     }
     let enabled = jobs.iter().filter(|job| job.enabled).count();
     out.push_str(&format!(
@@ -1198,8 +1582,62 @@ pub fn render(jobs: &[Job], now: Minute, path: &Path) -> String {
     out
 }
 
+/// The session id of the newest scheduled run for one job, read from
+/// the sessions directory rather than from the store: the store's shape
+/// is the contract this slice froze, and the id is a fact about a log.
+///
+/// A scheduled run's log is an ordinary log marked `kind: scheduled`
+/// whose first message is the framed task naming its job, so the join
+/// is the frame itself. Only each log's head is read — the frame is the
+/// run's first message — and the newest match wins, because a session
+/// id starts with a UTC stamp.
+pub fn last_session_id(home: &Path, job: &str) -> Option<String> {
+    let dir = crate::home::sessions_dir(home);
+    let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+        .collect();
+    paths.sort();
+    for path in paths.iter().rev() {
+        if is_scheduled_run_of(path, job) {
+            return path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string);
+        }
+    }
+    None
+}
+
+/// Whether this log is a scheduled run of `job`: its `start` record is
+/// marked `kind: scheduled` and its first message is the framed task
+/// that names the job.
+fn is_scheduled_run_of(path: &Path, job: &str) -> bool {
+    let Ok(file) = fs::File::open(path) else { return false };
+    let mut saw_scheduled_start = false;
+    for line in io::BufReader::new(file).lines() {
+        let Ok(line) = line else { return false };
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<session::Record>(&line) else { return false };
+        match record {
+            session::Record::Start { kind, .. } => {
+                if kind.as_deref() != Some(session::SCHEDULED_KIND) {
+                    return false;
+                }
+                saw_scheduled_start = true;
+            }
+            session::Record::User { content } => {
+                return saw_scheduled_start && content.contains(&format!("job `{job}`"));
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// One job's card.
-fn card(job: &Job, now: Minute) -> String {
+fn card(home: &Path, job: &Job, now: Minute) -> String {
     let state = if job.enabled { "enabled" } else { "disabled" };
     let state_color = if job.enabled { OK } else { WARN };
     let header = format!(
@@ -1232,6 +1670,13 @@ fn card(job: &Job, now: Minute) -> String {
         (None, _) => "never run".to_string(),
     };
     lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{last}{RESET}"));
+    // The retained output, one line under the last run: the session the
+    // last fire wrote, so the log is reachable from the surface that
+    // lists the job. Read from the sessions directory, not the store —
+    // the id is a fact about a log, and the store's shape is frozen.
+    if let Some(session) = last_session_id(home, &job.name) {
+        lines.push(format!("{DIM}\u{2502}{RESET} {DIM}session {session}{RESET}"));
+    }
     let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
     let mut out = format!("{header}\n");
     for line in lines {
@@ -1462,6 +1907,17 @@ mod tests {
         assert_eq!(minute(2026, 10, 19, 0, 0).day_of_week(), 1); // a Monday
     }
 
+    #[test]
+    fn previous_minute_carries_the_borrow_back_across_every_boundary() {
+        assert_eq!(minute(2026, 10, 14, 12, 30).previous_minute(), minute(2026, 10, 14, 12, 29));
+        assert_eq!(minute(2026, 10, 14, 12, 0).previous_minute(), minute(2026, 10, 14, 11, 59));
+        assert_eq!(minute(2026, 10, 14, 0, 0).previous_minute(), minute(2026, 10, 13, 23, 59));
+        assert_eq!(minute(2026, 1, 1, 0, 0).previous_minute(), minute(2025, 12, 31, 23, 59));
+        // Across a leap day: 2028 is a leap year.
+        assert_eq!(minute(2028, 3, 1, 0, 0).previous_minute(), minute(2028, 2, 29, 23, 59));
+        assert_eq!(minute(2026, 3, 1, 0, 0).previous_minute(), minute(2026, 2, 28, 23, 59));
+    }
+
     // --- the store ----------------------------------------------------------
 
     #[test]
@@ -1647,7 +2103,278 @@ mod tests {
         fs::remove_dir_all(&home).ok();
     }
 
+    // --- the fires ---------------------------------------------------------
+
+    /// Write one job into the store the way `fleet cron add` leaves it,
+    /// so a whole pass can be driven through the real store.
+    fn seed_job(home: &Path, name: &str, schedule: &str) {
+        Store::open(home).unwrap().add(name, schedule, "the goal", true).unwrap();
+    }
+
+    /// One finished fire's outcome, the shape a runner reports when the
+    /// run itself went through.
+    fn completed(job: &Job) -> RunOutcome {
+        RunOutcome {
+            outcome: Outcome::Completed,
+            session_id: format!("20261014T120000Z-{}", job.name),
+            log_path: PathBuf::from("/tmp/scheduled.jsonl"),
+            skipped_tool: None,
+            detail: "completed in 2 turns".to_string(),
+        }
+    }
+
+    /// A runner that panics for the job named `panics` and completes
+    /// every other one: the seam a panicking fire is driven through.
+    fn scripted_runner(panics: &'static str) -> Runner {
+        Box::new(move |job, _minute, _catch_up| {
+            Box::pin(async move {
+                if job.name == panics {
+                    panic!("the runner exploded");
+                }
+                Ok(completed(&job))
+            })
+        })
+    }
+
+    /// A panic inside a fire used to unwind through the scheduler
+    /// thread's `block_on` and kill the thread for the life of the
+    /// process, with nothing on any surface but the default hook's
+    /// stderr line. It is now one named line — the job, the panic — and
+    /// the loop carries on.
+    #[tokio::test]
+    async fn a_panicking_fire_is_named_and_the_minute_stays_claimed() {
+        let home = temp_home("fire-panics");
+        seed_job(&home, "boom", "* * * * *");
+        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("boom"));
+        let now = minute(2026, 10, 14, 12, 0);
+
+        let lines = scheduler.tick(now).await;
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("job `boom`"), "{}", lines[0]);
+        assert!(lines[0].contains("panicked"), "{}", lines[0]);
+        assert!(lines[0].contains("the runner exploded"), "{}", lines[0]);
+        // The latch decision: the minute stays claimed. A retry inside
+        // the same minute could spend a window whose run may already
+        // have spent, and the next minute is one second away.
+        assert!(scheduler.tick(now).await.is_empty());
+        // The store recorded the spent minute, as `failed`: its
+        // vocabulary has no fourth outcome, and the minute is spent
+        // either way.
+        let stored = Store::open(&home).unwrap().job("boom").unwrap().clone();
+        assert_eq!(stored.last_run.as_deref(), Some("2026-10-14T12:00Z"));
+        assert_eq!(stored.last_outcome, Some(Outcome::Failed));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// The fire beside a panicking one still runs, and the pass still
+    /// names it: a panic is one fire's failure, never the pass's.
+    #[tokio::test]
+    async fn a_panicking_fire_does_not_stop_the_fires_beside_it() {
+        let home = temp_home("fire-panics-beside");
+        seed_job(&home, "boom", "* * * * *");
+        seed_job(&home, "steady", "* * * * *");
+        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("boom"));
+        let now = minute(2026, 10, 14, 12, 0);
+
+        let lines = scheduler.tick(now).await;
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        let panicked = lines.iter().find(|line| line.contains("job `boom`")).expect("the panicking fire's line");
+        assert!(panicked.contains("the runner exploded"), "{panicked}");
+        let steady = lines.iter().find(|line| line.contains("job `steady`")).expect("the steady fire's line");
+        assert!(steady.contains("completed"), "{steady}");
+        // Both minutes are spent: neither fires again this minute.
+        assert!(scheduler.tick(now).await.is_empty());
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// A fire inside the TUI rides the interface's event channel and
+    /// produces no stderr line: the card carries the job, the minute,
+    /// the outcome, and the session (KI-090).
+    #[tokio::test]
+    async fn a_fire_inside_the_tui_rides_the_event_channel_instead_of_stderr() {
+        let home = temp_home("fire-ui");
+        seed_job(&home, "every-minute", "* * * * *");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+        let mut scheduler =
+            Scheduler::new(home.clone(), scripted_runner("nothing")).with_ui(Some(tx));
+
+        let lines = scheduler.tick(minute(2026, 10, 14, 12, 0)).await;
+        assert!(lines.is_empty(), "the card rides the channel, not stderr: {lines:?}");
+        let event = rx.try_recv().expect("the fire's card");
+        match event {
+            UiEvent::CronFire { job, minute, catch_up, outcome, detail, session } => {
+                assert_eq!(job, "every-minute");
+                assert_eq!(minute, "2026-10-14T12:00Z");
+                assert!(!catch_up);
+                assert_eq!(outcome, "completed");
+                assert_eq!(detail, "completed in 2 turns");
+                assert_eq!(session.as_deref(), Some("20261014T120000Z-every-minute"));
+            }
+            other => panic!("expected a cron fire event, got {other:?}"),
+        }
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// Two fires due in one minute run at the same time, not one after
+    /// the other. The proof is a two-party barrier only two concurrent
+    /// fires can clear: a pass that ran them one at a time would wait
+    /// forever on the first.
+    #[tokio::test]
+    async fn two_due_fires_run_concurrently_not_one_after_the_other() {
+        let home = temp_home("fire-concurrent");
+        seed_job(&home, "first", "* * * * *");
+        seed_job(&home, "second", "* * * * *");
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let runner_barrier = barrier.clone();
+        let mut scheduler = Scheduler::new(
+            home.clone(),
+            Box::new(move |job, _minute, _catch_up| {
+                let barrier = runner_barrier.clone();
+                Box::pin(async move {
+                    barrier.wait().await;
+                    Ok(completed(&job))
+                })
+            }),
+        );
+
+        let lines = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            scheduler.tick(minute(2026, 10, 14, 12, 0)),
+        )
+        .await
+        .expect("two concurrent fires cleared the barrier; a sequential pass would hang here");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    // --- the passed windows -------------------------------------------------
+
+    /// A window that came due while the pass was in flight is named,
+    /// one line per window, and never silently dropped.
+    #[tokio::test]
+    async fn a_window_that_passes_while_the_scheduler_is_busy_is_named_not_dropped() {
+        let home = temp_home("passed-window");
+        seed_job(&home, "every-minute", "* * * * *");
+        let mut scheduler = test_scheduler(home.clone());
+        // The 12:00 tick decides the fire, and its pass runs long: the
+        // next tick lands at 12:03.
+        assert_eq!(scheduler.tick(minute(2026, 10, 14, 12, 0)).await.len(), 1);
+
+        let lines = scheduler.tick(minute(2026, 10, 14, 12, 3)).await;
+        let passed: Vec<&String> =
+            lines.iter().filter(|line| line.contains("window passed")).collect();
+        assert_eq!(passed.len(), 2, "{lines:?}");
+        assert!(passed[0].contains("2026-10-14T12:01Z"), "{}", passed[0]);
+        assert!(passed[1].contains("2026-10-14T12:02Z"), "{}", passed[1]);
+        // The naming does not repeat: every passed minute is claimed in
+        // the latch as it is named.
+        let again = scheduler.tick(minute(2026, 10, 14, 12, 4)).await;
+        assert!(!again.iter().any(|line| line.contains("window passed")), "{again:?}");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// A long backlog is bounded on the surface: the first windows are
+    /// named, the rest are summed into one trailing count — and every
+    /// window's minute is spent whether it was named or not.
+    #[tokio::test]
+    async fn a_long_backlog_of_passed_windows_is_bounded_on_the_surface() {
+        let home = temp_home("passed-window-cap");
+        seed_job(&home, "every-minute", "* * * * *");
+        let mut scheduler = test_scheduler(home.clone());
+        assert_eq!(scheduler.tick(minute(2026, 10, 14, 12, 0)).await.len(), 1);
+
+        let lines = scheduler.tick(minute(2026, 10, 14, 12, 10)).await;
+        let named: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.contains("'s 2026-10-14T"))
+            .collect();
+        assert_eq!(named.len(), MAX_NAMED_MISSED_WINDOWS, "{lines:?}");
+        assert!(lines.iter().any(|line| line.contains("and 1 more window passed")), "{lines:?}");
+        // The nine minutes between are spent, named or not.
+        let again = scheduler.tick(minute(2026, 10, 14, 12, 11)).await;
+        assert!(!again.iter().any(|line| line.contains("window passed")), "{again:?}");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// A window that came due before the scheduler ever saw the job
+    /// enabled — a job that did not exist yet, or one that was
+    /// disabled — is nobody's drop and is not named.
+    #[tokio::test]
+    async fn a_window_from_before_the_job_was_seen_is_not_named_as_a_drop() {
+        let home = temp_home("passed-window-floor");
+        seed_job(&home, "every-minute", "* * * * *");
+        let mut scheduler = test_scheduler(home.clone());
+        // The first tick that sees the job is 12:01, so the 12:00
+        // window is not a window the scheduler dropped.
+        let lines = scheduler.tick(minute(2026, 10, 14, 12, 1)).await;
+        assert!(!lines.iter().any(|line| line.contains("window passed")), "{lines:?}");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+
+        // A job that was disabled when its windows passed starts its
+        // floor at the minute it comes back.
+        let home = temp_home("passed-window-disabled");
+        seed_job(&home, "off", "* * * * *");
+        Store::open(&home).unwrap().set_enabled("off", false).unwrap();
+        let mut scheduler = test_scheduler(home.clone());
+        assert!(scheduler.tick(minute(2026, 10, 14, 12, 3)).await.is_empty());
+        Store::open(&home).unwrap().set_enabled("off", true).unwrap();
+        let lines = scheduler.tick(minute(2026, 10, 14, 12, 3)).await;
+        assert!(!lines.iter().any(|line| line.contains("window passed")), "{lines:?}");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    // --- the store complaint -------------------------------------------------
+
+    /// The tick runs once a second for the life of the process, so an
+    /// unreadable store is named once and then silenced until the
+    /// reason changes — never one line per second over whatever
+    /// surface is watching.
+    #[tokio::test]
+    async fn an_unreadable_store_is_named_once_not_once_a_second() {
+        let home = temp_home("store-complaint");
+        fs::create_dir_all(jobs_path(&home).parent().unwrap()).unwrap();
+        fs::write(jobs_path(&home), "not a store").unwrap();
+        let mut scheduler = test_scheduler(home.clone());
+
+        let first = scheduler.tick(minute(2026, 10, 14, 12, 0)).await;
+        assert_eq!(first.len(), 1, "{first:?}");
+        assert!(first[0].contains("the job store is unreadable"), "{}", first[0]);
+        // The same complaint again is silence.
+        assert!(scheduler.tick(minute(2026, 10, 14, 12, 1)).await.is_empty());
+        assert!(scheduler.tick(minute(2026, 10, 14, 12, 2)).await.is_empty());
+        // A different reason is a different complaint, and it is named.
+        fs::write(jobs_path(&home), "[1, 2, 3]").unwrap();
+        let changed = scheduler.tick(minute(2026, 10, 14, 12, 3)).await;
+        assert_eq!(changed.len(), 1, "{changed:?}");
+        assert!(changed[0].contains("unreadable"), "{}", changed[0]);
+        // And silence again.
+        assert!(scheduler.tick(minute(2026, 10, 14, 12, 4)).await.is_empty());
+        fs::remove_dir_all(&home).ok();
+    }
+
     // --- the framing --------------------------------------------------------
+
+    /// The unattended gate's denial names the job's policy, not a user
+    /// who is guaranteed absent: this gate denies precisely because
+    /// nobody is there, so the model-visible text has to say so
+    /// (KI-088). A declared-unattended job approves everything and
+    /// supplies no denial of its own.
+    #[test]
+    fn the_unattended_gate_names_the_jobs_policy_not_an_absent_user() {
+        let gate = Gate::for_job(&job("careful", "* * * * *", None));
+        assert!(gate.unattended);
+        let denial = gate.denial_reason().expect("the unattended gate names its own reason");
+        assert!(denial.contains("not declared unattended"), "{denial}");
+        assert!(denial.contains("auto_approve"), "{denial}");
+        assert!(!denial.contains("the user did not approve"), "{denial}");
+
+        let mut trusted = job("trusted", "* * * * *", None);
+        trusted.auto_approve = true;
+        let gate = Gate::for_job(&trusted);
+        assert!(!gate.unattended);
+        assert_eq!(gate.denial_reason(), None);
+    }
 
     #[test]
     fn the_catch_up_framing_names_the_missed_window() {
@@ -1664,10 +2391,37 @@ mod tests {
 
     // --- the surface --------------------------------------------------------
 
+    /// One scheduled run's log under `home`: the `start` record marked
+    /// `kind: scheduled` and the framed task naming its job, written
+    /// the way a real fire leaves them.
+    fn seed_scheduled_session(home: &Path, id: &str, job: &str) {
+        let sessions = crate::home::sessions_dir(home);
+        fs::create_dir_all(&sessions).unwrap();
+        let framed = frame_task(&job_fixture(job), minute(2026, 10, 14, 12, 0), false);
+        let record = serde_json::json!({
+            "type": "start",
+            "v": 1,
+            "model": "deepseek-chat",
+            "created": "2026-10-14T12:00:00Z",
+            "kind": session::SCHEDULED_KIND,
+        });
+        let user = serde_json::json!({"type": "user", "content": framed});
+        fs::write(
+            sessions.join(format!("{id}.jsonl")),
+            format!("{record}\n{user}\n"),
+        )
+        .unwrap();
+    }
+
+    fn job_fixture(name: &str) -> Job {
+        job(name, "* * * * *", None)
+    }
+
     #[test]
     fn the_listing_cards_every_job_and_names_the_empty_home() {
+        let home = temp_home("listing-cards");
         let now = minute(2026, 10, 14, 12, 30);
-        let empty = render(&[], now, Path::new("/tmp/cron/jobs.json"));
+        let empty = render(&home, &[], now);
         assert!(empty.contains("no jobs yet"), "{empty}");
         assert!(empty.contains("fleet cron add"), "{empty}");
 
@@ -1675,7 +2429,7 @@ mod tests {
         ran.last_outcome = Some(Outcome::Completed);
         let mut fresh = job("hourly", "0 * * * *", None);
         fresh.enabled = false;
-        let listing = render(&[ran, fresh], now, Path::new("/tmp/cron/jobs.json"));
+        let listing = render(&home, &[ran, fresh], now);
         assert!(listing.contains("2 jobs"), "{listing}");
         assert!(listing.contains("daily-digest"), "{listing}");
         assert!(listing.contains("0 7 * * *"), "{listing}");
@@ -1690,8 +2444,84 @@ mod tests {
         assert!(listing.contains("next fire \u{2014} disabled"), "{listing}");
         assert!(listing.contains("1 enabled"), "{listing}");
         assert!(listing.contains("1 disabled"), "{listing}");
+        // No scheduled log yet: no session line on either card.
+        assert!(!listing.contains("session "), "{listing}");
         // Cards, never a plain-text table.
         assert!(listing.contains('\u{250c}'), "{listing}");
         assert!(listing.contains('\u{2518}'), "{listing}");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// The retained output is reachable from the surface that lists the
+    /// job: the card carries the session the last fire wrote, read from
+    /// the sessions directory rather than from the store.
+    #[test]
+    fn the_listing_carries_the_session_the_last_fire_wrote() {
+        let home = temp_home("listing-session");
+        // An older scheduled run for the job, then a newer one: the
+        // newest is the one the card names.
+        seed_scheduled_session(&home, "20261014T110000Z-aaa111", "daily-digest");
+        seed_scheduled_session(&home, "20261014T120000Z-bbb222", "daily-digest");
+        // Another job's run, which the digest's card must not claim.
+        seed_scheduled_session(&home, "20261014T120100Z-ccc333", "hourly");
+        // An ordinary session, which no card claims.
+        let sessions = crate::home::sessions_dir(&home);
+        fs::write(
+            sessions.join("20261014T120200Z-ddd444.jsonl"),
+            "{\"type\":\"start\",\"v\":1,\"model\":\"deepseek-chat\",\"created\":\"c\"}\n\
+             {\"type\":\"user\",\"content\":\"a task the owner typed\"}\n",
+        )
+        .unwrap();
+
+        let mut ran = job("daily-digest", "0 7 * * *", Some("2026-10-14T07:00Z"));
+        ran.last_outcome = Some(Outcome::Completed);
+        let other = job("hourly", "0 * * * *", None);
+        let listing = render(&home, &[ran, other], minute(2026, 10, 14, 12, 30));
+        assert!(
+            listing.contains("session 20261014T120000Z-bbb222"),
+            "{listing}"
+        );
+        // The other job's own newest run rides its own card.
+        assert!(listing.contains("session 20261014T120100Z-ccc333"), "{listing}");
+        // And the ordinary session is nobody's.
+        assert!(!listing.contains("ddd444"), "{listing}");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// The join is the frame itself: a log that is not a scheduled run
+    /// of the job is not claimed, and a home with no sessions directory
+    /// reads as no session rather than an error.
+    #[test]
+    fn the_session_join_names_only_scheduled_runs_of_the_job() {
+        let home = temp_home("session-join");
+        assert_eq!(last_session_id(&home, "daily-digest"), None);
+        seed_scheduled_session(&home, "20261014T120000Z-bbb222", "daily-digest");
+        assert_eq!(
+            last_session_id(&home, "daily-digest").as_deref(),
+            Some("20261014T120000Z-bbb222")
+        );
+        // A different job's log, and a log whose start record is not
+        // marked scheduled, both read as not this job's.
+        assert_eq!(last_session_id(&home, "hourly"), None);
+        let sessions = crate::home::sessions_dir(&home);
+        let framed = frame_task(&job_fixture("daily-digest"), minute(2026, 10, 14, 13, 0), false);
+        let start = serde_json::json!({
+            "type": "start",
+            "v": 1,
+            "model": "deepseek-chat",
+            "created": "c",
+        });
+        let user = serde_json::json!({"type": "user", "content": framed});
+        fs::write(
+            sessions.join("20261014T130000Z-eee555.jsonl"),
+            format!("{start}\n{user}\n"),
+        )
+        .unwrap();
+        // The newer unmarked log does not win over the marked one.
+        assert_eq!(
+            last_session_id(&home, "daily-digest").as_deref(),
+            Some("20261014T120000Z-bbb222")
+        );
+        fs::remove_dir_all(&home).ok();
     }
 }

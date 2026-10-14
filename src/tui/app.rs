@@ -23,6 +23,11 @@ pub enum Entry {
     /// One compaction: the turns it folded into a summary, and what the
     /// context cost before and after.
     Compaction(CompactionCard),
+    /// One scheduled fire: the job, the minute it ran for, how it
+    /// ended, and the session it wrote. A fact about the machine, not
+    /// something the model said — the run belongs to a job, in a log
+    /// of its own, never a turn in this conversation.
+    Cron(CronCard),
 }
 
 /// One tool call as a card: name, one-line summary, a status dot, and the
@@ -51,6 +56,27 @@ pub struct CompactionCard {
     pub turns: usize,
     pub tokens_before: u64,
     pub tokens_after: u64,
+}
+
+/// One scheduled fire as a card, in the same family as a tool card: the
+/// job's name, the minute it ran for (named as a catch-up when the
+/// window was missed while fleet was down), how the run ended, and the
+/// session log it wrote — the retained output, reachable from the card
+/// (KI-090).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CronCard {
+    pub job: String,
+    /// The minute the fire ran for, stamped.
+    pub minute: String,
+    /// Whether the fire served a window missed while fleet was down.
+    pub catch_up: bool,
+    /// How it ended: `completed`, `failed`, `skipped-needs-approval`,
+    /// or `panicked`.
+    pub outcome: String,
+    /// The one-line reason.
+    pub detail: String,
+    /// The session log the run wrote, when it got as far as one.
+    pub session: Option<String>,
 }
 
 /// Where a tool call stands.
@@ -425,6 +451,23 @@ impl App {
                 // shows the shape and the fact count, the live half of the
                 // `memory` record the log carries.
                 self.status.memory = Some((shape, facts));
+            }
+            UiEvent::CronFire { job, minute, catch_up, outcome, detail, session } => {
+                // A scheduled fire is a fact about the machine, not
+                // something the model said: it flushes the streaming
+                // tail and lands as its own block, the same family as a
+                // lane joining or a compaction. The run lives in its own
+                // session log — the conversation pane is where the
+                // outcome is read, not where the run happened.
+                self.flush_streaming();
+                self.entries.push(Entry::Cron(CronCard {
+                    job,
+                    minute,
+                    catch_up,
+                    outcome,
+                    detail,
+                    session,
+                }));
             }
             UiEvent::Subagent { goal, session, stage } => {
                 // A delegated child run, reported while the parent's turn
@@ -1487,6 +1530,64 @@ mod tests {
         );
         assert_eq!(app.status.turn, 3);
         assert!(app.status.working);
+    }
+
+    /// A scheduled fire lands as its own block in the house card
+    /// family: the job, the minute, the outcome, and the session it
+    /// wrote — the run belongs to a job in a log of its own, never a
+    /// turn in this conversation (KI-090).
+    #[test]
+    fn a_scheduled_fire_lands_as_its_own_card() {
+        let mut app = app();
+        app.apply_ui_event(UiEvent::Turn(3));
+        app.apply_ui_event(UiEvent::Token("half a thought".to_string()));
+        app.apply_ui_event(UiEvent::CronFire {
+            job: "daily-digest".to_string(),
+            minute: "2026-10-14T12:00Z".to_string(),
+            catch_up: false,
+            outcome: "completed".to_string(),
+            detail: "completed in 3 turns".to_string(),
+            session: Some("20261014T120000Z-1a2b3c".to_string()),
+        });
+        // The streaming tail flushed when the card landed, and the run's
+        // own turn counter is untouched: a fire is a fact about the
+        // machine, not a turn of this conversation.
+        assert_eq!(
+            app.entries,
+            vec![
+                Entry::Assistant("half a thought".to_string()),
+                Entry::Cron(CronCard {
+                    job: "daily-digest".to_string(),
+                    minute: "2026-10-14T12:00Z".to_string(),
+                    catch_up: false,
+                    outcome: "completed".to_string(),
+                    detail: "completed in 3 turns".to_string(),
+                    session: Some("20261014T120000Z-1a2b3c".to_string()),
+                }),
+            ]
+        );
+        assert_eq!(app.status.turn, 3);
+        assert!(app.status.working);
+
+        // A fire with no session — a run that failed before its log —
+        // still lands, and a catch-up window is carried as one.
+        app.apply_ui_event(UiEvent::CronFire {
+            job: "nightly".to_string(),
+            minute: "2026-10-14T03:00Z".to_string(),
+            catch_up: true,
+            outcome: "panicked".to_string(),
+            detail: "the fire panicked: boom".to_string(),
+            session: None,
+        });
+        let last = app.entries.last().expect("the second card");
+        match last {
+            Entry::Cron(card) => {
+                assert!(card.catch_up, "the catch-up window is carried");
+                assert_eq!(card.outcome, "panicked");
+                assert_eq!(card.session, None);
+            }
+            other => panic!("expected a cron card, got {other:?}"),
+        }
     }
 
     /// A resumed conversation shows the compactions its earlier runs

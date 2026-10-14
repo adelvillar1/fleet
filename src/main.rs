@@ -194,8 +194,8 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     // tick per second for the life of the session. The scheduler reads
     // the job store fresh every tick, so `fleet cron add` from another
     // shell is picked up within a second, and each fire is an ordinary
-    // headless run in its own session log.
-    fleet::cron::Scheduler::spawn(home.clone());
+    // headless run in its own session log. Its named lines ride stderr.
+    fleet::cron::Scheduler::spawn(home.clone(), None);
     // The skills are loaded once per chat session and declared on every
     // run in it: the files can change between runs, and the per-run
     // `skills` record is what pins what each run actually saw.
@@ -437,11 +437,10 @@ fn cron_command(options: &cli::CronOptions) -> ExitCode {
         return ExitCode::from(2);
     };
     let now = fleet::cron::Minute::now();
-    let path = fleet::cron::jobs_path(&home);
     match &options.action {
         CronAction::List => match fleet::cron::Store::open(&home) {
             Ok(store) => {
-                print!("{}", fleet::cron::render(store.jobs(), now, &path));
+                print!("{}", fleet::cron::render(&home, store.jobs(), now));
                 ExitCode::SUCCESS
             }
             Err(error) => {
@@ -461,7 +460,7 @@ fn cron_command(options: &cli::CronOptions) -> ExitCode {
                         .map(|minute| format!(", next fire {}", minute.stamp()))
                         .unwrap_or_default();
                     println!("fleet: cron: added `{}` \u{2014} {}{next}", job.name, job.schedule);
-                    print!("{}", fleet::cron::render(std::slice::from_ref(&job), now, &path));
+                    print!("{}", fleet::cron::render(&home, std::slice::from_ref(&job), now));
                     ExitCode::SUCCESS
                 }
                 Err(error) => {
@@ -471,10 +470,10 @@ fn cron_command(options: &cli::CronOptions) -> ExitCode {
             }
         }
         CronAction::Enable { name } => {
-            mutate(&home, name, now, &path, "enabled", true)
+            mutate(&home, name, now, "enabled", true)
         }
         CronAction::Disable { name } => {
-            mutate(&home, name, now, &path, "disabled", false)
+            mutate(&home, name, now, "disabled", false)
         }
         CronAction::Remove { name } => match fleet::cron::Store::open(&home).and_then(|mut store| {
             let job = store.remove(name)?;
@@ -498,14 +497,13 @@ fn mutate(
     home: &std::path::Path,
     name: &str,
     now: fleet::cron::Minute,
-    path: &std::path::Path,
     verb: &str,
     enabled: bool,
 ) -> ExitCode {
     match fleet::cron::Store::open(home).and_then(|mut store| store.set_enabled(name, enabled)) {
         Ok(job) => {
             println!("fleet: cron: {verb} `{}` \u{2014} {}", job.name, job.schedule);
-            print!("{}", fleet::cron::render(std::slice::from_ref(&job), now, path));
+            print!("{}", fleet::cron::render(home, std::slice::from_ref(&job), now));
             ExitCode::SUCCESS
         }
         Err(error) => {

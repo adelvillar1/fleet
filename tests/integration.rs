@@ -4889,6 +4889,18 @@ async fn a_scheduled_task_fires_when_its_minute_matches_and_only_once() {
     let logs = harness.scheduled_sessions();
     assert_eq!(logs.len(), 1, "{logs:?}");
     let records = session::replay(&logs[0]).unwrap();
+    let start = records
+        .iter()
+        .find_map(|record| match record {
+            Record::Start { kind, .. } => Some(kind.clone()),
+            _ => None,
+        })
+        .expect("the start record");
+    assert_eq!(
+        start.as_deref(),
+        Some(fleet::session::SCHEDULED_KIND),
+        "a scheduled run's log is an ordinary log marked kind: scheduled"
+    );
     let task = records
         .iter()
         .find_map(|record| match record {
@@ -4899,6 +4911,12 @@ async fn a_scheduled_task_fires_when_its_minute_matches_and_only_once() {
     assert!(task.starts_with("[scheduled run"), "{task}");
     assert!(task.contains("job `every-minute` at 2026-10-14T12:00Z"), "{task}");
     assert!(task.ends_with("summarize the day"), "{task}");
+    // The log is an ordinary session: `fleet sessions` lists it, marked
+    // as a scheduled run — the retained output is reachable from the
+    // surface that lists sessions, not only from the job's card.
+    let listed = session::list(&harness.home).unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].kind.as_deref(), Some(fleet::session::SCHEDULED_KIND));
     let job = harness.store().job("every-minute").unwrap().clone();
     assert_eq!(job.last_run.as_deref(), Some("2026-10-14T12:00Z"));
     assert_eq!(job.last_outcome, Some(fleet::cron::Outcome::Completed));
@@ -5017,6 +5035,20 @@ async fn a_job_that_is_not_declared_unattended_skips_its_tool_call_and_names_it(
         })
         .expect("the denied call's result");
     assert!(!denied, "the unattended gate denied the call");
+    // The denial the model reads names the job's policy, not a user who
+    // is guaranteed absent: this gate denies precisely because nobody
+    // is there (KI-088). It rides the ordinary tool_result path into
+    // the log, so model-visible stays model-visible.
+    let denial = records
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "bash" => Some(output.clone()),
+            _ => None,
+        })
+        .expect("the denied call's output");
+    assert!(denial.contains("not declared unattended"), "{denial}");
+    assert!(denial.contains("auto_approve"), "{denial}");
+    assert!(!denial.contains("the user did not approve"), "{denial}");
     let job = harness.store().job("careful").unwrap().clone();
     assert_eq!(job.last_outcome, Some(fleet::cron::Outcome::SkippedNeedsApproval));
     assert_eq!(job.last_run.as_deref(), Some("2026-10-14T12:00Z"));

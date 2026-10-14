@@ -511,6 +511,54 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             }
             lines
         }
+        Entry::Cron(card) => {
+            // A scheduled fire is the same family again, in the same
+            // two-line shape as the compaction card: a short settled
+            // line — the dot, the bold accent verb, the job, the state —
+            // and everything else wrapped underneath, exactly as a tool
+            // card wraps its preview. The first line stays short on
+            // purpose: a job name, a minute phrase, and a state word
+            // concatenated onto one line is the fixed-width overflow
+            // the card family already learned from (KI-078, KI-085).
+            // The run's own log is the retained output; the session id
+            // on this card is what makes it reachable.
+            let (glyph, state, color) = match card.outcome.as_str() {
+                "completed" => ("\u{2713}", "done", palette::DONE),
+                "skipped-needs-approval" => ("\u{2715}", "skipped", palette::PENDING),
+                // A failed run and a panicking fire both read as a
+                // settled failure; the detail line names which.
+                _ => ("\u{2715}", "failed", palette::DENIED),
+            };
+            let minute = if card.catch_up {
+                format!("catch-up for {}", card.minute)
+            } else {
+                format!("at {}", card.minute)
+            };
+            let mut lines = vec![Line::from(vec![
+                Span::styled(format!(" {glyph} "), Style::new().fg(color)),
+                Span::styled(
+                    "scheduled",
+                    Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ", Style::new()),
+                Span::styled(
+                    card.job.clone(),
+                    Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("  {state}"), Style::new().fg(color)),
+            ])];
+            let mut detail = format!("{minute} \u{b7} {}", card.detail);
+            if let Some(session) = &card.session {
+                detail.push_str(&format!(" \u{b7} session {session}"));
+            }
+            for chunk in wrap(&detail, width.saturating_sub(4).max(8)) {
+                lines.push(Line::from(vec![
+                    Span::styled("   \u{2514} ", Style::new().fg(palette::DIM)),
+                    Span::styled(chunk, Style::new().fg(palette::DIM)),
+                ]));
+            }
+            lines
+        }
     }
 }
 
@@ -1062,5 +1110,61 @@ mod tests {
         });
         let rendered = draw(&single, 80, 24);
         assert!(rendered.contains("1 turn → 1 summary"), "{rendered}");
+    }
+
+    /// The cron fire card renders in the house card style too: the tool
+    /// card's two-line shape — a dot, the bold accent verb, the job, the
+    /// minute, the settled state — with the outcome and the session id
+    /// wrapped underneath, so nothing is cut off at the pane's edge.
+    #[test]
+    fn the_cron_fire_card_renders_in_the_house_card_style() {
+        let mut app = fresh();
+        app.apply_ui_event(UiEvent::CronFire {
+            job: "daily-digest".to_string(),
+            minute: "2026-10-14T12:00Z".to_string(),
+            catch_up: false,
+            outcome: "completed".to_string(),
+            detail: "completed in 3 turns".to_string(),
+            session: Some("20261014T120000Z-1a2b3c".to_string()),
+        });
+        let chat = draw(&app, 80, 24);
+        assert!(chat.contains("scheduled"), "{chat}");
+        assert!(chat.contains("daily-digest"), "{chat}");
+        assert!(chat.contains("done"), "{chat}");
+        // The minute, the outcome, and the session ride the wrapped
+        // detail line, whole.
+        assert!(chat.contains("at 2026-10-14T12:00Z"), "{chat}");
+        assert!(chat.contains("completed in 3 turns"), "{chat}");
+        assert!(chat.contains("session 20261014T120000Z-1a2b3c"), "{chat}");
+
+        // A catch-up window is named as one on the card.
+        let mut catch_up = fresh();
+        catch_up.apply_ui_event(UiEvent::CronFire {
+            job: "hourly".to_string(),
+            minute: "2026-10-14T12:00Z".to_string(),
+            catch_up: true,
+            outcome: "skipped-needs-approval".to_string(),
+            detail: "skipped `bash`: the job is not declared unattended and no one is here to approve it"
+                .to_string(),
+            session: Some("20261014T120000Z-4d5e6f".to_string()),
+        });
+        let rendered = draw(&catch_up, 80, 24);
+        assert!(rendered.contains("catch-up for 2026-10-14T12:00Z"), "{rendered}");
+        assert!(rendered.contains("skipped"), "{rendered}");
+        assert!(rendered.contains("no one is here to approve it"), "{rendered}");
+
+        // A failed fire names its failure and carries no session.
+        let mut failed = fresh();
+        failed.apply_ui_event(UiEvent::CronFire {
+            job: "nightly".to_string(),
+            minute: "2026-10-14T03:00Z".to_string(),
+            catch_up: false,
+            outcome: "panicked".to_string(),
+            detail: "the fire panicked: boom".to_string(),
+            session: None,
+        });
+        let rendered = draw(&failed, 80, 24);
+        assert!(rendered.contains("failed"), "{rendered}");
+        assert!(rendered.contains("the fire panicked: boom"), "{rendered}");
     }
 }

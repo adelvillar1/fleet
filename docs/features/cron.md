@@ -17,6 +17,8 @@ src/cron.rs        new: the minute, the parser, the store, the run, the schedule
 src/cli.rs         `fleet cron`: list, add, enable, disable, remove
 src/main.rs        `fleet cron` dispatch, and the scheduler thread in `chat`
 src/tui/mod.rs     the scheduler thread beside the consolidator's
+src/tui/app.rs     the fire card, in the tool-card family
+src/tui/ui.rs      the fire card's render
 tests/integration.rs  the acceptance tests, driven through the mock server
 ```
 
@@ -132,15 +134,57 @@ check per field against the current minute — not a next-fire walk.
 **The latch.** A job fires at most once per matching minute per job,
 held in a `HashMap<String, Minute>` in memory. The latch is claimed at
 decision time, so a job the tick has decided to fire is not decided
-again for that minute whether its run succeeds or fails, and a run that
-outlasts its own minute cannot fire twice. The same latch covers the
-catch-up pass: a startup pass that runs twice, or a tick inside the
-missed minute, does not serve the window again.
+again for that minute whether its run succeeds, fails, or **panics** —
+a panicking fire leaves its minute claimed, because a retry inside the
+same minute could spend a window whose run may already have spent. The
+same latch covers the catch-up pass: a startup pass that runs twice,
+or a tick inside the missed minute, does not serve the window again.
 
 Two long-lived processes on one machine — a `chat` and a TUI — each own
 their own latch, so the same job can fire in both. That is the design's
 rule (the latch is in memory); it is logged as a known issue rather than
 papered over.
+
+**Concurrent fires.** Every fire a pass decides is spawned onto the
+scheduler's runtime (a local set, because a fire's future is `!Send`)
+and the pass awaits them all: a 10-minute run no longer serializes the
+fire beside it. The pass still awaits its own fires — the named line,
+the `record_run` write, and the latch all belong to the tick loop's
+single-threaded discipline — so a window that comes due while the pass
+is in flight is **named**, never silently dropped:
+
+```
+fleet: cron: job `every-minute`'s 2026-10-14T12:01Z window passed while the scheduler was running
+```
+
+One line per window, the minute claimed in the latch as it is named so
+the next tick does not name it again, and the whole backlog bounded
+(`MAX_NAMED_MISSED_WINDOWS` named windows, then one trailing count). A
+window that came due before the scheduler ever saw the job enabled — a
+job that did not exist yet, or one that was disabled — is nobody's
+drop and is not named.
+
+**A panicking fire is contained.** Each fire's future is polled inside
+`catch_unwind` (the `CatchUnwind` adapter, the shape
+`futures::FutureExt::catch_unwind` provides for the crates that carry
+the dependency), so a panic inside a fire is one named line rather than
+an unwind through the scheduler thread's `block_on` — which used to
+kill the thread for the life of the process, with nothing on any
+surface but the default hook's stderr line written over the TUI's
+alternate screen:
+
+```
+fleet: cron: job `every-minute` at 2026-10-14T12:00Z — the fire panicked: boom; the minute stays claimed (no retry this minute)
+```
+
+The store records the minute as `failed` (its vocabulary has no fourth
+outcome), the surfaces name the panic for what it was, and the loop
+carries on to the next tick and to the fires beside it.
+
+**An unreadable store is named once.** The tick runs once a second for
+the life of the process, so an unreadable job store used to write one
+line per second over whatever surface was watching. It is now named
+once and silenced until the reason changes.
 
 ## Catch-up
 
@@ -186,6 +230,13 @@ its turns landing calibration rows like any run. `run_job` resolves the
 route for the job's own task — one judgment per scheduled run, exactly
 like `fleet run` — and records the decision row.
 
+The log is created through `Session::create_scheduled`, so its `start`
+record carries `kind: scheduled`: a scheduled run is an ordinary session
+with a marker, which is what makes `fleet sessions` and the picker name
+one without opening its log. The job's name rides the framed task, and
+the session id is on the job's card (see *The surface*), so the
+retained output is reachable from both directions.
+
 The corpus root is an explicit input to `execute`, the way `home` is:
 the caller decides, and `run_job` resolves it with the same
 `resolve_root(cwd)` walk `fleet run` uses. Production behavior is
@@ -213,6 +264,15 @@ dangerous tool. The job's `auto_approve` decides:
   the log with `approved: false`, so the run's own record shows exactly
   which call did not happen.
 
+The denial the **model** reads names the job's policy, not a user who is
+guaranteed absent: `denied: this scheduled job is not declared
+unattended (`auto_approve` off), so no one is here to approve this
+call`. The loop's ordinary sentence — "the user did not approve this
+call." — is what an interactive denial names, and it is the one signal
+the model gets in the one path where no user exists (KI-088). Every
+other approver keeps the ordinary sentence; the gate supplies its own
+through `Approver::denial_reason`.
+
 An unattended run's per-turn progress has no surface to land on — no
 foreground is watching — so it goes to the log and the scheduler names
 the outcome on the surface that is watching.
@@ -220,10 +280,11 @@ the outcome on the surface that is watching.
 ## Retention
 
 A job's output is retained the ordinary way: **the run's own session
-log**, under `<FLEET_HOME>/sessions/`, resumable and listed by
-`fleet sessions` like any other log, plus the job's `last_run` and
-`last_outcome` fields in the store. There is no second copy and no
-side channel: a scheduled run is a session, and a session is a log.
+log**, under `<FLEET_HOME>/sessions/`, marked `kind: scheduled`,
+resumable and listed by `fleet sessions` like any other log, plus the
+job's `last_run` and `last_outcome` fields in the store. There is no
+second copy and no side channel: a scheduled run is a session, and a
+session is a log.
 
 ## Delivery — deliberately not built
 
@@ -239,8 +300,8 @@ the output went.
 ## The surface
 
 `fleet cron` with no subcommand lists the jobs as cards — name, schedule,
-next fire, last run and outcome — in the house card style, never a
-plain-text table:
+next fire, last run, outcome, and the session the last fire wrote — in
+the house card style, never a plain-text table:
 
 ```
 fleet cron — 2 jobs in ~/.fleet/cron/jobs.json
@@ -250,8 +311,15 @@ fleet cron — 2 jobs in ~/.fleet/cron/jobs.json
 │ Summarize yesterday's session logs into a digest.
 │ next fire 2026-10-15T07:00Z · auto-approve off
 │ last run 2026-10-14T07:00Z · completed
+│ session 20261014T070000Z-1a2b3c
 └──────────────────────────────────────────────────────┘
 ```
+
+The session line is read from the sessions directory, not from the
+store: the id is a fact about a log, and the store's shape is the
+contract this slice froze. The join is the frame itself — a scheduled
+run's log is marked `kind: scheduled` and its first message names its
+job — and only each log's head is read.
 
 `fleet cron add --name <name> --schedule "<expr>" --task "<goal>"
 [--auto-approve]` creates one; `enable`, `disable`, and `remove` mutate
@@ -259,3 +327,23 @@ by name, every one of them through the same validator and the same
 atomic rewrite. The listing is a read surface (exit 0 even with no
 jobs); a typed refusal — a taken name, a schedule that does not parse, a
 name not in the store — prints its reason and exits 1.
+
+## The TUI's fire card
+
+Inside the TUI, a finished fire rides the interface's own `UiEvent`
+channel (`CronFire`) and lands as a card in the tool-card family, beside
+the compaction and lane cards (KI-090):
+
+```
+ ✓ scheduled  daily-digest  done
+   └ at 2026-10-14T12:00Z · completed in 3 turns · session 20261014T120000Z-1a2b3c
+```
+
+The settled line stays short — the dot, the verb, the job, the state —
+and the minute (named as a catch-up when the window was missed while
+fleet was down), the outcome, and the session id ride the wrapped
+detail line, the same shape a tool card wraps its preview in. The
+headless `chat` path has no event channel: its named lines ride stderr,
+the consolidator's precedent. The store-complaint and passed-window
+lines ride stderr on both paths — they are operator diagnostics, not
+fires.

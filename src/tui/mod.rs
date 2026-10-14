@@ -327,9 +327,10 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
         // in its own session log, never a turn in the session this
         // interface is driving — and it reads the job store fresh every
         // tick, so `fleet cron add` from another shell lands within a
-        // second. Its named lines ride stderr, the consolidator's
-        // precedent.
-        crate::cron::Scheduler::spawn(home.clone());
+        // second. A finished fire rides the interface's own event
+        // channel and lands as a card (KI-090); the store and latch
+        // lines the pass names still ride stderr.
+        crate::cron::Scheduler::spawn(home.clone(), Some(ui_tx.clone()));
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()

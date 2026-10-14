@@ -146,6 +146,30 @@ pub enum UiEvent {
     /// the `subagent` call reads as one tool card that goes from
     /// pending to done with the outcome on it.
     Subagent { goal: String, session: String, stage: SubagentStage },
+    /// A scheduled job fired. The scheduler thread — which the TUI
+    /// spawns beside the agent's own, because a fire is an ordinary
+    /// headless run in its own session log rather than a turn in the
+    /// session this interface is driving — reports each finished fire
+    /// here, so the outcome lands as a card instead of a stderr line
+    /// scratched over the alternate screen (KI-090).
+    CronFire {
+        /// The job's name, the store's key.
+        job: String,
+        /// The minute the fire ran for, stamped.
+        minute: String,
+        /// Whether this fire served a window missed while fleet was
+        /// down (the catch-up rule) rather than its own minute.
+        catch_up: bool,
+        /// How it ended: `completed`, `failed`,
+        /// `skipped-needs-approval`, or `panicked`.
+        outcome: String,
+        /// The one-line reason, the same text the headless line
+        /// carries beside the job and the minute.
+        detail: String,
+        /// The session log this run wrote, when it got as far as one:
+        /// the retained output, reachable from the card.
+        session: Option<String>,
+    },
     /// The loop stopped orderly.
     Finished { stop_reason: String },
     /// The loop failed; the run is over.
@@ -207,6 +231,17 @@ impl std::error::Error for AgentError {}
 pub trait Approver {
     /// True when the call may run.
     fn approve(&mut self, call: &ToolCall) -> bool;
+
+    /// The model-visible text a denial carries, or `None` for the
+    /// ordinary interactive one — "the user did not approve this
+    /// call." An approver that denies for a reason of its own, where
+    /// no user exists to name, supplies its own sentence here: the
+    /// unattended job gate denies precisely because nobody is there,
+    /// so naming a user who is guaranteed absent is the one signal
+    /// the model gets and it has to be true (KI-088).
+    fn denial_reason(&self) -> Option<String> {
+        None
+    }
 
     /// Whether this approver's approvals come from a run-scoped latch
     /// rather than a per-call decision: `--yes`, or the console/TUI `a`
@@ -1050,7 +1085,18 @@ impl<'a> Agent<'a> {
         self.record_screen(call, approved);
         let tool = Tool::from_name(&call.function.name);
         let (output, truncated) = if !approved {
-            ("denied: the user did not approve this call.".to_string(), false)
+            // The denial the model reads. The ordinary gate names the
+            // user who was asked and said no; an approver that denies
+            // where no user exists — the unattended job gate — names
+            // its own policy instead (KI-088). Either way the text
+            // rides the ordinary `tool_result` path into the log, so
+            // model-visible stays model-visible (hard rule 5).
+            (
+                self.approver
+                    .denial_reason()
+                    .unwrap_or_else(|| "denied: the user did not approve this call.".to_string()),
+                false,
+            )
         } else if let Some(refusal) = self.scope_refusal(&call.function.name) {
             // A subagent reaching outside its admitted scope. The
             // declarations already excluded the tool; this is the

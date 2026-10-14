@@ -28,6 +28,13 @@ pub const SESSION_FORMAT_VERSION: u32 = 1;
 /// and a reader learns a log is a child only when it says so.
 pub const SUBAGENT_KIND: &str = "subagent";
 
+/// The `kind` a scheduled run's `start` record carries. A scheduled run
+/// is an ordinary session — the same loop, the same log format, the
+/// same listing — so the marker is the whole difference between "a run
+/// the owner started" and "a run a job started", and it is what makes
+/// `fleet sessions` name one without opening its log.
+pub const SCHEDULED_KIND: &str = "scheduled";
+
 /// One line of a session log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -164,6 +171,19 @@ impl Session {
     /// session, not a side channel.
     pub fn create_subagent(sessions_dir: &Path, model: &str, parent: &str) -> io::Result<Session> {
         Session::open_new(sessions_dir, model, Some(SUBAGENT_KIND), Some(parent))
+    }
+
+    /// Create a scheduled run's log under `sessions_dir(home)`, marked
+    /// `kind: scheduled` with no parent — a scheduled run belongs to a
+    /// job, not to a session that delegated to it, and the job's name
+    /// is in the run's own framed task.
+    ///
+    /// The same seam `create_subagent` uses: a scheduled run is an
+    /// ordinary session with a marker, so the picker, `fleet sessions`,
+    /// and replay treat it as real work in a real session.
+    pub fn create_scheduled(home: &Path, model: &str) -> io::Result<Session> {
+        let dir = crate::home::ensure_sessions_dir(home)?;
+        Session::open_new(&dir, model, Some(SCHEDULED_KIND), None)
     }
 
     /// The one place a log is created: the id, the file, and the `start`
