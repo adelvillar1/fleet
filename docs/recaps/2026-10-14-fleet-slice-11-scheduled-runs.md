@@ -141,21 +141,82 @@ scheduler thread), and the integration tests.
 
 ## Review cycle
 
-- Not run as a separate stage: this slice was built by a delegated
-  subagent on the parent's base model, and the parent re-verifies the
-  gate, the tests, the smoke, and the ledger rows itself. Everything
-  above is stated so that re-verification is mechanical.
+- **Stage 1 (spec, step-5-preview): SPEC-COMPLIANT** — all ten checks;
+  the store's typed errors, the parser's operators and Vixie's rule,
+  the scheduler's latch claimed at decision time, the catch-up's
+  never-run rule and its reason, the run path, the auto-approve policy
+  both ways, retention, the card-style surface, and the discipline
+  (zero test deletions, no new dependencies, the fork read-only).
+- **Stage 2 (quality, step-5-preview): REQUEST_CHANGES** — no criticals
+  on correctness (the next-fire search is a bounded 3,660-day walk, so
+  a never-matching expression returns rather than hangs; the atomic
+  rename genuinely covers the per-tick re-read; the auto-approve latch
+  cannot leak past a run), but seven Importants in the scheduler's
+  operational shapes, all fixed in `e8d0440`:
+  1. a panic in a fire unwound through `block_on` and killed the
+     scheduler thread permanently — now a `CatchUnwind` adapter
+     (cron.rs:1037), one named line, the loop continues; the minute
+     stays claimed, because a panic can land mid-run after requests
+     were spent and the next minute is one second away;
+  2. a long run stalled the tick loop and silently dropped other jobs'
+     windows forever (catch-up runs only at startup) — fires now spawn
+     onto the runtime inside a per-pass `LocalSet` (a fire's future is
+     `!Send`), joined within the pass so the named line and
+     `record_run` stay in the loop's discipline, and a window that
+     passes while a pass is in flight is named
+     (`MAX_NAMED_MISSED_WINDOWS = 8` plus a trailing count), never
+     dropped;
+  3. the store's comment claimed a clobber guarantee the
+     read-modify-write does not have — corrected to what is true, with
+     KI-092 naming the lost-update shape and the deferred lock;
+  4. the unattended denial told the model "the user did not approve
+     this call" in the one path where no user exists — an
+     `Approver::denial_reason()` seam now lets the job gate supply its
+     own sentence (KI-088 closed);
+  5. scheduled runs were indistinguishable in `fleet sessions` and the
+     retained output was reachable only from a scrolled-away stderr
+     line — `Session::create_scheduled` (the landed seam) marks the log
+     `kind: scheduled` and the listing card carries the last session id;
+  6. the TUI owed the fire a card (KI-090) — `UiEvent::CronFire` plus a
+     card in the compaction card's two-line shape (KI-090 closed);
+  7. the minors: the `unreachable!` is a typed `FieldCount` via
+     `try_into` into `[Field; 5]`; the unreadable store is named once
+     then silenced until the reason changes; KI-093/094/095 log the
+     future-`last_run`, backward-clock, and unretried-`record_run`
+     shapes.
+- The fix round's first child was interrupted by a transport hiccup
+  after landing two good `session.rs` patches; the parent verified the
+  tree it left (gate green) and re-dispatched with those patches named
+  as landed — the round completed in `e8d0440` (385 unit + 88
+  integration).
+- The parent's visual pass drove two real fires through the TUI (an
+  every-minute job against the mock, the port asserted, all six live
+  candidates disabled): `✓ scheduled visual-heartbeat done` /
+  `└ at 2026-10-14T12:14Z · completed in 1 turn · session …`, two
+  cards one minute apart, each carrying the job, the minute, the
+  outcome, and the session id — clearly distinct from the interactive
+  session. The card's first draft overflowed the pane (the KI-078/085
+  class) and was reshaped before commit (KI-096, closed).
+- **Both reviews dispatched in ONE parallel call** — the pattern's
+  third use.
 
 ## Not done (slice 12+)
 
 - Self-maintenance (12), diagnosis (13), boards (14), install (15).
 - Delivery to a gateway-connected surface (the seam is in the record's
   shape; nothing silently does nothing).
-- The minors logged: KI-087 (the KI-074 recurrence on the scheduled-run
-  path, with the smoke pattern named as the trigger), KI-088 (the
-  unattended denial's model-visible text names "the user"), KI-089 (the
-  latch is per-process, so two schedulers on one machine can both fire),
-  KI-090 (the TUI owes the cron fire a card rather than a stderr line),
-  KI-091 (the first integration tests dirtied the repo's git-tracked
-  corpus through the recall-hit write path; fixed by making the corpus
-  root an explicit input).
+- The rows logged: KI-087 (the KI-074 recurrence on the scheduled-run
+  path, with the smoke pattern named as the trigger), KI-088 (closed —
+  the unattended denial now names the job's policy), KI-089 (the latch
+  is per-process, so two schedulers on one machine can both fire, and
+  nothing records the double-fire), KI-090 (closed — the TUI card,
+  captured live), KI-091 (closed — the first integration tests dirtied
+  the repo's git-tracked corpus through the recall-hit write path;
+  fixed by making the corpus root an explicit input; the parent
+  re-verified `git status memories/` clean after a full test run),
+  KI-092 (the store's lost-update shape; the lock beside jobs.json is
+  the deferred fix), KI-093 (a future `last_run` silently disables
+  catch-up forever), KI-094 (a backward clock jump can double-fire a
+  minute via the tick latch), KI-095 (a `record_run` failure is never
+  retried for the claimed minute), KI-096 (closed — the card's
+  overflow recurrence, caught by the render test).
