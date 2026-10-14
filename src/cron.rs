@@ -998,6 +998,29 @@ pub async fn run_job(home: &Path, job: &Job, minute: Minute, catch_up: bool) -> 
 /// enabled job, not a next-fire walk.
 pub const CRON_TICK_SECONDS: u64 = 1;
 
+/// The built-in eval-corpus cadence: once a day at 04:00 UTC. The corpus
+/// is a headless deterministic run, not an agent conversation, so it
+/// rides the scheduler's own hook rather than a job-store entry — the
+/// tick decides it beside the cron jobs, with the same once-per-minute
+/// latch discipline a job gets. The interval is daily; this expression is
+/// its name.
+pub const EVAL_SCHEDULE: &str = "0 4 * * *";
+
+/// Whether the eval corpus is due at `now`: its cadence matches and the
+/// latch does not already hold this minute. Pure, so the schedule is
+/// testable without a clock or a corpus run.
+pub fn eval_due(last: Option<Minute>, now: Minute) -> bool {
+    match Schedule::parse(EVAL_SCHEDULE) {
+        Ok(schedule) => schedule.matches(now) && last != Some(now),
+        Err(_) => false,
+    }
+}
+
+/// What the eval cadence does when it fires: the production
+/// implementation runs the corpus headless and lands its row, and a test
+/// supplies its own, the way the cron [`Runner`] seam works.
+pub type EvalRunner = Box<dyn FnMut() -> Pin<Box<dyn Future<Output = Result<String, String>>>>>;
+
 /// How many passed windows one tick names before the rest are summed
 /// into one trailing count. A process that was suspended for a week
 /// would otherwise name a week of minutes, one line each, the first
@@ -1151,6 +1174,13 @@ pub struct Scheduler {
     /// `chat` path, whose named lines ride stderr as they always have.
     ui_tx: Option<UnboundedSender<UiEvent>>,
     runner: Runner,
+    /// The minute the eval corpus last ran for, the cadence's latch — the
+    /// same once-per-minute discipline a job's latch gives it.
+    eval_last: Option<Minute>,
+    /// The eval cadence's action; `None` is no cadence, which is what a
+    /// test that does not wire one gets (its cron-job behavior is
+    /// unchanged). [`Scheduler::spawn`] wires the real corpus run.
+    eval: Option<EvalRunner>,
 }
 
 impl Scheduler {
@@ -1163,6 +1193,8 @@ impl Scheduler {
             store_complaint: None,
             ui_tx: None,
             runner,
+            eval_last: None,
+            eval: None,
         }
     }
 
@@ -1170,6 +1202,31 @@ impl Scheduler {
     pub fn with_ui(mut self, ui_tx: Option<UnboundedSender<UiEvent>>) -> Scheduler {
         self.ui_tx = ui_tx;
         self
+    }
+
+    /// The eval cadence's action. A scheduler without one runs no corpus
+    /// cadence, so the tests that exercise the cron jobs are unchanged.
+    pub fn with_eval(mut self, eval: EvalRunner) -> Scheduler {
+        self.eval = Some(eval);
+        self
+    }
+
+    /// Run the eval corpus if its daily cadence is due at `now`, claiming
+    /// the minute either way so a fired minute is not fired twice. Returns
+    /// the named line the run produced, or empty when it is not due or no
+    /// cadence is wired. The row the corpus lands is in the calibration
+    /// stream; the line names the run on whatever surface is watching, the
+    /// way a fire's own line does.
+    pub async fn run_eval_if_due(&mut self, now: Minute) -> Vec<String> {
+        if self.eval.is_none() || !eval_due(self.eval_last, now) {
+            return Vec::new();
+        }
+        self.eval_last = Some(now);
+        let eval = self.eval.as_mut().expect("checked Some above");
+        match eval().await {
+            Ok(detail) => vec![format!("fleet: cron: eval corpus {detail}")],
+            Err(error) => vec![format!("fleet: cron: eval corpus failed: {error}")],
+        }
     }
 
     /// Spawn the scheduler on its own thread and runtime: the catch-up
@@ -1200,13 +1257,45 @@ impl Scheduler {
                     let home = runner_home.clone();
                     Box::pin(async move { run_job(&home, &job, minute, catch_up).await })
                 });
-                let mut scheduler = Scheduler::new(home, runner).with_ui(ui_tx);
+                // The built-in eval cadence: run the corpus headless once a
+                // day, its row landing in the stream like any run. It rides
+                // the scheduler's own hook (not a job-store entry) because
+                // the corpus is a deterministic run, not a conversation.
+                let eval_home = home.clone();
+                let eval: EvalRunner = Box::new(move || {
+                    let home = eval_home.clone();
+                    Box::pin(async move {
+                        let user_home = std::env::var("HOME").ok();
+                        let root = crate::calib::resolve_root(&home, user_home.as_deref());
+                        match crate::eval::mock_server_binary() {
+                            None => Err(
+                                "the mock-server binary was not found beside the fleet executable"
+                                    .to_string(),
+                            ),
+                            Some(bin) => {
+                                let report = crate::eval::run(&root, &bin).await;
+                                Ok(format!(
+                                    "ran \u{2014} {} passed, {} failed, score {:.2}",
+                                    report.passed(),
+                                    report.failed().len(),
+                                    report.score()
+                                ))
+                            }
+                        }
+                    })
+                });
+                let mut scheduler =
+                    Scheduler::new(home, runner).with_ui(ui_tx).with_eval(eval);
                 for line in scheduler.start(Minute::now()).await {
                     eprintln!("{line}");
                 }
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(CRON_TICK_SECONDS)).await;
-                    for line in scheduler.tick(Minute::now()).await {
+                    let now = Minute::now();
+                    for line in scheduler.tick(now).await {
+                        eprintln!("{line}");
+                    }
+                    for line in scheduler.run_eval_if_due(now).await {
                         eprintln!("{line}");
                     }
                 }
@@ -2138,6 +2227,56 @@ mod tests {
                 Ok(completed(&job))
             })
         })
+    }
+
+    #[test]
+    fn the_eval_cadence_is_daily_and_fires_once_per_matching_minute() {
+        // Pure: due at its daily minute, not at any other, and not twice
+        // for the same minute the latch already holds.
+        let due = minute(2026, 10, 14, 4, 0);
+        assert!(eval_due(None, due));
+        assert!(!eval_due(Some(due), due), "the latch holds the minute");
+        assert!(!eval_due(None, minute(2026, 10, 14, 5, 0)), "only 04:00 matches");
+        assert!(eval_due(Some(due), minute(2026, 10, 15, 4, 0)), "a new day is a new fire");
+    }
+
+    #[tokio::test]
+    async fn the_scheduler_runs_the_eval_corpus_on_its_daily_cadence() {
+        let home = temp_home("eval-cadence");
+        let fired = std::sync::Arc::new(AtomicUsize::new(0));
+        let seen = std::sync::Arc::clone(&fired);
+        let eval: EvalRunner = Box::new(move || {
+            let seen = std::sync::Arc::clone(&seen);
+            Box::pin(async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok("ran \u{2014} 6 passed, 0 failed, score 1.00".to_string())
+            })
+        });
+        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("nothing")).with_eval(eval);
+        let due = minute(2026, 10, 14, 4, 0);
+        // The matching minute fires it once, and the line names the run.
+        let lines = scheduler.run_eval_if_due(due).await;
+        assert_eq!(fired.load(Ordering::SeqCst), 1);
+        assert!(
+            lines.iter().any(|line| line.contains("eval corpus") && line.contains("score 1.00")),
+            "{lines:?}"
+        );
+        // The same minute does not fire again; a non-matching minute does not.
+        assert!(scheduler.run_eval_if_due(due).await.is_empty());
+        assert!(scheduler.run_eval_if_due(minute(2026, 10, 14, 9, 0)).await.is_empty());
+        assert_eq!(fired.load(Ordering::SeqCst), 1);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test]
+    async fn a_scheduler_without_a_wired_cadence_runs_no_corpus() {
+        // The default: no eval cadence wired, so `run_eval_if_due` is a
+        // no-op even on the matching minute — the cron-job tests are
+        // unchanged by the cadence's presence.
+        let home = temp_home("eval-cadence-none");
+        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("nothing"));
+        assert!(scheduler.run_eval_if_due(minute(2026, 10, 14, 4, 0)).await.is_empty());
+        fs::remove_dir_all(&home).ok();
     }
 
     /// A panic inside a fire used to unwind through the scheduler

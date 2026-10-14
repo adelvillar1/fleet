@@ -11,6 +11,7 @@ pub mod cli;
 pub mod compaction;
 pub mod cron;
 pub mod doctor;
+pub mod eval;
 pub mod home;
 pub mod improve;
 pub mod lanes;

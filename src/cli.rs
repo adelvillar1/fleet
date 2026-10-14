@@ -35,8 +35,12 @@ pub enum Command {
     /// Write one fact into the memory corpus: the CLI form of the
     /// `remember` tool, structured flags over the same field names.
     Remember(RememberOptions),
-    /// Environment and connectivity checks.
-    Doctor,
+    /// Environment and connectivity checks; `--diagnose` classifies one
+    /// session's failure and drafts an evidence-cited recap.
+    Doctor(DoctorOptions),
+    /// The eval corpus: run the fixed, graded suite headless and land a
+    /// row, or read the last run back with `--last`.
+    Eval(EvalOptions),
     /// Print the version.
     Version,
     /// Print help.
@@ -123,6 +127,28 @@ pub struct RememberOptions {
     /// Optional for a durable fact, required for a working one.
     pub valid_until: String,
     pub body: String,
+}
+
+/// Options for `fleet doctor`. The bare command runs the boot checks;
+/// `--diagnose <session>` classifies one session's failure and drafts an
+/// evidence-cited recap, and `--ledger <path>` points that diagnosis's
+/// ledger filing at a file. Without `--ledger` the diagnosis names the
+/// repo's own `docs/known-issues.md` as the file it would write and files
+/// nothing — the ledger stays human-owned until a path is named.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DoctorOptions {
+    /// A session id to diagnose instead of running the boot checks.
+    pub diagnose: Option<String>,
+    /// The ledger file a diagnosis files into; absent names the repo's
+    /// own ledger and writes nothing.
+    pub ledger: Option<String>,
+}
+
+/// Options for `fleet eval`. The bare command runs the whole corpus and
+/// lands a row; `--last` reads the most recent run back without running.
+#[derive(Debug, PartialEq, Eq)]
+pub struct EvalOptions {
+    pub last: bool,
 }
 
 /// Options for `fleet cron`. The bare command lists the jobs as cards;
@@ -231,7 +257,16 @@ usage:
                                 write one fact into the memory corpus — the CLI
                                 form of the remember tool; basis is required, and
                                 valid-until is required for a working-tier fact
-  fleet doctor                   check credentials, home, API, shell
+  fleet doctor                   check credentials, home, API, shell, roster,
+                                ledger, and the MCP cores; a broken layer is
+                                named with its reason
+  fleet doctor --diagnose <session> [--ledger <path>]
+                                classify one session's failure, draft an
+                                evidence-cited recap, and name (or, with
+                                --ledger, file) its known-issues row
+  fleet eval                     run the fixed eval corpus headless and land a
+                                row in the calibration stream
+  fleet eval --last              the last run's per-scenario scores
   fleet version                  print the version
   fleet help                     print this help
 
@@ -280,7 +315,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "cron" => parse_cron(rest),
         "improve" => parse_improve(rest),
         "remember" => parse_remember(rest),
-        "doctor" => no_flags(rest, Command::Doctor),
+        "doctor" => parse_doctor(rest),
+        "eval" => parse_eval(rest),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
         other => Err(format!("unknown command `{other}` — try `fleet help`")),
@@ -643,6 +679,61 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
     }))
 }
 
+/// `fleet doctor`: the bare command runs the boot checks; `--diagnose
+/// <session>` classifies one session's failure and drafts an
+/// evidence-cited recap; `--ledger <path>` points that diagnosis's filing
+/// at a file. `--ledger` without `--diagnose` is a usage error — there is
+/// nothing to file.
+fn parse_doctor(args: &[String]) -> Result<Command, String> {
+    let mut diagnose: Option<String> = None;
+    let mut ledger: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--diagnose" => diagnose = Some(take_value(args, &mut index, arg)?),
+            "--ledger" => ledger = Some(take_value(args, &mut index, arg)?),
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown doctor option `{other}`"));
+            }
+            other => {
+                return Err(format!("`{other}` takes no value here; see `fleet help`"));
+            }
+        }
+        index += 1;
+    }
+    if ledger.is_some() && diagnose.is_none() {
+        return Err(
+            "--ledger points the diagnosis's filing; it needs --diagnose (see `fleet help`)"
+                .to_string(),
+        );
+    }
+    Ok(Command::Doctor(DoctorOptions { diagnose, ledger }))
+}
+
+/// `fleet eval`: the bare command runs the whole corpus and lands a row;
+/// `--last` reads the most recent run back without running. Nothing else
+/// is accepted — the corpus is fixed, so there is no scenario to name.
+fn parse_eval(args: &[String]) -> Result<Command, String> {
+    let mut last = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--last" => last = true,
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown eval option `{other}`"));
+            }
+            other => {
+                return Err(format!("`{other}` takes no value here; see `fleet help`"));
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Eval(EvalOptions { last }))
+}
+
 /// A real calendar check on an already-`YYYY-MM-DD`-shaped string: the
 /// month is 1-12 and the day is within that month's own length (leap
 /// years included). Without it, `--day 2026-13-45` reads as "Fleet did
@@ -748,11 +839,53 @@ mod tests {
     fn bare_commands_take_no_options() {
         assert_eq!(parse(&args(&["sessions"])).unwrap(), Command::Sessions);
         assert_eq!(parse(&args(&["lanes"])).unwrap(), Command::Lanes);
-        assert_eq!(parse(&args(&["doctor"])).unwrap(), Command::Doctor);
+        assert_eq!(
+            parse(&args(&["doctor"])).unwrap(),
+            Command::Doctor(DoctorOptions { diagnose: None, ledger: None })
+        );
         assert_eq!(parse(&args(&["version"])).unwrap(), Command::Version);
         assert_eq!(parse(&args(&["--help"])).unwrap(), Command::Help);
         assert!(parse(&args(&["sessions", "--all"])).is_err());
         assert!(parse(&args(&["lanes", "--json"])).is_err());
+    }
+
+    #[test]
+    fn doctor_parses_the_bare_check_and_the_diagnosis() {
+        // The bare command is the boot check.
+        assert_eq!(
+            parse(&args(&["doctor"])).unwrap(),
+            Command::Doctor(DoctorOptions { diagnose: None, ledger: None })
+        );
+        // --diagnose names a session; --ledger points the filing.
+        assert_eq!(
+            parse(&args(&["doctor", "--diagnose", "20261014T120000Z-1"])).unwrap(),
+            Command::Doctor(DoctorOptions {
+                diagnose: Some("20261014T120000Z-1".to_string()),
+                ledger: None,
+            })
+        );
+        assert_eq!(
+            parse(&args(&["doctor", "--diagnose", "s1", "--ledger", "/tmp/ki.md"])).unwrap(),
+            Command::Doctor(DoctorOptions {
+                diagnose: Some("s1".to_string()),
+                ledger: Some("/tmp/ki.md".to_string()),
+            })
+        );
+        // --ledger without --diagnose, an unknown flag, and a stray word
+        // are each a usage error.
+        assert!(parse(&args(&["doctor", "--ledger", "/tmp/ki.md"])).is_err());
+        assert!(parse(&args(&["doctor", "--json"])).is_err());
+        assert!(parse(&args(&["doctor", "--diagnose"])).is_err());
+        assert_eq!(parse(&args(&["doctor", "--help"])).unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn eval_parses_the_bare_run_and_the_last_query() {
+        assert_eq!(parse(&args(&["eval"])).unwrap(), Command::Eval(EvalOptions { last: false }));
+        assert_eq!(parse(&args(&["eval", "--last"])).unwrap(), Command::Eval(EvalOptions { last: true }));
+        assert!(parse(&args(&["eval", "--json"])).is_err());
+        assert!(parse(&args(&["eval", "extra"])).is_err());
+        assert_eq!(parse(&args(&["eval", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]

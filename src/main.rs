@@ -44,7 +44,8 @@ async fn main() -> ExitCode {
         Ok(Command::Cron(options)) => cron_command(&options),
         Ok(Command::Improve(options)) => improve_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
-        Ok(Command::Doctor) => doctor_command(),
+        Ok(Command::Doctor(options)) => doctor_command(&options),
+        Ok(Command::Eval(options)) => eval_command(&options).await,
         Err(message) => {
             eprintln!("fleet: {message}");
             eprint!("{}", cli::HELP);
@@ -547,12 +548,18 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
                 user_home.as_deref(),
             ));
             let gate = fleet::improve::Gate::local(&repo);
+            // The eval-corpus gate probe for a source target: it runs
+            // `fleet eval` as a subprocess so the gate grades the
+            // freshly-built binary. A source self-edit that regresses the
+            // corpus is refused with the scenario named.
+            let eval = std::env::current_exe().ok().map(fleet::eval::subprocess_probe);
             let ctx = fleet::improve::Apply {
                 home: &home,
                 repo: &repo,
                 gate: &gate,
                 approved: *approve,
                 stream: Some(&stream),
+                eval,
             };
             let verdict = fleet::improve::apply(name, &ctx);
             match &verdict {
@@ -752,7 +759,13 @@ fn providers_command() -> ExitCode {
     }
 }
 
-fn doctor_command() -> ExitCode {
+fn doctor_command(options: &cli::DoctorOptions) -> ExitCode {
+    // The diagnosis path: classify one session's failure and draft an
+    // evidence-cited recap, filing (or naming) its ledger row.
+    if let Some(session_id) = &options.diagnose {
+        return diagnose_command(session_id, options.ledger.as_deref());
+    }
+
     let home = fleet_home().ok();
     let dotenv = read_dotenv();
     let key = setting("DEEPSEEK_API_KEY", &dotenv);
@@ -786,12 +799,70 @@ fn doctor_command() -> ExitCode {
     failed |= !shell_check.ok;
     println!("{}", doctor::render(&shell_check));
 
+    // The roster layer: how many routing candidates can serve. Named
+    // beside the credentials line — a keyless machine is the layer a
+    // routed run cannot cross, and `doctor` says so rather than leaving
+    // it to the first failed run.
+    let roster_check = match &home {
+        Some(home) => match route::load_roster(home) {
+            Ok(roster) => {
+                let resolved = route::resolve(&roster.candidates, &dotenv);
+                let total = resolved.len();
+                let ready = resolved
+                    .iter()
+                    .filter(|entry| route::provider_state(entry) == route::ProviderState::Ready)
+                    .count();
+                doctor::evaluate_roster(ready, total)
+            }
+            Err(error) => doctor::Check {
+                name: "roster",
+                ok: false,
+                detail: format!("the roster did not load: {error}"),
+            },
+        },
+        None => doctor::evaluate_roster(0, 0),
+    };
+    println!("{}", doctor::render(&roster_check));
+
+    // The ledger layer: the calibration stream's root and whether it is
+    // writable. The audit spine every self-improvement loop writes to,
+    // so an unwritable one is a broken layer `doctor` names and fails on.
+    let user_home = std::env::var("HOME").ok();
+    let ledger_check = match &home {
+        Some(home) => {
+            let root = fleet::calib::resolve_root(home, user_home.as_deref());
+            let writable = std::fs::create_dir_all(&root).is_ok();
+            let check = doctor::evaluate_ledger(Some(&root), writable);
+            failed |= !check.ok;
+            check
+        }
+        None => {
+            let check = doctor::evaluate_ledger(None, false);
+            failed |= !check.ok;
+            check
+        }
+    };
+    println!("{}", doctor::render(&ledger_check));
+
+    // The MCP cores, one named line each: whether each vendored lane's
+    // home resolves. Named, not failed — a lane that does not resolve
+    // degrades a run rather than blocking boot, and `fleet lanes` owns
+    // the deep MCP health probe. This line names which of the four is
+    // unavailable and why, the way the plan's layer list asks.
+    for lane in fleet::lanes::LANES.iter() {
+        let resolved = match fleet::lanes::resolve_home(lane) {
+            fleet::lanes::LaneHome::Resolved { home, .. } => Ok(home),
+            fleet::lanes::LaneHome::Unavailable { reason } => Err(reason),
+        };
+        let check = doctor::evaluate_mcp_core(lane.name, resolved.as_deref().map_err(|reason| reason.clone()));
+        println!("{}", doctor::render(&check));
+    }
+
     // The calibration-stream line: informational, never a check, and it
     // never changes the exit code. It names the root the stream actually
     // resolves to and whether today's file exists — the cheapest guard
     // against dev-decisions moving its LOG_DIR literal and silently
     // re-routing Fleet's rows.
-    let user_home = std::env::var("HOME").ok();
     let calib_line = match &home {
         Some(home) => {
             let root = fleet::calib::resolve_root(home, user_home.as_deref());
@@ -817,6 +888,106 @@ fn doctor_command() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// `fleet doctor --diagnose <session>`: replay one session's log, classify
+/// what is deterministically there, and draft the evidence-first recap.
+/// The recap cites the ledger rows that already hold this failure's
+/// signature — or names the row a filing would add. The filing writes
+/// only where `--ledger <path>` points it; without it the command names
+/// the repo's own `docs/known-issues.md` as the file it would write and
+/// writes nothing, so the human-owned ledger stays human-owned until a
+/// path is named.
+fn diagnose_command(session_id: &str, ledger: Option<&str>) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let path = session::session_path(&home, session_id);
+    if !path.exists() {
+        eprintln!(
+            "fleet: no session `{session_id}` under {}",
+            home::sessions_dir(&home).display()
+        );
+        return ExitCode::from(2);
+    }
+    let diagnosis = match doctor::diagnose_session(&path) {
+        Ok(diagnosis) => diagnosis,
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // The ledger target: the file `--ledger` names, or the repo's own
+    // `docs/known-issues.md` resolved from the working directory (the
+    // improve gate's cwd convention, KI-099's family). It is named either
+    // way; only an explicit `--ledger` writes.
+    let named = ledger
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_default()
+                .join("docs")
+                .join("known-issues.md")
+        });
+    print!("{}", doctor::render_diagnosis(&diagnosis, &named));
+    match ledger {
+        Some(_) => {
+            let entry = doctor::LedgerEntry { severity: "defect", diagnosis };
+            match doctor::file_ledger_row(&named, &entry) {
+                Ok(filed) => {
+                    let id = match filed {
+                        doctor::Filed::Appended { id } | doctor::Filed::Updated { id } => id,
+                    };
+                    eprintln!("fleet: doctor: filed {id} in {}", named.display());
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: doctor: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        None => {
+            eprintln!(
+                "fleet: doctor: would file to {} \u{2014} name it with --ledger <path> to write",
+                named.display()
+            );
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+/// `fleet eval`: run the fixed corpus headless against the mock, print
+/// house cards, and land one `eval_corpus` row; `--last` reads the most
+/// recent run back without running. A read surface when `--last`, a run
+/// otherwise — the exit code is success when the corpus is green (or the
+/// last run is only read) and failure on a regression, so a scheduler or
+/// a gate can read it.
+async fn eval_command(options: &cli::EvalOptions) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let user_home = std::env::var("HOME").ok();
+    let root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    if options.last {
+        print!("{}", fleet::eval::render_last(&root));
+        return ExitCode::SUCCESS;
+    }
+    let Some(mock_bin) = fleet::eval::mock_server_binary() else {
+        eprintln!(
+            "fleet: eval: the mock-server binary was not found beside the fleet executable; the corpus cannot run"
+        );
+        return ExitCode::FAILURE;
+    };
+    let report = fleet::eval::run(&root, &mock_bin).await;
+    print!("{}", fleet::eval::render(&report));
+    if report.green() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 

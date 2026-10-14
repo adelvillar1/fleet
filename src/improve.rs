@@ -73,6 +73,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::calib::{self, Stream, VERDICT_APPLIED, VERDICT_REFUSED, VERDICT_WAITING};
+use crate::eval;
 use crate::memory::{self, Memory};
 use crate::skills;
 
@@ -912,6 +913,24 @@ fn named_failure(steps: &[GateStep]) -> String {
     }
 }
 
+/// The eval-corpus gate step from one probe run: `ok` when the corpus is
+/// green, and a failure whose detail names the regressing scenario (the
+/// probe's `Err` reason) when it is not. The detail is bounded the way a
+/// cargo step's is — the reason names the failure; the whole report is
+/// `fleet eval`'s, not the ledger's.
+fn eval_gate_step(probe: &eval::EvalProbe) -> GateStep {
+    match probe() {
+        Ok(()) => GateStep { label: "eval_corpus".to_string(), ok: true, detail: "ok".to_string() },
+        Err(reason) => {
+            let mut bounded: String = reason.chars().take(MAX_DETAIL_CHARS).collect();
+            if reason.chars().count() > MAX_DETAIL_CHARS {
+                bounded.push('\u{2026}');
+            }
+            GateStep { label: "eval_corpus".to_string(), ok: false, detail: bounded }
+        }
+    }
+}
+
 // --- the verdict -----------------------------------------------------------
 
 /// What the gate did with one proposal.
@@ -984,6 +1003,13 @@ pub struct Apply<'a> {
     /// Approval in the current turn: `fleet improve apply --approve`.
     pub approved: bool,
     pub stream: Option<&'a Stream>,
+    /// The eval-corpus gate probe, run as a gate step for a **source**
+    /// target only: `Ok(())` when the corpus is green, `Err` naming the
+    /// regressing scenario when it is not. `None` skips the corpus step
+    /// — a test that is exercising something else, or a machine that has
+    /// not wired one. Production always wires it, so a real source
+    /// self-edit is gated on the corpus.
+    pub eval: Option<eval::EvalProbe>,
 }
 
 /// A pre-gate outcome: the proposal waits on the owner, or is refused
@@ -1121,8 +1147,29 @@ pub fn apply(name: &str, ctx: &Apply<'_>) -> Verdict {
             return finish(&proposal, Verdict::Refused { reason }, &[], ctx)
         }
     };
-    let steps = ctx.gate.run();
-    let verdict = if steps.iter().all(|step| step.ok) {
+    let mut steps = ctx.gate.run();
+    let gate_green = steps.iter().all(|step| step.ok);
+    // The eval-corpus gate step, for a source edit only and only when a
+    // probe is wired: the four cargo steps have already rebuilt the
+    // binary, so the corpus grades the edited code, and a regression
+    // refuses the apply with the scenario named — the AC that closes the
+    // loop with slice 12. A skill/memory/config target's gate is
+    // unchanged: no corpus step, the same four steps. The signal is the
+    // change itself — a `patch` is the one change that edits the repo's
+    // source — so it holds whatever the frontmatter's `target` word says.
+    let is_source_edit = matches!(proposal.change, Change::Patch { .. });
+    let eval_regressed = if gate_green && is_source_edit {
+        ctx.eval.as_ref().map(|probe| {
+            let step = eval_gate_step(probe);
+            let regressed = !step.ok;
+            steps.push(step);
+            regressed
+        })
+        .unwrap_or(false)
+    } else {
+        false
+    };
+    let verdict = if gate_green && !eval_regressed {
         match landed.commit(ctx.repo) {
             Ok(commit) => Verdict::Applied { summary: landed.summary.clone(), commit },
             Err(reason) => {
@@ -2050,7 +2097,7 @@ mod tests {
         let change = r#"{"op": "write-skill", "content": "---\nname: demo\ndescription: the old body\n---\n\nnew body\n"}"#;
         skill_proposal(&home, "demo-update", "demo", change);
         let stream = calib::Stream::open(scratch("apply-skill-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         let verdict = apply("demo-update", &ctx);
         let Verdict::Applied { .. } = &verdict else { panic!("expected applied, got {verdict:?}") };
         // The skill changed on disk.
@@ -2096,7 +2143,7 @@ mod tests {
         let change = r#"{"op": "patch", "path": "memories/load-bearing.md", "content": "rewritten\n"}"#;
         skill_proposal(&home, "bypass-the-fact", "memories/load-bearing.md", change);
         let stream = calib::Stream::open(scratch("apply-memories-bypass-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         let verdict = apply("bypass-the-fact", &ctx);
         let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
         assert!(reason.contains("memories/"), "{reason}");
@@ -2129,7 +2176,7 @@ mod tests {
         let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "overwrite-the-work", "src/lib.rs", change);
         let stream = calib::Stream::open(scratch("apply-dirty-target-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         let verdict = apply("overwrite-the-work", &ctx);
         let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
         assert!(reason.contains("uncommitted work"), "{reason}");
@@ -2151,7 +2198,7 @@ mod tests {
         let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "break-the-ranker", "src/lib.rs", change);
         let stream = calib::Stream::open(scratch("apply-source-red-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         let verdict = apply("break-the-ranker", &ctx);
         let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
         assert!(reason.contains("the_ranker_orders_a_corpus"), "{reason}");
@@ -2182,7 +2229,7 @@ mod tests {
         let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "fix-the-ranker", "src/lib.rs", change);
         let stream = calib::Stream::open(scratch("apply-source-green-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         let verdict = apply("fix-the-ranker", &ctx);
         let Verdict::Applied { commit, .. } = &verdict else { panic!("expected applied, got {verdict:?}") };
         let commit = commit.clone().expect("a repo-side apply commits");
@@ -2205,6 +2252,87 @@ mod tests {
     }
 
     #[test]
+    fn a_source_proposal_that_regresses_the_corpus_is_refused_with_the_scenario_named() {
+        // The slice-13 hook that closes the loop with slice 12: a source
+        // self-edit whose corpus run regresses is refused at the
+        // `eval_corpus` gate step, naming the scenario. Driven through the
+        // stand-in seam — a green stand-in cargo gate plus an eval probe
+        // that reports a regression — so the refusal is deterministic.
+        let home = scratch("apply-eval-regress");
+        let repo = scratch_repo("apply-eval-regress-repo");
+        let pre_image = fs::read_to_string(repo.join("src/lib.rs")).unwrap();
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 0, "", &log);
+        let gate = fake_gate(&repo, &bin);
+        let probe: eval::EvalProbe = std::sync::Arc::new(|| {
+            Err("the eval corpus regressed: conversation-fold".to_string())
+        });
+        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        skill_proposal(&home, "break-the-fold", "src/lib.rs", change);
+        let stream = calib::Stream::open(scratch("apply-eval-regress-calib"));
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: Some(probe),
+        };
+        let verdict = apply("break-the-fold", &ctx);
+        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        assert!(reason.contains("conversation-fold"), "{reason}");
+        assert!(reason.contains("eval_corpus"), "{reason}");
+        // The tree is back to its pre-image and nothing committed.
+        assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), pre_image);
+        let status = git(&repo, &["status", "--porcelain"]).unwrap();
+        assert!(status.trim().is_empty(), "{status}");
+        // The row landed, refused, carrying the eval step's evidence.
+        settle(&stream);
+        let root = stream.root().to_path_buf();
+        let rows = calib::read_day(&root, &calib::today(), 64);
+        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        assert_eq!(row.verdict, calib::VERDICT_REFUSED);
+        let eval_step =
+            row.gate.iter().find(|step| step.step == "eval_corpus").expect("the eval step");
+        assert!(!eval_step.ok);
+        assert!(eval_step.detail.contains("conversation-fold"), "{:?}", eval_step.detail);
+    }
+
+    #[test]
+    fn a_source_proposal_applies_when_the_corpus_is_green() {
+        // The green path: a green cargo gate plus a green corpus probe lets
+        // the source edit apply and commit, with the eval step recorded ok.
+        let home = scratch("apply-eval-green");
+        let repo = scratch_repo("apply-eval-green-repo");
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 0, "", &log);
+        let gate = fake_gate(&repo, &bin);
+        let probe: eval::EvalProbe = std::sync::Arc::new(|| Ok(()));
+        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        skill_proposal(&home, "keep-the-fold", "src/lib.rs", change);
+        let stream = calib::Stream::open(scratch("apply-eval-green-calib"));
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: Some(probe),
+        };
+        let verdict = apply("keep-the-fold", &ctx);
+        assert!(matches!(verdict, Verdict::Applied { .. }), "{verdict:?}");
+        assert!(fs::read_to_string(repo.join("src/lib.rs")).unwrap().contains("{ 2 }"));
+        settle(&stream);
+        let root = stream.root().to_path_buf();
+        let rows = calib::read_day(&root, &calib::today(), 64);
+        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        assert_eq!(row.verdict, calib::VERDICT_APPLIED);
+        assert!(row.gate.iter().any(|step| step.step == "eval_corpus" && step.ok));
+    }
+
+    #[test]
     fn a_destructive_proposal_waits_and_names_what_will_be_destroyed() {
         let home = scratch("apply-destructive");
         let repo = scratch_repo("apply-destructive-repo");
@@ -2223,7 +2351,7 @@ mod tests {
         let change = r#"{"op": "retire-skill", "name": "demo"}"#;
         skill_proposal(&home, "retire-demo", "demo", change);
         let stream = calib::Stream::open(scratch("apply-destructive-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         let verdict = apply("retire-demo", &ctx);
         let Verdict::Waiting { reason } = &verdict else { panic!("expected waiting, got {verdict:?}") };
         assert!(reason.contains("demo"), "{reason}");
@@ -2266,7 +2394,7 @@ mod tests {
         let change = r#"{"op": "write-skill", "content": "---\nname: demo\ndescription: the old body\n---\n\nnew body\n"}"#;
         skill_proposal(&home, "demo-update", "demo", change);
         let stream = calib::Stream::open(scratch("undo-skill-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         assert!(matches!(apply("demo-update", &ctx), Verdict::Applied { .. }));
         assert!(fs::read_to_string(&live_path).unwrap().contains("new body"));
         let reverted = undo("demo-update", &home, &repo).expect("the undo");
@@ -2285,7 +2413,7 @@ mod tests {
         let change = r#"{"op": "write-skill", "content": "---\nname: fresh\ndescription: a new skill\n---\n\nbody\n"}"#;
         skill_proposal(&home, "create-fresh", "fresh", change);
         let stream = calib::Stream::open(scratch("undo-create-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         assert!(matches!(apply("create-fresh", &ctx), Verdict::Applied { .. }));
         let created = skills::skills_dir(&home).join("fresh").join(skills::SKILL_FILE);
         assert!(created.exists());
@@ -2315,6 +2443,7 @@ mod tests {
             gate: &gate,
             approved: true,
             stream: Some(&stream),
+            eval: None,
         };
         assert!(matches!(apply("retire-demo", &ctx), Verdict::Applied { .. }));
         assert!(!skill_dir.exists());
@@ -2372,7 +2501,7 @@ mod tests {
         let change = r#"{"op": "supersede", "name": "old-fact", "justification": "the port moved to 8902", "replacement": "new-fact", "description": "the endpoint is 8902"}"#;
         memory_proposal(&home, "fix-the-fact", "old-fact", change);
         let stream = calib::Stream::open(scratch("provenance-inferred-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         let verdict = apply("fix-the-fact", &ctx);
         assert!(matches!(verdict, Verdict::Applied { .. }), "{verdict:?}");
         // The supersession landed through slice 8's own path.
@@ -2400,7 +2529,7 @@ mod tests {
         let change = r#"{"op": "supersede", "name": "load-bearing", "justification": "it changed", "replacement": "load-bearing-2", "description": "the new rule"}"#;
         memory_proposal(&home, "touch-the-rule", "load-bearing", change);
         let stream = calib::Stream::open(scratch("provenance-confirmed-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream) };
+        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
         let verdict = apply("touch-the-rule", &ctx);
         let Verdict::Waiting { reason } = &verdict else { panic!("expected waiting, got {verdict:?}") };
         assert!(reason.contains("confirmed-by"), "{reason}");

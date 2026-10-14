@@ -8,11 +8,12 @@
 //! the partial endings named), `recall_hit` (slice 8's memory
 //! feedback: one fact retrieval surfaced, the shape it routed under,
 //! and the score it ranked at), `consolidate` (slice 8 part 2's
-//! memory lifecycle: one compress, supersede, or forget action, the
-//! fact it touched, and the reason), and `propose` (slice 12's
+//! lifecycle: one compress, supersede, or forget action, the
+//! fact it touched, and the reason), `propose` (slice 12's
 //! self-maintenance gate: one proposal's verdict — applied, refused, or
-//! left waiting — with the gate's per-step evidence) — and `eval_corpus`
-//! is reserved for slice 13's scores.
+//! left waiting — with the gate's per-step evidence), and `eval_corpus`
+//! (slice 13's eval-corpus run: one run's per-scenario verdicts and its
+//! aggregate score — the harness's graded model of its own performance).
 //!
 //! The contract is dev-decisions' own: it **gates the operations, grades
 //! the outcomes, and earns autonomy on evidence**. Fleet's rows land in
@@ -181,6 +182,40 @@ pub struct ProposeRow {
     pub gate: Vec<GateStepRow>,
 }
 
+/// One scenario's verdict inside an `eval_corpus` run: the scenario's
+/// name, the family it belongs to, whether it passed, and the failure's
+/// name when it did not. The whole point of the corpus is that a failure
+/// is *named*, so the row carries the name rather than a bare count.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalScenarioRow {
+    pub scenario: String,
+    /// The family the scenario belongs to, e.g. `conversation-fold`.
+    pub family: String,
+    pub passed: bool,
+    /// The failure's name, omitted when the scenario passed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+}
+
+/// One eval-corpus run: the fixed suite's per-scenario verdicts and its
+/// aggregate score. Slice 13's scores land here — the same stream every
+/// other graded outcome lands in — so the corpus is queryable the way a
+/// `turn` or `propose` row is, and the improve gate reads a regression
+/// from the same place a reader does.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalCorpusRow {
+    pub ts: String,
+    /// The scenarios that passed.
+    pub passed: usize,
+    /// The scenarios that failed.
+    pub failed: usize,
+    /// The aggregate score: `passed / (passed + failed)`, or 1.0 for an
+    /// empty corpus. In `[0, 1]`.
+    pub score: f64,
+    /// Every scenario's verdict, in corpus order.
+    pub scenarios: Vec<EvalScenarioRow>,
+}
+
 /// One row in the stream, tagged by its op the way devdec's rows are: the
 /// tag is a field of the JSON object, not a wrapper.
 #[derive(Debug, Clone, Serialize)]
@@ -192,6 +227,7 @@ pub enum Row {
     RecallHit(RecallHitRow),
     Consolidate(ConsolidateRow),
     Propose(ProposeRow),
+    EvalCorpus(EvalCorpusRow),
 }
 
 impl Row {
@@ -204,6 +240,7 @@ impl Row {
             Row::RecallHit(_) => OP_RECALL_HIT,
             Row::Consolidate(_) => OP_CONSOLIDATE,
             Row::Propose(_) => OP_PROPOSE,
+            Row::EvalCorpus(_) => OP_EVAL_CORPUS,
         }
     }
 
@@ -216,6 +253,7 @@ impl Row {
             Row::RecallHit(row) => &row.ts,
             Row::Consolidate(row) => &row.ts,
             Row::Propose(row) => &row.ts,
+            Row::EvalCorpus(row) => &row.ts,
         }
     }
 }
@@ -234,18 +272,20 @@ pub const OP_CONSOLIDATE: &str = "consolidate";
 /// gate — applied, refused, or left waiting — with the gate's per-step
 /// evidence.
 pub const OP_PROPOSE: &str = "propose";
-/// Reserved for slice 13's eval-corpus scores. Nothing emits it yet; the
-/// name is claimed here so the reader and `fleet calib` need no format
-/// change when it lands.
+/// The eval-corpus op: one run of slice 13's fixed, graded suite — its
+/// per-scenario verdicts and its aggregate score. The harness's model of
+/// its own performance, and the row the improve gate reads a regression
+/// from.
 pub const OP_EVAL_CORPUS: &str = "eval_corpus";
 /// The ops this slice emits, in the order `fleet calib` groups them.
-pub const OPS: [&str; 6] = [
+pub const OPS: [&str; 7] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
     OP_RECALL_HIT,
     OP_CONSOLIDATE,
     OP_PROPOSE,
+    OP_EVAL_CORPUS,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -919,7 +959,10 @@ pub struct ReadRow {
     /// instruction was unclassified.
     #[serde(default)]
     pub shape: String,
-    /// The composite score a `recall_hit` row ranked at.
+    /// The composite score a `recall_hit` row ranked at, and the
+    /// aggregate score an `eval_corpus` run carried (`passed/total`, in
+    /// `[0, 1]`) — one numeric field the two ops share. Zero for every
+    /// other op.
     #[serde(default)]
     pub score: f64,
     /// The action a `consolidate` row names: `compress`, `supersede`,
@@ -946,6 +989,29 @@ pub struct ReadRow {
     /// reached the gate, and for every other op.
     #[serde(default)]
     pub gate: Vec<ReadGateStep>,
+    /// The scenarios that passed in an `eval_corpus` run. Zero for every
+    /// other op.
+    #[serde(default)]
+    pub passed: usize,
+    /// The scenarios that failed in an `eval_corpus` run. Zero for every
+    /// other op.
+    #[serde(default)]
+    pub failed: usize,
+    /// Every scenario's verdict in an `eval_corpus` run, in corpus order.
+    /// Empty for every other op.
+    #[serde(default)]
+    pub scenarios: Vec<ReadEvalScenario>,
+}
+
+/// One scenario's verdict as an `eval_corpus` row carries it: the name,
+/// the family, whether it passed, and the failure's name when it did not.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReadEvalScenario {
+    pub scenario: String,
+    pub family: String,
+    pub passed: bool,
+    #[serde(default)]
+    pub failure: String,
 }
 
 /// One gate step as a `propose` row carries it: the step's name, whether
@@ -1129,6 +1195,7 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
         OP_RECALL_HIT => recall_detail(&op_rows),
         OP_CONSOLIDATE => consolidate_detail(&op_rows),
         OP_PROPOSE => propose_detail(&op_rows),
+        OP_EVAL_CORPUS => eval_detail(&op_rows),
         _ => Vec::new(),
     };
     let header_right = format!("{} row{}", op_rows.len(), plural(op_rows.len()));
@@ -1299,6 +1366,32 @@ fn propose_detail(rows: &[&ReadRow]) -> Vec<String> {
     lines
 }
 
+/// The eval-corpus card's facts: the last run's aggregate score and its
+/// pass/fail tally, and the scenarios that failed in it — named, because
+/// a corpus failure the surface does not name is the thing the corpus
+/// exists to prevent.
+fn eval_detail(rows: &[&ReadRow]) -> Vec<String> {
+    let Some(last) = rows.last() else {
+        return Vec::new();
+    };
+    let mut lines = vec![format!(
+        "last {} passed \u{b7} {} failed \u{b7} score {:.2}",
+        last.passed, last.failed, last.score
+    )];
+    let failed: Vec<&str> = last
+        .scenarios
+        .iter()
+        .filter(|scenario| !scenario.passed)
+        .map(|scenario| scenario.scenario.as_str())
+        .collect();
+    if failed.is_empty() {
+        lines.push("every scenario passed".to_string());
+    } else {
+        lines.push(format!("failed: {}", failed.join(" \u{b7} ")));
+    }
+    lines
+}
+
 /// The dash run that pads a card header so its right edge aligns.
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
@@ -1403,6 +1496,10 @@ fn row_summary(row: &ReadRow) -> String {
         OP_PROPOSE => format!(
             "{}  propose  {}  {} {}  {}",
             row.ts, row.proposal, row.target, row.target_name, row.verdict
+        ),
+        OP_EVAL_CORPUS => format!(
+            "{}  eval_corpus  {} passed \u{b7} {} failed \u{b7} score {:.2}",
+            row.ts, row.passed, row.failed, row.score
         ),
         _ => format!("{}  {}", row.ts, row.op),
     }
@@ -1931,7 +2028,8 @@ mod tests {
                 "turn",
                 "recall_hit",
                 "consolidate",
-                "propose"
+                "propose",
+                "eval_corpus"
             ]
         );
     }
@@ -2121,6 +2219,116 @@ mod tests {
         let state = read_state(&root);
         assert_eq!(state.written, 0, "the wedged writer appended nothing: {state:?}");
         assert!(state.dropped >= 1, "the backlog was not counted: {state:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the eval_corpus op ---
+
+    fn eval_corpus_row(scenarios: Vec<EvalScenarioRow>) -> Row {
+        let passed = scenarios.iter().filter(|scenario| scenario.passed).count();
+        let failed = scenarios.len() - passed;
+        let score = if scenarios.is_empty() {
+            1.0
+        } else {
+            passed as f64 / scenarios.len() as f64
+        };
+        Row::EvalCorpus(EvalCorpusRow {
+            ts: "2026-10-14T12:00:00Z".to_string(),
+            passed,
+            failed,
+            score,
+            scenarios,
+        })
+    }
+
+    #[test]
+    fn the_eval_corpus_row_carries_per_scenario_verdicts_and_the_score() {
+        let row = serde_json::to_string(&eval_corpus_row(vec![
+            EvalScenarioRow {
+                scenario: "two-turn-tool-loop".to_string(),
+                family: "tool-loop".to_string(),
+                passed: true,
+                failure: None,
+            },
+            EvalScenarioRow {
+                scenario: "conversation-fold".to_string(),
+                family: "conversation-fold".to_string(),
+                passed: false,
+                failure: Some("the post-fold request lost the summary".to_string()),
+            },
+        ]))
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&row).unwrap();
+        assert_eq!(value["op"], "eval_corpus");
+        assert_eq!(value["passed"], 1);
+        assert_eq!(value["failed"], 1);
+        assert_eq!(value["score"], 0.5);
+        assert_eq!(value["scenarios"][0]["scenario"], "two-turn-tool-loop");
+        assert_eq!(value["scenarios"][0]["passed"], true);
+        // A passed scenario omits its failure; a failed one names it.
+        assert!(value["scenarios"][0].get("failure").is_none());
+        assert_eq!(value["scenarios"][1]["failure"], "the post-fold request lost the summary");
+    }
+
+    #[test]
+    fn the_reader_keeps_eval_corpus_rows_with_their_scenarios() {
+        let root = scratch("read-eval");
+        write_rows(
+            &root,
+            "2026-10-14",
+            &[eval_corpus_row(vec![
+                EvalScenarioRow {
+                    scenario: "session-corpus".to_string(),
+                    family: "session-corpus".to_string(),
+                    passed: true,
+                    failure: None,
+                },
+                EvalScenarioRow {
+                    scenario: "agent-continuation".to_string(),
+                    family: "agent-continuation".to_string(),
+                    passed: false,
+                    failure: Some("the resume lost the tail".to_string()),
+                },
+            ])],
+        );
+        let rows = read_day(&root, "2026-10-14", 512);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].op, OP_EVAL_CORPUS);
+        assert_eq!(rows[0].passed, 1);
+        assert_eq!(rows[0].failed, 1);
+        assert_eq!(rows[0].scenarios.len(), 2);
+        assert_eq!(rows[0].scenarios[1].scenario, "agent-continuation");
+        assert!(!rows[0].scenarios[1].passed);
+        assert_eq!(rows[0].scenarios[1].failure, "the resume lost the tail");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_surface_cards_the_eval_corpus_op_and_names_a_failing_scenario() {
+        let root = scratch("render-eval");
+        write_rows(
+            &root,
+            "2026-10-14",
+            &[eval_corpus_row(vec![
+                EvalScenarioRow {
+                    scenario: "memory-recall".to_string(),
+                    family: "memory".to_string(),
+                    passed: true,
+                    failure: None,
+                },
+                EvalScenarioRow {
+                    scenario: "conversation-fold".to_string(),
+                    family: "conversation-fold".to_string(),
+                    passed: false,
+                    failure: Some("the summary did not ride".to_string()),
+                },
+            ])],
+        );
+        let rendered = render(&root, "2026-10-14");
+        assert!(rendered.contains("eval_corpus"), "{rendered}");
+        assert!(rendered.contains("1 passed \u{b7} 1 failed \u{b7} score 0.50"), "{rendered}");
+        // The failing scenario is named on the card, not just counted.
+        assert!(rendered.contains("failed: conversation-fold"), "{rendered}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -461,7 +461,10 @@ fn message_roles(body: &serde_json::Value) -> Vec<&str> {
 #[tokio::test]
 async fn parse_surfaces_the_documented_commands() {
     assert_eq!(cli::parse(&args(&["sessions"])), Ok(cli::Command::Sessions));
-    assert_eq!(cli::parse(&args(&["doctor"])), Ok(cli::Command::Doctor));
+    assert_eq!(
+        cli::parse(&args(&["doctor"])),
+        Ok(cli::Command::Doctor(cli::DoctorOptions { diagnose: None, ledger: None }))
+    );
     assert_eq!(cli::parse(&args(&["version"])), Ok(cli::Command::Version));
     let error = cli::parse(&args(&["launch", "--profile", "web"])).unwrap_err();
     assert!(error.contains("launch"), "{error}");
