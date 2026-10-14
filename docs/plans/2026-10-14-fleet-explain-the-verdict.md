@@ -1,6 +1,6 @@
 # Slice 17 — the explanation beat: fleet explains its own verdicts (2026-10-14)
 
-status: planned
+status: landed-pushed (2026-10-14; reviews closed, the fix round in 9caee0d, the recap in docs/recaps/2026-10-14-fleet-slice-17-explain.md)
 
 ## Goal
 
