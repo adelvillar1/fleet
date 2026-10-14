@@ -15,6 +15,22 @@ inverts it: the shape partitions the pool, the words rank within it,
 and the write path records the phrases that resolved the problem so a
 later recall for the shape finds them.
 
+## The formal framing (the owner's, 2026-10-14)
+
+A problem is a **minima in a multidimensional space**; a solution is a
+**vector that drives toward that minima**; and a value that is a
+minimum for one dimension can be meaningless in the multidimensional
+context. Everything below follows from it: the query defines a
+multidimensional *region* (the shape); a candidate fact is a *vector* —
+its direction is the vocabulary recorded during the resolution, its
+magnitude is the evidence it actually drove (the recall-hit history,
+the confirmed-by provenance); and no single dimension may dominate the
+ranking, because the per-dimension minimum is exactly the failure mode
+(a homonym across shapes, a synonym within one). Fleet's recall today
+has it backwards: 0.80 of the scoring weight is word-based (vector 0.55
++ keyword 0.25) and the shape is a 0.15 additive boost — a tiebreaker
+under the words.
+
 ## The problem shape (PS-D, the recall half)
 
 "**Have I seen this shape before, and what resolved it?**" — the naive

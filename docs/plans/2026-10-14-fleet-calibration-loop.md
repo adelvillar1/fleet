@@ -17,6 +17,19 @@ surface shows the per-provider quality, and the failover's preference
 consults it — conservatively, behind the sibling's fit requirement,
 with the owner's declared chain untouched.
 
+## The formal framing (the owner's, 2026-10-14)
+
+A problem is a **minima in a multidimensional space**; a solution is a
+**vector that drives toward that minima**; and a value that is a
+minimum for one dimension can be meaningless in the multidimensional
+context. This slice's whole design follows from it: a per-provider
+aggregate wrong-rate averages across dimensions and is exactly the
+meaningless value the framing warns about — a provider right for one
+workload shape and wrong for another must not be averaged. So the
+calibration is keyed per **(provider × workload shape) cell**, the fit
+requirement applies per cell, the failover consults the cell for the
+current task's shape only, and the surface renders the cells.
+
 ## The problem shape (PS-B)
 
 "**Was that decision right?**" — the naive path is the operator
