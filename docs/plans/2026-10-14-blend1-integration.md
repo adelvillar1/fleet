@@ -135,12 +135,23 @@ B11), then vendored — fleet does not fork lane cores.
   "action": "rebuilt"}`), the store landed
   (`vectors/mini/embeddinggemma-2/{vectors.bin,manifest.json}`), the
   report rode back, and a second fire reported `unchanged` in 0.6s.
-  **The first fire's bound is logged, not papered over (KI-148):** the
-  first build embeds every chunk (the fleet docs → 319 entries,
-  minutes), which exceeds the lane call's 60s bound — so the parent
-  pre-built the fourteen corpora directly through the lane's own path
-  (background, the local embedder), and the scheduled jobs' first fire
-  finds them hash-gated. The bound itself stays a logged gap.
+  **The first fire's bound is logged, not papered over (KI-148,
+  KI-149):** the first build embeds every chunk, and TWO bounds stand
+  in its way — the lane call's 60s (which covers the lane's spawn plus
+  execution) and, inside the lane, the corpus module's one-shot
+  `sem1.embed` inheriting http_llama's 60s default (a corpus above
+  ~500 chunks can never build through the lane as it stands; the
+  kwarg exists, the module never raises it). Measured: the fleet docs
+  (44 sources → 319 entries) embed in 36.8s; mahjong-vtt's 620 chunks,
+  dnd-vtt's 2154, and deepseek-harness's 3279 outrun the inner bound.
+  **All fourteen corpora are now built** — the eleven smaller ones
+  through the lane's own refresh, the three largest through the same
+  refresh with the client's timeout raised (the interim mitigation) —
+  so the scheduled jobs' first fire finds them hash-gated and the
+  steady state is file reads (a 2-doc project's second fire: 0.6s,
+  `unchanged`). Both bounds stay logged as open gaps with their next
+  actions (a per-tool or spawn-excluded lane bound; the corpus module
+  batching or raising its embed timeout).
 - **B14 — the eval scenarios.** Deterministic scenarios (scripted seams,
   no paid live calls) for: the grounded path (a tabular fact reaches the
   answer unaltered), the escalation (an inconclusive validation
