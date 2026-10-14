@@ -42,9 +42,9 @@ async fn the_corpus_runs_green_and_lands_a_queryable_row() {
     let report = eval::run(&root, &mock_bin()).await;
 
     // Every scenario in the fixed corpus passes on the current code, and
-    // the run is deterministic: six scenarios, score 1.0, no regression.
+    // the run is deterministic: ten scenarios, score 1.0, no regression.
     assert!(report.green(), "the corpus regressed: {:?}", report.failed());
-    assert_eq!(report.scenarios.len(), 6);
+    assert_eq!(report.scenarios.len(), 10);
     assert_eq!(report.score(), 1.0);
 
     // The three fork families plus the three everyday shapes are all here.
@@ -57,6 +57,7 @@ async fn the_corpus_runs_green_and_lands_a_queryable_row() {
         "tool-loop",
         "subagent",
         "memory",
+        "grounded-lane",
     ] {
         assert!(families.contains(&family), "the corpus is missing {family}: {families:?}");
     }
@@ -65,10 +66,10 @@ async fn the_corpus_runs_green_and_lands_a_queryable_row() {
     // verdicts and the aggregate score — the corpus's scores are queryable.
     let row = eval::last_row(&root).expect("the eval row landed");
     assert_eq!(row.op, calib::OP_EVAL_CORPUS);
-    assert_eq!(row.passed, 6);
+    assert_eq!(row.passed, 10);
     assert_eq!(row.failed, 0);
     assert_eq!(row.score, 1.0);
-    assert_eq!(row.scenarios.len(), 6);
+    assert_eq!(row.scenarios.len(), 10);
     assert!(row.scenarios.iter().all(|scenario| scenario.passed));
 
     std::fs::remove_dir_all(&root).ok();
@@ -99,6 +100,6 @@ async fn a_broken_scenario_injected_through_the_seam_fails_with_its_name() {
     assert!(!broken.passed);
     assert_eq!(broken.failure.as_deref(), Some("the seam broke it"));
     // The real scenarios beside it still passed.
-    assert_eq!(report.passed(), 6);
+    assert_eq!(report.passed(), 10);
     assert_eq!(report.failed().len(), 1);
 }
