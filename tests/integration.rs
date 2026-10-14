@@ -463,7 +463,11 @@ async fn parse_surfaces_the_documented_commands() {
     assert_eq!(cli::parse(&args(&["sessions"])), Ok(cli::Command::Sessions));
     assert_eq!(
         cli::parse(&args(&["doctor"])),
-        Ok(cli::Command::Doctor(cli::DoctorOptions { diagnose: None, ledger: None }))
+        Ok(cli::Command::Doctor(cli::DoctorOptions {
+            diagnose: None,
+            ledger: None,
+            open: false
+        }))
     );
     assert_eq!(cli::parse(&args(&["version"])), Ok(cli::Command::Version));
     let error = cli::parse(&args(&["launch", "--profile", "web"])).unwrap_err();

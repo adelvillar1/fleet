@@ -1007,7 +1007,8 @@ pub struct Apply<'a> {
     /// target only: `Ok(())` when the corpus is green, `Err` naming the
     /// regressing scenario when it is not. `None` skips the corpus step
     /// — a test that is exercising something else, or a machine that has
-    /// not wired one. Production always wires it, so a real source
+    /// not wired one. Production always wires it (and the production
+    /// probe fails closed rather than skipping), so a real source
     /// self-edit is gated on the corpus.
     pub eval: Option<eval::EvalProbe>,
 }
@@ -1158,12 +1159,27 @@ pub fn apply(name: &str, ctx: &Apply<'_>) -> Verdict {
     // change itself — a `patch` is the one change that edits the repo's
     // source — so it holds whatever the frontmatter's `target` word says.
     let is_source_edit = matches!(proposal.change, Change::Patch { .. });
-    let eval_regressed = if gate_green && is_source_edit {
+    let eval_regressed = if is_source_edit {
         ctx.eval.as_ref().map(|probe| {
-            let step = eval_gate_step(probe);
-            let regressed = !step.ok;
-            steps.push(step);
-            regressed
+            if gate_green {
+                let step = eval_gate_step(probe);
+                let regressed = !step.ok;
+                steps.push(step);
+                regressed
+            } else {
+                // The cargo gate refused first, so the corpus never
+                // ran. The step is recorded not-run — `ok: false`, the
+                // detail naming why — so the row says the corpus was
+                // not reached rather than leaving the step absent and
+                // an operator unable to tell "not reached" from
+                // "passed". The refusal itself names the cargo steps.
+                steps.push(GateStep {
+                    label: "eval_corpus".to_string(),
+                    ok: false,
+                    detail: "not run \u{2014} the cargo gate refused first".to_string(),
+                });
+                false
+            }
         })
         .unwrap_or(false)
     } else {
@@ -2297,6 +2313,61 @@ mod tests {
             row.gate.iter().find(|step| step.step == "eval_corpus").expect("the eval step");
         assert!(!eval_step.ok);
         assert!(eval_step.detail.contains("conversation-fold"), "{:?}", eval_step.detail);
+    }
+
+    #[test]
+    fn a_red_cargo_gate_records_the_eval_step_as_not_run_rather_than_leaving_it_absent() {
+        // The named finding: when the cargo gate refused, the row carried
+        // no eval step at all, so an operator reading the row could not
+        // tell whether the corpus would have passed. The step is now
+        // recorded not-run — `ok: false`, the reason named — so the row
+        // says the corpus was not reached, not that it passed.
+        let home = scratch("apply-eval-not-run");
+        let repo = scratch_repo("apply-eval-not-run-repo");
+        let pre_image = fs::read_to_string(repo.join("src/lib.rs")).unwrap();
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 1, "error: test failed: the_ranker_orders_a_corpus", &log);
+        let gate = fake_gate(&repo, &bin);
+        // A wired probe that records whether it ran: under a red cargo
+        // gate it must not run at all.
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = std::sync::Arc::clone(&ran);
+        let probe: eval::EvalProbe = std::sync::Arc::new(move || {
+            seen.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        });
+        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        skill_proposal(&home, "red-gate", "src/lib.rs", change);
+        let stream = calib::Stream::open(scratch("apply-eval-not-run-calib"));
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: Some(probe),
+        };
+        let verdict = apply("red-gate", &ctx);
+        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        assert!(reason.contains("the gate refused the change"), "{reason}");
+        assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), pre_image);
+        assert!(
+            !ran.load(std::sync::atomic::Ordering::SeqCst),
+            "the corpus probe ran under a red cargo gate"
+        );
+        settle(&stream);
+        let root = stream.root().to_path_buf();
+        let rows = calib::read_day(&root, &calib::today(), 64);
+        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        // Five steps: the four cargo steps plus the eval step recorded
+        // not-run, with the reason named.
+        assert_eq!(row.gate.len(), 5, "{:?}", row.gate);
+        let eval_step =
+            row.gate.iter().find(|step| step.step == "eval_corpus").expect("the eval step");
+        assert!(!eval_step.ok, "{eval_step:?}");
+        assert!(eval_step.detail.contains("not run"), "{eval_step:?}");
+        assert!(eval_step.detail.contains("the cargo gate refused first"), "{eval_step:?}");
     }
 
     #[test]

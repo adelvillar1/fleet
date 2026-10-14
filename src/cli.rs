@@ -135,13 +135,18 @@ pub struct RememberOptions {
 /// ledger filing at a file. Without `--ledger` the diagnosis names the
 /// repo's own `docs/known-issues.md` as the file it would write and files
 /// nothing — the ledger stays human-owned until a path is named.
+/// `--open` is the action-items read-back: the ledger's open rows with
+/// their next-action cells, read-only wherever it is pointed.
 #[derive(Debug, PartialEq, Eq)]
 pub struct DoctorOptions {
     /// A session id to diagnose instead of running the boot checks.
     pub diagnose: Option<String>,
-    /// The ledger file a diagnosis files into; absent names the repo's
-    /// own ledger and writes nothing.
+    /// The ledger file a diagnosis files into, or the read-back reads;
+    /// absent names the repo's own ledger and writes nothing.
     pub ledger: Option<String>,
+    /// Read the ledger's open action items back instead of running the
+    /// boot checks. Mutually exclusive with `diagnose`.
+    pub open: bool,
 }
 
 /// Options for `fleet eval`. The bare command runs the whole corpus and
@@ -264,6 +269,11 @@ usage:
                                 classify one session's failure, draft an
                                 evidence-cited recap, and name (or, with
                                 --ledger, file) its known-issues row
+  fleet doctor --open [--ledger <path>]
+                                the ledger's open action items with their
+                                next actions, as cards — read-only; the
+                                bare form names the repo's own
+                                docs/known-issues.md and writes nothing
   fleet eval                     run the fixed eval corpus headless and land a
                                 row in the calibration stream
   fleet eval --last              the last run's per-scenario scores
@@ -681,12 +691,15 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
 
 /// `fleet doctor`: the bare command runs the boot checks; `--diagnose
 /// <session>` classifies one session's failure and drafts an
-/// evidence-cited recap; `--ledger <path>` points that diagnosis's filing
-/// at a file. `--ledger` without `--diagnose` is a usage error — there is
-/// nothing to file.
+/// evidence-cited recap; `--open` reads the ledger's open action items
+/// back as cards; `--ledger <path>` points the diagnosis's filing (or
+/// the read-back) at a file. `--ledger` without `--diagnose` or `--open`
+/// is a usage error — there is nothing to point it at — and `--open`
+/// takes no `--diagnose`.
 fn parse_doctor(args: &[String]) -> Result<Command, String> {
     let mut diagnose: Option<String> = None;
     let mut ledger: Option<String> = None;
+    let mut open = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -694,6 +707,7 @@ fn parse_doctor(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--diagnose" => diagnose = Some(take_value(args, &mut index, arg)?),
             "--ledger" => ledger = Some(take_value(args, &mut index, arg)?),
+            "--open" => open = true,
             other if other.starts_with('-') && other != "-" => {
                 return Err(format!("unknown doctor option `{other}`"));
             }
@@ -703,13 +717,19 @@ fn parse_doctor(args: &[String]) -> Result<Command, String> {
         }
         index += 1;
     }
-    if ledger.is_some() && diagnose.is_none() {
+    if ledger.is_some() && diagnose.is_none() && !open {
         return Err(
-            "--ledger points the diagnosis's filing; it needs --diagnose (see `fleet help`)"
+            "--ledger points the filing or the read; it needs --diagnose or --open (see `fleet help`)"
                 .to_string(),
         );
     }
-    Ok(Command::Doctor(DoctorOptions { diagnose, ledger }))
+    if open && diagnose.is_some() {
+        return Err(
+            "--open reads the ledger's action items; it does not take --diagnose (see `fleet help`)"
+                .to_string(),
+        );
+    }
+    Ok(Command::Doctor(DoctorOptions { diagnose, ledger, open }))
 }
 
 /// `fleet eval`: the bare command runs the whole corpus and lands a row;
@@ -841,7 +861,7 @@ mod tests {
         assert_eq!(parse(&args(&["lanes"])).unwrap(), Command::Lanes);
         assert_eq!(
             parse(&args(&["doctor"])).unwrap(),
-            Command::Doctor(DoctorOptions { diagnose: None, ledger: None })
+            Command::Doctor(DoctorOptions { diagnose: None, ledger: None, open: false })
         );
         assert_eq!(parse(&args(&["version"])).unwrap(), Command::Version);
         assert_eq!(parse(&args(&["--help"])).unwrap(), Command::Help);
@@ -854,7 +874,7 @@ mod tests {
         // The bare command is the boot check.
         assert_eq!(
             parse(&args(&["doctor"])).unwrap(),
-            Command::Doctor(DoctorOptions { diagnose: None, ledger: None })
+            Command::Doctor(DoctorOptions { diagnose: None, ledger: None, open: false })
         );
         // --diagnose names a session; --ledger points the filing.
         assert_eq!(
@@ -862,6 +882,7 @@ mod tests {
             Command::Doctor(DoctorOptions {
                 diagnose: Some("20261014T120000Z-1".to_string()),
                 ledger: None,
+                open: false,
             })
         );
         assert_eq!(
@@ -869,6 +890,7 @@ mod tests {
             Command::Doctor(DoctorOptions {
                 diagnose: Some("s1".to_string()),
                 ledger: Some("/tmp/ki.md".to_string()),
+                open: false,
             })
         );
         // --ledger without --diagnose, an unknown flag, and a stray word
@@ -877,6 +899,27 @@ mod tests {
         assert!(parse(&args(&["doctor", "--json"])).is_err());
         assert!(parse(&args(&["doctor", "--diagnose"])).is_err());
         assert_eq!(parse(&args(&["doctor", "--help"])).unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn doctor_parses_the_open_action_items_read_back() {
+        // The read-back: `--open` reads the ledger's open rows, and
+        // `--ledger` may point the read at a file.
+        assert_eq!(
+            parse(&args(&["doctor", "--open"])).unwrap(),
+            Command::Doctor(DoctorOptions { diagnose: None, ledger: None, open: true })
+        );
+        assert_eq!(
+            parse(&args(&["doctor", "--open", "--ledger", "/tmp/ki.md"])).unwrap(),
+            Command::Doctor(DoctorOptions {
+                diagnose: None,
+                ledger: Some("/tmp/ki.md".to_string()),
+                open: true,
+            })
+        );
+        // --open is a read, not a diagnosis: the two do not combine.
+        assert!(parse(&args(&["doctor", "--open", "--diagnose", "s1"])).is_err());
+        assert_eq!(parse(&args(&["doctor", "--open", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]

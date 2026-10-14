@@ -550,9 +550,12 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
             let gate = fleet::improve::Gate::local(&repo);
             // The eval-corpus gate probe for a source target: it runs
             // `fleet eval` as a subprocess so the gate grades the
-            // freshly-built binary. A source self-edit that regresses the
-            // corpus is refused with the scenario named.
-            let eval = std::env::current_exe().ok().map(fleet::eval::subprocess_probe);
+            // freshly-built binary. The probe fails closed — it refuses
+            // unless the current executable resolves under the gate
+            // root's own target/ directory, so a source self-edit is
+            // never waved through by an eval step that did not run, or
+            // by a stale installed binary's green.
+            let eval = Some(fleet::eval::subprocess_probe(&repo));
             let ctx = fleet::improve::Apply {
                 home: &home,
                 repo: &repo,
@@ -765,6 +768,12 @@ fn doctor_command(options: &cli::DoctorOptions) -> ExitCode {
     if let Some(session_id) = &options.diagnose {
         return diagnose_command(session_id, options.ledger.as_deref());
     }
+    // The action-items read-back: the ledger's open rows with their
+    // next actions, as cards. Read-only, always exit 0 — the ledger is
+    // an artifact, not a gate.
+    if options.open {
+        return open_command(options.ledger.as_deref());
+    }
 
     let home = fleet_home().ok();
     let dotenv = read_dotenv();
@@ -913,7 +922,14 @@ fn diagnose_command(session_id: &str, ledger: Option<&str>) -> ExitCode {
         return ExitCode::from(2);
     }
     let diagnosis = match doctor::diagnose_session(&path) {
-        Ok(diagnosis) => diagnosis,
+        Ok(Some(diagnosis)) => diagnosis,
+        // An orderly completion is not a failure: nothing is drafted,
+        // nothing is filed, and the surface says so rather than
+        // inventing a "failure" out of a healthy run.
+        Ok(None) => {
+            println!("fleet: doctor: no failure diagnosed \u{2014} the run completed");
+            return ExitCode::SUCCESS;
+        }
         Err(error) => {
             eprintln!("fleet: {error}");
             return ExitCode::FAILURE;
@@ -957,6 +973,26 @@ fn diagnose_command(session_id: &str, ledger: Option<&str>) -> ExitCode {
             ExitCode::SUCCESS
         }
     }
+}
+
+/// `fleet doctor --open`: the action-items read-back the plan's
+/// Diagnosis clause asks for — an unimplemented action item stays
+/// visible until it is closed. It reads the ledger and surfaces its
+/// open rows with their next-action cells as cards. The bare form
+/// names the repo's own `docs/known-issues.md` resolved from the
+/// working directory (the improve gate's cwd convention, KI-099's
+/// family) and writes nothing; `--ledger <path>` points the read at a
+/// file. Either way it is read-only — the human-owned ledger stays
+/// human-owned.
+fn open_command(ledger: Option<&str>) -> ExitCode {
+    let named = ledger.map(std::path::PathBuf::from).unwrap_or_else(|| {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join("docs")
+            .join("known-issues.md")
+    });
+    print!("{}", doctor::render_open_items(&named));
+    ExitCode::SUCCESS
 }
 
 /// `fleet eval`: run the fixed corpus headless against the mock, print

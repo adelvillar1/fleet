@@ -1146,6 +1146,16 @@ fn settle(caught: Result<Result<RunOutcome, String>, Box<dyn std::any::Any + Sen
     }
 }
 
+/// Settle a future whose panic was caught: its own output, or the
+/// panic's one-line name. The generic seam [`CatchUnwind`] feeds — a
+/// job fire settles through [`settle`], the eval cadence through
+/// this — so every scheduled fire rides the same guard and a panic
+/// is always a named value rather than an unwind through the
+/// scheduler thread's `block_on`.
+fn caught<T>(caught: Result<T, Box<dyn std::any::Any + Send>>) -> Result<T, String> {
+    caught.map_err(|payload| panic_message(payload.as_ref()))
+}
+
 /// The in-memory scheduler: the home the store and the runs live under,
 /// the per-job fired-minute latch, and the runner a fire goes through.
 pub struct Scheduler {
@@ -1217,15 +1227,27 @@ impl Scheduler {
     /// cadence is wired. The row the corpus lands is in the calibration
     /// stream; the line names the run on whatever surface is watching, the
     /// way a fire's own line does.
+    ///
+    /// The fire rides the same [`CatchUnwind`] guard every job fire
+    /// gets: a panic in the eval cadence would otherwise unwind
+    /// through the scheduler thread's `block_on` and kill the tick
+    /// loop for the life of the process — one stderr line over the
+    /// TUI's alternate screen, and every scheduled job with it.
+    /// Caught here it is one named line, and the loop carries on. The
+    /// minute stays claimed either way, the discipline a panicking
+    /// fire's latch keeps.
     pub async fn run_eval_if_due(&mut self, now: Minute) -> Vec<String> {
         if self.eval.is_none() || !eval_due(self.eval_last, now) {
             return Vec::new();
         }
         self.eval_last = Some(now);
         let eval = self.eval.as_mut().expect("checked Some above");
-        match eval().await {
-            Ok(detail) => vec![format!("fleet: cron: eval corpus {detail}")],
-            Err(error) => vec![format!("fleet: cron: eval corpus failed: {error}")],
+        match caught(CatchUnwind::new(eval()).await) {
+            Ok(Ok(detail)) => vec![format!("fleet: cron: eval corpus {detail}")],
+            Ok(Err(error)) => vec![format!("fleet: cron: eval corpus failed: {error}")],
+            Err(panic) => vec![format!(
+                "fleet: cron: eval corpus panicked: {panic}; the minute stays claimed (no retry this minute)"
+            )],
         }
     }
 
@@ -2265,6 +2287,41 @@ mod tests {
         assert!(scheduler.run_eval_if_due(due).await.is_empty());
         assert!(scheduler.run_eval_if_due(minute(2026, 10, 14, 9, 0)).await.is_empty());
         assert_eq!(fired.load(Ordering::SeqCst), 1);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// A panic in the eval cadence is the KI-027 spawn/port pattern
+    /// promoted into the scheduler's own thread: unguarded, it
+    /// unwinds through the tick loop's `block_on` and kills the
+    /// thread for the life of the process — silently, one stderr line
+    /// over the TUI's alternate screen — and every scheduled job with
+    /// it. The cadence now rides the same CatchUnwind guard a job
+    /// fire does: one named line, and the loop carries on.
+    #[tokio::test]
+    async fn a_panicking_eval_cadence_is_named_and_the_loop_carries_on() {
+        let home = temp_home("eval-cadence-panics");
+        let eval: EvalRunner = Box::new(|| {
+            Box::pin(async move { panic!("the eval runner exploded") })
+        });
+        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("nothing")).with_eval(eval);
+        let due = minute(2026, 10, 14, 4, 0);
+
+        let lines = scheduler.run_eval_if_due(due).await;
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("eval corpus"), "{}", lines[0]);
+        assert!(lines[0].contains("panicked"), "{}", lines[0]);
+        assert!(lines[0].contains("the eval runner exploded"), "{}", lines[0]);
+        assert!(lines[0].contains("the minute stays claimed"), "{}", lines[0]);
+        // The minute is spent either way: no retry inside it.
+        assert!(scheduler.run_eval_if_due(due).await.is_empty());
+        // The scheduler is still alive: a later tick decides and runs
+        // normally — the panic was one cadence's failure, never the
+        // tick loop's death.
+        seed_job(&home, "steady", "* * * * *");
+        let lines = scheduler.tick(minute(2026, 10, 14, 12, 0)).await;
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("job `steady`"), "{}", lines[0]);
+        assert!(lines[0].contains("completed"), "{}", lines[0]);
         fs::remove_dir_all(&home).ok();
     }
 

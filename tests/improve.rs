@@ -196,10 +196,26 @@ fn a_proposal_the_gate_refuses_is_refused_with_the_failure_named() {
     assert_eq!(propose[0].proposal, "break-the-tree");
     assert_eq!(propose[0].target, "source");
     assert_eq!(propose[0].verdict, fleet::calib::VERDICT_REFUSED);
-    assert_eq!(propose[0].gate.len(), 4);
+    // Five steps: the four cargo steps, all failed, plus the eval
+    // step recorded not-run — the cargo gate refused first, so the
+    // corpus was never reached. The row says so rather than leaving
+    // the step absent, where an operator could not tell "not
+    // reached" from "passed".
+    assert_eq!(propose[0].gate.len(), 5);
     assert!(propose[0].gate.iter().all(|step| !step.ok));
     // Every failed step names its own failure in the row's evidence.
     assert!(propose[0].gate.iter().all(|step| !step.detail.is_empty()));
+    let eval_step = propose[0]
+        .gate
+        .iter()
+        .find(|step| step.step == "eval_corpus")
+        .expect("the eval step");
+    assert!(eval_step.detail.contains("not run"), "{:?}", eval_step.detail);
+    assert!(
+        eval_step.detail.contains("the cargo gate refused first"),
+        "{:?}",
+        eval_step.detail
+    );
 }
 
 #[test]

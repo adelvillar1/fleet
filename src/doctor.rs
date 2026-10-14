@@ -339,11 +339,36 @@ fn row_id(line: &str) -> Option<String> {
     (!id.is_empty()).then_some(id)
 }
 
-/// One ledger row's text, in the ledger's own six-column shape, with the
-/// signature riding the evidence cell so a later filing can find it.
-fn render_ki_row(id: &str, entry: &LedgerEntry, sig: &str, status: &str) -> String {
+/// One ledger row's cells: the six `|`-separated fields (id, severity,
+/// issue, evidence, status, next action), trimmed. `None` when the
+/// line is not a six-cell row — a header, a separator, prose.
+fn row_cells(line: &str) -> Option<Vec<&str>> {
+    let mut cells: Vec<&str> = line.split('|').map(str::trim).collect();
+    // A row is `| a | b | … |`: the split opens and closes on the
+    // pipes, so the first and last cells are empty.
+    if cells.first().is_some_and(|cell| cell.is_empty()) {
+        cells.remove(0);
+    }
+    if cells.last().is_some_and(|cell| cell.is_empty()) {
+        cells.pop();
+    }
+    (cells.len() == 6).then_some(cells)
+}
+
+/// One ledger row's text, in the ledger's own six-column shape, with
+/// the signature riding the evidence cell so a later filing can find
+/// it. The status and the next action are the row owner's cells: a
+/// new row opens with `open`/`triage`, an update carries the
+/// existing row's own.
+fn render_ki_row(
+    id: &str,
+    entry: &LedgerEntry,
+    sig: &str,
+    status: &str,
+    next_action: &str,
+) -> String {
     format!(
-        "| {id} | {severity} | {class} failure in {layer}: {summary} | {evidence} [sig:{sig}] | {status} | triage |",
+        "| {id} | {severity} | {class} failure in {layer}: {summary} | {evidence} [sig:{sig}] | {status} | {next_action} |",
         severity = entry.severity,
         class = entry.diagnosis.class.label(),
         layer = entry.diagnosis.layer,
@@ -358,6 +383,20 @@ fn render_ki_row(id: &str, entry: &LedgerEntry, sig: &str, status: &str) -> Stri
 /// a filing never rewrites an unrelated row. The write goes through a
 /// temp file and a rename, so a reader never sees a half-written ledger.
 ///
+/// An update **preserves the row owner's cells**: the status and the
+/// next action stay exactly as the human left them — a re-diagnosis
+/// is evidence gathering, not triage, and silently reopening a closed
+/// row (or discarding its next action) is the named review finding.
+/// Only the issue and the evidence refresh. A row whose status or
+/// next-action cell cannot be read back (a malformed row) opens as a
+/// new row would rather than guessing.
+///
+/// The ledger is an LF file: the update path rebuilds the text with
+/// `lines().join("\n")` plus one trailing newline, so a CRLF ledger
+/// normalizes to LF and a file without a final newline gains one.
+/// The append path adds the trailing newline the same way. This is
+/// the documented assumption — `docs/known-issues.md` is LF.
+///
 /// The caller decides the file — a test points it at a scratch ledger,
 /// production names the repo's `docs/known-issues.md`. This function
 /// writes wherever it is pointed and nowhere else.
@@ -367,13 +406,20 @@ pub fn file_ledger_row(path: &Path, entry: &LedgerEntry) -> Result<Filed, String
     let text = fs::read_to_string(path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
     if let Some(index) = text.lines().position(|line| line.contains(&marker)) {
-        // Update the matched row in place, keeping its id.
+        // Update the matched row in place, keeping its id, its status,
+        // and its next action: the human's cells are not the
+        // automation's to overwrite.
         let id = text
             .lines()
             .nth(index)
             .and_then(row_id)
             .unwrap_or_else(|| next_ki_id(&text));
-        let updated = render_ki_row(&id, entry, &sig, "open");
+        let preserved = text.lines().nth(index).and_then(row_cells);
+        let (status, next_action) = match preserved {
+            Some(cells) => (cells[4].to_string(), cells[5].to_string()),
+            None => ("open".to_string(), "triage".to_string()),
+        };
+        let updated = render_ki_row(&id, entry, &sig, &status, &next_action);
         let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
         lines[index] = updated;
         let mut out = lines.join("\n");
@@ -383,7 +429,7 @@ pub fn file_ledger_row(path: &Path, entry: &LedgerEntry) -> Result<Filed, String
     }
     // Append a new row under the next id.
     let id = next_ki_id(&text);
-    let row = render_ki_row(&id, entry, &sig, "open");
+    let row = render_ki_row(&id, entry, &sig, "open", "triage");
     let mut out = text;
     if !out.ends_with('\n') {
         out.push('\n');
@@ -410,11 +456,12 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
 /// Diagnose one session log into a [`Diagnosis`]: replay the log, read
 /// its turns, its tool results, and its ending, and classify what is
 /// deterministically there. A tool result that errored is a tool-class
-/// failure in that tool's layer; an orderly completion is not a failure;
-/// anything else that did not complete is an `unknown`-class failure in
-/// the agent layer, named honestly rather than forced into a class the
-/// log cannot support.
-pub fn diagnose_session(path: &Path) -> Result<Diagnosis, String> {
+/// failure in that tool's layer; an orderly completion is **not a
+/// failure** — `Ok(None)`, so nothing is drafted and nothing is filed
+/// for a healthy run; anything else that did not complete is an
+/// `unknown`-class failure in the agent layer, named honestly rather
+/// than forced into a class the log cannot support.
+pub fn diagnose_session(path: &Path) -> Result<Option<Diagnosis>, String> {
     let records = crate::session::replay(path)
         .map_err(|error| format!("could not replay {}: {error}", path.display()))?;
     let id = path
@@ -447,11 +494,9 @@ pub fn diagnose_session(path: &Path) -> Result<Diagnosis, String> {
             name.clone(),
             format!("the run hit a tool failure in `{name}` after {turns} turns"),
         ),
-        (None, Some("completed")) => (
-            FailureClass::Unknown,
-            "agent".to_string(),
-            format!("the run completed in {turns} turns"),
-        ),
+        // An orderly completion is not a failure: nothing to classify,
+        // and nothing for a filing to file. The caller says so.
+        (None, Some("completed")) => return Ok(None),
         (None, other) => (
             FailureClass::Unknown,
             "agent".to_string(),
@@ -466,7 +511,7 @@ pub fn diagnose_session(path: &Path) -> Result<Diagnosis, String> {
         records.len(),
         tool_results.len(),
     );
-    Ok(Diagnosis { class, layer, summary, evidence })
+    Ok(Some(Diagnosis { class, layer, summary, evidence }))
 }
 
 /// The evidence-first draft: a recap composed from the diagnosis and the
@@ -499,6 +544,146 @@ pub fn render_diagnosis(diagnosis: &Diagnosis, ledger_path: &Path) -> String {
         summary = diagnosis.summary,
         evidence = diagnosis.evidence,
     )
+}
+
+// --- slice 13: the open-action-items read-back ------------------------------
+
+mod palette {
+    pub const ACCENT: &str = "\u{1b}[36m";
+    pub const WARN: &str = "\u{1b}[33m";
+    pub const DIM: &str = "\u{1b}[90m";
+    pub const TEXT: &str = "\u{1b}[37m";
+    pub const BOLD: &str = "\u{1b}[1m";
+    pub const RESET: &str = "\u{1b}[0m";
+}
+
+use palette::{ACCENT, BOLD, DIM, RESET, TEXT, WARN};
+
+const CARD_WIDTH: usize = 72;
+
+/// One open ledger row, as the read-back surfaces it: the id, the
+/// severity, the issue, and the next action that stays visible until
+/// the row's status leaves `open`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenItem {
+    pub id: String,
+    pub severity: String,
+    pub issue: String,
+    pub next_action: String,
+}
+
+/// The ledger's open rows, in file order: every six-cell row whose id
+/// leads with `KI-` and whose status cell is `open`, with its next
+/// action. This is the read-back the plan's Diagnosis clause asks for
+/// — an unclosed action item stays visible until it is closed. A row
+/// whose status is anything else (`closed`, a deferral, an owner's
+/// own word) is not surfaced.
+pub fn open_items(text: &str) -> Vec<OpenItem> {
+    text.lines()
+        .filter_map(row_cells)
+        .filter(|cells| cells[0].starts_with("KI-"))
+        .filter(|cells| cells[4].eq_ignore_ascii_case("open"))
+        .map(|cells| OpenItem {
+            id: cells[0].to_string(),
+            severity: cells[1].to_string(),
+            issue: cells[2].to_string(),
+            next_action: cells[5].to_string(),
+        })
+        .collect()
+}
+
+/// Render the open action items as house cards: one card per open row
+/// with its severity, its issue, and the next action that keeps it
+/// visible. A ledger with no open rows says so; an absent or
+/// unreadable ledger names itself. The surface is read-only wherever
+/// it is pointed — it writes nothing.
+pub fn render_open_items(ledger_path: &Path) -> String {
+    let text = match fs::read_to_string(ledger_path) {
+        Ok(text) => text,
+        Err(error) => {
+            return format!(
+                "{DIM}the ledger {} could not be read: {error}{RESET}\n",
+                ledger_path.display()
+            );
+        }
+    };
+    let items = open_items(&text);
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{BOLD}fleet doctor --open{RESET} {DIM}\u{2014} {} open action item{} in {}{RESET}\n\n",
+        items.len(),
+        plural(items.len()),
+        ledger_path.display(),
+    ));
+    if items.is_empty() {
+        out.push_str(&format!(
+            "{DIM}no open rows \u{b7} every action item this ledger holds is closed{RESET}\n"
+        ));
+        return out;
+    }
+    for item in &items {
+        out.push_str(&open_card(item));
+    }
+    out.push_str(&format!(
+        "{DIM}each row stays here until its status leaves `open` \u{b7} the ledger is the human-owned system of record{RESET}\n"
+    ));
+    out
+}
+
+/// One open row as a card: the id and severity on the header, the
+/// issue wrapped beneath, and the next action — the cell that keeps
+/// the item visible.
+fn open_card(item: &OpenItem) -> String {
+    let mut card = format!(
+        "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{id}{RESET} {DIM}{dashes} {WARN}{severity}{RESET} {DIM}\u{2510}{RESET}\n",
+        id = item.id,
+        dashes = dashes_for(&format!(" {} ", item.id), &item.severity),
+        severity = item.severity,
+    );
+    for line in wrap(&item.issue, CARD_WIDTH - 4) {
+        card.push_str(&format!("{DIM}\u{2502}{RESET} {TEXT}{line}{RESET}\n"));
+    }
+    for line in wrap(&format!("next: {}", item.next_action), CARD_WIDTH - 4) {
+        card.push_str(&format!("{DIM}\u{2502}{RESET} {WARN}{line}{RESET}\n"));
+    }
+    card.push_str(&format!("{DIM}\u{2514}{}\u{2518}{RESET}\n", "\u{2500}".repeat(CARD_WIDTH - 2)));
+    card
+}
+
+/// Wrap `text` to `width` columns on word boundaries; a word longer
+/// than the width rides its own line. A ledger's issue cell is a
+/// paragraph, and a card stays readable.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// The dash run that pads a card header so its right edge aligns.
+fn dashes_for(left: &str, right: &str) -> String {
+    let used = left.chars().count() + right.chars().count() + 2;
+    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+}
+
+/// The English plural for a count.
+fn plural(count: usize) -> &'static str {
+    if count == 1 {
+        ""
+    } else {
+        "s"
+    }
 }
 
 #[cfg(test)]
@@ -754,12 +939,97 @@ mod tests {
             ),
         )
         .unwrap();
-        let diagnosis = diagnose_session(&log).unwrap();
+        let diagnosis = diagnose_session(&log).unwrap().expect("a tool failure diagnoses");
         assert_eq!(diagnosis.class, FailureClass::Tool);
         assert_eq!(diagnosis.layer, "read_file");
         assert!(diagnosis.summary.contains("read_file"), "{}", diagnosis.summary);
         assert!(diagnosis.evidence.contains("ending interrupted"), "{}", diagnosis.evidence);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_completed_session_is_not_a_failure_and_files_nothing() {
+        // The named finding: `diagnose_session` used to return an
+        // `unknown`-class Diagnosis for a completed run ("the run
+        // completed in N turns"), so `--diagnose` on a healthy session
+        // filed a nonsense row into the human-owned ledger. An orderly
+        // completion is now `Ok(None)` — nothing classified, nothing
+        // filed, and the surface says so.
+        let dir = scratch("diagnose-healthy");
+        let log = dir.join("20261014T120000Z-2.jsonl");
+        std::fs::write(
+            &log,
+            concat!(
+                "{\"type\":\"start\",\"v\":1,\"model\":\"m\",\"created\":\"2026-10-14T12:00:00Z\"}\n",
+                "{\"type\":\"user\",\"content\":\"say hello\"}\n",
+                "{\"type\":\"assistant\",\"content\":\"hello\"}\n",
+                "{\"type\":\"end\",\"stop_reason\":\"completed\",\"turns\":1}\n",
+            ),
+        )
+        .unwrap();
+        let diagnosed = diagnose_session(&log).unwrap();
+        assert!(diagnosed.is_none(), "a completed run is not a failure: {diagnosed:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_update_preserves_a_human_closed_rows_status_and_next_action() {
+        // The named finding: the update path re-rendered the matched
+        // row with status hardcoded `open` and next-action hardcoded
+        // `triage`, so re-diagnosing a row a human closed silently
+        // reopened it and discarded the human's next action. The
+        // update now refreshes the issue and the evidence and leaves
+        // the owner's two cells exactly as they are.
+        let dir = scratch("ledger-closed-row");
+        let ledger = dir.join("known-issues.md");
+        std::fs::write(
+            &ledger,
+            "# Known issues\n\n| ID | Severity | Issue | Evidence | Status | Next action |\n|---|---|---|---|---|---|\n| KI-001 | defect | a human row | evidence | open | keep |\n",
+        )
+        .unwrap();
+        let entry =
+            LedgerEntry { severity: "defect", diagnosis: diagnosis(FailureClass::Tool, "bash", "a tool failed") };
+        // File it once: KI-002, open, triage.
+        assert_eq!(
+            file_ledger_row(&ledger, &entry).unwrap(),
+            Filed::Appended { id: "KI-002".to_string() }
+        );
+        // The human closes the row and writes their own next action.
+        let filed = std::fs::read_to_string(&ledger).unwrap();
+        let closed = close_row(&filed, "KI-002", "closed", "fixed in cbc5213");
+        std::fs::write(&ledger, closed).unwrap();
+
+        // The same failure re-diagnosed: the row updates, and the
+        // human's status and next action survive.
+        let second = file_ledger_row(&ledger, &entry).unwrap();
+        assert_eq!(second, Filed::Updated { id: "KI-002".to_string() });
+        let after = std::fs::read_to_string(&ledger).unwrap();
+        assert!(after.contains("| KI-002 |"), "{after}");
+        assert!(!after.contains("| KI-003 |"), "{after}");
+        assert!(after.contains("| closed |"), "{after}");
+        assert!(after.contains("| fixed in cbc5213 |"), "{after}");
+        // The evidence cell refreshed with the new diagnosis's own.
+        assert!(after.contains("session abc: 6 records, 1 tool result"), "{after}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Close one row's status and next-action cells, the way a human
+    /// editing the ledger would: the line carrying `id` is re-split,
+    /// the two cells replaced, and the line re-joined.
+    fn close_row(text: &str, id: &str, status: &str, next_action: &str) -> String {
+        text.lines()
+            .map(|line| {
+                let Some(mut cells) = row_cells(line) else { return line.to_string() };
+                if cells[0] != id {
+                    return line.to_string();
+                }
+                cells[4] = status;
+                cells[5] = next_action;
+                format!("| {} | {} | {} | {} | {} | {} |", cells[0], cells[1], cells[2], cells[3], cells[4], cells[5])
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
     }
 
     #[test]
@@ -783,6 +1053,71 @@ mod tests {
         file_ledger_row(&ledger, &entry).unwrap();
         let after = render_diagnosis(&d, &ledger);
         assert!(after.contains("KI-008 already carry"), "{after}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- slice 13: the open-action-items read-back ---
+
+    /// A scratch ledger holding two open rows, one closed row, and the
+    /// header and separator lines that are not rows.
+    fn scratch_ledger(tag: &str) -> std::path::PathBuf {
+        let dir = scratch(tag);
+        let ledger = dir.join("known-issues.md");
+        std::fs::write(
+            &ledger,
+            concat!(
+                "# Known issues\n\n",
+                "| ID | Severity | Issue | Evidence | Status | Next action |\n",
+                "|---|---|---|---|---|---|\n",
+                "| KI-104 | defect | the cadence fire lacked the panic guard | `src/cron.rs run_eval_if_due`, 2026-10-14 | open | wrap the fire in CatchUnwind |\n",
+                "| KI-105 | risk | the eval latch is in-memory | `src/cron.rs run_eval_if_due`, 2026-10-14 | closed | persist the minute beside jobs.json |\n",
+                "| KI-106 | gap | the read-back was unimplemented | the plan's slice-13 clause, 2026-10-14 | open | ship `fleet doctor --open` |\n",
+            ),
+        )
+        .unwrap();
+        ledger
+    }
+
+    #[test]
+    fn the_read_back_surfaces_the_open_rows_with_their_next_actions() {
+        let ledger = scratch_ledger("open-items");
+        let items = open_items(&std::fs::read_to_string(&ledger).unwrap());
+        // Two open rows in file order; the closed one is not
+        // surfaced, and the header and separator are not rows.
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert_eq!(items[0].id, "KI-104");
+        assert_eq!(items[0].severity, "defect");
+        assert_eq!(items[0].next_action, "wrap the fire in CatchUnwind");
+        assert_eq!(items[1].id, "KI-106");
+        assert_eq!(items[1].next_action, "ship `fleet doctor --open`");
+
+        // The cards carry the id, the issue, and the next action — the
+        // cell that keeps the item visible — and never the closed row.
+        let rendered = render_open_items(&ledger);
+        assert!(rendered.contains("fleet doctor --open"), "{rendered}");
+        assert!(rendered.contains("2 open action items"), "{rendered}");
+        assert!(rendered.contains("KI-104"), "{rendered}");
+        assert!(rendered.contains("wrap the fire in CatchUnwind"), "{rendered}");
+        assert!(rendered.contains("KI-106"), "{rendered}");
+        assert!(!rendered.contains("KI-105"), "{rendered}");
+        let _ = std::fs::remove_file(&ledger);
+    }
+
+    #[test]
+    fn a_ledger_with_no_open_rows_or_no_ledger_names_itself() {
+        let dir = scratch("open-items-none");
+        let ledger = dir.join("known-issues.md");
+        std::fs::write(
+            &ledger,
+            "# Known issues\n\n| ID | Severity | Issue | Evidence | Status | Next action |\n|---|---|---|---|---|---|\n| KI-001 | defect | a row | e | closed | done |\n",
+        )
+        .unwrap();
+        let rendered = render_open_items(&ledger);
+        assert!(rendered.contains("no open rows"), "{rendered}");
+        // An absent ledger is named, never an empty silence.
+        let absent = dir.join("absent.md");
+        let rendered = render_open_items(&absent);
+        assert!(rendered.contains("could not be read"), "{rendered}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
