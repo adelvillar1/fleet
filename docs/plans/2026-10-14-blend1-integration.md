@@ -5,7 +5,7 @@ status: landed-pending-review
 ## Goal
 
 The owner added a fifth lane to the specialist lanes — `blend1`
-(`~/Projects/blend1`, `main`, clean, v0.1.0, MIT) — and a provider that
+(`~/Projects/blend1`, `main`, clean, v0.1.0, Apache-2.0) — and a provider that
 complements the sys1 lane. blend1 is the blended lane of the sys1 house
 pattern: one `ask()` that runs the d1 router (sys1), the local
 EmbeddingGemma-2 semantic lane (sem1), and the Prior Labs TabPFN
