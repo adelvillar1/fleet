@@ -72,6 +72,8 @@ fn chat_action(app: &App, key: &KeyEvent, control: bool, alt: bool) -> Option<Ac
         KeyCode::PageDown => Some(Action::Scroll(-10)),
         KeyCode::Char('o') if control => Some(Action::OpenSessions),
         KeyCode::Char('l') if control => Some(Action::OpenLanes),
+        // The board pane's cycle, in the lanes' own ctrl-key family.
+        KeyCode::Char('b') if control => Some(Action::CycleBoard),
         KeyCode::Char(character) => {
             if control {
                 // Ctrl+key combinations are commands or nothing, never text.
@@ -182,6 +184,18 @@ mod tests {
             action_for(&app, &control(KeyCode::Char('l'))),
             Some(Action::OpenLanes)
         );
+    }
+
+    #[test]
+    fn ctrl_b_cycles_the_board_pane() {
+        let app = app();
+        assert_eq!(
+            action_for(&app, &control(KeyCode::Char('b'))),
+            Some(Action::CycleBoard)
+        );
+        // A bare `b` is still a letter, and other control keys are nothing.
+        assert_eq!(action_for(&app, &key(KeyCode::Char('b'))), Some(Action::Input('b')));
+        assert_eq!(action_for(&app, &control(KeyCode::Char('v'))), None);
     }
 
     #[test]

@@ -1,11 +1,12 @@
 //! Fleet's library face: the DeepSeek API client, the tool set, the agent
 //! loop, session logs, command parsing, the MCP stdio client with its lane
 //! registry, the git-tracked memory substrate with hybrid retrieval, the
-//! self-maintenance loop's gated proposals, the TUI, and the doctor's
-//! checks.
+//! self-maintenance loop's gated proposals, the three read-only boards
+//! over the machine's own sources, the TUI, and the doctor's checks.
 
 pub mod agent;
 pub mod api;
+pub mod boards;
 pub mod calib;
 pub mod cli;
 pub mod compaction;

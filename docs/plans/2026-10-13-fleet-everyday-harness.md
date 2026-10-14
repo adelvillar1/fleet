@@ -188,6 +188,28 @@ Three mechanisms. **Diagnosis**: per-layer probes in `doctor`'s image (credentia
 
 Native read-only surfaces: router board (the kit's operator API), second-brain board (the six derived state files), tower (git facts per project). TUI panes and/or a small embedded web server with hand-rolled SVG/CSS — no chart library, matching the fork's approach. The visual bar is directive 4: genuinely visual, never plain-text tables. Spec: `dsh-router-board`, `dsh-second-brain`, `dsh-tower`, `dsh-board-seam`. AC: each board renders real data from its source; a refused read keeps the last snapshot visible and names the error.
 
+**Landed 2026-10-14** (`src/boards.rs`, `src/tui/*`): the TUI's board
+pane carries the three boards — the router board over the kit's operator
+API (`/api/state`, `/api/usage`, `/api/suggest`, the bearer resolved from
+the kit's own rendered runtime config the way the kit resolves it), the
+second-brain board over the six derived state files, and the tower over
+`git` facts per project under `~/Projects`. Ctrl+B cycles them; the pane
+title and the status bar name the active board. The snapshot contract:
+each board keeps the last snapshot that landed, and a refused read names
+its reason at the top of the pane beside the minute of the last good read.
+The refresh is one thread with its own current-thread runtime, all three
+boards read concurrently at start and every 30s, every read bounded (8s per
+operator GET, 5s per `git` call, 64 projects per scan). No new
+dependencies: `Cargo.toml`/`Cargo.lock` untouched. The board seam is named
+as the not-built-yet — its contract is ported as the refresher, its browser
+face has no consumer this slice. Gate green: build warning-free, 480 unit +
+2 + 7 + 90 integration tests pass, and the live sources verified read-only
+through the ignored live test (5 tier chains, 19,873 ledger calls, 6 of 6
+state files, 30 repos). Record: `docs/features/boards.md`. Ledger: KI-115
+(the card-width recurrence the pane widening exposed, closed-fixed),
+KI-116 (the kit's deployed runtime root), KI-117 (serde_json's sorted map),
+KI-118 (the tower scan's fixed background cost).
+
 ### Slice 15 — install and launch
 
 `fleet install`: home layout, config scaffold, optional heavy-lane venvs (a port of `services/bootstrap.mjs` — per-lane, idempotent, degrade-without), `fleet doctor` as the gate; release binaries per OS; the README's quick start becomes literally true on a clean machine. AC: on a clean machine, install → doctor green → `fleet chat` completes a real task; no step requires the fork or Node.

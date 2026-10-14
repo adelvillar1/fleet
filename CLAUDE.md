@@ -45,6 +45,7 @@ None of that is in this repository yet. Verified inventory and per-repo state: [
 src/main.rs             dispatch, credential resolution, run/chat/sessions/lanes/doctor wiring
 src/cli.rs              argument parsing, help text, usage errors
 src/api.rs              DeepSeek chat-completions client (ureq), streaming, typed errors
+src/boards.rs           the three read-only boards: the router kit's operator API, the second-brain's derived state files, git facts per project
 src/agent.rs            the tool loop, approvals, turn cap, progress reporting
 src/mcp.rs              the hand-rolled MCP stdio client (spawn, initialize, tools/list, tools/call, teardown)
 src/lanes.rs            the four vendored lane cores: home resolution, launch specs, health probe

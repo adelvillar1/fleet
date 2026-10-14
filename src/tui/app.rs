@@ -6,6 +6,7 @@
 
 use crate::agent::{Approval, SubagentStage, UiEvent};
 use crate::api::Usage;
+use crate::boards::{BoardData, BoardKind, Boards};
 use crate::lanes::LaneHealth;
 use crate::session::{Record, SessionSummary};
 
@@ -132,6 +133,8 @@ pub enum Action {
     OpenSessions,
     /// Open the lane health view.
     OpenLanes,
+    /// Cycle the board pane to the next board.
+    CycleBoard,
     /// Close whatever overlay is open.
     CloseOverlay,
     /// Move the picker selection; positive is down.
@@ -235,6 +238,9 @@ pub struct App {
     pub scrolled_back: usize,
     /// True when the view sticks to the newest content.
     pub following: bool,
+    /// The three read-only boards: which one the pane shows, and each
+    /// one's last snapshot with its named refusal.
+    pub boards: Boards,
     pub should_quit: bool,
 }
 
@@ -267,6 +273,7 @@ impl App {
             error: None,
             scrolled_back: 0,
             following: true,
+            boards: Boards::new(),
             should_quit: false,
         }
     }
@@ -358,6 +365,10 @@ impl App {
                 Action::Submit => self.submit(),
                 Action::OpenLanes => {
                     self.open_lanes();
+                    None
+                }
+                Action::CycleBoard => {
+                    self.cycle_board();
                     None
                 }
                 Action::Scroll(delta) => {
@@ -574,6 +585,19 @@ impl App {
         self.lanes = lanes;
         self.lanes_loading = false;
         self.selected = 0;
+    }
+
+    /// Cycle the board pane to the next board and mark it for an
+    /// immediate read. The cadence already covers every board, so this is
+    /// about the one the user just asked for.
+    pub fn cycle_board(&mut self) {
+        self.boards.cycle();
+    }
+
+    /// Land one finished board read. A refusal keeps the last snapshot
+    /// and names the reason; a success clears both.
+    pub fn apply_board(&mut self, kind: BoardKind, outcome: Result<BoardData, String>) {
+        self.boards.apply(kind, outcome);
     }
 
     /// Show an approval prompt; the responder stays with the event loop.

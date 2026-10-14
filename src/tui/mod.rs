@@ -30,6 +30,7 @@ use crate::agent::{
     Agent, AgentOptions, ApprovalRequest, Approver, DEFAULT_MAX_TURNS, TuiApprover, UiEvent,
 };
 use crate::api::Client;
+use crate::boards::{self, BoardUpdate};
 use crate::lanes::{self, LaneHealth};
 use crate::route;
 use crate::session::{self, Session};
@@ -127,6 +128,12 @@ pub fn run(config: Config) -> Result<(), String> {
 
     let mut app = App::new(&config.model, &session_id);
     let (lanes_tx, lanes_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, Vec<LaneHealth>)>();
+    // The boards: their sources resolved once, exactly the way every
+    // credential in this crate resolves (the environment, then the fleet
+    // home's `.env`), and one refresher thread that reads all three on
+    // its own cadence. The interface only ever receives finished reads.
+    let dotenv = crate::home::read_dotenv(&config.home);
+    let (boards_tx, boards_rx) = boards::spawn_refresher(boards::resolve_sources(&dotenv));
     let outcome = event_loop(
         &config.home,
         &mut app,
@@ -137,6 +144,8 @@ pub fn run(config: Config) -> Result<(), String> {
         &command_tx,
         lanes_rx,
         &lanes_tx,
+        boards_rx,
+        &boards_tx,
     );
     // The agent thread is detached: it ends between runs once the command
     // channel closes, and the process's exit ends it mid-run, which leaves
@@ -165,6 +174,8 @@ fn event_loop(
     command_tx: &UnboundedSender<Command>,
     mut lanes_rx: UnboundedReceiver<(u64, Vec<LaneHealth>)>,
     lanes_tx: &UnboundedSender<(u64, Vec<LaneHealth>)>,
+    mut boards_rx: UnboundedReceiver<BoardUpdate>,
+    boards_tx: &UnboundedSender<boards::BoardCommand>,
 ) -> Result<(), String> {
     let mut pending: Option<ApprovalRequest> = None;
     while !app.should_quit {
@@ -186,12 +197,20 @@ fn event_loop(
         while let Ok((probe, rows)) = lanes_rx.try_recv() {
             app.set_lanes(probe, rows);
         }
+        // The boards' reads land here: a landed snapshot replaces the last
+        // one, a refusal keeps it and names the reason. Both are already
+        // bounded, so the loop never waits on a source.
+        while let Ok(update) = boards_rx.try_recv() {
+            app.apply_board(update.kind, update.outcome);
+        }
 
         if ratatui::crossterm::event::poll(POLL)
             .map_err(|error| format!("the keyboard could not be read: {error}"))?
         {
             match ratatui::crossterm::event::read() {
-                Ok(Event::Key(key)) => dispatch_key(home, app, &key, command_tx, lanes_tx, &mut pending),
+                Ok(Event::Key(key)) => {
+                    dispatch_key(home, app, &key, command_tx, lanes_tx, boards_tx, &mut pending)
+                }
                 // A paste is typing: the text lands in the input box with
                 // its newlines intact, never submitted line by line.
                 Ok(Event::Paste(text)) => app.paste(&text),
@@ -214,9 +233,13 @@ fn dispatch_key(
     key: &KeyEvent,
     command_tx: &UnboundedSender<Command>,
     lanes_tx: &UnboundedSender<(u64, Vec<LaneHealth>)>,
+    boards_tx: &UnboundedSender<boards::BoardCommand>,
     pending: &mut Option<ApprovalRequest>,
 ) {
     let Some(action) = action_for(app, key) else { return };
+    // The cycle asks for a read now: the cadence already covers every
+    // board, and the one the user just turned to should not wait for it.
+    let cycling = matches!(action, Action::CycleBoard);
     // The picker's rows are filesystem reads, so the loop loads them and
     // hands them to the state machine.
     if matches!(action, Action::OpenSessions) {
@@ -231,6 +254,9 @@ fn dispatch_key(
     }
     if let Some(effect) = app.apply(action) {
         apply_effect(home, app, effect, command_tx, pending);
+    }
+    if cycling {
+        let _ = boards_tx.send(boards::BoardCommand::Refresh);
     }
 }
 

@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use super::app::{App, Entry, Mode, ToolStatus};
+use crate::boards::{self, BoardData, BoardKind, Section, Slot};
 use crate::lanes::LaneState;
 
 /// The palette. One home per role, so the surface stays coherent as later
@@ -25,8 +26,14 @@ mod palette {
     pub const DONE: Color = Color::Green;
     pub const WORKING: Color = Color::Yellow;
     pub const IDLE: Color = Color::Green;
-    pub const BOARD: Color = Color::DarkGray;
 }
+
+/// The board pane's width. Slice 3 mounted the pane at 26 columns as a
+/// placeholder; the three boards are composed surfaces — cards, dots,
+/// bars — and a card with a name and its facts does not fit in 24 inner
+/// columns, so the pane takes what it needs and the conversation keeps
+/// the rest.
+const BOARD_WIDTH: u16 = 42;
 
 /// Draw one frame.
 pub fn render(frame: &mut Frame<'_>, app: &App) {
@@ -40,10 +47,10 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     .areas(frame.area());
 
     let [conversation, board] =
-        Layout::horizontal([Constraint::Min(20), Constraint::Length(26)]).areas(main);
+        Layout::horizontal([Constraint::Min(20), Constraint::Length(BOARD_WIDTH)]).areas(main);
 
     render_conversation(frame, app, conversation);
-    render_board(frame, board);
+    render_board(frame, app, board);
     if let Some(message) = &app.error {
         render_error(frame, message, error_bar);
     }
@@ -115,21 +122,656 @@ fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(paragraph, inner);
 }
 
-/// The board pane mount point; slice 14 fills it.
-fn render_board(frame: &mut Frame<'_>, area: Rect) {
+/// The board pane: one of the three read-only surfaces, whichever is
+/// active. The pane's title names it, the status bar repeats the name, and
+/// a refused read keeps the last snapshot on screen with the reason on one
+/// named line beside the time of the last good read.
+fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let kind = app.boards.active;
+    let slot = app.boards.slot(kind);
     let block = Block::bordered()
-        .title(" board ")
+        .title(format!(" board \u{2014} {} ", kind.label()))
         .title_style(title_style())
-        .border_style(Style::new().fg(palette::BOARD));
+        .border_style(Style::new().fg(palette::ACCENT));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let placeholder = Paragraph::new(Text::from(vec![
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let width = inner.width as usize;
+    let visible = inner.height as usize;
+    // The refusal rides the top of the pane: the reason, wrapped because a
+    // narrow pane clipping a named error is the same failure as not naming
+    // it, and the minute of the last good read beneath it.
+    let (error_lines, content_height) = match &slot.error {
+        Some(reason) => {
+            let budget = width.saturating_mul(3).saturating_sub(3);
+            let reason = boards::trim_to(reason, budget);
+            let mut lines: Vec<Line<'static>> = wrap(&format!(" ! {reason}"), width)
+                .into_iter()
+                .map(|chunk| Line::from(Span::styled(chunk, Style::new().fg(palette::DENIED))))
+                .collect();
+            let stamp = match &slot.snapshot {
+                Some(snapshot) => format!("   last good read {}", snapshot.read_at()),
+                None => "   no snapshot yet".to_string(),
+            };
+            lines.push(Line::from(Span::styled(stamp, Style::new().fg(palette::DIM))));
+            (lines, visible.saturating_sub(4))
+        }
+        None => (Vec::new(), visible),
+    };
+    let mut lines = board_lines(kind, slot, width);
+    // A board longer than its pane names what it is holding back rather
+    // than silently cutting its tail.
+    if lines.len() > content_height {
+        let hidden = lines.len() - content_height + 1;
+        lines.truncate(content_height.saturating_sub(1));
+        lines.push(Line::from(Span::styled(
+            format!(" +{hidden} more"),
+            Style::new().fg(palette::DIM),
+        )));
+    }
+    if error_lines.is_empty() {
+        frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+    let [top, rest] =
+        Layout::vertical([Constraint::Length(error_lines.len() as u16), Constraint::Min(1)])
+            .areas(inner);
+    frame.render_widget(Paragraph::new(Text::from(error_lines)), top);
+    frame.render_widget(Paragraph::new(Text::from(lines)), rest);
+}
+
+/// The active board's content: the snapshot that landed, the read in
+/// flight, or the empty state naming why nothing has.
+fn board_lines(kind: BoardKind, slot: &Slot, width: usize) -> Vec<Line<'static>> {
+    let Some(snapshot) = &slot.snapshot else {
+        // A board still on its opening read says it is reading; a board
+        // whose read was refused says so and names the reason. Neither
+        // ever shows an empty pane.
+        let (state, reason) = if slot.loading {
+            (" reading\u{2026}".to_string(), None)
+        } else {
+            (
+                " no snapshot yet".to_string(),
+                Some(slot.error.clone().unwrap_or_else(|| "the read has not landed yet".to_string())),
+            )
+        };
+        let mut lines = vec![
+            Line::from(Span::styled(
+                format!(" {} board", kind.label()),
+                Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                state,
+                if reason.is_some() { Style::new().fg(palette::DENIED) } else { Style::new().fg(palette::DIM) },
+            )),
+        ];
+        if let Some(reason) = reason {
+            lines.push(line_of(vec![(format!(" {reason}"), Style::new().fg(palette::DIM))], width));
+        }
+        return lines;
+    };
+    match snapshot {
+        BoardData::Router(snapshot) => router_lines(snapshot, width),
+        BoardData::Brain(snapshot) => brain_lines(snapshot, width),
+        BoardData::Tower(snapshot) => tower_lines(snapshot, width),
+    }
+}
+
+/// The router board: the kit's own routing state — the workload tier
+/// chains with their candidates, what it just served, and the usage
+/// ledger's counters with the per-model bars.
+fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'static>> {
+    let host = snapshot
+        .base_url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .to_string();
+    let judge = snapshot
+        .judge
+        .as_ref()
+        .map(|(mode, _)| mode.clone())
+        .unwrap_or_else(|| "\u{2014}".to_string());
+    let mut lines = vec![
+        line_of(
+            vec![
+                (" kit ".to_string(), Style::new().fg(palette::DIM)),
+                (host, Style::new().fg(palette::TEXT)),
+                (format!("  judge {judge}"), Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ),
         Line::from(""),
-        Line::from(Span::styled("board mounts here", Style::new().fg(palette::BOARD))),
-        Line::from(Span::styled("slice 14 fills it", Style::new().fg(palette::BOARD))),
-    ]))
-    .wrap(Wrap { trim: false });
-    frame.render_widget(placeholder, inner);
+        section("tiers"),
+    ];
+    for chain in &snapshot.tiers {
+        let extra = chain.candidates.len().saturating_sub(1);
+        let tail = if extra > 0 { format!("+{extra}") } else { String::new() };
+        // The resolved primary is the fact worth the whole line; the
+        // fallback count shows when it fits beside it, and `line_of`
+        // drops it when it does not.
+        let used = 3 + chain.tier.chars().count() + 1;
+        let room = width.saturating_sub(used + tail.chars().count() + 1);
+        let room = if chain.primary.chars().count() <= room {
+            room
+        } else {
+            width.saturating_sub(used)
+        };
+        lines.push(line_of(
+            vec![
+                (" \u{25cf} ".to_string(), Style::new().fg(palette::DONE)),
+                (chain.tier.clone(), Style::new().fg(palette::TEXT)),
+                (format!(" {}", boards::trim_to(&chain.primary, room)), Style::new().fg(palette::ACCENT)),
+                (format!(" {tail}"), Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(section("served"));
+    for row in snapshot.recent.iter().take(6) {
+        let (glyph, color) = if row.ok() {
+            ("\u{25cf}", palette::DONE)
+        } else {
+            ("\u{2715}", palette::DENIED)
+        };
+        let workload = row.workload.clone().unwrap_or_default();
+        lines.push(line_of(
+            vec![
+                (format!(" {glyph} "), Style::new().fg(color)),
+                (row.status.to_string(), Style::new().fg(color)),
+                (format!("  {}", boards::trim_to(&row.model, width.saturating_sub(22))), Style::new().fg(palette::TEXT)),
+                (format!("  {workload}"), Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(section("ledger"));
+    if let Some(totals) = &snapshot.totals {
+        let rate = totals
+            .success_rate()
+            .map(|rate| format!("{rate}%"))
+            .unwrap_or_else(|| "\u{2014}".to_string());
+        let errors = if totals.errors > 0 { palette::DENIED } else { palette::TEXT };
+        lines.push(line_of(
+            vec![
+                (" calls ".to_string(), Style::new().fg(palette::DIM)),
+                (boards::grouped(totals.calls), Style::new().fg(palette::TEXT)),
+                ("  ok ".to_string(), Style::new().fg(palette::DIM)),
+                (rate, Style::new().fg(palette::DONE)),
+                ("  err ".to_string(), Style::new().fg(palette::DIM)),
+                (boards::grouped(totals.errors), Style::new().fg(errors)),
+            ],
+            width,
+        ));
+        lines.push(line_of(
+            vec![
+                (" tokens ".to_string(), Style::new().fg(palette::DIM)),
+                (
+                    format!("{} in \u{b7} {} out", boards::compact(totals.prompt_tokens), boards::compact(totals.completion_tokens)),
+                    Style::new().fg(palette::TEXT),
+                ),
+            ],
+            width,
+        ));
+    }
+    if let Some(judge) = &snapshot.judge_counters {
+        lines.push(line_of(
+            vec![
+                (" judge ".to_string(), Style::new().fg(palette::DIM)),
+                (
+                    format!("{} fresh \u{b7} {} cached", boards::grouped(judge.fresh), boards::compact(judge.cached)),
+                    Style::new().fg(palette::TEXT),
+                ),
+                (
+                    format!("  {} err", boards::grouped(judge.errors)),
+                    Style::new().fg(if judge.errors > 0 { palette::PENDING } else { palette::DIM }),
+                ),
+            ],
+            width,
+        ));
+    }
+    if let Some(cascade) = &snapshot.cascade {
+        lines.push(line_of(
+            vec![
+                (" cascade ".to_string(), Style::new().fg(palette::DIM)),
+                (
+                    format!(
+                        "{} esc \u{b7} {} failed \u{b7} {} compared",
+                        boards::grouped(cascade.escalations),
+                        boards::grouped(cascade.failed),
+                        boards::grouped(cascade.compared)
+                    ),
+                    Style::new().fg(palette::TEXT),
+                ),
+            ],
+            width,
+        ));
+    }
+    // The workload mix: where the kit's traffic actually goes.
+    if !snapshot.workloads.is_empty() {
+        let mix: Vec<String> = snapshot
+            .workloads
+            .iter()
+            .take(3)
+            .map(|(workload, calls)| format!("{workload} {}", boards::compact(*calls)))
+            .collect();
+        lines.push(line_of(
+            vec![
+                (" mix ".to_string(), Style::new().fg(palette::DIM)),
+                (mix.join(" \u{b7} "), Style::new().fg(palette::TEXT)),
+            ],
+            width,
+        ));
+    }
+    // The kit's own routing guard: whether a pay-as-you-go provider may be
+    // routed to at all, and which ones are payg.
+    if let Some((allowed, providers)) = &snapshot.payg {
+        let (label, color) = if *allowed {
+            ("payg on".to_string(), palette::PENDING)
+        } else {
+            ("payg off".to_string(), palette::DONE)
+        };
+        let mut pieces = vec![
+            (" guard ".to_string(), Style::new().fg(palette::DIM)),
+            (label, Style::new().fg(color)),
+        ];
+        if !providers.is_empty() {
+            pieces.push((format!(" \u{b7} {}", providers.join(", ")), Style::new().fg(palette::DIM)));
+        }
+        lines.push(line_of(pieces, width));
+    }
+    // The models as bars: a comparison that reads at a glance.
+    let busiest = snapshot.models.first().map(|model| model.calls).unwrap_or(0);
+    for model in snapshot.models.iter().take(3) {
+        lines.push(line_of(
+            vec![
+                (" ".to_string(), Style::new()),
+                (boards::cell(&model.model, 14), Style::new().fg(palette::TEXT)),
+                (" ".to_string(), Style::new()),
+                (boards::bar(model.calls, busiest, 10), Style::new().fg(palette::ACCENT)),
+                (format!(" {}", boards::grouped(model.calls)), Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ));
+    }
+    for (tier, sentence) in snapshot.guidance.iter().take(1) {
+        lines.push(line_of(
+            vec![
+                (format!(" \u{2514} {tier} "), Style::new().fg(palette::DIM)),
+                (sentence.clone(), Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ));
+    }
+    for reason in &snapshot.refused {
+        lines.extend(refused_lines("read", reason, width));
+    }
+    lines
+}
+
+/// The second-brain board: the derived state as cards — the
+/// earned-autonomy gate board, the HITL inbox, the quality loops and
+/// their graded rows, the maturity sparkline, and the doing/conflict
+/// counts.
+fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        line_of(
+            vec![
+                (" second-brain ".to_string(), Style::new().fg(palette::DIM)),
+                (snapshot.home.display().to_string(), Style::new().fg(palette::TEXT)),
+            ],
+            width,
+        ),
+        Line::from(""),
+    ];
+    match &snapshot.gates {
+        Section::Landed(gates) => {
+            lines.push(section("gates"));
+            lines.push(line_of(
+                vec![
+                    (" verdicts ".to_string(), Style::new().fg(palette::DIM)),
+                    (boards::grouped(gates.totals.verdicts), Style::new().fg(palette::TEXT)),
+                    ("  dispositions ".to_string(), Style::new().fg(palette::DIM)),
+                    (boards::grouped(gates.totals.dispositions), Style::new().fg(palette::TEXT)),
+                ],
+                width,
+            ));
+            for gate in gates.board.iter().take(5) {
+                let fit = if gate.fit_ready { " fit".to_string() } else { String::new() };
+                let graded = Style::new().fg(if gate.fit_ready {
+                    palette::DONE
+                } else {
+                    palette::DIM
+                });
+                lines.push(line_of(
+                    vec![
+                        (" \u{25cf} ".to_string(), Style::new().fg(palette::DONE)),
+                        (boards::cell(&gate.gate, 12), Style::new().fg(palette::TEXT)),
+                        (format!(" {}v", boards::grouped(gate.verdicts)), Style::new().fg(palette::DIM)),
+                        (format!("  {}", gate.graded_progress), graded),
+                        (fit, Style::new().fg(palette::DONE)),
+                    ],
+                    width,
+                ));
+            }
+            if !gates.inbox.is_empty() {
+                lines.push(line_of(
+                    vec![
+                        (" hitl ".to_string(), Style::new().fg(palette::DIM)),
+                        (
+                            format!("{} open", gates.inbox.len()),
+                            Style::new().fg(palette::PENDING),
+                        ),
+                    ],
+                    width,
+                ));
+                for row in gates.inbox.iter().take(2) {
+                    lines.push(line_of(
+                        vec![
+                            (" \u{2715} ".to_string(), Style::new().fg(palette::DENIED)),
+                            (boards::cell(&row.op, 14), Style::new().fg(palette::TEXT)),
+                            (format!(" {}", row.verdict), Style::new().fg(palette::DENIED)),
+                        ],
+                        width,
+                    ));
+                }
+            }
+        }
+        Section::Refused(reason) => lines.extend(refused_lines("gates", reason, width)),
+    }
+
+    lines.push(Line::from(""));
+    match &snapshot.harness {
+        Section::Landed(harness) => {
+            lines.push(section("harness"));
+            let converged = harness.loops.iter().map(|row| row.converged).sum::<u64>();
+            let runs = harness.loops.iter().map(|row| row.runs).sum::<u64>();
+            lines.push(line_of(
+                vec![
+                    (" loops ".to_string(), Style::new().fg(palette::DIM)),
+                    (boards::grouped(runs), Style::new().fg(palette::TEXT)),
+                    ("  converged ".to_string(), Style::new().fg(palette::DIM)),
+                    (boards::grouped(converged), Style::new().fg(palette::DONE)),
+                ],
+                width,
+            ));
+            for row in harness.recent.iter().take(2) {
+                let color = if row.outcome == "ok" { palette::DONE } else { palette::DENIED };
+                lines.push(line_of(
+                    vec![
+                        (" \u{25cf} ".to_string(), Style::new().fg(color)),
+                        (boards::cell(&row.kind, 10), Style::new().fg(palette::TEXT)),
+                        (
+                            format!(" {} \u{b7} {}", boards::trim_to(&row.label, width.saturating_sub(18)), row.outcome),
+                            Style::new().fg(palette::DIM),
+                        ),
+                    ],
+                    width,
+                ));
+            }
+        }
+        Section::Refused(reason) => lines.extend(refused_lines("harness", reason, width)),
+    }
+
+    lines.push(Line::from(""));
+    match &snapshot.loops {
+        Section::Landed(loops) => {
+            lines.push(section("loops"));
+            let converged = loops.loops.iter().filter(|row| row.verdict == "passed").count();
+            lines.push(line_of(
+                vec![
+                    (" loops ".to_string(), Style::new().fg(palette::DIM)),
+                    (boards::grouped(loops.loops.len() as u64), Style::new().fg(palette::TEXT)),
+                    ("  converged ".to_string(), Style::new().fg(palette::DIM)),
+                    (boards::grouped(converged as u64), Style::new().fg(palette::DONE)),
+                    (
+                        format!("  pending {}", loops.loops.iter().map(|row| row.pending_review).sum::<u64>()),
+                        Style::new().fg(palette::PENDING),
+                    ),
+                ],
+                width,
+            ));
+            for row in loops.loops.iter().take(3) {
+                let color = if row.verdict == "passed" { palette::DONE } else { palette::PENDING };
+                lines.push(line_of(
+                    vec![
+                        (" \u{25cf} ".to_string(), Style::new().fg(color)),
+                        (boards::cell(&row.name, 14), Style::new().fg(palette::TEXT)),
+                        (
+                            format!(" {} \u{b7} {} iter", row.verdict, row.iterations),
+                            Style::new().fg(palette::DIM),
+                        ),
+                    ],
+                    width,
+                ));
+            }
+            if let Some((name, graded)) = loops.graded.first() {
+                lines.push(line_of(
+                    vec![
+                        (" graded ".to_string(), Style::new().fg(palette::DIM)),
+                        (boards::cell(name, 14), Style::new().fg(palette::TEXT)),
+                        (
+                            format!(" {} ({} confirmed)", boards::grouped(graded.n), boards::grouped(graded.confirmed)),
+                            Style::new().fg(palette::DIM),
+                        ),
+                    ],
+                    width,
+                ));
+            }
+        }
+        Section::Refused(reason) => lines.extend(refused_lines("loops", reason, width)),
+    }
+
+    lines.push(Line::from(""));
+    match &snapshot.maturity {
+        Section::Landed(maturity) => {
+            lines.push(section("maturity"));
+            // The output series is the fleet's own volume; the state's
+            // first series stands in when it names none.
+            let series = maturity
+                .series
+                .iter()
+                .find(|(name, _)| name == "output")
+                .or_else(|| maturity.series.first());
+            if let Some((name, values)) = series {
+                lines.push(line_of(
+                    vec![
+                        (" ".to_string(), Style::new()),
+                        (boards::cell(name, 12), Style::new().fg(palette::TEXT)),
+                        (" ".to_string(), Style::new()),
+                        (boards::sparkline(values, 12), Style::new().fg(palette::ACCENT)),
+                        (
+                            format!(" {}", values.last().copied().unwrap_or(0)),
+                            Style::new().fg(palette::DIM),
+                        ),
+                    ],
+                    width,
+                ));
+            }
+            if let Some((name, at)) = maturity.milestones.last() {
+                lines.push(line_of(
+                    vec![
+                        (" \u{2514} ".to_string(), Style::new().fg(palette::DIM)),
+                        (format!("{name} {at}"), Style::new().fg(palette::DIM)),
+                    ],
+                    width,
+                ));
+            }
+        }
+        Section::Refused(reason) => lines.extend(refused_lines("maturity", reason, width)),
+    }
+
+    lines.push(Line::from(""));
+    match &snapshot.reports {
+        Section::Landed(reports) => {
+            lines.push(section("reports"));
+            let conflicts = if reports.open_conflicts > 0 {
+                palette::PENDING
+            } else {
+                palette::DONE
+            };
+            lines.push(line_of(
+                vec![
+                    (" doing ".to_string(), Style::new().fg(palette::DIM)),
+                    (boards::grouped(reports.doing.len() as u64), Style::new().fg(palette::TEXT)),
+                    ("  conflicts ".to_string(), Style::new().fg(palette::DIM)),
+                    (boards::grouped(reports.open_conflicts), Style::new().fg(conflicts)),
+                ],
+                width,
+            ));
+            for row in reports.doing.iter().take(2) {
+                lines.push(line_of(
+                    vec![
+                        (" \u{25cf} ".to_string(), Style::new().fg(palette::PENDING)),
+                        (boards::cell(&row.project, 12), Style::new().fg(palette::TEXT)),
+                        (format!(" {}", boards::trim_to(&row.title, width.saturating_sub(18))), Style::new().fg(palette::DIM)),
+                    ],
+                    width,
+                ));
+            }
+        }
+        Section::Refused(reason) => lines.extend(refused_lines("reports", reason, width)),
+    }
+
+    match &snapshot.tower {
+        Section::Landed(tower) => {
+            let dirty: u64 = tower.projects.iter().map(|project| project.dirty).sum();
+            lines.push(line_of(
+                vec![
+                    (" tower ".to_string(), Style::new().fg(palette::DIM)),
+                    (
+                        format!("{} projects \u{b7} {} dirty", tower.projects.len(), dirty),
+                        Style::new().fg(palette::TEXT),
+                    ),
+                ],
+                width,
+            ));
+        }
+        Section::Refused(reason) => lines.extend(refused_lines("tower data", reason, width)),
+    }
+    lines
+}
+
+/// The tower: per-project cards — branch, dirty dot, head commit, the
+/// trailing-thirty-day count, ahead/behind — dirtiest first.
+fn tower_lines(snapshot: &boards::TowerSnapshot, width: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        line_of(
+            vec![(" root ".to_string(), Style::new().fg(palette::DIM)), (snapshot.root.display().to_string(), Style::new().fg(palette::TEXT))],
+            width,
+        ),
+        line_of(
+            vec![
+                (" repos ".to_string(), Style::new().fg(palette::DIM)),
+                (boards::grouped(snapshot.projects.len() as u64), Style::new().fg(palette::TEXT)),
+                ("  skipped ".to_string(), Style::new().fg(palette::DIM)),
+                (boards::grouped(snapshot.skipped.len() as u64), Style::new().fg(palette::DIM)),
+                (
+                    format!("  30d {}", snapshot.projects.iter().map(|project| project.commits_30d).sum::<u64>()),
+                    Style::new().fg(palette::DIM),
+                ),
+            ],
+            width,
+        ),
+        Line::from(""),
+    ];
+    for project in &snapshot.projects {
+        let (dot, color) = if project.dirty > 0 {
+            ("\u{25cf}", palette::PENDING)
+        } else {
+            ("\u{25cb}", palette::DONE)
+        };
+        let branch = project.branch.clone().unwrap_or_else(|| "\u{2014}".to_string());
+        let mut pieces = vec![
+            (format!(" {dot} "), Style::new().fg(color)),
+            (boards::cell(&project.name, 16), Style::new().fg(palette::TEXT)),
+            (format!(" {}", boards::trim_to(&branch, 10)), Style::new().fg(palette::DIM)),
+        ];
+        if project.dirty > 0 {
+            pieces.push((format!(" {}d", project.dirty), Style::new().fg(palette::PENDING)));
+        }
+        if let Some(ahead) = project.ahead {
+            pieces.push((format!(" \u{2191}{ahead}"), Style::new().fg(palette::DIM)));
+        }
+        if let Some(behind) = project.behind {
+            pieces.push((format!(" \u{2193}{behind}"), Style::new().fg(palette::DIM)));
+        }
+        lines.push(line_of(pieces, width));
+        // The head commit underneath, in the card family's two-line shape.
+        let head = match (&project.head, &project.subject) {
+            (Some(sha), Some(subject)) => format!("{sha} {subject}"),
+            (Some(sha), None) => sha.clone(),
+            _ => project
+                .notes
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "no commits yet".to_string()),
+        };
+        lines.push(line_of(
+            vec![
+                ("   \u{2514} ".to_string(), Style::new().fg(palette::DIM)),
+                (head, Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ));
+    }
+    if snapshot.beyond_bound > 0 {
+        lines.push(line_of(
+            vec![(
+                format!(" +{} beyond the scan's bound", snapshot.beyond_bound),
+                Style::new().fg(palette::DIM),
+            )],
+            width,
+        ));
+    }
+    lines
+}
+
+/// A board section header.
+fn section(title: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        format!(" {title}"),
+        Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+    ))
+}
+
+/// One refused read inside a snapshot, named on the board that carries it:
+/// the read's name on its own line and its reason beneath it, because a
+/// state file's path is long and a clipped path is not a named refusal.
+fn refused_lines(name: &str, reason: &str, width: usize) -> Vec<Line<'static>> {
+    vec![
+        line_of(
+            vec![(format!(" \u{2715} {name}"), Style::new().fg(palette::DENIED))],
+            width,
+        ),
+        line_of(vec![(format!("   {reason}"), Style::new().fg(palette::DIM))], width),
+    ]
+}
+
+/// Compose one line from styled pieces, dropping the tail when the pieces
+/// do not fit: a board line never wraps and never overflows its pane, so a
+/// long name or a long sentence costs its own tail rather than the
+/// layout's.
+fn line_of(pieces: Vec<(String, Style)>, width: usize) -> Line<'static> {
+    let mut used = 0usize;
+    let mut spans = Vec::with_capacity(pieces.len());
+    for (text, style) in pieces {
+        let room = width.saturating_sub(used);
+        if room == 0 {
+            break;
+        }
+        let text = boards::trim_to(&text, room);
+        used += text.chars().count();
+        spans.push(Span::styled(text, style));
+    }
+    Line::from(spans)
 }
 
 /// The one-line failure banner.
@@ -178,6 +820,10 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // instruction routed under and the fact count. Slice 8 part 2's
     // half of the turn-path surfacing — the `memory` record's live
     // counterpart, and absent on a run whose assembly was empty.
+    // The active board, so the pane's title is never the only place the
+    // surface is named.
+    spans.push(Span::styled("  board ", Style::new().fg(palette::DIM)));
+    spans.push(Span::styled(app.boards.active.label(), Style::new().fg(palette::ACCENT)));
     if let Some((shape, facts)) = &status.memory {
         spans.push(Span::styled("  memory ", Style::new().fg(palette::DIM)));
         let named = if shape.is_empty() { "no shape".to_string() } else { shape.clone() };
@@ -213,7 +859,8 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 /// The key hints.
 fn render_footer(frame: &mut Frame<'_>, area: Rect) {
-    let hints = "enter send · alt+enter newline · ctrl+o sessions · ctrl+l lanes · q quit";
+    let hints =
+        "enter send · alt+enter newline · ctrl+o sessions · ctrl+l lanes · ctrl+b board · q quit";
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hints, Style::new().fg(palette::TEXT)))),
         area,
@@ -487,6 +1134,13 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             // underneath, wrapped, exactly as a tool card wraps its
             // preview. The summary itself is in the next request, not
             // something to render here.
+            // The settled line carries the dot, the verb, the fold's size,
+            // and the state — nothing else. The summary phrase and the
+            // token counts ride the wrapped detail line, because a fixed
+            // width surface given a line built by concatenation cuts its
+            // tail (KI-078, KI-085, KI-096): at the width this pane ships
+            // beside the boards, `6 turns \u{2192} 1 summary  done` loses
+            // its state word.
             let mut lines = vec![Line::from(vec![
                 Span::styled(" \u{2713} ", Style::new().fg(palette::DONE)),
                 Span::styled(
@@ -495,13 +1149,16 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                 ),
                 Span::styled("  ", Style::new()),
                 Span::styled(
-                    format!("{} turn{} \u{2192} 1 summary", card.turns, if card.turns == 1 { "" } else { "s" },),
+                    format!("{} turn{}", card.turns, if card.turns == 1 { "" } else { "s" }),
                     Style::new().fg(palette::DIM),
                 ),
                 Span::styled("  done", Style::new().fg(palette::DONE)),
             ])];
             for chunk in wrap(
-                &format!("~{} \u{2192} ~{} tokens", card.tokens_before, card.tokens_after),
+                &format!(
+                    "\u{2192} 1 summary \u{b7} ~{} \u{2192} ~{} tokens",
+                    card.tokens_before, card.tokens_after
+                ),
                 width.saturating_sub(4).max(8),
             ) {
                 lines.push(Line::from(vec![
@@ -547,15 +1204,23 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                 ),
                 Span::styled(format!("  {state}"), Style::new().fg(color)),
             ])];
-            let mut detail = format!("{minute} \u{b7} {}", card.detail);
-            if let Some(session) = &card.session {
-                detail.push_str(&format!(" \u{b7} session {session}"));
-            }
-            for chunk in wrap(&detail, width.saturating_sub(4).max(8)) {
+            for chunk in wrap(&format!("{minute} \u{b7} {}", card.detail), width.saturating_sub(4).max(8)) {
                 lines.push(Line::from(vec![
                     Span::styled("   \u{2514} ", Style::new().fg(palette::DIM)),
                     Span::styled(chunk, Style::new().fg(palette::DIM)),
                 ]));
+            }
+            // The session id stands on its own line: a word wrap splits
+            // `session <id>` between the two, and a session id cut in half
+            // is not reachable (KI-078's class, at the pane's shipped
+            // width beside the boards).
+            if let Some(session) = &card.session {
+                for chunk in wrap(&format!("session {session}"), width.saturating_sub(4).max(8)) {
+                    lines.push(Line::from(vec![
+                        Span::styled("   \u{2514} ", Style::new().fg(palette::DIM)),
+                        Span::styled(chunk, Style::new().fg(palette::DIM)),
+                    ]));
+                }
             }
             lines
         }
@@ -891,6 +1556,383 @@ mod tests {
         assert!(tiny.contains("lanes"), "{tiny}");
     }
 
+    /// A router snapshot with the kit's own facts, as the operator API's
+    /// payload reads back.
+    fn router_snapshot() -> crate::boards::RouterSnapshot {
+        crate::boards::RouterSnapshot {
+            read_at: "2026-10-14T09:41Z".to_string(),
+            base_url: "http://127.0.0.1:8300".to_string(),
+            port: Some(8300),
+            judge: Some(("cascade".to_string(), Some("fastino/gliner2.5-multi-v1".to_string()))),
+            payg: Some((false, vec!["deepseek".to_string()])),
+            tiers: vec![
+                crate::boards::TierChain {
+                    tier: "standard_code".to_string(),
+                    primary: "stepfun/step-5-preview".to_string(),
+                    candidates: vec![
+                        "stepfun/step-5-preview".to_string(),
+                        "zai-coding-plan/GLM-5.3-Flash".to_string(),
+                    ],
+                },
+                crate::boards::TierChain {
+                    tier: "quick".to_string(),
+                    primary: "stepfun/step-3.7-flash".to_string(),
+                    candidates: vec![
+                        "stepfun/step-3.7-flash".to_string(),
+                        "xiaomi-mimo/mimo-v2.6-flash".to_string(),
+                        "zai-coding-plan/GLM-5.3-Flash".to_string(),
+                    ],
+                },
+            ],
+            totals: Some(crate::boards::UsageTotals {
+                calls: 19_873,
+                ok: 19_646,
+                errors: 227,
+                prompt_tokens: 88_197_905_869,
+                completion_tokens: 3_961_204_277,
+                total_tokens: 92_159_110_146,
+            }),
+            models: vec![
+                crate::boards::ModelRow {
+                    key: "stepfun/step-3.7-flash".to_string(),
+                    provider: "stepfun".to_string(),
+                    model: "step-3.7-flash".to_string(),
+                    calls: 3_720,
+                    errors: 5,
+                    total_tokens: 29_604_087_234,
+                },
+                crate::boards::ModelRow {
+                    key: "stepfun/step-5-preview".to_string(),
+                    provider: "stepfun".to_string(),
+                    model: "step-5-preview".to_string(),
+                    calls: 1_791,
+                    errors: 0,
+                    total_tokens: 61_234_540_459,
+                },
+            ],
+            recent: vec![
+                crate::boards::RecentRow {
+                    at: 1_791_918_037_872,
+                    provider: "stepfun".to_string(),
+                    model: "step-3.7-flash".to_string(),
+                    status: 200,
+                    workload: Some("standard_code".to_string()),
+                    ms: Some(2_000),
+                    reason: None,
+                },
+                crate::boards::RecentRow {
+                    at: 1_791_916_699_901,
+                    provider: "zai-coding-plan".to_string(),
+                    model: "GLM-5.3-Flash".to_string(),
+                    status: 500,
+                    workload: Some("standard_code".to_string()),
+                    ms: Some(812),
+                    reason: Some("upstream refused".to_string()),
+                },
+            ],
+            judge_counters: Some(crate::boards::JudgeCounters { fresh: 581, cached: 15_738, errors: 321 }),
+            cascade: Some(crate::boards::CascadeCounters {
+                escalations: 787,
+                cold: 0,
+                failed: 570,
+                compared: 217,
+            }),
+            workloads: vec![("standard_code".to_string(), 10_557)],
+            guidance: vec![("quick".to_string(), "the quick tier's head is exhausted".to_string())],
+            refused: Vec::new(),
+        }
+    }
+
+    /// A second-brain snapshot with the derived state's own facts.
+    fn brain_snapshot() -> crate::boards::BrainSnapshot {
+        crate::boards::BrainSnapshot {
+            read_at: "2026-10-14T09:41Z".to_string(),
+            home: std::path::PathBuf::from("/Users/owner/.second-brain"),
+            gates: Section::Landed(crate::boards::GatesRead {
+                generated: "2026-10-04T16:13:35Z".to_string(),
+                board: vec![crate::boards::GateRow {
+                    gate: "plan-gate".to_string(),
+                    verdicts: 24,
+                    dispositions: 9,
+                    graded_progress: "9/20".to_string(),
+                    graded_rows: 9,
+                    fit_ready: true,
+                    override_rate: 0.125,
+                }],
+                inbox: vec![crate::boards::InboxRow {
+                    op: "zcode-gate".to_string(),
+                    verdict: "block".to_string(),
+                    ts: "2026-10-02T20:09:10Z".to_string(),
+                    command: "cd /repo && python3".to_string(),
+                }],
+                totals: crate::boards::GateTotals { events: 107, verdicts: 80, dispositions: 16 },
+                daily: vec![("2026-09-22".to_string(), 4)],
+            }),
+            harness: Section::Refused("harness_state.json does not exist".to_string()),
+            loops: Section::Landed(crate::boards::LoopsRead {
+                derived_at: "2026-10-04T11:13:42".to_string(),
+                loops: vec![crate::boards::LoopRow {
+                    name: "ui-capture".to_string(),
+                    family: "ui".to_string(),
+                    verdict: "passed".to_string(),
+                    iterations: 3,
+                    pending_review: 1,
+                }],
+                graded: vec![(
+                    "ux_capture".to_string(),
+                    crate::boards::GradedRow { n: 127, confirmed: 45 },
+                )],
+                findings: vec!["one finding".to_string()],
+            }),
+            reports: Section::Landed(crate::boards::ReportsRead {
+                generated_at: "2026-10-04 16:18:56".to_string(),
+                doing: vec![crate::boards::DoingRow {
+                    id: "t1".to_string(),
+                    project: "fleet".to_string(),
+                    title: "slice 14".to_string(),
+                }],
+                pending_verification: 1,
+                conflicts: Vec::new(),
+                open_conflicts: 10,
+                trust: Vec::new(),
+            }),
+            maturity: Section::Landed(crate::boards::MaturityRead {
+                generated: "2026-10-04T11:13:42".to_string(),
+                weeks: vec!["2026-09-14".to_string(), "2026-09-21".to_string()],
+                series: vec![("output".to_string(), vec![79, 173])],
+                milestones: vec![("tower online".to_string(), "2026-10-01".to_string())],
+            }),
+            tower: Section::Landed(crate::boards::TowerDataRead {
+                generated_at: "2026-10-09 01:52".to_string(),
+                projects: vec![
+                    crate::boards::TowerProject {
+                        name: "fleet".to_string(),
+                        lifecycle: "active".to_string(),
+                        branch: Some("master".to_string()),
+                        last_commit: "2026-10-14".to_string(),
+                        commits_30d: 12,
+                        dirty: 0,
+                        plans: vec![("done".to_string(), 9)],
+                    },
+                    crate::boards::TowerProject {
+                        name: "second-brain".to_string(),
+                        lifecycle: "active".to_string(),
+                        branch: Some("main".to_string()),
+                        last_commit: "2026-10-09".to_string(),
+                        commits_30d: 40,
+                        dirty: 3,
+                        plans: vec![("done".to_string(), 4)],
+                    },
+                ],
+                timeline: Vec::new(),
+            }),
+        }
+    }
+
+    /// A tower snapshot with two projects' git facts.
+    fn tower_snapshot() -> crate::boards::TowerSnapshot {
+        crate::boards::TowerSnapshot {
+            read_at: "2026-10-14T09:41Z".to_string(),
+            root: std::path::PathBuf::from("/Users/owner/Projects"),
+            projects: vec![
+                crate::boards::ProjectFacts {
+                    name: "fleet".to_string(),
+                    branch: Some("master".to_string()),
+                    head: Some("a421e82".to_string()),
+                    subject: Some("docs: KI-114 lands".to_string()),
+                    when: Some("2026-10-14".to_string()),
+                    commits_30d: 12,
+                    dirty: 2,
+                    ahead: Some(1),
+                    behind: Some(0),
+                    notes: Vec::new(),
+                },
+                crate::boards::ProjectFacts {
+                    name: "second-brain".to_string(),
+                    branch: Some("main".to_string()),
+                    head: Some("91c0f31".to_string()),
+                    subject: Some("derive: the loops state".to_string()),
+                    when: Some("2026-10-09".to_string()),
+                    commits_30d: 40,
+                    dirty: 0,
+                    ahead: None,
+                    behind: None,
+                    notes: Vec::new(),
+                },
+            ],
+            skipped: vec![("blend1".to_string(), "no .git".to_string())],
+            beyond_bound: 0,
+        }
+    }
+
+    fn board_app(kind: crate::boards::BoardKind, snapshot: crate::boards::BoardData) -> App {
+        let mut app = fresh();
+        app.boards.apply(kind, Ok(snapshot));
+        app.boards.active = kind;
+        app
+    }
+
+    #[test]
+    fn the_router_board_renders_the_kits_routing_state() {
+        let mut app = board_app(
+            crate::boards::BoardKind::Router,
+            crate::boards::BoardData::Router(router_snapshot()),
+        );
+        let drawn = draw(&app, 120, 40);
+        // The pane's title names the board, and the status bar repeats it.
+        assert!(drawn.contains("board \u{2014} router"), "{drawn}");
+        assert!(drawn.contains("board router"), "{drawn}");
+        // The kit, its judge, and the tier chains with their primaries.
+        assert!(drawn.contains("127.0.0.1:8300"), "{drawn}");
+        assert!(drawn.contains("judge cascade"), "{drawn}");
+        assert!(drawn.contains("standard_code"), "{drawn}");
+        assert!(drawn.contains("stepfun/step-5-preview"), "{drawn}");
+        assert!(drawn.contains("+2"), "{drawn}");
+        // What it just served, with the failed call's own dot.
+        assert!(drawn.contains("step-3.7-flash"), "{drawn}");
+        assert!(drawn.contains("500"), "{drawn}");
+        assert!(drawn.contains("GLM-5.3-Flash"), "{drawn}");
+        // The ledger's counters and the per-model bars.
+        assert!(drawn.contains("19,873"), "{drawn}");
+        assert!(drawn.contains("98%"), "{drawn}");
+        assert!(drawn.contains("88.2B in \u{b7} 4.0B out"), "{drawn}");
+        assert!(drawn.contains("3,720"), "{drawn}");
+        // The judge and cascade counters, the workload mix, and the kit's
+        // own payg guard.
+        assert!(drawn.contains("15,738 cached"), "{drawn}");
+        assert!(drawn.contains("787 esc"), "{drawn}");
+        assert!(drawn.contains("standard_code 10,557"), "{drawn}");
+        assert!(drawn.contains("guard payg off \u{b7} deepseek"), "{drawn}");
+        // The board is genuinely visual: a bar and a sparkline's glyphs.
+        assert!(drawn.contains('\u{2588}'), "{drawn}");
+        // A second cycle moves to the second-brain board.
+        app.apply(crate::tui::app::Action::CycleBoard);
+        assert_eq!(app.boards.active, crate::boards::BoardKind::Brain);
+        let cycled = draw(&app, 120, 40);
+        assert!(cycled.contains("board \u{2014} second-brain"), "{cycled}");
+        assert!(cycled.contains("board second-brain"), "{cycled}");
+    }
+
+    #[test]
+    fn the_second_brain_board_renders_the_derived_state_as_cards() {
+        let app = board_app(
+            crate::boards::BoardKind::Brain,
+            crate::boards::BoardData::Brain(brain_snapshot()),
+        );
+        let drawn = draw(&app, 120, 40);
+        assert!(drawn.contains("board \u{2014} second-brain"), "{drawn}");
+        assert!(drawn.contains(".second-brain"), "{drawn}");
+        // The gate board: its totals and its earned-autonomy rows.
+        assert!(drawn.contains("verdicts"), "{drawn}");
+        assert!(drawn.contains("80"), "{drawn}");
+        assert!(drawn.contains("plan-gate"), "{drawn}");
+        assert!(drawn.contains("9/20"), "{drawn}");
+        // The HITL inbox, with the blocking verdict named.
+        assert!(drawn.contains("hitl 1 open"), "{drawn}");
+        assert!(drawn.contains("zcode-gate"), "{drawn}");
+        assert!(drawn.contains("block"), "{drawn}");
+        // The loops and their graded rows.
+        assert!(drawn.contains("ui-capture"), "{drawn}");
+        assert!(drawn.contains("127"), "{drawn}");
+        // The maturity sparkline and the doing/conflict counts.
+        assert!(drawn.contains("output"), "{drawn}");
+        assert!(drawn.contains("173"), "{drawn}");
+        assert!(drawn.contains('\u{2584}'), "{drawn}");
+        assert!(drawn.contains("slice 14"), "{drawn}");
+        assert!(drawn.contains("conflicts"), "{drawn}");
+        // One read that did not land is named on the board that carries it.
+        assert!(drawn.contains("harness_state.json does not exist"), "{drawn}");
+    }
+
+    #[test]
+    fn the_tower_board_renders_git_facts_per_project() {
+        let app = board_app(
+            crate::boards::BoardKind::Tower,
+            crate::boards::BoardData::Tower(tower_snapshot()),
+        );
+        let drawn = draw(&app, 120, 40);
+        assert!(drawn.contains("board \u{2014} tower"), "{drawn}");
+        assert!(drawn.contains("/Users/owner/Projects"), "{drawn}");
+        // The dirty project leads, with its branch, its dirty count, and
+        // its ahead count; the clean one follows with its head commit.
+        assert!(drawn.contains("fleet"), "{drawn}");
+        assert!(drawn.contains("master"), "{drawn}");
+        assert!(drawn.contains("2d"), "{drawn}");
+        assert!(drawn.contains("a421e82"), "{drawn}");
+        assert!(drawn.contains("docs: KI-114 lands"), "{drawn}");
+        assert!(drawn.contains("second-brain"), "{drawn}");
+        assert!(drawn.contains("91c0f31"), "{drawn}");
+        assert!(drawn.contains("skipped"), "{drawn}");
+    }
+
+    #[test]
+    fn a_refused_read_keeps_the_last_snapshot_and_names_the_error() {
+        let mut app = board_app(
+            crate::boards::BoardKind::Router,
+            crate::boards::BoardData::Router(router_snapshot()),
+        );
+        // The kit goes away: the read is refused.
+        app.apply_board(
+            crate::boards::BoardKind::Router,
+            Err("the kit at 8300 did not answer".to_string()),
+        );
+        let drawn = draw(&app, 120, 40);
+        // The last snapshot is still on screen, whole.
+        assert!(drawn.contains("standard_code"), "{drawn}");
+        assert!(drawn.contains("19,873"), "{drawn}");
+        // And the refusal is named, with the time of the last good read.
+        assert!(drawn.contains("the kit at 8300 did not answer"), "{drawn}");
+        assert!(drawn.contains("last good read 2026-10-14T09:41Z"), "{drawn}");
+    }
+
+    #[test]
+    fn a_board_that_has_never_read_names_its_reason() {
+        let mut app = fresh();
+        app.apply_board(
+            crate::boards::BoardKind::Tower,
+            Err("the tower could not list /nowhere: no such file or directory".to_string()),
+        );
+        app.boards.active = crate::boards::BoardKind::Tower;
+        let drawn = draw(&app, 120, 40);
+        assert!(drawn.contains("no snapshot"), "{drawn}");
+        assert!(drawn.contains("the tower could not list /nowhere"), "{drawn}");
+        // A board still on its opening read says it is reading rather
+        // than lying about having nothing.
+        let mut loading = fresh();
+        loading.boards.active = crate::boards::BoardKind::Brain;
+        let waiting = draw(&loading, 120, 40);
+        assert!(waiting.contains("reading"), "{waiting}");
+        assert!(!waiting.contains("no snapshot"), "{waiting}");
+    }
+
+    #[test]
+    fn a_board_longer_than_its_pane_names_what_it_holds_back() {
+        let mut snapshot = tower_snapshot();
+        for index in 0..12 {
+            snapshot.projects.push(crate::boards::ProjectFacts {
+                name: format!("project-{index:02}"),
+                branch: Some("main".to_string()),
+                head: Some("0000000".to_string()),
+                subject: Some("a commit".to_string()),
+                when: Some("2026-10-01".to_string()),
+                commits_30d: 1,
+                dirty: 0,
+                ahead: None,
+                behind: None,
+                notes: Vec::new(),
+            });
+        }
+        let app = board_app(
+            crate::boards::BoardKind::Tower,
+            crate::boards::BoardData::Tower(snapshot),
+        );
+        let drawn = draw(&app, 120, 24);
+        assert!(drawn.contains("more"), "{drawn}");
+        // The pane never overflows its frame: the last row is the marker.
+        let rows: Vec<&str> = drawn.lines().collect();
+        assert!(rows.len() <= 24, "{} rows", rows.len());
+    }
+
     #[test]
     fn the_lanes_modal_is_sized_from_its_rows_not_a_fixed_share() {
         // Four two-line rows must not cost 62% of the screen.
@@ -1095,12 +2137,18 @@ mod tests {
             tokens_before: 120_000,
             tokens_after: 900,
         });
-        let chat = draw(&app, 80, 24);
+        // The detail line's whole phrase needs the room a wide frame
+        // gives the conversation beside the board pane.
+        let chat = draw(&app, 120, 24);
         assert!(chat.contains("compacted"), "{chat}");
-        assert!(chat.contains("6 turns → 1 summary"), "{chat}");
-        assert!(chat.contains("done"), "{chat}");
-        // The token counts ride the wrapped detail line, whole.
-        assert!(chat.contains("~120000 → ~900 tokens"), "{chat}");
+        assert!(chat.contains("6 turns"), "{chat}");
+        assert!(chat.contains("→ 1 summary · ~120000 → ~900 tokens"), "{chat}");
+        // At 80 columns the settled line still carries its state word: a
+        // fixed-width surface given a concatenated line cuts its tail
+        // (KI-078, KI-085, KI-096), which is why the summary phrase moved
+        // to the detail line in the first place.
+        let narrow = draw(&app, 80, 24);
+        assert!(narrow.contains("6 turns  done"), "{narrow}");
         // A one-turn fold never says "1 turns".
         let mut single = fresh();
         single.apply_ui_event(UiEvent::Compacted {
@@ -1108,8 +2156,9 @@ mod tests {
             tokens_before: 100_001,
             tokens_after: 40,
         });
-        let rendered = draw(&single, 80, 24);
-        assert!(rendered.contains("1 turn → 1 summary"), "{rendered}");
+        let rendered = draw(&single, 120, 24);
+        assert!(rendered.contains("1 turn  done"), "{rendered}");
+        assert!(rendered.contains("→ 1 summary"), "{rendered}");
     }
 
     /// The cron fire card renders in the house card style too: the tool
@@ -1127,15 +2176,20 @@ mod tests {
             detail: "completed in 3 turns".to_string(),
             session: Some("20261014T120000Z-1a2b3c".to_string()),
         });
-        let chat = draw(&app, 80, 24);
+        // The whole detail line needs the room a wide frame gives the
+        // conversation beside the board pane.
+        let chat = draw(&app, 120, 24);
         assert!(chat.contains("scheduled"), "{chat}");
         assert!(chat.contains("daily-digest"), "{chat}");
         assert!(chat.contains("done"), "{chat}");
-        // The minute, the outcome, and the session ride the wrapped
-        // detail line, whole.
+        // The minute and the outcome ride the wrapped detail line, and the
+        // session id stands on its own so no wrap can halve it.
         assert!(chat.contains("at 2026-10-14T12:00Z"), "{chat}");
         assert!(chat.contains("completed in 3 turns"), "{chat}");
         assert!(chat.contains("session 20261014T120000Z-1a2b3c"), "{chat}");
+        // At 80 columns the settled line still carries its state word.
+        let narrow = draw(&app, 80, 24);
+        assert!(narrow.contains("daily-digest  done"), "{narrow}");
 
         // A catch-up window is named as one on the card.
         let mut catch_up = fresh();
@@ -1148,7 +2202,7 @@ mod tests {
                 .to_string(),
             session: Some("20261014T120000Z-4d5e6f".to_string()),
         });
-        let rendered = draw(&catch_up, 80, 24);
+        let rendered = draw(&catch_up, 120, 24);
         assert!(rendered.contains("catch-up for 2026-10-14T12:00Z"), "{rendered}");
         assert!(rendered.contains("skipped"), "{rendered}");
         assert!(rendered.contains("no one is here to approve it"), "{rendered}");
@@ -1163,7 +2217,7 @@ mod tests {
             detail: "the fire panicked: boom".to_string(),
             session: None,
         });
-        let rendered = draw(&failed, 80, 24);
+        let rendered = draw(&failed, 120, 24);
         assert!(rendered.contains("failed"), "{rendered}");
         assert!(rendered.contains("the fire panicked: boom"), "{rendered}");
     }
