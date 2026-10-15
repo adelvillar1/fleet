@@ -1,6 +1,6 @@
 # Slice 18 — the calibration loop closes: fleet's routes are judged (2026-10-14)
 
-status: planned
+status: landed-pushed-pending-review (2026-10-14; ebcfa48 + f55be4c, the third vector riding its own commit)
 
 ## Goal
 
@@ -49,13 +49,19 @@ missing is the judgment and the ride-back.
 
 ## Acceptance criteria
 
-- **C1 — the judgment op.** A batch-only surface (`fleet judge
+- **C1 — the judgment op (three-way verdict).** A batch-only surface (`fleet judge
   [--day <date>] [--dry-run]`) reads a day's `route` rows and asks the
   sys1 lane — the same lane the router already selects with — to judge
   each selection against its outcome evidence (the workload, the
   attempts, the failovers, the turn's outcome where joinable). The
   verdict, its confidence, and the reason ride a new op (`route_judged`)
-  keyed by the route row's identity. Every failure named; a lane that
+  keyed by the route row's identity. The verdict vocabulary is three-way
+  — right / wrong / **insufficient** — where insufficient is the owner's
+  third vector: the direction was right but the minima was not reached
+  for want of a companion (a failover followed the served turn, the
+  answer needed the escalation leg, or the attempt succeeded but the
+  task did not complete), and each insufficient reason NAMES the absent
+  companion. Wrong outranks insufficient in the grade. Every failure named; a lane that
   fails open answers with its own fallback prose, so the status is
   parsed and a non-ok judgment is a named refusal — no row, no
   influence, the recorded decision standing (the consuming-lanes rule).
@@ -64,11 +70,16 @@ missing is the judgment and the ride-back.
   17's shape. `--dry-run` makes no ask and shows what would be asked. A
   named daily budget (`JUDGE_BUDGET_USD_DAY`, with
   `FLEET_JUDGE_BUDGET_USD_DAY` able only to lower it) bounds the spend,
+  and the exit-code rule is contractual: a batch that obtained no
+  judgment (every row refused by name, an empty day, an over-budget day)
+  exits 1; a dry run, a judging batch, and an all-already-judged batch
+  exit 0, so a twice-daily cron is not a false alarm.
   and the spend record lands even when the row write fails (slice 17's
   sidecar pattern). The task's text never enters the judgment — the
   rows are redacted by design and the prompt says so.
 - **C3 — the calibration surface.** `fleet calib --calibration` renders
-  the per-provider judged quality as cards at the house bar: the
+  the per-CELL judged quality (provider × workload shape, never the
+  provider average) as cards at the house bar: the
   judged count, the right/wrong split, the confidence-weighted
   wrong-rate, the cost per correct turn, and the **fit state** — the
   sibling's readiness rule ported (a provider's floor is trusted only
@@ -80,7 +91,9 @@ missing is the judgment and the ride-back.
   preference consults the calibration: a provider whose
   confidence-weighted wrong-rate crosses a named floor AND whose sample
   is fit is skipped when a later candidate in the declared chain is
-  healthy. The declared chain's order and the head are untouched — the
+  healthy. The insufficient-rate NEVER skips — it notes: a fit cell whose
+  insufficient-rate crosses its floor names in the route row's reason
+  that the minima needs companions and that the provider is not skipped. The declared chain's order and the head are untouched — the
   influence moves only the failover's preference among the remaining
   candidates, and every skip names the calibration that caused it in
   the route row's reason. Config-gated (`calibration.informs_failover`,
@@ -89,8 +102,10 @@ missing is the judgment and the ride-back.
 - **C5 — the human's ground-truth seam.** A judged row can carry the
   owner's disposition (the sibling's vocabulary: agreed / disagreed /
   waived) through a named surface (`fleet judge --agree <key>` /
-  `--disagree <key>`), and the disposition overrides the automated
-  verdict in the calibration math. The judge is a signal, not an
+  `--disagree <key>` / `--waive <key>`), and the disposition overrides the automated
+  verdict in the calibration math — a disagreed INSUFFICIENT inverts to
+  right, because the owner's grading is the ground truth that the
+  companion was there. The judge is a signal, not an
   authority; the owner's grading is the ground truth.
 - **C6 — the eval scenario.** A deterministic scenario grades the loop:
   the judged rows beside the routes, the calibration's fit rule, the
