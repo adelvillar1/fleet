@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-blend1 MCP server: exposes the blended lane's five surfaces as MCP tools —
-`ask` (blend1.ask), `doctor` (blend1.doctor), `search` (corpus recall),
-`refresh` (docs-derived corpus refresh), and `seed` (the corpus's write
-path).
+blend1 MCP server: exposes the blended lane's six surfaces as MCP tools —
+`ask` (blend1.ask), `web` (the web leg called directly), `doctor`
+(blend1.doctor), `search` (corpus recall), `refresh` (docs-derived corpus
+refresh), and `seed` (the corpus's write path).
 
 Transport: stdio JSON-RPC (MCP 2024-11-05).
 
@@ -31,6 +31,14 @@ The ask result returns the BlendResult's fields as they are (structured
 content), so result keys added upstream ride through without an adapter
 change; `escalated` and `failed_lanes` are the adapter's escalation
 surface beside them.
+
+The `web` tool calls the web leg directly — tinyfish search + fetch,
+bounded at the leg's own WEB_MAX_URLS urls and WEB_EXCERPT_CHARS
+characters per excerpt — so a live lookup costs one lane call instead of
+the whole composed answer. Its result is the leg's own report, verbatim:
+the bounds, the url provenance, and the fail-open naming a missing
+tinyfish extra or an unset TINYFISH_API_KEY ride through unchanged, so a
+missing key is a named error the caller can read, never an empty answer.
 
 Key material never reaches the wire or a log: this process writes
 JSON-RPC frames to stdout and nothing else; blend1's telemetry redacts
@@ -112,6 +120,48 @@ ASK_TOOL = {
             },
         },
         "required": ["prompt"],
+    },
+}
+
+WEB_TOOL = {
+    "name": "web",
+    "description": (
+        "Search the live web and fetch the top hits, returning excerpts "
+        "with url provenance — bounded by the web leg's own limits and "
+        "framed as untrusted reference data; calls blend1's web leg "
+        "directly, without the composed ask's router, synthesis, or "
+        "validation gate."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The search query.",
+            },
+            "fetch": {
+                "type": "boolean",
+                "default": True,
+                "description": (
+                    "Fetch the top hits' pages for excerpts (default "
+                    "true). The web leg is one bounded search-plus-fetch "
+                    "call with no search-only mode — the value is "
+                    "validated here, and the leg's own bound "
+                    "(WEB_MAX_URLS urls, WEB_EXCERPT_CHARS characters per "
+                    "excerpt) decides what is fetched."
+                ),
+            },
+            "max_urls": {
+                "type": "integer",
+                "description": (
+                    "Optional cap on how many of the top hits are "
+                    "fetched. The leg's own WEB_MAX_URLS is the "
+                    "server-side ceiling — a larger value is clamped to "
+                    "it by the lane, never trusted past it."
+                ),
+            },
+        },
+        "required": ["query"],
     },
 }
 
@@ -236,7 +286,7 @@ SEED_TOOL = {
     },
 }
 
-TOOLS = (ASK_TOOL, DOCTOR_TOOL, SEARCH_TOOL, REFRESH_TOOL, SEED_TOOL)
+TOOLS = (ASK_TOOL, WEB_TOOL, DOCTOR_TOOL, SEARCH_TOOL, REFRESH_TOOL, SEED_TOOL)
 
 
 def _add_core_paths() -> None:
@@ -420,6 +470,55 @@ def main() -> None:
                             }
                         ]
                     },
+                )
+                continue
+
+            if tool_name == "web":
+                # The web leg called directly: tinyfish search + fetch with
+                # the leg's own bounds and its own fail-open — no router, no
+                # synthesis, no validation gate. The result rides back
+                # verbatim (plan C4: the bounds and the injection defense
+                # are the leg's own, never a second implementation here).
+                query = arguments.get("query")
+                if not isinstance(query, str) or not query.strip():
+                    error(req_id, -32602, "`query` must be a non-empty string.")
+                    continue
+                fetch = arguments.get("fetch")
+                if fetch is None:
+                    fetch = True
+                if not isinstance(fetch, bool):
+                    error(req_id, -32602, "`fetch` must be a boolean.")
+                    continue
+                max_urls = arguments.get("max_urls")
+                if max_urls is not None and (
+                    isinstance(max_urls, bool)
+                    or not isinstance(max_urls, int)
+                    or max_urls < 1
+                ):
+                    error(req_id, -32602, "`max_urls` must be a positive integer.")
+                    continue
+                try:
+                    # Per-call import, the corpus pattern. The leg's own
+                    # fail-open is its RETURN value, not an exception: a
+                    # missing tinyfish extra or an unset
+                    # TINYFISH_API_KEY comes back as a named error result,
+                    # so it rides through unchanged — never an empty
+                    # answer. `fetch` and `max_urls` are validated here so
+                    # a mistyped value is a named -32602 rather than a
+                    # crash; the leg's signature takes the query alone,
+                    # and its own WEB_MAX_URLS / WEB_EXCERPT_CHARS are the
+                    # server-side clamp — the caller's number never
+                    # reaches a fetch path unclamped because the lane
+                    # bounds the fetch itself.
+                    from blend1 import lanes
+
+                    result = lanes.web_lane(query)
+                except Exception as e:
+                    error(req_id, -32603, f"{type(e).__name__}: {e}")
+                    continue
+                respond(
+                    req_id,
+                    {"content": [{"type": "text", "text": json.dumps(result, default=str)}]},
                 )
                 continue
 
