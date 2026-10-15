@@ -94,7 +94,7 @@ def classify(
         )
         return ClassifyResult(
             task=resolved_task.id,
-            provider=provider if isinstance(provider, str) else ",".join(provider),
+            provider=provider if isinstance(provider, str) else ",".join(provider or []),
             providers_used=[],
             answers={},
             telemetry=telemetry,
@@ -111,7 +111,7 @@ def classify(
 
     result = ClassifyResult(
         task=resolved_task.id,
-        provider=provider if isinstance(provider, str) else ",".join(provider),
+        provider=provider if isinstance(provider, str) else ",".join(provider or []),
         providers_used=list(answers),
         answers=answers,
         telemetry=telemetry,

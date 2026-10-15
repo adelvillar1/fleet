@@ -1632,9 +1632,24 @@ mod tests {
                 key: None,
             },
         ];
-        // An empty specs map with no vendored sys1 → the judge cannot run,
-        // which is the fallback path exercised here.
-        let (decision, _latency) = select(&resolved, None, "do a thing", &HashMap::new()).await;
+        // The judge cannot run: the injected spec names a program that
+        // cannot spawn, so `select` falls back to the head. Hermetic on
+        // purpose — the vendored sys1 lane IS present in this repo and
+        // answers (KI-191's lane fix), and before that fix this test
+        // passed only because the lane crashed on every call, which is
+        // a test passing for the wrong reason (KI-202).
+        let mut specs = HashMap::new();
+        specs.insert(
+            JUDGE_LANE.to_string(),
+            ServerSpec {
+                program: "fleet-test-no-such-lane-program".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                passthrough: Vec::new(),
+                cwd: None,
+            },
+        );
+        let (decision, _latency) = select(&resolved, None, "do a thing", &specs).await;
         assert_eq!(decision.how, How::Fallback);
         assert_eq!(decision.provider, HEAD_ID);
         assert_eq!(decision.start_index, 0);

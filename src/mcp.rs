@@ -592,6 +592,27 @@ fn parse_tools(result: Value) -> Result<Vec<ToolInfo>, McpError> {
 /// Parse a `tools/call` result. The content is kept as raw JSON per
 /// block, so no tool's payload shape is assumed here.
 fn parse_call(result: Value) -> Result<CallResult, McpError> {
+    // A lane that answers a failed call with a JSON-RPC error nested
+    // under `result` — the vendored sys1 lane's shape (KI-191): the
+    // lane's own words ARE the refusal. Reading it as a content-less
+    // success drops the lane's error, and the caller then names a
+    // parse failure ("not the structured content it promises") over
+    // what the lane actually said. The message rides as the call's
+    // text with `is_error` set, so every caller's existing refusal
+    // path names the lane's own words.
+    if let Some(error) = result.get("error") {
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("the lane returned an error carrying no message");
+        return Ok(CallResult {
+            content: vec![ContentBlock {
+                content_type: "text".to_string(),
+                data: Value::String(message.to_string()),
+            }],
+            is_error: true,
+        });
+    }
     let content = result
         .get("content")
         .and_then(Value::as_array)
@@ -949,6 +970,21 @@ mod tests {
         // An empty result parses as no content, not an error.
         let empty = parse_call(json!({})).unwrap();
         assert!(empty.content.is_empty());
+        // A JSON-RPC error nested under `result` is the lane's own
+        // refusal, carried in the lane's words with is_error set —
+        // never a content-less success that drops what the lane said
+        // (KI-191: the beat refused nine rows naming a parse failure
+        // over the lane's own "can only join an iterable").
+        let nested = parse_call(json!({
+            "error": { "code": -32603, "message": "can only join an iterable" },
+        }))
+        .unwrap();
+        assert!(nested.is_error);
+        assert_eq!(nested.text(), "can only join an iterable");
+        // An error with no message still refuses, with a named stand-in.
+        let mute = parse_call(json!({ "error": { "code": -32603 } })).unwrap();
+        assert!(mute.is_error);
+        assert!(mute.text().contains("no message"), "got {:?}", mute.text());
     }
 
     /// A parsed call result over `blocks`, for the mapping tests.
