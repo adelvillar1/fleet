@@ -1,6 +1,6 @@
 # Slice 20 — the delegated vector: fleet's delegation learns its own direction (2026-10-14)
 
-status: planned
+status: in-progress — D2/D7/D8's cores landed 2026-10-15 (commit 047b3d7: delegate, graph, nomenclature, each with its tests, gate green). Not landed: D1 (the structured brief), D2's delegation-row writer and `fleet delegate`/`fleet calib --delegation`/the human seam, D3 (roles), D4 (fan-out), D5 (steer/stop), D6 (depth two), D7's `convention` tool + write hook + `fleet convention`, D8/D9/D10's surfaces and the delta report.
 
 ## Goal
 
