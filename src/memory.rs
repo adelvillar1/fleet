@@ -691,8 +691,11 @@ pub fn resolve_root(cwd: &Path) -> PathBuf {
 }
 
 /// `secs:nanos:len` of the file, the index's freshness key: a changed
-/// fact is re-embedded, an untouched one keeps its cached vector.
-fn file_stamp(path: &Path) -> Option<String> {
+/// fact is re-embedded, an untouched one keeps its cached vector. The
+/// session archive's index reads the same stamp off its own logs, so
+/// the two caches agree on what "changed" means — which is why it is
+/// public rather than a second, drifting copy of the format.
+pub fn file_stamp(path: &Path) -> Option<String> {
     let metadata = fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
     let duration = modified.duration_since(UNIX_EPOCH).ok()?;
@@ -1820,6 +1823,39 @@ impl Memory {
             }
         }
         Memory { root: root.to_path_buf(), embedder, facts: Mutex::new(facts), vectors }
+    }
+
+    /// Build a Memory over facts that did not come from a corpus root —
+    /// the session archive's synthetic ones — with the vectors already
+    /// computed for them and the embedder that computed them.
+    ///
+    /// [`Memory::load_with`] is the corpus root's path: it reads the
+    /// facts off disk and embeds what its index does not already hold.
+    /// The session archive derives its facts in memory from JSONL logs
+    /// and caches their vectors in the sessions directory's own index,
+    /// so it arrives with the corpus already in hand and needs the
+    /// same Memory without the disk read. The vectors ride in rather
+    /// than being recomputed because the archive's index has already
+    /// done the work, and the embedder rides in because the vector
+    /// channel needs the instruction's own embedding from the same
+    /// model that computed the facts' — a query embedded by any other
+    /// model would cosine against stale-dimension vectors and score
+    /// 0.0, the exact failure the index's embedder key exists to
+    /// prevent.
+    ///
+    /// Read-only by construction: the recall-count bump writes to a
+    /// fact's `path`, and a synthetic fact's path is the session log
+    /// it was derived from, so a synthetic Memory must never be routed
+    /// through [`Memory::recall_hits`] — the session archive's own
+    /// feedback loop is a later piece of its plan. `root` is empty
+    /// because synthetic facts have no corpus root; the caller already
+    /// holds the sessions directory they came from.
+    pub fn from_facts(
+        facts: Vec<Fact>,
+        vectors: HashMap<String, Vec<f32>>,
+        embedder: Box<dyn Embedder>,
+    ) -> Memory {
+        Memory { root: PathBuf::new(), embedder, facts: Mutex::new(facts), vectors }
     }
 
     /// The corpus root, `memories/`.
