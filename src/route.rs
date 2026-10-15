@@ -838,6 +838,32 @@ pub enum How {
     Pinned,
 }
 
+/// Where this route's judgment came from. A cached judgment is a
+/// recorded one, and the row says so: a cache that suppressed its own
+/// provenance would make the calibration stream's counts lie about
+/// how many judgments were actually made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JudgedFrom {
+    /// The judging lane answered this run.
+    #[default]
+    Fresh,
+    /// The route-decision cache answered from a recorded verdict.
+    Cached,
+    /// No judgment was obtained at all — the fallback and pin paths.
+    None,
+}
+
+impl JudgedFrom {
+    /// The word the decision row and the surfaces render with.
+    pub fn label(self) -> &'static str {
+        match self {
+            JudgedFrom::Fresh => "fresh",
+            JudgedFrom::Cached => "cached",
+            JudgedFrom::None => "none",
+        }
+    }
+}
+
 impl How {
     /// The word each mode renders with.
     pub fn label(self) -> &'static str {
@@ -866,6 +892,10 @@ pub struct RouteDecision {
     /// Why this route, in one line — the decision row and the status bar
     /// both read it.
     pub reason: String,
+    /// Whether the judgment was made this run, served from the
+    /// route-decision cache, or never obtained. Rides the decision so
+    /// the row can count the split without re-deriving it.
+    pub judged_from: JudgedFrom,
     /// The chain index failover begins walking from.
     pub start_index: usize,
     /// The walk order: the (provider, model) pairs this route walks, the
@@ -900,6 +930,7 @@ pub async fn select(
     specs: &HashMap<String, ServerSpec>,
     table: &[Preference],
     gates: Gates,
+    cache: Option<&mut crate::route_cache::Cache>,
 ) -> (RouteDecision, u128) {
     let started = Instant::now();
     let head = head_index(resolved);
@@ -914,6 +945,7 @@ pub async fn select(
                     None,
                     None,
                     format!("pinned to {provider}/{model}"),
+                    JudgedFrom::None,
                 ),
                 started.elapsed().as_millis(),
             );
@@ -926,7 +958,7 @@ pub async fn select(
         .filter(|pin_id| !pin_id.contains('/') && !resolved.iter().any(|entry| entry.id() == *pin_id))
         .map(|pin_id| format!("pin `{pin_id}` names no roster provider; "));
 
-    let judged = judge(task, specs).await;
+    let (judged, judged_from) = judge(task, specs, cache).await;
     // The workload this route serves: sys1's, or the gates' default when
     // the judgment is absent or below the confidence floor. The
     // confidence itself rides the gate note in the reason — the lane's
@@ -1005,7 +1037,14 @@ pub async fn select(
                 gate_note,
             );
             if order.is_empty() {
-                fallback(resolved, head, table, gates, &format!("{note}{reason}"))
+                fallback(
+                    resolved,
+                    head,
+                    table,
+                    gates,
+                    &format!("{note}{reason}"),
+                    judged_from,
+                )
             } else {
                 let how = if provider_pin.is_some() {
                     How::Pinned
@@ -1020,6 +1059,7 @@ pub async fn select(
                     Some(workload.clone()),
                     verdict.clone(),
                     format!("{note}{reason}"),
+                    judged_from,
                 )
             }
         }
@@ -1032,6 +1072,7 @@ pub async fn select(
                 "{}sys1 judged an unmapped workload `{workload}`; ",
                 unknown_pin.as_deref().unwrap_or_default()
             ),
+            judged_from,
         ),
     };
     (decision, started.elapsed().as_millis())
@@ -1045,6 +1086,7 @@ fn decision_from(
     workload: Option<String>,
     verdict: Option<String>,
     reason: String,
+    judged_from: JudgedFrom,
 ) -> RouteDecision {
     let (provider, model) = order
         .first()
@@ -1059,7 +1101,17 @@ fn decision_from(
     // `prepare` recomputes the same value after the demotion reorder,
     // which also keeps the selected candidate at the head.
     let start_index = 0;
-    RouteDecision { provider, model, how, workload, verdict, reason, start_index, order }
+    RouteDecision {
+        provider,
+        model,
+        how,
+        workload,
+        verdict,
+        reason,
+        judged_from,
+        start_index,
+        order,
+    }
 }
 
 /// A fallback decision: the gates' default workload's preference, named
@@ -1071,6 +1123,7 @@ fn fallback(
     table: &[Preference],
     gates: Gates,
     reason: &str,
+    judged_from: JudgedFrom,
 ) -> RouteDecision {
     let order = preference_for(table, gates.default_workload)
         .map(|preference| {
@@ -1081,7 +1134,8 @@ fn fallback(
                 .collect()
         })
         .unwrap_or_default();
-    let mut decision = decision_from(order, How::Fallback, None, None, reason.to_string());
+    let mut decision =
+        decision_from(order, How::Fallback, None, None, reason.to_string(), judged_from);
     // An empty table (a config that named no workloads) still has to
     // walk something: the declared chain's head, as the pre-slice
     // behavior did.
@@ -1097,20 +1151,72 @@ fn fallback(
     decision
 }
 
-/// Ask sys1 for a routing judgment: spawn the lane (like any other), call
-/// `sys1_classify` with task `route`, and read the workload verdict. Any
-/// failure — the lane cannot launch, the handshake or call fails, the
-/// answer has no workload — is `None`, which the caller turns into a
-/// fallback. The child is always torn down.
-async fn judge(task: &str, specs: &HashMap<String, ServerSpec>) -> Option<(String, f64, String)> {
+/// Ask sys1 for a routing judgment — or read the recorded one. A hit
+/// skips the spawn entirely; a miss spawns the lane (like any other),
+/// calls `sys1_classify`, and writes the verdict through so the next
+/// run for this task finds it. Any failure — the lane cannot launch,
+/// the handshake or call fails, the answer has no workload — is
+/// `None`, which the caller turns into a fallback. The child is always
+/// torn down.
+///
+/// The second element says which happened, because a cached judgment
+/// is still a judgment the row must attribute honestly.
+async fn judge(
+    task: &str,
+    specs: &HashMap<String, ServerSpec>,
+    cache: Option<&mut crate::route_cache::Cache>,
+) -> (Option<(String, f64, String)>, JudgedFrom) {
     let spec = match specs.get(JUDGE_LANE) {
         Some(spec) => spec.clone(),
-        None => lanes::spec_for(JUDGE_LANE).ok()?,
+        None => match lanes::spec_for(JUDGE_LANE) {
+            Ok(spec) => spec,
+            Err(_) => return (None, JudgedFrom::None),
+        },
     };
-    let server = McpServer::spawn(&spec).ok()?;
+    let hash = calib::hash16(task);
+    // The cache is consulted only when it belongs to the lane that
+    // would judge now: a key mismatch discards the whole file rather
+    // than serving another lane's verdicts.
+    if let Some(cache) = cache.as_ref() {
+        if cache.keyed_for(&crate::route_cache::Cache::key_for(&spec)) {
+            if let Some(recorded) = cache.get(&hash) {
+                return (
+                    Some((
+                        recorded.workload.clone(),
+                        recorded.confidence,
+                        recorded.verdict.clone(),
+                    )),
+                    JudgedFrom::Cached,
+                );
+            }
+        }
+    }
+    let server = match McpServer::spawn(&spec) {
+        Ok(server) => server,
+        Err(_) => return (None, JudgedFrom::None),
+    };
     let outcome = judge_live(&server, task).await;
     let _ = server.close().await;
-    outcome
+    let from = if outcome.is_some() {
+        JudgedFrom::Fresh
+    } else {
+        JudgedFrom::None
+    };
+    // The write-through: a verdict the lane actually made is recorded
+    // for the next run. A failed write costs a recompute and nothing
+    // else — the cache never blocks a route.
+    if let (Some(cache), Some((workload, confidence, verdict))) = (cache, outcome.as_ref()) {
+        cache.put(
+            hash,
+            crate::route_cache::Verdict {
+                workload: workload.clone(),
+                confidence: *confidence,
+                verdict: verdict.clone(),
+            },
+        );
+        cache.flush(&crate::route_cache::Cache::key_for(&spec));
+    }
+    (outcome, from)
 }
 
 /// The live judgment over an already-spawned sys1 server. The call shape
@@ -1517,6 +1623,7 @@ impl Router {
             input_chars: task.chars().count(),
             input_hash: calib::hash16(task),
             latency_ms,
+            judged_from: self.decision.judged_from.label().to_string(),
         }
     }
 
@@ -1749,6 +1856,11 @@ pub async fn prepare(
 ) -> Result<Prepared, ConfigError> {
     let roster = load_roster(home)?;
     let resolved = resolve(&roster.candidates, dotenv);
+    // The route-decision cache, read beside the roster it describes. A
+    // hit skips the judge lane's spawn entirely; a miss writes
+    // through. The cache never blocks a route — every failure path
+    // inside it costs a recompute and nothing else.
+    let mut decision_cache = crate::route_cache::Cache::load(home);
     let (mut decision, latency_ms) = select(
         &resolved,
         roster.pin.as_deref(),
@@ -1756,6 +1868,7 @@ pub async fn prepare(
         specs,
         &roster.preferences,
         roster.gates,
+        Some(&mut decision_cache),
     )
     .await;
     // The calibration stream, and its first read: today's graded rows
@@ -2352,6 +2465,7 @@ mod tests {
             &specs,
             &default_preferences(),
             Gates::default(),
+            None,
         )
         .await;
         assert_eq!(decision.how, How::Fallback);
@@ -2396,6 +2510,7 @@ mod tests {
             &specs,
             &default_preferences(),
             Gates::default(),
+            None,
         )
         .await;
         assert_eq!(decision.how, How::Pinned);
@@ -2416,6 +2531,7 @@ mod tests {
             &HashMap::new(),
             &default_preferences(),
             Gates::default(),
+            None,
         )
         .await;
         assert_eq!(decision.how, How::Pinned);
@@ -2448,6 +2564,7 @@ mod tests {
             &specs,
             &default_preferences(),
             Gates::default(),
+            None,
         )
         .await;
         // The selection proceeds normally, and the reason names the bad
@@ -2626,6 +2743,7 @@ mod tests {
             workload: Some("hard".to_string()),
             verdict: Some("pass".to_string()),
             reason: "sys1 judged `hard`".to_string(),
+            judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![
                 ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
@@ -2820,6 +2938,7 @@ mod tests {
             workload: None,
             verdict: None,
             reason: "test".to_string(),
+            judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![(HEAD_ID.to_string(), "auto".to_string())],
         };
@@ -2996,6 +3115,7 @@ mod tests {
             workload: None,
             verdict: None,
             reason: "sys1 gave no usable verdict".to_string(),
+            judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![
                 ("router-kit".to_string(), "auto".to_string()),

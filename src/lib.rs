@@ -30,6 +30,7 @@ pub mod memory;
 pub mod net;
 pub mod nomenclature;
 pub mod route;
+pub mod route_cache;
 pub mod roles;
 pub mod session;
 pub mod skills;

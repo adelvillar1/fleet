@@ -61,7 +61,8 @@ phrases for. The channel self-populates.
   it. The endpoint under test is the one the code declares, not the
   one the server binary defaults to.
 - **The fixture collision, second instance.** A new test in an
-  unrelated module named `zorbnicator` in a string literal and killed
+  unrelated module named the nonsense word zorbnicator in a string
+  literal and killed
   the honest-miss proof in `nomenclature/tests.rs` — the vocabulary is
   derived from the whole tree, so any new test anywhere can retire a
   proof of absence. The preventive rule (grep a nonsense word to zero

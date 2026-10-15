@@ -2344,6 +2344,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         workload: None,
         verdict: None,
         reason: "test head".to_string(),
+        judged_from: fleet::route::JudgedFrom::Fresh,
         start_index: 0,
         // The walk is the order, each entry carrying the model its own
         // candidate serves — the failover steps to the second entry,
@@ -2443,6 +2444,7 @@ async fn sys1_judges_the_route_through_the_injected_spec() {
         &specs,
         &preferences,
         fleet::route::Gates::default(),
+        None,
     )
     .await;
     assert_eq!(decision.how, How::Judged);
@@ -2452,6 +2454,91 @@ async fn sys1_judges_the_route_through_the_injected_spec() {
     // The walk starts at the selection — the order's head, position
     // zero — never at the candidate's roster position.
     assert_eq!(decision.start_index, 0);
+}
+
+/// The route-decision cache: a recorded judgment serves without
+/// spawning the lane again, and the decision says the verdict came
+/// from the record. The no-spawn proof is the mock's own `on_eof`
+/// marker — a child that runs reaches EOF and writes it, and a cache
+/// hit spawns nothing, so no marker appears. The cache is reloaded
+/// from its file between the two runs, so the round trip through disk
+/// is what the hit reads.
+#[tokio::test]
+async fn a_recorded_judgment_serves_without_spawning_the_lane() {
+    let home = temp_home("route-decision-cache");
+    let marker = home.join("spawned");
+    let script = home.join("script.jsonl");
+    // The judge's live path is initialize → call (no tools/list), so
+    // the script carries exactly those two entries (KI-201's order
+    // rule). The `on_eof` marker is the spawn's own signature.
+    std::fs::write(
+        &script,
+        format!(
+            "{}\n{}\n",
+            serde_json::json!({ "reply": initialize_reply(), "on_eof": marker.display().to_string() }),
+            serde_json::json!({ "reply": call_reply(
+                r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"hard","confidence":0.91}}}}"#
+            ) }),
+        ),
+    )
+    .unwrap();
+    let spec = fleet::mcp::ServerSpec {
+        program: env!("CARGO_BIN_EXE_mock-mcp").to_string(),
+        args: vec![script.to_string_lossy().into_owned()],
+        env: Vec::new(),
+        passthrough: Vec::new(),
+        cwd: None,
+    };
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), spec);
+    let preferences = vec![fleet::route::Preference {
+        workload: "hard",
+        candidates: vec![("zai-coding-plan", "GLM-5.3-Flash")],
+    }];
+    let resolved =
+        vec![resolved("zai-coding-plan", "https://api.z.ai".to_string(), true, Some("sk-fake-test"))];
+
+    // The first run: a miss — judged live, written through to the file.
+    let mut cache = fleet::route_cache::Cache::load(&home);
+    let (first, _) = fleet::route::select(
+        &resolved,
+        None,
+        "refactor the crate",
+        &specs,
+        &preferences,
+        fleet::route::Gates::default(),
+        Some(&mut cache),
+    )
+    .await;
+    assert_eq!(first.how, How::Judged);
+    assert_eq!(first.judged_from, fleet::route::JudgedFrom::Fresh);
+    assert!(
+        marker.exists(),
+        "the miss spawned the lane: the child reached EOF and wrote its marker"
+    );
+
+    // The second run reads the cache back from its file: a hit, with
+    // nothing spawned.
+    std::fs::remove_file(&marker).unwrap();
+    let mut cache = fleet::route_cache::Cache::load(&home);
+    let (second, _) = fleet::route::select(
+        &resolved,
+        None,
+        "refactor the crate",
+        &specs,
+        &preferences,
+        fleet::route::Gates::default(),
+        Some(&mut cache),
+    )
+    .await;
+    assert_eq!(second.judged_from, fleet::route::JudgedFrom::Cached);
+    assert_eq!(second.workload.as_deref(), Some("hard"));
+    assert_eq!(second.verdict.as_deref(), Some("pass"));
+    assert_eq!(second.provider, "zai-coding-plan");
+    assert!(
+        !marker.exists(),
+        "the hit spawned nothing: no child, so no marker"
+    );
 }
 
 /// The composed workload's candidate is a lane, not a gateway: the full
@@ -4486,6 +4573,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         workload: None,
         verdict: None,
         reason: "pinned for the test".to_string(),
+        judged_from: fleet::route::JudgedFrom::Fresh,
         start_index: 0,
         // The walk's entry names the candidate's own model — that is
         // what every request on this route carries.
@@ -5404,6 +5492,7 @@ impl CronHarness {
             workload: None,
             verdict: None,
             reason: "the mock is the only candidate".to_string(),
+            judged_from: fleet::route::JudgedFrom::None,
             start_index: 0,
             order: vec![("cand-mock".to_string(), "test-model".to_string())],
         };

@@ -67,6 +67,14 @@ pub struct RouteRow {
     /// A stable content hash of the task, for joining — never the text.
     pub input_hash: String,
     pub latency_ms: u128,
+    /// Whether the judgment was made this run (`fresh`), served from
+    /// the route-decision cache (`cached`), or never obtained
+    /// (`none`). Rides every row so the stream can count the split —
+    /// a cached judgment is a recorded one, and the counts must not
+    /// pretend otherwise. Absent on rows written before the cache
+    /// existed, which read as empty.
+    #[serde(default)]
+    pub judged_from: String,
 }
 
 /// One tool-call screening decision: the approval gate's verdict for one
@@ -1298,6 +1306,14 @@ pub struct ReadRow {
     /// for every other op.
     #[serde(default)]
     pub how: String,
+    /// The route row's judgment provenance: `fresh`, `cached`, or
+    /// `none` — whether the lane answered this run, the route-decision
+    /// cache answered from a record, or no judgment was obtained.
+    /// Empty for every other op and for rows written before the cache
+    /// existed, which is what keeps the hit rate an honest count
+    /// rather than an assumption.
+    #[serde(default)]
+    pub judged_from: String,
     /// The route row's model, the served candidate's own. Empty for every
     /// other op.
     #[serde(default)]
@@ -2150,8 +2166,13 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
     Some(card)
 }
 
-/// The route card's facts: attempts served and failed, and the chain the
-/// last decision walked.
+/// The route card's facts: attempts served and failed, the chain the
+/// last decision walked, and the judgment's provenance split — how
+/// many of the day's judgments the lane made and how many the
+/// route-decision cache served. The split is the number that decides
+/// whether the cache earns its keep: a hit rate near zero says the
+/// cache is overhead, and the owner should see that rather than
+/// infer it.
 fn route_detail(rows: &[&ReadRow]) -> Vec<String> {
     let served: usize = rows
         .iter()
@@ -2169,9 +2190,12 @@ fn route_detail(rows: &[&ReadRow]) -> Vec<String> {
     let Some(last) = rows.last() else {
         return Vec::new();
     };
+    let fresh = rows.iter().filter(|row| row.judged_from == "fresh").count();
+    let cached = rows.iter().filter(|row| row.judged_from == "cached").count();
     vec![
         format!("{served} served \u{b7} {failed} failed \u{b7} {} skipped", skipped(rows)),
         format!("last {} \u{b7} {} attempts in the walk", last.provider, last.attempts.len()),
+        format!("judgment: {fresh} fresh \u{b7} {cached} from the record"),
     ]
 }
 
@@ -2847,6 +2871,7 @@ mod tests {
             input_chars: 4,
             input_hash: hash16("task"),
             latency_ms: 3,
+            judged_from: "fresh".to_string(),
         })
     }
 
@@ -3283,6 +3308,30 @@ mod tests {
         let root = scratch("empty");
         let rendered = render(&root, "2026-10-13");
         assert!(rendered.contains("no Fleet rows for 2026-10-13"), "{rendered}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The route card's provenance split: the count that decides
+    /// whether the route-decision cache earns its keep. It rides the
+    /// row and the reader reads it back off the file, so the number
+    /// the surface shows is the number the stream recorded.
+    #[test]
+    fn the_route_card_counts_the_judgment_provenance_split() {
+        let root = scratch("judged-from");
+        let mut cached = route_row(&[("a", "served")]);
+        if let Row::Route(inner) = &mut cached {
+            inner.judged_from = "cached".to_string();
+        }
+        write_rows(
+            &root,
+            "2026-10-13",
+            &[route_row(&[("a", "served")]), cached, route_row(&[("a", "served")])],
+        );
+        let rendered = render(&root, "2026-10-13");
+        assert!(
+            rendered.contains("judgment: 2 fresh \u{b7} 1 from the record"),
+            "{rendered}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
