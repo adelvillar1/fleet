@@ -490,6 +490,12 @@ pub struct LogEvidence {
     /// The paths the parent's session wrote after this delegation's
     /// result, among the paths the child wrote.
     pub continued: Vec<String>,
+    /// The identifiers the child's own writes the write-time guard
+    /// flagged — each one a novel name with a canonical near-neighbour
+    /// in the project's vocabulary. D7's verdict signal: a child that
+    /// drove away from the project's trajectory left its own evidence
+    /// in its log, and this is it.
+    pub drifted: Vec<String>,
     /// Why the logs could not be read, when they could not. Absent
     /// evidence is named rather than guessed: an unreadable log leaves
     /// the signals absent, never asserted.
@@ -527,6 +533,18 @@ pub fn read_evidence(row: &DelegationRow) -> LogEvidence {
                     }
                 }
             }
+            Record::ToolResult { name, output, .. } => {
+                // The write-time guard's flag rides the write's own
+                // result, so the drift signal is read where the child
+                // left it: one flagged name per line the note carries.
+                if name == "write_file" {
+                    for flagged in guard_flagged(output) {
+                        if !evidence.drifted.contains(&flagged) {
+                            evidence.drifted.push(flagged);
+                        }
+                    }
+                }
+            }
             Record::End { stop_reason, turns } => {
                 evidence.ending = Some(stop_reason.clone());
                 evidence.turns = *turns;
@@ -536,6 +554,28 @@ pub fn read_evidence(row: &DelegationRow) -> LogEvidence {
     }
     evidence.continued = continued_paths(row, &evidence.wrote);
     evidence
+}
+
+/// The flagged names one `write_file` result carries, in the note's
+/// own order.
+///
+/// The note's shape is the guard's (`- `name` — the established term
+/// is ...`), and reading it back here is what makes the drift signal
+/// mechanical rather than a second opinion: the same words the model
+/// read are the words the grader sees. A result with no note carries
+/// none.
+fn guard_flagged(output: &str) -> Vec<String> {
+    if !output.contains("canonical near-neighbours") {
+        return Vec::new();
+    }
+    output
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix("- `")?;
+            let (name, _) = rest.split_once('`')?;
+            Some(name.to_string())
+        })
+        .collect()
 }
 
 /// The paths the parent's own session wrote after this delegation's
@@ -686,6 +726,18 @@ pub fn compose_prompt(row: &DelegationRow, evidence: &LogEvidence) -> String {
                     evidence.continued.len()
                 )
             });
+            // The drift signal, named where the grader reads it: a
+            // child whose own writes the guard flagged introduced novel
+            // names for concepts the project already names, which is a
+            // trajectory that drove away from the tree's vocabulary —
+            // a WRONG signal, distinct from an insufficient one.
+            if !evidence.drifted.is_empty() {
+                record.push(format!(
+                    "the child's own writes the write-time guard flagged: {} — novel name(s) with \
+                     canonical near-neighbours in this project's vocabulary",
+                    evidence.drifted.join(", ")
+                ));
+            }
         }
     }
     let body = bound(&record.join("\n"), EVIDENCE_CHARS);

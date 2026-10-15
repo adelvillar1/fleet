@@ -27,6 +27,10 @@ pub enum Command {
     Delegate(DelegateOptions),
     /// List the named roles a delegation can run under, as cards.
     Roles,
+    /// Ask what this project already calls a concept: the established
+    /// term with its sites, the plain statement that no established
+    /// term exists, or the named variant to rename away from.
+    Convention(ConventionOptions),
     /// The skills surface: the live skills, the drafts awaiting the
     /// slice-12 gate, and the usage-scan curation.
     Skills(SkillsOptions),
@@ -377,6 +381,12 @@ usage:
                                 under: description, what each narrows, and
                                 its file — the `subagent` tool's `role`
                                 argument names one
+  fleet convention <concept>    what this project already calls a concept:
+                                the established term with its file:line
+                                sites, the plain statement that no
+                                established term exists, or the named
+                                variant to rename away from — the same
+                                lookup the `convention` tool rides
   fleet skills [--proposed] [--curate] [--show <name>]
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
@@ -505,6 +515,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "judge" => parse_judge(rest),
         "delegate" => parse_delegate(rest),
         "roles" => no_flags(rest, Command::Roles),
+        "convention" => parse_convention(rest),
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
@@ -1226,6 +1237,43 @@ fn parse_explain(args: &[String]) -> Result<Command, String> {
     }
 }
 
+/// Options for `fleet convention`: the one concept to ask about.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ConventionOptions {
+    pub concept: String,
+}
+
+/// `fleet convention <concept>`: one positional, required. A second
+/// positional is refused rather than silently dropped — a concept is
+/// one name, and a caller that passed two meant to ask two questions.
+fn parse_convention(args: &[String]) -> Result<Command, String> {
+    let mut concept: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown convention option `{other}`"));
+            }
+            other => {
+                if concept.is_some() {
+                    return Err(format!(
+                        "`{other}` takes no value here; convention asks about one concept: \
+                         `fleet convention <concept>`"
+                    ));
+                }
+                concept = Some(other.to_string());
+            }
+        }
+        index += 1;
+    }
+    let Some(concept) = concept else {
+        return Err("convention needs a concept: `fleet convention <concept>`".to_string());
+    };
+    Ok(Command::Convention(ConventionOptions { concept }))
+}
+
 /// A real calendar check on an already-`YYYY-MM-DD`-shaped string: the
 /// month is 1-12 and the day is within that month's own length (leap
 /// years included). Without it, `--day 2026-13-45` reads as "Fleet did
@@ -1272,6 +1320,19 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn convention_takes_one_concept_and_refuses_the_rest() {
+        let command = parse(&args(&["convention", "judge_route"])).unwrap();
+        let Command::Convention(options) = command else { panic!("not a convention") };
+        assert_eq!(options.concept, "judge_route");
+        // No concept: a named usage refusal, never a guess.
+        assert!(parse(&args(&["convention"])).is_err());
+        // A second positional: one concept, not two questions.
+        assert!(parse(&args(&["convention", "a", "b"])).is_err());
+        // An unknown flag is refused rather than read as a concept.
+        assert!(parse(&args(&["convention", "--loud"])).is_err());
     }
 
     #[test]

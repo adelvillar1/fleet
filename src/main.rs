@@ -42,6 +42,7 @@ async fn main() -> ExitCode {
         Ok(Command::Judge(options)) => judge_command(&options).await,
         Ok(Command::Delegate(options)) => delegate_command(&options).await,
         Ok(Command::Roles) => roles_command(),
+        Ok(Command::Convention(options)) => convention_command(&options),
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
@@ -696,6 +697,26 @@ fn roles_command() -> ExitCode {
         return ExitCode::from(2);
     };
     print!("{}", fleet::roles::render(&fleet::roles::load_all(&home)));
+    ExitCode::SUCCESS
+}
+
+/// `fleet convention <concept>`: what this project already calls a
+/// concept, answered from the working tree's own vocabulary.
+///
+/// The exit code is success on every answer — an established term, an
+/// established-as-written term, a named variant, and the honest miss
+/// are all answers, and only a usage error (a missing concept, which
+/// the parser refuses before this runs) exits nonzero. A lookup that
+/// exits nonzero on a miss would train its caller to read the miss as
+/// a failure, which is exactly the distrust the honest state exists to
+/// avoid.
+fn convention_command(options: &cli::ConventionOptions) -> ExitCode {
+    let root = std::env::current_dir().unwrap_or_default();
+    let answer = fleet::tools::convention_result(
+        &root,
+        &serde_json::json!({ "concept": options.concept }),
+    );
+    print!("{answer}");
     ExitCode::SUCCESS
 }
 

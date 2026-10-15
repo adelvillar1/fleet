@@ -1061,6 +1061,32 @@ pub fn check(root: &Path, candidate: &str) -> Option<Convention> {
     check_in(&vocabulary, candidate)
 }
 
+/// The established term `candidate` is a case or separator variant of,
+/// when one exists — the state the write-time guard refuses, answered
+/// here for the lookup that runs before the write.
+///
+/// The scan is the module's own because the vocabulary's entries are
+/// its private shape: a caller that could walk them directly would be
+/// one refactor away from reimplementing the establishment ordering.
+/// The first match in establishment order wins, so the answer names the
+/// term the project leans on hardest.
+pub fn near_exact_term<'a>(
+    vocabulary: &'a Vocabulary,
+    candidate: &str,
+) -> Option<&'a Entry> {
+    let mut found: Vec<&Entry> = vocabulary
+        .entries
+        .iter()
+        .filter(|entry| is_near_exact(candidate, &entry.term))
+        .collect();
+    found.sort_by(|left, right| {
+        establishment_key(right)
+            .cmp(&establishment_key(left))
+            .then_with(|| left.term.cmp(&right.term))
+    });
+    found.into_iter().next()
+}
+
 /// The candidate check against an already-derived vocabulary.
 pub fn check_in(vocabulary: &Vocabulary, candidate: &str) -> Option<Convention> {
     let parts = split_identifier(candidate);

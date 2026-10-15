@@ -724,6 +724,15 @@ impl<'a> Agent<'a> {
         if self.improve_home.is_some() && admitted(tools::IMPROVE_TOOL) {
             specs.push(tools::improve_spec());
         }
+        // `convention` is declared on every run: the vocabulary it reads
+        // is the tree's own, which every run already works in, and the
+        // question it answers — "what does this project already call
+        // this?" — is the one a fresh context cannot answer for itself.
+        // It is the retrieval half of the write-time guard: the guard
+        // flags after a write, and this answers before one.
+        if admitted(tools::CONVENTION_TOOL) {
+            specs.push(tools::convention_spec());
+        }
         specs
     }
 
@@ -1541,6 +1550,21 @@ impl<'a> Agent<'a> {
                 },
             });
         }
+        if name == tools::CONVENTION_TOOL {
+            // The nomenclature lookup: a read of the tree's own
+            // vocabulary, so it crosses the same gate every call
+            // crosses and rides the same bounded tool_result path. The
+            // derivation is CPU work over the whole tree, so it leaves
+            // the async context on the blocking pool the same reason a
+            // write-time guard check does (KI-017).
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => Prepared::Ready(Work::Convention {
+                    root: std::env::current_dir().unwrap_or_default(),
+                    arguments,
+                }),
+            });
+        }
         if tools::lane_of(name).is_some() {
             return Ok(Prepared::Serial { call: call.clone() });
         }
@@ -1833,6 +1857,8 @@ enum Work {
         repo: std::path::PathBuf,
         arguments: serde_json::Value,
     },
+    /// One nomenclature lookup against the tree's vocabulary.
+    Convention { root: std::path::PathBuf, arguments: serde_json::Value },
     /// One supersession, already past its provenance gate.
     Supersede {
         memory: Arc<Memory>,
@@ -1900,6 +1926,19 @@ async fn run_work(work: Work) -> (String, bool) {
                 output: crate::improve::file_from_tool(&home, &repo, &arguments),
                 truncated: false,
             });
+            (outcome.output, outcome.truncated)
+        }
+        Work::Convention { root, arguments } => {
+            // The vocabulary's derivation walks the tree, so it is CPU
+            // work like the write-time guard's check — off the async
+            // context, on the blocking pool (KI-017). The answer rides
+            // the same cap every tool's output rides (KI-041).
+            let answer = tokio::task::spawn_blocking(move || {
+                tools::convention_result(&root, &arguments)
+            })
+            .await
+            .unwrap_or_else(|error| format!("error: the convention lookup failed: {error}"));
+            let outcome = tools::bound(ToolOutcome { output: answer, truncated: false });
             (outcome.output, outcome.truncated)
         }
         Work::Supersede { memory, calib, request, approved } => {
@@ -2001,6 +2040,9 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
         Prepared::Ready(work) => match work {
             Work::Remember { .. } | Work::Supersede { .. } => Some("memory".to_string()),
             Work::Improve { .. } => Some("proposals".to_string()),
+            // A lookup reads the tree and writes nothing: no writer to
+            // hold apart, so two of them in one batch run together.
+            Work::Convention { .. } => None,
             Work::UseSkill { .. } => None,
             Work::Builtin { tool, arguments, .. } => match tool {
                 Tool::Bash => Some("shell".to_string()),
@@ -2507,6 +2549,12 @@ fn call_summary(call: &ToolCall) -> String {
         return crate::skills::requested_skill(&call.function.arguments)
             .unwrap_or_else(|| call.function.name.clone());
     }
+    if call.function.name == tools::CONVENTION_TOOL {
+        // The concept the lookup would answer about: the fact a user
+        // needs to answer "may this run?", and the fact the progress
+        // line names.
+        return convention_concept(&call.function.arguments);
+    }
     // The provenance gate's synthetic call is named
     // `supersede (confirmed-by)`, so the prefix match covers it: the
     // prompt then names the fact, the justification, and — in the
@@ -2553,6 +2601,9 @@ fn compact_arguments(arguments: &serde_json::Value, limit: usize) -> String {
 fn describe_call(call: &ToolCall) -> String {
     if call.function.name == tools::USE_SKILL_TOOL {
         return format!("{}: {}", tools::USE_SKILL_TOOL, call_summary(call));
+    }
+    if call.function.name == tools::CONVENTION_TOOL {
+        return format!("{}: {}", tools::CONVENTION_TOOL, call_summary(call));
     }
     if call.function.name == tools::SUBAGENT_TOOL {
         return format!("{}: {}", tools::SUBAGENT_TOOL, subagent_goal(&call.function.arguments));
@@ -2615,6 +2666,23 @@ fn subagent_goal(arguments: &str) -> String {
         .unwrap_or_default();
     let mut bounded: String = goal.chars().take(72).collect();
     if goal.chars().count() > 72 {
+        bounded.push('\u{2026}');
+    }
+    bounded
+}
+
+/// The concept one `convention` call asks about, bounded for one line.
+/// A missing or malformed concept reads as the empty string rather than
+/// a guess — the parse that follows names the real refusal.
+fn convention_concept(arguments: &str) -> String {
+    let concept = serde_json::from_str::<serde_json::Value>(arguments)
+        .ok()
+        .and_then(|arguments| {
+            arguments.get("concept").and_then(|concept| concept.as_str()).map(str::to_string)
+        })
+        .unwrap_or_default();
+    let mut bounded: String = concept.chars().take(48).collect();
+    if concept.chars().count() > 48 {
         bounded.push('\u{2026}');
     }
     bounded
@@ -3196,13 +3264,15 @@ mod tests {
                 "list_dir",
                 "remember",
                 "supersede",
-                "subagent"
+                "subagent",
+                "convention"
             ]
         );
 
         // Without memory the run is the run this crate has always had:
-        // the same four declarations plus the delegation tool, and the
-        // compiled-in prompt.
+        // the same four declarations plus the delegation tool, the
+        // convention lookup (declared on every run — the vocabulary it
+        // reads is the tree's own), and the compiled-in prompt.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
@@ -3221,7 +3291,7 @@ mod tests {
         let plain =
             Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
                 .unwrap();
-        assert_eq!(plain.declarations().len(), 5);
+        assert_eq!(plain.declarations().len(), 6);
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);

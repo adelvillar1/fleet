@@ -64,6 +64,16 @@ pub const SUBAGENT_TOOL: &str = "subagent";
 /// home; the semantics belong to `crate::improve`.
 pub const IMPROVE_TOOL: &str = "improve";
 
+/// The model-visible name of the nomenclature lookup a run declares
+/// beside the others: `convention` answers "what does this project
+/// already call this?" — the established term with its sites, or the
+/// honest statement that no established term exists. It is the
+/// retrieval half of D7's guard: the write-time flag tells a model
+/// after it wrote, and this tells it before. Its semantics belong to
+/// `crate::nomenclature`; the name lives here so every tool has one
+/// home.
+pub const CONVENTION_TOOL: &str = "convention";
+
 /// The arrow a forwarded subagent call's name carries. A subagent's own
 /// tool calls reach the owner's Approver through the parent's gate, and
 /// the gate must be able to say whose call it is: the forwarded call is
@@ -152,6 +162,107 @@ pub fn use_skill_spec() -> ToolSpec {
             "required": ["name"],
         }),
     )
+}
+
+/// How long a concept may be before the lookup stops reading it. A
+/// concept is a name, not a sentence; the bound is what keeps a
+/// pasted paragraph from becoming a vocabulary scan key.
+pub const CONCEPT_LIMIT: usize = 120;
+
+/// The request declaration for `convention`: one concept, and the
+/// question "what does this project already call this?".
+///
+/// The description names the honest miss as a first-class answer,
+/// because a lookup that only ever returns hits trains the model to
+/// distrust it — and the write-time guard's flag is what the model is
+/// trying to avoid by asking.
+pub fn convention_spec() -> ToolSpec {
+    ToolSpec::function(
+        CONVENTION_TOOL,
+        "Ask what this project already calls a concept before you write it. Returns the established term with its file:line sites, says plainly when no established term exists, and names a case or separator variant of an established term as the drift it is. Never returns a ranked list of synonyms.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "concept": {
+                    "type": "string",
+                    "description": "The name you are about to write, or the word you want the project's name for.",
+                },
+            },
+            "required": [ "concept" ],
+        }),
+    )
+}
+
+/// The `convention` lookup's answer, as the tool result the model
+/// reads.
+///
+/// Four states, each answered plainly, because a lookup that hides one
+/// of them is a lookup the model stops trusting:
+///
+/// - **a canonical near-neighbour** — the card from
+///   [`crate::nomenclature::check`], naming the established term and
+///   its sites;
+/// - **established as written** — the concept is itself the term, and
+///   the answer says so with its sites;
+/// - **a case or separator variant** — the state the write-time guard
+///   refuses, answered here first, naming the term to rename to;
+/// - **an honest miss** — nothing in the tree's vocabulary is near it,
+///   which is the answer "this is genuinely new", not a failure.
+pub fn convention_result(root: &std::path::Path, arguments: &serde_json::Value) -> String {
+    let Some(concept) = arguments
+        .get("concept")
+        .and_then(|concept| concept.as_str())
+        .map(str::trim)
+        .filter(|concept| !concept.is_empty())
+    else {
+        return "error: `concept` is required \u{2014} the name you are about to write, or the \
+                word you want the project's name for"
+            .to_string();
+    };
+    let concept: String = concept.chars().take(CONCEPT_LIMIT).collect();
+    match crate::nomenclature::check(root, &concept) {
+        Some(convention) => convention.card(),
+        None => {
+            let vocabulary = crate::nomenclature::vocabulary(root);
+            let compound = concept.to_lowercase();
+            match vocabulary.get(&compound) {
+                Some(entry) => format!(
+                    "established term: {}\ncarried by {} file(s) through identifiers, {} through \
+                     docs\nsites:\n{}",
+                    entry.term,
+                    entry.ident_files,
+                    entry.doc_files,
+                    site_lines(&entry.sites),
+                ),
+                None => match crate::nomenclature::near_exact_term(&vocabulary, &concept) {
+                    Some(entry) => format!(
+                        "`{concept}` is a case or separator variant of the established term `{}` \
+                         \u{2014} rename to the established term\nsites:\n{}",
+                        entry.term,
+                        site_lines(&entry.sites),
+                    ),
+                    None => format!(
+                        "no established term for `{concept}` \u{2014} nothing in this tree's \
+                         vocabulary is near it, so it is a genuinely new concept and the write-time \
+                         guard will not flag it"
+                    ),
+                },
+            }
+        }
+    }
+}
+
+/// One site per line, indented under the term they carry. An empty
+/// list reads as the plain statement that the term's sites were not
+/// recorded, which the vocabulary's own bound can produce.
+fn site_lines(sites: &[crate::nomenclature::Site]) -> String {
+    if sites.is_empty() {
+        return "  (no sites recorded)\n".to_string();
+    }
+    sites
+        .iter()
+        .map(|site| format!("  {}:{}\n", site.file, site.line))
+        .collect()
 }
 
 /// The request declaration for `remember`: the `brain_remember` shape,
@@ -753,12 +864,92 @@ fn run_list_dir(path: &str) -> Result<ToolOutcome, String> {
 mod tests {
     use super::*;
 
+    /// A scratch tree, unique per call, with `src/` under it.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-tools-{tag}-{}-{serial}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        dir
+    }
+
+    /// Write one file under a scratch tree and touch it recent: the
+    /// vocabulary's recency multiplier reads the mtime, and a fresh
+    /// file's zeroed stamp would make the establishment arithmetic the
+    /// formula never states.
+    fn write(root: &std::path::Path, relative: &str, text: &str) {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        // A week-old stamp: inside the recency window, far from zero.
+        let stamp = std::time::SystemTime::now() - std::time::Duration::from_secs(7 * 86_400);
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(stamp).unwrap();
+    }
+
     #[test]
     fn names_round_trip() {
         for tool in ALL_TOOLS {
             assert_eq!(Tool::from_name(tool.name()), Some(tool));
         }
         assert_eq!(Tool::from_name("rm_rf"), None);
+    }
+
+    /// The convention lookup's four states, each answered plainly.
+    /// The tree establishes `judge_route` through identifiers and docs;
+    /// the answers are derived from the same extractor the write-time
+    /// guard reads, so the two can never disagree about what the
+    /// project calls a thing.
+    #[test]
+    fn the_convention_lookup_answers_all_four_states() {
+        let root = scratch("convention-states");
+        write(
+            &root,
+            "src/judge.rs",
+            "pub fn judge_route(row: &Row) -> Verdict {\n    Verdict::default()\n}\n",
+        );
+        write(&root, "src/route.rs", "pub fn route_of(row: &Row) -> Route {\n    Route::default()\n}\n");
+        write(&root, "docs/notes.md", "The `judge_route` helper grades a row.\n");
+
+        // Established as written: the concept is itself the term.
+        let exact = convention_result(&root, &serde_json::json!({ "concept": "judge_route" }));
+        assert!(exact.starts_with("established term: judge_route"), "{exact}");
+        assert!(exact.contains("src/judge.rs:1"), "{exact}");
+
+        // A canonical near-neighbour: the anagram, named with its sites.
+        let near = convention_result(&root, &serde_json::json!({ "concept": "route_judge" }));
+        assert!(near.contains("judge_route"), "{near}");
+        assert!(near.contains("sites:"), "{near}");
+
+        // A case or separator variant: the state the write guard
+        // refuses, answered here first with the rename target named.
+        let variant = convention_result(&root, &serde_json::json!({ "concept": "JudgeRoute" }));
+        assert!(
+            variant.contains("case or separator variant of the established term `judge_route`"),
+            "{variant}"
+        );
+        assert!(variant.contains("rename to the established term"), "{variant}");
+
+        // An honest miss: a first-class answer, not a failure. The
+        // concept's words are deliberate nonsense — a code file's
+        // string literals are identifier evidence for the vocabulary,
+        // so a fixture naming an ordinary word would retire some other
+        // proof's absence.
+        let miss = convention_result(
+            &root,
+            &serde_json::json!({ "concept": "the flumdorian gizmodium" }),
+        );
+        assert!(miss.starts_with("no established term"), "{miss}");
+        assert!(miss.contains("genuinely new concept"), "{miss}");
+
+        // A missing concept is a named refusal, never a guess.
+        let refused = convention_result(&root, &serde_json::json!({}));
+        assert!(refused.starts_with("error: `concept` is required"), "{refused}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

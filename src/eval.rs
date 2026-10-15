@@ -461,6 +461,10 @@ pub enum ScenarioFamily {
     /// A lane call whose result must carry a computed fact into the final
     /// answer unaltered — the grounded path blend1 exists for.
     GroundedLane,
+    /// The nomenclature guard: the derived vocabulary, the lookup's
+    /// four states, the write-time flag and refusal, and the drift
+    /// signal a delegation's own log carries (slice 20's D7).
+    Nomenclature,
 }
 
 impl ScenarioFamily {
@@ -477,6 +481,7 @@ impl ScenarioFamily {
             ScenarioFamily::Calibration => "calibration",
             ScenarioFamily::Delegation => "delegation",
             ScenarioFamily::GroundedLane => "grounded-lane",
+            ScenarioFamily::Nomenclature => "nomenclature",
         }
     }
 }
@@ -623,6 +628,9 @@ pub fn corpus() -> Vec<Scenario> {
         }),
         Scenario::new("delegation-loop-closes", ScenarioFamily::Delegation, |bin| {
             Box::pin(delegation_loop_closes(bin))
+        }),
+        Scenario::new("nomenclature-guard", ScenarioFamily::Nomenclature, |bin| {
+            Box::pin(nomenclature_guard(bin))
         }),
     ]
 }
@@ -3800,6 +3808,145 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     grade(NAME, family, &checks)
 }
 
+/// `nomenclature-guard`: the guard's whole discipline, graded with no
+/// model and no lane in the path.
+///
+/// The plan's six checks, each against the same derived vocabulary the
+/// write-time guard reads — so the scenario grades the machinery rather
+/// than a second opinion of it:
+///
+/// 1. a concept with an established term returns it with its sites;
+/// 2. a concept with none says so, plainly;
+/// 3. a near-exact variant is named as the drift it is (the state the
+///    write guard refuses);
+/// 4. a novel name for an existing concept is flagged with the
+///    candidate named;
+/// 5. a genuinely new concept is not flagged;
+/// 6. a delegation whose child's own writes the guard flagged carries
+///    the drift in its evidence and names it in the grading prompt.
+async fn nomenclature_guard(_mock_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "nomenclature-guard";
+    let family = ScenarioFamily::Nomenclature;
+    let root = match scratch_dir("nomenclature-tree") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    // The synthetic tree establishes `judge_route` through both
+    // channels the extractor reads: identifiers in source, and the
+    // backtick span in a doc.
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::write(
+        root.join("src/judge.rs"),
+        "pub fn judge_route(row: &Row) -> Verdict {\n    Verdict::default()\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/route.rs"),
+        "pub fn route_of(row: &Row) -> Route {\n    Route::default()\n}\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("docs/notes.md"), "The `judge_route` helper grades a row.\n")
+        .unwrap();
+    let lookup = |concept: &str| {
+        crate::tools::convention_result(&root, &serde_json::json!({ "concept": concept }))
+    };
+    let mut checks: Vec<(&str, bool)> = Vec::new();
+
+    // 1 — the established term, with its sites.
+    let exact = lookup("judge_route");
+    checks.push((
+        "a concept with an established term returns it with its sites",
+        exact.starts_with("established term: judge_route") && exact.contains("src/judge.rs:1"),
+    ));
+    // 2 — the honest miss, stated plainly. The concept's words are
+    // deliberate nonsense: a code file's string literals are
+    // identifier evidence for the vocabulary, so a fixture naming an
+    // ordinary word would retire some other proof's absence.
+    let miss = lookup("the flumdorian gizmodium");
+    checks.push((
+        "a concept with no established term says so plainly",
+        miss.starts_with("no established term") && miss.contains("genuinely new concept"),
+    ));
+    // 3 — the near-exact variant: the state the write guard refuses,
+    // answered by the lookup first, naming the rename target.
+    let variant = lookup("JudgeRoute");
+    checks.push((
+        "a near-exact variant is named as the drift it is",
+        crate::nomenclature::is_near_exact("JudgeRoute", "judge_route")
+            && variant.contains("case or separator variant of the established term `judge_route`"),
+    ));
+    // 4 — the flag: a novel name with a canonical near-neighbour.
+    let near = crate::nomenclature::check(&root, "route_judge");
+    checks.push((
+        "a novel name for an existing concept is flagged with the candidate",
+        near.as_ref().and_then(|convention| convention.term.as_deref()) == Some("judge_route"),
+    ));
+    // 5 — clean: a genuinely new concept, unflagged.
+    let fresh = crate::nomenclature::check(&root, "the_quibbet_sled_concept");
+    checks.push((
+        "a genuinely new concept is not flagged",
+        fresh.is_none()
+            && lookup("the_quibbet_sled_concept").contains("genuinely new concept"),
+    ));
+    // 6 — the drift signal: a child's own log carries the guard's
+    // flag, the evidence reads it back, and the grading prompt names
+    // it where the grader reads.
+    let sessions = root.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let log = sessions.join("sess-drift.jsonl");
+    let note = "note: this write introduces names with canonical near-neighbours in this \
+                project's vocabulary:\n- `routeJudge` \u{2014} the established term is \
+                `judge_route` (src/judge.rs:1); consider renaming";
+    let lines = [
+        serde_json::json!({ "type": "start", "v": 1, "model": "test-model",
+            "created": "2026-10-15T12:00:00Z", "kind": "subagent" })
+        .to_string(),
+        serde_json::json!({ "type": "assistant", "content": "working", "tool_calls": [
+            { "id": "call-0", "type": "function", "function": {
+                "name": "write_file",
+                "arguments": serde_json::json!({ "path": "src/judge.rs", "content": "x" }).to_string(),
+            } },
+        ] })
+        .to_string(),
+        serde_json::json!({ "type": "tool_result", "call_id": "call-0", "name": "write_file",
+            "output": format!("wrote 11 bytes\n{note}"), "truncated": false, "approved": true })
+            .to_string(),
+        serde_json::json!({ "type": "end", "stop_reason": "completed", "turns": 2 }).to_string(),
+    ];
+    std::fs::write(&log, format!("{}\n", lines.join("\n"))).unwrap();
+    // The row reaches the grader the way a real one does: written as
+    // the stream's own line and read back through the delegate reader
+    // — only `delegate` constructs a delegation row.
+    let day = calib::today();
+    let stream_root = root.join("stream");
+    let rows = vec![delegation_row_line(
+        "sess-drift",
+        "refactor",
+        "stepfun",
+        "completed",
+        2,
+        &log.to_string_lossy(),
+        "sess-root",
+    )];
+    write_day_file(&stream_root, &day, &rows);
+    let day_rows = crate::delegate::read_day(&stream_root, &day);
+    let row = day_rows
+        .delegations
+        .first()
+        .expect("the day's row reads back through the delegate reader");
+    let evidence = crate::delegate::read_evidence(row);
+    let prompt = crate::delegate::compose_prompt(row, &evidence);
+    checks.push((
+        "a drifted delegation carries the flag in its evidence and names it in the prompt",
+        evidence.drifted == vec!["routeJudge".to_string()]
+            && prompt.contains("routeJudge")
+            && prompt.contains("canonical near-neighbours"),
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    grade(NAME, family, &checks)
+}
+
 /// One hand-written `delegation_judged` row, the shape a writer would
 /// have landed — the ride-back's own fixture.
 fn delegation_judged_line(
@@ -4292,6 +4439,7 @@ mod tests {
                 "explain-the-verdict",
                 "calibration-loop-closes",
                 "delegation-loop-closes",
+                "nomenclature-guard",
             ]
         );
     }
