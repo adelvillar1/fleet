@@ -40,6 +40,7 @@ async fn main() -> ExitCode {
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Judge(options)) => judge_command(&options).await,
+        Ok(Command::Delegate(options)) => delegate_command(&options).await,
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
@@ -670,6 +671,16 @@ fn calib_command(options: &cli::CalibOptions) -> ExitCode {
         print!("{}", fleet::calib::render_calibration(&root, &day, gate));
         return ExitCode::SUCCESS;
     }
+    if options.delegation {
+        // The delegation calibration surface: the per-(provider ×
+        // brief-shape) judged quality — the delegation beat's own cells,
+        // read from the day's `delegation_judged` rows, with the three
+        // rates kept apart and the fit rule's readiness. The same gate,
+        // read the same way.
+        let gate = fleet::route::calibration_config(&home).informs_failover;
+        print!("{}", fleet::delegate::render_calibration(&root, &day, gate));
+        return ExitCode::SUCCESS;
+    }
     print!("{}", fleet::calib::render(&root, &day));
     ExitCode::SUCCESS
 }
@@ -715,6 +726,55 @@ async fn judge_command(options: &cli::JudgeOptions) -> ExitCode {
         day: day.clone(),
         dry_run: options.dry_run,
         lane: fleet::judge::LaneSource::Vendored,
+    })
+    .await;
+    print!("{}", outcome.card);
+    if outcome.batch_answered() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// `fleet delegate`: the day's delegation rows, judged against their
+/// outcome evidence — the child's own session log — through the
+/// vendored sys1 lane, or the owner's disposition on one judged
+/// delegation row.
+///
+/// The ported discipline verbatim, the plan's D2: the batch spends at
+/// most one bounded ask per unjudged delegation row under a named daily
+/// budget, lands a redacted `delegation_judged` row per ask, and refuses
+/// by name on every failure. The exit code is the plan's contractual
+/// rule: a batch that obtained no judgment — every row refused, an empty
+/// day, an over-budget day — exits 1; a dry run, a judging batch, and an
+/// all-already-judged batch exit 0, so a twice-daily cron is not a false
+/// alarm.
+async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let user_home = std::env::var("HOME").ok();
+    let root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    let day = options.day.clone().unwrap_or_else(fleet::calib::today);
+    if let Some(disposition) = &options.disposition {
+        return match fleet::delegate::disposition(&root, &day, &disposition.key, &disposition.word) {
+            Ok(row) => {
+                print!("{}", fleet::delegate::disposition_card(&row, &day));
+                ExitCode::SUCCESS
+            }
+            Err(reason) => {
+                print!("{}", fleet::delegate::disposition_refusal_card(&day, &reason));
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let outcome = fleet::delegate::judge(fleet::delegate::JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: options.dry_run,
+        lane: fleet::delegate::LaneSource::Vendored,
     })
     .await;
     print!("{}", outcome.card);

@@ -21,6 +21,10 @@ pub enum Command {
     /// Judge a day's routing decisions through the sys1 lane, or record
     /// the owner's disposition on a judged row.
     Judge(JudgeOptions),
+    /// Judge a day's delegations against their outcome evidence through
+    /// the sys1 lane, or record the owner's disposition on a judged
+    /// delegation row.
+    Delegate(DelegateOptions),
     /// The skills surface: the live skills, the drafts awaiting the
     /// slice-12 gate, and the usage-scan curation.
     Skills(SkillsOptions),
@@ -86,6 +90,10 @@ pub struct CalibOptions {
     /// The calibration surface: the per-provider judged quality as cards,
     /// with the fit rule's readiness, instead of the stream's own rows.
     pub calibration: bool,
+    /// The delegation calibration surface: the per-(provider ×
+    /// brief-shape) judged quality as cards, instead of the stream's own
+    /// rows. The two surfaces read different rows and do not combine.
+    pub delegation: bool,
 }
 
 /// Options for `fleet judge`. The bare command judges a day's route rows;
@@ -104,12 +112,39 @@ pub struct JudgeOptions {
 }
 
 /// One `fleet judge --agree/--disagree/--waive` request: the word, and
-/// the key it rides on.
+/// the judged row's key it rides on.
 #[derive(Debug, PartialEq, Eq)]
 pub struct JudgeDisposition {
     /// `agreed`, `disagreed`, or `waived`.
     pub word: String,
     /// The judged row's key, as `fleet judge`'s card names it.
+    pub key: String,
+}
+
+/// Options for `fleet delegate`. The ported discipline, the same
+/// two-form shape as `fleet judge`: a batch that judges the day's
+/// delegation rows against their outcome evidence — the child's own
+/// session log — or the owner's disposition on one judged delegation
+/// row. The two forms do not combine, for the same reason: one is a
+/// batch that spends, the other is a write that does not.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DelegateOptions {
+    /// A past day to judge, `YYYY-MM-DD`; absent is today (UTC).
+    pub day: Option<String>,
+    /// Rehearse only: resolve the rows and show what would be asked — no
+    /// ask, no row, no spend.
+    pub dry_run: bool,
+    /// The owner's disposition, and the judged row's key it addresses.
+    pub disposition: Option<DelegateDisposition>,
+}
+
+/// One `fleet delegate --agree/--disagree/--waive` request: the word,
+/// and the judged delegation row's key it rides on.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DelegateDisposition {
+    /// `agreed`, `disagreed`, or `waived`.
+    pub word: String,
+    /// The judged row's key, as `fleet delegate`'s card names it.
     pub key: String,
 }
 
@@ -291,7 +326,9 @@ usage:
   fleet calib [--day <date>] [--calibration]
                                 the calibration stream: one day's rows by op;
                                 --calibration renders the per-provider judged
-                                quality as cards with the fit rule's readiness
+                                quality as cards with the fit rule's readiness;
+                                --delegation renders the per-(provider ×
+                                brief-shape) delegation cells instead
   fleet judge [--day <date>] [--dry-run]
                                 judge the day's route rows against their
                                 outcome evidence through the sys1 lane, one
@@ -301,6 +338,16 @@ usage:
   fleet judge --disagree <key> agreed confirms the automated verdict,
   fleet judge --waive <key>    disagreed inverts it, waived sets it aside —
                                 the owner's grading is the ground truth
+  fleet delegate [--day <date>] [--dry-run]
+                                judge the day's delegations against their
+                                outcome evidence — the child's own session
+                                log — through the sys1 lane, one bounded ask
+                                per unjudged delegation; --dry-run shows what
+                                would be asked and spends nothing
+  fleet delegate --agree <key>    record the owner's grading on a judged
+  fleet delegate --disagree <key> delegation row: agreed confirms the
+  fleet delegate --waive <key>    automated verdict, disagreed inverts it,
+                                waived sets it aside
   fleet skills [--proposed] [--curate] [--show <name>]
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
@@ -427,6 +474,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
         "judge" => parse_judge(rest),
+        "delegate" => parse_delegate(rest),
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
@@ -504,6 +552,7 @@ fn parse_chat(args: &[String]) -> Result<Command, String> {
 fn parse_calib(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
     let mut calibration = false;
+    let mut delegation = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -511,12 +560,23 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--day" => day = Some(take_value(args, &mut index, arg)?),
             "--calibration" => calibration = true,
+            "--delegation" => delegation = true,
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown calib option `{arg}`"));
             }
             _ => return Err(format!("`{arg}` takes no value here; calib reads a day with --day")),
         }
         index += 1;
+    }
+    // The two surfaces read different rows — route judgments and
+    // delegation judgments — and a caller asking for both is asking two
+    // questions.
+    if calibration && delegation {
+        return Err(
+            "calib takes one surface: --calibration reads the route cells, --delegation the \
+             delegation cells"
+                .to_string(),
+        );
     }
     if let Some(day) = &day {
         let numeric = day.len() == 10 && day.chars().enumerate().all(|(position, character)| {
@@ -533,7 +593,7 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
             return Err(format!("`{day}` is not a real day; use --day YYYY-MM-DD"));
         }
     }
-    Ok(Command::Calib(CalibOptions { day, calibration }))
+    Ok(Command::Calib(CalibOptions { day, calibration, delegation }))
 }
 
 /// `fleet judge [--day <date>] [--dry-run]`: judge the day's route rows
@@ -604,6 +664,84 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
         );
     }
     Ok(Command::Judge(JudgeOptions { day, dry_run, disposition }))
+}
+
+/// `fleet delegate [--day <date>] [--dry-run]`: judge the day's
+/// delegation rows against their outcome evidence — the child's own
+/// session log — through the sys1 lane. The ported discipline verbatim:
+/// one bounded ask per unjudged row, a named daily budget the config can
+/// only lower, a dry run that spends nothing, and a fail-open lane as a
+/// named refusal. The disposition flags are the other half — `--agree`,
+/// `--disagree`, and `--waive` record the owner's grading on one judged
+/// delegation row by its key — and they do not combine with the batch or
+/// with each other.
+fn parse_delegate(args: &[String]) -> Result<Command, String> {
+    let mut day: Option<String> = None;
+    let mut dry_run = false;
+    let mut disposition: Option<(String, String)> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--dry-run" => dry_run = true,
+            "--day" => day = Some(take_value(args, &mut index, arg)?),
+            "--agree" | "--disagree" | "--waive" => {
+                let word = match arg {
+                    "--agree" => "agreed",
+                    "--disagree" => "disagreed",
+                    _ => "waived",
+                }
+                .to_string();
+                let key = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| {
+                        format!("`{arg}` needs a judged delegation row's key: `fleet delegate {arg} <key>`")
+                    })?;
+                if disposition.is_some() {
+                    return Err(
+                        "delegate takes one disposition: --agree, --disagree, or --waive"
+                            .to_string(),
+                    );
+                }
+                disposition = Some((word, key.clone()));
+                index += 1;
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown delegate option `{other}`"));
+            }
+            other => {
+                return Err(format!(
+                    "`{other}` takes no value here; delegate names a day with --day and a judged row with --agree, --disagree, or --waive"
+                ));
+            }
+        }
+        index += 1;
+    }
+    if let Some(day) = &day {
+        let numeric = day.len() == 10 && day.chars().enumerate().all(|(position, character)| {
+            if position == 4 || position == 7 {
+                character == '-'
+            } else {
+                character.is_ascii_digit()
+            }
+        });
+        if !numeric {
+            return Err(format!("`{day}` is not a day; use --day YYYY-MM-DD"));
+        }
+        if !valid_calendar_day(day) {
+            return Err(format!("`{day}` is not a real day; use --day YYYY-MM-DD"));
+        }
+    }
+    let disposition = disposition.map(|(word, key)| DelegateDisposition { word, key });
+    if disposition.is_some() && dry_run {
+        return Err(
+            "--dry-run rehearses the batch; a disposition is a write and takes no rehearsal"
+                .to_string(),
+        );
+    }
+    Ok(Command::Delegate(DelegateOptions { day, dry_run, disposition }))
 }
 
 /// `fleet skills`: the bare command lists the live skills; `--proposed`
@@ -1212,21 +1350,21 @@ mod tests {
     fn calib_parses_an_optional_day_and_rejects_junk() {
         assert_eq!(
             parse(&args(&["calib"])).unwrap(),
-            Command::Calib(CalibOptions { day: None, calibration: false })
+            Command::Calib(CalibOptions { day: None, calibration: false, delegation: false })
         );
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-10-01"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()), calibration: false })
+            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()), calibration: false, delegation: false })
         );
         // The calibration surface is `calib --calibration`, with or
         // without a day.
         assert_eq!(
             parse(&args(&["calib", "--calibration"])).unwrap(),
-            Command::Calib(CalibOptions { day: None, calibration: true })
+            Command::Calib(CalibOptions { day: None, calibration: true, delegation: false })
         );
         assert_eq!(
             parse(&args(&["calib", "--calibration", "--day", "2026-10-01"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()), calibration: true })
+            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()), calibration: true, delegation: false })
         );
         assert!(parse(&args(&["calib", "--day", "yesterday"])).is_err());
         assert!(parse(&args(&["calib", "--day", "2026-1-1"])).is_err());
@@ -1238,15 +1376,79 @@ mod tests {
         assert!(parse(&args(&["calib", "--day", "2026-02-29"])).is_err()); // 2026 is not a leap year
         assert_eq!(
             parse(&args(&["calib", "--day", "2024-02-29"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2024-02-29".to_string()), calibration: false })
+            Command::Calib(CalibOptions { day: Some("2024-02-29".to_string()), calibration: false, delegation: false })
         ); // 2024 is a leap year
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-12-31"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2026-12-31".to_string()), calibration: false })
+            Command::Calib(CalibOptions { day: Some("2026-12-31".to_string()), calibration: false, delegation: false })
         );
         assert!(parse(&args(&["calib", "--day"])).is_err());
         assert!(parse(&args(&["calib", "--json"])).is_err());
         assert!(parse(&args(&["calib", "today"])).is_err());
+        // The delegation surface is `calib --delegation`, and the two
+        // surfaces read different rows: a caller asking for both is
+        // asking two questions.
+        assert_eq!(
+            parse(&args(&["calib", "--delegation"])).unwrap(),
+            Command::Calib(CalibOptions { day: None, calibration: false, delegation: true })
+        );
+        assert_eq!(
+            parse(&args(&["calib", "--delegation", "--day", "2026-10-01"])).unwrap(),
+            Command::Calib(CalibOptions {
+                day: Some("2026-10-01".to_string()),
+                calibration: false,
+                delegation: true
+            })
+        );
+        assert!(parse(&args(&["calib", "--calibration", "--delegation"])).is_err());
+    }
+
+    #[test]
+    fn delegate_parses_its_day_its_rehearsal_and_one_disposition() {
+        // The ported two-form shape: a batch that spends, or one write
+        // that does not — and the two never combine.
+        assert_eq!(
+            parse(&args(&["delegate"])).unwrap(),
+            Command::Delegate(DelegateOptions {
+                day: None,
+                dry_run: false,
+                disposition: None
+            })
+        );
+        assert_eq!(
+            parse(&args(&["delegate", "--day", "2026-10-13", "--dry-run"])).unwrap(),
+            Command::Delegate(DelegateOptions {
+                day: Some("2026-10-13".to_string()),
+                dry_run: true,
+                disposition: None
+            })
+        );
+        for (flag, word) in [
+            ("--agree", "agreed"),
+            ("--disagree", "disagreed"),
+            ("--waive", "waived"),
+        ] {
+            assert_eq!(
+                parse(&args(&["delegate", flag, "a1b2c3d4e5f60718"])).unwrap(),
+                Command::Delegate(DelegateOptions {
+                    day: None,
+                    dry_run: false,
+                    disposition: Some(DelegateDisposition {
+                        word: word.to_string(),
+                        key: "a1b2c3d4e5f60718".to_string()
+                    })
+                })
+            );
+        }
+        // The refusals, each naming what was wrong.
+        let error = parse(&args(&["delegate", "--agree"])).unwrap_err();
+        assert!(error.contains("--agree"), "{error}");
+        let error = parse(&args(&["delegate", "--agree", "key", "--disagree", "other"])).unwrap_err();
+        assert!(error.contains("one disposition"), "{error}");
+        let error = parse(&args(&["delegate", "--dry-run", "--agree", "key"])).unwrap_err();
+        assert!(error.contains("no rehearsal"), "{error}");
+        assert!(parse(&args(&["delegate", "--day", "yesterday"])).is_err());
+        assert!(parse(&args(&["delegate", "--json"])).is_err());
     }
 
     #[test]
