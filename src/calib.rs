@@ -377,6 +377,118 @@ pub struct RouteJudgedRow {
     pub lane: String,
 }
 
+/// One delegated run, as the orchestrator records it the moment a
+/// subagent stops. The row the beat reads and the row the parent chain
+/// joins on.
+///
+/// **Redacted by design:** the child's own summary is not a field. The
+/// row carries the brief's shape, the scope, the outcome, the turns, the
+/// spend, the duration, the child's log path, and the parent chain —
+/// objective evidence only. Grading the summary grades the model's
+/// confidence in itself; the log is what the child actually did.
+///
+/// The shape lives here beside every other row the stream carries, and
+/// not in the beat that reads it, for one reason: the beat's own guard
+/// is that no synchronous path may name it — a beat that spends a lane
+/// ask must be unreachable from a path that runs on every turn — and the
+/// orchestrator's row write IS a synchronous path. So the stream owns
+/// the row and the write, and the beat owns the reading and re-exports
+/// the shape under its own name.
+///
+/// Every field is `#[serde(default)]` and every `Option` is
+/// `skip_serializing_if`, so a hand-written row that omits one is not
+/// silently dropped by the reader (the KI-164/KI-171 class: a fixture
+/// row the reader drops is a false negative, and a false negative in a
+/// calibration beat is a silent wrong).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DelegatedRunRow {
+    #[serde(default)]
+    pub ts: String,
+    /// The child's session id — the row's key, the join to the child's
+    /// own session log, and the value `fleet delegate --agree`
+    /// addresses. It is the identity already: hashing it would add
+    /// nothing and would make the key an owner cannot type.
+    #[serde(default)]
+    pub session: String,
+    /// The brief's shape — the kind of work the brief asked for, the
+    /// cell key's shape half. Two briefs that read differently but ask
+    /// for the same kind of work are the same vector; the text stays out
+    /// of the row. Empty reads as `unshaped`.
+    #[serde(default)]
+    pub brief_shape: String,
+    /// The admitted scope, as the delegation recorded it: the tool list
+    /// or the role's name. Bounded wherever it is drawn.
+    #[serde(default)]
+    pub scope: String,
+    /// The provider that served the child's turns — the cell key's
+    /// provider half, beside the brief's shape. Empty when the run was
+    /// unrouted, which reads as one shared cell rather than a guessed
+    /// provider.
+    #[serde(default)]
+    pub provider: String,
+    /// The outcome the row claims, in the session log's own ending
+    /// vocabulary: `completed`, `max-turns`, `failed`, or
+    /// `interrupted`.
+    #[serde(default)]
+    pub outcome: String,
+    /// The turns the child ran.
+    #[serde(default)]
+    pub turns: u64,
+    /// What the delegation spent, in USD — the child's own spend, not
+    /// the beat's.
+    #[serde(default)]
+    pub spend_usd: f64,
+    /// How long the delegation took, in milliseconds.
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// The child's own session log path — the evidence the beat reads,
+    /// and the directory the parent's log is derived from.
+    #[serde(default)]
+    pub log: String,
+    /// The typed cause on a failed or refused delegation, when the
+    /// orchestrator recorded one. A cause, never prose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The immediate parent's session id. A chain cannot be backfilled
+    /// honestly, so it is recorded from the first row.
+    #[serde(default)]
+    pub parent_session: String,
+    /// The root session's id — the delegation the whole chain started
+    /// from.
+    #[serde(default)]
+    pub root_session: String,
+    /// The delegation's depth: 1 for a parent's own child, 2 for a
+    /// grandchild.
+    #[serde(default)]
+    pub depth: u32,
+}
+
+/// Record one delegated run to the stream and hand the stamped row
+/// back.
+///
+/// The row lands through the stream's own writer — one bounded queue,
+/// one background thread, one `write_all` under `O_APPEND` — and never
+/// by hand-appending to the day's file: a row appended beside the
+/// stream is a row two writers can interleave into, and a row appended
+/// without its op tag is a row the reader cannot join (the KI-164
+/// class). The day comes from the row's own timestamp, stamped here
+/// with the stream's clock so a delegation that finished at 23:59:59
+/// lands in the day it finished in rather than the day the writer
+/// thread got to it.
+///
+/// The stream is advisory by construction and this path is no
+/// exception: a full queue drops the row and counts it, an unwritable
+/// root fails and counts it, and no delegation is ever blocked,
+/// delayed, or failed by its own audit trail. What the caller gets
+/// back is the row it meant to record, stamped — the honest shape of
+/// "the row was handed to the stream", which is all any caller of an
+/// advisory trail can be told.
+pub fn record_delegation(stream: &Stream, mut row: DelegatedRunRow) -> DelegatedRunRow {
+    row.ts = stamp();
+    stream.record(Row::Delegation(row.clone()));
+    row
+}
+
 /// One row in the stream, tagged by its op the way devdec's rows are: the
 /// tag is a field of the JSON object, not a wrapper.
 #[derive(Debug, Clone, Serialize)]
@@ -391,6 +503,7 @@ pub enum Row {
     EvalCorpus(EvalCorpusRow),
     Explain(ExplainRow),
     RouteJudged(RouteJudgedRow),
+    Delegation(DelegatedRunRow),
 }
 
 impl Row {
@@ -406,6 +519,7 @@ impl Row {
             Row::EvalCorpus(_) => OP_EVAL_CORPUS,
             Row::Explain(_) => OP_EXPLAIN,
             Row::RouteJudged(_) => OP_ROUTE_JUDGED,
+            Row::Delegation(_) => OP_DELEGATION,
         }
     }
 
@@ -421,6 +535,7 @@ impl Row {
             Row::EvalCorpus(row) => &row.ts,
             Row::Explain(row) => &row.ts,
             Row::RouteJudged(row) => &row.ts,
+            Row::Delegation(row) => &row.ts,
         }
     }
 }
@@ -455,8 +570,16 @@ pub const OP_EXPLAIN: &str = "explain";
 /// per-provider calibration surface reads and what the failover's
 /// preference consults.
 pub const OP_ROUTE_JUDGED: &str = "route_judged";
+/// The delegation op: one delegated run, recorded by the orchestrator
+/// the moment a subagent stops. Keyed by the child's own session id —
+/// the join to the child's session log, the value
+/// `fleet delegate --agree` addresses, and the row the parent chain is
+/// reconstructable from. The name lives here rather than in the beat
+/// because it is a [`Row`] variant: the stream owns the op, and a beat
+/// that named its own op would be a second place for the word to drift.
+pub const OP_DELEGATION: &str = "delegation";
 /// The ops this slice emits, in the order `fleet calib` groups them.
-pub const OPS: [&str; 9] = [
+pub const OPS: [&str; 10] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -466,6 +589,7 @@ pub const OPS: [&str; 9] = [
     OP_EVAL_CORPUS,
     OP_EXPLAIN,
     OP_ROUTE_JUDGED,
+    OP_DELEGATION,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -2842,6 +2966,44 @@ mod tests {
     }
 
     #[test]
+    fn a_delegation_row_lands_under_the_streams_own_op() {
+        // The delegation row is a `Row` variant, so its tag is the
+        // stream's own op name and the beat's reader joins on the same
+        // word the writer put there — a row the reader could not join
+        // would land and be invisible (the KI-164 class).
+        let row = DelegatedRunRow {
+            ts: "2026-10-15T09:00:00Z".to_string(),
+            session: "20261015T090000Z-abcdef".to_string(),
+            brief_shape: "task+approach+context+done".to_string(),
+            scope: "bash,read_file".to_string(),
+            provider: "stepfun".to_string(),
+            outcome: "completed".to_string(),
+            turns: 4,
+            spend_usd: 0.0,
+            duration_ms: 1_250,
+            log: "/sessions/20261015T090000Z-abcdef.jsonl".to_string(),
+            reason: None,
+            parent_session: "20261015T085959Z-000000".to_string(),
+            root_session: "20261015T085959Z-000000".to_string(),
+            depth: 1,
+        };
+        let line = serde_json::to_string(&Row::Delegation(row)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["op"], OP_DELEGATION);
+        assert_eq!(value["op"], OP_DELEGATION);
+        // The parent chain rides the row, because a chain cannot be
+        // backfilled honestly.
+        assert_eq!(value["parent_session"], "20261015T085959Z-000000");
+        assert_eq!(value["root_session"], "20261015T085959Z-000000");
+        assert_eq!(value["depth"], 1);
+        // The child's own summary is not a field, by design: the row is
+        // the objective evidence, never the child's report.
+        assert!(!line.contains("summary"), "{line}");
+        // The reader keeps Fleet's own ops and skips everything else, so
+        // the new op has to be in the set for the row to be readable.
+        assert!(OPS.contains(&OP_DELEGATION));
+    }
+    #[test]
     fn the_four_stop_reasons_are_named_verbatim() {
         assert_eq!(TurnStop::Completed.label(), "completed");
         assert_eq!(TurnStop::Interrupted.label(), "interrupted");
@@ -3205,7 +3367,8 @@ mod tests {
         assert!(!rows[0].gate[0].ok);
         assert_eq!(rows[0].gate[0].detail, "the_ranker");
         let _ = std::fs::remove_dir_all(&root);
-        // The op list names propose beside the rest.
+        // The op list names propose beside the rest, and the delegation
+        // op beside that.
         assert_eq!(
             OPS,
             [
@@ -3217,7 +3380,8 @@ mod tests {
                 "propose",
                 "eval_corpus",
                 "explain",
-                "route_judged"
+                "route_judged",
+                "delegation"
             ]
         );
     }

@@ -182,10 +182,20 @@ const READ_CAP: usize = 512;
 /// oversized line is drained and skipped rather than read into memory.
 const MAX_LINE_BYTES: u64 = 1 << 20;
 
-/// The delegation op: one delegated run, recorded by the orchestrator
-/// when a subagent runs. Keyed by the child's session id, and redacted
-/// by design — the child's own summary is not among the evidence.
-pub const OP_DELEGATION: &str = "delegation";
+/// The delegation row, under the name this beat and its readers use,
+/// and the op the stream tags it with.
+///
+/// Both live in the stream rather than here, and the shape is aliased
+/// back rather than owned, for one reason: the beat's own guard is that
+/// no synchronous path may name it — a beat that spends a lane ask must
+/// be unreachable from a path that runs on every turn — and the
+/// orchestrator's row write IS a synchronous path. So the stream owns
+/// the row and the write, and this beat owns the reading and the name.
+/// A row appended beside the stream would be a row two writers can
+/// interleave into, and a row without the stream's own op tag is a row
+/// this reader could not join (the KI-164 class).
+pub use crate::calib::OP_DELEGATION;
+pub use crate::calib::DelegatedRunRow as DelegationRow;
 
 /// The judgment op: one delegation graded against its outcome evidence
 /// through the sys1 lane, keyed by the judged delegation's session id.
@@ -237,82 +247,6 @@ pub struct JudgeRequest<'a> {
 
 // --- the row shapes --------------------------------------------------------
 
-/// One delegated run, as the orchestrator records it when a subagent
-/// runs. The row the beat reads and the row the parent chain joins on.
-///
-/// **Redacted by design:** the child's own summary is not a field. The
-/// row carries the brief's shape, the scope, the outcome, the turns, the
-/// spend, the duration, the child's log path, and the parent chain —
-/// objective evidence only. Grading the summary grades the model's
-/// confidence in itself; the log is what the child actually did.
-///
-/// Every field is `#[serde(default)]` and every `Option` is
-/// `skip_serializing_if`, so a hand-written row that omits one is not
-/// silently dropped by the reader (the KI-164/KI-171 class: a fixture
-/// row the reader drops is a false negative, and a false negative in a
-/// calibration beat is a silent wrong).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct DelegationRow {
-    #[serde(default)]
-    pub ts: String,
-    /// The child's session id — the row's key, the join to the child's
-    /// own session log, and the value `fleet delegate --agree`
-    /// addresses. It is the identity already: hashing it would add
-    /// nothing and would make the key an owner cannot type.
-    #[serde(default)]
-    pub session: String,
-    /// The brief's shape — the kind of work the brief asked for, the
-    /// cell key's shape half. Two briefs that read differently but ask
-    /// for the same kind of work are the same vector; the text stays out
-    /// of the row. Empty reads as `unshaped`.
-    #[serde(default)]
-    pub brief_shape: String,
-    /// The admitted scope, as the delegation recorded it: the tool list
-    /// or the role's name. Bounded wherever it is drawn.
-    #[serde(default)]
-    pub scope: String,
-    /// The provider that served the child's turns — the cell key's
-    /// provider half, beside the brief's shape. Empty when the run was
-    /// unrouted, which reads as one shared cell rather than a guessed
-    /// provider.
-    #[serde(default)]
-    pub provider: String,
-    /// The outcome the row claims, in the session log's own ending
-    /// vocabulary: [`OUTCOME_COMPLETED`], [`OUTCOME_MAX_TURNS`],
-    /// [`OUTCOME_FAILED`], or [`OUTCOME_INTERRUPTED`].
-    #[serde(default)]
-    pub outcome: String,
-    /// The turns the child ran.
-    #[serde(default)]
-    pub turns: u64,
-    /// What the delegation spent, in USD — the child's own spend, not
-    /// the beat's.
-    #[serde(default)]
-    pub spend_usd: f64,
-    /// How long the delegation took, in milliseconds.
-    #[serde(default)]
-    pub duration_ms: u64,
-    /// The child's own session log path — the evidence the beat reads,
-    /// and the directory the parent's log is derived from.
-    #[serde(default)]
-    pub log: String,
-    /// The typed cause on a failed or refused delegation, when the
-    /// orchestrator recorded one. A cause, never prose.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    /// The immediate parent's session id. A chain cannot be backfilled
-    /// honestly, so it is recorded from the first row.
-    #[serde(default)]
-    pub parent_session: String,
-    /// The root session's id — the delegation the whole chain started
-    /// from.
-    #[serde(default)]
-    pub root_session: String,
-    /// The delegation's depth: 1 for a parent's own child, 2 for a
-    /// grandchild.
-    #[serde(default)]
-    pub depth: u32,
-}
 
 /// One delegation's judgment, as the beat records it. The row the
 /// calibration surface reads and the ride-back consults, keyed by the
@@ -694,7 +628,18 @@ pub fn compose_prompt(row: &DelegationRow, evidence: &LogEvidence) -> String {
         format!("the provider that served the child's turns: {provider}"),
         format!("the outcome the row claims: {outcome}"),
         format!("the turns the row claims: {}", row.turns),
-        format!("what the delegation spent: ${:.4}", row.spend_usd),
+        // The spend is unpriced in this crate and the record says so
+        // rather than printing a confident `$0.0000`: a judge told a
+        // delegation cost nothing would grade it on a fact the stream
+        // never held.
+        format!(
+            "what the delegation spent: {}",
+            if row.spend_usd > 0.0 {
+                format!("${:.4}", row.spend_usd)
+            } else {
+                "unpriced — this crate prices no model tokens yet".to_string()
+            },
+        ),
         format!("how long the delegation took: {} ms", row.duration_ms),
         format!(
             "the parent chain: parent session {parent} · root session {root} · depth {depth}",

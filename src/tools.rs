@@ -79,19 +79,22 @@ pub fn subagent_call_prefix() -> String {
 /// The request declaration for `subagent`: one delegated task, the
 /// child's admitted scope, and its turn cap.
 ///
-/// Three things the description has to carry, because the model is the
+/// Four things the description has to carry, because the model is the
 /// only caller that can get them wrong: the goal must be
 /// **self-contained** (the child sees nothing of this conversation), the
 /// child runs on **this same model** (there is no cheaper path and no
-/// model parameter), and the admitted scope is a **narrowing** of a
-/// default that already excludes the durable-write, lane, and
-/// delegation tools. `max-turns` is bounded in the schema and again at
-/// parse, because a bound the schema alone carries is a bound a
-/// non-conforming caller ignores.
+/// model parameter), the admitted scope is a **declaration** the child's
+/// subtree is held to (a declared tool is admitted and an undeclared one
+/// is refused by name), and the brief is **composed rather than hoped
+/// for** — `context`, `output`, and `approach` are the three parts that
+/// make a delegation gradeable, and a brief that carries only a goal
+/// gives the child nothing to diff against. `max-turns` is bounded in
+/// the schema and again at parse, because a bound the schema alone
+/// carries is a bound a non-conforming caller ignores.
 pub fn subagent_spec() -> ToolSpec {
     ToolSpec::function(
         SUBAGENT_TOOL,
-        "Spawn a subagent that runs one delegated task in its own session, with its own context and no knowledge of this conversation. The goal must be self-contained: state the whole task, every path, and every constraint, because the subagent sees nothing else. It runs on this same model, and its tool calls still ask for approval. Its admitted tools default to bash, read_file, write_file, list_dir, and use_skill; pass `tools` to narrow that list, and nothing outside it is callable — remember, supersede, lane tools, and subagent itself are never admitted. It stops at `max-turns` (default 20, at most 50) and returns its final answer, its session id and log path, its turn count, and its outcome (completed, max-turns, or failed) — a failure returns the partial result and the reason, never silence. The summary is the subagent's own report, not evidence: verify any external side effect it claims — a file it wrote, a command it ran — before you report that claim as fact. Delegate a self-contained piece of work whose intermediate steps would not help you; do the work yourself when you need what you learn along the way.",
+        "Spawn a subagent that runs one delegated task in its own session, with its own context and no knowledge of this conversation. The goal must be self-contained: state the whole task, every path, and every constraint, because the subagent sees nothing else. It runs on this same model, and its tool calls still ask for approval. Compose the brief rather than hoping for it: `context` is the background the subagent cannot see, `output` is the definition of done — the shape of the answer you will accept — and `approach` is your proposed solution, stated as a proposal rather than an instruction. The subagent's first message composes all four parts between explicit markers, so it cannot read the background as the task or the proposal as an order; it ends its answer with a delta block saying whether it followed your approach and, when it deviated, why (the approach was infeasible, a companion was missing and is named, or it found a better route) and whether that was forced or chosen. Omit all three and the subagent is handed the goal alone, exactly as before. The declaration IS the scope: pass `tools` to name the capabilities this subtree needs and nothing outside that list is callable — remember, supersede, lane tools, and improve are never admissible — and naming `subagent` opens a second delegation level, which the depth cap refuses at depth 2 by name. An undeclared tool is refused by name, so under-declare deliberately and let the refusal teach you what the subtree needed. It stops at `max-turns` (default 20, halved at depth 2, at most 50) and returns its final answer, its session id and log path, its turn count, and its outcome (completed, max-turns, or failed) — a failure returns the partial result and the reason, never silence. The summary is the subagent's own report, not evidence: verify any external side effect it claims — a file it wrote, a command it ran — before you report that claim as fact. Delegate a self-contained piece of work whose intermediate steps would not help you; do the work yourself when you need what you learn along the way.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -101,17 +104,33 @@ pub fn subagent_spec() -> ToolSpec {
                 },
                 "tools": {
                     "type": "array",
-                    "description": "The subagent's admitted tool names, narrowing the default (bash, read_file, write_file, list_dir, use_skill). An empty list admits no tool at all.",
+                    "description": "The capabilities this subtree needs, which IS the subagent's admitted scope: a declared tool is admitted and an undeclared one is refused by name. Naming subagent opens a second delegation level; at depth 2 it is stripped and the call is refused citing the cap. An empty list admits no tool at all.",
                     "items": {
                         "type": "string",
-                        "enum": ["bash", "read_file", "write_file", "list_dir", "use_skill"],
+                        "enum": ["bash", "read_file", "write_file", "list_dir", "use_skill", "subagent"],
                     },
                 },
                 "max-turns": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 50,
-                    "description": "The subagent's turn cap. Defaults to 20 and is bounded at 50.",
+                    "description": "The subagent's turn cap. Defaults to 20 and is bounded at 50; a depth-2 child is held to half the default.",
+                },
+                "context": {
+                    "type": "string",
+                    "description": "The background the subagent needs and cannot see: paths already read, decisions already made, constraints discovered along the way. It rides the brief's CONTEXT section beside the capabilities the subtree was declared.",
+                },
+                "output": {
+                    "type": "string",
+                    "description": "The definition of done: the shape of the answer you will accept. It rides the brief's WHAT DONE LOOKS LIKE section.",
+                },
+                "approach": {
+                    "type": "string",
+                    "description": "Your proposed solution for this subtree, stated as a proposal rather than an instruction. The subagent reports whether it followed it, so a brief with no approach is a brief with nothing to diff against.",
+                },
+                "role": {
+                    "type": "string",
+                    "description": "The role this delegation runs under, by name — a name, not a path. The role's own overlay is loaded beside the compiled-in system prompt; the name rides the brief and the delegation row so the calibration's cells can key on it. A name that could not name a role is refused by name rather than silently defaulted.",
                 },
             },
             "required": ["goal"],
@@ -948,7 +967,12 @@ mod tests {
             crate::subagents::ADMISSIBLE_TOOLS.to_vec(),
             "the schema enum and ADMISSIBLE_TOOLS are one set — the comment's coupling is this assertion"
         );
-        for excluded in [REMEMBER_TOOL, SUPERSEDE_TOOL, SUBAGENT_TOOL, "mcp__sem1__probe"] {
+        // `subagent` is admissible because the depth cap is 2: naming it
+        // in a declaration opens a second level, and the scope strips it
+        // again at the cap. The durable-write and lane tools are not,
+        // and never are.
+        assert!(admitted.contains(&SUBAGENT_TOOL), "{admitted:?}");
+        for excluded in [REMEMBER_TOOL, SUPERSEDE_TOOL, IMPROVE_TOOL, "mcp__sem1__probe"] {
             assert!(!admitted.contains(&excluded), "{excluded} must not be admissible");
         }
         // The turn cap is bounded in the schema as well as at parse.
@@ -962,6 +986,21 @@ mod tests {
         let description = spec["function"]["description"].as_str().unwrap();
         assert!(description.contains("self-contained"), "{description}");
         assert!(description.contains("this same model"), "{description}");
+        // The three parts that make a brief gradeable are declared, and
+        // none of them is required: a call that omits all three is
+        // handed the goal alone.
+        for part in ["context", "output", "approach", "role"] {
+            let declared = &parameters["properties"][part];
+            assert_eq!(declared["type"], "string", "{part} must be declared a string");
+        }
+        assert!(description.contains("`context`"), "{description}");
+        assert!(description.contains("`approach`"), "{description}");
+        assert!(description.contains("`output`"), "{description}");
+        assert!(description.contains("delta block"), "{description}");
+        assert!(
+            description.contains("The declaration IS the scope"),
+            "{description}"
+        );
     }
 
     #[test]
