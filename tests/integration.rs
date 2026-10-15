@@ -2325,6 +2325,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
     ];
     let decision = RouteDecision {
         provider: "cand-head".to_string(),
+        model: "test-model".to_string(),
         how: How::Fallback,
         workload: None,
         verdict: None,
@@ -4029,6 +4030,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
     let resolved = vec![resolved("cand-one", mock.url(), false, None)];
     let decision = RouteDecision {
         provider: "cand-one".to_string(),
+        model: "test-model".to_string(),
         how: How::Pinned,
         workload: None,
         verdict: None,
@@ -4941,6 +4943,7 @@ impl CronHarness {
         let resolved = vec![resolved("cand-mock", mock.url(), false, None)];
         let decision = RouteDecision {
             provider: "cand-mock".to_string(),
+            model: "test-model".to_string(),
             how: How::Pinned,
             workload: None,
             verdict: None,

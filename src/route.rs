@@ -542,6 +542,10 @@ impl How {
 pub struct RouteDecision {
     /// The selected candidate id.
     pub provider: String,
+    /// The model the selected candidate serves — what the run will
+    /// actually call, carried so the surface and the session log name
+    /// the truth instead of the CLI's requested default.
+    pub model: String,
     pub how: How,
     /// sys1's judged workload, when there was one.
     pub workload: Option<String>,
@@ -589,14 +593,14 @@ pub async fn select(
     let head = head_index(resolved);
     let decision = if let Some(pin_id) = pin {
         match resolved.iter().position(|entry| entry.id() == pin_id && entry.usable()) {
-            Some(index) => RouteDecision {
-                provider: pin_id.to_string(),
-                how: How::Pinned,
-                workload: None,
-                verdict: None,
-                reason: format!("pinned to {pin_id}"),
-                start_index: index,
-            },
+            Some(index) => decision_at(
+                resolved,
+                index,
+                How::Pinned,
+                None,
+                None,
+                format!("pinned to {pin_id}"),
+            ),
             None => fallback(resolved, head, &format!("pin `{pin_id}` is not usable; using the head")),
         }
     } else {
@@ -605,14 +609,14 @@ pub async fn select(
                 match workload_candidate(&workload)
                     .and_then(|id| resolved.iter().position(|entry| entry.id() == id))
                 {
-                    Some(index) if resolved[index].usable() => RouteDecision {
-                        provider: resolved[index].id().to_string(),
-                        how: How::Judged,
-                        workload: Some(workload.clone()),
-                        verdict: Some(verdict),
-                        reason: format!("sys1 judged `{workload}`"),
-                        start_index: index,
-                    },
+                    Some(index) if resolved[index].usable() => decision_at(
+                        resolved,
+                        index,
+                        How::Judged,
+                        Some(workload.clone()),
+                        Some(verdict),
+                        format!("sys1 judged `{workload}`"),
+                    ),
                     Some(index) => fallback(
                         resolved,
                         head,
@@ -631,17 +635,33 @@ pub async fn select(
     (decision, started.elapsed().as_millis())
 }
 
+/// A decision for the candidate at `index` — the one construction, so
+/// no site forgets the model the route will actually serve. An index
+/// past the roster reads as the head's id with no model rather than
+/// panicking: a decision is a record, never a crash.
+fn decision_at(
+    resolved: &[Resolved],
+    index: usize,
+    how: How,
+    workload: Option<String>,
+    verdict: Option<String>,
+    reason: String,
+) -> RouteDecision {
+    let entry = resolved.get(index);
+    RouteDecision {
+        provider: entry.map(Resolved::id).unwrap_or(HEAD_ID).to_string(),
+        model: entry.map(|entry| entry.candidate.model.clone()).unwrap_or_default(),
+        how,
+        workload,
+        verdict,
+        reason,
+        start_index: index,
+    }
+}
+
 /// A fallback decision to the declared HEAD.
 fn fallback(resolved: &[Resolved], head: usize, reason: &str) -> RouteDecision {
-    let provider = resolved.get(head).map(Resolved::id).unwrap_or(HEAD_ID).to_string();
-    RouteDecision {
-        provider,
-        how: How::Fallback,
-        workload: None,
-        verdict: None,
-        reason: reason.to_string(),
-        start_index: head,
-    }
+    decision_at(resolved, head, How::Fallback, None, None, reason.to_string())
 }
 
 /// Ask sys1 for a routing judgment: spawn the lane (like any other), call
@@ -704,6 +724,20 @@ pub struct Attempt {
     pub outcome: &'static str,
     /// The failure class, when the attempt failed; `no-key` when skipped.
     pub class: Option<&'static str>,
+}
+
+/// What one session's walk actually did. The surface prints it after
+/// every run, so "why did this candidate serve" is answerable without
+/// opening the stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkReport {
+    /// The candidate that served and its model, when one did.
+    pub served: Option<(String, String)>,
+    /// Every attempt, in the order the walk made them.
+    pub attempts: Vec<Attempt>,
+    /// The candidates skipped for want of keys, each with the env var
+    /// it wanted — the named absence, never a bare skip.
+    pub unkeyed: Vec<(String, String)>,
 }
 
 /// Map a client error onto a failure class. 400/404 are client errors —
@@ -952,6 +986,36 @@ impl Router {
             input_chars: task.chars().count(),
             input_hash: calib::hash16(task),
             latency_ms,
+        }
+    }
+
+    /// What this session's walk actually did, for the surface: the
+    /// candidate that served and its model, every attempt in order, and
+    /// the candidates skipped for want of keys with the env var each
+    /// wanted. The route row already carries the same facts for the
+    /// stream; this is the owner-facing half.
+    pub fn walk_report(&self) -> WalkReport {
+        let state = lock(&self.state);
+        let served = state.served.and_then(|index| {
+            self.resolved.get(index).map(|entry| {
+                (entry.id().to_string(), entry.candidate.model.clone())
+            })
+        });
+        let unkeyed = state
+            .attempts
+            .iter()
+            .filter(|attempt| attempt.class == Some("no-key"))
+            .filter_map(|attempt| {
+                self.resolved
+                    .iter()
+                    .find(|entry| entry.id() == attempt.provider)
+                    .map(|entry| (entry.id().to_string(), entry.candidate.key_env.clone()))
+            })
+            .collect();
+        WalkReport {
+            served,
+            attempts: state.attempts.clone(),
+            unkeyed,
         }
     }
 
@@ -1785,6 +1849,7 @@ mod tests {
         let resolved = resolve(&default_roster(), &HashMap::new());
         let decision = RouteDecision {
             provider: "zai-coding-plan".to_string(),
+            model: "GLM-5.3-Flash".to_string(),
             how: How::Judged,
             workload: Some("hard".to_string()),
             verdict: Some("pass".to_string()),
@@ -1974,6 +2039,7 @@ mod tests {
         let resolved = resolve(&default_roster(), &HashMap::new());
         let decision = RouteDecision {
             provider: HEAD_ID.to_string(),
+            model: "auto".to_string(),
             how: How::Fallback,
             workload: None,
             verdict: None,
@@ -2148,6 +2214,7 @@ mod tests {
         ];
         let decision = RouteDecision {
             provider: "router-kit".to_string(),
+            model: "auto".to_string(),
             how: How::Fallback,
             workload: None,
             verdict: None,

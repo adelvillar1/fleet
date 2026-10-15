@@ -116,14 +116,10 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         }
     };
     let dotenv = read_dotenv();
-    let mut session = match open_session(&home, options.session.as_deref(), &options.model) {
-        Ok(session) => session,
-        Err(message) => {
-            eprintln!("fleet: {message}");
-            return ExitCode::from(2);
-        }
-    };
-    eprintln!("fleet: session {} (model {})", session.id(), options.model);
+    // The route is prepared before the session exists: the session's
+    // first record and the first line the owner reads name the route
+    // that will actually serve, not the CLI's requested default — and
+    // a failed route no longer leaves an empty session behind.
     let prepared = match route::prepare(&home, &dotenv, &options.task, &HashMap::new()).await {
         Ok(prepared) => prepared,
         Err(error) => {
@@ -131,11 +127,25 @@ async fn run_command(options: &RunOptions) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    eprintln!("route: {} ({})", prepared.decision.provider, prepared.decision.how.label());
+    let mut session = match open_session(&home, options.session.as_deref(), &prepared.decision.model)
+    {
+        Ok(session) => session,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    eprintln!("fleet: session {}", session.id());
+    eprintln!(
+        "route: {} ({}) · model {}",
+        prepared.decision.provider,
+        prepared.decision.how.label(),
+        prepared.decision.model
+    );
     let skills = fleet::skills::load(&home);
     let outcome = drive(
         &prepared,
-        options.model.clone(),
+        prepared.decision.model.clone(),
         options.max_turns,
         options.yes,
         &mut session,
@@ -144,6 +154,7 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         &home,
     )
     .await;
+    report_walk(&prepared);
     prepared.record_route(&options.task);
     // The self-authoring half: after the session, the harness drafts the
     // skill changes its outcomes justify. Best-effort by construction —
@@ -184,7 +195,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    println!("fleet chat — model {}, session {} (/exit to quit)", options.model, session.id());
+    println!("fleet chat — session {} (/exit to quit)", session.id());
     // The scheduled consolidation cycle: one pass now, then one every
     // hour for the life of the session. The live system's episodic
     // store went dormant because its consolidation was manual — the
@@ -229,7 +240,12 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         if prepared.is_none() {
             match route::prepare(&home, &dotenv, trimmed, &HashMap::new()).await {
                 Ok(fresh) => {
-                    eprintln!("route: {} ({})", fresh.decision.provider, fresh.decision.how.label());
+                    eprintln!(
+                        "route: {} ({}) · model {}",
+                        fresh.decision.provider,
+                        fresh.decision.how.label(),
+                        fresh.decision.model
+                    );
                     judge_task = trimmed.to_string();
                     prepared = Some(fresh);
                 }
@@ -242,7 +258,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         let prepared = prepared.as_ref().expect("prepared on the first task");
         let outcome = drive(
             prepared,
-            options.model.clone(),
+            prepared.decision.model.clone(),
             DEFAULT_MAX_TURNS,
             options.yes,
             &mut session,
@@ -263,11 +279,45 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         }
     }
     if let Some(prepared) = &prepared {
+        report_walk(prepared);
         prepared.record_route(&judge_task);
     }
     // The session is over: draft its lessons into proposals, best-effort.
     draft_lessons(&home, session.path());
     ExitCode::SUCCESS
+}
+
+/// After a run: what the walk actually did. The attempts in order —
+/// served, failed with its class, or skipped naming the env var it
+/// wanted — so "why did this candidate serve" is answerable without
+/// opening the stream. The route row carries the same facts for the
+/// calibration stream; this is the owner-facing half.
+fn report_walk(prepared: &route::Prepared) {
+    let report = prepared.router.walk_report();
+    if report.attempts.is_empty() {
+        return;
+    }
+    let key_env = |provider: &str| {
+        report
+            .unkeyed
+            .iter()
+            .find(|(skipped, _)| skipped == provider)
+            .map(|(_, env)| env.clone())
+    };
+    let walked = report
+        .attempts
+        .iter()
+        .map(|attempt| match attempt.outcome {
+            "served" => format!("{} served", attempt.provider),
+            "skipped" => match key_env(&attempt.provider) {
+                Some(env) => format!("{} skipped (no {})", attempt.provider, env),
+                None => format!("{} skipped", attempt.provider),
+            },
+            _ => format!("{} failed ({})", attempt.provider, attempt.class.unwrap_or("unknown")),
+        })
+        .collect::<Vec<_>>()
+        .join(" → ");
+    eprintln!("walk: {walked}");
 }
 
 /// The self-authoring half, after a session ends: read the session's log

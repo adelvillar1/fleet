@@ -752,6 +752,7 @@ mod tests {
         // model is the parent's, and no decision can move it.
         let decision = RouteDecision {
             provider: "zai-coding-plan".to_string(),
+            model: "GLM-5.3-Flash".to_string(),
             how: crate::route::How::Judged,
             workload: Some("hard".to_string()),
             verdict: Some("pass".to_string()),
