@@ -36,9 +36,11 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::api::Usage;
 use crate::route::Attempt;
+use crate::skills::wrap_detail;
 
 // --- the vocabulary --------------------------------------------------------
 
@@ -310,6 +312,66 @@ pub struct ExplainValidationRow {
     pub number_check: String,
 }
 
+/// One judgment beat's row: the routing decision the sys1 lane graded,
+/// the verdict it reached, its confidence, and the reason — and never the
+/// task's text, which the route rows are redacted against by design.
+///
+/// The row is keyed by the judged route row's identity
+/// ([`route_key`]), the 16 hex characters of the sha256 over the route
+/// row's own canonical form, in devdec's join shape
+/// (`sha256(x).hexdigest()[:16]`). The key is what makes the judgment
+/// joinable: `fleet judge --agree <key>` addresses one row by it, and the
+/// calibration surface reads the day's judgments beside the routes they
+/// graded.
+///
+/// The owner's disposition rides the SAME row, appended again with the
+/// key unchanged: the stream is append-only, so a disposition is a later
+/// row for the same route, and a reader takes the freshest one per key
+/// (see [`judged_rows`]). That is what makes the human seam the ground
+/// truth without a rewrite of what the lane judged — the automated
+/// verdict stays on the row it was written with, and the disposition
+/// overrides it in the math rather than in the record.
+#[derive(Debug, Clone, Serialize)]
+pub struct RouteJudgedRow {
+    pub ts: String,
+    /// The judged route row's identity — the join key, and the value
+    /// `fleet judge --agree`/`--disagree`/`--waive` addresses.
+    pub route_key: String,
+    /// The provider the judgment grades: the candidate the route row
+    /// names as having served (or the selected one when none did).
+    pub provider: String,
+    /// The workload shape the judgment grades it *for* — the route row's
+    /// own `workload` label, carried through so the calibration is keyed
+    /// by (provider × shape) rather than averaged per provider. A
+    /// provider that is right for one shape and wrong for another has
+    /// two cells, and neither hides the other.
+    pub workload: String,
+    /// `right` or `wrong` — see [`VERDICT_RIGHT`] and [`VERDICT_WRONG`].
+    pub verdict: String,
+    /// The lane's confidence in its own workload judgment, in `[0, 1]`.
+    /// It is the weight the confidence-weighted wrong-rate applies, so a
+    /// confident wrong judgment counts for more than a tentative one.
+    pub confidence: f64,
+    /// Why, bounded: the lane's workload label, the provider it maps to,
+    /// and the outcome evidence the grade rested on.
+    pub reason: String,
+    /// The owner's disposition, when one has been recorded: `agreed`,
+    /// `disagreed`, or `waived` — see [`DISPOSITIONS`]. Absent on a row
+    /// the lane's judgment alone wrote, and for a row written before the
+    /// field existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disposition: Option<String>,
+    /// What the ask cost, when the path spent anything. Absent on a
+    /// disposition row, which spends nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// The ask's latency in milliseconds, when the lane reported one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    /// The lane that answered: `sys1`.
+    pub lane: String,
+}
+
 /// One row in the stream, tagged by its op the way devdec's rows are: the
 /// tag is a field of the JSON object, not a wrapper.
 #[derive(Debug, Clone, Serialize)]
@@ -323,6 +385,7 @@ pub enum Row {
     Propose(ProposeRow),
     EvalCorpus(EvalCorpusRow),
     Explain(ExplainRow),
+    RouteJudged(RouteJudgedRow),
 }
 
 impl Row {
@@ -337,6 +400,7 @@ impl Row {
             Row::Propose(_) => OP_PROPOSE,
             Row::EvalCorpus(_) => OP_EVAL_CORPUS,
             Row::Explain(_) => OP_EXPLAIN,
+            Row::RouteJudged(_) => OP_ROUTE_JUDGED,
         }
     }
 
@@ -351,6 +415,7 @@ impl Row {
             Row::Propose(row) => &row.ts,
             Row::EvalCorpus(row) => &row.ts,
             Row::Explain(row) => &row.ts,
+            Row::RouteJudged(row) => &row.ts,
         }
     }
 }
@@ -379,8 +444,14 @@ pub const OP_EVAL_CORPUS: &str = "eval_corpus";
 /// the row exists so the prose is auditable beside the verdict, not so
 /// anything can act on it.
 pub const OP_EXPLAIN: &str = "explain";
+/// The judgment op: one routing decision graded against its outcome
+/// evidence through the sys1 lane, keyed by the judged route row's
+/// identity. The row that closes the calibration loop — it is what the
+/// per-provider calibration surface reads and what the failover's
+/// preference consults.
+pub const OP_ROUTE_JUDGED: &str = "route_judged";
 /// The ops this slice emits, in the order `fleet calib` groups them.
-pub const OPS: [&str; 8] = [
+pub const OPS: [&str; 9] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -389,6 +460,7 @@ pub const OPS: [&str; 8] = [
     OP_PROPOSE,
     OP_EVAL_CORPUS,
     OP_EXPLAIN,
+    OP_ROUTE_JUDGED,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -414,6 +486,33 @@ pub const ACTION_SUPERSEDE: &str = "supersede";
 pub const ACTION_FORGET: &str = "forget";
 /// Every consolidation action, in the order the surface tallies them.
 pub const ACTIONS: [&str; 3] = [ACTION_COMPRESS, ACTION_SUPERSEDE, ACTION_FORGET];
+
+/// The judgment's verdict when the routing decision was right: the lane's
+/// workload label mapped to the candidate that served, or to a candidate
+/// that was tried and failed on an availability class while a later one
+/// served in its place.
+pub const VERDICT_RIGHT: &str = "right";
+/// The judgment's verdict when the routing decision was wrong: the lane's
+/// workload label mapped to a different candidate than the one that
+/// served, and that candidate was never tried or failed in a way that
+/// was its own.
+pub const VERDICT_WRONG: &str = "wrong";
+/// Every judgment verdict, in the order the surface tallies them.
+pub const JUDGMENT_VERDICTS: [&str; 2] = [VERDICT_RIGHT, VERDICT_WRONG];
+
+/// The owner's disposition confirming the automated verdict: the judge
+/// was right, and the owner says so.
+pub const DISPOSITION_AGREED: &str = "agreed";
+/// The owner's disposition inverting the automated verdict: the judge was
+/// wrong, and the owner's grading is the ground truth.
+pub const DISPOSITION_DISAGREED: &str = "disagreed";
+/// The owner's disposition setting a judged row aside: neither right nor
+/// wrong, excluded from the calibration math and counted apart on the
+/// card.
+pub const DISPOSITION_WAIVED: &str = "waived";
+/// Every disposition, in the order the surface tallies them.
+pub const DISPOSITIONS: [&str; 3] =
+    [DISPOSITION_AGREED, DISPOSITION_DISAGREED, DISPOSITION_WAIVED];
 
 /// One approval decision's verdict, as the row names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1048,6 +1147,26 @@ pub struct ReadRow {
     pub op: String,
     #[serde(default)]
     pub provider: String,
+    /// The route row's workload (`quick`, `hard`, …), the word sys1
+    /// judged. Empty for every other op.
+    #[serde(default)]
+    pub workload: String,
+    /// The route row's `how`: `judged`, `fallback`, or `pinned`. Empty
+    /// for every other op.
+    #[serde(default)]
+    pub how: String,
+    /// The route row's model, the served candidate's own. Empty for every
+    /// other op.
+    #[serde(default)]
+    pub model: String,
+    /// The candidates a route row attempted, in order. Empty for every
+    /// other op.
+    #[serde(default)]
+    pub providers_used: Vec<String>,
+    /// The task's length in characters, as a route or turn row recorded
+    /// it. Zero for every other op.
+    #[serde(default)]
+    pub input_chars: usize,
     #[serde(default)]
     pub attempts: Vec<ReadAttempt>,
     #[serde(default)]
@@ -1157,6 +1276,25 @@ pub struct ReadRow {
     /// for every other op.
     #[serde(default)]
     pub latency_ms: u64,
+    /// The judged route row's identity a `route_judged` row carries — the
+    /// devdec join shape, the value `fleet judge --agree` addresses.
+    /// Empty for every other op.
+    #[serde(default)]
+    pub route_key: String,
+    /// The lane's confidence in its own workload judgment, as a
+    /// `route_judged` row recorded it, in `[0, 1]`. Zero for every other
+    /// op.
+    #[serde(default)]
+    pub confidence: f64,
+    /// The owner's disposition a `route_judged` row carries: `agreed`,
+    /// `disagreed`, or `waived`. Empty on a row the lane's judgment alone
+    /// wrote, and for every other op.
+    #[serde(default)]
+    pub disposition: String,
+    /// The lane that answered a `route_judged` row: `sys1`. Empty for
+    /// every other op.
+    #[serde(default)]
+    pub lane: String,
     /// The ask's route telemetry an `explain` row carries, nested the
     /// way the row writes it. Empty for every other op.
     #[serde(default)]
@@ -1211,12 +1349,16 @@ pub struct ReadGateStep {
     pub detail: String,
 }
 
-/// One attempt as a row carries it: the provider and its outcome, which is
-/// all the demotion reader grades.
+/// One attempt as a row carries it: the provider, its outcome, and the
+/// failure class when it failed (`no-key`, `disabled`, or `calibration`
+/// when skipped) — all the demotion reader and the judgment's grade
+/// need.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ReadAttempt {
     pub provider: String,
     pub outcome: String,
+    #[serde(default)]
+    pub class: Option<String>,
 }
 
 /// Read the last `cap` rows of one day's stream, oldest first.
@@ -1310,6 +1452,372 @@ pub fn demotions(root: &Path, day: &str, candidates: &[&str]) -> Vec<String> {
         .collect()
 }
 
+// --- the judgment's join key and the calibration read ----------------------
+
+/// A route row's identity: one canonical line over the fields the reader
+/// carries, hashed to the 16 hex characters dev-decisions joins on
+/// (`sha256(x).hexdigest()[:16]`).
+///
+/// The identity is built from the reader's shape rather than the
+/// writer's on purpose: the judgment reads the day's rows off the stream,
+/// `fleet judge --agree <key>` addresses one by the same key, and a
+/// later reader recomputes it from the same fields — so the key the beat
+/// wrote and the key an owner types are the same value. It is stable for
+/// as long as the field set is; adding a field to the line is a key
+/// migration, which is why the set is fixed here and documented rather
+/// than "whatever the row happens to carry".
+pub fn route_key(row: &ReadRow) -> String {
+    let attempts = row
+        .attempts
+        .iter()
+        .map(|attempt| format!("{}:{}", attempt.provider, attempt.outcome))
+        .collect::<Vec<_>>()
+        .join(",");
+    let identity = format!(
+        "route|{ts}|{provider}|{how}|{workload}|{verdict}|{reason}|{model}|{used}|{attempts}|{chars}|{hash}|{latency}",
+        ts = row.ts,
+        provider = row.provider,
+        how = row.how,
+        workload = row.workload,
+        verdict = row.verdict,
+        reason = row.reason,
+        model = row.model,
+        used = row.providers_used.join(","),
+        attempts = attempts,
+        chars = row.input_chars,
+        hash = row.input_hash,
+        latency = row.latency_ms,
+    );
+    hash16(&identity)
+}
+
+/// The day's judged rows, one per route key — the freshest, because the
+/// stream is append-only and a later row for a key (a re-judgment, or the
+/// owner's disposition) is the one that stands. Order is first
+/// appearance, so a surface that walks the result reads the day in the
+/// order it happened.
+pub fn judged_rows(rows: &[ReadRow]) -> Vec<ReadRow> {
+    let mut order: Vec<String> = Vec::new();
+    let mut freshest: HashMap<String, ReadRow> = HashMap::new();
+    for row in rows.iter().filter(|row| row.op == OP_ROUTE_JUDGED) {
+        let key = row.route_key.clone();
+        if !freshest.contains_key(&key) {
+            order.push(key.clone());
+        }
+        freshest.insert(key, row.clone());
+    }
+    order.into_iter().filter_map(|key| freshest.remove(&key)).collect()
+}
+
+/// How many judged rows a provider's sample must carry before its floor
+/// is trusted.
+///
+/// Sized for fleet's volume, not the sibling's: dev-decisions grades many
+/// heads across many tasks a day and asks for 20 rows; fleet is one
+/// owner's tool, where a day's route rows are the runs they did — single
+/// digits on a quiet day, low double digits on a heavy one. Twenty rows
+/// would take a week to gather and the calibration would never inform
+/// anything. Eight is reachable within a day or two, and it is chosen so
+/// the floor cannot be crossed by fewer than **three** wrong judgments:
+/// two wrong of eight is 0.25, below the 0.50 floor, and three is 0.375 —
+/// still below it unweighted, so a bare-majority-of-a-small-sample swing
+/// never moves routing on its own.
+pub const FIT_MIN_ROWS: usize = 8;
+
+/// How much confidence span a provider's judged sample must carry before
+/// its floor is trusted: `max(confidence) - min(confidence)` across the
+/// graded rows, at least this wide.
+///
+/// The confidence-weighted wrong-rate weights each judgment by the
+/// lane's own confidence, so a sample whose confidences are all the same
+/// number carries no information about how confidence relates to
+/// correctness — the weighting degenerates into an unweighted rate and
+/// the "confidence-weighted" claim is vacuous. The sibling asks for 0.4
+/// over its volume; fleet's rows per day are fewer and a decision model
+/// answering over one compact evidence record clusters high, so 0.4
+/// would rarely be reachable at eight rows and the fit rule would refuse
+/// samples that are genuinely informative. 0.30 is the span at which the
+/// weighting is doing real work at fleet's sample sizes.
+pub const FIT_MIN_SPAN: f64 = 0.30;
+
+/// The confidence-weighted wrong-rate at or above which a **fit**
+/// provider is skipped in the failover's preference.
+///
+/// The sibling's calibration is a report and carries no such floor;
+/// fleet's ride-back needs one, and 0.50 is the most conservative
+/// crossing that still means something: weighted by the judge's own
+/// confidence, the provider is wrong at least as often as it is right. A
+/// lower floor would move routing on a provider that is more right than
+/// wrong, which is not what "conservative" means.
+pub const WRONG_RATE_FLOOR: f64 = 0.50;
+
+/// Whether a provider's judged sample is fit to have its floor trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FitState {
+    /// Enough graded rows and enough confidence span: the floor is
+    /// trusted, and the wrong-rate is a score rather than a noise.
+    Fit,
+    /// Not yet: the sample is too small, too flat, or both. The surface
+    /// names what it still needs and renders no score.
+    Unfit,
+}
+
+impl FitState {
+    /// The word the surface and the row carry.
+    pub fn label(self) -> &'static str {
+        match self {
+            FitState::Fit => "fit",
+            FitState::Unfit => "unfit",
+        }
+    }
+}
+
+/// One calibration cell: a provider's judged quality **for one workload
+/// shape**. The cell, not the provider, is the unit of calibration,
+/// because a keyword or phrase in the wrong context is meaningless: a
+/// provider that is right for `hard` and wrong for `prose` has two
+/// cells, and averaging them into one wrong-rate would hide exactly the
+/// split the owner's directive names (2026-10-14).
+///
+/// Every number on a cell — the counts, the confidence-weighted
+/// wrong-rate, the cost per correct call, and the fit requirement — is
+/// computed inside it. A provider with twenty judged rows across three
+/// shapes has three cells, each with its own count, span, and fit state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CalibrationCell {
+    pub provider: String,
+    /// The workload shape this cell grades, the route row's own label.
+    /// Empty for a route that carried no judged workload.
+    pub workload: String,
+    /// Every judged row in this cell, including waived ones.
+    pub judged: usize,
+    /// The rows that graded right after the owner's disposition is
+    /// applied.
+    pub right: usize,
+    /// The rows that graded wrong after the owner's disposition is
+    /// applied.
+    pub wrong: usize,
+    /// The rows the owner set aside: neither right nor wrong, excluded
+    /// from the rate.
+    pub waived: usize,
+    /// The rows whose verdict the owner's disposition flipped, which is
+    /// the human seam's footprint in the math.
+    pub overridden: usize,
+    /// `sum(confidence * wrong) / sum(confidence)` over the graded rows,
+    /// or the plain wrong fraction when every confidence is zero (a
+    /// sample that reported no confidence at all).
+    pub weighted_wrong_rate: f64,
+    /// `max(confidence) - min(confidence)` across the graded rows.
+    pub confidence_span: f64,
+    pub fit: FitState,
+    /// What the day's judgments in this cell cost.
+    pub spend_usd: f64,
+    /// The spend divided by the right count, or `None` when nothing
+    /// graded right — a cell with no correct turn has no cost per
+    /// correct turn to report.
+    pub cost_per_right: Option<f64>,
+}
+
+impl CalibrationCell {
+    /// How many more graded rows this cell needs before it is fit.
+    pub fn needs_rows(&self) -> usize {
+        FIT_MIN_ROWS.saturating_sub(self.right + self.wrong)
+    }
+
+    /// How much more confidence span this cell needs before it is fit.
+    pub fn needs_span(&self) -> f64 {
+        (FIT_MIN_SPAN - self.confidence_span).max(0.0)
+    }
+
+    /// Whether this cell may move the failover's preference: fit, and
+    /// its confidence-weighted wrong-rate at or over
+    /// [`WRONG_RATE_FLOOR`].
+    pub fn informs_failover(&self) -> bool {
+        self.fit == FitState::Fit && self.weighted_wrong_rate >= WRONG_RATE_FLOOR
+    }
+
+    /// The shape this cell grades, as the surface names it. A route with
+    /// no judged workload says so rather than printing an empty shape.
+    pub fn shape(&self) -> &str {
+        if self.workload.is_empty() {
+            "unshaped"
+        } else {
+            &self.workload
+        }
+    }
+}
+
+/// The cell for one (provider, workload shape) pair, or `None` when the
+/// day holds no judged rows for it. The ride-back's only lookup: a
+/// provider's shape-Y record never answers a shape-X question.
+pub fn cell<'a>(
+    cells: &'a [CalibrationCell],
+    provider: &str,
+    workload: &str,
+) -> Option<&'a CalibrationCell> {
+    cells.iter().find(|cell| cell.provider == provider && cell.workload == workload)
+}
+
+/// The day's calibration cells, keyed by (provider × workload shape), in
+/// the order the judged rows first name each pair.
+///
+/// The owner's disposition is applied here and only here: `agreed`
+/// confirms the automated verdict, `disagreed` inverts it, and `waived`
+/// sets the row aside entirely. The judge is a signal; the owner's
+/// grading is the ground truth.
+pub fn calibration(rows: &[ReadRow]) -> Vec<CalibrationCell> {
+    let judged = judged_rows(rows);
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut grouped: HashMap<(String, String), Vec<&ReadRow>> = HashMap::new();
+    for row in &judged {
+        let key = (row.provider.clone(), row.workload.clone());
+        if !grouped.contains_key(&key) {
+            order.push(key.clone());
+        }
+        grouped.entry(key).or_default().push(row);
+    }
+    order
+        .into_iter()
+        .filter_map(|key| grouped.remove(&key))
+        .map(|rows| summarize(&rows[0].provider, &rows[0].workload, &rows))
+        .collect()
+}
+
+/// One cell's summary from its judged rows.
+fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCell {
+    let mut right = 0usize;
+    let mut wrong = 0usize;
+    let mut waived = 0usize;
+    let mut overridden = 0usize;
+    let mut weight_sum = 0.0f64;
+    let mut weighted_wrong = 0.0f64;
+    let mut spend = 0.0f64;
+    let mut confidences: Vec<f64> = Vec::new();
+    for row in rows {
+        spend += row.cost_usd;
+        let automated = row.verdict.as_str();
+        let graded = match row.disposition.as_str() {
+            DISPOSITION_WAIVED => {
+                waived += 1;
+                None
+            }
+            DISPOSITION_DISAGREED => {
+                overridden += 1;
+                Some(invert(automated))
+            }
+            // `agreed` and an absent disposition both stand on the
+            // automated verdict; an unknown word is read as an absent
+            // one rather than silently waiving the row.
+            _ => Some(automated.to_string()),
+        };
+        let Some(graded) = graded else { continue };
+        confidences.push(row.confidence);
+        if graded == VERDICT_WRONG {
+            wrong += 1;
+            weighted_wrong += row.confidence;
+        } else {
+            right += 1;
+        }
+        weight_sum += row.confidence;
+    }
+    let graded_count = right + wrong;
+    let weighted_wrong_rate = if weight_sum > 0.0 {
+        weighted_wrong / weight_sum
+    } else if graded_count > 0 {
+        // A sample that reported no confidence at all: the weighting has
+        // nothing to weight by, so the honest rate is the plain fraction.
+        wrong as f64 / graded_count as f64
+    } else {
+        0.0
+    };
+    let confidence_span = match confidences.iter().copied().fold(None::<(f64, f64)>, |bounds, confidence| {
+        Some(match bounds {
+            None => (confidence, confidence),
+            Some((low, high)) => (low.min(confidence), high.max(confidence)),
+        })
+    }) {
+        Some((low, high)) => high - low,
+        None => 0.0,
+    };
+    let fit = if graded_count >= FIT_MIN_ROWS && confidence_span >= FIT_MIN_SPAN {
+        FitState::Fit
+    } else {
+        FitState::Unfit
+    };
+    CalibrationCell {
+        provider: provider.to_string(),
+        workload: workload.to_string(),
+        judged: rows.len(),
+        right,
+        wrong,
+        waived,
+        overridden,
+        weighted_wrong_rate: weighted_wrong_rate + 0.0,
+        confidence_span: confidence_span + 0.0,
+        fit,
+        spend_usd: spend + 0.0,
+        cost_per_right: (right > 0).then(|| spend / right as f64),
+    }
+}
+
+/// The opposite verdict, for a row the owner disagreed with.
+fn invert(verdict: &str) -> String {
+    if verdict == VERDICT_WRONG {
+        VERDICT_RIGHT.to_string()
+    } else {
+        VERDICT_WRONG.to_string()
+    }
+}
+
+// --- the home-side spend ledger --------------------------------------------
+
+/// The home-side spend ledger for one beat: `home` joined with `name`,
+/// one JSON line per ask whose row never reached the calibration stream.
+///
+/// The ledger is the home's, not the stream's and not the beat's own
+/// artifact directory's, so it survives a failure in either: money the
+/// lane already spent is money spent, and a cap that only moves on
+/// success lets a broken writer spend uncapped (the consuming-lanes
+/// rule). Each beat names its own file, so the two ledgers never share a
+/// line.
+pub fn spend_sidecar(home: &Path, name: &str) -> PathBuf {
+    home.join(name)
+}
+
+/// Append one failed ask's cost to the beat's home-side ledger. Best
+/// effort: a ledger that cannot be written (an unwritable home) is not a
+/// second failure to report — the beat's own refusal names the ask that
+/// could not complete.
+pub fn record_spend(home: &Path, name: &str, cost: Option<f64>) {
+    // The direct path spent nothing, so there is nothing to record.
+    let Some(cost) = cost else { return };
+    let line = json!({ "ts": stamp(), "cost_usd": cost }).to_string();
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(spend_sidecar(home, name))
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// The day's spend recorded only to a beat's home-side ledger: asks whose
+/// row never reached the calibration stream. An absent or unreadable
+/// ledger spends nothing, which is the honest reading.
+pub fn sidecar_spend(home: &Path, name: &str, day: &str) -> f64 {
+    let Ok(text) = std::fs::read_to_string(spend_sidecar(home, name)) else {
+        return 0.0;
+    };
+    text.lines()
+        .filter_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            let ts = value.get("ts").and_then(serde_json::Value::as_str)?;
+            ts.starts_with(day).then(|| value.get("cost_usd")?.as_f64())?
+        })
+        .sum()
+}
+
 // --- the surface -----------------------------------------------------------
 
 /// The card width, matching `lanes` and `providers`.
@@ -1333,7 +1841,7 @@ mod palette {
 }
 
 // The card's colors, in scope for the format strings below.
-use palette::{ACCENT, BOLD, DIM, RESET, TEXT};
+use palette::{ACCENT, BOLD, DIM, RESET, TEXT, WARN};
 
 /// Render one day's stream as cards: one per op with its counts, the
 /// writer's persisted counters, and the last few rows verbatim. Never a
@@ -1385,6 +1893,7 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
         OP_PROPOSE => propose_detail(&op_rows),
         OP_EVAL_CORPUS => eval_detail(&op_rows),
         OP_EXPLAIN => explain_detail(&op_rows),
+        OP_ROUTE_JUDGED => judged_detail(&op_rows),
         _ => Vec::new(),
     };
     let header_right = format!("{} row{}", op_rows.len(), plural(op_rows.len()));
@@ -1615,6 +2124,46 @@ fn dashes_for(left: &str, right: &str) -> String {
     "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
+/// The judgment op's facts on the stream's own card: the right/wrong
+/// split, the dispositions that moved it, and the fit rule's verdict on
+/// the day's cells.
+fn judged_detail(rows: &[&ReadRow]) -> Vec<String> {
+    let tally = JUDGMENT_VERDICTS
+        .iter()
+        .filter_map(|verdict| {
+            let count = rows.iter().filter(|row| row.verdict == *verdict).count();
+            (count > 0).then(|| format!("{count} {verdict}"))
+        })
+        .collect::<Vec<_>>();
+    let dispositions = DISPOSITIONS
+        .iter()
+        .filter_map(|disposition| {
+            let count = rows.iter().filter(|row| row.disposition == *disposition).count();
+            (count > 0).then(|| format!("{count} {disposition}"))
+        })
+        .collect::<Vec<_>>();
+    let judged = calib_rows_from(rows);
+    let cells = calibration(&judged);
+    let fit = cells.iter().filter(|cell| cell.fit == FitState::Fit).count();
+    let mut lines = vec![format!("verdicts: {}", tally.join(" \u{b7} "))];
+    lines.push(format!(
+        "fit: {fit} of {} cell{} \u{b7} the floor is trusted at {FIT_MIN_ROWS} rows and \
+         {FIT_MIN_SPAN:.2} span",
+        cells.len(),
+        plural(cells.len())
+    ));
+    if !dispositions.is_empty() {
+        lines.push(format!("the owner: {}", dispositions.join(" \u{b7} ")));
+    }
+    lines
+}
+
+/// The rows a detail function holds, owned back into the reader's shape
+/// so the calibration math can run over them.
+fn calib_rows_from(rows: &[&ReadRow]) -> Vec<ReadRow> {
+    rows.iter().map(|row| (*row).clone()).collect()
+}
+
 /// The English plural for a count, the way `lanes` and `providers` carry
 /// theirs.
 fn plural(count: usize) -> &'static str {
@@ -1718,8 +2267,261 @@ fn row_summary(row: &ReadRow) -> String {
             "{}  eval_corpus  {} passed \u{b7} {} failed \u{b7} score {:.2}",
             row.ts, row.passed, row.failed, row.score
         ),
+        OP_ROUTE_JUDGED => format!(
+            "{}  route_judged  {}  {}  conf {:.2}  key {}{}",
+            row.ts,
+            row.provider,
+            row.verdict,
+            row.confidence,
+            row.route_key,
+            if row.disposition.is_empty() {
+                String::new()
+            } else {
+                format!("  \u{b7} the owner {}", row.disposition)
+            },
+        ),
         _ => format!("{}  {}", row.ts, row.op),
     }
+}
+
+// --- the calibration surface ----------------------------------------------
+
+/// Strip ANSI escapes for a width measurement, the way `route` and
+/// `explain` do: a card's drawn width is what the terminal shows, not
+/// what the bytes say.
+fn plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(character) = chars.next() {
+        if character == '\u{1b}' {
+            for next in chars.by_ref() {
+                if next == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(character);
+        }
+    }
+    out
+}
+
+/// The status dot a calibration cell's card carries: green when the
+/// cell is fit and below the floor, amber when it is fit and at or over
+/// it (the cell informs the failover's preference), and dim when it is
+/// unfit — an unfit cell is not a score, so it is not colored like one.
+fn calibration_dot(cell: &CalibrationCell) -> (&'static str, &'static str) {
+    if cell.informs_failover() {
+        ("\u{25d8}", palette::WARN)
+    } else if cell.fit == FitState::Fit {
+        ("\u{2713}", palette::OK)
+    } else {
+        ("\u{25cb}", palette::DIM)
+    }
+}
+
+/// One cell's card: the judged count, the right/wrong split, the
+/// confidence-weighted wrong-rate, the cost per correct call, and the
+/// fit state — all inside the cell, never averaged across shapes. An
+/// unfit cell renders as unfit with what it still needs and never as a
+/// score.
+fn calibration_card(cell: &CalibrationCell) -> String {
+    let (dot, color) = calibration_dot(cell);
+    let title = format!("{} \u{b7} {}", cell.provider, cell.shape());
+    let header_right = format!("{dot} {}", cell.fit.label());
+    let header = format!(
+        "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{id}{RESET} {DIM}{dashes} {color}{right}{RESET} {DIM}\u{2510}{RESET}",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+        BOLD = palette::BOLD,
+        ACCENT = palette::ACCENT,
+        id = title,
+        dashes = dashes_for(&format!(" {title} "), &plain(&header_right)),
+        color = color,
+        right = header_right,
+    );
+    let mut lines = vec![format!(
+        "{DIM}\u{2502}{RESET} {TEXT}{judged} judged \u{b7} {right} right \u{b7} {wrong} wrong{extra}{RESET}",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+        TEXT = palette::TEXT,
+        judged = cell.judged,
+        right = cell.right,
+        wrong = cell.wrong,
+        extra = if cell.waived == 0 && cell.overridden == 0 {
+            String::new()
+        } else {
+            let mut parts = Vec::new();
+            if cell.waived > 0 {
+                parts.push(format!("{} waived", cell.waived));
+            }
+            if cell.overridden > 0 {
+                parts.push(format!("{} overridden by the owner", cell.overridden));
+            }
+            format!(" \u{b7} {}", parts.join(" \u{b7} "))
+        },
+    )];
+    if cell.fit == FitState::Fit {
+        let rate_color = if cell.informs_failover() { palette::WARN } else { palette::OK };
+        lines.push(format!(
+            "{DIM}\u{2502}{RESET} {TEXT}confidence-weighted wrong-rate {rate_color}{rate:.2}{RESET} \
+             {DIM}\u{b7} floor {floor:.2} \u{b7} span {span:.2}{RESET}",
+            DIM = palette::DIM,
+            RESET = palette::RESET,
+            TEXT = palette::TEXT,
+            rate_color = rate_color,
+            rate = cell.weighted_wrong_rate,
+            floor = WRONG_RATE_FLOOR,
+            span = cell.confidence_span,
+        ));
+        if cell.informs_failover() {
+            // Wrapped rather than clipped: the clause says what the
+            // ride-back does, and a reader should not have to guess at a
+            // cut tail. It names the shape the cell grades, because the
+            // influence is shape-scoped and never a global.
+            for line in wrap_detail(
+                &format!(
+                    "informs the failover for shape `{}` only: skipped in the preference when a \
+                     later candidate is healthy",
+                    cell.shape()
+                ),
+                CARD_WIDTH - 4,
+            ) {
+                lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{line}{RESET}"));
+            }
+        }
+    } else {
+        // Unfit: what it still needs, named, and no score.
+        let mut needs = Vec::new();
+        if cell.needs_rows() > 0 {
+            needs.push(format!(
+                "{} more judged row{}",
+                cell.needs_rows(),
+                plural(cell.needs_rows())
+            ));
+        }
+        if cell.needs_span() > 0.0 {
+            needs.push(format!("{:.2} more confidence span", cell.needs_span()));
+        }
+        for line in
+            wrap_detail(&format!("unfit \u{b7} needs {}", needs.join(" \u{b7} ")), CARD_WIDTH - 4)
+        {
+            lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{line}{RESET}"));
+        }
+        for line in wrap_detail("no score is drawn from this sample", CARD_WIDTH - 4) {
+            lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{line}{RESET}"));
+        }
+    }
+    lines.push(format!(
+        "{DIM}\u{2502}{RESET} {TEXT}judge spend ${spend:.4}{cost}{RESET}",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+        TEXT = palette::TEXT,
+        spend = cell.spend_usd,
+        cost = cell
+            .cost_per_right
+            .map(|cost| format!(" \u{b7} ${cost:.4} per right call"))
+            .unwrap_or_else(|| " \u{b7} no right call to price".to_string()),
+    ));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2),
+        DIM = palette::DIM,
+        RESET = palette::RESET
+    );
+    let mut card = format!("{header}\n");
+    for line in lines {
+        card.push_str(&line);
+        card.push('\n');
+    }
+    card.push_str(&bottom);
+    card.push('\n');
+    card
+}
+
+/// The calibration surface: one day's (provider \u{d7} workload shape)
+/// cells as cards, the fit rule's thresholds named, and the ride-back's
+/// gate state. `informs_failover` is the config gate's resolved value,
+/// so the surface says whether the calibration is allowed to move
+/// anything at all rather than leaving it to be inferred.
+///
+/// The cells, never a per-provider average: a provider that is right for
+/// one shape and wrong for another has two cards, and neither hides the
+/// other. A day with no judged rows says so rather than rendering an
+/// empty surface \u{2014} "no judgments yet" names the command that makes
+/// them.
+pub fn render_calibration(root: &Path, day: &str, informs_failover: bool) -> String {
+    let rows = read_day(root, day, DISPLAY_CAP);
+    let cells = calibration(&rows);
+    let mut out = format!(
+        "{BOLD}fleet calib --calibration{RESET} {DIM}\u{2014} the judged quality, per provider and \
+         shape{RESET}\n{DIM}{day} (UTC){RESET}\n\n",
+        BOLD = palette::BOLD,
+        RESET = palette::RESET,
+        DIM = palette::DIM,
+    );
+    if cells.is_empty() {
+        out.push_str(&format!(
+            "{DIM}no judged routes for {day} yet \u{b7} `fleet judge` grades a day's route rows \
+             through the sys1 lane{RESET}\n",
+            DIM = palette::DIM,
+            RESET = palette::RESET,
+        ));
+        return out;
+    }
+    for cell in &cells {
+        out.push_str(&calibration_card(cell));
+    }
+    let judged: usize = cells.iter().map(|cell| cell.judged).sum();
+    let fit = cells.iter().filter(|cell| cell.fit == FitState::Fit).count();
+    let informing = cells.iter().filter(|cell| cell.informs_failover()).count();
+    let mut providers: Vec<&str> = cells.iter().map(|cell| cell.provider.as_str()).collect();
+    providers.sort_unstable();
+    providers.dedup();
+    let gate = if informs_failover { "on" } else { "off" };
+    // The footer: four purpose-built lines, each inside the house width,
+    // so the surface reads the same at 80 columns as it does at 120.
+    out.push_str(&format!(
+        "{DIM}{judged} judged row{judged_plural} \u{b7} {cells} cell{cells_plural} over \
+         {providers} provider{provider_plural}{RESET}\n\
+         {DIM}{fit} fit \u{b7} {informing} informing the failover{RESET}\n",
+        judged_plural = plural(judged),
+        cells_plural = plural(cells.len()),
+        provider_plural = plural(providers.len()),
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+        judged = judged,
+        cells = cells.len(),
+        providers = providers.len(),
+        fit = fit,
+        informing = informing,
+    ));
+    out.push_str(&format!(
+        "{DIM}gate calibration.informs_failover {gate} \u{b7} floor {floor:.2} at {rows} rows \
+         \u{b7} {span:.2} span{RESET}\n",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+        gate = gate,
+        floor = WRONG_RATE_FLOOR,
+        rows = FIT_MIN_ROWS,
+        span = FIT_MIN_SPAN,
+    ));
+    out.push_str(&format!(
+        "{DIM}the declared chain's order and its head are untouched{RESET}\n",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+    ));
+    out.push_str(&format!(
+        "{DIM}the calibration moves only the failover's preference{RESET}\n",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+    ));
+    out.push_str(&format!(
+        "{DIM}and only for the workload shape's own cell{RESET}\n",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+    ));
+    out
 }
 
 #[cfg(test)]
@@ -2253,7 +3055,8 @@ mod tests {
                 "consolidate",
                 "propose",
                 "eval_corpus",
-                "explain"
+                "explain",
+                "route_judged"
             ]
         );
     }

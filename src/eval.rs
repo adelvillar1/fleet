@@ -80,6 +80,7 @@ use crate::agent::{Agent, AgentError, AgentOptions, ApproveAll, Approver, RunRep
 use crate::api::{Client, Message};
 use crate::calib::{self, EvalCorpusRow, EvalScenarioRow, Row, Stream};
 use crate::memory::{self, Memory};
+use crate::route;
 use crate::session::{self, Record, Session};
 
 // --- the mock harness -----------------------------------------------------
@@ -450,6 +451,9 @@ pub enum ScenarioFamily {
     Memory,
     /// The explanation beat's discipline, graded end to end (slice 17).
     Explain,
+    /// The calibration loop: the judgment, its discipline, the fit rule,
+    /// and the conservative ride-back (slice 18).
+    Calibration,
     /// A lane call whose result must carry a computed fact into the final
     /// answer unaltered — the grounded path blend1 exists for.
     GroundedLane,
@@ -466,6 +470,7 @@ impl ScenarioFamily {
             ScenarioFamily::Subagent => "subagent",
             ScenarioFamily::Memory => "memory",
             ScenarioFamily::Explain => "explain",
+            ScenarioFamily::Calibration => "calibration",
             ScenarioFamily::GroundedLane => "grounded-lane",
         }
     }
@@ -595,6 +600,9 @@ pub fn corpus() -> Vec<Scenario> {
         }),
         Scenario::new("explain-the-verdict", ScenarioFamily::Explain, |bin| {
             Box::pin(explain_the_verdict(bin))
+        }),
+        Scenario::new("calibration-loop-closes", ScenarioFamily::Calibration, |bin| {
+            Box::pin(calibration_loop_closes(bin))
         }),
     ]
 }
@@ -2029,6 +2037,532 @@ async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
     grade(NAME, family, &checks)
 }
 
+// --- the calibration loop (slice 18) -------------------------------------
+
+/// One `route` row as the router's writer lands it, for the scenario's
+/// own stream. `provider` served; the walk is named by `attempts`.
+fn route_row_line(
+    ts: &str,
+    provider: &str,
+    workload: &str,
+    attempts: &[(&str, &str, &str)],
+    input_hash: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ts": ts,
+        "op": "route",
+        "provider": provider,
+        "how": "judged",
+        "workload": workload,
+        "verdict": "pass",
+        "reason": format!("sys1 judged `{workload}`"),
+        "model": "GLM-5.3-Flash",
+        "providers_used": attempts.iter().map(|(id, _, _)| id).collect::<Vec<_>>(),
+        "attempts": attempts
+            .iter()
+            .map(|(id, outcome, class)| serde_json::json!({
+                "provider": id, "outcome": outcome, "class": class,
+            }))
+            .collect::<Vec<_>>(),
+        "input_chars": 812,
+        "input_hash": input_hash,
+        "latency_ms": 812,
+    })
+}
+
+/// One `route_judged` row as the beat's writer lands it.
+fn judged_row_line(
+    ts: &str,
+    route_key: &str,
+    provider: &str,
+    workload: &str,
+    verdict: &str,
+    confidence: f64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ts": ts,
+        "op": "route_judged",
+        "route_key": route_key,
+        "provider": provider,
+        "workload": workload,
+        "verdict": verdict,
+        "confidence": confidence,
+        "reason": "the lane judged the workload and the outcome evidence agreed",
+        "cost_usd": 0.0002,
+        "latency_ms": 900,
+        "lane": "sys1",
+    })
+}
+
+/// The scripted lane's entries for one judgment batch: the handshake,
+/// the tool list, and one `tools/call` reply per ask the batch makes.
+/// The reply is the `sys1_classify` answer's own shape, so fleet's side
+/// of the contract is what the scenario grades.
+fn judge_lane_entries(answers: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let handshake = serde_json::json!({ "reply": {
+        "jsonrpc": "2.0", "id": "$echo",
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": { "tools": { "listChanged": false } },
+            "serverInfo": { "name": "sys1", "version": "0.1.0" },
+        },
+    } });
+    // One ask costs the lane TWO script entries — the tool list the beat
+    // reads before every call, then the call itself — because each ask
+    // spawns, handshakes, lists, calls, and tears its child down.
+    let mut entries = vec![handshake];
+    for answer in answers {
+        entries.push(serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "tools": [{ "name": "sys1_classify", "description": "one classify",
+                                    "inputSchema": { "type": "object" } }] },
+        } }));
+        entries.push(serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "content": [{ "type": "text", "text": answer.to_string() }],
+                        "isError": false },
+        } }));
+    }
+    entries
+}
+
+/// One `sys1_classify` answer over the route task: a workload label with
+/// its confidence, and the ask's cost.
+fn sys1_answer(label: &str, confidence: f64) -> serde_json::Value {
+    serde_json::json!({
+        "task": "route",
+        "verdict": "pass",
+        "provider": "glide",
+        "providers_used": ["glide"],
+        "answers": { "glide": {
+            "workload": { "label": label, "confidence": confidence },
+            "execution": { "label": "single", "confidence": 0.8 },
+        } },
+        "latency_ms": 900,
+        "cost_usd": 0.0002,
+    })
+}
+
+/// The ten route rows the scenario's day holds: eight judged routes to
+/// zai-coding-plan (the `hard` workload's target) and two judged routes
+/// to the declared head, with the first a full walk.
+fn calibration_day_rows() -> Vec<serde_json::Value> {
+    (0..10u32)
+        .map(|index| {
+            let (provider, workload) = if index < 8 {
+                ("zai-coding-plan", "hard")
+            } else {
+                ("router-kit", "quick")
+            };
+            let attempts: Vec<(&str, &str, &str)> = if index == 0 {
+                vec![("router-kit", "failed", "auth"), ("zai-coding-plan", "served", "")]
+            } else {
+                vec![(provider, "served", "")]
+            };
+            route_row_line(
+                &format!("2026-10-14T12:00:{index:02}Z"),
+                provider,
+                workload,
+                &attempts,
+                &format!("{index:032x}"),
+            )
+        })
+        .collect()
+}
+
+/// Write `rows` as one day's stream file under `root`.
+fn write_day_file(root: &Path, day: &str, rows: &[serde_json::Value]) {
+    let path = calib::day_path(root, day);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let text = rows.iter().map(|row| row.to_string()).collect::<Vec<_>>().join("\n");
+    std::fs::write(&path, format!("{text}\n")).unwrap();
+}
+
+/// The three roster candidates the ride-back's checks walk.
+fn calibration_roster() -> Vec<route::Resolved> {
+    let candidate = |id: &str, base_url: &str, key_env: &str, model: &str| route::Resolved {
+        candidate: route::Candidate {
+            id: id.to_string(),
+            base_url: base_url.to_string(),
+            key_env: key_env.to_string(),
+            model: model.to_string(),
+            enabled: true,
+            key_required: false,
+            disabled_reason: None,
+        },
+        key: None,
+    };
+    vec![
+        candidate("router-kit", "http://127.0.0.1:8300/v1", "AGNOSTIC_ROUTER_TOKEN", "auto"),
+        candidate("zai-coding-plan", "https://api.z.ai", "ZAI_CODING_API_KEY", "GLM-5.3-Flash"),
+        candidate(
+            "xiaomi-mimo",
+            "https://token-plan-sgp.xiaomimimo.com/v1",
+            "XIAOMI_MIMO_API_KEY",
+            "mimo-v2.6-flash",
+        ),
+    ]
+}
+
+/// The calibration loop, graded end to end through scripted seams: a
+/// day's route rows are judged beside themselves, the fit rule trusts a
+/// sample only when it carries rows and span, the conservative
+/// ride-back skips a fit-and-wrong provider while leaving an unfit one
+/// alone, the dry run spends nothing, and a lane that fails open is
+/// refused by name. No paid call: the lane is the scripted MCP child,
+/// the same seam the blend1 and explain scenarios drive.
+async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "calibration-loop-closes";
+    let family = ScenarioFamily::Calibration;
+    let Some(mcp_bin) = mock_mcp_binary() else {
+        return ScenarioOutcome::fail(
+            NAME,
+            family,
+            "the mock-mcp binary was not found beside the fleet executable; the lane seam cannot run",
+        );
+    };
+    // Today (UTC), because the beat stamps its rows with the real clock:
+    // a hardcoded day would stop matching the rows the judge writes at a
+    // UTC midnight, and the scenario would fail for a reason that has
+    // nothing to do with the loop.
+    let day = calib::today();
+    let (home, root) = match scratch_dir("calib-home")
+        .and_then(|home| scratch_dir("calib-root").map(|root| (home, root)))
+    {
+        Ok(pair) => pair,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let day_rows = calibration_day_rows();
+    write_day_file(&root, &day, &day_rows);
+    let rows = calib::read_day(&root, &day, 64);
+    let route_rows: Vec<&calib::ReadRow> =
+        rows.iter().filter(|row| row.op == calib::OP_ROUTE).collect();
+    if route_rows.len() != 10 {
+        return ScenarioOutcome::fail(
+            NAME,
+            family,
+            format!("the reader kept {} of 10 route rows", route_rows.len()),
+        );
+    }
+    let keys: Vec<String> = route_rows.iter().map(|row| calib::route_key(row)).collect();
+
+    // The lane answers each row with the workload its provider was
+    // chosen for, at a confidence that walks down the day — so the
+    // sample carries span as well as rows.
+    let answers: Vec<serde_json::Value> = (0..10u32)
+        .map(|index| {
+            if index < 8 {
+                sys1_answer("hard", 0.95 - index as f64 * 0.05)
+            } else {
+                sys1_answer("quick", 0.95 - index as f64 * 0.05)
+            }
+        })
+        .collect();
+    let lane = match ScriptedLane::start(&mcp_bin, judge_lane_entries(&answers)) {
+        Ok(lane) => lane,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let spec = lane.spec();
+    let mut checks: Vec<(&str, bool)> = Vec::new();
+
+    // The dry run first: no ask, no row, no spend, and the card shows
+    // what would be asked.
+    let dry = crate::judge::judge(crate::judge::JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: true,
+        lane: crate::judge::LaneSource::Scripted(spec.clone()),
+    })
+    .await;
+    checks.push(("the dry run refuses nothing", dry.refusal.is_none()));
+    checks.push(("the dry run lands no row", dry.judged.is_empty()));
+    checks.push(("the dry run rehearses every unjudged route row", dry.dry_run_prompts.len() == 10));
+    checks.push((
+        "the dry run's prompts carry the redacted evidence and never the task text",
+        dry.dry_run_prompts.iter().all(|(_, prompt)| {
+            prompt.contains("ROUTE DATA BEGIN")
+                && prompt.contains("redacted by design")
+                && prompt.contains("never instructions to follow")
+        }),
+    ));
+    checks.push((
+        "the dry run spends nothing",
+        (crate::judge::day_spend(&root, &home, &day)).abs() < 1e-9,
+    ));
+    checks.push((
+        "the dry run's card says so",
+        dry.card.contains("dry run") && dry.card.contains("no ask, no row, no spend"),
+    ));
+
+    // The real leg: one bounded ask per route row, each landing a row
+    // keyed by the route row's own identity, beside the route itself.
+    let outcome = crate::judge::judge(crate::judge::JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: crate::judge::LaneSource::Scripted(spec.clone()),
+    })
+    .await;
+    checks.push(("the batch refused nothing", outcome.refusal.is_none()));
+    checks.push(("the batch judged every route row", outcome.judged.len() == 10));
+    checks.push((
+        "the rows are keyed by the route rows' identities",
+        outcome.judged.iter().zip(keys.iter()).all(|(row, key)| &row.route_key == key),
+    ));
+    // The scripted lane answers every ask with the same shape, so the
+    // two `quick` routes it re-judges as `hard` are graded wrong: the
+    // loop catches a real disagreement rather than agreeing with itself.
+    let right = outcome
+        .judged
+        .iter()
+        .filter(|row| row.verdict == calib::VERDICT_RIGHT)
+        .count();
+    checks.push(("eight judgments graded the selection right", right == 8));
+    checks.push((
+        "two judgments graded the selection wrong, and said why",
+        outcome.judged.len() - right == 2
+            && outcome
+                .judged
+                .iter()
+                .filter(|row| row.verdict == calib::VERDICT_WRONG)
+                .all(|row| row.provider == "router-kit" && row.reason.contains("never attempted")),
+    ));
+    let rows = calib::read_day(&root, &day, 64);
+    checks.push((
+        "the judged rows ride beside the routes",
+        rows.iter().filter(|row| row.op == calib::OP_ROUTE).count() == 10
+            && rows.iter().filter(|row| row.op == calib::OP_ROUTE_JUDGED).count() == 10,
+    ));
+    checks.push((
+        "the day's spend is recorded",
+        (crate::judge::day_spend(&root, &home, &day) - 0.002).abs() < 1e-6,
+    ));
+    // A second batch is idempotent: it spends nothing and refuses by
+    // name rather than re-asking.
+    let again = crate::judge::judge(crate::judge::JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: crate::judge::LaneSource::Scripted(spec.clone()),
+    })
+    .await;
+    checks.push((
+        "a second batch spends nothing on a route it already judged",
+        again.judged.is_empty()
+            && again.refusals.len() == 10
+            && again.refusals.iter().all(|(_, reason)| reason.contains("already judged")),
+    ));
+    drop(lane);
+
+    // The fit rule: zai carries eight rows spanning 0.35, so it is fit;
+    // the head carries two, so it is not — and an unfit provider renders
+    // no score.
+    let cells = calib::calibration(&rows);
+    let zai = calib::cell(&cells, "zai-coding-plan", "hard");
+    let kit = calib::cell(&cells, "router-kit", "quick");
+    checks.push(("the calibration names both cells", zai.is_some() && kit.is_some()));
+    let (Some(zai), Some(kit)) = (zai, kit) else {
+        return grade(NAME, family, &checks);
+    };
+    checks.push(("the eight-row cell counts eight rows", zai.judged == 8));
+    checks.push(("the two-row cell counts two rows", kit.judged == 2));
+    // The scripted seam answers every ask at one confidence, so both
+    // cells carry zero span — the flat-sample case the span requirement
+    // exists to refuse. Neither is fit, so neither draws a score, and
+    // the surface says what each still needs.
+    checks.push(("a flat sample is unfit however many rows it carries", zai.fit == calib::FitState::Unfit));
+    checks.push((
+        "the unfit cell names what it needs and draws no score",
+        kit.needs_rows() > 0
+            && zai.needs_span() > 0.0
+            && calib::render_calibration(&root, &day, true).contains("no score is drawn"),
+    ));
+    checks.push((
+        "an unfit cell informs nothing however wrong it looks",
+        !zai.informs_failover() && !kit.informs_failover(),
+    ));
+
+    // The conservative ride-back: a fit-and-wrong provider is skipped in
+    // the preference; an unfit one never is, however wrong it looks;
+    // and the selection is never skipped.
+    let wrong_root = match scratch_dir("calib-wrong") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    // The split the owner's directive names: zai is WRONG for `hard` and
+    // RIGHT for `prose`, both on fit samples. The two cells are separate
+    // records, and each moves only its own shape's walk.
+    let split_rows: Vec<serde_json::Value> = (0..8u32)
+        .map(|index| {
+            judged_row_line(
+                &format!("{day}T13:00:{index:02}Z"),
+                &format!("wrong-key-{index:016x}"),
+                "zai-coding-plan",
+                "hard",
+                calib::VERDICT_WRONG,
+                0.95 - index as f64 * 0.05,
+            )
+        })
+        .chain((0..8u32).map(|index| {
+            judged_row_line(
+                &format!("{day}T13:30:{index:02}Z"),
+                &format!("right-key-{index:016x}"),
+                "zai-coding-plan",
+                "prose",
+                calib::VERDICT_RIGHT,
+                0.95 - index as f64 * 0.05,
+            )
+        }))
+        .collect();
+    write_day_file(&wrong_root, &day, &split_rows);
+    let roster = calibration_roster();
+    let hard_walk = route::calibration_skips(&wrong_root, &day, &roster, "router-kit", "hard");
+    checks.push((
+        "a fit-and-wrong cell is skipped in the preference",
+        hard_walk.len() == 1
+            && hard_walk[0].provider == "zai-coding-plan"
+            && hard_walk[0].workload == "hard",
+    ));
+    checks.push((
+        "the same provider's right-for-prose cell skips nothing for prose",
+        route::calibration_skips(&wrong_root, &day, &roster, "router-kit", "prose").is_empty(),
+    ));
+    checks.push((
+        "a shape the day holds no cell for moves nothing",
+        route::calibration_skips(&wrong_root, &day, &roster, "router-kit", "quick").is_empty(),
+    ));
+    checks.push((
+        "the selected provider is never skipped",
+        route::calibration_skips(&wrong_root, &day, &roster, "zai-coding-plan", "hard").is_empty(),
+    ));
+    let unfit_root = match scratch_dir("calib-unfit") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    // An unfit cell: wrong at full confidence, but one row. The raw rate
+    // is 1.0 and it still moves nothing, because the fit requirement
+    // outranks the number.
+    write_day_file(
+        &unfit_root,
+        &day,
+        &[judged_row_line(
+            &format!("{day}T14:00:00Z"),
+            "unfit-key-0000000000000001",
+            "zai-coding-plan",
+            "hard",
+            calib::VERDICT_WRONG,
+            0.95,
+        )],
+    );
+    checks.push((
+        "an unfit cell never moves routing however wrong it looks",
+        route::calibration_skips(&unfit_root, &day, &roster, "router-kit", "hard").is_empty(),
+    ));
+    // A provider outside the roster is never skipped either: the
+    // calibration names the day's cells, and the walk only skips what it
+    // could otherwise attempt.
+    checks.push((
+        "a provider the roster does not carry is never skipped",
+        route::calibration_skips(&wrong_root, &day, &roster[..1], "router-kit", "hard").is_empty(),
+    ));
+    // The cells are separate records on the surface, and neither hides
+    // the other.
+    let cells = calib::calibration(&calib::read_day(&wrong_root, &day, 64));
+    checks.push((
+        "the surface renders the split as two cells",
+        cells.len() == 2
+            && calib::cell(&cells, "zai-coding-plan", "hard")
+                .is_some_and(|cell| cell.informs_failover())
+            && calib::cell(&cells, "zai-coding-plan", "prose")
+                .is_some_and(|cell| !cell.informs_failover()),
+    ));
+
+    // The fail-open leg: the lane's own fallback shape is a named
+    // refusal, not a judgment — no row, and the recorded decisions
+    // stand. A fresh root holds the same ten route rows unjudged, so
+    // the refusals are the fail-open's rather than the idempotence's.
+    let open_root = match scratch_dir("calib-open") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    write_day_file(&open_root, &day, &day_rows);
+    let fallback = blend1_result(serde_json::json!({
+        "task": "route",
+        "verdict": "error",
+        "provider": null,
+        "providers_used": [],
+        "answers": {},
+        "telemetry": { "glide": { "error": "FASTINO_API_KEY is not set",
+                                  "error_kind": "provider" } },
+        "reason": "FASTINO_API_KEY is not set",
+    }));
+    let fail_lane = match ScriptedLane::start(
+        &mcp_bin,
+        judge_lane_entries(&vec![fallback; 10]),
+    ) {
+        Ok(lane) => lane,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let fail = crate::judge::judge(crate::judge::JudgeRequest {
+        root: &open_root,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: crate::judge::LaneSource::Scripted(fail_lane.spec()),
+    })
+    .await;
+    checks.push((
+        "a lane that fails open is refused by name, not shipped as a judgment",
+        fail.judged.is_empty()
+            && fail.refusals.len() == 10
+            && fail.refusals.iter().all(|(_, reason)| reason.contains("failed open")),
+    ));
+    checks.push((
+        "the fail-open refusal carries the lane's own error",
+        fail.refusals.iter().all(|(_, reason)| reason.contains("FASTINO_API_KEY")),
+    ));
+    checks.push((
+        "the fail-open lands no row and spends nothing",
+        calib::read_day(&open_root, &day, 64)
+            .iter()
+            .filter(|row| row.op == calib::OP_ROUTE_JUDGED)
+            .count()
+            == 0
+            && (crate::judge::day_spend(&open_root, &home, &day)).abs() < 1e-9,
+    ));
+
+    // The human seam: the owner's disposition rides a later row for the
+    // same key and overrides the verdict in the math.
+    let seam_key = keys[0].clone();
+    match crate::judge::disposition(&root, &day, &seam_key, calib::DISPOSITION_DISAGREED) {
+        Ok(_) => checks.push(("the owner's disposition lands", true)),
+        Err(reason) => {
+            checks.push(("the owner's disposition lands", false));
+            eprintln!("{NAME}: the disposition refused: {reason}");
+        }
+    }
+    let freshest = calib::judged_rows(&calib::read_day(&root, &day, 64));
+    checks.push((
+        "the disposition is the freshest row for its key and leaves the verdict on the record",
+        freshest.len() == 10
+            && freshest
+                .iter()
+                .find(|row| row.route_key == seam_key)
+                .is_some_and(|row| {
+                    row.disposition == calib::DISPOSITION_DISAGREED
+                        && row.verdict == calib::VERDICT_RIGHT
+                }),
+    ));
+
+    for scratch in [&home, &root, &wrong_root, &unfit_root, &open_root] {
+        let _ = std::fs::remove_dir_all(scratch);
+    }
+    grade(NAME, family, &checks)
+}
+
 /// The tool message one recorded request carried: the lane's answer as
 /// the model read it (the fourth message — system, user, assistant,
 /// tool).
@@ -2479,6 +3013,7 @@ mod tests {
                 "blend1-reprocess",
                 "blend1-corpus-recall",
                 "explain-the-verdict",
+                "calibration-loop-closes",
             ]
         );
     }

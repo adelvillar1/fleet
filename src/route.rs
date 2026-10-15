@@ -264,13 +264,55 @@ pub fn validate_provider_entry(value: &serde_json::Value) -> Result<ProviderEntr
 }
 
 /// The `calib` section: where the calibration stream lives when
-/// dev-decisions' own default is not where it should be. Unknown fields
-/// are rejected for the same reason a provider's are.
+/// dev-decisions' own default is not where it should be, and whether the
+/// calibration may move the failover's preference. Unknown fields are
+/// rejected for the same reason a provider's are.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CalibEntry {
     #[serde(default)]
     log_root: Option<String>,
+    /// Whether a provider whose judged sample is fit and whose
+    /// confidence-weighted wrong-rate is at or over the floor is skipped
+    /// in the failover's preference. Absent is on: the ride-back is the
+    /// slice's point, and turning it off is the owner's explicit choice.
+    #[serde(default)]
+    informs_failover: Option<bool>,
+}
+
+/// The resolved calibration knobs, with the defaults applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CalibrationConfig {
+    /// Whether the calibration may move the failover's preference. Off
+    /// restores the pre-slice-18 behavior exactly: no calibration skip,
+    /// no calibration clause in the decision row's reason.
+    pub informs_failover: bool,
+}
+
+impl Default for CalibrationConfig {
+    fn default() -> Self {
+        CalibrationConfig { informs_failover: true }
+    }
+}
+
+/// The calibration knobs as `<home>/config.json` names them, with the
+/// compiled-in default for everything the file does not. Best-effort by
+/// design, like [`calib_log_root`]: a config too broken to parse has
+/// already failed the roster load loud, and this reader is for the
+/// surfaces that want the knobs without a roster.
+pub fn calibration_config(home: &Path) -> CalibrationConfig {
+    let Ok(text) = std::fs::read_to_string(home.join("config.json")) else {
+        return CalibrationConfig::default();
+    };
+    let Ok(file) = serde_json::from_str::<ConfigFile>(&text) else {
+        return CalibrationConfig::default();
+    };
+    CalibrationConfig {
+        informs_failover: file
+            .calib
+            .and_then(|calib| calib.informs_failover)
+            .unwrap_or(true),
+    }
 }
 
 /// The `skills` section: the two curation knobs. Both are optional; a
@@ -518,7 +560,12 @@ pub struct RouteDecision {
 /// workloads that benefit from a direct route. This is the one genuinely
 /// tunable policy in the slice; it is ported from the kit's own tier table
 /// with the owner's primary-route directive applied.
-fn workload_candidate(workload: &str) -> Option<&'static str> {
+///
+/// Public because the judgment beat grades a recorded decision against
+/// the lane's independent workload label through this same table — the
+/// one construction, so a judgment and a selection cannot disagree about
+/// what a workload maps to.
+pub fn workload_candidate(workload: &str) -> Option<&'static str> {
     match workload {
         "quick" | "standard_code" => Some(HEAD_ID),
         "hard" => Some("zai-coding-plan"),
@@ -755,6 +802,10 @@ struct RouterState {
     served: Option<usize>,
     /// Every attempt across every turn, in order.
     attempts: Vec<Attempt>,
+    /// The calibration clauses the walk collected, in the order the
+    /// skips happened. They ride the decision row's reason, so a later
+    /// reader sees why the walk was ordered as it was.
+    calibration_clauses: Vec<String>,
 }
 
 /// Walks the roster with failover. Built once per session from the resolved
@@ -767,11 +818,30 @@ pub struct Router {
     resolved: Vec<Resolved>,
     decision: RouteDecision,
     state: Mutex<RouterState>,
+    /// The candidates the calibration skips in this walk's preference, as
+    /// the cells themselves. Slice 18's ride-back: a provider's cell for
+    /// the current workload's shape — and only that cell — is consulted,
+    /// so a provider judged wrong for one shape is never skipped for
+    /// another. Empty when the gate is off, which restores the pre-slice
+    /// behavior exactly.
+    calibration_skips: Vec<calib::CalibrationCell>,
 }
 
 impl Router {
     /// A router over `resolved`, starting its walk at the decision's index.
     pub fn new(resolved: Vec<Resolved>, decision: RouteDecision) -> Router {
+        Router::build(resolved, decision, Vec::new())
+    }
+
+    /// A router over `resolved` whose walk passes over the calibration's
+    /// skipped cells. The private half of [`Router::new`]: the
+    /// constructor's shape is unchanged for every caller that has no
+    /// calibration to consult.
+    fn build(
+        resolved: Vec<Resolved>,
+        decision: RouteDecision,
+        calibration_skips: Vec<calib::CalibrationCell>,
+    ) -> Router {
         let clients = resolved
             .iter()
             .map(|entry| {
@@ -783,7 +853,14 @@ impl Router {
             clients,
             resolved,
             decision,
-            state: Mutex::new(RouterState { index, committed: false, served: None, attempts: Vec::new() }),
+            state: Mutex::new(RouterState {
+                index,
+                committed: false,
+                served: None,
+                attempts: Vec::new(),
+                calibration_clauses: Vec::new(),
+            }),
+            calibration_skips,
         }
     }
 
@@ -793,8 +870,51 @@ impl Router {
         self.decision.clone()
     }
 
+    /// Whether this walk's preference passes `provider` over, and the
+    /// clause that says why — the cell's own numbers, so a later reader
+    /// sees which (provider × shape) cell caused the skip rather than a
+    /// per-provider average.
+    ///
+    /// The conservative influence, and its bounds: the declared chain's
+    /// order and its head are the owner's standing directive, so the walk's
+    /// *starting* candidate — sys1's selection — is never skipped, and
+    /// a candidate is skipped only when a later candidate in the declared
+    /// chain is healthy. Everything between is the preference the
+    /// calibration moves.
+    fn calibration_skip(&self, index: usize, start: usize) -> Option<String> {
+        if index <= start || self.calibration_skips.is_empty() {
+            return None;
+        }
+        let provider = self.resolved.get(index)?.id().to_string();
+        let cell = self
+            .calibration_skips
+            .iter()
+            .find(|cell| cell.provider == provider)?;
+        // A skip that would leave the walk with nothing to try is not a
+        // skip: the last healthy candidate is always attempted.
+        let healthy_later = self
+            .resolved
+            .iter()
+            .enumerate()
+            .skip(index + 1)
+            .any(|(_, entry)| entry.usable());
+        healthy_later.then(|| {
+            format!(
+                "; calibration skipped {provider} for shape `{}` in the failover preference \
+                 (judged wrong at {:.2} on a fit cell of {} rows, span {:.2})",
+                cell.shape(),
+                cell.weighted_wrong_rate,
+                cell.judged,
+                cell.confidence_span,
+            )
+        })
+    }
+
     /// The assembled decision row after the run, with every attempt and the
-    /// final choice. `latency_ms` is the selection judgment's cost.
+    /// final choice. `latency_ms` is the selection judgment's cost, and
+    /// the reason carries every clause the walk collected — the demotion
+    /// that reordered it (slice 5) and the calibration that skipped a
+    /// candidate in its preference (slice 18).
     pub fn row(&self, task: &str, latency_ms: u128) -> calib::RouteRow {
         let state = lock(&self.state);
         let served_index = state.served;
@@ -814,6 +934,10 @@ impl Router {
             .filter(|attempt| attempt.outcome != "skipped")
             .map(|attempt| attempt.provider.clone())
             .collect();
+        let mut reason = self.decision.reason.clone();
+        for clause in &state.calibration_clauses {
+            reason.push_str(clause);
+        }
         let ts = session::iso_utc_stamp(SystemTime::now()).unwrap_or_default();
         calib::RouteRow {
             ts,
@@ -821,7 +945,7 @@ impl Router {
             how: self.decision.how.label().to_string(),
             workload: self.decision.workload.clone(),
             verdict: self.decision.verdict.clone(),
-            reason: self.decision.reason.clone(),
+            reason,
             model,
             providers_used,
             attempts: state.attempts.clone(),
@@ -876,6 +1000,19 @@ impl Router {
                     provider: self.resolved[index].id().to_string(),
                     outcome: "skipped",
                     class: Some("no-key"),
+                });
+                continue;
+            }
+            // The calibration's preference, consulted before the attempt:
+            // a fit-and-wrong candidate is passed over in favour of a
+            // healthy later one, and the clause that says why rides the
+            // decision row's reason (see `prepare`).
+            if let Some(clause) = self.calibration_skip(index, start) {
+                lock(&self.state).calibration_clauses.push(clause);
+                self.record(Attempt {
+                    provider: self.resolved[index].id().to_string(),
+                    outcome: "skipped",
+                    class: Some("calibration"),
                 });
                 continue;
             }
@@ -1006,10 +1143,59 @@ pub async fn prepare(
             calib::DEMOTION_THRESHOLD
         ));
     }
+    // The calibration's ride-back: the day's judged rows name the
+    // (provider × shape) cells whose fit sample is wrong at or over the
+    // floor, and the walk passes them over in its preference — never at
+    // the head, never ahead of sys1's selection, never for a shape other
+    // than the one the row was judged for, and never when nothing
+    // healthy lies after them. Gate-off restores the pre-slice behavior
+    // exactly.
+    let calibration = calibration_config(home);
+    let skips = if calibration.informs_failover {
+        calibration_skips(
+            &calib.root(),
+            &calib::today(),
+            &resolved,
+            &decision.provider,
+            decision.workload.as_deref().unwrap_or_default(),
+        )
+    } else {
+        Vec::new()
+    };
     decision.start_index =
         resolved.iter().position(|entry| entry.id() == decision.provider).unwrap_or(0);
-    let router = Arc::new(Router::new(resolved, decision.clone()));
+    let router = Arc::new(Router::build(resolved, decision.clone(), skips));
     Ok(Prepared { router, decision, latency_ms, calib })
+}
+
+/// The cells the calibration skips in this walk's preference: every
+/// roster candidate's cell **for the current workload's shape** (other
+/// than the selected one, whose place at the head of the walk is sys1's
+/// judgment's) whose sample is fit and whose confidence-weighted
+/// wrong-rate is at or over [`calib::WRONG_RATE_FLOOR`].
+///
+/// Shape-scoped by construction: the day's cells are filtered to the one
+/// workload shape the route was judged for, so a provider judged wrong
+/// for shape X is never skipped for a shape-Y task, and its shape-Y
+/// record never moves a shape-X walk. Pure and gated by its caller: the
+/// gate-off path never calls it, which is what makes "the config turns
+/// it off" restore the pre-slice behavior exactly rather than
+/// approximately.
+pub fn calibration_skips(
+    root: &Path,
+    day: &str,
+    resolved: &[Resolved],
+    selected: &str,
+    workload: &str,
+) -> Vec<calib::CalibrationCell> {
+    let rows = calib::read_day(root, day, calib::READ_CAP);
+    calib::calibration(&rows)
+        .into_iter()
+        .filter(|cell| cell.informs_failover())
+        .filter(|cell| cell.workload == workload)
+        .filter(|cell| cell.provider != selected)
+        .filter(|cell| resolved.iter().any(|entry| entry.id() == cell.provider))
+        .collect()
 }
 
 /// Reorder the chain for this session's walk: the selected candidate keeps
@@ -1650,6 +1836,207 @@ mod tests {
         .unwrap();
         assert_eq!(skills_config(&home).merge_similarity, 1.0);
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // --- the calibration's ride-back (slice 18) ---
+
+    /// A scratch FLEET_HOME with one config file's text.
+    fn config_home(tag: &str, text: &str) -> std::path::PathBuf {
+        let home = std::env::temp_dir().join(format!("fleet-calib-gate-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("config.json"), text).unwrap();
+        home
+    }
+
+    #[test]
+    fn the_calibration_gate_defaults_on_and_the_config_can_turn_it_off() {
+        let home = std::env::temp_dir().join(format!("fleet-calib-gate-none-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        // Absent is on: the ride-back is the slice's point, and turning
+        // it off is the owner's explicit choice.
+        assert!(calibration_config(&home).informs_failover);
+        // A `calib` section that names only the log root leaves it on.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "calib": { "log_root": "/tmp/somewhere-else/logs" } }"#,
+        )
+        .unwrap();
+        assert!(calibration_config(&home).informs_failover);
+        // Off is a named value, and a misspelled one is rejected the way
+        // every other config key is — loud, not silently disabling.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "calib": { "informs_failover": false } }"#,
+        )
+        .unwrap();
+        assert!(!calibration_config(&home).informs_failover);
+        std::fs::write(home.join("config.json"), r#"{ "calib": { "inform_failover": false } }"#).unwrap();
+        assert!(calibration_config(&home).informs_failover);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_gate_off_leaves_the_pre_slice_behavior_exactly() {
+        // The pure half of "a config that turns it off leaves the
+        // pre-slice behavior exactly": the skip set is computed by
+        // `prepare` only when the gate is on, so a caller that never
+        // calls it gets an empty set and a walk that attempts every
+        // candidate — and `Router::new` (the constructor every
+        // pre-slice caller uses) carries no skips at all.
+        let home = config_home("off", r#"{ "calib": { "informs_failover": false } }"#);
+        assert!(!calibration_config(&home).informs_failover);
+        let resolved = resolve(&default_roster(), &HashMap::new());
+        let decision = RouteDecision {
+            provider: HEAD_ID.to_string(),
+            how: How::Fallback,
+            workload: None,
+            verdict: None,
+            reason: "test".to_string(),
+            start_index: 0,
+        };
+        let router = Router::new(resolved, decision);
+        // A router built the pre-slice way skips nothing, whatever the
+        // stream holds: the walk attempts every candidate in order.
+        assert!(router.calibration_skips.is_empty());
+        assert_eq!(router.calibration_skip(3, 0), None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// One judged row as a JSON line, the shape the judgment beat's
+    /// writer lands. Written directly rather than through the row type
+    /// so the socket-guard's "only calib and judge construct one" stays
+    /// literally true of this file.
+    fn judged_row(provider: &str, workload: &str, verdict: &str, confidence: f64) -> String {
+        serde_json::json!({
+            "ts": "2026-10-14T12:00:00Z",
+            "op": "route_judged",
+            "route_key": format!("{provider}-{workload}-{verdict}-{confidence}"),
+            "provider": provider,
+            "workload": workload,
+            "verdict": verdict,
+            "confidence": confidence,
+            "reason": "the lane judged the workload",
+            "cost_usd": 0.0002,
+            "latency_ms": 900,
+            "lane": "sys1",
+        })
+        .to_string()
+    }
+
+    /// Write `lines` as one day's stream file under `root`.
+    fn write_day(root: &std::path::Path, day: &str, lines: &[String]) {
+        let path = calib::day_path(root, day);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+    }
+
+    #[test]
+    fn a_fit_and_wrong_cell_is_skipped_for_its_own_shape_only() {
+        let root = std::env::temp_dir().join(format!("fleet-calib-skips-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let day = "2026-10-14";
+        // zai's `hard` cell: eight judged rows, all wrong, confidences
+        // spanning 0.35 — fit, and at or over the floor.
+        let mut lines: Vec<String> = (0..calib::FIT_MIN_ROWS)
+            .map(|index| {
+                judged_row(
+                    "zai-coding-plan",
+                    "hard",
+                    calib::VERDICT_WRONG,
+                    0.95 - index as f64 * 0.05,
+                )
+            })
+            .collect();
+        // zai's `prose` cell: the same provider, right for a different
+        // shape — eight rows, all right. It must never move a `hard`
+        // walk, and the `hard` cell must never move a `prose` one.
+        lines.extend((0..calib::FIT_MIN_ROWS).map(|index| {
+            judged_row("zai-coding-plan", "prose", calib::VERDICT_RIGHT, 0.95 - index as f64 * 0.05)
+        }));
+        // mimo's `hard` cell: one wrong row at full confidence — wrong,
+        // but unfit.
+        lines.push(judged_row("xiaomi-mimo", "hard", calib::VERDICT_WRONG, 0.95));
+        write_day(&root, day, &lines);
+
+        let resolved = resolve(&default_roster(), &HashMap::new());
+        // The `hard` walk skips zai, and only because of its `hard` cell.
+        let hard = calibration_skips(&root, day, &resolved, HEAD_ID, "hard");
+        assert_eq!(hard.len(), 1);
+        assert_eq!(hard[0].provider, "zai-coding-plan");
+        assert_eq!(hard[0].workload, "hard");
+        // The `prose` walk skips nothing: zai's prose cell is right, and
+        // its hard cell is not this walk's to consult.
+        assert!(calibration_skips(&root, day, &resolved, HEAD_ID, "prose").is_empty());
+        // A shape the day holds no cell for moves nothing at all.
+        assert!(calibration_skips(&root, day, &resolved, HEAD_ID, "quick").is_empty());
+        // The selection is never skipped: its place at the head of the
+        // walk is sys1's judgment's.
+        assert!(calibration_skips(&root, day, &resolved, "zai-coding-plan", "hard").is_empty());
+        // A provider the roster does not carry is never named.
+        let one = vec![resolved[0].clone()];
+        assert!(calibration_skips(&root, day, &one, HEAD_ID, "hard").is_empty());
+        // The two cells are separate records: neither hides the other.
+        let cells = calib::calibration(&calib::read_day(&root, day, 512));
+        assert_eq!(cells.len(), 3);
+        assert_eq!(
+            calib::cell(&cells, "zai-coding-plan", "hard").map(|cell| cell.informs_failover()),
+            Some(true)
+        );
+        assert_eq!(
+            calib::cell(&cells, "zai-coding-plan", "prose").map(|cell| cell.informs_failover()),
+            Some(false)
+        );
+        assert_eq!(calib::cell(&cells, "zai-coding-plan", "quick"), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_walk_records_a_calibration_skip_and_names_its_cell_in_the_reason() {
+        let resolved = vec![
+            resolved_for_test("router-kit"),
+            resolved_for_test("zai-coding-plan"),
+            resolved_for_test("xiaomi-mimo"),
+            resolved_for_test("stepfun"),
+        ];
+        let decision = RouteDecision {
+            provider: "router-kit".to_string(),
+            how: How::Fallback,
+            workload: None,
+            verdict: None,
+            reason: "sys1 gave no usable verdict".to_string(),
+            start_index: 0,
+        };
+        // The walk's preference passes zai over: mimo and stepfun are
+        // both usable, so a later healthy candidate exists.
+        let cell = calib::CalibrationCell {
+            provider: "zai-coding-plan".to_string(),
+            workload: "hard".to_string(),
+            judged: 8,
+            right: 0,
+            wrong: 8,
+            waived: 0,
+            overridden: 0,
+            weighted_wrong_rate: 0.94,
+            confidence_span: 0.35,
+            fit: calib::FitState::Fit,
+            spend_usd: 0.0016,
+            cost_per_right: None,
+        };
+        let router = Router::build(resolved, decision, vec![cell]);
+        // The head is the walk's start, so it is never skipped; zai is
+        // skipped, and the clause names the cell that did it.
+        assert_eq!(router.calibration_skip(0, 0), None);
+        let clause = router.calibration_skip(1, 0).expect("zai is skipped");
+        assert!(clause.contains("calibration skipped zai-coding-plan"), "{clause}");
+        assert!(clause.contains("for shape `hard`"), "{clause}");
+        assert!(clause.contains("0.94"), "{clause}");
+        assert!(clause.contains("8 rows"), "{clause}");
+        // The last candidate is never skipped: a skip that would leave
+        // the walk with nothing to try is not a skip.
+        assert_eq!(router.calibration_skip(3, 0), None);
     }
 
     // --- the providers surface ---

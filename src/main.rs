@@ -39,6 +39,7 @@ async fn main() -> ExitCode {
         Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
+        Ok(Command::Judge(options)) => judge_command(&options).await,
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
@@ -610,8 +611,68 @@ fn calib_command(options: &cli::CalibOptions) -> ExitCode {
         .day
         .clone()
         .unwrap_or_else(fleet::calib::today);
+    if options.calibration {
+        // The calibration surface: the per-provider judged quality, with
+        // the fit rule's readiness and the ride-back's gate state read
+        // from the owner's config so the surface says what the gate is
+        // rather than leaving it to be inferred.
+        let gate = fleet::route::calibration_config(&home).informs_failover;
+        print!("{}", fleet::calib::render_calibration(&root, &day, gate));
+        return ExitCode::SUCCESS;
+    }
     print!("{}", fleet::calib::render(&root, &day));
     ExitCode::SUCCESS
+}
+
+/// `fleet judge`: the day's route rows, judged against their outcome
+/// evidence through the vendored sys1 lane — or the owner's disposition
+/// on one judged row.
+///
+/// The batch is batch-only by construction: it spends at most one
+/// bounded lane ask per unjudged route row, lands a redacted
+/// `route_judged` row per ask, and refuses by name on every failure. The
+/// exit code is success when the batch answered (including a dry run,
+/// which answers by rehearsing, and a batch whose every route row was
+/// already judged, which answers by confirming) and failure when it did
+/// not: a batch that stood in front of unjudged route rows and judged
+/// none of them — the lane unavailable, the budget spent, the day empty
+/// — exits nonzero, because the consuming-lanes rule is that such a leg
+/// is NO ANSWER and a silent success would ship it as one. A disposition
+/// exits 0 when it landed and 1 when its key named no judged row.
+async fn judge_command(options: &cli::JudgeOptions) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let user_home = std::env::var("HOME").ok();
+    let root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    let day = options.day.clone().unwrap_or_else(fleet::calib::today);
+    if let Some(disposition) = &options.disposition {
+        return match fleet::judge::disposition(&root, &day, &disposition.key, &disposition.word) {
+            Ok(row) => {
+                print!("{}", fleet::judge::disposition_card(&row, &day));
+                ExitCode::SUCCESS
+            }
+            Err(reason) => {
+                print!("{}", fleet::judge::disposition_refusal_card(&day, &reason));
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let outcome = fleet::judge::judge(fleet::judge::JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: options.dry_run,
+        lane: fleet::judge::LaneSource::Vendored,
+    })
+    .await;
+    print!("{}", outcome.card);
+    if outcome.batch_answered() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// Build the routed agent and run `task`, printing the final answer to

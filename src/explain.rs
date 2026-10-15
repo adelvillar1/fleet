@@ -75,6 +75,12 @@ pub const EXPLAIN_ESTIMATED_ASK_USD: f64 = 0.0018;
 /// stray variable cannot loosen it.
 pub const EXPLAIN_BUDGET_ENV: &str = "FLEET_EXPLAIN_BUDGET_USD_DAY";
 
+/// This beat's own home-side spend ledger, beside the home's other
+/// files. The ledger's shape is shared with the judgment beat through
+/// [`calib::record_spend`] / [`calib::sidecar_spend`]; the file name is
+/// this beat's, so the two never share a line.
+const SPEND_LEDGER: &str = ".fleet-explain-spend.jsonl";
+
 /// The directory under the home that holds the recoverable
 /// explanations, one file per judged artifact.
 pub const EXPLANATIONS_DIR: &str = "explanations";
@@ -256,8 +262,11 @@ pub fn explanation_path(home: &Path, input_sha256: &str) -> PathBuf {
 /// [`day_spend`] sums this beside the stream's own `explain` rows. The
 /// home is a location independent of both the explanations file and
 /// the calibration root, so it survives a failure in either.
+///
+/// The shape is the shared one [`calib::spend_sidecar`] carries for both
+/// beats; the file name is this beat's own.
 fn spend_sidecar(home: &Path) -> PathBuf {
-    home.join(".fleet-explain-spend.jsonl")
+    calib::spend_sidecar(home, SPEND_LEDGER)
 }
 
 /// Append one failed ask's cost to the home-side spend ledger. Best
@@ -266,32 +275,14 @@ fn spend_sidecar(home: &Path) -> PathBuf {
 /// that could not complete.
 fn record_failed_spend(home: &Path, cost: Option<f64>) {
     // The direct path spent nothing, so there is nothing to record.
-    let Some(cost) = cost else { return };
-    let line = json!({ "ts": calib::stamp(), "cost_usd": cost }).to_string();
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(spend_sidecar(home))
-    {
-        use std::io::Write;
-        let _ = writeln!(file, "{line}");
-    }
+    calib::record_spend(home, SPEND_LEDGER, cost);
 }
 
 /// The day's spend recorded only to the home-side ledger: asks whose
 /// row never reached the calibration stream. An absent or unreadable
 /// ledger spends nothing, which is the honest reading.
 fn sidecar_spend(home: &Path, day: &str) -> f64 {
-    let Ok(text) = std::fs::read_to_string(spend_sidecar(home)) else {
-        return 0.0;
-    };
-    text.lines()
-        .filter_map(|line| {
-            let value: Value = serde_json::from_str(line).ok()?;
-            let ts = value.get("ts").and_then(Value::as_str)?;
-            ts.starts_with(day).then(|| value.get("cost_usd")?.as_f64())?
-        })
-        .sum()
+    calib::sidecar_spend(home, SPEND_LEDGER, day)
 }
 
 /// The day's recorded explain spend, summed from today's `explain`

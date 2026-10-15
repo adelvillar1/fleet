@@ -18,6 +18,9 @@ pub enum Command {
     Providers,
     /// Show the calibration stream: one day's rows, grouped by op.
     Calib(CalibOptions),
+    /// Judge a day's routing decisions through the sys1 lane, or record
+    /// the owner's disposition on a judged row.
+    Judge(JudgeOptions),
     /// The skills surface: the live skills, the drafts awaiting the
     /// slice-12 gate, and the usage-scan curation.
     Skills(SkillsOptions),
@@ -80,6 +83,34 @@ pub struct ChatOptions {
 pub struct CalibOptions {
     /// A past day to show, `YYYY-MM-DD`; absent is today (UTC).
     pub day: Option<String>,
+    /// The calibration surface: the per-provider judged quality as cards,
+    /// with the fit rule's readiness, instead of the stream's own rows.
+    pub calibration: bool,
+}
+
+/// Options for `fleet judge`. The bare command judges a day's route rows;
+/// `--agree`, `--disagree`, and `--waive` record the owner's disposition
+/// on one judged row by its key. The two forms do not combine — one is a
+/// batch that spends, the other is a write that does not.
+#[derive(Debug, PartialEq, Eq)]
+pub struct JudgeOptions {
+    /// A past day to judge, `YYYY-MM-DD`; absent is today (UTC).
+    pub day: Option<String>,
+    /// Rehearse only: resolve the rows and show what would be asked — no
+    /// ask, no row, no spend.
+    pub dry_run: bool,
+    /// The owner's disposition, and the judged row's key it addresses.
+    pub disposition: Option<JudgeDisposition>,
+}
+
+/// One `fleet judge --agree/--disagree/--waive` request: the word, and
+/// the key it rides on.
+#[derive(Debug, PartialEq, Eq)]
+pub struct JudgeDisposition {
+    /// `agreed`, `disagreed`, or `waived`.
+    pub word: String,
+    /// The judged row's key, as `fleet judge`'s card names it.
+    pub key: String,
 }
 
 /// Options for `fleet skills`. The bare command lists the live skills;
@@ -257,7 +288,19 @@ usage:
   fleet sessions                 list saved sessions
   fleet lanes                    probe the four vendored lanes' health
   fleet providers                list the routing roster and per-provider state
-  fleet calib [--day <date>]    the calibration stream: one day's rows by op
+  fleet calib [--day <date>] [--calibration]
+                                the calibration stream: one day's rows by op;
+                                --calibration renders the per-provider judged
+                                quality as cards with the fit rule's readiness
+  fleet judge [--day <date>] [--dry-run]
+                                judge the day's route rows against their
+                                outcome evidence through the sys1 lane, one
+                                bounded ask per unjudged row; --dry-run shows
+                                what would be asked and spends nothing
+  fleet judge --agree <key>    record the owner's grading on a judged row:
+  fleet judge --disagree <key> agreed confirms the automated verdict,
+  fleet judge --waive <key>    disagreed inverts it, waived sets it aside —
+                                the owner's grading is the ground truth
   fleet skills [--proposed] [--curate] [--show <name>]
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
@@ -337,6 +380,17 @@ options for run and chat:
 
 options for calib:
   --day <YYYY-MM-DD>  a past day's rows (default: today, UTC)
+  --calibration       the per-provider judged quality as cards, with the
+                      fit rule's readiness and the ride-back's gate state
+
+options for judge:
+  --day <YYYY-MM-DD>  a past day's route rows (default: today, UTC)
+  --dry-run           resolve the rows and show what would be asked: no
+                      ask, no row, no spend
+  --agree <key>       the owner confirms the automated verdict
+  --disagree <key>    the owner inverts it — the judge was wrong
+  --waive <key>       the owner sets the row aside: neither right nor
+                      wrong, excluded from the calibration math
 
 options for cron:
   --name <name>       the job to act on, for every subcommand
@@ -350,6 +404,9 @@ environment:
                       DeepSeek Harness credential store (~/.dsh/.credentials.yaml)
   DEEPSEEK_BASE_URL   optional API base (default https://api.deepseek.com)
   FLEET_HOME          optional home (default ~/.fleet)
+  FLEET_JUDGE_BUDGET_USD_DAY
+                      optional; can only LOWER the judgment beat's daily
+                      spend cap (default $0.05)
 
 exit codes: 0 success, 1 runtime failure, 2 usage or configuration,
 3 turn cap reached
@@ -369,6 +426,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "lanes" => no_flags(rest, Command::Lanes),
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
+        "judge" => parse_judge(rest),
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
@@ -440,16 +498,19 @@ fn parse_chat(args: &[String]) -> Result<Command, String> {
     Ok(Command::Chat(ChatOptions { model, yes, session }))
 }
 
-/// `fleet calib`: one optional `--day`, and nothing else. A day that is
-/// not `YYYY-MM-DD` is a usage error rather than a silently wrong read.
+/// `fleet calib`: one optional `--day`, the calibration surface's
+/// `--calibration`, and nothing else. A day that is not `YYYY-MM-DD` is
+/// a usage error rather than a silently wrong read.
 fn parse_calib(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
+    let mut calibration = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
         match arg {
             "--help" | "-h" => return Ok(Command::Help),
             "--day" => day = Some(take_value(args, &mut index, arg)?),
+            "--calibration" => calibration = true,
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown calib option `{arg}`"));
             }
@@ -472,7 +533,77 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
             return Err(format!("`{day}` is not a real day; use --day YYYY-MM-DD"));
         }
     }
-    Ok(Command::Calib(CalibOptions { day }))
+    Ok(Command::Calib(CalibOptions { day, calibration }))
+}
+
+/// `fleet judge [--day <date>] [--dry-run]`: judge the day's route rows
+/// through the sys1 lane. The disposition flags are the other half of
+/// the surface — `--agree`, `--disagree`, and `--waive` record the
+/// owner's grading on one judged row by its key — and they do not
+/// combine with the batch or with each other: one is a batch that
+/// spends, the other is a single write that does not, and a caller who
+/// wants both is asking two questions.
+fn parse_judge(args: &[String]) -> Result<Command, String> {
+    let mut day: Option<String> = None;
+    let mut dry_run = false;
+    let mut disposition: Option<(String, String)> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--dry-run" => dry_run = true,
+            "--day" => day = Some(take_value(args, &mut index, arg)?),
+            "--agree" | "--disagree" | "--waive" => {
+                let word = match arg {
+                    "--agree" => "agreed",
+                    "--disagree" => "disagreed",
+                    _ => "waived",
+                }
+                .to_string();
+                let key = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| format!("`{arg}` needs a judged row's key: `fleet judge {arg} <key>`"))?;
+                if disposition.is_some() {
+                    return Err("judge takes one disposition: --agree, --disagree, or --waive".to_string());
+                }
+                disposition = Some((word, key.clone()));
+                index += 1;
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown judge option `{other}`"));
+            }
+            other => {
+                return Err(format!(
+                    "`{other}` takes no value here; judge names a day with --day and a judged row with --agree, --disagree, or --waive"
+                ));
+            }
+        }
+        index += 1;
+    }
+    if let Some(day) = &day {
+        let numeric = day.len() == 10 && day.chars().enumerate().all(|(position, character)| {
+            if position == 4 || position == 7 {
+                character == '-'
+            } else {
+                character.is_ascii_digit()
+            }
+        });
+        if !numeric {
+            return Err(format!("`{day}` is not a day; use --day YYYY-MM-DD"));
+        }
+        if !valid_calendar_day(day) {
+            return Err(format!("`{day}` is not a real day; use --day YYYY-MM-DD"));
+        }
+    }
+    let disposition = disposition.map(|(word, key)| JudgeDisposition { word, key });
+    if disposition.is_some() && dry_run {
+        return Err(
+            "--dry-run rehearses the batch; a disposition is a write and takes no rehearsal".to_string(),
+        );
+    }
+    Ok(Command::Judge(JudgeOptions { day, dry_run, disposition }))
 }
 
 /// `fleet skills`: the bare command lists the live skills; `--proposed`
@@ -1081,11 +1212,21 @@ mod tests {
     fn calib_parses_an_optional_day_and_rejects_junk() {
         assert_eq!(
             parse(&args(&["calib"])).unwrap(),
-            Command::Calib(CalibOptions { day: None })
+            Command::Calib(CalibOptions { day: None, calibration: false })
         );
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-10-01"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()) })
+            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()), calibration: false })
+        );
+        // The calibration surface is `calib --calibration`, with or
+        // without a day.
+        assert_eq!(
+            parse(&args(&["calib", "--calibration"])).unwrap(),
+            Command::Calib(CalibOptions { day: None, calibration: true })
+        );
+        assert_eq!(
+            parse(&args(&["calib", "--calibration", "--day", "2026-10-01"])).unwrap(),
+            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()), calibration: true })
         );
         assert!(parse(&args(&["calib", "--day", "yesterday"])).is_err());
         assert!(parse(&args(&["calib", "--day", "2026-1-1"])).is_err());
@@ -1097,11 +1238,11 @@ mod tests {
         assert!(parse(&args(&["calib", "--day", "2026-02-29"])).is_err()); // 2026 is not a leap year
         assert_eq!(
             parse(&args(&["calib", "--day", "2024-02-29"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2024-02-29".to_string()) })
+            Command::Calib(CalibOptions { day: Some("2024-02-29".to_string()), calibration: false })
         ); // 2024 is a leap year
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-12-31"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2026-12-31".to_string()) })
+            Command::Calib(CalibOptions { day: Some("2026-12-31".to_string()), calibration: false })
         );
         assert!(parse(&args(&["calib", "--day"])).is_err());
         assert!(parse(&args(&["calib", "--json"])).is_err());
@@ -1396,6 +1537,51 @@ mod tests {
         assert!(parse(&args(&["improve", "undo", "a", "--approve"])).is_err());
         assert_eq!(parse(&args(&["improve", "--help"])).unwrap(), Command::Help);
         assert_eq!(parse(&args(&["improve", "apply", "--help"])).unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn judge_parses_the_batch_and_the_three_dispositions() {
+        // The bare command is the batch: today's route rows, judged.
+        assert_eq!(
+            parse(&args(&["judge"])).unwrap(),
+            Command::Judge(JudgeOptions { day: None, dry_run: false, disposition: None })
+        );
+        assert_eq!(
+            parse(&args(&["judge", "--day", "2026-10-13", "--dry-run"])).unwrap(),
+            Command::Judge(JudgeOptions {
+                day: Some("2026-10-13".to_string()),
+                dry_run: true,
+                disposition: None
+            })
+        );
+        // The dispositions address one judged row by its key, and each
+        // carries its own word.
+        for (flag, word) in
+            [("--agree", "agreed"), ("--disagree", "disagreed"), ("--waive", "waived")]
+        {
+            assert_eq!(
+                parse(&args(&["judge", flag, "a1b2c3d4e5f60718"])).unwrap(),
+                Command::Judge(JudgeOptions {
+                    day: None,
+                    dry_run: false,
+                    disposition: Some(JudgeDisposition {
+                        word: word.to_string(),
+                        key: "a1b2c3d4e5f60718".to_string()
+                    })
+                })
+            );
+        }
+        // One disposition at a time, and never beside the batch's
+        // rehearsal: the two forms answer two different questions.
+        assert!(parse(&args(&["judge", "--agree", "k", "--disagree", "k"])).is_err());
+        assert!(parse(&args(&["judge", "--agree", "k", "--dry-run"])).is_err());
+        // A missing key, an unknown flag, a junk day, and a stray word
+        // are each a named refusal.
+        assert!(parse(&args(&["judge", "--agree"])).is_err());
+        assert!(parse(&args(&["judge", "--json"])).is_err());
+        assert!(parse(&args(&["judge", "--day", "2026-13-45"])).is_err());
+        assert!(parse(&args(&["judge", "extra"])).is_err());
+        assert_eq!(parse(&args(&["judge", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]
