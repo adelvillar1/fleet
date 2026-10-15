@@ -31,7 +31,12 @@ requirement applies per cell, the failover consults the cell for the
 current task's shape only, and the surface renders the cells. The
 judged-wrong routes are the accumulated anti-vectors — the failures
 driving in the opposite direction — whose per-cell weight is what the
-failover drives away from.
+failover drives away from. And the third vector kind rides the
+judgment too: a route whose direction was right but which never reached
+the minima for want of a companion (a failover followed, the turn
+needed the escalation leg) is INSUFFICIENT, not wrong — the cell's math
+keeps right / wrong / insufficient apart, and only the wrong-rate
+skips a provider.
 
 ## The problem shape (PS-B)
 

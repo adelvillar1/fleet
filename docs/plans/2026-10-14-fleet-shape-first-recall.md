@@ -24,9 +24,15 @@ context. Everything below follows from it: the query defines a
 multidimensional *region* (the shape); a candidate fact is a *vector* —
 its direction is the vocabulary recorded during the resolution, its
 magnitude is the evidence it actually drove (the recall-hit history,
-the confirmed-by provenance); and **a failure is a vector in the
-opposite direction** — an anti-vector whose direction is the vocabulary
-of the trajectory that diverged. No single dimension may dominate the
+the confirmed-by provenance); and there are **two kinds of negative
+vector**: a failure, which drives in the OPPOSITE direction (an
+anti-vector whose direction is the vocabulary of the trajectory that
+diverged), and an INCOMPLETE solution, whose direction was right but
+which never reached the minima because the companions it needed were
+absent — it drove partway and stalled. The incomplete vector is the one
+most mistaken for done: it is not wrong (its direction was correct, so
+it is never skipped or penalized like a failure), and it is surfaced
+with its missing companions named. No single dimension may dominate the
 ranking, because the per-dimension minimum is exactly the failure mode
 (a homonym across shapes, a synonym within one). An anti-vector that
 matches the current trajectory is highly relevant — the avoidance half
