@@ -91,6 +91,13 @@ exactly the ground truth that says *the companion was there* — and
 `waived` sets the row aside entirely: neither right nor wrong,
 excluded from the rate.
 
+A **second** disposition supersedes the first by the same rule — a
+later `--agree` after a `--disagree` lands a later row for the key, and
+the math follows the later one. There is no idempotence guard, by
+design and by limitation: the stream is append-only, so recording the
+same disposition twice lands two rows and keeps both, and the reader's
+freshest-row rule is what makes the last one stand.
+
 ## The two kinds of negative vector (the owner's third vector)
 
 The owner's framing (2026-10-14): a problem is a minima in a
@@ -131,8 +138,23 @@ outcome evidence:
 - **the turn's answer needed the escalation leg** — the row's own sys1
   verdict was `escalate` and the record carries no evidence the leg ran;
 - **the attempt succeeded but the task did not complete** — the joined
-  `turn` row's stop reason is a non-completion (`failed`,
-  `interrupted`, `max-turns`).
+  `turn` row's stop reason is a non-completion that NAMES an absent
+  companion: `max-turns` ran out on a longer turn budget, `failed` lost
+  whatever the failed step needed to finish. Each reason names the
+  companion it was missing, because "insufficient" without the absent
+  companion is not actionable.
+
+**`interrupted` does not grade insufficient.** In this crate it is the
+word for a session log that never recorded an ending — an I/O failure,
+or a run stopped from outside (`calib::TurnStop`). That is *absent*
+outcome evidence rather than a named absence, and the third vector is
+defined by the companion that was absent, so an interrupted run grades
+on the selection evidence alone: the required candidate served, no
+failover preceded it, and the selection is right. The ruling matters
+because the insufficient-rate drives the companion NOTE — reading an
+owner's own stop (or a wedged disk) as a missing companion would
+amber-stain cells and trigger notes about companions that were never
+absent, which is exactly the noise the note's floor exists to prevent.
 
 A wrong direction outranks an incomplete one: when both readings are
 available, the anti-vector is the actionable signal and the grade is
@@ -144,10 +166,10 @@ the beat grades in.
 
 | Bound | Behaviour |
 |---|---|
-| **Batch-only** | No turn's synchronous path names the judgment. `judge` runs from the CLI; `route.rs` never calls it. A test walks the call graph and asserts the only in-crate callers are `cli` and `judge`'s own tests. |
+| **Batch-only** | No turn's synchronous path names the judgment. `judge` runs from the CLI's dispatch in `main.rs`; `route.rs` never calls it — it reads the *calibration*, which is a pure read of the stream. The proof is a source grep over a fixed module list (`no_synchronous_path_references_the_judgment_beat`), not a walk of the call graph: it asserts no synchronous path names the beat, and names the two in-crate callers that legitimately do — `main.rs` (the CLI dispatch) and `eval.rs` (the graded scenario), beside `judge`'s own tests. |
 | **Dry run** | `--dry-run` makes no ask and shows exactly what would be asked — the route keys, the shapes, the providers, and the composed evidence. |
-| **Budget** | `JUDGE_BUDGET_USD_DAY` = $0.05/day. `FLEET_JUDGE_BUDGET_USD_DAY` can only **lower** it, never raise it. |
-| **Fail-open refusal** | A lane that fails open answers with its own fallback prose. The beat parses the judgment's status fields and treats a non-ok judgment as **no judgment** — a named refusal carrying the lane's own error, no row, no influence, the recorded decision standing. |
+| **Budget** | `JUDGE_BUDGET_USD_DAY` = $0.05/day. `FLEET_JUDGE_BUDGET_USD_DAY` can only **lower** it, never raise it. Each ask reserves `JUDGE_ESTIMATED_ASK_USD` before it is made; the cap holds to within one ask's real cost, because the lane's router picks the path — and therefore the cost — only once the ask has been made. |
+| **Fail-open refusal** | A lane that fails open answers with its own fallback prose. The beat parses the judgment's status fields and treats a non-ok judgment as **no judgment** — a named refusal carrying the lane's own error, no row, no influence, the recorded decision standing. An answer that reports a workload but no confidence is refused the same way: the confidence is the weight the cell math reads, and a guessed weight fabricates the number the weighted rates, the span, and the fit requirement all rest on. |
 | **Spend record** | The spend ledger lands **even when the row write fails** (slice 17's sidecar pattern), so the budget cannot be evaded by a failing disk. |
 
 The real-binary check runs against the lane's **unconfigured** state:
@@ -161,17 +183,28 @@ sized for fleet's volume rather than inherited from the sibling:
 
 | Constant | Value | Why this number |
 |---|---|---|
-| `calib::FIT_MIN_ROWS` | **8** | dev-decisions grades many heads across many tasks a day and asks for 20. Fleet is one owner's tool: a day's route rows are the runs they did — single digits on a quiet day, low double digits on a heavy one. Twenty rows would take a week and the calibration would never inform anything. Eight is reachable within a day or two, and it is chosen so the floor cannot be crossed by fewer than **three** wrong judgments: two of eight is 0.25 and three is 0.375, both below the 0.50 floor, so a small-sample swing never moves routing on its own. |
+| `calib::FIT_MIN_ROWS` | **8** | dev-decisions grades many heads across many tasks a day and asks for 20. Fleet is one owner's tool: a day's route rows are the runs they did — single digits on a quiet day, low double digits on a heavy one. Twenty rows would take a week and the calibration would never inform anything. Eight is reachable within a day or two. What eight buys, stated exactly: read **unweighted**, the floor cannot be crossed by fewer than **four** wrong judgments — three of eight is 0.375, below the 0.50 floor, and four is 0.50, the first crossing — so a bare small-sample swing never moves routing on the unweighted reading. In the **confidence-weighted** regime three IS enough: three wrongs at 0.95 against five rights at 0.55 weight to 2.85 / 5.60 = 0.509, over the floor, on a sample whose 0.40 span is fit. That is deliberate rather than a loophole — the weighting is the point, and `FIT_MIN_SPAN` is what keeps a flat high-confidence sample from degenerating into an unweighted rate. |
 | `calib::FIT_MIN_SPAN` | **0.30** | The wrong-rate is weighted by the lane's own confidence, so a sample whose confidences are all the same number carries no information about how confidence relates to correctness — the weighting degenerates and the "confidence-weighted" claim is vacuous. The sibling asks for 0.4 over its volume; fleet's rows per day are fewer and a decision model answering over one compact evidence record clusters high, so 0.4 would rarely be reachable at eight rows and would refuse samples that are genuinely informative. 0.30 is the span at which the weighting does real work at fleet's sample sizes. |
 | `calib::WRONG_RATE_FLOOR` | **0.50** | The sibling's calibration is a report and carries no such floor; fleet's ride-back needs one. 0.50 is the most conservative crossing that still means something: weighted by the judge's own confidence, the provider is wrong at least as often as it is right. A lower floor would move routing on a provider that is more right than wrong, which is not what "conservative" means. |
 | `calib::INSUFFICIENT_RATE_FLOOR` | **0.50** | The trigger for the companion NOTE, never for a skip: a fit cell whose confidence-weighted insufficient-rate is at or over this names that the minima needs companions. It is the same conservative crossing read against the other negative vector — at least half the cell's confidence weight sat on selections whose direction was right but whose minima was not reached. Below it the cell is mostly reaching its minima and the note would be noise. |
 
-A cell's math keeps the three states apart: the right-rate, the
-wrong-rate, and the insufficient-rate are three numbers, weighted by
-the lane's own confidence, and never folded. An insufficient row is not
-a wrong one — its direction was correct — so folding the two would skip
-a provider whose selections were right, and folding it into right would
+A cell's math keeps the three states apart: the cell carries the
+confidence-weighted **wrong**-rate and the confidence-weighted
+**insufficient**-rate beside the three counts (right, wrong,
+insufficient), and never folds them. There is no third weighted rate —
+the right count is a count, not a rate. An insufficient row is not a
+wrong one — its direction was correct — so folding the two would skip a
+provider whose selections were right, and folding it into right would
 hide the companions the minima needs.
+
+A graded row that reported **no confidence at all** is counted apart
+(`zero_confidence`) and named on the card: it weighs nothing in the
+weighted rates, so the rates are the confident rows' alone — and when
+every graded row is one, the weighting has nothing to weight by and the
+rates are the plain fractions. The beat refuses a lane answer that
+reports a workload with no confidence at all rather than grading it on
+a guessed weight (above), so the count reads rows whose confidence the
+lane itself reported as zero.
 
 An unfit cell renders as **unfit with what it still needs** — how many
 more rows, how much more span — and never as a score. The surface's own
@@ -219,7 +252,22 @@ fit cell of 8 rows (span 0.35) — the direction is right, the minima
 needs companions, and the provider is not skipped
 ```
 
-**The gate.** `calibration.informs_failover` in `~/.fleet/config.toml`
+The two clauses are deliberately different words, and the verb is the
+whole difference: a `skipped` clause moved a candidate out of the
+walk's preference, a `notes` clause moved nothing. A later reader of a
+decision row sees which of the two happened from the clause's own
+first word, without having to re-derive it.
+
+**The readers' bounds, named.** Both readers that can move money or
+routing — the beat's day-spend read and the ride-back's cell lookup —
+read the last `calib::READ_CAP` (512) rows of the day. On a day heavier
+than 512 rows a cell's earlier judged rows fall out of the tail, the
+cell reads as unfit, and the ride-back silently stops informing: the
+KI-167 class, inherited by a second reader rather than introduced by
+this one. The home-side spend ledger is unbounded, so an ask whose row
+never landed is counted whatever the day's weight.
+
+**The gate.** `calibration.informs_failover` in `~/.fleet/config.json`
 (default **on**; absent = on). Off restores the pre-slice behaviour
 exactly — no skip, no clause — which is pinned by a test, not asserted
 by argument.
@@ -247,9 +295,10 @@ three states are three named numbers on the card, never a binary.
 `fleet judge` renders the batch's card (the asked, the refused, the
 right/wrong/insufficient tally, the spend against the budget), the
 dry-run's card (what would be asked and what it would cost), the
-fail-open refusal card, and the disposition card — where an
-insufficient verdict renders in its own colour, amber, between the
-green of a right and the red of a wrong.
+fail-open refusal card, and the disposition card. Every row line on
+every card reads the one verdict mapping the vocabulary carries —
+wrong in red, **insufficient in amber**, right in green — so a card
+never prints a green `right` above its own `8 insufficient` tally.
 
 ## Combinations
 

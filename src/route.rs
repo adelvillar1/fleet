@@ -2153,6 +2153,7 @@ mod tests {
             weighted_wrong_rate: 0.94,
             weighted_insufficient_rate: 0.0,
             confidence_span: 0.35,
+            zero_confidence: 0,
             fit: calib::FitState::Fit,
             spend_usd: 0.0016,
             cost_per_right: None,

@@ -1528,19 +1528,26 @@ pub fn judged_rows(rows: &[ReadRow]) -> Vec<ReadRow> {
     order.into_iter().filter_map(|key| freshest.remove(&key)).collect()
 }
 
-/// How many judged rows a provider's sample must carry before its floor
-/// is trusted.
+/// How many judged rows a provider's sample must carry before its
+/// floor is trusted.
 ///
 /// Sized for fleet's volume, not the sibling's: dev-decisions grades many
 /// heads across many tasks a day and asks for 20 rows; fleet is one
 /// owner's tool, where a day's route rows are the runs they did — single
 /// digits on a quiet day, low double digits on a heavy one. Twenty rows
 /// would take a week to gather and the calibration would never inform
-/// anything. Eight is reachable within a day or two, and it is chosen so
-/// the floor cannot be crossed by fewer than **three** wrong judgments:
-/// two wrong of eight is 0.25, below the 0.50 floor, and three is 0.375 —
-/// still below it unweighted, so a bare-majority-of-a-small-sample swing
-/// never moves routing on its own.
+/// anything. Eight is reachable within a day or two.
+///
+/// What eight rows buys, stated exactly: read UNWEIGHTED, the floor
+/// cannot be crossed by fewer than four wrong judgments — three of
+/// eight is 0.375, below the 0.50 floor, and four is 0.50, the first
+/// crossing. So a bare small-sample swing never moves routing on the
+/// unweighted reading. In the confidence-weighted regime three IS
+/// enough: three wrongs at 0.95 against five rights at 0.55 weight to
+/// 2.85 / (2.85 + 2.75) = 0.509, over the floor, on a sample whose
+/// 0.40 span is fit. That is deliberate rather than a loophole — the
+/// weighting is the point, and [`FIT_MIN_SPAN`] is what keeps a flat
+/// high-confidence sample from degenerating into an unweighted rate.
 pub const FIT_MIN_ROWS: usize = 8;
 
 /// How much confidence span a provider's judged sample must carry before
@@ -1651,6 +1658,13 @@ pub struct CalibrationCell {
     pub weighted_insufficient_rate: f64,
     /// `max(confidence) - min(confidence)` across the graded rows.
     pub confidence_span: f64,
+    /// The graded rows that carry no confidence at all. They weigh
+    /// nothing in the weighted rates — a row at zero confidence
+    /// contributes no weight to either side — so a cell holding them is
+    /// reweighted by their absence, and a cell holding nothing else
+    /// falls back to the plain fractions below. Counted and rendered so
+    /// the reweighting is visible rather than left to be inferred.
+    pub zero_confidence: usize,
     pub fit: FitState,
     /// What the day's judgments in this cell cost.
     pub spend_usd: f64,
@@ -1662,8 +1676,14 @@ pub struct CalibrationCell {
 
 impl CalibrationCell {
     /// How many more graded rows this cell needs before it is fit.
+    ///
+    /// The graded count, not the right+wrong pair: the fit rule counts
+    /// every graded row — right, wrong, AND insufficient — so an unfit
+    /// cell carrying insufficient rows must not overstate what it still
+    /// needs. Six insufficient rows are six of the eight, not zero of
+    /// them: the cell needs two more, not eight.
     pub fn needs_rows(&self) -> usize {
-        FIT_MIN_ROWS.saturating_sub(self.right + self.wrong)
+        FIT_MIN_ROWS.saturating_sub(self.right + self.wrong + self.insufficient)
     }
 
     /// How much more confidence span this cell needs before it is fit.
@@ -1745,6 +1765,7 @@ fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCe
     let mut weight_sum = 0.0f64;
     let mut weighted_wrong = 0.0f64;
     let mut weighted_insufficient = 0.0f64;
+    let mut zero_confidence = 0usize;
     let mut spend = 0.0f64;
     let mut confidences: Vec<f64> = Vec::new();
     for row in rows {
@@ -1766,6 +1787,13 @@ fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCe
         };
         let Some(graded) = graded else { continue };
         confidences.push(row.confidence);
+        // A judgment that reported no confidence at all: it is graded,
+        // it is counted, and it weighs nothing. Counted apart so the
+        // reweighting it causes is visible on the card rather than
+        // inferred from a rate that moved without an obvious reason.
+        if row.confidence == 0.0 {
+            zero_confidence += 1;
+        }
         // The three states are counted apart and never folded: an
         // insufficient row's direction was right, so counting it as a
         // wrong one would skip a provider whose selections were correct,
@@ -1824,6 +1852,7 @@ fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCe
         weighted_wrong_rate: weighted_wrong_rate + 0.0,
         weighted_insufficient_rate: weighted_insufficient_rate + 0.0,
         confidence_span: confidence_span + 0.0,
+        zero_confidence,
         fit,
         spend_usd: spend + 0.0,
         cost_per_right: (right > 0).then(|| spend / right as f64),
@@ -2467,6 +2496,28 @@ fn calibration_card(cell: &CalibrationCell) -> String {
                 insufficient_color = insufficient_color,
                 rate = cell.weighted_insufficient_rate,
             ));
+        }
+        if cell.zero_confidence > 0 {
+            // The reweighting, named. A row that reported no confidence
+            // weighs nothing on either side, so the rates above are the
+            // confident rows' alone — and when every graded row is one,
+            // the weighting had nothing to weight by and the rates are
+            // the plain fractions. Either way the reader sees it rather
+            // than inferring it from a number that moved.
+            let note = if cell.zero_confidence == cell.right + cell.wrong + cell.insufficient {
+                "every graded row reported no confidence — the weighting has nothing to weight \
+                 by, so the rates above are the plain fractions"
+                    .to_string()
+            } else {
+                format!(
+                    "{} of the graded rows reported no confidence and weigh nothing in the \
+                     weighted rates above",
+                    cell.zero_confidence
+                )
+            };
+            for line in wrap_detail(&note, CARD_WIDTH - 4) {
+                lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{line}{RESET}"));
+            }
         }
         if cell.informs_failover() {
             // Wrapped rather than clipped: the clause says what the

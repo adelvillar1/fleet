@@ -484,8 +484,9 @@ fn the_grade_is_insufficient_when_the_answer_needed_the_escalation_leg() {
 fn the_grade_is_insufficient_when_the_attempt_succeeded_but_the_task_did_not_complete() {
     // The required candidate served — the direction was right — and the
     // run ended `failed`: the attempt succeeded and the task did not
-    // complete. The minima was not reached for want of whatever the
-    // completion needed, which is not the provider's selection.
+    // complete. The minima was not reached for want of a companion, and
+    // the reason NAMES it — "insufficient" without the absent companion
+    // is not actionable (the plan's C1).
     let route = route_row(
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
@@ -499,6 +500,72 @@ fn the_grade_is_insufficient_when_the_attempt_succeeded_but_the_task_did_not_com
     assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT);
     assert!(judgment.reason.contains("did not complete"), "{}", judgment.reason);
     assert!(judgment.reason.contains("`failed`"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("whatever the failed step needed"),
+        "{}",
+        judgment.reason
+    );
+    assert!(judgment.reason.contains("want of a companion"), "{}", judgment.reason);
+}
+
+#[test]
+fn the_stalled_reason_names_the_companion_each_stop_reason_was_missing() {
+    // The turn cap and the failed step name different companions: the
+    // cap ran out on a longer budget, the failed run on whatever the
+    // failed step needed to finish. One generic "for want of a
+    // companion" would leave the operator to guess which.
+    let route = route_row(
+        "2026-10-14T12:00:00Z",
+        "zai-coding-plan",
+        "hard",
+        &[("zai-coding-plan", "served", None)],
+        "a1b2c3d4e5f60718",
+    );
+    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let capped = turn_row("a1b2c3d4e5f60718", "ok", "max-turns");
+    let judgment = grade(&route, Some(&capped), &reply);
+    assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT);
+    assert!(
+        judgment.reason.contains("a longer turn budget"),
+        "{}",
+        judgment.reason
+    );
+}
+
+#[test]
+fn an_owner_interrupted_run_grades_on_the_selection_alone() {
+    // The ruling on `interrupted`: in this crate it is the word for a
+    // session log that never recorded an ending — an I/O failure, or a
+    // run stopped from outside (see `calib::TurnStop`). That is ABSENT
+    // outcome evidence, not a named absence, and the third vector is
+    // defined by the companion that was absent. So an interrupted run
+    // grades on the selection evidence alone: the required candidate
+    // served and no failover preceded it, so the selection is right —
+    // and an owner's own stop cannot amber-stain a cell or trigger the
+    // companion note, which is the noise the note's floor exists to
+    // prevent.
+    let route = route_row(
+        "2026-10-14T12:00:00Z",
+        "zai-coding-plan",
+        "hard",
+        &[("zai-coding-plan", "served", None)],
+        "a1b2c3d4e5f60718",
+    );
+    let turn = turn_row("a1b2c3d4e5f60718", "failed", "interrupted");
+    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let judgment = grade(&route, Some(&turn), &reply);
+    assert_eq!(judgment.verdict, VERDICT_RIGHT, "{}", judgment.reason);
+    // An interrupted run whose DIRECTION was wrong is still wrong: the
+    // ruling reads the outcome evidence, never the selection's.
+    let wrong = route_row(
+        "2026-10-14T12:00:00Z",
+        "router-kit",
+        "hard",
+        &[("router-kit", "served", None), ("zai-coding-plan", "skipped", Some("no-key"))],
+        "a1b2c3d4e5f60718",
+    );
+    let judgment = grade(&wrong, Some(&turn), &reply);
+    assert_eq!(judgment.verdict, VERDICT_WRONG);
 }
 
 #[test]
@@ -830,6 +897,45 @@ fn the_wrong_rate_is_confidence_weighted_and_the_floor_is_named() {
 }
 
 #[test]
+fn three_confident_wrongs_cross_the_floor_in_the_weighted_regime() {
+    // The fit rule's stated arithmetic, pinned where it can fail: read
+    // UNWEIGHTED the floor cannot be crossed by fewer than four wrongs
+    // of eight (three is 0.375, below 0.50), but in the
+    // confidence-weighted regime three confident wrongs against five
+    // tentative rights DO cross — 2.85 of 5.60 is 0.509, on a sample
+    // whose 0.40 span is fit. The thresholds are defensible; the
+    // "three can never cross" claim that used to justify them was not.
+    // The weighting is the point, and FIT_MIN_SPAN is what keeps a flat
+    // high-confidence sample from degenerating into an unweighted rate.
+    let rows: Vec<ReadRow> = (0..calib::FIT_MIN_ROWS)
+        .map(|index| {
+            let (verdict, confidence) = if index < 3 {
+                (VERDICT_WRONG, 0.95)
+            } else {
+                (VERDICT_RIGHT, 0.55)
+            };
+            read_judged("zai-coding-plan", "hard", verdict, confidence, "")
+        })
+        .collect();
+    let cells = calib::calibration(&rows);
+    let cell = &cells[0];
+    assert_eq!(cell.wrong, 3);
+    assert_eq!(cell.right, 5);
+    assert_eq!(cell.fit, calib::FitState::Fit);
+    assert!((cell.confidence_span - 0.40).abs() < 1e-9, "{}", cell.confidence_span);
+    assert!(
+        (cell.weighted_wrong_rate - 2.85 / 5.60).abs() < 1e-9,
+        "{}",
+        cell.weighted_wrong_rate
+    );
+    assert!(cell.weighted_wrong_rate > calib::WRONG_RATE_FLOOR);
+    assert!(cell.informs_failover());
+    // The same three wrongs unweighted do not cross: three of eight is
+    // 0.375, and the weighted reading is what carries it over.
+    assert!((3.0 / 8.0) < calib::WRONG_RATE_FLOOR);
+}
+
+#[test]
 fn a_cell_below_the_floor_is_fit_and_does_not_inform_the_failover() {
     let rows: Vec<ReadRow> = (0..calib::FIT_MIN_ROWS)
         .map(|index| {
@@ -987,6 +1093,120 @@ fn the_owners_disposition_overrides_the_automated_verdict_in_the_math() {
     assert_eq!(waived[0].fit, calib::FitState::Unfit, "six waived rows leave too few to fit");
 }
 
+#[test]
+fn an_unfit_insufficient_cell_counts_its_insufficient_rows_toward_fit() {
+    // Six insufficient rows spanning 0.35: the cell is unfit on rows,
+    // and it says it needs TWO more judged rows — not eight. The fit
+    // rule counts every graded row, so `needs_rows` reads the graded
+    // count; reading the right+wrong pair alone overstates the gap and
+    // tells an operator to keep judging routes the cell has already
+    // graded.
+    let rows: Vec<ReadRow> = (0..6)
+        .map(|index| {
+            read_judged(
+                "xiaomi-mimo",
+                "hard",
+                VERDICT_INSUFFICIENT,
+                0.95 - index as f64 * 0.07,
+                "",
+            )
+        })
+        .collect();
+    let cells = calib::calibration(&rows);
+    let cell = &cells[0];
+    assert_eq!(cell.insufficient, 6);
+    assert_eq!(cell.right, 0);
+    assert_eq!(cell.wrong, 0);
+    assert_eq!(cell.fit, calib::FitState::Unfit);
+    assert_eq!(cell.needs_rows(), 2);
+    // The surface names the same two rows, not eight.
+    let root = scratch("needs-insufficient");
+    write_day(
+        &root,
+        &day(),
+        &(0..6)
+            .map(|index| {
+                Row::RouteJudged(read_judged_value(
+                    "xiaomi-mimo",
+                    "hard",
+                    VERDICT_INSUFFICIENT,
+                    0.95 - index as f64 * 0.07,
+                    "",
+                ))
+            })
+            .collect::<Vec<_>>(),
+    );
+    let rendered = calib::render_calibration(&root, &day(), true);
+    assert!(rendered.contains("needs 2 more judged rows"), "{rendered}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_cell_counts_its_zero_confidence_rows_and_names_the_reweighting_on_its_card() {
+    // Four confident wrongs beside four rights that reported no
+    // confidence at all: the rights weigh nothing, so the weighted
+    // wrong-rate is 1.00 and the cell informs the failover — a provider
+    // that was half right, skipped. The reweighting is real (the lane's
+    // confidence is the weight the whole math reads), and the cell now
+    // NAMES it on its card instead of leaving a reader to infer why the
+    // rate is what it is.
+    let mut rows: Vec<ReadRow> = (0..4)
+        .map(|index| {
+            read_judged("zai-coding-plan", "hard", VERDICT_WRONG, 0.95 - index as f64 * 0.05, "")
+        })
+        .collect();
+    rows.extend((0..4).map(|_| read_judged("zai-coding-plan", "hard", VERDICT_RIGHT, 0.0, "")));
+    let cells = calib::calibration(&rows);
+    let cell = &cells[0];
+    assert_eq!(cell.right, 4);
+    assert_eq!(cell.wrong, 4);
+    assert_eq!(cell.zero_confidence, 4);
+    assert_eq!(cell.fit, calib::FitState::Fit);
+    assert!((cell.weighted_wrong_rate - 1.0).abs() < 1e-9, "{}", cell.weighted_wrong_rate);
+    assert!(cell.informs_failover());
+
+    // The count rides the card: the reweighting is visible, not inferred.
+    let root = scratch("zero-confidence");
+    let mut card_rows: Vec<Row> = (0..4)
+        .map(|index| {
+            Row::RouteJudged(read_judged_value(
+                "zai-coding-plan",
+                "hard",
+                VERDICT_WRONG,
+                0.95 - index as f64 * 0.05,
+                "",
+            ))
+        })
+        .collect();
+    card_rows.extend([0.7, 0.6, 0.5].iter().map(|confidence| {
+        Row::RouteJudged(read_judged_value(
+            "zai-coding-plan",
+            "hard",
+            VERDICT_RIGHT,
+            *confidence,
+            "",
+        ))
+    }));
+    card_rows.push(Row::RouteJudged(read_judged_value(
+        "zai-coding-plan",
+        "hard",
+        VERDICT_RIGHT,
+        0.0,
+        "",
+    )));
+    write_day(&root, &day(), &card_rows);
+    let rendered = calib::render_calibration(&root, &day(), true);
+    assert!(
+        rendered.contains("1 of the graded rows reported no confidence"),
+        "{rendered}"
+    );
+    for line in rendered.lines() {
+        let width = plain(line).chars().count();
+        assert!(width <= 72, "a line is {width} wide: {}", plain(line));
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // --- the batch-only proof ---
 
 #[test]
@@ -1057,6 +1277,21 @@ fn no_synchronous_path_references_the_judgment_beat() {
     let route = include_str!("../route.rs");
     assert!(route.contains("calib::calibration("), "the walk consults the calibration");
     assert!(route.contains("calibration_skips"), "the walk's skips are named");
+    // The beat's real in-crate callers, named rather than inferred: the
+    // CLI dispatch in `main`, and the graded scenario in `eval` — plus
+    // this module's own tests. The guard above is a source grep over a
+    // fixed module list, not a walk of the call graph; what it proves is
+    // that no SYNCHRONOUS path names the beat, and this names the two
+    // that legitimately do.
+    for (name, source) in [
+        ("main.rs", include_str!("../main.rs")),
+        ("eval.rs", include_str!("../eval.rs")),
+    ] {
+        assert!(
+            source.contains("judge::") || source.contains("fleet::judge"),
+            "{name} is expected to drive the beat"
+        );
+    }
 }
 
 // --- the beat, end to end over the scripted lane ---
@@ -1277,6 +1512,52 @@ async fn a_lane_that_fails_open_is_refused_by_name_not_shipped_as_a_judgment() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[tokio::test]
+async fn a_lanes_answer_with_no_confidence_is_refused_rather_than_graded_on_a_guessed_weight() {
+    // The confidence is the weight the whole cell math reads. A reply
+    // that reports a workload but no confidence used to default to 0.0,
+    // and a zero-confidence row weighs nothing: four confident wrongs
+    // beside four zero-confidence rights read a 1.00 weighted
+    // wrong-rate and skip a provider that was half right. The two
+    // guesses available are both wrong (0.0 hides the row, a "neutral"
+    // 1.0 invents a confidence the lane never claimed), so the answer is
+    // refused by name — no row, no influence — exactly as a fail-open
+    // is.
+    let home = scratch("noconf-home");
+    let root = scratch("noconf-calib");
+    let route = route_row(
+        "2026-10-14T12:00:00Z",
+        "zai-coding-plan",
+        "hard",
+        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        "a1b2c3d4e5f60718",
+    );
+    write_day(&root, &day(), &[route_row_value(route.clone())]);
+    let reply = serde_json::json!({
+        "task": "route",
+        "verdict": "pass",
+        "provider": "glide",
+        "providers_used": ["glide"],
+        "answers": { "glide": { "workload": { "label": "hard" } } },
+        "latency_ms": 900,
+        "cost_usd": 0.0002,
+    })
+    .to_string();
+    let outcome = judge_over(&home, &root, &day(), false, &reply).await;
+
+    assert!(outcome.judged.is_empty());
+    assert_eq!(outcome.refusals.len(), 1);
+    let reason = &outcome.refusals[0].1;
+    assert!(reason.contains("no confidence"), "{reason}");
+    // No row, and the stream still holds exactly the route row.
+    assert_eq!(calib::read_day(&root, &day(), 64).len(), 1);
+    // The batch did not answer, so the command's exit code says so.
+    assert!(!outcome.batch_answered());
+    assert!(plain(&outcome.card).contains("the recorded decisions stand"), "{}", outcome.card);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn a_batch_that_judged_nothing_did_not_answer_and_the_command_says_so() {
     // The exit-code half of the consuming-lanes rule: a leg that could
@@ -1384,6 +1665,58 @@ async fn an_over_budget_day_is_refused_naming_the_spend() {
     assert!(dry.refusal.is_none(), "{:?}", dry.refusal);
     assert!(dry.judged.is_empty());
     assert!(!dry.dry_run_prompts.is_empty());
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn a_row_the_writer_could_not_land_records_its_spend_to_the_sidecar_and_refuses_by_name() {
+    // The sidecar's failed branch, asserted rather than commented: the
+    // ask spent, the row could not reach the stream, and the spend still
+    // lands on the home-side ledger — a cap that only moves on success
+    // lets a broken writer spend uncapped (slice 17's pattern). The
+    // refusal names the sidecar's own path, and the day's spend reads
+    // the cost back for the day.
+    let home = scratch("sidecar-home");
+    let root = scratch("sidecar-calib");
+    let route = route_row(
+        "2026-10-14T12:00:00Z",
+        "zai-coding-plan",
+        "hard",
+        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        "a1b2c3d4e5f60718",
+    );
+    write_day(&root, &day(), &[route_row_value(route.clone())]);
+    // The day's own file loses its write bit: the reader still sees the
+    // route row — the ask still runs — and every append the writer
+    // attempts fails.
+    let day_file = calib::day_path(&root, &day());
+    let mut permissions = std::fs::metadata(&day_file).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o444);
+    std::fs::set_permissions(&day_file, permissions).unwrap();
+    let outcome = judge_over(&home, &root, &day(), false, &lane_reply("hard", 0.91)).await;
+    // The write bit comes back, so the scratch directory can be removed.
+    let mut permissions = std::fs::metadata(&day_file).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o644);
+    std::fs::set_permissions(&day_file, permissions).unwrap();
+
+    assert!(outcome.judged.is_empty(), "{:?}", outcome.refusals);
+    assert_eq!(outcome.refusals.len(), 1);
+    let reason = &outcome.refusals[0].1;
+    assert!(reason.contains("could not be recorded"), "{reason}");
+    assert!(
+        reason.contains(&calib::spend_sidecar(&home, SPEND_LEDGER).display().to_string()),
+        "{reason}"
+    );
+    // No judged row landed — the stream still holds exactly the route
+    // row — and the spend is on the home-side ledger for the day, so the
+    // day's cap still moves on money the lane already spent.
+    assert_eq!(calib::read_day(&root, &day(), 64).len(), 1);
+    assert!((calib::sidecar_spend(&home, SPEND_LEDGER, &day()) - 0.0002).abs() < 1e-9);
+    assert!((day_spend(&root, &home, &day()) - 0.0002).abs() < 1e-9);
+    // The batch did not answer, so the command's exit code says so.
+    assert!(!outcome.batch_answered());
+    assert!(plain(&outcome.card).contains("the recorded decisions stand"), "{}", outcome.card);
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1547,9 +1880,71 @@ fn a_day_with_no_judged_rows_names_the_command_that_makes_them() {
 }
 
 #[test]
+fn an_insufficient_row_renders_as_insufficient_and_never_as_right() {
+    // The iteration cap's residue, and the round's top finding: the
+    // batch card's per-row line mapped anything that was not `wrong` to
+    // a green `right`, so a batch whose eight rows all graded
+    // insufficient printed `right <provider> for shape <shape>` in green
+    // for every row — directly above the same card's
+    // `0 right · 0 wrong · 8 insufficient` tally. The card contradicted
+    // itself and misreported the loop's own output. The line now reads
+    // the one verdict mapping all three states carry.
+    let route = route_row(
+        "2026-10-14T12:00:00Z",
+        "xiaomi-mimo",
+        "hard",
+        &[("zai-coding-plan", "served", None)],
+        "a1b2c3d4e5f60718",
+    );
+    let row = RouteJudgedRow {
+        ts: calib::stamp(),
+        route_key: calib::route_key(&route),
+        provider: "xiaomi-mimo".to_string(),
+        workload: "hard".to_string(),
+        verdict: VERDICT_INSUFFICIENT.to_string(),
+        confidence: 0.88,
+        reason: "the run ended `max-turns`: the attempt succeeded and the task did not complete, \
+                 so the minima was not reached for want of a companion (a longer turn budget)"
+            .to_string(),
+        disposition: None,
+        cost_usd: Some(0.0002),
+        latency_ms: Some(900),
+        lane: JUDGE_LANE.to_string(),
+    };
+    let card = batch_card("2026-10-14", &[row], &[], None, &[], 0.0002, JUDGE_BUDGET_USD_DAY);
+    let text = plain(&card);
+    // The word, beside the provider and the shape it was judged for.
+    assert!(
+        text.contains("insufficient xiaomi-mimo for shape hard"),
+        "{text}"
+    );
+    // Never the green word, on the row's line or anywhere in the card.
+    assert!(!text.contains("right xiaomi-mimo"), "{text}");
+    // The card's own tally still says the same thing, so the two halves
+    // of the card agree.
+    assert!(text.contains("0 right \u{b7} 0 wrong \u{b7} 1 insufficient"), "{text}");
+    // Amber — the third state's own colour, the same escape the
+    // disposition card paints it with.
+    assert!(
+        card.contains(&format!(
+            "{}{}insufficient{}",
+            palette::BOLD, palette::WARN, palette::RESET
+        )),
+        "{}",
+        card
+    );
+    for line in card.lines() {
+        let width = plain(line).chars().count();
+        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+    }
+}
+
+#[test]
 fn a_card_with_unbounded_fields_stays_inside_the_house_width() {
     // A provider id and a reason the operator never bounded are cut at
-    // the house width, not run past it.
+    // the house width, not run past it — and the LONGEST verdict word
+    // the vocabulary carries is the case that proves it, because the
+    // row line's room for its two ids shrinks as the word grows.
     let route = ReadRow {
         provider: "a-very-long-provider-id-that-no-one-ever-bounded-".repeat(3),
         reason: "a reason the lane reported that is far too long to fit on one line ".repeat(6),
@@ -1557,11 +1952,11 @@ fn a_card_with_unbounded_fields_stays_inside_the_house_width() {
         confidence: 0.91,
         ..ReadRow::default()
     };
-    let row = RouteJudgedRow {
+    let mut row = RouteJudgedRow {
         ts: calib::stamp(),
         route_key: calib::route_key(&route),
         provider: route.provider.clone(),
-        workload: "hard".to_string(),
+        workload: "a-workload-shape-nobody-bounded-either".repeat(2),
         verdict: VERDICT_WRONG.to_string(),
         confidence: 0.91,
         reason: route.reason.clone(),
@@ -1570,8 +1965,23 @@ fn a_card_with_unbounded_fields_stays_inside_the_house_width() {
         latency_ms: Some(900),
         lane: JUDGE_LANE.to_string(),
     };
-    let card = batch_card("2026-10-14", &[row], &[], None, &[], 0.0002, JUDGE_BUDGET_USD_DAY);
+    let card = batch_card("2026-10-14", &[row.clone()], &[], None, &[], 0.0002, JUDGE_BUDGET_USD_DAY);
     for line in card.lines() {
+        let width = plain(line).chars().count();
+        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+    }
+    // The same two unbounded ids under the longest word: the ids' tails
+    // are what a long line costs, never the width.
+    row.verdict = VERDICT_INSUFFICIENT.to_string();
+    let card = batch_card("2026-10-14", &[row.clone()], &[], None, &[], 0.0002, JUDGE_BUDGET_USD_DAY);
+    for line in card.lines() {
+        let width = plain(line).chars().count();
+        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+    }
+    // And the disposition card draws the same line, so it holds there
+    // too.
+    row.disposition = Some(calib::DISPOSITION_DISAGREED.to_string());
+    for line in disposition_card(&row, "2026-10-14").lines() {
         let width = plain(line).chars().count();
         assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
     }

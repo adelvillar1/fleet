@@ -99,8 +99,15 @@ pub const JUDGE_BUDGET_USD_DAY: f64 = 0.05;
 
 /// The per-ask spend a budget check reserves before it asks: five times
 /// the direct estimate, because the lane's router decides which path an
-/// ask takes only once the ask has been made, and the reservation has to
-/// cover the expensive path.
+/// ask takes only once the ask has been made, and the reservation is
+/// the only number available before then.
+///
+/// It is a reservation, not a bound: the ask's real cost is known only
+/// after the ask has been made, so a day's total can cross the cap by
+/// at most one ask's real cost minus this reservation. The cap holds to
+/// within one ask's real cost — no check made before the ask can do
+/// better, and a larger reservation only refuses earlier without
+/// bounding anything.
 pub const JUDGE_ESTIMATED_ASK_USD: f64 = 0.0002;
 
 /// The config seam: an environment variable that can *lower* the daily
@@ -169,7 +176,11 @@ pub struct JudgeRequest<'a> {
 /// One route row's judgment, as the beat records it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Judgment {
-    /// `right` or `wrong` — [`calib::VERDICT_RIGHT`] / [`calib::VERDICT_WRONG`].
+    /// `right`, `wrong`, or `insufficient` — [`calib::VERDICT_RIGHT`] /
+    /// [`calib::VERDICT_WRONG`] / [`calib::VERDICT_INSUFFICIENT`]. The
+    /// two negative states are different information: `wrong` is the
+    /// anti-vector, `insufficient` the trajectory that stalled for want
+    /// of a companion.
     pub verdict: &'static str,
     /// The lane's confidence in its own workload judgment, in `[0, 1]`.
     pub confidence: f64,
@@ -463,8 +474,10 @@ impl JudgeReply {
 
     /// Read one lane answer out of the structured content a `tools/call`
     /// returned. Every field is optional on the wire: a lane that
-    /// reports less still answers, and the row records what it reported
-    /// rather than a guess.
+    /// reports less still parses, and the row records what it reported
+    /// rather than a guess. A workload head that reports no confidence
+    /// parses too — [`ask_lane`] is where such an answer is refused,
+    /// because the confidence is the weight the cell math reads.
     pub fn parse(value: &Value) -> JudgeReply {
         let object = value.as_object().cloned().unwrap_or_default();
         let answers = object.get("answers").and_then(Value::as_object);
@@ -570,6 +583,24 @@ async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<JudgeReply, Strin
     if let Some(reason) = reply.fail_open() {
         return Err(format!("the lane failed open and its fallback is not a judgment: {reason}"));
     }
+    // The weight the whole cell math rests on. A judgment that reports a
+    // workload but no confidence cannot be weighted, and the two guesses
+    // available are both wrong: a default 0.0 makes the row weigh
+    // nothing (four confident wrongs beside four zero-confidence rights
+    // read as a 1.00 wrong-rate and skip a provider that was half
+    // right), and a "neutral" 1.0 invents a confidence the lane never
+    // claimed. The weighted rates, the span, and the fit requirement all
+    // read this number, so an answer without it is refused by name —
+    // no row, no influence, the recorded decision standing — exactly as
+    // a fail-open is.
+    if reply.confidence.is_none() {
+        return Err(
+            "the lane's judgment carried no confidence to weight it by — the cell's weighted \
+             rates, its confidence span, and its fit requirement all read the confidence, so a \
+             judgment without one is refused rather than graded on a guessed weight"
+                .to_string(),
+        );
+    }
     Ok(reply)
 }
 
@@ -596,19 +627,31 @@ async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<JudgeReply, Strin
 ///   a permission, throttling, an outage, a timeout, an unreachable host
 ///   — and a later candidate served in its place); the turn's answer
 ///   needed the escalation leg (the row's own sys1 verdict was
-///   `escalate`); or the attempt succeeded but the task did not complete
-///   (the joined turn's stop reason is not `completed`). The trajectory
+///   (`escalate`); or the attempt succeeded but the task did not complete
+///   (the joined turn's stop reason is a non-completion that names a
+///   companion — `failed` or `max-turns`; see [`turn_stalled`] for why
+///   `interrupted` is not one). The trajectory
 ///   drove partway and stalled rather than diverging, so it never moves
 ///   the failover — it says the minima needs companions.
 /// - **right** when the required candidate is the one that served, no
 ///   failover preceded it, no escalation leg was called for, and the run
-///   completed where the outcome is joinable.
+///   completed where the outcome is joinable. A run whose log never
+///   recorded an ending (`interrupted`) carries no outcome evidence
+///   against the selection, so it stands on the selection alone rather
+///   than being read as a stall.
 ///
 /// The lane's confidence rides along as the judgment's confidence, and
 /// the reason names the evidence the grade rested on. `turn` is the
 /// run's outcome where a `turn` row joins this route by its input hash;
 /// a route with no joinable turn stands on the selection evidence
 /// alone.
+///
+/// The confidence is not decoration and not optional here: every reply
+/// this grade sees carries one, because [`ask_lane`] refuses a lane
+/// answer that reports a workload without a confidence rather than let
+/// the cell math grade it on a guessed weight. The `unwrap_or(0.0)`
+/// below is therefore the shape's total function, never a path a lane
+/// answer takes.
 pub fn grade(route: &ReadRow, turn: Option<&ReadRow>, reply: &JudgeReply) -> Judgment {
     let label = reply.workload.clone().unwrap_or_default();
     let confidence = reply.confidence.unwrap_or(0.0);
@@ -670,7 +713,8 @@ pub fn grade(route: &ReadRow, turn: Option<&ReadRow>, reply: &JudgeReply) -> Jud
                 "sys1 judged the workload `{label}` at {confidence:.2}, which routes to \
                  `{expected}` — the candidate that served — but the run ended `{stop}`: the \
                  attempt succeeded and the task did not complete, so the minima was not reached \
-                 for want of a companion"
+                 for want of a companion ({})",
+                stall_companion(stop)
             ),
         };
     }
@@ -693,15 +737,42 @@ fn needed_escalation(route: &ReadRow) -> bool {
 }
 
 /// Whether the run stalled short of its minima: the joined turn's stop
-/// reason is a non-completion (`failed`, `interrupted`, `max-turns` —
-/// the attempt succeeded and the task did not complete). A turn that
-/// recorded no stop reason, and a route with no joinable turn at all,
-/// stalled on nothing: there is no outcome to contradict the selection,
-/// so the grade rests on the selection evidence alone.
+/// reason is a non-completion that NAMES an absent companion.
+///
+/// `failed` (the run died at a step that needed something) and
+/// `max-turns` (the turn budget ran out) both name one;
+/// **`interrupted` does not** — in this crate it is the word for a
+/// session log that never recorded an ending (an I/O failure, or a run
+/// stopped from outside; see [`calib::TurnStop`]), which is *absent*
+/// outcome evidence rather than a named absence. The third vector is
+/// defined by the companion that was absent, so a run with no recorded
+/// ending grades on the selection evidence alone instead of asserting
+/// a companion the record never names — otherwise an owner's own stop
+/// (or a wedged disk) would amber-stain a cell and trigger the
+/// companion note, which is the noise the note's floor exists to
+/// prevent. A turn that recorded no stop reason, and a route with no
+/// joinable turn at all, stalled on nothing: there is no outcome to
+/// contradict the selection, so the grade rests on the selection
+/// evidence alone.
 fn turn_stalled(turn: Option<&ReadRow>) -> bool {
     match turn {
-        Some(turn) => !turn.stop_reason.is_empty() && turn.stop_reason != "completed",
+        Some(turn) => {
+            !turn.stop_reason.is_empty()
+                && turn.stop_reason != "completed"
+                && turn.stop_reason != "interrupted"
+        }
         None => false,
+    }
+}
+
+/// The companion a stalled run was missing, named per stop reason:
+/// "insufficient" without the absent companion is not actionable (the
+/// plan's C1). The turn cap ran out on a longer budget; a failed run
+/// lost whatever the failed step needed to finish.
+fn stall_companion(stop_reason: &str) -> &'static str {
+    match stop_reason {
+        "max-turns" => "a longer turn budget",
+        _ => "whatever the failed step needed to finish",
     }
 }
 
@@ -801,6 +872,13 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
         // recorded spend plus one reserved ask against the cap.
         // Exceeding it is a named refusal carrying the day's spend, and
         // it is recorded once rather than repeated per row.
+        //
+        // The reservation is the only number available before the ask:
+        // the lane's router picks the path (and therefore the cost) only
+        // once the ask has been made, so an ask whose real cost exceeds
+        // the reservation overshoots by the difference. The cap holds to
+        // within one ask's real cost, and the reservation's size only
+        // moves how early the refusal comes.
         if spend + JUDGE_ESTIMATED_ASK_USD > cap {
             budget_refusal.get_or_insert_with(|| {
                 format!(
@@ -990,27 +1068,55 @@ fn inner_rule() -> String {
     format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH.saturating_sub(4)))
 }
 
+/// The least room one id gets on a verdict line: the truncation
+/// marker's own length, so a bounded id still shows characters beside
+/// its marker.
+const ID_FLOOR: usize = 13;
+
+/// The card frame's own prefix on every body line — `│ ` — which is
+/// room the line's content does not have.
+const FRAME_PREFIX: usize = 2;
+
+/// The room two ids share on a verdict line: the house width less the
+/// frame's prefix, the verdict word's own length, the fixed words
+/// around the ids, and the four characters a `0.00`–`1.00` confidence
+/// draws. `fixed` counts the caller's own prefix and separators the
+/// same way on either card.
+///
+/// Sized for the longest word the vocabulary carries — `insufficient`,
+/// twelve characters — beside two ids nobody bounded: the ids' tails
+/// are what a long line costs, never the card's width.
+fn id_room(word: &str, fixed: usize) -> usize {
+    CARD_WIDTH.saturating_sub(FRAME_PREFIX + word.chars().count() + fixed)
+}
+
 /// One judged row's lines: the key, the provider and the shape it was
 /// judged for, the verdict with its dot, the confidence, and the reason
 /// wrapped.
+///
+/// The verdict's word and color come from [`verdict_style`], the one
+/// mapping all three states carry — the same one the disposition card
+/// reads. The iteration cap's residue was an inline `wrong`-else-`right`
+/// pair here, which painted an insufficient row green directly above
+/// the same card's `0 right · 0 wrong · 8 insufficient` tally: the card
+/// contradicting itself, and misreporting the loop's own output.
 fn judged_lines(row: &RouteJudgedRow) -> Vec<String> {
-    let (word, color) = if row.verdict == VERDICT_WRONG { ("wrong", ERROR) } else { ("right", OK) };
+    let (word, color) = verdict_style(&row.verdict);
     // The provider and the shape are bounded to the room the line has
     // left, so an id the operator never bounded costs its tail rather
     // than the card's width.
-    let provider = bound(&row.provider, PROVIDER_CAP);
-    let shape = bound(&row.workload, PROVIDER_CAP);
+    let room = id_room(word, 30);
+    let provider_cap = PROVIDER_CAP.min(room.saturating_sub(ID_FLOOR)).max(ID_FLOOR);
+    let provider = bound(&row.provider, provider_cap);
+    // An empty workload says so rather than printing a blank shape —
+    // the same fallback the disposition card carries.
+    let shape = bound(
+        if row.workload.is_empty() { "unshaped" } else { &row.workload },
+        room.saturating_sub(provider.chars().count()).max(ID_FLOOR),
+    );
     let mut lines = vec![format!(
         "{BOLD}{color}{word}{RESET} {TEXT}{provider}{RESET} {DIM}for shape{RESET} {TEXT}{shape}{RESET} \
          {DIM}\u{b7} confidence {confidence:.2}{RESET}",
-        BOLD = palette::BOLD,
-        color = color,
-        RESET = palette::RESET,
-        TEXT = palette::TEXT,
-        DIM = palette::DIM,
-        word = word,
-        provider = provider,
-        shape = shape,
         confidence = row.confidence,
     )];
     for line in wrap_detail(&row.reason, CARD_WIDTH - 12) {
@@ -1158,19 +1264,29 @@ pub fn disposition_card(row: &RouteJudgedRow, day: &str) -> String {
         _ => ("agreed", OK),
     };
     let (verdict_word, verdict_color) = verdict_style(&row.verdict);
+    // The same line the batch card draws for a judged row, so one card
+    // is never wider than the other: the verdict word in its own colour,
+    // the provider and the shape it was judged for, the confidence. The
+    // fixed words are counted exactly as `judged_lines` counts them, and
+    // the longest verdict word beside two unbounded ids still fits.
+    let room = id_room(verdict_word, 32);
+    let provider_cap = PROVIDER_CAP.min(room.saturating_sub(ID_FLOOR)).max(ID_FLOOR);
+    let provider = bound(&row.provider, provider_cap);
+    let shape = bound(
+        if row.workload.is_empty() { "unshaped" } else { &row.workload },
+        room.saturating_sub(provider.chars().count()).max(ID_FLOOR),
+    );
     let body = vec![
         format!(
             "{BOLD}{color}{word}{RESET} {DIM}\u{b7}{RESET} {TEXT}the owner's grading is the ground truth{RESET}"
         ),
         format!(
-            "{DIM}\u{b7}{RESET} {TEXT}judged {verdict_color}{verdict_word}{RESET} \
+            "{DIM}\u{b7}{RESET} {verdict_color}{verdict_word}{RESET} \
              {TEXT}{provider}{RESET} {DIM}for shape{RESET} {TEXT}{shape}{RESET} {DIM}\u{b7} \
              confidence {confidence:.2}{RESET}",
-            provider = bound(&row.provider, PROVIDER_CAP),
-            shape = bound(
-                if row.workload.is_empty() { "unshaped" } else { &row.workload },
-                PROVIDER_CAP
-            ),
+            verdict_color = verdict_color,
+            provider = provider,
+            shape = shape,
             confidence = row.confidence,
         ),
         format!("{DIM}\u{b7} key {key}{RESET}", key = row.route_key),
