@@ -1,6 +1,6 @@
 # The web tool, available to every agent
 
-Status: active
+Status: complete — C1–C5 and C7 delivered at df95b06 (the Rust declaration, the delegate-scope admission, the self-resolved blend1 spec, the lane's own bounds and fail-open, the tests), with blend1's MCP side at 2d8650a; gate-green, live-proven. The one leg deferred: C6 — no fleet surface yet names the web leg's live state. blend1's own doctor report carries the `web` availability (`{"available": false, "reason": "missing TINYFISH_API_KEY"}` on this machine — the leg's designed unkeyed fail-open), but neither `fleet doctor` nor `fleet lanes` renders it. Named here rather than claimed delivered.
 Date: 2026-10-15
 
 ## Why

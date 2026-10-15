@@ -1,5 +1,11 @@
 # Fleet crate architecture
 
+> **Stale snapshot.** This document describes the slice-1 crate (four
+> tools, four lanes, no router, no memory, no TUI settings). The
+> application is now 45 modules and ~70k lines. The current-state
+> survey is [deep-dive-2026-10-15.md](deep-dive-2026-10-15.md); the
+> sections below remain accurate for the cores they name.
+
 The whole binary is Rust across the modules below; dependencies are `ureq` (HTTP), `ratatui`/`crossterm` (TUI), `tokio` (async runtime, child processes), `serde`/`serde_json` — everything else is std.
 
 ## Module map

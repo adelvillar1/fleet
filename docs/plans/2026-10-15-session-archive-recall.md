@@ -1,6 +1,6 @@
 # The session archive becomes workable — recall, view, resume
 
-Status: active
+Status: complete — C1–C6 and C8 delivered at df95b06: `fleet sessions --recall` ranks the archive through the six channels (live proof: a session's own vocabulary ranks it first at 0.64, trajectory 0.86), the second embedder-keyed index at `sessions/.recall-index.json`, `fleet sessions` and `fleet sessions <id>` both render cards, and provenance reads the outcome grade. The one leg deferred, by the module's own record: C7's feedback loop — bumping a recalled session's recall-count is a later piece, because a synthetic fact's path is the session log and the corpus's own bump must never be pointed at it (`src/session_recall.rs`'s "What this module is not").
 Date: 2026-10-15
 
 ## Why
