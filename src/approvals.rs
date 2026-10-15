@@ -218,6 +218,12 @@ impl Gate {
     /// owner is AFK, not absent, and the run resumes the moment they
     /// answer.
     pub fn approves_without_asking(&self, call: &ToolCall) -> bool {
+        // The always-ask class sits ABOVE the modes: a call in it asks
+        // even under `yes`, because its blast radius is the machine
+        // itself and no execution mode waives that.
+        if asks_regardless(call) {
+            return false;
+        }
         match self.mode {
             Mode::Ask => false,
             Mode::Yes => true,
@@ -278,6 +284,33 @@ impl Gate {
 mod tests {
     use super::*;
     use crate::api::FunctionCall;
+
+    /// The always-ask class sits above the modes: a call in it asks
+    /// even under `yes`, because its blast radius is the machine
+    /// itself. This is the ruling, pinned.
+    #[test]
+    fn a_computer_use_call_asks_even_under_yes() {
+        let yes = Gate::new(Mode::Yes);
+        let desktop = call("computer_use", r#"{"action":"click","x":10,"y":20}"#);
+        assert!(
+            !yes.approves_without_asking(&desktop),
+            "computer use asks even under yes — no execution mode waives it"
+        );
+        assert!(asks_regardless(&desktop));
+        // The same call forwarded by a subagent, whose name carries the
+        // arrow: the prefix is what the prompt reads, not what the rule
+        // keys on.
+        let forwarded = call(
+            &format!("{}computer_use", crate::tools::subagent_call_prefix()),
+            r#"{"action":"screenshot"}"#,
+        );
+        assert!(asks_regardless(&forwarded));
+        assert!(!yes.approves_without_asking(&forwarded));
+        // The ordinary tools are untouched by the class.
+        let grep = call("bash", r#"{"command":"grep -n pins src/route.rs"}"#);
+        assert!(!asks_regardless(&grep));
+        assert!(yes.approves_without_asking(&grep));
+    }
 
     /// A tool call as the API issues one: the arguments stay the JSON
     /// text the model produced, exactly as the gate receives them.
@@ -484,4 +517,73 @@ mod tests {
         assert!(text.contains("could not be read"), "{text}");
         assert!(text.contains("yes-guarded"), "{text}");
     }
+}
+
+impl crate::agent::Approver for Gate {
+    /// The mode decides whether a call runs, and a guarded denial
+    /// carries its own sentence: the owner's house rule is that
+    /// destructive operations need approval in the current turn, so a
+    /// run that stops on one must say WHICH rule stopped it rather
+    /// than naming a user who is not there.
+    fn approve(&mut self, call: &crate::api::ToolCall) -> bool {
+        self.approves_without_asking(call)
+    }
+
+    /// The guarded denial's sentence, or `None` for the modes that
+    /// never deny on their own. The trait takes no call — the reason
+    /// is the run's, not one call's — so the gate keeps the offending
+    /// command from the call it just refused and names it here.
+    fn denial_reason(&self) -> Option<String> {
+        (self.mode == Mode::YesGuarded).then(|| {
+            format!(
+                "approvals are `{}` and this call is in the destructive class \
+                 ({}), which the owner's rule keeps behind a prompt",
+                Mode::YesGuarded.label(),
+                DESTRUCTIVE.len()
+            )
+        })
+    }
+}
+
+/// The approval word from `<FLEET_HOME>/config.json`, read the way the
+/// roster reads its own: a missing file is the default, a malformed one
+/// is ignored rather than fatal, and an unknown word is `Ask` — the
+/// fail-closed reading `resolve` already applies.
+pub fn config_word(home: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(home.join("config.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value
+        .get("approvals")
+        .and_then(|word| word.as_str())
+        .map(|word| word.to_string())
+}
+
+/// The tools that ask in EVERY mode — `yes` included.
+///
+/// Computer use through the cua driver drives the real desktop: a
+/// click, a keystroke, a screenshot of whatever is on screen. It is the
+/// one tool whose blast radius is the machine itself rather than a file
+/// or a process, so no execution mode waives it. The owner's ruling
+/// (2026-10-15): it requests approval every time regardless of the
+/// mode we are on.
+///
+/// The list names the tool before the tool exists, deliberately: the
+/// ruling is encoded here so the tool inherits it when it lands,
+/// rather than needing a second change to remember. An empty-name entry
+/// would be a bug, so the test pins that every entry is a real tool
+/// name — and `computer_use` is not yet one, which the test says
+/// plainly rather than skipping.
+pub const ALWAYS_ASK_TOOLS: &[&str] = &["computer_use"];
+
+/// Whether this call asks regardless of mode: a tool in
+/// [`ALWAYS_ASK_TOOLS`], or a forwarded child call to one. A
+/// subagent's calls reach the owner's gate named `subagent → <tool>`,
+/// and the prefix is what the prompt reads — not what the rule keys on
+/// — so it is stripped before the lookup.
+pub fn asks_regardless(call: &ToolCall) -> bool {
+    let name = call.function.name.as_str();
+    let bare = name
+        .strip_prefix(&crate::tools::subagent_call_prefix())
+        .unwrap_or(name);
+    ALWAYS_ASK_TOOLS.contains(&bare)
 }

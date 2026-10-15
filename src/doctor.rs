@@ -161,6 +161,27 @@ pub fn evaluate_recall(vector: Option<(&str, usize)>) -> Check {
     Check { name: "recall", ok: true, detail }
 }
 
+/// The approval mode's line. A run that stops asking must say so in
+/// one place rather than leaving the owner to infer it from a run that
+/// never prompted: the mode, and whether the destructive class is
+/// still behind a prompt under it.
+pub fn render_approvals(mode: crate::approvals::Mode) -> String {
+    let detail = match mode {
+        crate::approvals::Mode::Ask => "every tool call asks".to_string(),
+        crate::approvals::Mode::Yes => "every tool call runs \u{2014} the destructive class included".to_string(),
+        crate::approvals::Mode::YesGuarded => {
+            "every tool call runs except the destructive class, which still asks".to_string()
+        }
+    };
+    format!(
+        "{DIM}\u{2502}{RESET} {TEXT}approvals {mode} \u{b7} {detail}{RESET}",
+        mode = mode.label(),
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+        TEXT = palette::TEXT,
+    )
+}
+
 // --- slice 13: the per-layer diagnosis -------------------------------------
 
 /// How a failure is classified, in the plan's own five words plus the

@@ -933,8 +933,20 @@ async fn drive(
         // `fleet improve apply` runs one.
         improve_home: Some(home.to_path_buf()),
     };
-    let approver: Box<dyn Approver> =
-        if yes { Box::new(ApproveAll) } else { Box::new(ConsoleApprover::new()) };
+    let approver: Box<dyn Approver> = match fleet::approvals::resolve(
+        yes.then_some(true),
+        fleet::approvals::config_word(&home).as_deref(),
+    ) {
+        // The default: every call asks. The owner's house rule stands.
+        fleet::approvals::Mode::Ask => Box::new(ConsoleApprover::new()),
+        // Everything runs, the destructive class included — the
+        // explicit `--yes` or a config that asked for it.
+        fleet::approvals::Mode::Yes => Box::new(ApproveAll),
+        // Everything but the destructive class runs; a call in that
+        // class still asks, and its denial names the rule that kept
+        // it there.
+        fleet::approvals::Mode::YesGuarded => Box::new(fleet::approvals::Gate::new(fleet::approvals::Mode::YesGuarded)),
+    };
     let mut progress = std::io::stderr().lock();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress)?;
     let report = agent.run(task).await?;
@@ -1199,6 +1211,16 @@ fn doctor_checks() -> ExitCode {
     let probed = fleet::memory::probe(&fleet::memory::embedding_endpoint());
     let recall_check = doctor::evaluate_recall(probed.vector());
     println!("{}", doctor::render(&recall_check));
+
+    // The approval mode, named where a run that stopped asking can be
+    // understood without inferring it. The doctor carries no `--yes`,
+    // so this is the mode a plain `fleet run` resolves to — the config
+    // word's own answer, with the flag absent.
+    let mode = fleet::approvals::resolve(
+        None,
+        fleet::approvals::config_word(home.as_deref().unwrap_or(std::path::Path::new("."))).as_deref(),
+    );
+    println!("{}", doctor::render_approvals(mode));
 
     if failed {
         ExitCode::FAILURE
