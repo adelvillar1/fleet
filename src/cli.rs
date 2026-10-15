@@ -10,8 +10,9 @@ pub enum Command {
     Run(RunOptions),
     /// Interactive multi-turn session.
     Chat(ChatOptions),
-    /// List saved sessions.
-    Sessions,
+    /// The archive: listed as cards, ranked for an instruction with
+    /// `--recall`, or one session opened by name.
+    SessionsView { recall: Option<String>, view: Option<String> },
     /// Probe the four vendored lanes' health.
     Lanes,
     /// List the routing roster in declared chain order with per-provider state.
@@ -531,7 +532,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     match command.as_str() {
         "run" => parse_run(rest),
         "chat" => parse_chat(rest),
-        "sessions" => no_flags(rest, Command::Sessions),
+        "sessions" => parse_sessions(rest),
         "lanes" => no_flags(rest, Command::Lanes),
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
@@ -614,6 +615,37 @@ fn parse_chat(args: &[String]) -> Result<Command, String> {
 /// `fleet calib`: one optional `--day`, the calibration surface's
 /// `--calibration`, and nothing else. A day that is not `YYYY-MM-DD` is
 /// a usage error rather than a silently wrong read.
+/// `fleet sessions` grew three surfaces and one of them takes a
+/// value: `--recall "<instruction>"` ranks the archive, and a bare
+/// positional names one session to open. The parse refuses a second
+/// positional and an unknown flag by name, the way every other
+/// fleet surface does.
+fn parse_sessions(args: &[String]) -> Result<Command, String> {
+    let mut recall: Option<String> = None;
+    let mut view: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--recall" => recall = Some(take_value(args, &mut index, arg)?),
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown sessions option `{arg}`"));
+            }
+            _ => {
+                if view.is_some() {
+                    return Err(format!(
+                        "`{arg}` is a second session; `fleet sessions` opens one at a time"
+                    ));
+                }
+                view = Some(arg.to_string());
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::SessionsView { recall, view })
+}
+
 fn parse_calib(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
     let mut calibration = false;
@@ -1483,7 +1515,10 @@ mod tests {
 
     #[test]
     fn bare_commands_take_no_options() {
-        assert_eq!(parse(&args(&["sessions"])).unwrap(), Command::Sessions);
+        assert_eq!(
+            parse(&args(&["sessions"])).unwrap(),
+            Command::SessionsView { recall: None, view: None }
+        );
         assert_eq!(parse(&args(&["lanes"])).unwrap(), Command::Lanes);
         assert_eq!(
             parse(&args(&["doctor"])).unwrap(),
@@ -1492,6 +1527,16 @@ mod tests {
         assert_eq!(parse(&args(&["version"])).unwrap(), Command::Version);
         assert_eq!(parse(&args(&["--help"])).unwrap(), Command::Help);
         assert!(parse(&args(&["sessions", "--all"])).is_err());
+        // A second positional is refused by name: the surface opens one
+        // session at a time.
+        assert!(parse(&args(&["sessions", "a", "b"])).is_err());
+        assert_eq!(
+            parse(&args(&["sessions", "--recall", "the router pin"])).unwrap(),
+            Command::SessionsView {
+                recall: Some("the router pin".to_string()),
+                view: None
+            }
+        );
         assert!(parse(&args(&["lanes", "--json"])).is_err());
     }
 

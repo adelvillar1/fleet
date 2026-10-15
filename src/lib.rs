@@ -9,6 +9,7 @@
 
 pub mod agent;
 pub mod api;
+pub mod approvals;
 pub mod boards;
 pub mod calib;
 pub mod cli;
@@ -33,6 +34,7 @@ pub mod route;
 pub mod route_cache;
 pub mod roles;
 pub mod session;
+pub mod session_recall;
 pub mod skills;
 pub mod subagents;
 pub mod tools;

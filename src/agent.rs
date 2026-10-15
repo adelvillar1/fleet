@@ -733,6 +733,14 @@ impl<'a> Agent<'a> {
         if admitted(tools::CONVENTION_TOOL) {
             specs.push(tools::convention_spec());
         }
+        // The live-source tool rides every run and every delegate by
+        // default: a fact the model cannot check is a fact it will
+        // guess at, and the lane's own bounds and fail-open are the
+        // guard — the Rust side declares and dispatches, it does not
+        // re-implement the web leg.
+        if admitted(tools::WEB_TOOL) {
+            specs.push(tools::web_spec());
+        }
         specs
     }
 
@@ -1554,6 +1562,23 @@ impl<'a> Agent<'a> {
                 },
             });
         }
+        if name == tools::WEB_TOOL {
+            // The live source: blend1's web leg, called directly. The
+            // lane spec resolves here — the pattern `judge()` runs for
+            // sys1 — so the tool works whether or not the run carried
+            // lane specs, and works identically for a root and a
+            // depth-2 grandchild. A plain `fleet run` passes an empty
+            // specs map, which is exactly why the resolution cannot
+            // lean on it.
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => match crate::lanes::spec_for("blend1") {
+                    Err(error) => settled(format!("error: the web lane cannot launch: {error}")),
+                    Ok(spec) => Prepared::Ready(Work::Web { spec, arguments }),
+                },
+            });
+        }
+
         if name == tools::CONVENTION_TOOL {
             // The nomenclature lookup: a read of the tree's own
             // vocabulary, so it crosses the same gate every call
@@ -1862,6 +1887,10 @@ enum Work {
         arguments: serde_json::Value,
         derived: Vec<String>,
     },
+    /// One live-source ask: blend1's web leg, spawned for the call and
+    /// torn down after it. The spec rides the work because it is
+    /// resolved where the launch is known, the way the judge's is.
+    Web { spec: crate::mcp::ServerSpec, arguments: serde_json::Value },
     /// One proposal filed into the home's store.
     Improve {
         home: std::path::PathBuf,
@@ -1941,6 +1970,29 @@ async fn run_work(work: Work) -> (String, bool) {
                 output: crate::improve::file_from_tool(&home, &repo, &arguments),
                 truncated: false,
             });
+            (outcome.output, outcome.truncated)
+        }
+        Work::Web { spec, arguments } => {
+            // The lane is spawned for the call and torn down after it,
+            // the judge's own shape. The bounds and the injection
+            // framing are the leg's, not a second implementation: this
+            // side declares and dispatches, and the answer rides the
+            // same cap every tool's output rides (KI-041). A lane that
+            // cannot launch, fails the handshake, or names a missing
+            // extra is a value the model reads and reacts to — never a
+            // blocked run.
+            let answer = match crate::mcp::McpServer::spawn(&spec) {
+                Err(error) => format!("error: the web lane cannot launch: {error}"),
+                Ok(server) => {
+                    let text = match server.call_tool("web", arguments).await {
+                        Err(error) => format!("error: the web lane failed: {error}"),
+                        Ok(call) => call.text(),
+                    };
+                    let _ = server.close().await;
+                    text
+                }
+            };
+            let outcome = tools::bound(ToolOutcome { output: answer, truncated: false });
             (outcome.output, outcome.truncated)
         }
         Work::Convention { root, arguments } => {
@@ -2160,6 +2212,11 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
             // A lookup reads the tree and writes nothing: no writer to
             // hold apart, so two of them in one batch run together.
             Work::Convention { .. } => None,
+            // A live-source ask is a read of the outside world: it
+            // writes nothing here either, so two of them in one batch
+            // run together — the lane's own bounds are the clamp, not
+            // this planner's.
+            Work::Web { .. } => None,
             Work::UseSkill { .. } => None,
             Work::Builtin { tool, arguments, .. } => match tool {
                 Tool::Bash => Some("shell".to_string()),
@@ -3382,14 +3439,17 @@ mod tests {
                 "remember",
                 "supersede",
                 "subagent",
-                "convention"
+                "convention",
+                "web"
             ]
         );
 
         // Without memory the run is the run this crate has always had:
         // the same four declarations plus the delegation tool, the
         // convention lookup (declared on every run — the vocabulary it
-        // reads is the tree's own), and the compiled-in prompt.
+        // reads is the tree's own), the live source (declared on every
+        // run — a fact the model cannot check is a fact it guesses
+        // at), and the compiled-in prompt.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
@@ -3408,7 +3468,7 @@ mod tests {
         let plain =
             Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
                 .unwrap();
-        assert_eq!(plain.declarations().len(), 6);
+        assert_eq!(plain.declarations().len(), 7);
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);

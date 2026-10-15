@@ -206,13 +206,18 @@ const BRIEF_PART_CAP: usize = 8 * 1024;
 /// that names it opens a second level, and a delegation that does not
 /// keeps the chain at one. It is stripped again at the cap, so the
 /// admission a depth-2 run can be given is empty by construction.
-pub const ADMISSIBLE_TOOLS: [&str; 6] = [
+pub const ADMISSIBLE_TOOLS: [&str; 7] = [
     "bash",
     "read_file",
     "write_file",
     "list_dir",
     tools::USE_SKILL_TOOL,
     tools::SUBAGENT_TOOL,
+    // The live source rides a delegate by default: a child reasoning
+    // about the world outside the tree is exactly the agent that needs
+    // to check a fact rather than guess at one, and the lane's own
+    // bounds and fail-open travel with it.
+    tools::WEB_TOOL,
 ];
 
 /// The tool set one subagent run is admitted to.

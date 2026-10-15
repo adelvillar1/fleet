@@ -35,7 +35,7 @@ async fn main() -> ExitCode {
         }
         Ok(Command::Run(options)) => run_command(&options).await,
         Ok(Command::Chat(options)) => chat_command(&options).await,
-        Ok(Command::Sessions) => sessions_command(),
+        Ok(Command::SessionsView { recall, view }) => sessions_command(recall.as_deref(), view.as_deref()),
         Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
@@ -962,7 +962,12 @@ fn open_session(home: &std::path::Path, id: Option<&str>, model: &str) -> Result
     }
 }
 
-fn sessions_command() -> ExitCode {
+/// `fleet sessions` — three surfaces over one archive. Bare, it lists
+/// the sessions as cards. `--recall "<instruction>"` ranks the archive
+/// through the six-channel ranker, where a session IS a trajectory and
+/// the direction channel reads the record itself. A positional opens
+/// one session's log as cards.
+fn sessions_command(recall: Option<&str>, view: Option<&str>) -> ExitCode {
     let home = match fleet_home() {
         Ok(home) => home,
         Err(message) => {
@@ -970,6 +975,17 @@ fn sessions_command() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if let Some(instruction) = recall {
+        // The ranker, pointed at the archive. The embedder resolves
+        // the same way the run's does, and an absent embedder is the
+        // keyword-only degradation — never a blocked surface.
+        let embedder = fleet::memory::probe(&fleet::memory::embedding_endpoint()).embedder();
+        let sessions_dir = fleet::home::sessions_dir(&home);
+        let mut index = fleet::session_recall::SessionIndex::load(&sessions_dir);
+        let hits = index.recall(&sessions_dir, embedder, instruction);
+        print!("{}", fleet::session_recall::render_hits(&hits, instruction));
+        return ExitCode::SUCCESS;
+    }
     let summaries = match session::list(&home) {
         Ok(summaries) => summaries,
         Err(error) => {
@@ -977,27 +993,27 @@ fn sessions_command() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if summaries.is_empty() {
-        println!("no sessions yet — run `fleet run \"<task>\"` to start one");
-        return ExitCode::SUCCESS;
+    if let Some(id) = view {
+        let Some(summary) = summaries.iter().find(|summary| summary.id == id) else {
+            eprintln!("fleet: no session named `{id}`; `fleet sessions` lists them");
+            return ExitCode::FAILURE;
+        };
+        let path = fleet::home::sessions_dir(&home).join(format!("{id}.jsonl"));
+        match session::replay(&path) {
+            Ok(records) => {
+                print!(
+                    "{}",
+                    fleet::session_recall::render_detail(&summary.id, &summary.created, &records)
+                );
+                return ExitCode::SUCCESS;
+            }
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
-    println!("{:44} {:20} {:16} state", "id", "created", "model");
-    for summary in summaries {
-        // A delegated child's log is an ordinary session with a marker:
-        // the listing names the kind beside the state, and a compacted
-        // session is marked the same way — its replay is a compacted
-        // shape, which a reader deserves to know before opening it.
-        let kind = summary.kind.as_deref().unwrap_or("session");
-        let markers = if summary.compacted { format!("{kind} compacted") } else { kind.to_string() };
-        println!(
-            "{:44} {:20} {:16} {} {}",
-            summary.id,
-            summary.created,
-            summary.model,
-            if summary.ended { "ended" } else { "open" },
-            markers
-        );
-    }
+    print!("{}", fleet::session_recall::render_list(&summaries));
     ExitCode::SUCCESS
 }
 

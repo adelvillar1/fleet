@@ -1010,3 +1010,235 @@ mod tests {
         assert!(!hits.iter().any(|hit| hit.id == "b-session"));
     }
 }
+
+// --- the surfaces ----------------------------------------------------------
+
+/// The card width, matching `lanes` and `calib`.
+const CARD_WIDTH: usize = 72;
+
+mod palette {
+    pub const ACCENT: &str = "\u{1b}[36m";
+    pub const OK: &str = "\u{1b}[32m";
+    pub const WARN: &str = "\u{1b}[33m";
+    pub const ERROR: &str = "\u{1b}[31m";
+    pub const DIM: &str = "\u{1b}[90m";
+    pub const TEXT: &str = "\u{1b}[37m";
+    pub const BOLD: &str = "\u{1b}[1m";
+    pub const RESET: &str = "\u{1b}[0m";
+}
+
+use palette::{ACCENT, BOLD, DIM, ERROR, OK, RESET, TEXT, WARN};
+
+/// The outcome word's color: a resolved session is evidence, a
+/// diverged one is an anti-vector, and an incomplete one is a
+/// trajectory that stalled — three states, three colors, never one
+/// undifferentiated "session" tone.
+fn outcome_color(outcome: &str) -> &'static str {
+    match outcome {
+        "resolved" => OK,
+        "diverged" => ERROR,
+        _ => WARN,
+    }
+}
+
+/// `fleet sessions --recall`: the ranked archive as cards, never a
+/// table. Each card names the session, its outcome, the six channels
+/// the composite was built from, and the derived phrases — the
+/// successful calls that drove toward the answer, which is the
+/// direction a later session reads.
+pub fn render_hits(hits: &[ScoredHit], instruction: &str) -> String {
+    let mut out = format!(
+        "{BOLD}fleet sessions --recall{RESET} {DIM}\u{2014} the archive ranked for \u{201c}{instruction}\u{201d}{RESET}\n\n"
+    );
+    if hits.is_empty() {
+        out.push_str(&format!(
+            "{DIM}no session in the archive answers that \u{b7} the corpus grows with every run{RESET}\n"
+        ));
+        return out;
+    }
+    for hit in hits {
+        let title = &hit.id;
+        let header_right = format!("{} {}", outcome_color(&hit.outcome), hit.outcome);
+        let header = format!(
+            "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{title}{RESET} {DIM}{dashes} {header_right} {RESET}{DIM}\u{2510}{RESET}",
+            dashes = dashes_for(&format!(" {title} "), &hit.outcome),
+        );
+        out.push_str(&header);
+        out.push('\n');
+        out.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {TEXT}score {score:.2} \u{b7} vector {vector:.2} \u{b7} keyword {keyword:.2} \u{b7} trajectory {trajectory:.2}{RESET}\n",
+            score = hit.score,
+            vector = hit.vector,
+            keyword = hit.keyword,
+            trajectory = hit.trajectory,
+        ));
+        out.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {DIM}history {history:.2} \u{b7} freshness {freshness:.2} \u{b7} provenance {provenance:.2}{RESET}\n",
+            history = hit.history,
+            freshness = hit.freshness,
+            provenance = hit.provenance,
+        ));
+        let task: String = hit.task.chars().take(CARD_WIDTH - 12).collect();
+        out.push_str(&format!("{DIM}\u{2502}{RESET} {TEXT}{task}{RESET}\n"));
+        if !hit.phrases.is_empty() {
+            out.push_str(&format!(
+                "{DIM}\u{2502}{RESET} {DIM}drove: {}{RESET}\n",
+                hit.phrases.join(" \u{b7} ")
+            ));
+        }
+        out.push_str(&format!(
+            "{DIM}\u{2514}{}\u{2518}{RESET}\n",
+            "\u{2500}".repeat(CARD_WIDTH - 2)
+        ));
+    }
+    out.push_str(&format!(
+        "\n{DIM}{} session{} ranked \u{b7} the trajectory channel reads the record itself{RESET}\n",
+        hits.len(),
+        if hits.len() == 1 { "" } else { "s" }
+    ));
+    out
+}
+
+/// `fleet sessions`: the archive as cards, replacing the plain-text
+/// table the surface used to print. A session is a piece of work with
+/// an outcome, not a row.
+pub fn render_list(summaries: &[crate::session::SessionSummary]) -> String {
+    let mut out = format!(
+        "{BOLD}fleet sessions{RESET} {DIM}\u{2014} the archive, newest first{RESET}\n\n"
+    );
+    if summaries.is_empty() {
+        out.push_str(&format!(
+            "{DIM}no sessions yet \u{b7} run `fleet run \"<task>\"` to start one{RESET}\n"
+        ));
+        return out;
+    }
+    for summary in summaries {
+        let kind = summary.kind.as_deref().unwrap_or("session");
+        let markers = if summary.compacted {
+            format!("{kind} \u{b7} compacted")
+        } else {
+            kind.to_string()
+        };
+        let state_color = if summary.ended { OK } else { WARN };
+        let state = if summary.ended { "ended" } else { "open" };
+        let header = format!(
+            "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{id}{RESET} {DIM}{dashes} {state_color}{state}{RESET} {DIM}\u{2510}{RESET}",
+            id = summary.id,
+            dashes = dashes_for(&format!(" {} ", summary.id), state),
+        );
+        out.push_str(&header);
+        out.push('\n');
+        out.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {TEXT}{created} \u{b7} {model} \u{b7} {markers}{RESET}\n",
+            created = summary.created,
+            model = summary.model,
+            markers = markers,
+        ));
+        out.push_str(&format!(
+            "{DIM}\u{2514}{}\u{2518}{RESET}\n",
+            "\u{2500}".repeat(CARD_WIDTH - 2)
+        ));
+    }
+    out.push_str(&format!(
+        "\n{DIM}{} session{} \u{b7} `fleet sessions <id>` opens one \u{b7} `--recall \"<what>\"` ranks them{RESET}\n",
+        summaries.len(),
+        if summaries.len() == 1 { "" } else { "s" }
+    ));
+    out
+}
+
+/// The dash run that pads a card header so its right edge aligns.
+fn dashes_for(left: &str, right: &str) -> String {
+    let used = left.chars().count() + right.chars().count() + 2;
+    "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+}
+
+/// `fleet sessions <id>`: one session's log as cards — the task, the
+/// turns, the calls, and the outcome. The audit view shows the record,
+/// not a summary of it: every tool call is named with its outcome, and
+/// a failure is named rather than smoothed over, because a session
+/// whose failures are hidden is a session nobody can learn from.
+pub fn render_detail(id: &str, created: &str, records: &[crate::session::Record]) -> String {
+    use crate::session::Record;
+    let mut out = format!(
+        "{BOLD}fleet sessions{RESET} {DIM}\u{2014} {id} \u{b7} {created}{RESET}\n\n"
+    );
+    let mut turns = 0usize;
+    let mut calls = 0usize;
+    let mut failed = 0usize;
+    let mut last_outcome = String::new();
+    for record in records {
+        match record {
+            Record::Start { model, kind, parent, .. } => {
+                let mut line = format!("model {model}");
+                if let Some(kind) = kind {
+                    line.push_str(&format!(" \u{b7} {kind}"));
+                }
+                if let Some(parent) = parent {
+                    line.push_str(&format!(" \u{b7} child of {parent}"));
+                }
+                out.push_str(&format!("{DIM}start \u{b7} {line}{RESET}\n"));
+            }
+            Record::User { content } => {
+                turns += 1;
+                let task: String = content.chars().take(CARD_WIDTH - 10).collect();
+                out.push_str(&format!(
+                    "\n{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}turn {turns}{RESET} {DIM}{dashes} the ask{RESET} {DIM}\u{2510}{RESET}\n",
+                    dashes = dashes_for(&format!(" turn {turns} "), "the ask"),
+                ));
+                out.push_str(&format!("{DIM}\u{2502}{RESET} {TEXT}{task}{RESET}\n"));
+            }
+            Record::Assistant { content, tool_calls } => {
+                if let Some(content) = content {
+                    let text: String = content.chars().take(CARD_WIDTH - 6).collect();
+                    out.push_str(&format!("{DIM}\u{2502}{RESET} {TEXT}{text}{RESET}\n"));
+                }
+                for call in tool_calls {
+                    calls += 1;
+                    let args: String = call.function.arguments.chars().take(40).collect();
+                    out.push_str(&format!(
+                        "{DIM}\u{2502}{RESET} {DIM}\u{2192} {name} {args}{RESET}\n",
+                        name = call.function.name,
+                    ));
+                }
+            }
+            Record::ToolResult { name, output, approved, .. } => {
+                let failed_call = output.starts_with("error:") || output.starts_with("denied");
+                if failed_call {
+                    failed += 1;
+                }
+                let color = if failed_call { ERROR } else if *approved { OK } else { WARN };
+                let mark = if failed_call {
+                    "failed"
+                } else if *approved {
+                    "approved"
+                } else {
+                    "unapproved"
+                };
+                let text: String = output.chars().take(CARD_WIDTH - 14).collect();
+                out.push_str(&format!(
+                    "{DIM}\u{2502}{RESET}   {color}{mark}{RESET} {DIM}{name} \u{b7} {text}{RESET}\n",
+                ));
+            }
+            Record::End { stop_reason, .. } => {
+                last_outcome = stop_reason.clone();
+            }
+            _ => {}
+        }
+    }
+    if !last_outcome.is_empty() {
+        let color = match last_outcome.as_str() {
+            "completed" => OK,
+            "max-turns" => WARN,
+            _ => ERROR,
+        };
+        out.push_str(&format!(
+            "\n{DIM}\u{2514}{}\u{2518}{RESET} {color}{stop}{RESET} {DIM}\u{b7} {turns} turn{turn_plural} \u{b7} {calls} call{call_plural} \u{b7} {failed} failed{RESET}\n",
+            "\u{2500}".repeat(CARD_WIDTH - 2),
+            stop = last_outcome,
+            turn_plural = if turns == 1 { "" } else { "s" },
+            call_plural = if calls == 1 { "" } else { "s" },
+        ));
+    }
+    out
+}
