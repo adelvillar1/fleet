@@ -140,10 +140,18 @@ pub fn use_skill_spec() -> ToolSpec {
 /// `valid-until` on every working-tier one, and the description says
 /// so, because those two rules are what make the corpus's provenance
 /// and lifecycle mean anything.
+///
+/// The description is also where the slice-19 instruction lives — the
+/// slice-9 lesson: an instruction with no home where the model sees it
+/// does not exist. It asks for the **phrases that resolved the
+/// problem** (the trajectory's own vocabulary, which rides the fact's
+/// indexed text and the trajectory channel) and for the **sign**: a
+/// fact tagged with a failure shape is an anti-vector, and its phrases
+/// are the trajectory that diverged.
 pub fn remember_spec() -> ToolSpec {
     ToolSpec::function(
         REMEMBER_TOOL,
-        "Write one fact into the memory corpus. A fact is one file the harness reads back on later turns, so write what a future session needs: the fact as one sentence (description), what kind it is (type), its provenance (basis), and its full content (body). basis is required on every write: confirmed-by when the user stated or verified the fact, inferred when this session merely produced it. tier is working (session-scoped; valid-until is required and the consolidation cycle compresses it) or durable (the default; no expiry). shape takes comma-separated structure tags from rendering, state-sync, deploy, build, change, deps, docs.",
+        "Write one fact into the memory corpus. A fact is one file the harness reads back on later turns, so write what a future session needs: the fact as one sentence (description), what kind it is (type), its provenance (basis), and its full content (body). basis is required on every write: confirmed-by when the user stated or verified the fact, inferred when this session merely produced it. tier is working (session-scoped; valid-until is required and the consolidation cycle compresses it) or durable (the default; no expiry). shape takes comma-separated tags from the structure shapes (rendering, state-sync, deploy, build, change, deps, docs) and the failure shapes (fail-open, drops-the-row, bound-exceeded, claim-outran-evidence), at most three in total. phrases records the resolution: the exact vocabulary that drove toward the answer — the commands, file names, and words that worked — so a later recall for this shape matches them even when the question is worded differently. When what you are recording is a FAILURE, tag it with a failure shape and record in phrases the trajectory that was tried and diverged: recall will surface it as an anti-vector to avoid, marked, never as a candidate solution.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -161,7 +169,12 @@ pub fn remember_spec() -> ToolSpec {
                 },
                 "shape": {
                     "type": "string",
-                    "description": "Comma-separated structure shapes from rendering, state-sync, deploy, build, change, deps, docs (at most three).",
+                    "description": "Comma-separated shapes from the structure shapes (rendering, state-sync, deploy, build, change, deps, docs) and the failure shapes (fail-open, drops-the-row, bound-exceeded, claim-outran-evidence), at most three. A failure-shape tag makes the fact an anti-vector — what broke, recalled so it is avoided.",
+                },
+                "phrases": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "The phrases that resolved the problem: the vocabulary that drove toward the answer, quoted as it was used. They ride the fact's indexed text and the trajectory channel, so a later recall for this shape matches them even when the question is worded differently. For a failure, the phrases of the trajectory that was tried and diverged.",
                 },
                 "basis": {
                     "type": "string",
@@ -224,7 +237,7 @@ pub fn supersede_spec() -> ToolSpec {
                 },
                 "shape": {
                     "type": "string",
-                    "description": "The replacement's structure shapes; defaults to the superseded fact's own.",
+                    "description": "The replacement's shapes — structure or failure; defaults to the superseded fact's own.",
                 },
                 "valid-until": {
                     "type": "string",
@@ -833,7 +846,9 @@ mod tests {
         let parameters = &spec["function"]["parameters"];
         // The brain_remember shape: structured fields, mechanism over
         // prose.
-        for field in ["name", "description", "type", "shape", "basis", "tier", "valid-until", "body"] {
+        for field in [
+            "name", "description", "type", "shape", "phrases", "basis", "tier", "valid-until", "body",
+        ] {
             assert!(parameters["properties"].get(field).is_some(), "remember lacks {field}");
         }
         // `basis` is required on every write; `valid-until` is required
@@ -847,6 +862,18 @@ mod tests {
         // The two memory tools are not part of the closed four either.
         assert_eq!(Tool::from_name(REMEMBER_TOOL), None);
         assert_eq!(Tool::from_name(SUPERSEDE_TOOL), None);
+        // Slice 19: the phrases ride an array of strings, and the
+        // description is their home — the slice-9 lesson, an instruction
+        // with no home where the model sees it does not exist. It asks
+        // for the resolution's phrases and, for a failure, the sign.
+        let phrases = &parameters["properties"]["phrases"];
+        assert_eq!(phrases["type"], "array");
+        assert_eq!(phrases["items"]["type"], "string");
+        let description = spec["function"]["description"].as_str().unwrap();
+        assert!(description.contains("phrases records the resolution"), "{description}");
+        assert!(description.contains("anti-vector"), "{description}");
+        assert!(description.contains("fail-open"), "{description}");
+        assert!(description.contains("basis is required on every write"), "{description}");
     }
 
     #[test]

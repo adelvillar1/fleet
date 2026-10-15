@@ -1,11 +1,14 @@
 //! Memory: the git-tracked fact substrate, hybrid retrieval with a
-//! probed vector path, Wave-D shape-routed recall, recall-hit feedback,
-//! and the protected tier with budget-aware turn-context assembly.
+//! probed vector path, shape-first recall (the shape partitions, the
+//! words corroborate), the failure axis with its two signs, the
+//! resolution's phrases, recall-hit feedback, and the protected tier
+//! with budget-aware turn-context assembly.
 //!
 //! **The substrate.** One markdown file per durable fact under
 //! `memories/`, frontmatter carrying `name`, `description`, `type`,
-//! `date`, `basis`, `shape`, `recall-count`, `superseded-by`, and
-//! `valid-until`, with the file's body as the fact's content. The fork's
+//! `date`, `basis`, `shape`, `phrases`, `recall-count`,
+//! `superseded-by`, and `valid-until`, with the file's body as the
+//! fact's content. The fork's
 //! `memories/` tree (234 facts in exactly this shape) is the spec, and
 //! its `@fleet/dsh-brain` the design. Facts persist across sessions
 //! because they are files; a bad one reverts cleanly because they are
@@ -13,9 +16,8 @@
 //! in-place rewrite is the recall-count bump, and it is bounded to that
 //! one frontmatter line.
 //!
-//! **The hybrid ranker.** A fact's score is a weighted sum of four named
-//! channels — vector similarity, keyword coverage, importance earned by
-//! recall-count, and exponential temporal decay — with the weights named
+//! **The hybrid ranker.** A fact's score is a weighted sum of named
+//! channels — no single one dominating — with the weights named
 //! constants below. The vector backend is **probed, not assumed**: the
 //! loopback llama-server sem1 serves (`127.0.0.1:8901`, or wherever
 //! `FLEET_EMBEDDING_ENDPOINT` points) is discovered with one real
@@ -23,23 +25,61 @@
 //! to keyword-only — the correct degradation, named by `doctor` and by
 //! this module's own surface, never silent. That is the fix for the live
 //! system, where an absent embedding stack silently degraded recall over
-//! 11k entries. `basis` deliberately does **not** enter the score: the
-//! plan's rule is that importance is earned by use, not asserted at
-//! write, and basis is provenance — the permission model part 2's
-//! guardrail reads, not a rank.
+//! 11k entries.
 //!
-//! **Shape routing.** The incoming instruction classifies into one
-//! structure shape from the fork's Wave D keyword taxonomy (rendering,
-//! state-sync, deploy, build, change, deps, docs — keyword-backed, not
-//! model-backed, because the model path proved unreliable), and a
-//! same-shape fact takes a named boost. An unclassifiable instruction
-//! answers from the surface alone — the documented fallback, not an
-//! error.
+//! **Shape-first recall.** The owner's directive, stated twice and
+//! sharpened both times: *problem shape must drive semantic search* —
+//! "a keyword or phrase in the wrong context is meaningless, while a
+//! problem shape tied to the word phrases that were recorded during the
+//! resolution are key information." Recall runs in two movements. The
+//! instruction classifies into a shape — a structure shape from the
+//! fork's Wave D keyword taxonomy, or a failure shape from Fleet's own
+//! failure record — and that shape **partitions** the pool: the facts
+//! carrying it are the primary pool, every other fact is spillover.
+//! Within the primary pool the facts rank as multidimensional vectors:
+//! the topical channels (vector similarity, keyword coverage), the
+//! trajectory channel (the phrases the resolution recorded — where the
+//! fact drove), the history channel (recall-count, earned by use), the
+//! freshness channel (exponential decay), and the provenance channel
+//! (basis). The shape is **structural**: it selects the pool and
+//! carries no additive term of its own — the old `SHAPE_BOOST`, a 0.15
+//! tiebreaker under 0.80 of word weight, is gone, because it let a
+//! homonym across shapes outrank the right shape's own answer. An
+//! unclassifiable instruction degrades to the word-ranked pool as the
+//! primary pool: the classification's failure must never starve recall,
+//! it only fails to reorder it.
+//!
+//! **The spillover.** Off-shape facts enter the assembly only through
+//! one of three named routes — the primary pool is empty, its best
+//! score is below [`SPILLOVER_FLOOR`], or the budget has room after the
+//! pool is in — and every off-shape fact that enters is MARKED
+//! `off-shape` in its line, so the model knows its context is weaker.
+//! Never silently mixed into the shape's answers.
+//!
+//! **The two signs.** A fact is a vector with a sign. A **resolution**
+//! drives toward the minima — the approaches that fit the shape, the
+//! prevention half of the shelf. A **failure** is an anti-vector
+//! driving the opposite way — what kind of thing broke, the avoidance
+//! half. The sign is derived, not stored: a fact carrying any
+//! failure-shape tag is an anti-vector, every other fact is a
+//! resolution. An anti-vector that matches the current trajectory is
+//! highly relevant and surfaces as prominently as a resolution — it is
+//! not a penalty and not a lower rank — and the assembly line names the
+//! sign (`resolved:` / `diverged:`) so the model never reads an
+//! anti-vector as a candidate solution.
+//!
+//! **The phrases.** The write path records the phrases that resolved
+//! the problem — the vocabulary that worked — and, for a failure, the
+//! phrases of the trajectory that was tried and diverged. They ride the
+//! fact's indexed text beside the description and the shape tags (what
+//! the vector channel embeds) and they are the trajectory channel's own
+//! text: the fact's direction, scored on its own channel rather than
+//! riding inside the topical words.
 //!
 //! **The protected tier and assembly.** Facts whose `type` marks
 //! identity or standing preferences (`user`, `feedback` in the fork's
 //! taxonomy) are protected: the injection budget can never evict them.
-//! Turn context is *assembled* — protected tier first, then shape-routed
+//! Turn context is *assembled* — protected tier first, then shape-first
 //! recall, then recent working memory, within a named token budget —
 //! rather than dumped whole. The observed failure this avoids: a turn
 //! about one topic injected with unrelated facts.
@@ -189,8 +229,17 @@ pub struct Fact {
     /// frontmatter reads as [`Tier::Durable`], so the corpus's own
     /// pre-tier facts load unchanged.
     pub tier: Tier,
-    /// Structure tags from the fork's shape vocabulary.
+    /// Structure tags from the fork's shape vocabulary, and — since
+    /// slice 19 — the failure shapes from Fleet's own failure record. A
+    /// fact may carry both axes; either match puts it in a recall's
+    /// primary pool.
     pub shape: Vec<String>,
+    /// The phrases the resolution recorded: the vocabulary that drove
+    /// toward the answer, and — for a failure — the vocabulary of the
+    /// trajectory that was tried and diverged. The fact's direction:
+    /// the trajectory channel's own text, and part of what the vector
+    /// channel embeds.
+    pub phrases: Vec<String>,
     /// Times recall has surfaced this fact; the importance channel reads
     /// it and the recall-count bump writes it.
     pub recall_count: u64,
@@ -235,13 +284,42 @@ impl Fact {
         self.shape.iter().any(|tag| tag == shape)
     }
 
-    /// The text the index embeds: the description with the shape tags
-    /// riding along, the way the fork's importer indexes them.
-    pub fn indexed_text(&self) -> String {
+    /// The fact's sign, derived from its tags: a fact carrying any
+    /// failure-shape tag is an anti-vector (it records what drove away
+    /// from the minima), and every other fact is a resolution. One
+    /// vocabulary — the tag is the sign — so no field can contradict
+    /// the tags.
+    pub fn sign(&self) -> Sign {
+        if self.shape.iter().any(|tag| is_failure_shape(tag)) {
+            Sign::Divergence
+        } else {
+            Sign::Resolution
+        }
+    }
+
+    /// The fact's topical text: the description with the shape tags
+    /// riding along, the way the fork's importer indexes them. This is
+    /// what the topical channels score — the neighborhood the fact
+    /// talks about.
+    pub fn topic_text(&self) -> String {
         if self.shape.is_empty() {
             self.description.clone()
         } else {
             format!("{} {}", self.description, self.shape.join(" "))
+        }
+    }
+
+    /// The text the index embeds: the topic text with the resolution's
+    /// phrases riding along — what the fact is about AND where it
+    /// drove. The trajectory channel scores the phrases on their own;
+    /// the topical channels score the topic text, so the two
+    /// dimensions cannot double-count each other.
+    pub fn indexed_text(&self) -> String {
+        let topic = self.topic_text();
+        if self.phrases.is_empty() {
+            topic
+        } else {
+            format!("{} {}", topic, self.phrases.join(" "))
         }
     }
 }
@@ -259,6 +337,10 @@ impl Fact {
 /// reads a bracketed `shape: [a, b]` list; the skills parser rejects
 /// empty values and every indented line. Generalizing one parser to
 /// both would cost the skills subset its deliberate rejections.
+///
+/// The bracketed-list reader serves two fields since slice 19:
+/// `shape` (lowercased tags, either axis) and `phrases` (the
+/// resolution's recorded vocabulary, case-preserving).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Document {
     fields: Vec<(String, String)>,
@@ -410,6 +492,29 @@ fn shape_tags(value: Option<&str>) -> Vec<String> {
         .collect()
 }
 
+/// The `phrases` field reads as a bracketed list too —
+/// `[read CLAUDE.local.md directly, never grep-extract credentials]` —
+/// Fleet's own field, written by the write path since slice 19. Unlike
+/// the shape tags the phrases are **case-preserving**: they are the
+/// vocabulary that worked, quoted as it was used, and lowercasing them
+/// would corrupt the direction they record. Each is trimmed and
+/// unquoted, empties dropped, the count capped at [`MAX_PHRASES`], and
+/// each bounded at [`MAX_PHRASE_CHARS`] with a marked cut so a
+/// hand-written file cannot inflate the index. A bare scalar reads as
+/// no phrases, the shape field's own rule.
+fn phrase_list(value: Option<&str>) -> Vec<String> {
+    let Some(value) = value else { return Vec::new() };
+    let Some(inner) = value.trim().strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+        return Vec::new();
+    };
+    inner
+        .split(',')
+        .map(|phrase| sanitize_line(unquote(phrase.trim()), MAX_PHRASE_CHARS))
+        .filter(|phrase| !phrase.is_empty())
+        .take(MAX_PHRASES)
+        .collect()
+}
+
 /// One log line naming the fact that was skipped and why. A broken fact
 /// is never silent and never fatal — the skills precedent.
 fn skip_line(name: &str, reason: &str) {
@@ -470,6 +575,7 @@ fn fact(
         basis,
         tier,
         shape: shape_tags(document.get("shape")),
+        phrases: phrase_list(document.get("phrases")),
         recall_count,
         superseded_by: document.get("superseded-by").unwrap_or("").to_string(),
         valid_until: document.get("valid-until").unwrap_or("").to_string(),
@@ -848,22 +954,62 @@ static INDEX_WRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
 
 // --- the ranker ------------------------------------------------------------
 
-/// The vector channel's weight. The dominant channel when the vector
-/// path serves; the keyword-only backend contributes nothing here, and
-/// the other three channels carry the ranking.
-pub const W_VECTOR: f64 = 0.55;
+/// The topical channels' weights, and the topical dimension they sum
+/// to. The vector channel is the cosine between the instruction's
+/// embedding and the fact's indexed text; the keyword channel is how
+/// much of the instruction the fact's topic text answers. Together
+/// they are the **neighborhood** the fact talks about — 0.40 of the
+/// composite, less than half, so no topical fact can carry a ranking
+/// on its own. That is the slice-19 reweighting: the pair used to be
+/// 0.80 (vector 0.55 + keyword 0.25) and could, which is exactly how a
+/// homonym across shapes outranked the right shape's own answer.
+///
+/// The two sub-channels carry equal weight: the embedded direction and
+/// the token overlap are two readings of the same dimension, and
+/// neither is the other's tiebreaker.
+pub const W_VECTOR: f64 = 0.20;
 
 /// The keyword channel's weight: how much of the instruction the fact's
-/// indexed text answers.
-pub const W_KEYWORD: f64 = 0.25;
+/// topic text answers.
+pub const W_KEYWORD: f64 = 0.20;
 
-/// The importance channel's weight: recall-count, earned by use.
-pub const W_IMPORTANCE: f64 = 0.10;
+/// The trajectory channel's weight: how much of the instruction's
+/// trajectory the fact's recorded phrases answer. This is the fact's
+/// DIRECTION — the vocabulary the resolution drove with — and it is
+/// the largest single channel, because "a problem shape tied to the
+/// word phrases that were recorded during the resolution" is the
+/// owner's key information. A fact whose phrases echo the
+/// instruction's trajectory is driving toward this minima; a fact that
+/// merely talks about the neighborhood is not.
+pub const W_TRAJECTORY: f64 = 0.25;
 
-/// The temporal-decay channel's weight: exponential freshness.
-pub const W_DECAY: f64 = 0.10;
+/// The history channel's weight: recall-count, earned by use. Half of
+/// the fact's MAGNITUDE — the evidence it has actually driven — beside
+/// the provenance channel.
+pub const W_HISTORY: f64 = 0.20;
 
-/// Recalls at which the importance bonus reaches its ceiling — the
+/// The freshness channel's weight: exponential temporal decay. The
+/// smallest channel on purpose: a fresh fact is not a better vector.
+pub const W_FRESHNESS: f64 = 0.10;
+
+/// The provenance channel's weight: the fact's basis. The other half
+/// of the magnitude — a confirmed-by vector has driven somewhere the
+/// owner verified, an inferred one is a proposal at half strength.
+/// Provenance entered the score at slice 19; before that it was read
+/// only by the permission model, and the magnitude of a fact's
+/// evidence was invisible to the ranking.
+pub const W_PROVENANCE: f64 = 0.05;
+
+/// What a `confirmed-by` fact contributes to the provenance channel,
+/// against an `inferred` one's half. A confirmed vector outweighs an
+/// inferred one without erasing it: the multidimensional context is
+/// what ranks, and an inferred fact that drove is still a vector.
+pub const PROVENANCE_CONFIRMED: f64 = 1.0;
+
+/// What an `inferred` fact contributes to the provenance channel.
+pub const PROVENANCE_INFERRED: f64 = 0.5;
+
+/// Recalls at which the history channel reaches its ceiling — the
 /// fork's `recallWindow`, ported.
 pub const RECALL_CEILING: u64 = 8;
 
@@ -872,56 +1018,85 @@ pub const RECALL_CEILING: u64 = 8;
 /// fact decays smoothly instead of falling off a cliff.
 pub const DECAY_HALFLIFE_DAYS: f64 = 90.0;
 
-/// The shape-routing boost: a fact carrying the instruction's
-/// classified shape takes this onto its score. Routing, not ranking —
-/// it rides beside the four hybrid channels.
-pub const SHAPE_BOOST: f64 = 0.15;
-
 /// The floor a fact must clear to enter a turn for this instruction.
 /// Below it the fact is noise: an unrelated fact's best case is its
-/// decay plus a sliver of importance, and a turn about one topic must
-/// not be injected with facts about another. The floor sits just above
-/// the decay channel alone, so a fact enters when it matches something
-/// — forty percent of the instruction's tokens, or a vector hit, or a
-/// long recall history — and not merely for being fresh. The live
+/// freshness plus its provenance (0.15 under the named weights) plus
+/// one shared stopword's worth of topical overlap (0.04) — 0.19, just
+/// under the floor — and a turn about one topic must not be injected
+/// with facts about another. The floor's meaning is now exact: a
+/// quarter-strength match in any single channel, beside freshness and
+/// provenance, clears it (0.20 × 0.25 + 0.15 = 0.20, and 0.2125 for
+/// the heavier trajectory channel), and nothing weaker does — a fact
+/// enters when it matches something, in at least one dimension, and
+/// not merely for standing. A heavily-recalled fact that matches
+/// nothing still clears it, ranks last, and is the budget's first drop
+/// — the same accepted behavior as before the reweighting. The live
 /// embedding model's cosines do not separate relevance on their own
-/// (KI-058), so the floor is on the composite score; a heavily-recalled
-/// fact that matches nothing still clears it, ranks last, and is the
-/// budget's first drop.
+/// (KI-058), so the floor is on the composite score.
 pub const MIN_RECALL_SCORE: f64 = 0.20;
+
+/// The floor the primary pool's best score must clear before the
+/// shape's own answer stands alone. Below it the off-shape facts are
+/// admitted as candidates through the spillover's second route; at or
+/// above it they enter only on the budget's room.
+///
+/// Sized against the composite's 1.00 and against
+/// [`MIN_RECALL_SCORE`] (0.20): 0.45 is the point at which the shape's
+/// own answer is multidimensional — full topical coverage with
+/// freshness and provenance is 0.35, and four recalls' history (0.10)
+/// or a 0.8 trajectory match (0.20) carries it over. A pool whose best
+/// is below it has matched the shape without corroborating it in a
+/// second dimension — the fact that merely talks about the
+/// neighborhood — and the marked off-shape facts are worth their
+/// weaker status beside it.
+pub const SPILLOVER_FLOOR: f64 = 0.45;
 
 /// One fact's score: the total the ranking orders by, and the channels
 /// that produced it — the "why" the surface prints.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Score {
     pub total: f64,
+    /// The topical cosine sub-channel: the embedded direction.
     pub vector: f64,
+    /// The topical token-coverage sub-channel.
     pub keyword: f64,
-    pub importance: f64,
-    pub decay: f64,
-    /// The shape-routing boost, `0.0` when unrouted or untagged.
-    pub shape_boost: f64,
+    /// The trajectory channel: the recorded phrases' match.
+    pub trajectory: f64,
+    /// The history channel: recall-count over the ceiling.
+    pub history: f64,
+    /// The freshness channel: exponential decay.
+    pub freshness: f64,
+    /// The provenance channel: the basis.
+    pub provenance: f64,
 }
 
 impl Score {
-    /// Compose the four hybrid channels and the routing boost.
+    /// Compose the named channels. The shape is deliberately absent:
+    /// it partitions the pool (see [`Memory::partition`]) rather than
+    /// adding a term, so no constant here can make a wrong-shape fact
+    /// outrank the right shape's own answer.
     fn compute(
         vector: f64,
         keyword: f64,
+        trajectory: f64,
         recall_count: u64,
+        basis: Basis,
         date: &str,
         today_days: Option<i64>,
-        shape_hit: bool,
     ) -> Score {
-        let importance = recall_count.min(RECALL_CEILING) as f64 / RECALL_CEILING as f64;
-        let decay = decay_factor(date, today_days);
-        let shape_boost = if shape_hit { SHAPE_BOOST } else { 0.0 };
+        let history = recall_count.min(RECALL_CEILING) as f64 / RECALL_CEILING as f64;
+        let freshness = decay_factor(date, today_days);
+        let provenance = match basis {
+            Basis::ConfirmedBy => PROVENANCE_CONFIRMED,
+            Basis::Inferred => PROVENANCE_INFERRED,
+        };
         let total = W_VECTOR * vector
             + W_KEYWORD * keyword
-            + W_IMPORTANCE * importance
-            + W_DECAY * decay
-            + shape_boost;
-        Score { total, vector, keyword, importance, decay, shape_boost }
+            + W_TRAJECTORY * trajectory
+            + W_HISTORY * history
+            + W_FRESHNESS * freshness
+            + W_PROVENANCE * provenance;
+        Score { total, vector, keyword, trajectory, history, freshness, provenance }
     }
 
     /// Every channel zero: the score of a fact that was never ranked.
@@ -933,9 +1108,10 @@ impl Score {
             total: 0.0,
             vector: 0.0,
             keyword: 0.0,
-            importance: 0.0,
-            decay: 0.0,
-            shape_boost: 0.0,
+            trajectory: 0.0,
+            history: 0.0,
+            freshness: 0.0,
+            provenance: 0.0,
         }
     }
 }
@@ -980,13 +1156,28 @@ fn tokens(text: &str) -> Vec<String> {
 }
 
 /// How much of the instruction the fact answers: the instruction's
-/// tokens the fact's indexed text carries, over the instruction's
+/// tokens the fact's topic text carries, over the instruction's
 /// tokens. An instruction with no tokens covers nothing.
 fn keyword_coverage(query: &[String], fact: &[String]) -> f64 {
     if query.is_empty() {
         return 0.0;
     }
     let covered = query.iter().filter(|token| fact.iter().any(|seen| seen == *token)).count();
+    covered as f64 / query.len() as f64
+}
+
+/// How much of the instruction's trajectory the fact's recorded
+/// phrases answer: the instruction's tokens the phrases carry, over
+/// the instruction's tokens. A fact with no recorded phrases has no
+/// direction, so it scores 0.0 — the same shape as the keyword
+/// channel, measured over the trajectory's own text so the two
+/// dimensions cannot double-count each other.
+fn trajectory_coverage(query: &[String], phrases: &[String]) -> f64 {
+    if query.is_empty() || phrases.is_empty() {
+        return 0.0;
+    }
+    let carried: Vec<String> = phrases.iter().flat_map(|phrase| tokens(phrase)).collect();
+    let covered = query.iter().filter(|token| carried.iter().any(|seen| seen == *token)).count();
     covered as f64 / query.len() as f64
 }
 
@@ -1126,15 +1317,169 @@ pub const SHAPE_KEYWORDS: [(&str, &[&str]); 7] = [
 /// The taxonomy in its own order, for the surface's naming.
 pub const SHAPES: [&str; 7] = ["rendering", "state-sync", "deploy", "build", "change", "deps", "docs"];
 
-/// Classify one instruction into a structure shape by its keywords, or
-/// `None` when no shape's terms appear. Substring match on the
-/// lowercased text, first shape in [`SHAPE_KEYWORDS`] order wins — the
-/// fork's `classifyShape`, ported.
+/// The **failure shapes**: the avoidance half of the shelf, named for
+/// Fleet's own failure record in `docs/known-issues.md`. Each names a
+/// class of thing that broke, with the ledger rows it is drawn from:
+///
+/// - `fail-open` — a dependency was unavailable and the path proceeded
+///   on a degraded answer instead of refusing (KI-044: route selection's
+///   `sys1_classify` fails open with verdict `error` and every run falls
+///   back to the declared HEAD; KI-110: the improve-gate's subprocess
+///   probe failed open and could grade the wrong binary).
+/// - `drops-the-row` — a writer wrote a record the reader silently
+///   discarded, so the system behaved as if it never existed (KI-164: a
+///   JSON `null` made `parse_row` drop the whole line; KI-171: a
+///   hand-written row missing `family` dropped silently).
+/// - `bound-exceeded` — an unbounded or wrongly-bounded read or write
+///   overran its budget, undercounted, or rode control characters into
+///   the surface (KI-060: the description unbounded; KI-167: the
+///   reader's `READ_CAP=512` undercounts a heavy day; KI-120/KI-122:
+///   the tower scan and the second-brain read unbounded; KI-035: no cap
+///   on a lane's stdout line).
+/// - `claim-outran-evidence` — a doc, a recap, a plan's assumption, or
+///   a test asserted more than the code or the run proved (KI-160: the
+///   slice-16 plan's "fleet's suite covers the lane" overclaimed;
+///   KI-159: two doc claims read stronger than the code; KI-009: a
+///   recap claimed the wrong CI state; KI-133: the feature doc's
+///   network wording overclaimed).
+///
+/// A fact tagged with a failure shape is an anti-vector: it records
+/// what drove AWAY from the minima, and recall serves it through the
+/// same partition as a resolution. A fact may carry both axes —
+/// `[build, bound-exceeded]` is a structure shape and a failure shape,
+/// and either match puts it in the pool.
+pub const FAILURE_SHAPES: [&str; 4] =
+    ["fail-open", "drops-the-row", "bound-exceeded", "claim-outran-evidence"];
+
+/// The failure axis's keyword taxonomy, Fleet's own (the fork's
+/// `shapes.json` carries only the structure shapes). Consulted after
+/// the structure table, so the fork's order rule still decides when
+/// both axes' terms appear — an instruction that names a structure
+/// shape and a failure shape routes under the structure shape.
+pub const FAILURE_SHAPE_KEYWORDS: [(&str, &[&str]); 4] = [
+    (
+        "fail-open",
+        &[
+            "fail open",
+            "fails open",
+            "failed open",
+            "failing open",
+            "fail-open",
+            "fails-open",
+            "degraded answer",
+        ],
+    ),
+    (
+        "drops-the-row",
+        &[
+            "drops the row",
+            "dropped the row",
+            "drops the record",
+            "dropped the record",
+            "row vanished",
+            "row was dropped",
+            "silently dropped",
+            "reader dropped",
+        ],
+    ),
+    (
+        "bound-exceeded",
+        &[
+            "unbounded",
+            "no cap",
+            "past the bound",
+            "bound exceeded",
+            "overran",
+            "undercount",
+        ],
+    ),
+    (
+        "claim-outran-evidence",
+        &[
+            "outran",
+            "overclaimed",
+            "claims more than",
+            "asserts more than",
+            "reads stronger than",
+        ],
+    ),
+];
+
+/// Whether `tag` is one of the failure shapes — the axis that gives a
+/// fact its sign.
+pub fn is_failure_shape(tag: &str) -> bool {
+    FAILURE_SHAPES.contains(&tag)
+}
+
+/// The axis a shape name belongs to, for the surfaces' naming.
+pub fn shape_axis(shape: &str) -> &'static str {
+    if is_failure_shape(shape) {
+        "failure"
+    } else {
+        "structure"
+    }
+}
+
+/// A fact's sign in the recall ranking.
+///
+/// A resolution is a vector TOWARD the minima: the approaches that fit
+/// the shape, the prevention half of the shelf. A divergence is an
+/// anti-vector in the OPPOSITE direction: what kind of thing broke, the
+/// avoidance half. "A failure drives the vector in an opposite
+/// direction for a solution trajectory" — so an anti-vector that
+/// matches the current trajectory is highly relevant and surfaces as
+/// prominently as a resolution. It is not a penalty and not a lower
+/// rank; what keeps it from being read as a candidate solution is the
+/// marker every line and card carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sign {
+    /// Drove toward the minima: a resolution.
+    Resolution,
+    /// Drove away from it: a failure, an anti-vector.
+    Divergence,
+}
+
+impl Sign {
+    /// The sign a fact's tags give it — the tag is the sign, so no
+    /// field can contradict the tags.
+    pub fn of(fact: &Fact) -> Sign {
+        fact.sign()
+    }
+
+    /// The word the surface and the assembly line carry.
+    pub fn marker(self) -> &'static str {
+        match self {
+            Sign::Resolution => "resolved:",
+            Sign::Divergence => "diverged:",
+        }
+    }
+
+    /// The bare word, for a card's header.
+    pub fn word(self) -> &'static str {
+        match self {
+            Sign::Resolution => "resolved",
+            Sign::Divergence => "diverged",
+        }
+    }
+}
+
+/// Classify one instruction into a shape by its keywords, or `None`
+/// when no shape's terms appear. The structure table is consulted
+/// first — the fork's `classifyShape`, ported, substring match on the
+/// lowercased text with the taxonomy's order deciding — and the
+/// failure axis's table second, so Fleet's own failure record is
+/// routable without disturbing the fork's order rule. Keyword-backed,
+/// not model-backed, because the model path proved unreliable.
 pub fn classify_shape(text: &str) -> Option<&'static str> {
     let haystack = text.to_lowercase();
     SHAPE_KEYWORDS
         .iter()
         .find(|(_, terms)| terms.iter().any(|term| haystack.contains(term)))
+        .or_else(|| {
+            FAILURE_SHAPE_KEYWORDS
+                .iter()
+                .find(|(_, terms)| terms.iter().any(|term| haystack.contains(term)))
+        })
         .map(|(shape, _)| *shape)
 }
 
@@ -1279,47 +1624,76 @@ impl Memory {
         let mut hits: Vec<ScoredFact> = facts
             .iter()
             .filter(|fact| fact.protected() && !fact.forgotten(&today))
-            .map(|fact| ScoredFact { fact: fact.clone(), score: Score::unranked() })
+            .map(|fact| ScoredFact {
+                fact: fact.clone(),
+                score: Score::unranked(),
+                off_shape: false,
+            })
             .collect();
         hits.sort_by(|left, right| left.fact.name.cmp(&right.fact.name));
         hits
     }
 
-    /// Ranked recall for one instruction: the hybrid score with the
-    /// shape-routing boost, protected facts excluded (they are assembled
-    /// through [`Memory::protected`] — no fact enters a turn twice),
-    /// working-tier facts excluded (they are assembled through
-    /// [`Memory::working`], the same rule one tier over), forgotten
-    /// facts excluded, and everything below [`MIN_RECALL_SCORE`]
-    /// dropped as noise for this instruction. Strongest first, name as
-    /// the deterministic tie-break.
-    pub fn recall(&self, instruction: &str) -> Vec<ScoredFact> {
+    /// One instruction's shape-partitioned ranking: the shape's own
+    /// pool and the off-shape spillover, each strongest first with the
+    /// name as the deterministic tie-break.
+    ///
+    /// The instruction classifies into a shape — or into nothing, in
+    /// which case every fact is primary: the word-ranked pool IS the
+    /// primary pool, the documented degradation. The classification's
+    /// failure must never starve recall; it only fails to reorder it.
+    /// A fact carrying the classified shape is primary — a fact with
+    /// several tags is in the pool when any of them matches, so a fact
+    /// carrying both a structure shape and a failure shape answers
+    /// either axis — and every other fact above the floor is spillover,
+    /// marked as such.
+    pub fn partition(&self, instruction: &str) -> Partition {
         let shape = classify_shape(instruction);
         let query_vector = self.embedder.embed(instruction);
         let query_tokens = tokens(instruction);
         let today = calib::today();
         let today_days = parse_day(&today);
         let facts = lock_facts(&self.facts);
-        let mut hits: Vec<ScoredFact> = facts
-            .iter()
-            .filter(|fact| {
-                !fact.protected()
-                    && fact.tier != Tier::Working
-                    && !fact.forgotten(&today)
-            })
-            .map(|fact| ScoredFact {
-                fact: fact.clone(),
-                score: self.score(fact, &query_vector, &query_tokens, shape, today_days),
-            })
-            .filter(|hit| hit.score.total >= MIN_RECALL_SCORE)
-            .collect();
-        hits.sort_by(|left, right| {
-            right
-                .score
-                .total
-                .total_cmp(&left.score.total)
-                .then_with(|| left.fact.name.cmp(&right.fact.name))
-        });
+        let mut primary: Vec<ScoredFact> = Vec::new();
+        let mut spillover: Vec<ScoredFact> = Vec::new();
+        for fact in facts.iter().filter(|fact| {
+            !fact.protected() && fact.tier != Tier::Working && !fact.forgotten(&today)
+        }) {
+            let score = self.score(fact, &query_vector, &query_tokens, today_days);
+            if score.total < MIN_RECALL_SCORE {
+                continue;
+            }
+            let in_pool = match shape {
+                Some(shape) => fact.carries_shape(shape),
+                None => true,
+            };
+            let hit = ScoredFact { fact: fact.clone(), score, off_shape: !in_pool };
+            if in_pool {
+                primary.push(hit);
+            } else {
+                spillover.push(hit);
+            }
+        }
+        by_rank(&mut primary);
+        by_rank(&mut spillover);
+        Partition { shape, primary, spillover }
+    }
+
+    /// Ranked recall for one instruction: the shape-partitioned
+    /// ranking, flattened — the primary pool first, then the spillover,
+    /// each strongest first with the name as the deterministic
+    /// tie-break. Protected facts excluded (they are assembled
+    /// through [`Memory::protected`] — no fact enters a turn twice),
+    /// working-tier facts excluded (they are assembled through
+    /// [`Memory::working`], the same rule one tier over), forgotten
+    /// facts excluded, and everything below [`MIN_RECALL_SCORE`]
+    /// dropped as noise for this instruction. [`Memory::partition`] is
+    /// the same ranking with the two pools kept apart, which is what
+    /// the assembly and the surface read.
+    pub fn recall(&self, instruction: &str) -> Vec<ScoredFact> {
+        let partition = self.partition(instruction);
+        let mut hits = partition.primary;
+        hits.extend(partition.spillover);
         hits
     }
 
@@ -1387,23 +1761,33 @@ impl Memory {
     }
 
     /// One fact's score against a query. The vector channel needs both
-    /// vectors; the keyword channel needs the tokens; the rest is the
-    /// fact's own.
+    /// vectors; the keyword channel needs the topic text's tokens; the
+    /// trajectory channel needs the recorded phrases; the rest is the
+    /// fact's own. The shape is deliberately not an argument: it
+    /// partitioned the pool upstream, so no term here can reorder
+    /// across it.
     fn score(
         &self,
         fact: &Fact,
         query_vector: &Option<Vec<f32>>,
         query_tokens: &[String],
-        shape: Option<&str>,
         today_days: Option<i64>,
     ) -> Score {
         let vector = match (query_vector, self.vectors.get(&fact.name)) {
             (Some(query), Some(fact_vector)) => cosine(query, fact_vector).max(0.0),
             _ => 0.0,
         };
-        let keyword = keyword_coverage(query_tokens, &tokens(&fact.indexed_text()));
-        let shape_hit = matches!(shape, Some(shape) if fact.carries_shape(shape));
-        Score::compute(vector, keyword, fact.recall_count, &fact.date, today_days, shape_hit)
+        let keyword = keyword_coverage(query_tokens, &tokens(&fact.topic_text()));
+        let trajectory = trajectory_coverage(query_tokens, &fact.phrases);
+        Score::compute(
+            vector,
+            keyword,
+            trajectory,
+            fact.recall_count,
+            fact.basis,
+            &fact.date,
+            today_days,
+        )
     }
 
     /// Add one to the fact's `recall-count`: in memory first (so the
@@ -1424,12 +1808,51 @@ impl Memory {
     }
 }
 
-/// One fact ranked for one instruction: the fact and the score that
-/// ordered it.
+/// One instruction's recall, partitioned by the classified shape: the
+/// shape's own pool first, the off-shape spillover second, each
+/// strongest first. [`Memory::recall`] is this, flattened.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Partition {
+    /// The classified shape, or `None` for the surface-alone fallback —
+    /// in which case every fact above the floor is primary.
+    pub shape: Option<&'static str>,
+    /// The facts carrying the shape, strongest first.
+    pub primary: Vec<ScoredFact>,
+    /// The facts outside the shape, strongest first, each marked
+    /// `off_shape`.
+    pub spillover: Vec<ScoredFact>,
+}
+
+impl Partition {
+    /// The primary pool's best score, or `None` when the pool is empty
+    /// — the value [`SPILLOVER_FLOOR`] is read against.
+    pub fn best(&self) -> Option<f64> {
+        self.primary.first().map(|hit| hit.score.total)
+    }
+}
+
+/// Strongest first, name as the deterministic tie-break — the one
+/// ordering every pool in this module ranks by.
+fn by_rank(hits: &mut [ScoredFact]) {
+    hits.sort_by(|left, right| {
+        right
+            .score
+            .total
+            .total_cmp(&left.score.total)
+            .then_with(|| left.fact.name.cmp(&right.fact.name))
+    });
+}
+
+/// One fact ranked for one instruction: the fact, the score that
+/// ordered it, and which pool it came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoredFact {
     pub fact: Fact,
     pub score: Score,
+    /// True when the fact entered through the spillover rather than the
+    /// shape's own pool — the weaker context the assembly marks
+    /// `off-shape` in its line.
+    pub off_shape: bool,
 }
 
 /// The bounded, frontmatter-preserving field rewrite: the one line the
@@ -1581,20 +2004,32 @@ static REWRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
 pub const ASSEMBLY_TOKEN_BUDGET: usize = 2048;
 
 /// One turn's assembled context: the protected tier (never evicted),
-/// the shape-routed recall that fit the budget, the working memory that
-/// fit after it, and what the budget dropped — named, so the surface
-/// can be honest about it.
+/// the shape-first recall that fit the budget — its primary pool and
+/// its marked spillover — the working memory that fit after it, and
+/// what the budget dropped — named, so the surface can be honest
+/// about it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assembly {
     /// The classified shape, or `None` for the surface-alone fallback.
     pub shape: Option<&'static str>,
-    /// Every fact above the floor, strongest first — the full ranking,
-    /// before the budget applies.
+    /// Every fact above the floor, the primary pool first then the
+    /// spillover, each strongest first — the full ranking, before the
+    /// budget applies.
     pub ranked: Vec<ScoredFact>,
     /// The protected tier, name-sorted.
     pub protected: Vec<ScoredFact>,
-    /// The ranked facts that entered, in rank order.
+    /// The ranked facts that entered, in rank order: the primary pool
+    /// first, then the spillover that a route admitted. This is what
+    /// the turn path records hits for and what the block renders.
     pub recalled: Vec<ScoredFact>,
+    /// The primary-pool facts that entered, in rank order.
+    pub primary: Vec<ScoredFact>,
+    /// The off-shape facts that entered, in rank order — the marked
+    /// half of `recalled`.
+    pub spillover: Vec<ScoredFact>,
+    /// Which of the spillover's three routes admitted them, when any
+    /// entered — the named reason the surface prints.
+    pub spillover_route: Option<String>,
     /// The working memory that entered, in the order given.
     pub working: Vec<Fact>,
     /// Names the budget dropped, ranked facts first.
@@ -1607,7 +2042,7 @@ pub struct Assembly {
 
 impl Memory {
     /// Assemble one turn's context within [`ASSEMBLY_TOKEN_BUDGET`]:
-    /// protected tier first, then shape-routed recall, then the caller's
+    /// protected tier first, then shape-first recall, then the caller's
     /// working memory. `working` is part 2's seam — the write path
     /// fills the session-scoped tier; part 1's callers pass none.
     pub fn assemble(&self, instruction: &str, working: &[Fact]) -> Assembly {
@@ -1626,28 +2061,76 @@ impl Memory {
     /// strongest match rather than an empty block); the rest enter while
     /// they fit, and the ones that do not are named in `dropped`.
     /// Working memory is strictly budget-bounded.
+    ///
+    /// **The spillover's three routes** (slice 19). The primary pool
+    /// always leads — the shape's own answer is what the turn is about.
+    /// The off-shape facts enter only through one of three named
+    /// routes: (a) the primary pool is empty, so they are the answer;
+    /// (b) the pool's best is below [`SPILLOVER_FLOOR`], so the shape
+    /// matched without corroborating itself and the strongest off-shape
+    /// fact enters even under budget pressure, beside the weak pool;
+    /// (c) the budget has room after the pool is in. Every off-shape
+    /// fact that enters is marked `off-shape` in its line. Never
+    /// silently mixed.
     pub fn assemble_within(
         &self,
         instruction: &str,
         working: &[Fact],
         budget: usize,
     ) -> Assembly {
-        let shape = classify_shape(instruction);
+        let partition = self.partition(instruction);
+        let shape = partition.shape;
         let protected = self.protected();
-        let ranked = self.recall(instruction);
+        let ranked = self.ranked_of(&partition);
         let today = calib::today();
+
+        // The three routes, decided once and named for the surface.
+        let spillover_route = if partition.spillover.is_empty() {
+            None
+        } else if partition.primary.is_empty() {
+            Some(spillover_route_empty(shape))
+        } else if partition.best().unwrap_or(0.0) < SPILLOVER_FLOOR {
+            Some(spillover_route_weak(shape, partition.best().unwrap_or(0.0)))
+        } else {
+            Some(spillover_route_room(shape))
+        };
 
         let mut used = 0;
         for hit in &protected {
             used += estimate_tokens(protected_line(hit).chars().count());
         }
         let mut recalled: Vec<ScoredFact> = Vec::new();
+        let mut primary: Vec<ScoredFact> = Vec::new();
+        let mut spillover: Vec<ScoredFact> = Vec::new();
         let mut dropped: Vec<String> = Vec::new();
-        for (index, hit) in ranked.iter().enumerate() {
+        // The primary pool first: the shape's own answer leads whatever
+        // the words say, and its strongest fact always enters.
+        for (index, hit) in partition.primary.iter().enumerate() {
             let cost = estimate_tokens(recalled_line(hit).chars().count());
             if index == 0 || used + cost <= budget {
                 used += cost;
                 recalled.push(hit.clone());
+                primary.push(hit.clone());
+            } else {
+                dropped.push(hit.fact.name.clone());
+            }
+        }
+        // Then the spillover, by the route that admitted it. Routes (a)
+        // and (b) put the off-shape facts in the running from the start,
+        // and their strongest fact still enters under budget pressure —
+        // the fork's `renderBlock` rule applied to the marked half,
+        // because a weak shape answer plus one marked weaker fact beats
+        // a weak shape answer alone. Route (c) admits them only while
+        // the budget has room after the pool is in.
+        let weak_pool =
+            partition.primary.is_empty() || partition.best().unwrap_or(0.0) < SPILLOVER_FLOOR;
+        for (index, hit) in partition.spillover.iter().enumerate() {
+            let cost = estimate_tokens(recalled_line(hit).chars().count());
+            let guaranteed = weak_pool && index == 0;
+            if guaranteed || used + cost <= budget {
+                used += cost;
+                recalled.push(hit.clone());
+                spillover.push(hit.clone());
             } else {
                 dropped.push(hit.fact.name.clone());
             }
@@ -1670,11 +2153,52 @@ impl Memory {
             ranked,
             protected,
             recalled,
+            primary,
+            spillover,
+            spillover_route,
             working: kept_working,
             dropped,
             used,
             budget,
         }
+    }
+
+    /// The partition flattened: primary pool first, then the spillover,
+    /// each strongest first — the full ranking the surface cards.
+    fn ranked_of(&self, partition: &Partition) -> Vec<ScoredFact> {
+        let mut ranked = partition.primary.clone();
+        ranked.extend(partition.spillover.iter().cloned());
+        ranked
+    }
+}
+
+/// Route (a)'s named reason: the shape's own pool is empty, so the
+/// off-shape facts are the answer.
+fn spillover_route_empty(shape: Option<&str>) -> String {
+    match shape {
+        Some(shape) => {
+            format!("no fact carries `{shape}`, so the off-shape facts are the answer")
+        }
+        None => "the word-ranked pool is the primary pool".to_string(),
+    }
+}
+
+/// Route (b)'s named reason: the pool's best is below the floor, so
+/// the shape matched without corroborating itself.
+fn spillover_route_weak(shape: Option<&str>, best: f64) -> String {
+    match shape {
+        Some(shape) => format!(
+            "the `{shape}` pool's best ({best:.2}) is below the SPILLOVER_FLOOR ({SPILLOVER_FLOOR:.2})"
+        ),
+        None => "the word-ranked pool is the primary pool".to_string(),
+    }
+}
+
+/// Route (c)'s named reason: the budget had room after the pool was in.
+fn spillover_route_room(shape: Option<&str>) -> String {
+    match shape {
+        Some(shape) => format!("the budget had room after the `{shape}` pool was in"),
+        None => "the word-ranked pool is the primary pool".to_string(),
     }
 }
 
@@ -1694,16 +2218,36 @@ fn protected_line(hit: &ScoredFact) -> String {
     )
 }
 
-/// One recalled fact as the assembled context carries it: its first
-/// shape tag, the score it ranked at, and its basis.
+/// One recalled fact as the assembled context carries it: its sign, the
+/// shape tag the line names, the score it ranked at, its basis — and,
+/// for an off-shape fact, the `off-shape` marker. The sign comes first
+/// so the model can never read an anti-vector as a candidate solution: a
+/// `diverged:` line is what drove AWAY from this problem, not a
+/// proposal to adopt.
 fn recalled_line(hit: &ScoredFact) -> String {
-    let tag = hit.fact.shape.first().map(String::as_str).unwrap_or("\u{b7}");
+    let tag = line_tag(&hit.fact);
+    let marker = if hit.off_shape { " off-shape" } else { "" };
     format!(
-        "- [{tag} {:.2} {}] {}",
+        "- {} [{tag} {:.2} {}{}] {}",
+        hit.fact.sign().marker(),
         hit.score.total,
         hit.fact.basis.label(),
+        marker,
         hit.fact.description
     )
+}
+
+/// The tag one assembled line carries: the fact's first shape tag, or —
+/// for an anti-vector — its failure-shape tag, because the class of
+/// thing that broke is what the line has to name. A fact with no tags
+/// rides the middle dot.
+fn line_tag(fact: &Fact) -> &str {
+    fact.shape
+        .iter()
+        .find(|tag| is_failure_shape(tag))
+        .or_else(|| fact.shape.first())
+        .map(String::as_str)
+        .unwrap_or("\u{b7}")
 }
 
 /// One working-memory fact as the assembled context carries it.
@@ -1711,10 +2255,17 @@ fn working_line(fact: &Fact) -> String {
     format!("- [working {}] {}", fact.basis.label(), fact.description)
 }
 
+/// The legend the recall section carries when it holds an anti-vector:
+/// the two signs, named, so a `diverged:` line is never read as a
+/// candidate.
+const SIGN_LEGEND: &str =
+    "resolved: drove toward the answer \u{b7} diverged: drove away \u{2014} an anti-vector to avoid, not a candidate\n";
+
 /// Render an assembly as the block that enters a turn's context: the
 /// protected tier first, then the recall section — named for its shape,
-/// or named as the surface-alone fallback when nothing classified —
-/// then the working tier. Sections with nothing in them render nothing.
+/// its axis, or named as the surface-alone fallback when nothing
+/// classified — then the working tier. Sections with nothing in them
+/// render nothing.
 pub fn render_assembly(assembly: &Assembly) -> String {
     let mut out = String::new();
     if !assembly.protected.is_empty() {
@@ -1728,12 +2279,18 @@ pub fn render_assembly(assembly: &Assembly) -> String {
     }
     if !assembly.recalled.is_empty() {
         match assembly.shape {
+            Some(shape) if is_failure_shape(shape) => out.push_str(&format!(
+                "Relevant memory (failure-shape recall for `{shape}` \u{2014} what broke before, and what resolved it \u{2014} propose only, verify before relying):\n"
+            )),
             Some(shape) => out.push_str(&format!(
                 "Relevant memory (shape-routed recall for `{shape}` \u{2014} propose only, verify before relying):\n"
             )),
             None => out.push_str(
                 "Relevant memory (surface recall \u{2014} no shape matched, the documented fallback \u{2014} propose only, verify before relying):\n",
             ),
+        }
+        if assembly.recalled.iter().any(|hit| hit.fact.sign() == Sign::Divergence) {
+            out.push_str(SIGN_LEGEND);
         }
         for hit in &assembly.recalled {
             out.push_str(&recalled_line(hit));
@@ -1776,8 +2333,20 @@ pub const MAX_NAME_CHARS: usize = 64;
 pub const MAX_TYPE_CHARS: usize = 32;
 
 /// How many shape tags the writer emits — part 1's reader reads
-/// whatever the file carries; the cap is the writer's rule.
+/// whatever the file carries; the cap is the writer's rule. The cap is
+/// across BOTH axes: a fact may carry structure shapes and failure
+/// shapes, and the total is what the frontmatter line and the
+/// partition's matching stay readable at.
 pub const MAX_SHAPE_TAGS: usize = 3;
+
+/// How many resolution phrases the writer emits. The phrases are the
+/// fact's direction — the vocabulary that drove — and a direction is a
+/// handful of phrases, not a transcript.
+pub const MAX_PHRASES: usize = 6;
+
+/// One phrase's bound: it rides the indexed text and the trajectory
+/// channel, so it is bounded like the description.
+pub const MAX_PHRASE_CHARS: usize = 160;
 
 /// The justification's bound: it rides the calibration row and the
 /// replacement fact's body, so it is bounded like the description.
@@ -1802,6 +2371,8 @@ pub enum WriteError {
     Type(String),
     /// A shape tag is outside the taxonomy, or there are too many.
     Shape(String),
+    /// Too many phrases, or a phrase list that is not strings.
+    Phrases(String),
     /// The basis is missing or outside the vocabulary.
     Basis(String),
     /// The tier is outside the three speeds — `episodic` included,
@@ -1842,6 +2413,7 @@ impl std::fmt::Display for WriteError {
             WriteError::Description(reason) => write!(f, "{reason}"),
             WriteError::Type(reason) => write!(f, "{reason}"),
             WriteError::Shape(reason) => write!(f, "{reason}"),
+            WriteError::Phrases(reason) => write!(f, "{reason}"),
             WriteError::Basis(reason) => write!(f, "{reason}"),
             WriteError::Tier(reason) => write!(f, "{reason}"),
             WriteError::ValidUntil(reason) => write!(f, "{reason}"),
@@ -1894,12 +2466,18 @@ fn valid_name(name: &str) -> bool {
 /// speaks, mechanism over prose. `basis` is required on every write and
 /// `valid-until` on every working-tier one, because those two rules are
 /// what make the corpus's provenance and lifecycle mean something.
+/// `phrases` is the slice-19 addition: the vocabulary the resolution
+/// drove with — and, for a failure, the vocabulary of the trajectory
+/// that was tried and diverged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remember {
     pub name: String,
     pub description: String,
     pub fact_type: String,
     pub shape: Vec<String>,
+    /// The resolution's phrases: the trajectory's own vocabulary. Empty
+    /// for a fact with no recorded direction.
+    pub phrases: Vec<String>,
     pub basis: Basis,
     pub tier: Tier,
     /// ISO date after which the fact is stale; empty for a durable
@@ -1938,6 +2516,7 @@ impl Remember {
             ));
         }
         let shape = parse_shape(&string_argument(arguments, "shape")?)?;
+        let phrases = parse_phrases(&string_array_argument(arguments, "phrases")?)?;
         let basis = match string_argument(arguments, "basis")? {
             Some(text) => Basis::parse(&text.to_ascii_lowercase()).ok_or_else(|| {
                 WriteError::Basis(format!(
@@ -1993,7 +2572,17 @@ impl Remember {
                 body.len()
             )));
         }
-        Ok(Remember { name, description, fact_type, shape, basis, tier, valid_until, body })
+        Ok(Remember {
+            name,
+            description,
+            fact_type,
+            shape,
+            phrases,
+            basis,
+            tier,
+            valid_until,
+            body,
+        })
     }
 }
 
@@ -2012,10 +2601,38 @@ fn string_argument(
     }
 }
 
+/// One array-of-strings argument read off the arguments object: `None`
+/// when the key is absent or null, and a typed error when the key is
+/// present but is not an array of strings. The phrases ride an array
+/// rather than a comma-separated scalar because a phrase legitimately
+/// contains commas ("read CLAUDE.local.md directly, never grep").
+fn string_array_argument(
+    arguments: &serde_json::Value,
+    key: &str,
+) -> Result<Option<Vec<String>>, WriteError> {
+    match arguments.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|item| match item {
+                serde_json::Value::String(text) => Ok(text.clone()),
+                _ => Err(WriteError::Name(format!(
+                    "every `{key}` entry must be a string"
+                ))),
+            })
+            .collect::<Result<Vec<String>, WriteError>>()
+            .map(Some),
+        Some(_) => Err(WriteError::Name(format!("the `{key}` argument must be an array of strings"))),
+    }
+}
+
 /// Parse the comma-separated shape list: each tag lowercased and
-/// checked against the Wave-D taxonomy, duplicates dropped, the count
-/// capped. A tag outside the taxonomy is refused with the taxonomy
-/// named — a typo'd tag is dead weight in the routing boost.
+/// checked against the two axes' taxonomy — the fork's structure shapes
+/// and Fleet's failure shapes — duplicates dropped, the count capped
+/// across both. A tag outside the taxonomy is refused with the
+/// taxonomy named — a typo'd tag is dead weight in the partition, and a
+/// typo'd failure tag would silently make an anti-vector read as a
+/// resolution.
 fn parse_shape(value: &Option<String>) -> Result<Vec<String>, WriteError> {
     let Some(value) = value else { return Ok(Vec::new()) };
     let mut tags: Vec<String> = Vec::new();
@@ -2024,10 +2641,11 @@ fn parse_shape(value: &Option<String>) -> Result<Vec<String>, WriteError> {
         if tag.is_empty() {
             continue;
         }
-        if !SHAPES.contains(&tag.as_str()) {
+        if !SHAPES.contains(&tag.as_str()) && !is_failure_shape(&tag) {
             return Err(WriteError::Shape(format!(
-                "`{tag}` is not a structure shape; the shapes are {}",
-                SHAPES.join(", ")
+                "`{tag}` is not a shape; the structure shapes are {} and the failure shapes are {}",
+                SHAPES.join(", "),
+                FAILURE_SHAPES.join(", ")
             )));
         }
         if !tags.iter().any(|seen| seen == &tag) {
@@ -2043,12 +2661,37 @@ fn parse_shape(value: &Option<String>) -> Result<Vec<String>, WriteError> {
     Ok(tags)
 }
 
+/// Parse the resolution's phrases: each sanitized and bounded, empties
+/// dropped, duplicates dropped, the count capped. A phrase is the
+/// vocabulary that drove, so it is kept as written — control characters
+/// stripped and the length bounded the way the description is, and
+/// nothing else.
+fn parse_phrases(value: &Option<Vec<String>>) -> Result<Vec<String>, WriteError> {
+    let Some(value) = value else { return Ok(Vec::new()) };
+    let mut phrases: Vec<String> = Vec::new();
+    for phrase in value {
+        let phrase = sanitize_line(phrase, MAX_PHRASE_CHARS);
+        if phrase.is_empty() || phrases.iter().any(|seen| seen == &phrase) {
+            continue;
+        }
+        phrases.push(phrase);
+    }
+    if phrases.len() > MAX_PHRASES {
+        return Err(WriteError::Phrases(format!(
+            "{} phrases is past the {MAX_PHRASES}-phrase bound",
+            phrases.len()
+        )));
+    }
+    Ok(phrases)
+}
+
 /// Render one fact in the fork's field order: `name`, `description`,
-/// `type`, `date`, `basis`, `tier`, `shape`, `recall-count`,
-/// `superseded-by`, `valid-until` — the order part 1's reader reads
-/// back, with `tier` beside `basis`. An unset optional field renders
-/// bare, the fork writer's own "unset" rendering, which the parser
-/// accepts.
+/// `type`, `date`, `basis`, `tier`, `shape`, `phrases`,
+/// `recall-count`, `superseded-by`, `valid-until` — the order part 1's
+/// reader reads back, with `tier` beside `basis` and the slice-19
+/// `phrases` field beside its sibling `shape`. An unset optional field
+/// renders bare, the fork writer's own "unset" rendering, which the
+/// parser accepts.
 fn render_document(request: &Remember, today: &str) -> String {
     let mut out = String::from("---\n");
     out.push_str(&format!("name: {}\n", request.name));
@@ -2061,6 +2704,11 @@ fn render_document(request: &Remember, today: &str) -> String {
         out.push_str("shape: []\n");
     } else {
         out.push_str(&format!("shape: [{}]\n", request.shape.join(", ")));
+    }
+    if request.phrases.is_empty() {
+        out.push_str("phrases: []\n");
+    } else {
+        out.push_str(&format!("phrases: [{}]\n", request.phrases.join(", ")));
     }
     out.push_str("recall-count: 0\n");
     out.push_str("superseded-by:\n");
@@ -2141,6 +2789,7 @@ impl Memory {
             basis: request.basis,
             tier: request.tier,
             shape: request.shape.clone(),
+            phrases: request.phrases.clone(),
             recall_count: 0,
             superseded_by: String::new(),
             valid_until: request.valid_until.clone(),
@@ -2342,6 +2991,12 @@ impl Memory {
                         Some(text) => parse_shape(&Some(text.clone()))?,
                         None => fact.shape.clone(),
                     },
+                    // A modify keeps the direction the superseded fact
+                    // recorded: the vocabulary that worked does not
+                    // change because the fact's sentence did. A
+                    // supersession that needs a new direction writes a
+                    // new fact rather than editing this one's.
+                    phrases: fact.phrases.clone(),
                     // A supersession is a proposal: the replacement is
                     // inferred until someone confirms it.
                     basis: Basis::Inferred,
@@ -2703,6 +3358,7 @@ fn write_summary(root: &Path, today: &str, compressed: &[Fact], superseded: &[Fa
         ),
         fact_type: "episodic".to_string(),
         shape: Vec::new(),
+        phrases: Vec::new(),
         basis: Basis::Inferred,
         tier: Tier::Episodic,
         valid_until: String::new(),
@@ -2823,10 +3479,14 @@ mod palette {
     pub const DIM: &str = "\u{1b}[90m";
     pub const TEXT: &str = "\u{1b}[37m";
     pub const BOLD: &str = "\u{1b}[1m";
+    /// The divergence's color: an anti-vector is a caution, not a
+    /// candidate — the surface renders it in a different color so the
+    /// two signs read apart at a glance.
+    pub const WARN: &str = "\u{1b}[33m";
     pub const RESET: &str = "\u{1b}[0m";
 }
 
-use palette::{ACCENT, BOLD, DIM, RESET, TEXT};
+use palette::{ACCENT, BOLD, DIM, RESET, TEXT, WARN};
 
 /// The card width, matching `skills`, `calib`, `lanes`, and `providers`.
 const CARD_WIDTH: usize = 72;
@@ -2868,8 +3528,9 @@ pub fn render(memory: &Memory, shape: Option<&str>) -> String {
     if shown.is_empty() {
         if let Some(shape) = shape {
             out.push_str(&format!(
-                "{DIM}no facts carry shape `{shape}` \u{b7} the structure shapes are {}{RESET}\n",
-                SHAPES.join(", ")
+                "{DIM}no facts carry shape `{shape}` \u{b7} the structure shapes are {} and the failure shapes are {}{RESET}\n",
+                SHAPES.join(", "),
+                FAILURE_SHAPES.join(", ")
             ));
         } else {
             out.push_str(&format!(
@@ -2906,6 +3567,15 @@ fn render_card(fact: &Fact) -> String {
     for chunk in wrap_detail(&fact.description, CARD_WIDTH - 4) {
         lines.push(format!("{DIM}\u{2502}{RESET} {TEXT}{chunk}{RESET}"));
     }
+    // The recorded phrases — the fact's direction — ride the card when
+    // the fact carries them, so the surface shows what drove, not only
+    // what the fact is about.
+    if !fact.phrases.is_empty() {
+        let phrases = fact.phrases.join(" \u{b7} ");
+        for chunk in wrap_detail(&format!("drove: {phrases}"), CARD_WIDTH - 4) {
+            lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{chunk}{RESET}"));
+        }
+    }
     let shape = if fact.shape.is_empty() {
         "\u{2014}".to_string()
     } else {
@@ -2933,11 +3603,14 @@ fn render_card(fact: &Fact) -> String {
     card
 }
 
-/// Render the ranked assembly for one instruction: every fact above the
-/// floor with its score and the channels that produced it, then the
-/// block that would enter a turn's context, then what the budget
-/// dropped. A dry run — printing changes no recall-count and records no
-/// row; the turn path (part 2) records the hits.
+/// Render the ranked assembly for one instruction: the partition — the
+/// shape's own pool, then the off-shape spillover marked and named for
+/// the route that admitted it — each fact's card naming the evidence
+/// that ranked it (the channels, the trajectory, the hit history, the
+/// basis, the sign), then the block that would enter a turn's context,
+/// then what the budget dropped. A dry run — printing changes no
+/// recall-count and records no row; the turn path (part 2) records the
+/// hits.
 pub fn render_recall(memory: &Memory, instruction: &str) -> String {
     let assembly = memory.assemble(instruction, &[]);
     let mut out = String::new();
@@ -2945,11 +3618,13 @@ pub fn render_recall(memory: &Memory, instruction: &str) -> String {
         "{BOLD}fleet memories --recall{RESET} {DIM}\u{2014} \"{instruction}\"{RESET}\n"
     ));
     let shape_line = match assembly.shape {
-        Some(shape) => format!("shape: {shape}"),
+        Some(shape) => format!("shape: {shape} ({}-shape)", shape_axis(shape)),
         None => "shape: none \u{2014} surface recall (the documented fallback)".to_string(),
     };
+    let primary = assembly.ranked.iter().filter(|hit| !hit.off_shape).count();
+    let off = assembly.ranked.len() - primary;
     out.push_str(&format!(
-        "{DIM}{shape_line} \u{b7} backend: {} \u{b7} {} fact{} ranked \u{b7} {} fit the {}-token budget{RESET}\n\n",
+        "{DIM}{shape_line} \u{b7} backend: {} \u{b7} {} fact{} ranked \u{b7} {primary} in the pool \u{b7} {off} off-shape \u{b7} {} fit the {}-token budget{RESET}\n\n",
         memory.backend_label(),
         assembly.ranked.len(),
         plural(assembly.ranked.len()),
@@ -2974,8 +3649,33 @@ pub fn render_recall(memory: &Memory, instruction: &str) -> String {
         ));
         return out;
     }
-    for hit in &assembly.ranked {
+    // The partition, sectioned: the shape's own pool first — whatever
+    // the words say, the shape's answer leads — then the spillover,
+    // marked and named for the route that admitted it.
+    let pool_name = match assembly.shape {
+        Some(shape) => format!("the `{shape}` pool"),
+        None => "the word-ranked pool (no shape matched)".to_string(),
+    };
+    out.push_str(&format!(
+        "{DIM}\u{b7} {pool_name} \u{b7} {primary} fact{} \u{b7} resolved: drove toward the minima \u{b7} diverged: drove away{RESET}\n",
+        plural(primary)
+    ));
+    for hit in assembly.ranked.iter().filter(|hit| !hit.off_shape) {
         out.push_str(&render_recall_card(hit));
+    }
+    if !assembly.spillover.is_empty() {
+        let route = assembly
+            .spillover_route
+            .clone()
+            .unwrap_or_else(|| "an off-shape route admitted them".to_string());
+        out.push_str(&format!(
+            "{DIM}\u{b7} off-shape \u{b7} {} fact{} outside the pool \u{b7} admitted because {route}{RESET}\n",
+            assembly.spillover.len(),
+            plural(assembly.spillover.len()),
+        ));
+        for hit in &assembly.spillover {
+            out.push_str(&render_recall_card(hit));
+        }
     }
     let block = render_assembly(&assembly);
     if block.is_empty() {
@@ -3000,28 +3700,50 @@ pub fn render_recall(memory: &Memory, instruction: &str) -> String {
     out
 }
 
-/// One ranked fact's card: the name with its score, then the channels
-/// that produced the score — the "why" — then the fact.
+/// One ranked fact's card: the name with its score and its sign, then
+/// the channels that produced the score — the "why", each dimension
+/// named so the operator sees what the fact's evidence IS — then the
+/// fact. An anti-vector's sign renders in the divergence's color, and
+/// an off-shape fact says so.
 fn render_recall_card(hit: &ScoredFact) -> String {
-    let header_right = format!("{:.2}", hit.score.total);
+    let sign = hit.fact.sign();
+    // The two signs are visually distinct: a divergence renders in the
+    // caution color, a resolution in the plain text color.
+    let score_color = match sign {
+        Sign::Resolution => TEXT,
+        Sign::Divergence => WARN,
+    };
+    let off = if hit.off_shape { " off-shape" } else { "" };
+    let header_right = format!("{:.2} {}{off}", hit.score.total, sign.marker());
     let header = format!(
-        "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{name}{RESET} {DIM}{dashes} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}",
+        "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{name}{RESET} {DIM}{dashes} {score_color}{right}{RESET} {DIM}\u{2510}{RESET}",
         name = hit.fact.name,
         dashes = dashes_for(&format!(" {} ", hit.fact.name), &header_right),
         right = header_right,
     );
     let mut lines: Vec<String> = Vec::new();
-    // The channels render as two fixed lines rather than one wrapped
-    // one: the wrap point would fall mid-phrase ("shape" ending a line,
-    // "+0.15" opening the next), and the "why" must read as one fact.
+    // The channels render as fixed lines rather than one wrapped one:
+    // the wrap point would fall mid-phrase and the "why" must read as
+    // one fact. The topical pair, then the trajectory — the fact's
+    // direction — then the magnitude and the pool it came from.
     lines.push(format!(
-        "{DIM}\u{2502}{RESET} {DIM}vector {:.2} \u{b7} keyword {:.2} \u{b7} importance {:.2}{RESET}",
-        hit.score.vector, hit.score.keyword, hit.score.importance
+        "{DIM}\u{2502}{RESET} {DIM}vector {:.2} \u{b7} keyword {:.2} \u{b7} trajectory {:.2}{RESET}",
+        hit.score.vector, hit.score.keyword, hit.score.trajectory
     ));
-    let mut standing = format!("decay {:.2}", hit.score.decay);
-    if hit.score.shape_boost > 0.0 {
-        standing.push_str(&format!(" \u{b7} shape +{:.2}", hit.score.shape_boost));
-    }
+    let shape = if hit.fact.shape.is_empty() {
+        "\u{2014}".to_string()
+    } else {
+        hit.fact.shape.join(", ")
+    };
+    let standing = format!(
+        "shape: {shape} \u{b7} history {} \u{b7} freshness {:.2} \u{b7} provenance {}",
+        hit.fact.recall_count, hit.score.freshness, hit.fact.basis.label()
+    );
+    let standing = if sign == Sign::Divergence {
+        format!("{WARN}{standing}{RESET}")
+    } else {
+        standing
+    };
     lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{standing}{RESET}"));
     for chunk in wrap_detail(&hit.fact.description, CARD_WIDTH - 4) {
         lines.push(format!("{DIM}\u{2502}{RESET} {TEXT}{chunk}{RESET}"));
@@ -3225,8 +3947,38 @@ mod tests {
         )
     }
 
+    /// A well-formed fact with a recall history — the history channel's
+    /// input, the magnitude the ranking reads.
+    fn recalled_fact(name: &str, description: &str, shape: &str, recalls: u64) -> String {
+        format!(
+            "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {today}\nbasis: confirmed-by\nshape: [{shape}]\nrecall-count: {recalls}\nsuperseded-by:\nvalid-until:\n---\n\nThe full content of {name}.\n",
+            today = calib::today()
+        )
+    }
+
+    /// A fact carrying the resolution's phrases — the trajectory
+    /// channel's own text — and its recall history, in the writer's
+    /// field order.
+    fn trajectory_fact(
+        name: &str,
+        description: &str,
+        shape: &str,
+        phrases: &[&str],
+        recalls: u64,
+    ) -> String {
+        format!(
+            "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {today}\nbasis: confirmed-by\nshape: [{shape}]\nphrases: [{}]\nrecall-count: {recalls}\nsuperseded-by:\nvalid-until:\n---\n\nThe full content of {name}.\n",
+            phrases.join(", "),
+            today = calib::today()
+        )
+    }
+
     fn fact_names(facts: &[Fact]) -> Vec<&str> {
         facts.iter().map(|fact| fact.name.as_str()).collect()
+    }
+
+    fn hit_names(hits: &[ScoredFact]) -> Vec<&str> {
+        hits.iter().map(|hit| hit.fact.name.as_str()).collect()
     }
 
     /// A deterministic embedder over a fixed scripted vocabulary: each
@@ -3323,6 +4075,23 @@ mod tests {
         );
         // A bare shape scalar reads as no tags, the fork reader's rule.
         assert!(shape_tags(Some("deploy")).is_empty());
+        // The phrases field reads as a bracketed list too, but
+        // case-preserving: they are the vocabulary that worked, quoted
+        // as it was used.
+        let phrased = parse_document(
+            "---\nname: demo\ndescription: d\nphrases: [Read CLAUDE.local.md directly, never grep-extract credentials]\n---\nbody\n",
+        )
+        .unwrap();
+        assert_eq!(
+            phrase_list(phrased.get("phrases")),
+            vec![
+                "Read CLAUDE.local.md directly".to_string(),
+                "never grep-extract credentials".to_string()
+            ]
+        );
+        // A bare scalar reads as no phrases, the shape field's own rule.
+        assert!(phrase_list(Some("read the docs")).is_empty());
+        assert!(phrase_list(None).is_empty());
     }
 
     #[test]
@@ -3476,7 +4245,7 @@ mod tests {
     fn order_corpus(root: &Path) {
         write_fact(root, "alpha", &good_fact("alpha", "railway deploy per branch", "project", ""));
         write_fact(root, "zeta", &good_fact("zeta", "deploy railway", "project", ""));
-        write_fact(root, "eta", &good_fact("eta", "the railway is failing", "project", ""));
+        write_fact(root, "eta", &good_fact("eta", "railway is failing", "project", ""));
         write_fact(root, "junk", &good_fact("junk", "the walnut table texture", "project", ""));
     }
 
@@ -3485,9 +4254,9 @@ mod tests {
         let root = scratch("order");
         order_corpus(&root);
 
-        // Vector-off: the keyword channel decides. `eta` covers four of
-        // the five query tokens against `alpha`/`zeta`'s two; `junk`
-        // covers one and lands under the floor.
+        // Vector-off: the keyword sub-channel decides. `eta` covers
+        // three of the five query tokens against `alpha`/`zeta`'s two;
+        // `junk` covers one — a stopword — and lands under the floor.
         let keyword_only = Memory::load_with(&root, Box::new(KeywordOnly));
         let off: Vec<String> = keyword_only
             .recall("the railway deploy is failing")
@@ -3503,6 +4272,8 @@ mod tests {
             .collect();
         assert_eq!(off, again);
         // The floor dropped the junk: an unrelated fact never enters.
+        // Its whole score is freshness (0.10) plus provenance (0.05)
+        // plus one stopword's overlap (0.04) — 0.19, under the floor.
         assert!(!off.contains(&"junk".to_string()));
 
         // Vector-on: the same corpus, the same query, a different order.
@@ -3519,7 +4290,9 @@ mod tests {
             .map(|hit| hit.fact.name)
             .collect();
         assert_eq!(on, vec!["alpha".to_string(), "zeta".to_string(), "eta".to_string()]);
-        // The vector channel is what moved the order.
+        // The vector sub-channel is what moved the order, and the two
+        // topical sub-channels are the only thing that separates these
+        // three — no trajectory, no history, one basis.
         let hits = vector_on.recall("the railway deploy is failing");
         assert!((hits[0].score.vector - 1.0).abs() < 1e-9, "{:?}", hits[0].score);
         let eta = hits.iter().find(|hit| hit.fact.name == "eta").expect("eta ranks");
@@ -3528,30 +4301,131 @@ mod tests {
     }
 
     #[test]
-    fn the_named_weights_compose_the_score_and_the_floor_drops_noise() {
+    fn the_named_weights_compose_the_score_and_no_channel_dominates() {
         let today = parse_day(&calib::today());
-        // A fact dated today with the ceiling's recalls: importance
-        // saturates, decay is fresh.
-        let score = Score::compute(0.8, 0.5, RECALL_CEILING, &calib::today(), today, false);
-        let expected =
-            W_VECTOR * 0.8 + W_KEYWORD * 0.5 + W_IMPORTANCE * 1.0 + W_DECAY * 1.0;
+        // A fact dated today with the ceiling's recalls: history
+        // saturates, freshness is fresh.
+        let score = Score::compute(
+            0.8,
+            0.5,
+            0.5,
+            RECALL_CEILING,
+            Basis::ConfirmedBy,
+            &calib::today(),
+            today,
+        );
+        let expected = W_VECTOR * 0.8
+            + W_KEYWORD * 0.5
+            + W_TRAJECTORY * 0.5
+            + W_HISTORY * 1.0
+            + W_FRESHNESS * 1.0
+            + W_PROVENANCE * PROVENANCE_CONFIRMED;
         assert!((score.total - expected).abs() < 1e-12, "{score:?}");
-        // The shape boost rides beside the four channels, not inside them.
-        let boosted = Score::compute(0.8, 0.5, RECALL_CEILING, &calib::today(), today, true);
-        assert!((boosted.total - expected - SHAPE_BOOST).abs() < 1e-12, "{boosted:?}");
-        // Importance saturates: eight recalls and eighty score the same.
-        let saturated = Score::compute(0.0, 0.0, 80, &calib::today(), today, false);
-        let at_ceiling = Score::compute(0.0, 0.0, RECALL_CEILING, &calib::today(), today, false);
-        assert_eq!(saturated.importance, at_ceiling.importance);
-        // A fact with no readable date contributes no decay term.
-        assert_eq!(Score::compute(0.0, 0.0, 0, "not-a-date", today, false).decay, 0.0);
-        // Decay halves at the half-life.
-        let decayed = Score::compute(0.0, 0.0, 0, &days_ago(90), today, false);
-        assert!((decayed.decay - 0.5).abs() < 1e-9, "{decayed:?}");
-        // The floor: a fresh fact with no coverage and no vector clears
-        // nothing, and one with full coverage does.
-        assert!(Score::compute(0.0, 0.0, 0, &calib::today(), today, false).total < MIN_RECALL_SCORE);
-        assert!(Score::compute(0.0, 1.0, 0, &calib::today(), today, false).total >= MIN_RECALL_SCORE);
+        // No single channel dominates: the weights sum to one and the
+        // largest single one is a minority of the composite, so a fact
+        // that is strong in one dimension and empty in the rest cannot
+        // outrank a fact that is moderate in several. That is the
+        // owner's rule — a per-dimension minimum is meaningless in a
+        // multidimensional context.
+        let weights = [
+            W_VECTOR,
+            W_KEYWORD,
+            W_TRAJECTORY,
+            W_HISTORY,
+            W_FRESHNESS,
+            W_PROVENANCE,
+        ];
+        let sum: f64 = weights.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-12, "{weights:?}");
+        assert!(
+            weights.iter().all(|weight| *weight < 0.5),
+            "no channel may carry half the composite: {weights:?}"
+        );
+        // The topical pair — the neighborhood — is less than the rest
+        // of the evidence put together, so talking about the
+        // neighborhood cannot outrank driving toward the minima.
+        let topical = W_VECTOR + W_KEYWORD;
+        assert!(topical < 1.0 - topical, "the topical pair is {topical}");
+        // History saturates: eight recalls and eighty score the same.
+        let saturated = Score::compute(
+            0.0,
+            0.0,
+            0.0,
+            80,
+            Basis::Inferred,
+            &calib::today(),
+            today,
+        );
+        let at_ceiling = Score::compute(
+            0.0,
+            0.0,
+            0.0,
+            RECALL_CEILING,
+            Basis::Inferred,
+            &calib::today(),
+            today,
+        );
+        assert_eq!(saturated.history, at_ceiling.history);
+        // A confirmed-by vector outweighs an inferred one, and neither
+        // is erased: provenance is magnitude, not a gate.
+        let confirmed = Score::compute(
+            0.0,
+            0.0,
+            0.0,
+            0,
+            Basis::ConfirmedBy,
+            &calib::today(),
+            today,
+        );
+        let inferred = Score::compute(
+            0.0,
+            0.0,
+            0.0,
+            0,
+            Basis::Inferred,
+            &calib::today(),
+            today,
+        );
+        assert!(confirmed.provenance > inferred.provenance);
+        assert!(inferred.provenance > 0.0);
+        // A fact with no readable date contributes no freshness term.
+        assert_eq!(
+            Score::compute(0.0, 0.0, 0.0, 0, Basis::Inferred, "not-a-date", today).freshness,
+            0.0
+        );
+        // Freshness halves at the half-life.
+        let decayed = Score::compute(
+            0.0,
+            0.0,
+            0.0,
+            0,
+            Basis::Inferred,
+            &days_ago(90),
+            today,
+        );
+        assert!((decayed.freshness - 0.5).abs() < 1e-9, "{decayed:?}");
+        // The floor's arithmetic, exact: standing alone (freshness plus
+        // provenance, no match at all) does not clear it, and a
+        // quarter-strength match in ANY single channel does — exactly
+        // at the floor for the 0.20-weight channels, above it for the
+        // heavier trajectory channel.
+        let standing = W_FRESHNESS * 1.0 + W_PROVENANCE * PROVENANCE_CONFIRMED;
+        assert!(standing < MIN_RECALL_SCORE, "{standing}");
+        for weight in [W_VECTOR, W_KEYWORD, W_HISTORY] {
+            let one_quarter = weight * 0.25 + standing;
+            assert!(
+                (one_quarter - MIN_RECALL_SCORE).abs() < 1e-12,
+                "{weight}: a quarter-strength match plus standing is {one_quarter}"
+            );
+        }
+        assert!(
+            W_TRAJECTORY * 0.25 + standing > MIN_RECALL_SCORE,
+            "a quarter-strength trajectory match plus standing clears the floor"
+        );
+        // Full topical coverage alone, with nothing else, is under the
+        // spillover floor: the neighborhood is not an answer.
+        let topical_only = W_KEYWORD * 1.0 + W_FRESHNESS * 1.0 + W_PROVENANCE * PROVENANCE_CONFIRMED;
+        assert!(topical_only < SPILLOVER_FLOOR, "{topical_only}");
     }
 
     // --- shape routing ---
@@ -3575,8 +4449,56 @@ mod tests {
         // earlier shape in the taxonomy wins.
         assert_eq!(classify_shape("the build release"), Some("deploy"));
         // An unclassifiable instruction is the documented fallback, not
-        // an error: no shape, no boost, the surface alone answers.
+        // an error: no shape, no partition, the surface alone answers.
         assert_eq!(classify_shape("tell me about the walnut table"), None);
+        assert_eq!(classify_shape("a lesson"), None);
+
+        // The failure axis classifies too — the avoidance half of the
+        // shelf is routable. One instruction per failure shape, each
+        // naming its class from Fleet's own failure record.
+        let failures = [
+            ("the lane failed open when sys1 was down", "fail-open"),
+            ("the reader silently dropped the row", "drops-the-row"),
+            ("the tower scan read was unbounded", "bound-exceeded"),
+            ("the feature doc claims more than the code proved", "claim-outran-evidence"),
+        ];
+        for (instruction, expected) in failures {
+            assert_eq!(classify_shape(instruction), Some(expected), "{instruction}");
+        }
+        // The structure table is consulted first: an instruction naming
+        // both axes' terms routes under the structure shape, the fork's
+        // order rule undisturbed.
+        assert_eq!(classify_shape("the unbounded webpack bundle"), Some("build"));
+        // An instruction with no shape's terms at all is still the
+        // fallback, not an error.
+        assert_eq!(classify_shape("the railway deploy is failing"), Some("deploy"));
+        assert_eq!(classify_shape("the walnut table"), None);
+    }
+
+    #[test]
+    fn the_failure_shapes_name_fleets_own_failure_record() {
+        // The taxonomy is the ledger's classes, named: four shapes, each
+        // with the rows it is drawn from in docs/known-issues.md.
+        assert_eq!(
+            FAILURE_SHAPES,
+            ["fail-open", "drops-the-row", "bound-exceeded", "claim-outran-evidence"]
+        );
+        for shape in FAILURE_SHAPES {
+            assert!(is_failure_shape(shape), "{shape}");
+            // Every failure shape has its own keyword entry, so it
+            // classifies rather than sitting in the vocabulary unrouted.
+            assert!(
+                FAILURE_SHAPE_KEYWORDS.iter().any(|(name, _)| *name == shape),
+                "{shape} has no keywords"
+            );
+        }
+        // The two axes are disjoint: a structure shape is never a
+        // failure shape, so the sign derived from a tag is unambiguous.
+        for shape in SHAPES {
+            assert!(!is_failure_shape(shape), "{shape}");
+            assert_eq!(shape_axis(shape), "structure");
+        }
+        assert_eq!(shape_axis("fail-open"), "failure");
     }
 
     #[test]
@@ -3586,20 +4508,410 @@ mod tests {
         write_fact(&root, "tagged", &good_fact("tagged", twin, "project", "deploy"));
         write_fact(&root, "untagged", &good_fact("untagged", twin, "project", ""));
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
-        // Unclassified: no boost, so the tagged and untagged twins rank
-        // equally and the name breaks the tie.
+        // Unclassified: no partition — the word-ranked pool IS the
+        // primary pool — so the tagged and untagged twins rank equally
+        // and the name breaks the tie. Nothing is off-shape.
         let hits = memory.recall("a lesson");
-        let tagged = hits.iter().find(|hit| hit.fact.name == "tagged").expect("tagged ranks");
-        let untagged = hits.iter().find(|hit| hit.fact.name == "untagged").expect("untagged ranks");
-        assert_eq!(tagged.score.shape_boost, 0.0);
+        let names: Vec<&str> = hits.iter().map(|hit| hit.fact.name.as_str()).collect();
+        assert_eq!(names, vec!["tagged", "untagged"]);
+        assert!(hits.iter().all(|hit| !hit.off_shape), "{hits:?}");
+        let tagged = &hits[0];
+        let untagged = &hits[1];
         assert_eq!(tagged.score.total, untagged.score.total);
-        // Classified: the same-shape fact takes the boost and outranks
-        // its twin.
+        // Classified: the partition puts the same-shape twin in the
+        // primary pool and the other in the spillover, whatever the
+        // words say — the shape term is structural, so there is no
+        // boost to assert and none to rely on.
         let hits = memory.recall("the railway deploy is failing");
         let names: Vec<&str> = hits.iter().map(|hit| hit.fact.name.as_str()).collect();
         assert_eq!(names, vec!["tagged", "untagged"]);
-        assert!(hits[0].score.shape_boost > 0.0);
+        assert!(!hits[0].off_shape, "the same-shape twin is primary");
+        assert!(hits[1].off_shape, "the untagged twin is spillover");
+        // The twins' word evidence is identical, so only the partition
+        // separates them.
+        assert_eq!(hits[0].score.total, hits[1].score.total);
+        // The degradation never starves recall: both twins rank.
+        let partition = memory.partition("the railway deploy is failing");
+        assert_eq!(partition.shape, Some("deploy"));
+        assert_eq!(hit_names(&partition.primary), vec!["tagged"]);
+        assert_eq!(hit_names(&partition.spillover), vec!["untagged"]);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // --- shape-first recall: the partition, the vectors, the signs ----
+
+    #[test]
+    fn the_shape_partitions_the_pool_and_the_words_cannot_cross_it() {
+        let root = scratch("partition");
+        // The proof corpus: a same-shape fact with WEAK word evidence
+        // beside a wrong-shape fact with STRONG word evidence and a
+        // long recall history. Keyword-only, so every number below is
+        // exact and hand-checkable.
+        write_fact(
+            &root,
+            "same-shape",
+            &good_fact("same-shape", "the branch pipeline is green", "project", "deploy"),
+        );
+        write_fact(
+            &root,
+            "wrong-shape",
+            &recalled_fact(
+                "wrong-shape",
+                "the railway deploy is failing",
+                "rendering",
+                RECALL_CEILING,
+            ),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let hits = memory.recall("the railway deploy is failing");
+        // The same-shape fact ranks first whatever the words say: the
+        // shape selects the pool, and no term can cross it.
+        assert_eq!(hit_names(&hits), vec!["same-shape", "wrong-shape"]);
+        assert!(!hits[0].off_shape, "the same-shape fact is primary");
+        assert!(hits[1].off_shape, "the wrong-shape fact is spillover");
+        // The word evidence, which used to decide, is on the wrong-shape
+        // side — that is what makes this a proof.
+        let same = &hits[0].score;
+        let wrong = &hits[1].score;
+        assert!((same.keyword - 0.6).abs() < 1e-12, "{same:?}");
+        assert!((same.total - 0.27).abs() < 1e-12, "{same:?}");
+        assert!((wrong.keyword - 1.0).abs() < 1e-12, "{wrong:?}");
+        assert!((wrong.history - 1.0).abs() < 1e-12, "{wrong:?}");
+        assert!((wrong.total - 0.55).abs() < 1e-12, "{wrong:?}");
+        assert!(wrong.total > same.total, "the words still prefer the wrong shape");
+        // THIS TEST FAILS UNDER THE OLD WEIGHTING. The old score was
+        // vector 0.55 + keyword 0.25 + importance 0.10 + decay 0.10 plus
+        // SHAPE_BOOST 0.15, and by hand:
+        //   same-shape:  0.55*0.0 + 0.25*0.6 + 0.10*0.0 + 0.10*1.0 + 0.15 = 0.40
+        //   wrong-shape: 0.55*0.0 + 0.25*1.0 + 0.10*1.0 + 0.10*1.0 + 0.00 = 0.45
+        // — the wrong-shape fact ranked FIRST, which is exactly the
+        // failure the owner named ("a keyword or phrase in the wrong
+        // context is meaningless"). The partition is what fixes it, and
+        // this ordering is the proof.
+    }
+
+    #[test]
+    fn within_one_shape_the_vector_that_drove_outranks_the_one_that_merely_talks() {
+        let root = scratch("multidimensional");
+        // Inside ONE shape: fact A has strong topical overlap and no
+        // trajectory evidence — it talks about the neighborhood. Fact B
+        // has weak topical overlap but strong trajectory evidence (its
+        // recorded phrases echo the instruction's trajectory) and a
+        // recall history — it drove toward this minima. A word-dominant
+        // ranking picks A; the multidimensional one picks B.
+        write_fact(
+            &root,
+            "topical-only",
+            &good_fact(
+                "topical-only",
+                "the railway deploy is failing per branch on the canvas",
+                "project",
+                "deploy",
+            ),
+        );
+        write_fact(
+            &root,
+            "drove-here",
+            &trajectory_fact(
+                "drove-here",
+                "a lesson about branches",
+                "deploy",
+                &["check the railway deploy logs before failing again"],
+                4,
+            ),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let hits = memory.recall("the railway deploy is failing");
+        assert_eq!(hit_names(&hits), vec!["drove-here", "topical-only"]);
+        let drove = &hits[0].score;
+        let talked = &hits[1].score;
+        // B's evidence is multidimensional: a 0.8 trajectory match and
+        // half the history ceiling, over weak topical overlap.
+        assert!((drove.keyword - 0.2).abs() < 1e-12, "{drove:?}");
+        assert!((drove.trajectory - 0.8).abs() < 1e-12, "{drove:?}");
+        assert!((drove.history - 0.5).abs() < 1e-12, "{drove:?}");
+        assert!((drove.total - 0.49).abs() < 1e-12, "{drove:?}");
+        // A's evidence is topical and nothing else: full coverage, no
+        // direction, no history.
+        assert!((talked.keyword - 1.0).abs() < 1e-12, "{talked:?}");
+        assert!((talked.trajectory - 0.0).abs() < 1e-12, "{talked:?}");
+        assert!((talked.total - 0.35).abs() < 1e-12, "{talked:?}");
+        // THIS TEST FAILS UNDER THE OLD WEIGHTING, where the topical
+        // pair was 0.80 and there was no trajectory channel at all:
+        //   topical-only: 0.25*1.0 + 0.10*0.0 + 0.10*1.0 + 0.15 = 0.50
+        //   drove-here:   0.25*0.2 + 0.10*0.5 + 0.10*1.0 + 0.15 = 0.35
+        // — A ranked first. The old weighting had no way to see that B
+        // drove toward this problem and A merely talks about it.
+    }
+
+    #[test]
+    fn the_two_signs_play_opposite_roles_and_the_assembly_names_which_is_which() {
+        let root = scratch("signs");
+        // Inside one shape: a resolution whose phrases match the
+        // instruction's trajectory, a failure whose phrases match the
+        // SAME trajectory, and a failure whose phrases do not.
+        write_fact(
+            &root,
+            "what-worked",
+            &trajectory_fact(
+                "what-worked",
+                "the bundle build is slow",
+                "build",
+                &[
+                    "pin the webpack cache before the bundle build",
+                    "compile with the pinned lockfile",
+                ],
+                4,
+            ),
+        );
+        write_fact(
+            &root,
+            "what-diverged",
+            &trajectory_fact(
+                "what-diverged",
+                "the bundle output grew past its bound",
+                "build, bound-exceeded",
+                &["the webpack bundle was left unbounded and failed to compile"],
+                0,
+            ),
+        );
+        write_fact(
+            &root,
+            "unrelated-divergence",
+            &trajectory_fact(
+                "unrelated-divergence",
+                "a lane judged a workload",
+                "build, fail-open",
+                &["a lane fell back once"],
+                0,
+            ),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let hits = memory.recall("the webpack bundle fails to compile");
+        // The candidate, then the divergence beside it — marked, never
+        // merged into the candidate ranking.
+        assert_eq!(hit_names(&hits), vec!["what-worked", "what-diverged"]);
+        assert_eq!(hits[0].fact.sign(), Sign::Resolution);
+        assert_eq!(hits[1].fact.sign(), Sign::Divergence);
+        assert!((hits[0].score.total - 0.4833).abs() < 1e-3, "{:?}", hits[0].score);
+        assert!((hits[1].score.total - 0.425).abs() < 1e-3, "{:?}", hits[1].score);
+        // The failure whose phrases do NOT match does not surface merely
+        // for sharing the shape: its whole score is freshness plus
+        // provenance (0.15), under the floor — it is in neither pool.
+        let partition = memory.partition("the webpack bundle fails to compile");
+        assert!(
+            partition
+                .primary
+                .iter()
+                .all(|hit| hit.fact.name != "unrelated-divergence"),
+            "{:?}",
+            hit_names(&partition.primary)
+        );
+        assert!(
+            partition
+                .spillover
+                .iter()
+                .all(|hit| hit.fact.name != "unrelated-divergence"),
+            "{:?}",
+            hit_names(&partition.spillover)
+        );
+        // The sign is derived from the tags, not stored: a failure-shape
+        // tag is what makes a fact an anti-vector.
+        assert_eq!(hits[1].fact.shape, vec!["build".to_string(), "bound-exceeded".to_string()]);
+        // The assembly names which is which, and the model can never
+        // read the anti-vector as a candidate.
+        let assembly = memory.assemble("the webpack bundle fails to compile", &[]);
+        let block = render_assembly(&assembly);
+        assert!(!block.contains("failure-shape recall"), "{block}");
+        assert!(block.contains("shape-routed recall for `build`"), "{block}");
+        assert!(block.contains(SIGN_LEGEND.trim_end()), "{block}");
+        assert!(block.contains("- resolved: [build"), "{block}");
+        assert!(block.contains("- diverged: [bound-exceeded"), "{block}");
+        assert!(!block.contains("a lane fell back once"), "{block}");
+        // The divergence surfaces as prominently as the resolution: it
+        // is in the same pool, ranked by the same evidence, and only the
+        // marker distinguishes it.
+        assert_eq!(assembly.primary.len(), 2);
+        // THIS TEST FAILS UNDER THE OLD WEIGHTING, where neither the
+        // sign nor the trajectory channel existed: the old score ranked
+        // all three facts by topical overlap alone (all three carry
+        // `build` and take the same 0.15 boost), the unrelated
+        // divergence surfaced on freshness plus the boost (0.25 ≥ the
+        // 0.20 floor), and nothing marked an anti-vector from a
+        // resolution — the model would have read all three as
+        // candidates.
+    }
+
+    #[test]
+    fn a_failure_shape_recalls_through_the_same_partition() {
+        let root = scratch("failure-axis");
+        // The avoidance half: two facts tagged with a failure shape,
+        // recalled when the instruction matches that failure shape,
+        // through the same partition as a resolution.
+        write_fact(
+            &root,
+            "what-broke",
+            &trajectory_fact(
+                "what-broke",
+                "the calibration reader cannot read a null",
+                "drops-the-row",
+                &["parse_row drops the whole line", "the row vanished from read_day"],
+                0,
+            ),
+        );
+        write_fact(
+            &root,
+            "what-it-cost",
+            &trajectory_fact(
+                "what-it-cost",
+                "the reader takes a null into a numeric field",
+                "drops-the-row",
+                &["serde default for Option", "parse_row keeps the row"],
+                0,
+            ),
+        );
+        // A fact carrying BOTH axes: it answers either one.
+        write_fact(
+            &root,
+            "both-axes",
+            &good_fact(
+                "both-axes",
+                "the shader layout repaints and the tower scan read was unbounded",
+                "project",
+                "rendering, bound-exceeded",
+            ),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+
+        let partition = memory.partition("the row vanished from the stream");
+        assert_eq!(partition.shape, Some("drops-the-row"));
+        assert_eq!(hit_names(&partition.primary), vec!["what-broke", "what-it-cost"]);
+        assert!(partition.spillover.is_empty());
+        // Every fact in a failure-shape pool is an anti-vector: the
+        // avoidance half is not a candidate, and its own phrases may
+        // still carry what resolved it.
+        assert!(partition.primary.iter().all(|hit| hit.fact.sign() == Sign::Divergence));
+
+        // Either axis matches: the both-axes fact is primary under the
+        // structure shape AND under the failure shape.
+        let rendering = memory.partition("the shader layout repaints every frame");
+        assert_eq!(rendering.shape, Some("rendering"));
+        assert!(rendering.primary.iter().any(|hit| hit.fact.name == "both-axes"));
+        let failure = memory.partition("the tower scan read was unbounded");
+        assert_eq!(failure.shape, Some("bound-exceeded"));
+        assert!(failure.primary.iter().any(|hit| hit.fact.name == "both-axes"));
+        assert_eq!(shape_axis("bound-exceeded"), "failure");
+        assert_eq!(shape_axis("rendering"), "structure");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_spillover_enters_only_through_its_three_named_routes() {
+        // Route (a): the primary pool is empty, so the off-shape facts
+        // are the answer — and the strongest of them enters even at a
+        // budget that fits nothing else.
+        let root_a = scratch("spillover-empty");
+        write_fact(
+            &root_a,
+            "off-one",
+            &good_fact("off-one", "the railway deploy is failing per branch", "project", "rendering"),
+        );
+        let memory = Memory::load_with(&root_a, Box::new(KeywordOnly));
+        let assembly = memory.assemble_within("the railway deploy is failing", &[], 1);
+        assert_eq!(hit_names(&assembly.recalled), vec!["off-one"]);
+        assert!(assembly.recalled[0].off_shape);
+        assert_eq!(assembly.spillover.len(), 1);
+        assert!(
+            assembly
+                .spillover_route
+                .as_deref()
+                .unwrap_or_default()
+                .contains("no fact carries `deploy`"),
+            "{:?}",
+            assembly.spillover_route
+        );
+        assert!(render_assembly(&assembly).contains("off-shape"));
+
+        // Route (b): the pool's best is below SPILLOVER_FLOOR, so the
+        // strongest off-shape fact enters beside the weak pool — again
+        // at a budget that fits nothing else.
+        let root_b = scratch("spillover-weak");
+        write_fact(
+            &root_b,
+            "same-shape",
+            &good_fact("same-shape", "the branch pipeline is green", "project", "deploy"),
+        );
+        write_fact(
+            &root_b,
+            "wrong-shape",
+            &recalled_fact(
+                "wrong-shape",
+                "the railway deploy is failing",
+                "rendering",
+                RECALL_CEILING,
+            ),
+        );
+        let memory = Memory::load_with(&root_b, Box::new(KeywordOnly));
+        let assembly = memory.assemble_within("the railway deploy is failing", &[], 1);
+        assert_eq!(hit_names(&assembly.recalled), vec!["same-shape", "wrong-shape"]);
+        assert!(!assembly.recalled[0].off_shape);
+        assert!(assembly.recalled[1].off_shape, "the weak pool's neighbour is marked");
+        assert!(
+            assembly
+                .spillover_route
+                .as_deref()
+                .unwrap_or_default()
+                .contains("below the SPILLOVER_FLOOR"),
+            "{:?}",
+            assembly.spillover_route
+        );
+
+        // Route (c) and the floor's other side: a pool whose best clears
+        // the floor stands alone, so the off-shape fact enters only on
+        // the budget's room — and is dropped, named, when there is none.
+        let root_c = scratch("spillover-strong");
+        write_fact(
+            &root_c,
+            "strong",
+            &trajectory_fact(
+                "strong",
+                "the railway deploy is failing per branch",
+                "deploy",
+                &["read the railway deploy logs before failing again"],
+                RECALL_CEILING,
+            ),
+        );
+        write_fact(
+            &root_c,
+            "off-shape-fact",
+            &good_fact("off-shape-fact", "the railway deploy is failing", "project", "rendering"),
+        );
+        let memory = Memory::load_with(&root_c, Box::new(KeywordOnly));
+        let partition = memory.partition("the railway deploy is failing");
+        assert!(
+            partition.best().expect("the pool has a best") >= SPILLOVER_FLOOR,
+            "{:?}",
+            partition.best()
+        );
+        let room = memory.assemble("the railway deploy is failing", &[]);
+        assert_eq!(hit_names(&room.recalled), vec!["strong", "off-shape-fact"]);
+        assert!(room.recalled[1].off_shape);
+        assert!(
+            room.spillover_route
+                .as_deref()
+                .unwrap_or_default()
+                .contains("the budget had room"),
+            "{:?}",
+            room.spillover_route
+        );
+        let tight = memory.assemble_within("the railway deploy is failing", &[], 1);
+        assert_eq!(hit_names(&tight.recalled), vec!["strong"]);
+        assert!(tight.spillover.is_empty(), "no route admitted them");
+        assert!(tight.dropped.contains(&"off-shape-fact".to_string()), "{:?}", tight.dropped);
+        assert!(!render_assembly(&tight).contains("off-shape"));
+        let _ = fs::remove_dir_all(&root_a);
+        let _ = fs::remove_dir_all(&root_b);
+        let _ = fs::remove_dir_all(&root_c);
     }
 
     // --- feedback ---
@@ -4104,7 +5416,7 @@ mod tests {
     }
 
     #[test]
-    fn the_recall_surface_prints_the_ranking_the_block_and_the_dry_run() {
+    fn the_recall_surface_prints_the_partition_the_ranking_and_the_dry_run() {
         let root = scratch("render-recall");
         pressure_corpus(&root);
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
@@ -4113,17 +5425,27 @@ mod tests {
             .map(|fact| fs::read_to_string(&fact.path).unwrap())
             .collect();
         let rendered = render_recall(&memory, "the railway deploy is failing");
-        // The shape, the backend, and the counts are named.
-        assert!(rendered.contains("shape: deploy"), "{rendered}");
+        // The shape and its axis, the backend, and the counts are
+        // named — including how many facts are in the pool and how many
+        // are off-shape.
+        assert!(rendered.contains("shape: deploy (structure-shape)"), "{rendered}");
         assert!(rendered.contains("backend: keyword-only"), "{rendered}");
         assert!(rendered.contains("3 facts ranked"), "{rendered}");
-        // Each ranked fact's card carries its score and the channels
-        // that produced it — the "why".
-        assert!(rendered.contains("vector 0.00 \u{b7} keyword"), "{rendered}");
-        assert!(rendered.contains("decay 1.00 \u{b7} shape +0.15"), "{rendered}");
+        assert!(rendered.contains("3 in the pool"), "{rendered}");
+        assert!(rendered.contains("0 off-shape"), "{rendered}");
+        // Each ranked fact's card carries its channels — the "why",
+        // each dimension named — and its magnitude: the shape, the hit
+        // history, the freshness, the basis, and the sign.
+        assert!(rendered.contains("vector 0.00 \u{b7} keyword 0.60 \u{b7} trajectory 0.00"), "{rendered}");
+        assert!(
+            rendered.contains("shape: deploy \u{b7} history 0 \u{b7} freshness 1.00 \u{b7} provenance confirmed-by"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("0.35 resolved:"), "{rendered}");
         // The assembled block renders, and the junk is absent from it.
         assert!(rendered.contains("Standing context (protected"), "{rendered}");
         assert!(rendered.contains("shape-routed recall for `deploy`"), "{rendered}");
+        assert!(rendered.contains("- resolved: [deploy 0.35 confirmed-by]"), "{rendered}");
         assert!(!rendered.contains("walnut"), "{rendered}");
         // The dry run is named, and it is true: no file changed.
         assert!(rendered.contains("a dry run"), "{rendered}");
@@ -4132,6 +5454,86 @@ mod tests {
             .map(|fact| fs::read_to_string(&fact.path).unwrap())
             .collect();
         assert_eq!(before, after);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_recall_surface_marks_the_spillover_and_names_the_route() {
+        let root = scratch("render-spillover");
+        // The M1 corpus: a same-shape fact with weak word evidence and
+        // a wrong-shape fact with strong word evidence and a long
+        // recall history — the words alone would rank the wrong-shape
+        // fact first.
+        write_fact(
+            &root,
+            "same-shape",
+            &good_fact("same-shape", "the branch pipeline is green", "project", "deploy"),
+        );
+        write_fact(
+            &root,
+            "wrong-shape",
+            &recalled_fact("wrong-shape", "the railway deploy is failing", "rendering", RECALL_CEILING),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let rendered = render_recall(&memory, "the railway deploy is failing");
+        // The partition is sectioned: the shape's pool, then the
+        // off-shape facts with the route that admitted them named.
+        assert!(rendered.contains("\u{b7} the `deploy` pool \u{b7} 1 fact"), "{rendered}");
+        assert!(rendered.contains("\u{b7} off-shape \u{b7} 1 fact outside the pool"), "{rendered}");
+        assert!(
+            rendered.contains("admitted because the `deploy` pool's best (0.27) is below the SPILLOVER_FLOOR (0.45)"),
+            "{rendered}"
+        );
+        // The off-shape card says so on its header, and the assembly
+        // line carries the marker.
+        assert!(rendered.contains("0.55 resolved: off-shape"), "{rendered}");
+        assert!(
+            rendered.contains("- resolved: [rendering 0.55 confirmed-by off-shape] the railway deploy is failing"),
+            "{rendered}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_recall_surface_renders_the_two_signs_distinctly() {
+        let root = scratch("render-signs");
+        write_fact(
+            &root,
+            "what-worked",
+            &trajectory_fact(
+                "what-worked",
+                "the bundle build is slow",
+                "build",
+                &["pin the webpack cache before the bundle build"],
+                0,
+            ),
+        );
+        write_fact(
+            &root,
+            "what-diverged",
+            &trajectory_fact(
+                "what-diverged",
+                "the bundle output grew past its bound",
+                "build, bound-exceeded",
+                &["the webpack bundle was left unbounded and failed to compile"],
+                0,
+            ),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let rendered = render_recall(&memory, "the webpack bundle fails to compile");
+        // The resolution is a candidate; the anti-vector is beside it,
+        // marked, in the divergence's color — never a candidate.
+        assert!(rendered.contains("resolved:"), "{rendered}");
+        assert!(rendered.contains("diverged:"), "{rendered}");
+        assert!(
+            rendered.contains(WARN),
+            "the divergence renders in the caution color"
+        );
+        // The block carries the legend and both markers, and the
+        // anti-vector's line names the class of thing that broke.
+        assert!(rendered.contains(SIGN_LEGEND.trim_end()), "{rendered}");
+        assert!(rendered.contains("- resolved: [build"), "{rendered}");
+        assert!(rendered.contains("- diverged: [bound-exceeded"), "{rendered}");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -4166,6 +5568,147 @@ mod tests {
         format!(
             "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {date}\nbasis: inferred\ntier: working\nshape: []\nrecall-count: 0\nsuperseded-by:\nvalid-until: {valid_until}\n---\n\nThe note's body.\n"
         )
+    }
+
+    #[test]
+    fn the_write_path_accepts_the_failure_shapes_and_records_the_phrases() {
+        let root = scratch("write-signs");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        // A tag outside BOTH taxonomies is refused with both named.
+        let error = Remember::parse(&serde_json::json!({
+            "name": "typo-tag",
+            "description": "a fact with a typo'd shape",
+            "basis": "inferred",
+            "shape": "telemetry",
+        }))
+        .unwrap_err();
+        assert!(
+            matches!(&error, WriteError::Shape(reason) if reason.contains("rendering, state-sync") && reason.contains("fail-open, drops-the-row")),
+            "{error}"
+        );
+        // A failure-shape tag beside a structure tag is accepted, the
+        // cap is across both axes, and the written fact's sign follows
+        // the tag.
+        let request = Remember::parse(&serde_json::json!({
+            "name": "the-reader-dropped-a-row",
+            "description": "the calibration reader dropped a row it had written",
+            "shape": "build, bound-exceeded",
+            "basis": "inferred",
+            "phrases": ["parse_row drops the whole line"],
+        }))
+        .unwrap();
+        assert_eq!(
+            request.shape,
+            vec!["build".to_string(), "bound-exceeded".to_string()]
+        );
+        assert_eq!(request.phrases, vec!["parse_row drops the whole line".to_string()]);
+        let written = memory.remember(&request).unwrap();
+        assert_eq!(written.sign(), Sign::Divergence);
+        // The document renders the phrases beside their sibling shape,
+        // and the loader reads them back.
+        let text = fs::read_to_string(&written.path).unwrap();
+        assert!(text.contains("shape: [build, bound-exceeded]\n"), "{text}");
+        assert!(text.contains("phrases: [parse_row drops the whole line]\n"), "{text}");
+        let loaded = load_facts(&root);
+        assert_eq!(loaded[0].phrases, request.phrases);
+        // A modify keeps the direction the superseded fact recorded.
+        let modify = Supersede::parse(&serde_json::json!({
+            "name": "the-reader-dropped-a-row",
+            "justification": "the reader now takes a null",
+            "replacement": "the-reader-keeps-the-row",
+            "description": "the calibration reader keeps every row it writes",
+        }))
+        .unwrap();
+        memory.supersede(&modify, false, None).unwrap();
+        let replacement = load_facts(&root)
+            .into_iter()
+            .find(|fact| fact.name == "the-reader-keeps-the-row")
+            .expect("the replacement was written");
+        assert_eq!(replacement.phrases, request.phrases);
+
+        // The phrase list is bounded, sanitized, and typed.
+        let too_many = Remember::parse(&serde_json::json!({
+            "name": "too-many-phrases",
+            "description": "a fact with too many phrases",
+            "basis": "inferred",
+            "phrases": (0..MAX_PHRASES + 1).map(|index| format!("phrase {index}")).collect::<Vec<_>>(),
+        }))
+        .unwrap_err();
+        assert!(matches!(too_many, WriteError::Phrases(_)), "{too_many}");
+        let not_strings = Remember::parse(&serde_json::json!({
+            "name": "bad-phrases",
+            "description": "a fact with a non-string phrase",
+            "basis": "inferred",
+            "phrases": ["fine", 7],
+        }))
+        .unwrap_err();
+        assert!(not_strings.to_string().contains("must be a string"), "{not_strings}");
+        let nasty = Remember::parse(&serde_json::json!({
+            "name": "nasty-phrases",
+            "description": "a fact with a nasty phrase",
+            "basis": "inferred",
+            "phrases": ["tab\there and an escape \u{1b}[31m"],
+        }))
+        .unwrap();
+        assert_eq!(nasty.phrases, vec!["tabhere and an escape [31m".to_string()]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_phrases_round_trip_through_the_write_path_and_a_later_recall() {
+        let root = scratch("phrases-round-trip");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        // The write path records the phrases that resolved the problem —
+        // the vocabulary that worked — and they ride the fact's indexed
+        // text beside the description and the shape tags.
+        let request = Remember::parse(&serde_json::json!({
+            "name": "deploy-credentials-rule",
+            "description": "the deploy credential rule",
+            "shape": "deploy",
+            "basis": "confirmed-by",
+            "phrases": ["read CLAUDE.local.md directly", "never grep-extract credentials"],
+        }))
+        .unwrap();
+        let written = memory.remember(&request).unwrap();
+        assert_eq!(
+            written.indexed_text(),
+            "the deploy credential rule deploy read CLAUDE.local.md directly never grep-extract credentials"
+        );
+        // The topical text is the description and the tags; the phrases
+        // are the trajectory's own field, so the two dimensions cannot
+        // double-count each other.
+        assert_eq!(written.topic_text(), "the deploy credential rule deploy");
+        assert!(!written.topic_text().contains("CLAUDE.local.md"));
+
+        // The control twin: the same fact with no phrases recorded.
+        let twin = Remember::parse(&serde_json::json!({
+            "name": "deploy-credentials-twin",
+            "description": "the deploy credential rule",
+            "shape": "deploy",
+            "basis": "confirmed-by",
+        }))
+        .unwrap();
+        memory.remember(&twin).unwrap();
+
+        // A later recall for the shape, in a DIFFERENT wording: the
+        // phrases are what match, and the twin — same description, same
+        // shape, no direction — never clears the floor.
+        let reloaded = Memory::load_with(&root, Box::new(KeywordOnly));
+        let hits = reloaded.recall("read CLAUDE.local.md for the railway credentials");
+        assert_eq!(hit_names(&hits), vec!["deploy-credentials-rule"]);
+        let hit = &hits[0];
+        assert!((hit.score.trajectory - 0.625).abs() < 1e-12, "{:?}", hit.score);
+        assert!((hit.score.keyword - 0.125).abs() < 1e-12, "{:?}", hit.score);
+        assert!(!hit.off_shape, "the fact carries the instruction's shape");
+        // The phrases round-trip through the file: the loader reads back
+        // exactly what the write path recorded.
+        let loaded = load_facts(&root);
+        let fact = loaded
+            .iter()
+            .find(|fact| fact.name == "deploy-credentials-rule")
+            .expect("the fact is on disk");
+        assert_eq!(fact.phrases, request.phrases);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
