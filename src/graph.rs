@@ -80,7 +80,8 @@ use crate::skills::wrap_detail;
 /// [`Graph::settle`], [`Graph::fail`] — never by hand, because the score
 /// is derived from these states and a hand-set one is a score nobody can
 /// reconstruct.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Status {
     /// Declared, not yet dispatched.
     Pending,
@@ -95,12 +96,21 @@ pub enum Status {
     Failed,
 }
 
+/// A node stands where it was declared until the graph moves it, so
+/// the default is the declared state — which is also what a file that
+/// omits a node's status reads as.
+impl Default for Status {
+    fn default() -> Self {
+        Status::Pending
+    }
+}
+
 /// The capability declaration D9 asks for at decomposition: what this
 /// subtree is likely to need. The declaration IS the scope — a declared
 /// tool is admitted and an undeclared one is refused by name — so a
 /// declaration that sits beside a hand-written list is decoration, and
 /// decoration is worse than nothing because it looks like a guarantee.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Capabilities {
     /// The tools, from the admissible set.
     pub tools: Vec<String>,
@@ -1187,6 +1197,117 @@ fn node_state(node: &Node, unlock: &Unlock) -> (&'static str, &'static str, &'st
         Status::Pending if unlock.is_unlocked() => ("\u{25cf}", "ready", OK),
         Status::Pending if !unlock.resource_free => ("\u{25cf}", "held", WARN),
         Status::Pending => ("\u{25cb}", "waiting", DIM),
+    }
+}
+
+// --- the file ---------------------------------------------------------------
+
+/// The declared graph as it persists under the home: the declaration
+/// and the states, and nothing else.
+///
+/// What is deliberately absent is the fact-gate. A verifier is the
+/// parent's own closure over a node's artifact — D2's judge — and a
+/// closure is not a value that can be written down, so a loaded graph
+/// carries the conservative default until its caller attaches the real
+/// predicate. That is the honest shape: the file is the declaration,
+/// the gate rides the run that owns it, and a graph read back off disk
+/// unlocks nothing its parent has not re-declared.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GraphFile {
+    /// The nodes, in declaration order.
+    pub nodes: Vec<NodeFile>,
+}
+
+/// One node as it persists: every declared field, and the state it
+/// stood in when the graph was written.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NodeFile {
+    pub id: String,
+    pub cost: u64,
+    #[serde(default)]
+    pub prereqs: Vec<String>,
+    #[serde(default)]
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub capabilities: Capabilities,
+    #[serde(default)]
+    pub approach: String,
+    #[serde(default)]
+    pub status: Status,
+}
+
+/// Where a home's declared graph lives: `<home>/graph.json`, beside the
+/// sessions and the roles.
+pub fn path_in(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("graph.json")
+}
+
+impl Graph {
+    /// Write this graph to `path` as the home's declared graph.
+    ///
+    /// The parent directory is created: a first save into a fresh home
+    /// is the ordinary case, and refusing it would make the surface's
+    /// first act a failure.
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        let file = GraphFile {
+            nodes: self
+                .nodes
+                .iter()
+                .map(|node| NodeFile {
+                    id: node.id.clone(),
+                    cost: node.cost,
+                    prereqs: node.prereqs.clone(),
+                    paths: node.paths.clone(),
+                    capabilities: node.capabilities.clone(),
+                    approach: node.approach.clone(),
+                    status: node.status,
+                })
+                .collect(),
+        };
+        let text = serde_json::to_string_pretty(&file)
+            .map_err(|error| format!("the graph would not serialize: {error}"))?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("{}: {error}", parent.display()))?;
+        }
+        std::fs::write(path, format!("{text}\n"))
+            .map_err(|error| format!("{}: {error}", path.display()))
+    }
+
+    /// Read a declared graph back from `path`.
+    ///
+    /// Every failure is named rather than defaulted: an absent file, an
+    /// unreadable one, and a malformed one are three different facts,
+    /// and an empty graph silently substituted for any of them would
+    /// render as "nothing is blocking anything" — the one reading the
+    /// surface must never produce by accident. The loaded graph carries
+    /// no fact-gate (see [`GraphFile`]); the caller attaches its own.
+    pub fn load(path: &std::path::Path) -> Result<Graph, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let file: GraphFile = serde_json::from_str(&text)
+            .map_err(|error| format!("{} is not a declared graph: {error}", path.display()))?;
+        let mut graph = Graph::new();
+        for node in file.nodes {
+            let id = node.id.clone();
+            graph.add(
+                Node::new(node.id, node.cost)
+                    .with_prereqs(node.prereqs)
+                    .with_paths(node.paths)
+                    .with_capabilities(node.capabilities)
+                    .with_approach(node.approach),
+            )
+            .map_err(|error| error.to_string())?;
+            // The state rides the file. A load that reset every node to
+            // pending would render verified work as blocking work —
+            // the one reading the surface would see the graph standing
+            // still when it had moved. The file is the recorded state,
+            // so the load restores it rather than re-declaring it.
+            if let Some(added) = graph.nodes.iter_mut().find(|added| added.id == id) {
+                added.status = node.status;
+            }
+        }
+        Ok(graph)
     }
 }
 

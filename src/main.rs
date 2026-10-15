@@ -43,6 +43,7 @@ async fn main() -> ExitCode {
         Ok(Command::Delegate(options)) => delegate_command(&options).await,
         Ok(Command::Roles) => roles_command(),
         Ok(Command::Convention(options)) => convention_command(&options),
+        Ok(Command::Graph(options)) => graph_command(&options),
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
@@ -718,6 +719,39 @@ fn convention_command(options: &cli::ConventionOptions) -> ExitCode {
     );
     print!("{answer}");
     ExitCode::SUCCESS
+}
+
+/// `fleet graph [--file <path>]`: the declared dependency graph as
+/// cards, read from the home's `graph.json` or `--file`'s.
+///
+/// Every failure is named and exits nonzero: an absent graph file, an
+/// unreadable one, and a malformed one are three different facts, and
+/// rendering an empty graph for any of them would show the owner
+/// "nothing is blocking anything" when the truth is that the surface
+/// could not read the declaration. The cards are the plan's own bar —
+/// status dots, readiness bars, named edges, the critical path, and
+/// what is holding each node.
+fn graph_command(options: &cli::GraphOptions) -> ExitCode {
+    let path = match &options.file {
+        Some(file) => std::path::PathBuf::from(file),
+        None => {
+            let Some(home) = fleet_home().ok() else {
+                eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+                return ExitCode::from(2);
+            };
+            fleet::graph::path_in(&home)
+        }
+    };
+    match fleet::graph::Graph::load(&path) {
+        Ok(graph) => {
+            print!("{}", fleet::graph::render(&graph));
+            ExitCode::SUCCESS
+        }
+        Err(reason) => {
+            eprintln!("fleet: {reason}");
+            ExitCode::from(2)
+        }
+    }
 }
 
 /// `fleet judge`: the day's route rows, judged against their outcome

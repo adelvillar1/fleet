@@ -31,6 +31,10 @@ pub enum Command {
     /// term with its sites, the plain statement that no established
     /// term exists, or the named variant to rename away from.
     Convention(ConventionOptions),
+    /// The declared dependency graph as cards: status dots, readiness
+    /// bars, the named edges, the critical path, and what is holding
+    /// each node — the home's `graph.json`, or `--file`'s.
+    Graph(GraphOptions),
     /// The skills surface: the live skills, the drafts awaiting the
     /// slice-12 gate, and the usage-scan curation.
     Skills(SkillsOptions),
@@ -387,6 +391,11 @@ usage:
                                 established term exists, or the named
                                 variant to rename away from — the same
                                 lookup the `convention` tool rides
+  fleet graph [--file <path>]   the declared dependency graph as cards:
+                                status dots, readiness bars, the named
+                                edges, the critical path, and what is
+                                holding each node — the home's
+                                `graph.json`, or `--file`'s
   fleet skills [--proposed] [--curate] [--show <name>]
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
@@ -516,6 +525,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "delegate" => parse_delegate(rest),
         "roles" => no_flags(rest, Command::Roles),
         "convention" => parse_convention(rest),
+        "graph" => parse_graph(rest),
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
@@ -1243,6 +1253,50 @@ pub struct ConventionOptions {
     pub concept: String,
 }
 
+/// Options for `fleet graph`: the declared graph to render, defaulting
+/// to the home's own.
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct GraphOptions {
+    /// A graph file beside the home's, for a graph declared somewhere
+    /// else — a scratch tree, a proposal's own declaration.
+    pub file: Option<String>,
+}
+
+/// `fleet graph [--file <path>]`: no positionals, one optional flag. A
+/// second positional is refused rather than read as a path.
+fn parse_graph(args: &[String]) -> Result<Command, String> {
+    let mut file: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--file" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| "`--file` needs a path: `fleet graph --file <path>`".to_string())?;
+                if file.is_some() {
+                    return Err("`--file` was given twice".to_string());
+                }
+                file = Some(value.clone());
+                index += 1;
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown graph option `{other}`"));
+            }
+            other => {
+                return Err(format!(
+                    "`{other}` takes no value here; graph reads a declared graph: \
+                     `fleet graph [--file <path>]`"
+                ));
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Graph(GraphOptions { file }))
+}
+
 /// `fleet convention <concept>`: one positional, required. A second
 /// positional is refused rather than silently dropped — a concept is
 /// one name, and a caller that passed two meant to ask two questions.
@@ -1333,6 +1387,21 @@ mod tests {
         assert!(parse(&args(&["convention", "a", "b"])).is_err());
         // An unknown flag is refused rather than read as a concept.
         assert!(parse(&args(&["convention", "--loud"])).is_err());
+    }
+
+    #[test]
+    fn graph_takes_no_positional_and_one_optional_file() {
+        let command = parse(&args(&["graph"])).unwrap();
+        let Command::Graph(options) = command else { panic!("not a graph") };
+        assert_eq!(options.file, None);
+        let command = parse(&args(&["graph", "--file", "/tmp/g.json"])).unwrap();
+        let Command::Graph(options) = command else { panic!("not a graph") };
+        assert_eq!(options.file, Some("/tmp/g.json".to_string()));
+        // A positional, a repeated flag, and an unknown flag are each
+        // refused rather than silently read.
+        assert!(parse(&args(&["graph", "extra"])).is_err());
+        assert!(parse(&args(&["graph", "--file", "a", "--file", "b"])).is_err());
+        assert!(parse(&args(&["graph", "--loud"])).is_err());
     }
 
     #[test]

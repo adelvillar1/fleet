@@ -632,6 +632,9 @@ pub fn corpus() -> Vec<Scenario> {
         Scenario::new("nomenclature-guard", ScenarioFamily::Nomenclature, |bin| {
             Box::pin(nomenclature_guard(bin))
         }),
+        Scenario::new("dependency-graph", ScenarioFamily::Nomenclature, |bin| {
+            Box::pin(dependency_graph(bin))
+        }),
     ]
 }
 
@@ -3947,6 +3950,177 @@ async fn nomenclature_guard(_mock_bin: PathBuf) -> ScenarioOutcome {
     grade(NAME, family, &checks)
 }
 
+/// `dependency-graph`: the orchestration the waves replaced, graded
+/// with no model and no lane in the path.
+///
+/// The plan's checks over the public surface: the diamond is the
+/// shape, the fact-set is the gate, and every assertion reads the same
+/// API the dispatcher and the render do — so the scenario grades the
+/// machinery rather than a second opinion of it.
+async fn dependency_graph(_mock_bin: PathBuf) -> ScenarioOutcome {
+    use crate::graph::{Capabilities, Graph, Node, Status};
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    const NAME: &str = "dependency-graph";
+    let family = ScenarioFamily::Nomenclature;
+    let facts: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    let gate = Arc::clone(&facts);
+    let mut graph = Graph::with_verifier(move |node: &Node| {
+        gate.lock().unwrap().contains(&node.id)
+    });
+    // The diamond: ship needs left and right, both need base. Costs:
+    // base 2, left 3, right 4, ship 6.
+    graph.add(Node::new("base", 2).with_paths(["src/base.rs"])).unwrap();
+    graph.add(Node::new("left", 3).with_prereqs(["base"]).with_paths(["src/left.rs"]))
+        .unwrap();
+    graph.add(Node::new("right", 4).with_prereqs(["base"]).with_paths(["src/right.rs"]))
+        .unwrap();
+    graph
+        .add(
+            Node::new("ship", 6)
+                .with_prereqs(["left", "right"])
+                .with_capabilities(Capabilities {
+                    tools: vec!["bash".to_string()],
+                    skills: vec!["vendoring-lanes".to_string()],
+                    workflows: Vec::new(),
+                    loops: vec!["judge".to_string()],
+                }),
+        )
+        .unwrap();
+    let mut checks: Vec<(&str, bool)> = Vec::new();
+
+    // 1 — nothing has landed: base is ready, and nothing else is.
+    let ready = graph.ready();
+    checks.push((
+        "a node with no prerequisites is ready immediately",
+        ready == vec!["base".to_string()],
+    ));
+
+    // 2 — the arithmetic, pinned: the score is the closure's remaining
+    // work, and in a diamond the shared base's cost enters the head's
+    // score through both branches — ship carries (left + base) plus
+    // (right + base).
+    let scores = graph.scores();
+    let score_of = |id: &str| {
+        scores
+            .iter()
+            .find(|(name, _)| name == id)
+            .map(|(_, score)| *score)
+            .unwrap_or(0)
+    };
+    checks.push((
+        "the dependency score counts the closure's remaining work",
+        score_of("base") == 0 && score_of("left") == 2 && score_of("ship") == 11,
+    ));
+
+    // 3 — the later nodes dispatch the moment their prerequisite's
+    // fact lands, without waiting for a wave: base verifies, and both
+    // branches are dispatchable in the same pass. The order is the
+    // documented one — the node blocking the most work first, then the
+    // larger cost — so right (4) precedes left (3).
+    facts.lock().unwrap().insert("base".to_string());
+    graph.settle();
+    let dispatchable = graph.dispatchable(3, &[]);
+    checks.push((
+        "a node that unlocks mid-flight dispatches without waiting for the wave",
+        dispatchable == vec!["right".to_string(), "left".to_string()],
+    ));
+
+    // 4 — a verified completion drops every dependent's score by the
+    // completed node's cost, and the arithmetic is the formula's own.
+    let after_base = graph.scores();
+    let after_of = |id: &str| {
+        after_base
+            .iter()
+            .find(|(name, _)| name == id)
+            .map(|(_, score)| *score)
+            .unwrap_or(0)
+    };
+    checks.push((
+        "a verified completion drops every dependent's score by its cost",
+        after_of("left") == 0 && after_of("right") == 0 && after_of("ship") == 7,
+    ));
+
+    // 5 — the resource edge is mandatory: left is running and holds
+    // src/left.rs, so a node naming the same path is held even at
+    // score zero, with the holder named.
+    graph.dispatch("left").unwrap();
+    graph.dispatch("right").unwrap();
+    graph.add(Node::new("twin", 1).with_paths(["src/left.rs"])).unwrap();
+    let twin_unlock = graph.unlock("twin").expect("twin is declared");
+    checks.push((
+        "a resource conflict holds a node and names the holder",
+        !twin_unlock.is_unlocked()
+            && twin_unlock
+                .reason()
+                .map(|reason| reason.contains("left"))
+                .unwrap_or(false),
+    ));
+    // With both branches' facts landed, ship is unlocked: score zero
+    // and no conflict of its own.
+    facts.lock().unwrap().insert("left".to_string());
+    facts.lock().unwrap().insert("right".to_string());
+    graph.settle();
+    let ship_unlock = graph.unlock("ship").expect("ship is declared");
+    checks.push((
+        "a zero-score node with no resource conflict is unlocked",
+        ship_unlock.is_unlocked(),
+    ));
+
+    // 6 — a failed prerequisite never unlocks its dependent, and the
+    // reason names it.
+    graph.add(Node::new("seed", 1)).unwrap();
+    graph.add(Node::new("crop", 2).with_prereqs(["seed"])).unwrap();
+    graph.dispatch("seed").unwrap();
+    graph.fail("seed").unwrap();
+    let crop_unlock = graph.unlock("crop").expect("crop is declared");
+    checks.push((
+        "a failed prerequisite does not unlock its dependent and names it",
+        !crop_unlock.is_unlocked()
+            && crop_unlock
+                .reason()
+                .map(|reason| reason.contains("seed"))
+                .unwrap_or(false),
+    ));
+
+    // 7 — the render names the critical path and what holds each node.
+    let cards = crate::graph::render(&graph);
+    checks.push((
+        "the render names the critical path and the holds",
+        cards.contains("critical path")
+            && cards.contains("twin")
+            && cards.contains("crop")
+            && cards.contains("vendoring-lanes"),
+    ));
+
+    // 8 — the surface's file: the graph round-trips through the home's
+    // own graph.json with the state it stood in, and a file that will
+    // not read is named rather than defaulted.
+    let root = match scratch_dir("dependency-graph-home") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let path = crate::graph::path_in(&root);
+    graph.save(&path).unwrap();
+    let loaded = Graph::load(&path).unwrap();
+    checks.push((
+        "the graph round-trips through the home's file with its state",
+        loaded.len() == graph.len()
+            && loaded.node("left").map(|node| node.status) == Some(Status::Verified),
+    ));
+    let malformed = root.join("malformed.json");
+    std::fs::write(&malformed, "{ not a graph").unwrap();
+    checks.push((
+        "a graph file that will not read is named, not defaulted",
+        Graph::load(&malformed)
+            .unwrap_err()
+            .contains("is not a declared graph"),
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    grade(NAME, family, &checks)
+}
+
 /// One hand-written `delegation_judged` row, the shape a writer would
 /// have landed — the ride-back's own fixture.
 fn delegation_judged_line(
@@ -4440,6 +4614,7 @@ mod tests {
                 "calibration-loop-closes",
                 "delegation-loop-closes",
                 "nomenclature-guard",
+                "dependency-graph",
             ]
         );
     }

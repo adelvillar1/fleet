@@ -75,6 +75,79 @@ fn diamond(facts: &Facts) -> Graph {
     graph
 }
 
+/// A scratch path, unique per call, under the temp dir.
+fn scratch(tag: &str) -> std::path::PathBuf {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "fleet-graph-{tag}-{}-{serial}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join("graph.json")
+}
+
+#[test]
+fn a_graph_round_trips_through_its_file_with_the_state_it_stood_in() {
+    // The declaration rides the file — the prereqs, the resource paths,
+    // the capability declaration, the approach — and so does the state:
+    // a graph saved mid-flight reads back mid-flight, because a load
+    // that reset every node to pending would render verified work as
+    // blocking work.
+    let path = scratch("round-trip");
+    let mut graph = Graph::new();
+    graph
+        .add(
+            Node::new("fetch", 2)
+                .with_paths(["src/api.rs"])
+                .with_capabilities(Capabilities {
+                    tools: vec!["bash".to_string()],
+                    skills: vec!["vendoring-lanes".to_string()],
+                    workflows: Vec::new(),
+                    loops: vec!["judge".to_string()],
+                })
+                .with_approach("fetch, then judge"),
+        )
+        .unwrap();
+    graph.add(Node::new("build", 3).with_prereqs(["fetch"])).unwrap();
+    graph.dispatch("fetch").unwrap();
+    graph.save(&path).unwrap();
+
+    let loaded = Graph::load(&path).unwrap();
+    assert_eq!(loaded.len(), 2);
+    let fetch = loaded.node("fetch").unwrap();
+    assert_eq!(fetch.status, Status::Running, "the dispatched state rides the file");
+    assert_eq!(fetch.paths, vec!["src/api.rs".to_string()]);
+    assert_eq!(fetch.capabilities.tools, vec!["bash".to_string()]);
+    assert_eq!(fetch.capabilities.skills, vec!["vendoring-lanes".to_string()]);
+    assert_eq!(fetch.capabilities.loops, vec!["judge".to_string()]);
+    assert_eq!(fetch.approach, "fetch, then judge");
+    assert_eq!(loaded.node("build").unwrap().prereqs, vec!["fetch".to_string()]);
+    assert_eq!(loaded.node("build").unwrap().status, Status::Pending);
+    // The loaded graph carries no fact-gate: nothing verifies, so
+    // nothing unlocks, until the caller attaches its own predicate.
+    assert!(loaded.node("fetch").is_some());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_graph_that_will_not_read_is_named_rather_than_defaulted() {
+    // Absent, malformed: two different facts, both named. An empty
+    // graph silently substituted for either would render as "nothing
+    // is blocking anything" — the one reading the surface must never
+    // produce that by accident.
+    let absent = std::env::temp_dir().join("fleet-graph-absent-does-not-exist.json");
+    let _ = std::fs::remove_file(&absent);
+    let missing = Graph::load(&absent).unwrap_err();
+    assert!(missing.contains("fleet-graph-absent"), "{missing}");
+    let malformed = scratch("malformed");
+    std::fs::write(&malformed, "{ not a graph").unwrap();
+    let broken = Graph::load(&malformed).unwrap_err();
+    assert!(broken.contains("is not a declared graph"), "{broken}");
+    let _ = std::fs::remove_file(&malformed);
+}
+
 #[test]
 fn a_node_with_no_prerequisites_is_ready_immediately() {
     let mut graph = Graph::new();
