@@ -1,6 +1,6 @@
 # Slice 20 — the delegated vector: fleet's delegation learns its own direction (2026-10-14)
 
-status: in-progress — D2/D7/D8's cores landed 2026-10-15 (commit 047b3d7: delegate, graph, nomenclature, each with its tests, gate green). Not landed: D1 (the structured brief), D2's delegation-row writer and `fleet delegate`/`fleet calib --delegation`/the human seam, D3 (roles), D4 (fan-out), D5 (steer/stop), D6 (depth two), D7's `convention` tool + write hook + `fleet convention`, D8/D9/D10's surfaces and the delta report.
+status: in-progress — the cores landed 2026-10-15 across three commits: 047b3d7 (delegate, graph, nomenclature — D2's row model, D8's graph core, D7's guard machinery), a1aeaaf (D4's bounded fan-out, D5's steer/stop, D7's write hook) and 93c32e6 (D1's structured brief, D6's n+2 depth model, D2's delegation-row writer, D9's capability declaration, D10's delta report), gate green at 896 passed / 2 ignored. NOT landed: D2's `fleet delegate` beat, its exit-code rule, `fleet calib --delegation`, the human seam (`--agree/--disagree/--waive`), and the `delegation-loop-closes` eval scenario; D3's roles (`~/.fleet/roles/<name>.md` and the overlay load); D7's `convention` tool and `fleet convention` surface; D8's dispatch surface; D10's replan surface. The two children delivered their scopes; the surfaces above are the remaining increments.
 
 ## Goal
 
