@@ -454,6 +454,10 @@ pub enum ScenarioFamily {
     /// The calibration loop: the judgment, its discipline, the fit rule,
     /// and the conservative ride-back (slice 18).
     Calibration,
+    /// The delegation loop: the judgment against the child's own
+    /// session log, its discipline, the (provider × brief-shape) cells,
+    /// and the conservative ride-back (slice 20's D2).
+    Delegation,
     /// A lane call whose result must carry a computed fact into the final
     /// answer unaltered — the grounded path blend1 exists for.
     GroundedLane,
@@ -471,6 +475,7 @@ impl ScenarioFamily {
             ScenarioFamily::Memory => "memory",
             ScenarioFamily::Explain => "explain",
             ScenarioFamily::Calibration => "calibration",
+            ScenarioFamily::Delegation => "delegation",
             ScenarioFamily::GroundedLane => "grounded-lane",
         }
     }
@@ -615,6 +620,9 @@ pub fn corpus() -> Vec<Scenario> {
         }),
         Scenario::new("calibration-loop-closes", ScenarioFamily::Calibration, |bin| {
             Box::pin(calibration_loop_closes(bin))
+        }),
+        Scenario::new("delegation-loop-closes", ScenarioFamily::Delegation, |bin| {
+            Box::pin(delegation_loop_closes(bin))
         }),
     ]
 }
@@ -3198,6 +3206,635 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     grade(NAME, family, &checks)
 }
 
+// --- the delegation loop (slice 20's D2) -----------------------------------
+
+/// One delegation row in the stream, the shape `fleet delegate` reads:
+/// the child's session id is the key, the brief's shape and the serving
+/// provider are the cell key, and the parent chain rides because a
+/// chain cannot be backfilled honestly.
+fn delegation_row_line(
+    session: &str,
+    brief_shape: &str,
+    provider: &str,
+    outcome: &str,
+    turns: u64,
+    log: &str,
+    root_session: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ts": "2026-10-14T12:00:00Z",
+        "op": "delegation",
+        "session": session,
+        "brief_shape": brief_shape,
+        "scope": "bash,read_file,write_file,list_dir",
+        "provider": provider,
+        "outcome": outcome,
+        "turns": turns,
+        "spend_usd": 0.0123,
+        "duration_ms": 812,
+        "log": log,
+        "parent_session": "parent-session",
+        "root_session": root_session,
+        "depth": 1,
+    })
+}
+
+/// One child's own session log — the evidence the beat reads — written
+/// the way a real run leaves it: the start record, one assistant turn
+/// carrying its tool calls, and the ending the log recorded. The
+/// ending and the turns are what the grade's mechanical read joins the
+/// row against.
+fn child_log(path: &std::path::Path, ending: &str, turns: u64, wrote: &[&str], commands: u64) {
+    let mut calls: Vec<serde_json::Value> = Vec::new();
+    for (index, written) in wrote.iter().enumerate() {
+        calls.push(serde_json::json!({
+            "id": format!("call-{index}"),
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": serde_json::json!({ "path": written, "content": "x" }).to_string(),
+            },
+        }));
+    }
+    for index in 0..commands {
+        calls.push(serde_json::json!({
+            "id": format!("cmd-{index}"),
+            "type": "function",
+            "function": { "name": "bash", "arguments": serde_json::json!({ "command": "echo hi" }).to_string() },
+        }));
+    }
+    let lines = [
+        serde_json::json!({ "type": "start", "v": 1, "model": "test-model",
+            "created": "2026-10-14T12:00:00Z", "kind": "subagent" })
+        .to_string(),
+        serde_json::json!({ "type": "assistant", "content": "working", "tool_calls": calls })
+            .to_string(),
+        serde_json::json!({ "type": "end", "stop_reason": ending, "turns": turns }).to_string(),
+    ];
+    std::fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
+}
+
+/// One `sys1_classify` answer over the delegation beat: the verdict
+/// word, the confidence that weights it, and the lane's own reason. The
+/// same answer shape the routing beat reads — one lane answer serves
+/// both beats, which is the loop reused rather than forked.
+fn delegate_answer(verdict: &str, confidence: f64, reason: &str) -> serde_json::Value {
+    serde_json::json!({
+        "task": "route",
+        "verdict": verdict,
+        "confidence": confidence,
+        "reason": reason,
+        "provider": "glide",
+        "providers_used": ["glide"],
+        "answers": { "glide": { "workload": { "label": "hard", "confidence": confidence } } },
+        "latency_ms": 700,
+        "cost_usd": 0.0002,
+    })
+}
+
+/// The scripted lane's entries for the delegation beat: the handshake,
+/// the tool list declaring `sys1_classify`, then one answer keyed on
+/// the row's own root session id — which rides the composed prompt,
+/// because the child's own summary text never does (the rows are
+/// redacted by design). Keyed, so each ask is answered with its own
+/// row's judgment rather than the script's first answer.
+fn delegate_lane_entries(answers: &[(String, serde_json::Value)]) -> Vec<serde_json::Value> {
+    let handshake = serde_json::json!({ "reply": {
+        "jsonrpc": "2.0", "id": "$echo",
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": { "tools": { "listChanged": false } },
+            "serverInfo": { "name": "sys1", "version": "0.1.0" },
+        },
+    } });
+    let tool_list = serde_json::json!({ "reply": {
+        "jsonrpc": "2.0", "id": "$echo",
+        "result": { "tools": [{ "name": "sys1_classify", "description": "one classify",
+                                "inputSchema": { "type": "object" } }] },
+    } });
+    let mut entries = vec![handshake, tool_list];
+    for (root_session, answer) in answers {
+        entries.push(serde_json::json!({
+            "match": format!("root session {root_session}"),
+            "reply": {
+                "jsonrpc": "2.0", "id": "$echo",
+                "result": { "content": [{ "type": "text", "text": answer.to_string() }],
+                            "isError": false },
+            },
+        }));
+    }
+    entries
+}
+
+/// One delegation row the scenario's day holds, beside its child's own
+/// log and the lane's answer for it.
+struct DaySpec {
+    session: &'static str,
+    shape: &'static str,
+    provider: &'static str,
+    outcome: &'static str,
+    turns: u64,
+    ending: &'static str,
+    log_turns: u64,
+    wrote: &'static [&'static str],
+    commands: u64,
+    verdict: &'static str,
+    confidence: f64,
+    reason: &'static str,
+}
+
+/// The five delegation rows the scenario's day holds: two the logs
+/// agree with, one the log contradicts, one that stopped at its cap,
+/// and one the lane escalates. Each row's own evidence decides its
+/// grade, which is the loop catching real disagreement rather than
+/// agreeing with itself.
+fn delegation_day_specs() -> Vec<DaySpec> {
+    vec![
+        DaySpec {
+            session: "sess-r1", shape: "refactor", provider: "stepfun",
+            outcome: "completed", turns: 3, ending: "completed", log_turns: 3,
+            wrote: &["/tmp/a.rs"], commands: 1,
+            verdict: "pass", confidence: 0.91, reason: "",
+        },
+        DaySpec {
+            session: "sess-r2", shape: "refactor", provider: "stepfun",
+            outcome: "completed", turns: 2, ending: "completed", log_turns: 2,
+            wrote: &["/tmp/b.rs"], commands: 1,
+            verdict: "pass", confidence: 0.83, reason: "",
+        },
+        DaySpec {
+            // The row claims `completed`; the child's own log recorded
+            // `failed` at fewer turns — the contradiction signal, and
+            // the lane's `pass` cannot rescue it.
+            session: "sess-w1", shape: "refactor", provider: "zai-coding-plan",
+            outcome: "completed", turns: 4, ending: "failed", log_turns: 2,
+            wrote: &[], commands: 1,
+            verdict: "pass", confidence: 0.70, reason: "",
+        },
+        DaySpec {
+            // The child stopped at its cap with the direction right:
+            // the companion the minima needed was a longer turn budget,
+            // named.
+            session: "sess-i1", shape: "triage", provider: "stepfun",
+            outcome: "max-turns", turns: 5, ending: "max-turns", log_turns: 5,
+            wrote: &[], commands: 1,
+            verdict: "pass", confidence: 0.88, reason: "",
+        },
+        DaySpec {
+            // The log agrees and the lane escalates: the direction was
+            // right, the answer needed more than the delegation
+            // reached, and the companion is whatever the lane named.
+            session: "sess-i2", shape: "triage", provider: "xiaomi-mimo",
+            outcome: "completed", turns: 2, ending: "completed", log_turns: 2,
+            wrote: &[], commands: 1,
+            verdict: "escalate", confidence: 0.79,
+            reason: "the answer needed the escalation leg",
+        },
+    ]
+}
+
+/// Write the specs' delegation rows and their children's logs into
+/// `root`, returning the rows.
+fn write_delegation_day(root: &std::path::Path, specs: &[DaySpec]) -> Vec<serde_json::Value> {
+    let logs = root.join("sessions");
+    std::fs::create_dir_all(&logs).unwrap();
+    specs
+        .iter()
+        .map(|spec| {
+            let log = logs.join(format!("{}.jsonl", spec.session));
+            child_log(&log, spec.ending, spec.log_turns, spec.wrote, spec.commands);
+            delegation_row_line(
+                spec.session,
+                spec.shape,
+                spec.provider,
+                spec.outcome,
+                spec.turns,
+                &log.to_string_lossy(),
+                spec.session,
+            )
+        })
+        .collect()
+}
+
+/// The delegation loop, graded end to end through scripted seams: the
+/// day's delegation rows are judged against their outcome evidence —
+/// the children's own session logs — the three verdicts carry their
+/// signals, the cells key on (provider × brief shape) with the fit
+/// rule's readiness, the conservative ride-back moves a fit-and-wrong
+/// cell and nothing else, the dry run spends nothing, a lane that fails
+/// open is refused by name, and the owner's disposition inverts. No
+/// paid call: the lane is the scripted MCP child, the same seam the
+/// calibration scenario drives.
+async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "delegation-loop-closes";
+    let family = ScenarioFamily::Delegation;
+    let Some(mcp_bin) = mock_mcp_binary() else {
+        return ScenarioOutcome::fail(
+            NAME,
+            family,
+            "the mock-mcp binary was not found beside the fleet executable; the lane seam cannot run",
+        );
+    };
+    let day = calib::today();
+    let (home, root) = match scratch_dir("delegate-home")
+        .and_then(|home| scratch_dir("delegate-root").map(|root| (home, root)))
+    {
+        Ok(pair) => pair,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let specs = delegation_day_specs();
+    let mut rows = write_delegation_day(&root, &specs);
+    // One already-judged delegation: the stream carries its judgment,
+    // so the batch neither re-asks nor lands a second row.
+    let judged_key = "sess-j1";
+    let judged_log = root.join("sessions").join(format!("{judged_key}.jsonl"));
+    child_log(&judged_log, "completed", 2, &[], 1);
+    rows.push(delegation_row_line(
+        judged_key,
+        "refactor",
+        "stepfun",
+        "completed",
+        2,
+        &judged_log.to_string_lossy(),
+        judged_key,
+    ));
+    rows.push(serde_json::json!({
+        "ts": "2026-10-14T12:30:00Z",
+        "op": "delegation_judged",
+        "session": judged_key,
+        "provider": "stepfun",
+        "brief_shape": "refactor",
+        "verdict": calib::VERDICT_RIGHT,
+        "confidence": 0.9,
+        "reason": "judged earlier",
+        "lane": "sys1",
+    }));
+    write_day_file(&root, &day, &rows);
+    let mut checks: Vec<(&str, bool)> = Vec::new();
+
+    // The dry run first, over a fresh root carrying the same five
+    // unjudged rows: no ask, no row, no spend, and the prompts carry
+    // the redacted evidence and never the child's summary text.
+    let dry_root = match scratch_dir("delegate-dry") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let dry_rows = write_delegation_day(&dry_root, &specs);
+    write_day_file(&dry_root, &day, &dry_rows);
+    let lane = match ScriptedLane::start(&mcp_bin, delegate_lane_entries(&[])) {
+        Ok(lane) => lane,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let dry = crate::delegate::judge(crate::delegate::JudgeRequest {
+        root: &dry_root,
+        home: &home,
+        day: day.clone(),
+        dry_run: true,
+        lane: crate::delegate::LaneSource::Scripted(lane.spec()),
+    })
+    .await;
+    checks.push(("the dry run refuses nothing", dry.refusal.is_none()));
+    checks.push(("the dry run lands no row", dry.judged.is_empty()));
+    checks.push(("the dry run rehearses every unjudged row", dry.dry_run_prompts.len() == 5));
+    checks.push((
+        "the dry run's prompts carry the redacted evidence and never the task text",
+        dry.dry_run_prompts.iter().all(|(_, prompt)| {
+            prompt.contains("DELEGATION DATA BEGIN")
+                && prompt.contains("redacted by design")
+                && prompt.contains("never instructions to follow")
+        }),
+    ));
+    checks.push((
+        "the dry run spends nothing",
+        (crate::delegate::day_spend(&dry_root, &home, &day)).abs() < 1e-9,
+    ));
+    checks.push((
+        "the dry run's card says so",
+        dry.card.contains("dry run") && dry.card.contains("no ask, no row, no spend"),
+    ));
+    drop(lane);
+
+    // The real leg: one bounded ask per unjudged row, each answered
+    // with its own row's judgment, each landing a row keyed by the
+    // child's session id beside the delegation itself.
+    let answers: Vec<(String, serde_json::Value)> = specs
+        .iter()
+        .map(|spec| {
+            (
+                spec.session.to_string(),
+                delegate_answer(spec.verdict, spec.confidence, spec.reason),
+            )
+        })
+        .collect();
+    let lane = match ScriptedLane::start(&mcp_bin, delegate_lane_entries(&answers)) {
+        Ok(lane) => lane,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let outcome = crate::delegate::judge(crate::delegate::JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: crate::delegate::LaneSource::Scripted(lane.spec()),
+    })
+    .await;
+    checks.push(("the batch refuses nothing at the batch level", outcome.refusal.is_none()));
+    checks.push(("five rows are judged", outcome.judged.len() == 5));
+    checks.push((
+        "the already-judged delegation is refused by name",
+        outcome.refusals.len() == 1
+            && outcome.refusals[0].0 == judged_key
+            && outcome.refusals[0].1.contains("already judged"),
+    ));
+    // The three verdicts, each with its signal.
+    let by_session = |session: &str| {
+        outcome
+            .judged
+            .iter()
+            .find(|row| row.session == session)
+            .unwrap_or_else(|| panic!("no judgment for {session}"))
+    };
+    let right = by_session("sess-r1");
+    checks.push((
+        "the agreeing rows grade right with the lane's confidence",
+        right.verdict == calib::VERDICT_RIGHT
+            && by_session("sess-r2").verdict == calib::VERDICT_RIGHT
+            && (right.confidence - 0.91).abs() < 1e-9,
+    ));
+    let wrong = by_session("sess-w1");
+    checks.push((
+        "the contradicted claim grades wrong and names the log's own words",
+        wrong.verdict == calib::VERDICT_WRONG
+            && wrong.reason.contains("contradicted by its own session log")
+            && wrong.reason.contains("recorded `failed`"),
+    ));
+    let capped = by_session("sess-i1");
+    checks.push((
+        "the capped run grades insufficient and names the companion",
+        capped.verdict == calib::VERDICT_INSUFFICIENT
+            && capped.reason.contains("a longer turn budget"),
+    ));
+    let escalated = by_session("sess-i2");
+    checks.push((
+        "the lane's escalation grades insufficient with the lane's companion",
+        escalated.verdict == calib::VERDICT_INSUFFICIENT
+            && escalated.reason.contains("the answer needed the escalation leg"),
+    ));
+    // The rows land in the stream beside the delegations, keyed by the
+    // child's session id.
+    let day_rows = crate::delegate::read_day(&root, &day);
+    checks.push((
+        "the judged rows ride the stream beside the delegations",
+        day_rows.delegations.len() == 6 && day_rows.judged.len() == 6,
+    ));
+    checks.push((
+        "the judgment joins the delegation it graded",
+        every_judgment_joins(&day_rows),
+    ));
+    // The cells key on (provider × brief shape) and keep the three
+    // rates apart; a one- or two-row cell is unfit and informs nothing.
+    let cells = crate::delegate::calibration(&day_rows.judged);
+    let refactor_stepfun = cells
+        .iter()
+        .find(|cell| cell.provider == "stepfun" && cell.shape() == "refactor")
+        .expect("the (stepfun, refactor) cell");
+    checks.push((
+        "the cell counts its rows and keeps the rates apart",
+        refactor_stepfun.judged == 3
+            && refactor_stepfun.right == 3
+            && refactor_stepfun.wrong == 0
+            && refactor_stepfun.insufficient == 0,
+    ));
+    checks.push((
+        "a three-row cell is unfit and informs nothing",
+        !refactor_stepfun.informs_failover() && refactor_stepfun.needs_rows() > 0,
+    ));
+    // The batch is idempotent, and the second batch answers (the exit
+    // code's all-already-judged leg).
+    let again = crate::delegate::judge(crate::delegate::JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: crate::delegate::LaneSource::Scripted(lane.spec()),
+    })
+    .await;
+    checks.push((
+        "a second batch spends nothing on a delegation it already judged",
+        again.judged.is_empty()
+            && again.refusals.len() == 6
+            && again.refusals.iter().all(|(_, reason)| reason.contains("already judged"))
+            && again.batch_answered(),
+    ));
+    drop(lane);
+
+    // The conservative ride-back, over hand-written judged rows in
+    // their own roots: a fit-and-wrong cell is skipped in the
+    // preference, an unfit one never is however wrong it looks, and a
+    // provider outside the candidate set is never skipped.
+    let wrong_root = match scratch_dir("delegate-wrong") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let split: Vec<serde_json::Value> = (0..8u32)
+        .map(|index| {
+            delegation_judged_line(
+                &format!("wrong-key-{index:016x}"),
+                "zai-coding-plan",
+                "refactor",
+                calib::VERDICT_WRONG,
+                0.95 - index as f64 * 0.05,
+            )
+        })
+        .chain((0..8u32).map(|index| {
+            delegation_judged_line(
+                &format!("right-key-{index:016x}"),
+                "zai-coding-plan",
+                "triage",
+                calib::VERDICT_RIGHT,
+                0.95 - index as f64 * 0.05,
+            )
+        }))
+        .collect();
+    write_day_file(&wrong_root, &day, &split);
+    checks.push((
+        "a fit-and-wrong cell is skipped in the preference",
+        crate::delegate::delegation_skips(&wrong_root, &day, &["zai-coding-plan", "stepfun"], "refactor")
+            .len()
+            == 1,
+    ));
+    checks.push((
+        "the same provider's right-for-triage cell skips nothing for triage",
+        crate::delegate::delegation_skips(&wrong_root, &day, &["zai-coding-plan"], "triage")
+            .is_empty(),
+    ));
+    checks.push((
+        "a provider outside the candidate set is never skipped",
+        crate::delegate::delegation_skips(&wrong_root, &day, &["stepfun"], "refactor").is_empty(),
+    ));
+    // An unfit cell: one wrong row at full confidence. The raw rate is
+    // 1.0 and it still moves nothing, because the fit requirement
+    // outranks the number.
+    let unfit_root = match scratch_dir("delegate-unfit") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let unfit = vec![delegation_judged_line(
+        "unfit-key-0000000000000001",
+        "zai-coding-plan",
+        "refactor",
+        calib::VERDICT_WRONG,
+        0.95,
+    )];
+    write_day_file(&unfit_root, &day, &unfit);
+    checks.push((
+        "an unfit cell never moves routing however wrong it looks",
+        crate::delegate::delegation_skips(&unfit_root, &day, &["zai-coding-plan"], "refactor")
+            .is_empty(),
+    ));
+
+    // The fail-open leg: the lane's own fallback shape is a named
+    // refusal, not a judgment — no row, and the recorded decisions
+    // stand. A fresh root holds one unjudged delegation.
+    let open_root = match scratch_dir("delegate-open") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let open_rows = write_delegation_day(&open_root, &specs[..1]);
+    write_day_file(&open_root, &day, &open_rows);
+    let fail_open = delegate_lane_entries(&[(
+        "sess-r1".to_string(),
+        serde_json::json!({
+            "task": "route", "verdict": "error",
+            "telemetry_error": "no provider answered the judgment head",
+        }),
+    )]);
+    let lane = match ScriptedLane::start(&mcp_bin, fail_open) {
+        Ok(lane) => lane,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let opened = crate::delegate::judge(crate::delegate::JudgeRequest {
+        root: &open_root,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: crate::delegate::LaneSource::Scripted(lane.spec()),
+    })
+    .await;
+    checks.push((
+        "a lane that fails open is a named refusal, not a judgment",
+        opened.judged.is_empty()
+            && opened.refusals.len() == 1
+            && opened.refusals[0].1.contains("no provider answered the judgment head"),
+    ));
+    checks.push((
+        "the fail-open lands no row",
+        crate::delegate::read_day(&open_root, &day).judged.is_empty(),
+    ));
+    drop(lane);
+
+    // The human seam: the owner's disposition lands a later append-only
+    // row that spends nothing, and a disagreement inverts because the
+    // owner's grading is the ground truth on whether a brief shape
+    // drove.
+    let spend_before = crate::delegate::day_spend(&root, &home, &day);
+    let disagreed = crate::delegate::disposition(&root, &day, "sess-w1", "disagreed");
+    checks.push((
+        "the owner's disagreement lands a later row",
+        disagreed.is_ok()
+            && disagreed.as_ref().unwrap().disposition.as_deref() == Some("disagreed"),
+    ));
+    let waived = crate::delegate::disposition(&root, &day, "sess-r1", "waived");
+    checks.push((
+        "the owner's waiver sets the row aside",
+        waived.is_ok() && waived.as_ref().unwrap().disposition.as_deref() == Some("waived"),
+    ));
+    checks.push((
+        "a disposition spends nothing",
+        (crate::delegate::day_spend(&root, &home, &day) - spend_before).abs() < 1e-9,
+    ));
+    // The freshest row stands: the disposition rides a later row that
+    // keeps the original verdict beside the owner's word, and the CELL
+    // math applies it — a disagreement inverts, because the owner's
+    // grading is the ground truth on whether a brief shape drove.
+    let after = crate::delegate::read_day(&root, &day);
+    let w1 = after
+        .judged
+        .iter()
+        .rev()
+        .find(|row| row.session == "sess-w1")
+        .expect("the disposition row");
+    checks.push((
+        "the freshest row stands and carries the owner's word",
+        w1.disposition.as_deref() == Some("disagreed"),
+    ));
+    let cells_after = crate::delegate::calibration(&after.judged);
+    let w1_cell = cells_after
+        .iter()
+        .find(|cell| cell.provider == "zai-coding-plan" && cell.shape() == "refactor")
+        .expect("the (zai-coding-plan, refactor) cell");
+    checks.push((
+        "the cell math applies the disposition and the verdict inverts",
+        w1_cell.wrong == 0 && w1_cell.right == 1 && w1_cell.judged == 1,
+    ));
+    // The waived row is set apart: neither right nor wrong, excluded
+    // from the rate.
+    let r1_cell = cells_after
+        .iter()
+        .find(|cell| cell.provider == "stepfun" && cell.shape() == "refactor")
+        .expect("the (stepfun, refactor) cell");
+    checks.push((
+        "the waived row is set apart and excluded from the rate",
+        r1_cell.waived == 1 && r1_cell.right == 2 && r1_cell.judged == 3,
+    ));
+    // An unknown key is a named refusal, not a silent write.
+    checks.push((
+        "a disposition naming no judged row refuses by name",
+        crate::delegate::disposition(&root, &day, "no-such-session", "agreed").is_err(),
+    ));
+
+    for scratch in [&home, &root, &dry_root, &wrong_root, &unfit_root, &open_root] {
+        let _ = std::fs::remove_dir_all(scratch);
+    }
+    grade(NAME, family, &checks)
+}
+
+/// One hand-written `delegation_judged` row, the shape a writer would
+/// have landed — the ride-back's own fixture.
+fn delegation_judged_line(
+    session: &str,
+    provider: &str,
+    brief_shape: &str,
+    verdict: &str,
+    confidence: f64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ts": "2026-10-14T13:00:00Z",
+        "op": "delegation_judged",
+        "session": session,
+        "provider": provider,
+        "brief_shape": brief_shape,
+        "verdict": verdict,
+        "confidence": confidence,
+        "reason": "the fixture's own reason",
+        "lane": "sys1",
+    })
+}
+
+/// Every judged row joins a delegation the day carries, by session id
+/// — the join the stream promises. Written without naming the row
+/// type: the delegate module's guard owns construction of the rows,
+/// and this scenario builds its fixtures as stream JSON, never as the
+/// struct.
+fn every_judgment_joins(day: &crate::delegate::DayRows) -> bool {
+    day.judged.iter().all(|judged| {
+        day.delegations.iter().any(|delegation| {
+            delegation.session == judged.session
+                && crate::delegate::delegation_key(delegation) == judged.session
+        })
+    })
+}
+
 /// The tool message one recorded request carried: the lane's answer as
 /// the model read it (the fourth message — system, user, assistant,
 /// tool).
@@ -3653,6 +4290,7 @@ mod tests {
                 "blend1-corpus-recall",
                 "explain-the-verdict",
                 "calibration-loop-closes",
+                "delegation-loop-closes",
             ]
         );
     }
