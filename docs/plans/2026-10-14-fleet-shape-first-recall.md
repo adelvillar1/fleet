@@ -24,9 +24,14 @@ context. Everything below follows from it: the query defines a
 multidimensional *region* (the shape); a candidate fact is a *vector* —
 its direction is the vocabulary recorded during the resolution, its
 magnitude is the evidence it actually drove (the recall-hit history,
-the confirmed-by provenance); and no single dimension may dominate the
+the confirmed-by provenance); and **a failure is a vector in the
+opposite direction** — an anti-vector whose direction is the vocabulary
+of the trajectory that diverged. No single dimension may dominate the
 ranking, because the per-dimension minimum is exactly the failure mode
-(a homonym across shapes, a synonym within one). Fleet's recall today
+(a homonym across shapes, a synonym within one). An anti-vector that
+matches the current trajectory is highly relevant — the avoidance half
+of the shelf — and surfaces as prominently as a resolution, marked, so
+the model never reads a failure as a candidate solution. Fleet's recall today
 has it backwards: 0.80 of the scoring weight is word-based (vector 0.55
 + keyword 0.25) and the shape is a 0.15 additive boost — a tiebreaker
 under the words.

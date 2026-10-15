@@ -28,7 +28,10 @@ meaningless value the framing warns about — a provider right for one
 workload shape and wrong for another must not be averaged. So the
 calibration is keyed per **(provider × workload shape) cell**, the fit
 requirement applies per cell, the failover consults the cell for the
-current task's shape only, and the surface renders the cells.
+current task's shape only, and the surface renders the cells. The
+judged-wrong routes are the accumulated anti-vectors — the failures
+driving in the opposite direction — whose per-cell weight is what the
+failover drives away from.
 
 ## The problem shape (PS-B)
 
