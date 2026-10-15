@@ -1,8 +1,12 @@
 # Fleet services
 
-The four fleet lane cores — [sys1](sys1/) (judgment), [sdm1](sdm1/) (tabular),
-[sem1](sem1/) (embeddings), [gen1](gen1/) (media) — vendored from the
-deepseek-harness fork's `services/` tree (same author, Apache-2.0). Each
+The five fleet lane cores — [sys1](sys1/) (judgment), [sdm1](sdm1/) (tabular),
+[sem1](sem1/) (embeddings), [gen1](gen1/) (media), and [blend1](blend1/)
+(the composed lane: one grounded `ask` over the specialized legs, with
+the web leg and the escalation legs beside it) — vendored from the
+deepseek-harness fork's `services/` tree (same author, Apache-2.0).
+blend1's own upstream is the owner's `~/Projects/blend1` (see its
+`VENDOR.json`). Each
 carries a `VENDOR.json` recording the upstream pin and the provenance of this
 copy; the upstream repos stay the development home.
 
@@ -32,6 +36,7 @@ Concretely, from this repository's root:
 | sdm1 | `SDM1_PYTHONPATH=src python3 -u service/mcp_server.py` | `sdm1_classify`, `sdm1_health` |
 | sem1 | `SEM1_PYTHONPATH=src python3 -u service/mcp_server.py` | `sem1_embed`, `sem1_probe`, `sem1_index`, `sem1_search` |
 | gen1 | `GEN1_PYTHONPATH=src python3 -u service/mcp_server.py` | `gen1_imagine` |
+| blend1 | `BLEND1_PYTHONPATH=src python3 -u service/mcp_server.py` | `ask`, `web`, `doctor`, `search`, `refresh`, `seed` |
 
 Each child speaks newline-delimited JSON-RPC 2.0 (MCP protocol version
 2024-11-05) on stdin/stdout: `initialize`, `tools/list`, `tools/call`, and

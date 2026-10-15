@@ -40,12 +40,16 @@
 //!   the paths that reach it. In a tree — the common case — the drop is
 //!   exactly the completed node's cost.
 //!
-//! ## Unlock is two conditions
+//! ## Unlock is three conditions
 //!
-//! Score zero AND resource-free, both necessary and separately reported
-//! by [`Unlock`]: a node fully unblocked by its dependencies can still
-//! be held by a sibling on its path, and "waiting on work" and "waiting
-//! on a lock" call for different actions from the owner.
+//! Score zero, dependencies verified, AND resource-free — all three
+//! necessary and separately reported by [`Unlock`]: a node fully
+//! unblocked by its dependencies can still be held by a sibling on its
+//! path, and "waiting on work" and "waiting on a lock" call for
+//! different actions from the owner. The third condition sits beside
+//! the score because it differs from it only when a declared cost is
+//! zero or a prerequisite is unresolved — both named — which is why it
+//! is checked beside the score rather than instead of it.
 //!
 //! ## The safety net
 //!
@@ -267,11 +271,12 @@ pub struct ResourceHold {
     pub path: String,
 }
 
-/// The two conditions, reported separately and both necessary.
+/// The three conditions, reported separately and all necessary.
 ///
 /// Collapsing them into one "blocked" state would hide the difference
-/// between waiting on work and waiting on a lock, and those call for
-/// different actions from the owner.
+/// between waiting on work, waiting on a missing prerequisite, and
+/// waiting on a lock, and those call for different actions from the
+/// owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unlock {
     /// The dependency score reached zero: no unfinished work stands in
