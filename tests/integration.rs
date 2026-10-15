@@ -2441,6 +2441,205 @@ async fn sys1_judges_the_route_through_the_injected_spec() {
     assert_eq!(decision.start_index, 0);
 }
 
+/// The composed workload's candidate is a lane, not a gateway: the full
+/// production path — `prepare` judges the workload through the injected
+/// sys1 seam, the composed judgment targets blend1, and the walk drives
+/// the blend1 lane through the MCP client with the ask payload mapped
+/// at the boundary. The answer comes back in the chat shape, and the
+/// lane's own facts (path, escalation, score) ride the route row's
+/// reason rather than being flattened away.
+#[tokio::test]
+async fn a_composed_judgment_answers_through_the_blend1_lane() {
+    // The judge seam: sys1 answers the route judgment `composed`. The
+    // judge's live path is initialize → call (no tools/list), so the
+    // script carries exactly those two entries — an extra one would be
+    // served to the call (KI-201's order rule).
+    let judge = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": call_reply(
+            r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"composed","confidence":0.88}}}}"#
+        ) }),
+    ]);
+    // The answer seam: blend1 declares `ask` and answers with its own
+    // structured result — the shape `BlendResult.as_dict()` carries.
+    // The lane boundary DOES list tools before calling, so this script
+    // carries the three entries its three requests consume in order.
+    let answer = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "ask", "description": "the grounding ask", "inputSchema": { "type": "object" } }
+        ])) }),
+        serde_json::json!({ "reply": call_reply(
+            r#"{"path":"synthesized","final_answer":"the grounded answer","escalated":false,
+                "score":{"correct":true,"confidence":0.8},"total_latency_ms":812}"#
+        ) }),
+    ]);
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), judge.spec());
+    specs.insert("blend1".to_string(), answer.spec());
+
+    // The default roster already declares blend1 as the composed
+    // workload's lane-kind candidate; no config is needed.
+    let home = temp_home("composed-lane");
+    let prepared =
+        fleet::route::prepare(&home, &std::collections::HashMap::new(), "compose the answer", &specs)
+            .await
+            .unwrap();
+    assert_eq!(prepared.decision.how, How::Judged);
+    assert_eq!(prepared.decision.provider, "blend1");
+    assert_eq!(prepared.decision.workload.as_deref(), Some("composed"));
+
+    // The run: the walk drives the lane, and the agent sees the lane's
+    // answer as an ordinary assistant message. The session is created
+    // with the routed model, the production order — the route is
+    // prepared first, so the log's start record names what serves.
+    let mut session = Session::create(&home, &prepared.decision.model).unwrap();
+    let client = Client::routed(prepared.router.clone());
+    let options = AgentOptions {
+        model: prepared.decision.model.clone(),
+        max_turns: 3,
+        ui_tx: None,
+        lane_specs: None,
+        calib: Some(prepared.calib.clone()),
+        skills: Vec::new(),
+        memory: None,
+        scope: None,
+        improve_home: None,
+    };
+    let report = {
+        let mut progress = Vec::new();
+        let mut agent =
+            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        agent.run("compose the answer").await.unwrap()
+    };
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(report.final_message.as_deref(), Some("the grounded answer"));
+
+    // The route row names the lane's own facts — the adapter surfaces
+    // blend1's differences, never flattens them.
+    let row = prepared.router.row("compose the answer", 0);
+    assert_eq!(row.provider, "blend1");
+    assert_eq!(row.model, "blend1");
+    assert!(
+        row.reason.contains("blend1 answered through path `synthesized`"),
+        "{}",
+        row.reason
+    );
+    assert!(row.reason.contains("escalated: false"), "{}", row.reason);
+    assert!(row.reason.contains("\"correct\":true"), "{}", row.reason);
+    assert!(row.reason.contains("lane latency 812ms"), "{}", row.reason);
+    // The session log is an ordinary session: the routed model in the
+    // start record, the lane's answer as the turn's content.
+    let records = session::replay(&session.path()).unwrap();
+    assert!(records.iter().any(|record| matches!(
+        record,
+        Record::Start { model, .. } if model == "blend1"
+    )));
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The lane that fails open is a named refusal that advances the walk:
+/// blend1 refuses the ask, its own words ride the route row, the
+/// attempt's class names the lane's failure, and the workload's next
+/// candidate serves — the consuming-lanes rule inside the walk.
+#[tokio::test]
+async fn a_lane_that_refuses_advances_the_walk_by_name() {
+    let kit = MockApi::start(vec![assistant_stream("Answered by the kit.")]);
+    let home = temp_home("composed-lane-refusal");
+    // A declared table: `composed` walks blend1, then the kit. The kit's
+    // endpoint is the mock, so the failover leg lands somewhere real.
+    std::fs::write(
+        home.join("config.json"),
+        serde_json::json!({
+            "providers": [
+                { "id": "router-kit", "base_url": kit.url(), "key_required": false }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join("routing.json"),
+        serde_json::json!({
+            "workloads": [
+                { "workload": "composed", "candidates": ["blend1/blend1", "router-kit/auto"] }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let judge = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": call_reply(
+            r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"composed","confidence":0.88}}}}"#
+        ) }),
+    ]);
+    // The lane that fails open: the call runs, the tool refuses, and
+    // the refusal's own words are the answer.
+    let refusing = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "ask", "description": "the grounding ask", "inputSchema": { "type": "object" } }
+        ])) }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "content": [{ "type": "text",
+                "text": "the corpus for this project is not indexed" }], "isError": true }
+        } }),
+    ]);
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), judge.spec());
+    specs.insert("blend1".to_string(), refusing.spec());
+
+    let prepared =
+        fleet::route::prepare(&home, &std::collections::HashMap::new(), "compose the answer", &specs)
+            .await
+            .unwrap();
+    assert_eq!(prepared.decision.provider, "blend1");
+
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::routed(prepared.router.clone());
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 3,
+        ui_tx: None,
+        lane_specs: None,
+        calib: Some(prepared.calib.clone()),
+        skills: Vec::new(),
+        memory: None,
+        scope: None,
+        improve_home: None,
+    };
+    let report = {
+        let mut progress = Vec::new();
+        let mut agent =
+            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        agent.run("compose the answer").await.unwrap()
+    };
+    // The kit served: the lane's refusal advanced the walk.
+    assert_eq!(report.final_message.as_deref(), Some("Answered by the kit."));
+    let row = prepared.router.row("compose the answer", 0);
+    assert_eq!(row.provider, "router-kit");
+    let attempts: Vec<(&str, &str, Option<&str>)> = row
+        .attempts
+        .iter()
+        .map(|attempt| (attempt.provider.as_str(), attempt.outcome, attempt.class))
+        .collect();
+    assert_eq!(
+        attempts,
+        vec![("blend1", "failed", Some("lane")), ("router-kit", "served", None)]
+    );
+    // The lane's own words ride the row: the refusal is named, not a
+    // bare class the reader must interpret.
+    assert!(
+        row.reason.contains("the corpus for this project is not indexed"),
+        "{}",
+        row.reason
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
 /// A real-lane probe of `sys1_classify`'s schema: if the vendored sys1 lane
 /// boots on this machine, confirm the call shape the route judgment relies
 /// on. If it does not boot (no python3, an import failure), log it and do

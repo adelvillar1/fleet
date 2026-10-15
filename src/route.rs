@@ -41,6 +41,7 @@ use serde_json::json;
 
 use crate::api::{ChatRequest, ChatResponse, Client, ClientError, StreamEvent};
 use crate::calib;
+use crate::lane_client;
 use crate::lanes;
 use crate::mcp::{McpServer, ServerSpec};
 use crate::session;
@@ -1193,7 +1194,12 @@ pub fn failure_class(error: &ClientError) -> &'static str {
         },
         ClientError::Network(message) => {
             let lowered = message.to_lowercase();
-            if lowered.contains("timeout") || lowered.contains("timed out") {
+            // A lane candidate's failure names itself: the boundary's
+            // messages start "lane `<name>`: ", and the class says the
+            // failure was a lane's rather than guessing from the prose.
+            if lowered.starts_with("lane ") {
+                "lane"
+            } else if lowered.contains("timeout") || lowered.contains("timed out") {
                 "timeout"
             } else {
                 "network"
@@ -1276,15 +1282,34 @@ struct RouterState {
     /// skips happened. They ride the decision row's reason, so a later
     /// reader sees why the walk was ordered as it was.
     calibration_clauses: Vec<String>,
+    /// The clause a lane candidate's answer earned: its path, its
+    /// escalation, its score — the lane's own facts, surfaced on the
+    /// row rather than flattened away (the owner's ruling on the
+    /// blend1 adapter).
+    lane_note: Option<String>,
+    /// The named refusal a lane candidate's failure left on the row:
+    /// the lane's own words, so a reader sees WHY the composed leg
+    /// advanced rather than inferring it from a bare class.
+    lane_failure: Option<String>,
+}
+
+/// What the walk invokes per candidate. A gateway candidate is a plain
+/// chat-completions client; a lane candidate (blend1) is a launch spec
+/// whose ask is mapped at [`crate::lane_client`]'s boundary — or the
+/// named reason no spec could be resolved, which fails every attempt
+/// by name and lets the walk advance.
+enum Endpoint {
+    Http(Client),
+    Lane(Result<ServerSpec, String>),
 }
 
 /// Walks the roster with failover. Built once per session from the resolved
 /// roster and the selection decision; the run's [`Client`] holds it behind
 /// an `Arc` and every streamed request crosses [`Router::chat_stream`].
 pub struct Router {
-    /// One plain client per candidate (no router of its own), reused across
+    /// One endpoint per candidate (no router of its own), reused across
     /// turns so each gateway's connection pool survives.
-    clients: Vec<Client>,
+    endpoints: Vec<Endpoint>,
     resolved: Vec<Resolved>,
     /// The walk order: positions into `resolved`, in the order this
     /// session's preference walks them — the workload's own candidate
@@ -1308,22 +1333,41 @@ pub struct Router {
 impl Router {
     /// A router over `resolved`, starting its walk at the decision's index.
     pub fn new(resolved: Vec<Resolved>, decision: RouteDecision) -> Router {
-        Router::build(resolved, decision, Vec::new())
+        Router::build(resolved, decision, Vec::new(), &HashMap::new())
     }
 
     /// A router over `resolved` whose walk passes over the calibration's
     /// skipped cells. The private half of [`Router::new`]: the
     /// constructor's shape is unchanged for every caller that has no
     /// calibration to consult.
+    ///
+    /// `lane_specs` carries the launch spec for each lane-kind candidate
+    /// by lane name — the agent's own specs, so a lane the operator
+    /// configured is launched the way they configured it. A lane the map
+    /// does not name falls back to the vendored copy (`lanes::spec_for`),
+    /// which is the self-contained harness's shape; a lane with neither
+    /// is a named reason, and every attempt on it fails by that name.
     fn build(
         resolved: Vec<Resolved>,
         decision: RouteDecision,
         calibration_skips: Vec<calib::CalibrationCell>,
+        lane_specs: &HashMap<String, ServerSpec>,
     ) -> Router {
-        let clients = resolved
+        let endpoints = resolved
             .iter()
-            .map(|entry| {
-                Client::new(entry.candidate.base_url.as_str(), entry.key.clone().unwrap_or_default())
+            .map(|entry| match entry.candidate.kind {
+                CandidateKind::Http => {
+                    Endpoint::Http(Client::new(entry.candidate.base_url.as_str(), entry.key.clone().unwrap_or_default()))
+                }
+                CandidateKind::Lane => Endpoint::Lane(
+                    lane_specs
+                        .get(entry.id())
+                        .cloned()
+                        .or_else(|| lanes::spec_for(entry.id()).ok())
+                        .ok_or_else(|| {
+                            format!("the lane `{}` has no launch spec", entry.id())
+                        }),
+                ),
             })
             .collect();
         // The walk order: the decision's own (provider, model) list as
@@ -1355,7 +1399,7 @@ impl Router {
         };
         let index = decision.start_index.min(order.len().saturating_sub(1));
         Router {
-            clients,
+            endpoints,
             resolved,
             order,
             models,
@@ -1366,6 +1410,8 @@ impl Router {
                 served: None,
                 attempts: Vec::new(),
                 calibration_clauses: Vec::new(),
+                lane_note: None,
+                lane_failure: None,
             }),
             calibration_skips,
         }
@@ -1446,6 +1492,16 @@ impl Router {
         let mut reason = self.decision.reason.clone();
         for clause in &state.calibration_clauses {
             reason.push_str(clause);
+        }
+        // The lane's own facts, when a lane candidate served: the path
+        // it answered through, whether it escalated, its score.
+        if let Some(note) = &state.lane_note {
+            reason.push_str(note);
+        }
+        // The named refusal, when a lane candidate failed: its own
+        // words, so the row says why the walk advanced.
+        if let Some(failure) = &state.lane_failure {
+            reason.push_str(&format!("; {failure}"));
         }
         let ts = session::iso_utc_stamp(SystemTime::now()).unwrap_or_default();
         calib::RouteRow {
@@ -1607,22 +1663,51 @@ impl Router {
     ) -> Result<ChatResponse, (ClientError, bool)> {
         let index = self.order[position];
         let model = self.models[position].clone();
-        let routed = ChatRequest {
-            model: &model,
-            messages: request.messages,
-            tools: request.tools.clone(),
-        };
-        let streamed = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&streamed);
-        let result = self.clients[index]
-            .chat_stream_plain(&routed, |event| {
-                flag.store(true, Ordering::Relaxed);
-                on_event(event);
-            })
-            .await;
-        match result {
-            Ok(response) => Ok(response),
-            Err(error) => Err((error, streamed.load(Ordering::Relaxed))),
+        match &self.endpoints[index] {
+            Endpoint::Http(client) => {
+                let routed = ChatRequest {
+                    model: &model,
+                    messages: request.messages,
+                    tools: request.tools.clone(),
+                };
+                let streamed = Arc::new(AtomicBool::new(false));
+                let flag = Arc::clone(&streamed);
+                let result = client
+                    .chat_stream_plain(&routed, |event| {
+                        flag.store(true, Ordering::Relaxed);
+                        on_event(event);
+                    })
+                    .await;
+                result.map_err(|error| (error, streamed.load(Ordering::Relaxed)))
+            }
+            Endpoint::Lane(spec) => {
+                // A lane candidate answers a one-shot ask, not a chat
+                // completion: the request's conversation is mapped to
+                // the lane's prompt at the boundary, and the lane's
+                // answer back into the chat shape. A lane that cannot
+                // be asked — no spec, a child that will not spawn, a
+                // refusal — fails by name, and the walk advances.
+                let prompt = lane_client::ask_prompt(request.messages);
+                let asked = match spec {
+                    Ok(spec) => lane_client::ask(spec, &prompt).await,
+                    Err(reason) => Err(reason.clone()),
+                };
+                match asked {
+                    Ok(answer) => {
+                        let response = lane_client::chat_response(&answer);
+                        on_event(StreamEvent::Content(answer.text));
+                        lock(&self.state).lane_note = Some(answer.note);
+                        Ok(response)
+                    }
+                    Err(reason) => {
+                        // The named refusal rides the row: the lane's
+                        // own words, beside the attempt's `lane` class.
+                        let named = format!("lane `{}`: {reason}", self.resolved[index].id());
+                        lock(&self.state).lane_failure = Some(named.clone());
+                        Err((ClientError::Network(named), false))
+                    }
+                }
+            }
         }
     }
 
@@ -1741,7 +1826,7 @@ pub async fn prepare(
         .iter()
         .position(|(provider, _)| provider == &decision.provider)
         .unwrap_or(0);
-    let router = Arc::new(Router::build(resolved, decision.clone(), skips));
+    let router = Arc::new(Router::build(resolved, decision.clone(), skips, specs));
     Ok(Prepared { router, decision, latency_ms, calib })
 }
 
@@ -2938,7 +3023,7 @@ mod tests {
             spend_usd: 0.0016,
             cost_per_right: None,
         };
-        let router = Router::build(resolved, decision, vec![cell]);
+        let router = Router::build(resolved, decision, vec![cell], &HashMap::new());
         // The head is the walk's start, so it is never skipped; zai is
         // skipped, and the clause names the cell that did it.
         assert_eq!(router.calibration_skip(0, 0), None);

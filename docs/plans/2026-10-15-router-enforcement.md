@@ -1,6 +1,6 @@
 # Slice 21 — the router as intended: the kit's pattern, internal and plugin-shaped (2026-10-15)
 
-status: in-progress (the routing core landed 2026-10-15: the ported table, the plugin config, the order-walk with the gates, the pin semantics, and the honest surface are committed and gate-green; the blend1 lane-serving path — AC4's client-boundary half and AC9's composed leg — is the remaining increment)
+status: in-progress — the routing core and the blend1 lane-serving path landed 2026-10-15 (commits d997557 and the lane increment): the ported table, the plugin config, the order-walk with the gates, the pin semantics, the honest surface, and the composed workload's lane candidate answering through the MCP boundary with its facts on the row are committed and gate-green (901 passed / 2 ignored, release exit 0). The blend1 boundary is verified three ways: the mapping's unit tests, the full-path integration tests (the composed judgment answering, the refusing lane advancing the walk by name), and a LIVE run whose real lane answer rode the stream (path `synthesized`, score on provider liquid). The one leg still open: a live run where the REAL sys1 judges a task `composed` — its route task currently answers low-confidence labels (`prose` at 0.24 on the live probe), so the gate routes to the default workload; the composed path itself is proven end to end. Nothing else remains in this plan.
 
 ## The architecture this slice lands (the owner's rulings, 2026-10-15)
 

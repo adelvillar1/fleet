@@ -144,3 +144,40 @@ findings:
 Remaining in slice 21: the blend1 lane-serving path (AC4's
 client-boundary half and AC9's composed leg). Then the delegation
 plan's remaining wiring and CLI surfaces.
+
+## The blend1 lane lands (same session, the routing plan's last piece)
+
+The composed workload's candidate is a lane, not a gateway, and the
+walk now drives it: `src/lane_client.rs` is the one place the mapping
+lives — the chat request's conversation in (role-named, because the
+lane is stateless and one-shot), the lane's `ask` over the same MCP
+seam the judge walks (spawn, handshake, list, call, teardown), and the
+answer back in the chat shape with the lane's own facts — path,
+escalation, score, latency — riding the route row's reason, per the
+owner's ruling that the adapter SURFACES blend1's differences. The
+Router carries an `Endpoint` per candidate (`Http` or `Lane`), the
+lane's launch spec coming from the agent's specs map with the vendored
+copy as the fallback (the self-contained harness's shape), and a lane
+that cannot be asked fails by name — class `lane`, its own words on
+the row — and the walk advances.
+
+Verified three ways: the mapping's unit tests (prompt rendering, the
+BlendResult mapping, the three named refusals); the full-path
+integration tests (a composed judgment answering through a scripted
+lane end to end through `prepare`, and a refusing lane advancing the
+walk with its words on the row); and LIVE — a real `fleet run` whose
+route landed on blend1 and whose real lane answer rode the stream:
+path `synthesized`, escalated false, score correct 0.99 on provider
+liquid, about $0.00013, the grounded answer citing KI-001/KI-002 from
+the indexed notes. The first live attempt refused on the MCP client's
+default 60s call budget; the boundary now names its own five-minute
+budget (KI-206), and the retry landed. The one leg still open is
+named honestly: a live run where the REAL sys1 judges a task
+`composed` — its route task answers low-confidence labels today
+(`prose` at 0.24 on the live probe), so the gate routes to the default
+workload; the composed path itself is proven end to end.
+
+KI-205 records the KI-201 recurrence on the new seam: the judge's live
+path is initialize+call (no tools/list), unlike the lane boundary's
+initialize+list+call, and a script that does not count the requests a
+path makes serves the wrong entry to the call.

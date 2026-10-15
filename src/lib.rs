@@ -24,6 +24,7 @@ pub mod improve;
 pub mod install;
 pub mod judge;
 pub mod lanes;
+pub mod lane_client;
 pub mod mcp;
 pub mod memory;
 pub mod net;
