@@ -586,6 +586,18 @@ pub fn corpus() -> Vec<Scenario> {
         Scenario::new("memory-recall", ScenarioFamily::Memory, |bin| {
             Box::pin(memory_recall(bin))
         }),
+        Scenario::new("memory-shape-inversion", ScenarioFamily::Memory, |bin| {
+            Box::pin(memory_shape_inversion(bin))
+        }),
+        Scenario::new("memory-spillover-routes", ScenarioFamily::Memory, |bin| {
+            Box::pin(memory_spillover_routes(bin))
+        }),
+        Scenario::new("memory-failure-shape-recall", ScenarioFamily::Memory, |bin| {
+            Box::pin(memory_failure_shape_recall(bin))
+        }),
+        Scenario::new("memory-phrases-round-trip", ScenarioFamily::Memory, |bin| {
+            Box::pin(memory_phrases_round_trip(bin))
+        }),
         Scenario::new("blend1-grounded-fact", ScenarioFamily::GroundedLane, |bin| {
             Box::pin(blend1_grounded_fact(bin))
         }),
@@ -1696,6 +1708,446 @@ fn fact_file(name: &str, description: &str, basis: &str, fact_type: &str, shape:
     format!(
         "---\nname: {name}\ndescription: \"{description}\"\ntype: {fact_type}\ndate: {today}\nbasis: {basis}\ntier: durable\nshape: [{shape}]\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe body of {name}.\n",
         today = calib::today()
+    )
+}
+
+/// One durable fact in the writer's field order with the slice-19
+/// fields: the shape tags, the resolution's phrases, the missing
+/// companions, and the recall history — the substrate the shape-first
+/// recall scenarios grade.
+fn trajectory_fact_file(
+    name: &str,
+    description: &str,
+    basis: &str,
+    shape: &str,
+    phrases: &[&str],
+    missing: &[&str],
+    recalls: u64,
+) -> String {
+    format!(
+        "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {today}\nbasis: {basis}\ntier: durable\nshape: [{shape}]\nphrases: [{}]\nmissing: [{}]\nrecall-count: {recalls}\nsuperseded-by:\nvalid-until:\n---\n\nThe body of {name}.\n",
+        phrases.join(", "),
+        missing.join(", "),
+        today = calib::today()
+    )
+}
+
+/// Write one fact file into a scenario's scratch corpus. A fault is a
+/// named error the scenario grades — a driver never panics.
+fn write_fact_file(root: &Path, name: &str, text: &str) -> Result<(), String> {
+    std::fs::create_dir_all(root)
+        .map_err(|error| format!("the scratch dir {} could not be made: {error}", root.display()))?;
+    std::fs::write(root.join(format!("{name}.md")), text)
+        .map_err(|error| format!("the fact {name} could not be written: {error}"))
+}
+
+/// One memory-family scenario's corpus, graded on a fault: the scratch
+/// dir is created and every fact written, or the scenario fails naming
+/// the fault.
+fn memory_corpus(
+    name: &str,
+    family: ScenarioFamily,
+    tag: &str,
+    facts: &[(&str, String)],
+) -> Result<PathBuf, ScenarioOutcome> {
+    let corpus = match scratch_dir(tag) {
+        Ok(corpus) => corpus,
+        Err(error) => {
+            return Err(ScenarioOutcome::fail(
+                name,
+                family,
+                format!("the scratch dir could not be made: {error}"),
+            ))
+        }
+    };
+    for (fact, text) in facts {
+        if let Err(error) = write_fact_file(&corpus, fact, text) {
+            std::fs::remove_dir_all(&corpus).ok();
+            return Err(ScenarioOutcome::fail(name, family, error));
+        }
+    }
+    Ok(corpus)
+}
+
+/// The names a ranked recall surfaces, in rank order.
+fn hit_names(hits: &[crate::memory::ScoredFact]) -> Vec<&str> {
+    hits.iter().map(|hit| hit.fact.name.as_str()).collect()
+}
+
+// --- the memory family: shape-first recall ---------------------------------
+
+/// The inversion, at the corpus level: a same-shape fact with WEAK word
+/// evidence outranks a wrong-shape fact with STRONG word evidence and a
+/// long recall history. This is M1's own proof — under the old
+/// weighting (the word channels at 0.80 plus a 0.15 shape boost) the
+/// wrong-shape fact ranked first, and the corpus is built to fail there.
+async fn memory_shape_inversion(_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "memory-shape-inversion";
+    let family = ScenarioFamily::Memory;
+    let corpus = match memory_corpus(
+        NAME,
+        family,
+        "memory-inversion",
+        &[
+            (
+                "same-shape",
+                fact_file("same-shape", "the branch pipeline is green", "confirmed-by", "project", "deploy"),
+            ),
+            (
+                "wrong-shape",
+                trajectory_fact_file(
+                    "wrong-shape",
+                    "the railway deploy is failing",
+                    "confirmed-by",
+                    "rendering",
+                    &[],
+                    &[],
+                    8,
+                ),
+            ),
+        ],
+    ) {
+        Ok(corpus) => corpus,
+        Err(failure) => return failure,
+    };
+    // Keyword-only: the scenario never touches the shared loopback
+    // llama-server, so it is deterministic and offline.
+    let memory = Memory::load_with(&corpus, Box::new(memory::KeywordOnly));
+    let partition = memory.partition("the railway deploy is failing");
+    let same = partition.primary.first().expect("the pool has its fact");
+    let wrong = partition.spillover.first().expect("the spillover has its fact");
+    let ranked = memory.recall("the railway deploy is failing");
+    let order = hit_names(&ranked);
+    std::fs::remove_dir_all(&corpus).ok();
+    grade(
+        NAME,
+        family,
+        &[
+            ("the instruction classifies into the shape", partition.shape == Some("deploy")),
+            ("the same-shape fact is the primary pool", hit_names(&partition.primary) == ["same-shape"]),
+            ("the wrong-shape fact is spillover", hit_names(&partition.spillover) == ["wrong-shape"]),
+            (
+                "the word evidence is on the wrong-shape side",
+                wrong.score.total > same.score.total,
+            ),
+            (
+                "the shape's own answer leads the ranking",
+                order == ["same-shape", "wrong-shape"],
+            ),
+            ("the off-shape fact is marked", !same.off_shape && wrong.off_shape),
+        ],
+    )
+}
+
+/// The spillover's three conditions, each on its own corpus: the pool
+/// is empty, the pool's best is below the floor, and the pool's best
+/// clears it. The routes are what keep an off-shape fact from being
+/// silently mixed into the shape's answers.
+async fn memory_spillover_routes(_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "memory-spillover-routes";
+    let family = ScenarioFamily::Memory;
+    let mut checks: Vec<(&str, bool)> = Vec::new();
+
+    // Route (a): the pool is empty, so the off-shape facts are the
+    // answer — and the strongest of them enters even at a budget that
+    // fits nothing else.
+    let route_a = match memory_corpus(
+        NAME,
+        family,
+        "memory-spill-empty",
+        &[(
+            "off-one",
+            fact_file("off-one", "the railway deploy is failing per branch", "confirmed-by", "project", "rendering"),
+        )],
+    ) {
+        Ok(corpus) => corpus,
+        Err(failure) => return failure,
+    };
+    let empty_pool = Memory::load_with(&route_a, Box::new(memory::KeywordOnly));
+    let empty = empty_pool.assemble_within("the railway deploy is failing", &[], 1);
+    checks.push(("route (a): the off-shape fact is the answer", hit_names(&empty.recalled) == ["off-one"]));
+    checks.push(("route (a): it is marked off-shape", empty.recalled.first().is_some_and(|hit| hit.off_shape)));
+    checks.push((
+        "route (a): the route names the empty pool",
+        empty
+            .spillover_route
+            .as_deref()
+            .is_some_and(|route| route.contains("no fact carries `deploy`")),
+    ));
+    std::fs::remove_dir_all(&route_a).ok();
+
+    // Route (b): the pool's best is below the floor, so the shape
+    // matched without corroborating itself and the strongest off-shape
+    // fact enters beside the weak pool — again under budget pressure.
+    let route_b = match memory_corpus(
+        NAME,
+        family,
+        "memory-spill-weak",
+        &[
+            (
+                "same-shape",
+                fact_file("same-shape", "the branch pipeline is green", "confirmed-by", "project", "deploy"),
+            ),
+            (
+                "wrong-shape",
+                trajectory_fact_file(
+                    "wrong-shape",
+                    "the railway deploy is failing",
+                    "confirmed-by",
+                    "rendering",
+                    &[],
+                    &[],
+                    8,
+                ),
+            ),
+        ],
+    ) {
+        Ok(corpus) => corpus,
+        Err(failure) => return failure,
+    };
+    let weak_pool = Memory::load_with(&route_b, Box::new(memory::KeywordOnly));
+    let weak = weak_pool.assemble_within("the railway deploy is failing", &[], 1);
+    checks.push((
+        "route (b): the weak pool's neighbour enters",
+        hit_names(&weak.recalled) == ["same-shape", "wrong-shape"],
+    ));
+    checks.push((
+        "route (b): the route names the floor",
+        weak
+            .spillover_route
+            .as_deref()
+            .is_some_and(|route| route.contains("below the SPILLOVER_FLOOR")),
+    ));
+    std::fs::remove_dir_all(&route_b).ok();
+
+    // Route (c) and the floor's other side: a pool whose best clears the
+    // floor stands alone, so the off-shape fact enters only on the
+    // budget's room — and is dropped, named, when there is none.
+    let route_c = match memory_corpus(
+        NAME,
+        family,
+        "memory-spill-strong",
+        &[
+            (
+                "strong",
+                trajectory_fact_file(
+                    "strong",
+                    "the railway deploy is failing per branch",
+                    "confirmed-by",
+                    "deploy",
+                    &["read the railway deploy logs before failing again"],
+                    &[],
+                    8,
+                ),
+            ),
+            (
+                "off-shape-fact",
+                fact_file("off-shape-fact", "the railway deploy is failing", "confirmed-by", "project", "rendering"),
+            ),
+        ],
+    ) {
+        Ok(corpus) => corpus,
+        Err(failure) => return failure,
+    };
+    let strong_pool = Memory::load_with(&route_c, Box::new(memory::KeywordOnly));
+    let partition = strong_pool.partition("the railway deploy is failing");
+    let best = partition.best().unwrap_or(0.0);
+    let room = strong_pool.assemble("the railway deploy is failing", &[]);
+    let tight = strong_pool.assemble_within("the railway deploy is failing", &[], 1);
+    checks.push(("the floor's other side: the pool clears it", best >= crate::memory::SPILLOVER_FLOOR));
+    checks.push((
+        "route (c): the budget had room, so the off-shape fact enters",
+        hit_names(&room.recalled) == ["strong", "off-shape-fact"],
+    ));
+    checks.push((
+        "route (c): no room, so it is dropped and named",
+        hit_names(&tight.recalled) == ["strong"] && tight.dropped == ["off-shape-fact"],
+    ));
+    checks.push((
+        "route (c): the tight assembly carries no off-shape marker",
+        !crate::memory::render_assembly(&tight).contains("off-shape"),
+    ));
+    std::fs::remove_dir_all(&route_c).ok();
+
+    grade(NAME, family, &checks)
+}
+
+/// The failure-shape recall: the avoidance half of the shelf, served
+/// through the same partition as a resolution, with the three signs
+/// named so an anti-vector is never read as a candidate and a stalled
+/// trajectory is never read as done.
+async fn memory_failure_shape_recall(_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "memory-failure-shape-recall";
+    let family = ScenarioFamily::Memory;
+    let corpus = match memory_corpus(
+        NAME,
+        family,
+        "memory-failure-shape",
+        &[
+            (
+                "what-broke",
+                trajectory_fact_file(
+                    "what-broke",
+                    "the calibration reader cannot read a null",
+                    "confirmed-by",
+                    "drops-the-row",
+                    &["parse_row drops the whole line"],
+                    &[],
+                    0,
+                ),
+            ),
+            (
+                "what-fixed-it",
+                trajectory_fact_file(
+                    "what-fixed-it",
+                    "the reader now takes a null into a numeric field",
+                    "confirmed-by",
+                    "drops-the-row, resolved",
+                    &["serde default for Option", "parse_row keeps the row"],
+                    &[],
+                    0,
+                ),
+            ),
+            (
+                "what-stalled",
+                trajectory_fact_file(
+                    "what-stalled",
+                    "the reader keeps the row but loses its timestamp",
+                    "confirmed-by",
+                    "drops-the-row, incomplete",
+                    &["serde default for Option"],
+                    &["the timezone-aware parser"],
+                    0,
+                ),
+            ),
+            (
+                "both-axes",
+                fact_file(
+                    "both-axes",
+                    "the shader layout repaints and the tower scan read was unbounded",
+                    "confirmed-by",
+                    "project",
+                    "rendering, bound-exceeded",
+                ),
+            ),
+        ],
+    ) {
+        Ok(corpus) => corpus,
+        Err(failure) => return failure,
+    };
+    let memory = Memory::load_with(&corpus, Box::new(memory::KeywordOnly));
+    let failure = memory.partition("the row vanished from the stream");
+    let rendering = memory.partition("the shader layout repaints every frame");
+    let bound = memory.partition("the tower scan read was unbounded");
+    let block = crate::memory::render_assembly(&memory.assemble("the row vanished from the stream", &[]));
+    let signs: Vec<crate::memory::Sign> =
+        failure.primary.iter().map(|hit| hit.fact.sign()).collect();
+    std::fs::remove_dir_all(&corpus).ok();
+    grade(
+        NAME,
+        family,
+        &[
+            ("the instruction classifies into the failure shape", failure.shape == Some("drops-the-row")),
+            (
+                "the failure pool is the shape's own facts",
+                hit_names(&failure.primary) == ["what-broke", "what-fixed-it", "what-stalled"],
+            ),
+            (
+                "the three signs are named apart",
+                signs
+                    == [
+                        crate::memory::Sign::Divergence,
+                        crate::memory::Sign::Resolution,
+                        crate::memory::Sign::Incomplete,
+                    ],
+            ),
+            (
+                "the failure-shape header names all three outcomes",
+                block.contains("what broke before, what resolved it, and what stalled"),
+            ),
+            (
+                "the stalled trajectory names its companions",
+                block.contains("missing: the timezone-aware parser"),
+            ),
+            (
+                "either axis matches a both-axes fact",
+                rendering.primary.iter().any(|hit| hit.fact.name == "both-axes")
+                    && bound.primary.iter().any(|hit| hit.fact.name == "both-axes"),
+            ),
+            (
+                "the legend names every sign",
+                block.contains("resolved:") && block.contains("diverged:") && block.contains("incomplete:"),
+            ),
+        ],
+    )
+}
+
+/// The phrases' round trip: the write path records the vocabulary that
+/// resolved the problem, and a later recall for the shape matches it
+/// even when the question is worded differently — while the same fact
+/// with no recorded direction never clears the floor.
+async fn memory_phrases_round_trip(_bin: PathBuf) -> ScenarioOutcome {
+    const NAME: &str = "memory-phrases-round-trip";
+    let family = ScenarioFamily::Memory;
+    let corpus = match memory_corpus(
+        NAME,
+        family,
+        "memory-phrases",
+        &[
+            (
+                "deploy-credentials-rule",
+                trajectory_fact_file(
+                    "deploy-credentials-rule",
+                    "the deploy credential rule",
+                    "confirmed-by",
+                    "deploy",
+                    &["read CLAUDE.local.md directly", "never grep-extract credentials"],
+                    &[],
+                    0,
+                ),
+            ),
+            (
+                "deploy-credentials-twin",
+                fact_file(
+                    "deploy-credentials-twin",
+                    "the deploy credential rule",
+                    "confirmed-by",
+                    "project",
+                    "deploy",
+                ),
+            ),
+        ],
+    ) {
+        Ok(corpus) => corpus,
+        Err(failure) => return failure,
+    };
+    let memory = Memory::load_with(&corpus, Box::new(memory::KeywordOnly));
+    // The question is worded differently from the phrases: it says
+    // "for the railway credentials", the resolution says
+    // "read CLAUDE.local.md directly".
+    let hits = memory.recall("read CLAUDE.local.md for the railway credentials");
+    let ranked = hit_names(&hits);
+    let trajectory = hits.first().map(|hit| hit.score.trajectory).unwrap_or(0.0);
+    let keyword = hits.first().map(|hit| hit.score.keyword).unwrap_or(0.0);
+    let primary = hits.first().is_some_and(|hit| !hit.off_shape);
+    // The phrases ride the corpus's own card, where the operator reads
+    // what drove beside what the fact is about.
+    let cards = crate::memory::render(&memory, None);
+    std::fs::remove_dir_all(&corpus).ok();
+    grade(
+        NAME,
+        family,
+        &[
+            ("the phrase-carrying fact is the only hit", ranked == ["deploy-credentials-rule"]),
+            ("the trajectory channel matched it", (trajectory - 0.625).abs() < 1e-9),
+            ("the topical channels barely did", (keyword - 0.125).abs() < 1e-9),
+            ("it is the shape's own pool", primary),
+            ("the twin with no direction is absent", !ranked.contains(&"deploy-credentials-twin")),
+            (
+                "the surface cards the resolution's vocabulary",
+                cards.contains("drove: read CLAUDE.local.md directly"),
+            ),
+        ],
     )
 }
 
@@ -3110,12 +3562,39 @@ mod tests {
                 "conversation-fold",
                 "subagent-delegation",
                 "memory-recall",
+                "memory-shape-inversion",
+                "memory-spillover-routes",
+                "memory-failure-shape-recall",
+                "memory-phrases-round-trip",
                 "blend1-grounded-fact",
                 "blend1-escalation",
                 "blend1-reprocess",
                 "blend1-corpus-recall",
                 "explain-the-verdict",
                 "calibration-loop-closes",
+            ]
+        );
+    }
+
+    /// The memory family is shape-first recall's own: the recall that
+    /// enters a turn, the inversion the partition proves, the
+    /// spillover's three routes, the failure axis's recall, and the
+    /// phrases' round trip.
+    #[test]
+    fn the_memory_scenarios_are_the_shape_first_recall_family() {
+        let memory: Vec<&str> = corpus()
+            .iter()
+            .filter(|scenario| scenario.family == ScenarioFamily::Memory)
+            .map(|scenario| scenario.name)
+            .collect();
+        assert_eq!(
+            memory,
+            vec![
+                "memory-recall",
+                "memory-shape-inversion",
+                "memory-spillover-routes",
+                "memory-failure-shape-recall",
+                "memory-phrases-round-trip",
             ]
         );
     }

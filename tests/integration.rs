@@ -3356,10 +3356,16 @@ fn the_memories_shape_flag_filters_the_cards() {
         .expect("run the fleet binary");
     let empty_out = String::from_utf8_lossy(&empty.stdout);
     assert!(empty_out.contains("no facts carry shape `telemetry`"), "{empty_out}");
-    assert!(
-        empty_out.contains("rendering, state-sync, deploy, build, change, deps, docs"),
-        "{empty_out}"
-    );
+    // The line is long enough to wrap, so the assertion is on the axes'
+    // own vocabulary rather than on one unbroken string: every shape in
+    // all three taxonomies is named somewhere on the surface.
+    for shape in [
+        "rendering", "state-sync", "deploy", "build", "change", "deps", "docs", "fail-open",
+        "drops-the-row", "bound-exceeded", "claim-outran-evidence", "fixed-width-clip",
+        "foreign-root", "incomplete", "resolved",
+    ] {
+        assert!(empty_out.contains(shape), "{shape} is not named: {empty_out}");
+    }
     std::fs::remove_dir_all(&root).ok();
 }
 

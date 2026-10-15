@@ -145,13 +145,16 @@ pub fn use_skill_spec() -> ToolSpec {
 /// slice-9 lesson: an instruction with no home where the model sees it
 /// does not exist. It asks for the **phrases that resolved the
 /// problem** (the trajectory's own vocabulary, which rides the fact's
-/// indexed text and the trajectory channel) and for the **sign**: a
-/// fact tagged with a failure shape is an anti-vector, and its phrases
-/// are the trajectory that diverged.
+/// indexed text and the trajectory channel), for the **sign** (a fact
+/// tagged with a failure shape is an anti-vector, and its phrases are
+/// the trajectory that diverged), and for the **third sign's outcome**
+/// (a trajectory whose direction was right but whose companions were
+/// absent is tagged `incomplete` and records them in `missing`, so it
+/// is never mistaken for done).
 pub fn remember_spec() -> ToolSpec {
     ToolSpec::function(
         REMEMBER_TOOL,
-        "Write one fact into the memory corpus. A fact is one file the harness reads back on later turns, so write what a future session needs: the fact as one sentence (description), what kind it is (type), its provenance (basis), and its full content (body). basis is required on every write: confirmed-by when the user stated or verified the fact, inferred when this session merely produced it. tier is working (session-scoped; valid-until is required and the consolidation cycle compresses it) or durable (the default; no expiry). shape takes comma-separated tags from the structure shapes (rendering, state-sync, deploy, build, change, deps, docs) and the failure shapes (fail-open, drops-the-row, bound-exceeded, claim-outran-evidence), at most three in total. phrases records the resolution: the exact vocabulary that drove toward the answer — the commands, file names, and words that worked — so a later recall for this shape matches them even when the question is worded differently. When what you are recording is a FAILURE, tag it with a failure shape and record in phrases the trajectory that was tried and diverged: recall will surface it as an anti-vector to avoid, marked, never as a candidate solution.",
+        "Write one fact into the memory corpus. A fact is one file the harness reads back on later turns, so write what a future session needs: the fact as one sentence (description), what kind it is (type), its provenance (basis), and its full content (body). basis is required on every write: confirmed-by when the user stated or verified the fact, inferred when this session merely produced it. tier is working (session-scoped; valid-until is required and the consolidation cycle compresses it) or durable (the default; no expiry). shape takes comma-separated tags from the structure shapes (rendering, state-sync, deploy, build, change, deps, docs), the failure shapes (fail-open, drops-the-row, bound-exceeded, claim-outran-evidence, fixed-width-clip, foreign-root), and the outcome tags (incomplete, resolved), at most three in total. phrases records the resolution: the exact vocabulary that drove toward the answer — the commands, file names, and words that worked — so a later recall for this shape matches them even when the question is worded differently. When what you are recording is a FAILURE, tag it with a failure shape and record in phrases the trajectory that was tried and diverged: recall will surface it as an anti-vector to avoid, marked, never as a candidate solution. When what you are recording was INCOMPLETE — the direction was right but the companions it needed were absent, so it drove partway and stalled — tag it `incomplete` and name those companions in missing: recall surfaces it as `incomplete:` with them named, so a later session finishes the trajectory instead of re-deriving it or reading it as settled. When a failure shape's fix landed, tag it `resolved` so the fact reads as a candidate rather than an anti-vector.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -169,12 +172,17 @@ pub fn remember_spec() -> ToolSpec {
                 },
                 "shape": {
                     "type": "string",
-                    "description": "Comma-separated shapes from the structure shapes (rendering, state-sync, deploy, build, change, deps, docs) and the failure shapes (fail-open, drops-the-row, bound-exceeded, claim-outran-evidence), at most three. A failure-shape tag makes the fact an anti-vector — what broke, recalled so it is avoided.",
+                    "description": "Comma-separated shapes from the structure shapes (rendering, state-sync, deploy, build, change, deps, docs), the failure shapes (fail-open, drops-the-row, bound-exceeded, claim-outran-evidence, fixed-width-clip, foreign-root), and the outcome tags (incomplete, resolved), at most three. A failure-shape tag makes the fact an anti-vector — what broke, recalled so it is avoided — unless an outcome tag overrides it: `incomplete` says the trajectory stalled with companions missing, `resolved` says the fix landed.",
                 },
                 "phrases": {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "The phrases that resolved the problem: the vocabulary that drove toward the answer, quoted as it was used. They ride the fact's indexed text and the trajectory channel, so a later recall for this shape matches them even when the question is worded differently. For a failure, the phrases of the trajectory that was tried and diverged.",
+                },
+                "missing": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "The companions an INCOMPLETE trajectory was missing: the absent pieces that kept a correct direction from reaching the minima. Name them and tag the fact `incomplete` — recall surfaces them on the `incomplete:` line so a later session finishes the trajectory instead of re-deriving it. They are not the fact's direction, so they do not ride the indexed text and cannot score.",
                 },
                 "basis": {
                     "type": "string",
@@ -207,7 +215,7 @@ pub fn remember_spec() -> ToolSpec {
 pub fn supersede_spec() -> ToolSpec {
     ToolSpec::function(
         SUPERSEDE_TOOL,
-        "Retire a fact from memory. justification is required and is recorded in the calibration row and the replacement's body. With replacement, the modify path: a new fact is written (description is required) and the old one is folded into it, staying on disk and out of recall. Without replacement, the forget path: the fact is expired with the retirement noted in its body, and the cycle archives its file. A confirmed-by fact cannot be modified or forgotten without the user's approval, which the harness asks for; an inferred one is supersedable on your justification.",
+        "Retire a fact from memory. justification is required and is recorded in the calibration row and the replacement's body. With replacement, the modify path: a new fact is written (description is required) and the old one is folded into it, staying on disk and out of recall. Without replacement, the forget path: the fact is expired with the retirement noted in its body, and the cycle archives its file. A confirmed-by fact cannot be modified or forgotten without the user's approval, which the harness asks for; an inferred one is supersedable on your justification. The replacement inherits the superseded fact's phrases, its missing companions, its type, its shape, and its valid-until when you omit them: omit `missing` to keep the companions the trajectory was missing, pass an explicit empty list to clear them because they arrived, or pass a list to state the new ones. A replacement is always inferred — a supersession is a proposal until someone confirms it.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -237,7 +245,12 @@ pub fn supersede_spec() -> ToolSpec {
                 },
                 "shape": {
                     "type": "string",
-                    "description": "The replacement's shapes — structure or failure; defaults to the superseded fact's own.",
+                    "description": "The replacement's shapes — structure, failure, or outcome; defaults to the superseded fact's own.",
+                },
+                "missing": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "The replacement's missing companions. Omit it to inherit the superseded fact's own; pass an explicit empty list to clear them because they arrived; pass a list to state the new ones.",
                 },
                 "valid-until": {
                     "type": "string",
@@ -847,7 +860,8 @@ mod tests {
         // The brain_remember shape: structured fields, mechanism over
         // prose.
         for field in [
-            "name", "description", "type", "shape", "phrases", "basis", "tier", "valid-until", "body",
+            "name", "description", "type", "shape", "phrases", "missing", "basis", "tier",
+            "valid-until", "body",
         ] {
             assert!(parameters["properties"].get(field).is_some(), "remember lacks {field}");
         }
@@ -865,15 +879,25 @@ mod tests {
         // Slice 19: the phrases ride an array of strings, and the
         // description is their home — the slice-9 lesson, an instruction
         // with no home where the model sees it does not exist. It asks
-        // for the resolution's phrases and, for a failure, the sign.
+        // for the resolution's phrases, for the sign, and for the third
+        // sign's outcome with the companions named in `missing`.
         let phrases = &parameters["properties"]["phrases"];
         assert_eq!(phrases["type"], "array");
         assert_eq!(phrases["items"]["type"], "string");
+        let missing = &parameters["properties"]["missing"];
+        assert_eq!(missing["type"], "array");
+        assert_eq!(missing["items"]["type"], "string");
         let description = spec["function"]["description"].as_str().unwrap();
         assert!(description.contains("phrases records the resolution"), "{description}");
         assert!(description.contains("anti-vector"), "{description}");
         assert!(description.contains("fail-open"), "{description}");
         assert!(description.contains("basis is required on every write"), "{description}");
+        // The third vector's instruction, in the tool's own words: the
+        // owner's most-mistaken-for-done case is recordable at all.
+        assert!(description.contains("INCOMPLETE"), "{description}");
+        assert!(description.contains("name those companions in missing"), "{description}");
+        assert!(description.contains("fixed-width-clip"), "{description}");
+        assert!(description.contains("foreign-root"), "{description}");
     }
 
     #[test]
@@ -890,6 +914,13 @@ mod tests {
         assert!(parameters["properties"].get("replacement").is_some());
         assert!(parameters["properties"].get("description").is_some());
         assert!(spec["function"]["description"].as_str().unwrap().contains("confirmed-by"));
+        // The third vector's inherit-or-clear rule is stated where the
+        // model reads it: omit `missing` to keep the companions, pass an
+        // empty list to clear them.
+        assert!(parameters["properties"].get("missing").is_some());
+        let description = spec["function"]["description"].as_str().unwrap();
+        assert!(description.contains("omit `missing` to keep the companions"), "{description}");
+        assert!(description.contains("explicit empty list to clear them"), "{description}");
     }
 
     #[test]

@@ -1440,6 +1440,7 @@ fn stage(proposal: &Proposal, ctx: &Apply<'_>) -> Result<Landed, Hold> {
                 body: String::new(),
                 fact_type: None,
                 shape: None,
+                missing: None,
                 valid_until: None,
             },
             ctx,

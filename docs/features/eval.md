@@ -28,11 +28,12 @@ tests/eval.rs        new: the corpus runs green and grades a broken scenario, en
 
 ## The corpus
 
-Six scenarios, fixed in `eval::corpus()` — adding one is a code change,
-never a runtime file. Each is a scripted mock-server run with asserted
-outcomes, driven by a **plain single-endpoint client** pointed at the
-mock, so no run can reach the live API (KI-066 applied structurally, not
-by a guard). Deterministic: same corpus, same scripts, same verdicts.
+Sixteen scenarios, fixed in `eval::corpus()` — adding one is a code
+change, never a runtime file. Each is a scripted mock-server run with
+asserted outcomes, driven by a **plain single-endpoint client** pointed
+at the mock, so no run can reach the live API (KI-066 applied
+structurally, not by a guard). Deterministic: same corpus, same
+scripts, same verdicts.
 
 | Scenario | Family | Asserts |
 |---|---|---|
@@ -42,9 +43,17 @@ by a guard). Deterministic: same corpus, same scripts, same verdicts.
 | `conversation-fold` | conversation-fold | a conversation past the budget folds; a `compaction` record lands; the post-fold request carries the framed summary |
 | `subagent-delegation` | subagent | a delegated task runs in its own session on the parent's model; two logs exist; the parent's log carries the delegation result |
 | `memory-recall` | memory | a durable fact enters the turn's context; the `memory` record names the shape and the facts (keyword-only, so the shared llama-server is never touched) |
+| `memory-shape-inversion` | memory | the shape partitions the pool: a same-shape fact with weak word evidence leads the ranking over a wrong-shape fact with strong word evidence and a long recall history, and the off-shape fact is marked |
+| `memory-spillover-routes` | memory | the spillover's three conditions: an empty pool admits the off-shape facts, a pool below `SPILLOVER_FLOOR` admits its strongest neighbour under budget pressure, and a pool at or above the floor stands alone — the off-shape fact enters only on the budget's room and is dropped, named, when there is none |
+| `memory-failure-shape-recall` | memory | the avoidance half serves through the same partition: the three signs are named apart in one failure-shape pool, the header names all three outcomes, a stalled trajectory names its companions, and a both-axes fact answers either axis |
+| `memory-phrases-round-trip` | memory | the resolution's phrases match a later recall worded differently — the trajectory channel reads 0.625 while the topical channels read 0.125 — and the same fact with no recorded direction never clears the floor |
 
 The first three port the fork's `benchmarks/` families the plan names;
-the last three are the everyday shapes the crate already proves.
+the last seven are the everyday shapes the crate already proves. The
+four shape-first-recall scenarios (slice 19's M5) run through a
+**scripted seam** rather than the mock: a scratch corpus on disk and
+the keyword-only embedder, so they are deterministic and offline and
+never touch the shared llama-server.
 
 Every driver fault is a **graded verdict, never a panic**: a scratch
 dir that will not create, a session log that will not open, a mock
@@ -66,7 +75,7 @@ calibration stream. `fleet eval --last` reads the most recent row back
 without running. The row's shape:
 
 ```json
-{"op":"eval_corpus","ts":"…","passed":6,"failed":0,"score":1.0,
+{"op":"eval_corpus","ts":"…","passed":16,"failed":0,"score":1.0,
  "scenarios":[{"scenario":"two-turn-tool-loop","family":"tool-loop","passed":true}, …]}
 ```
 

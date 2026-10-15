@@ -2,7 +2,7 @@
 
 Fleet's semantic memory: the git-tracked `memories/` fact substrate,
 hybrid retrieval with the vector path probed rather than assumed,
-shape-first recall, the failure axis with its two signs, the
+shape-first recall, the failure axis with its three signs, the
 resolution's phrases, recall-hit feedback, the protected tier with
 budget-aware turn-context assembly, the `brain_remember`-shaped write
 path, the scheduled consolidation cycle, provenance as the permission
@@ -48,13 +48,14 @@ memories/
 ```
 
 The frontmatter carries `name`, `description`, `type`, `date`, `basis`,
-`tier`, `shape`, `phrases`, `recall-count`, `superseded-by`, and
-`valid-until`, with the file's body as the fact's full content — the
-fork's `memories/` tree (234 facts in exactly this shape) is the spec,
-with `phrases` Fleet's own slice-19 addition beside its sibling
-`shape`. The description is the one-sentence fact: what the index
-embeds and what an assembled turn carries; the body is the full content
-on disk, read on demand the way a skill's body is.
+`tier`, `shape`, `phrases`, `missing`, `recall-count`,
+`superseded-by`, and `valid-until`, with the file's body as the fact's
+full content — the fork's `memories/` tree (234 facts in exactly this
+shape) is the spec, with `phrases` and `missing` Fleet's own slice-19
+additions beside their sibling `shape`. The description is the
+one-sentence fact: what the index embeds and what an assembled turn
+carries; the body is the full content on disk, read on demand the way a
+skill's body is.
 
 Facts persist across sessions because they are files. A bad one reverts
 cleanly because they are git-tracked. No code path in this slice
@@ -115,38 +116,70 @@ Recall therefore runs in two movements:
 
 | Channel | Weight | Meaning |
 |---|---|---|
-| `W_VECTOR` | 0.20 | cosine to the instruction (the embedded direction) |
-| `W_KEYWORD` | 0.20 | the instruction's tokens the fact's topic text covers |
-| `W_TRAJECTORY` | 0.25 | the instruction's tokens the recorded **phrases** cover — the fact's direction |
-| `W_HISTORY` | 0.20 | `recall-count` over `RECALL_CEILING` (8), earned by use |
+| `W_VECTOR` | 0.15 | cosine to the instruction (the embedded direction) |
+| `W_KEYWORD` | 0.15 | the instruction's tokens the fact's topic text covers |
+| `W_TRAJECTORY` | 0.30 | the instruction's tokens the recorded **phrases** cover — the fact's direction |
+| `W_HISTORY` | 0.25 | `recall-count` over `RECALL_CEILING` (8), earned by use |
 | `W_FRESHNESS` | 0.10 | exponential freshness, half-life `DECAY_HALFLIFE_DAYS` (90) |
 | `W_PROVENANCE` | 0.05 | the basis: confirmed-by 1.0, inferred 0.5 |
 
-The topical pair (`W_VECTOR` + `W_KEYWORD`) is 0.40 — less than half
-the composite — so a fact that merely talks about the neighborhood
-cannot outrank the vector that drove toward this minima. The trajectory
-channel is the largest single one, because the phrases recorded during
-the resolution are the owner's key information. The magnitude is
-history plus provenance (0.25 together): a confirmed-by vector that
-recall has surfaced eight times has driven somewhere; an inferred one
-is a proposal at half strength, not erased. Freshness is the smallest
-channel on purpose — a fresh fact is not a better vector. All six are
-named constants in `src/memory.rs`, documented and tunable.
+**Direction outranks proximity.** The semantic channels (vector,
+keyword) measure how NEAR a fact sits to the query; the direction
+channels (trajectory, history, provenance) measure which way its vector
+points. The owner's ruling governs the weighting, and it is verified by
+arithmetic rather than intuition: the proximity pair is 0.30 of the
+composite and the direction channels are 0.60, so the margin is
+structural rather than a coincidence of one corpus.
+
+The maximum a fact with NO direction evidence can score is full topical
+coverage plus standing — vector 0.15 + keyword 0.15 + freshness 0.10 +
+provenance 0.05 = **0.45**. A direction-strong fact (a 0.8 trajectory
+match, four recalls' history, confirmed-by, and a weak 0.2 cosine)
+scores 0.15 × 0.2 + 0.30 × 0.8 + 0.25 × 0.5 + 0.10 + 0.05 = **0.545**
+and wins by **0.095**. The first slice-19 reweighting (0.20 each, 0.40
+together) did NOT hold that line: it left a maximum-proximity,
+zero-direction fact at 0.55 against the direction-strong fact's 0.49,
+so proximity won the moment the vector channel served a fact whose
+words matched perfectly. The topical pair is 0.15 each now, the
+trajectory channel is the largest single one at 0.30 (the phrases
+recorded during the resolution are the owner's key information), and
+the magnitude — history 0.25 plus provenance 0.05 — is the smaller half
+of the direction group by design: a confirmed-by vector that recall has
+surfaced eight times has driven somewhere, an inferred one is a proposal
+at half strength, not erased. Freshness is the smallest channel on
+purpose — a fresh fact is not a better vector. All six are named
+constants in `src/memory.rs`, documented and tunable.
 
 The topical channels score the fact's **topic text** (the description
 plus the shape tags); the trajectory channel scores the fact's
 **phrases** (the resolution's own vocabulary). The two dimensions
 cannot double-count each other. The vector channel embeds the fact's
 **indexed text** — the topic text with the phrases riding along — so
-the embedding carries the direction too.
+the embedding carries the direction too. The **missing** companions are
+deliberately excluded from the indexed text: an absent companion is not
+the fact's direction, and embedding it would score a fact for what it
+does not have.
 
 `MIN_RECALL_SCORE` (0.20) is the floor below which a fact is noise for
-this instruction. Its meaning is exact under the named weights: an
-unrelated fact's best case is freshness plus provenance (0.15) plus one
-shared stopword's worth of topical overlap (0.04) — 0.19, just under —
-and a quarter-strength match in any single channel beside standing
-clears it. A heavily-recalled fact that matches nothing still clears
-it, ranks last, and is the budget's first drop, exactly as before.
+this instruction, and its meaning is exact under the named weights.
+Standing alone — freshness 0.10 plus provenance 0.05, no match at all —
+is 0.15, under the floor: a fact never enters merely for standing. A
+quarter-strength match in a DIRECTION channel beside standing clears it
+(trajectory 0.225, history 0.2125), while the topical pair needs a
+third of its weight to reach it (0.15 × 1/3 + 0.15 = 0.20, exactly at
+the floor). The ruling reads in miniature: a fact enters when it points
+somewhere, not merely when it sits near. A heavily-recalled fact that
+matches nothing still clears it, ranks last, and is the budget's first
+drop, exactly as before.
+
+The floor is **not** a guard against a near-miss, and the doc used to
+overclaim here. An unrelated fact's best case on this machine's normal
+configuration — the vector path live, the same domain — is 0.15 × 0.6049
+(KI-058's measured unrelated cosine) + 0.10 + 0.05 = **0.24**, which is
+OVER the floor; on a keyword-only machine the best case is 0.10 + 0.05
++ 0.15 × 0.2 (one shared token in five) = 0.18, under it. What keeps a
+near-miss from being read as the shape's answer is the shape partition
+and the spillover's routes, not the floor.
 
 An **unclassifiable instruction** is the documented degradation: no
 shape, no partition, and the word-ranked pool IS the primary pool. The
@@ -212,20 +245,24 @@ assembly only through one of three named routes:
 
 - **(a)** the primary pool is empty — the off-shape facts are the
   answer;
-- **(b)** the pool's best score is below `SPILLOVER_FLOOR` (0.45) — the
+- **(b)** the pool's best score is below `SPILLOVER_FLOOR` (0.50) — the
   shape matched without corroborating itself in a second dimension, so
   the strongest off-shape fact enters even under budget pressure,
   beside the weak pool;
 - **(c)** the budget has room after the pool is in.
 
 `SPILLOVER_FLOOR` is sized against the composite's 1.00 and against
-`MIN_RECALL_SCORE` (0.20): full topical coverage with freshness and
-provenance is 0.35, and four recalls' history (0.10) or a 0.8
-trajectory match (0.20) carries a same-shape fact over 0.45 — the
-point at which the shape's own answer is multidimensional. Every
-off-shape fact that enters is MARKED `off-shape` in its assembly line
-and on its card, and the surface names the route that admitted it.
-Never silently mixed into the shape's answers.
+`MIN_RECALL_SCORE` (0.20), and it was re-derived when the weights moved:
+**0.50 is the point at which the shape's own answer carries DIRECTION.**
+The most a fact with no direction evidence can score is full topical
+coverage (vector 0.15 + keyword 0.15) with freshness and provenance
+(0.15) — 0.45 — so the neighborhood alone can no longer stand alone as
+the shape's answer. A same-shape fact clears it with a 0.2 trajectory
+match on top of full topical coverage (0.51), or two recalls' history
+(0.5125); the direction-strong fact scores 0.545 and clears it with
+0.045 to spare. Every off-shape fact that enters is MARKED `off-shape`
+in its assembly line and on its card, and the surface names the route
+that admitted it. Never silently mixed into the shape's answers.
 
 **The failure axis.** The shape vocabulary gains the failure shapes —
 what kind of thing broke, the avoidance half of the shelf — named for
@@ -237,32 +274,72 @@ Fleet's own failure record in `docs/known-issues.md`:
 | `drops-the-row` | a writer wrote a record the reader silently discarded, so the system behaved as if it never existed | KI-164 (a JSON `null` made `parse_row` drop the whole line), KI-171 (a hand-written row missing `family` dropped silently) |
 | `bound-exceeded` | an unbounded or wrongly-bounded read or write overran its budget, undercounted, or rode control characters into the surface | KI-060 (the description unbounded), KI-167 (`READ_CAP=512` undercounts), KI-120/KI-122 (the tower scan and the second-brain read unbounded), KI-035 (no cap on a lane's stdout line) |
 | `claim-outran-evidence` | a doc, a recap, a plan's assumption, or a test asserted more than the code or the run proved | KI-160 ("fleet's suite covers the lane" overclaimed), KI-159 (two doc claims read stronger than the code), KI-009 (a recap claimed the wrong CI state), KI-133 (the feature doc's network wording overclaimed) |
+| `fixed-width-clip` | a fixed-width surface was handed a line built by concatenation rather than bounded to the pane's own width, and it clipped or hard-wrapped the line mid-token | KI-078 (the approval modal cut a long call summary mid-word; the subagent card's state token pushed off the line), KI-085 (the compaction card cut mid-token at 52 columns), KI-096 (the cron fire card cut at 50), KI-115 (a widened pane cut the compaction card again), KI-179 (three card lines grew past `CARD_WIDTH` at once) — five recurrences, with KI-055's one shared word-aware wrapper the named remedy and still open |
+| `foreign-root` | a path was resolved from the working directory alone, so a run started outside any intended root silently adopted a foreign one | KI-074 (`resolve_root`'s ancestor walk adopted a corpus found further up), KI-087 (the scheduled run reproduced it verbatim), KI-099 (the improve gate gates against the wrong tree), KI-106 (`doctor --diagnose`'s default ledger path) — four surfaces, one root cause |
 
 A fact tagged with a failure shape is recalled through the same
 partition as a resolution, and the write path accepts the tags (the
-three-tag cap is across both axes).
+three-tag cap is across all three axes).
 
-**The two signs.** A fact carries a sign, derived from its tags rather
-than stored: a failure-shape tag makes the fact an **anti-vector**, and
-every other fact is a **resolution**. A resolution drives toward the
-minima; a failure drives the opposite way. An anti-vector that matches
-the current trajectory is highly relevant — it is the avoidance half of
-the shelf — and it surfaces as prominently as a resolution: same pool,
-same ranking, no penalty. What keeps it from being read as a candidate
-is the marker: every assembly line and every card names its sign
-(`resolved:` / `diverged:`), the divergence renders in a caution color
-on the surface, and the recall section carries a one-line legend when
-it holds an anti-vector. The model must never read an anti-vector as a
-candidate solution.
+**The outcome tags.** A failure shape is the PROBLEM's shape, not a
+claim about how the trajectory ended — which is what the two-sign rule
+got wrong. A fact about how a `drops-the-row` bug was FIXED is tagged
+with the failure shape because that is the problem's shape, and under
+the two-sign rule it rendered `diverged:`, warning the model off a
+correct trajectory while the failure-shape header promised "what broke
+before, and what resolved it" with the resolved half unable to occur. A
+third axis fixes it:
 
-**The phrases.** The write path records the phrases that resolved the
-problem — the vocabulary that drove — and, for a failure, the phrases
-of the trajectory that was tried and diverged. They ride the fact's
-`phrases` frontmatter field beside `shape`, they are part of the
-indexed text the vector channel embeds, and they are the trajectory
-channel's own text. A later recall for the shape matches them even when
-the question is worded differently — that is the slice-9 lesson's
-point: the instruction's only home is the tool's description.
+| Tag | Axis | What it says |
+|---|---|---|
+| `incomplete` | outcome | the direction was right and the companions it needed were absent, so it drove partway and stalled |
+| `resolved` | outcome | the trajectory reached the minima — load-bearing only beside a failure shape, where it says the fix landed and the fact is a candidate, not an anti-vector |
+
+An outcome tag is not a problem shape: a fact carries one beside a
+structure or failure shape, never instead of one. They classify last,
+so an instruction that names a problem shape still routes to it, and an
+instruction that names only an outcome ("the torch stack was missing")
+routes to the third sign — the "have I stalled here before?" question.
+
+**The three signs.** A fact carries a sign, derived from its tags rather
+than stored, and the precedence is the order that keeps an anti-vector
+from being read as a candidate:
+
+- any failure tag ⇒ **divergence**, unless an outcome tag overrides it;
+- `incomplete` ⇒ **incomplete** — it wins over a failure tag, because a
+  stalled trajectory is not an anti-vector;
+- `resolved` ⇒ **resolution** — even inside a failure-shape pool;
+- nothing else ⇒ **resolution**.
+
+A resolution drives toward the minima; a divergence drives the opposite
+way; an incomplete drove the right direction and stalled. An anti-vector
+that matches the current trajectory is highly relevant — it is the
+avoidance half of the shelf — and it surfaces as prominently as a
+resolution: same pool, same ranking, no penalty. The third sign is not a
+penalty either: **an incomplete vector ranks exactly as a resolution**,
+same pool and same weights, and what distinguishes it is the marker and
+the missing companions named beside it. Every assembly line and every
+card names its sign (`resolved:` / `diverged:` / `incomplete:`), the
+divergence renders in a caution color and an incomplete one in the
+accent on the surface, and the recall section carries a one-line legend
+naming all three whenever it holds anything other than a resolution.
+The model must never read an anti-vector as a candidate solution, and
+never read a stalled trajectory as done.
+
+**The phrases and the missing companions.** The write path records the
+phrases that resolved the problem — the vocabulary that drove — and, for
+a failure, the phrases of the trajectory that was tried and diverged.
+They ride the fact's `phrases` frontmatter field beside `shape`, they are
+part of the indexed text the vector channel embeds, and they are the
+trajectory channel's own text. A later recall for the shape matches them
+even when the question is worded differently — that is the slice-9
+lesson's point: the instruction's only home is the tool's description.
+The `missing` field is the third vector's: the companions an incomplete
+trajectory needed and did not have, case-preserving, capped at
+`MAX_MISSING` (6) and `MAX_MISSING_CHARS` (160) like the phrases, and
+deliberately excluded from the indexed text. They ride the fact's
+assembly line (`· missing: …`) and its card, so the absent pieces are
+named where the fact is ranked rather than lost.
 
 ## Feedback: the measure rung
 
@@ -300,13 +377,18 @@ remember(
                 tier (default project)
   shape:        comma-separated tags from the structure shapes
                 (rendering, state-sync, deploy, build, change, deps,
-                docs) and the failure shapes (fail-open, drops-the-row,
-                bound-exceeded, claim-outran-evidence), at most three
-                in total
+                docs), the failure shapes (fail-open, drops-the-row,
+                bound-exceeded, claim-outran-evidence, fixed-width-clip,
+                foreign-root), and the outcome tags (incomplete,
+                resolved), at most three in total
   phrases:      the phrases that resolved the problem — the vocabulary
                 that drove toward the answer, quoted as it was used;
                 for a failure, the trajectory that was tried and
                 diverged
+  missing:      the companions an INCOMPLETE trajectory was missing —
+                the absent pieces that kept a correct direction from
+                reaching the minima. Name them and tag the fact
+                `incomplete`
   basis:        confirmed-by | inferred (required — every write)
   tier:         working | durable (default durable)
   valid-until:  YYYY-MM-DD (required for working; none for durable)
@@ -331,15 +413,19 @@ description is their instruction's home** — the slice-9 lesson: an
 instruction with no home where the model sees it does not exist. The
 description asks for the exact vocabulary that drove toward the answer
 (commands, file names, the words that worked) so a later recall for the
-shape matches them even when the question is worded differently, and it
-asks for the sign: when what is being recorded is a failure, tag it
-with a failure shape and record the trajectory that was tried and
-diverged. The phrases ride an array of strings — a phrase legitimately
-contains commas — bounded at `MAX_PHRASES` (6) and `MAX_PHRASE_CHARS`
-(160), sanitized the way the description is, and case-preserving
-because they are the vocabulary as it was used. They render in the
-document beside their sibling `shape`, and a modify keeps the direction
-the superseded fact recorded.
+shape matches them even when the question is worded differently; it asks
+for the sign (tag a failure with a failure shape and record the
+trajectory that was tried and diverged); and it asks for the third
+sign's outcome — tag a trajectory `incomplete` and name its companions
+in `missing`, so "the bootstrap was correct but the torch stack was
+missing" is recordable at all rather than being written as a resolution.
+The phrases and the companions ride arrays of strings — a phrase
+legitimately contains commas — bounded at `MAX_PHRASES` (6) and
+`MAX_MISSING` (6), each entry at `MAX_PHRASE_CHARS` /
+`MAX_MISSING_CHARS` (160), sanitized the way the description is, and
+case-preserving because they are the vocabulary as it was used. They
+render in the document beside their sibling `shape`, and a modify keeps
+the direction the superseded fact recorded.
 
 **KI-060's fix lives here.** The writer bounds and sanitizes the
 description — control characters removed (not replaced, so a stripped
@@ -352,11 +438,11 @@ than silently cut, because a fact that lost its tail would read as
 whole.
 
 The document renders in the fork's field order — `name`, `description`,
-`type`, `date`, `basis`, `tier`, `shape`, `recall-count`,
-`superseded-by`, `valid-until` — with an unset optional field bare, the
-fork writer's own "unset" rendering, through a unique temp file and a
-rename. The file is the record: a written fact loads with every field,
-which is what makes a bad fact a revert.
+`type`, `date`, `basis`, `tier`, `shape`, `phrases`, `missing`,
+`recall-count`, `superseded-by`, `valid-until` — with an unset optional
+field bare, the fork writer's own "unset" rendering, through a unique
+temp file and a rename. The file is the record: a written fact loads
+with every field, which is what makes a bad fact a revert.
 
 ## Three speeds
 
@@ -435,7 +521,13 @@ One pass, three actions, each fact taking the ones its state calls for:
 - **supersede** — a durable `inferred` fact recall has never surfaced,
   older than `STALE_AFTER_DAYS` (180), is folded into the same summary
   and stamped. A `confirmed-by` fact in that shape is left alone and
-  named on the surface: provenance decides, not age.
+  named on the surface: provenance decides, not age. An **incomplete**
+  fact in that shape is left alone and named too — the third-vector
+  rule, and a decision worth naming: the summary's bullets carry a
+  fact's name, date, and description, never its missing companions, so
+  folding one would keep the sentence and lose the absent pieces, which
+  are the fact's whole point. An incomplete durable inferred fact is
+  never folded, whatever its age.
 - **forget** — a fact whose `valid-until` has passed and that no summary
   carries is moved to `memories/.archive/`. Nothing is deleted: the
   file stays, reversible by a move back, and diffable in git — it
@@ -483,6 +575,13 @@ supersede(
   body, type, shape, valid-until:
                   the replacement's own fields; each defaults to the
                   superseded fact's
+  missing:        the replacement's missing companions. **Inherit-or-clear**:
+                  omit it to keep the companions the trajectory was
+                  missing (a reworded fact does not unmiss them), pass
+                  an explicit empty list to clear them because they
+                  arrived, or pass a list to state the new ones. There
+                  is no way to say "unknown" — an absent argument is an
+                  inheritance, and a list is a statement
 )
 ```
 
@@ -556,8 +655,9 @@ fleet remember --name <name> --description "<fact>" --basis confirmed-by|inferre
                                 CLI form of the remember tool — the user typing
                                 the write is the approval, so there is no gate
 fleet memories                              cards: name, type, shape, basis,
-                                            recall-count, valid-until, path, and
-                                            the phrases a fact carries; the
+                                            recall-count, valid-until, path, the
+                                            phrases a fact carries, and its
+                                            missing companions; the
                                             protected/retired tallies; the backend
                                             the probe found
 fleet memories --recall "<instruction>"     the shape-first recall: the primary
@@ -566,12 +666,14 @@ fleet memories --recall "<instruction>"     the shape-first recall: the primary
                                             route that admitted it, each card
                                             naming the evidence that ranked it
                                             (the channels, the trajectory, the hit
-                                            history, the basis, the sign), then the
-                                            block that would enter a turn's
-                                            context, then what the budget dropped
+                                            history, the basis, the sign, and the
+                                            missing companions), then the block
+                                            that would enter a turn's context,
+                                            then what the budget dropped
 fleet memories --shape <name>               the cards filtered by shape — a
-                                            structure shape or a failure shape; an
-                                            empty filter names both taxonomies
+                                            structure shape, a failure shape, or
+                                            an outcome tag; an empty filter names
+                                            all three taxonomies
 fleet memories --consolidate                one consolidation pass, with what
                                             it did as cards, then the corpus
                                             the pass left behind
@@ -584,9 +686,22 @@ records no row — the turn path that records hits is the agent's. Its
 header names the shape and its axis, the backend, how many facts
 ranked, how many are in the pool and how many are off-shape, and how
 many fit the budget. The pool's cards render a resolution's sign in the
-plain text color and a divergence's in a caution color, so the operator
-reads "what worked here" and "what diverged here" at a glance; the
-spillover's divider names the route that admitted it. The flags do not
+plain text color, a divergence's in a caution color, and an incomplete
+one in the accent, so the operator reads "what worked here", "what
+diverged here", and "what stalled here" at a glance; the spillover's
+divider names the route that admitted it.
+
+**The surface's lines are bounded.** The recall surface's status line,
+its dividers, and a card's standing line are concatenations that grow
+with the corpus — a backend label, a fact count, a route reason, every
+tag a fact carries — and an unbounded concatenation on a fixed-width
+surface is the `fixed-width-clip` class (KI-078, KI-085, KI-096,
+KI-115, KI-179: five recurrences on five surfaces, and this surface was
+the sixth). They wrap to `SURFACE_WIDTH` (110) through the shared
+word-aware wrapper, at a word boundary rather than mid-token, and the
+card's own lines wrap to `CARD_WIDTH`; a test pins both at 80 and at
+120 columns. The block that would enter a turn's context is not a
+terminal surface, so it is not bounded to a column count. The flags do not
 combine where they answer different questions: `--recall` and `--shape`
 are two questions, `--archive` is its own surface, and `--consolidate`
 runs the cycle and then cards the corpus (optionally filtered by
@@ -613,14 +728,60 @@ Slice 19 removed the constant and inverted the design:
   so a wrong-shape fact with perfect word overlap cannot outrank the
   right shape's own answer.
 - The words corroborate within the shape, as one dimension among
-  several: the topical pair dropped from 0.80 to 0.40, the trajectory
-  channel (the resolution's phrases) joined at 0.25, the magnitude
-  (history 0.20 plus provenance 0.05) became visible to the ranking,
-  and freshness stayed the smallest channel. `basis` entered the score
-  for the first time — it was read only by the permission model before.
+  several: the topical pair dropped from 0.80 to 0.30 (vector 0.15 +
+  keyword 0.15), the trajectory channel (the resolution's phrases)
+  joined at 0.30, the magnitude (history 0.25 plus provenance 0.05)
+  became visible to the ranking, and freshness stayed the smallest
+  channel. `basis` entered the score for the first time — it was read
+  only by the permission model before. The first reweighting put the
+  topical pair at 0.40 and still failed the owner's ruling: a
+  maximum-proximity, zero-direction fact could score 0.55 against a
+  direction-strong fact's 0.49. The second reweighting is the one that
+  holds the line — proximity 0.30 against direction 0.60, with a 0.095
+  margin on the canonical pair of numbers.
 - The failure shapes joined as a first-class axis with a sign: a
   failure is an anti-vector, recalled through the same partition and
   marked so it is never read as a candidate.
+- The third sign joined them. An incomplete solution — direction right,
+  companions absent — ranks exactly as a resolution and is surfaced
+  with its missing companions named, so the vector most mistaken for
+  done is never read as finished. The outcome tags (`incomplete`,
+  `resolved`) are what let a failure-shape fact say what became of its
+  trajectory, which the two-sign rule could not: a fix recorded under
+  the problem's own shape used to render as an anti-vector.
+- `SPILLOVER_FLOOR` moved from 0.45 to 0.50 when the weights did, so
+  the point at which the shape's own answer may stand alone is the
+  point at which it carries direction.
+
+## Limitations
+
+- **The phrases can be gamed.** A fact can record phrases that parrot
+  the question — "the railway deploy is failing" as a resolution's
+  recorded vocabulary — and score a full trajectory match without
+  having driven anywhere. Nothing in the path can tell recorded
+  vocabulary from invented vocabulary; what limits the damage is that
+  the trajectory channel is one dimension among six, and the
+  partition and the spillover's routes still decide which pool a fact
+  is read from. A future slice could cross-check a fact's phrases
+  against the recall hits it earns.
+- **A failure-shape fact is only as right as its outcome tag.** A fact
+  tagged with a failure shape and no outcome tag reads as an
+  anti-vector; a fix recorded without `resolved` warns the model off a
+  correct trajectory, and a stall recorded without `incomplete` reads
+  as either done or diverged. The tool's description is the
+  instruction's home and it names all three, but the tag is the
+  model's to write.
+- **The floor does not separate a near-miss.** The live embedding
+  model's cosines do not separate relevance on their own (KI-058), so
+  an unrelated same-domain fact can clear `MIN_RECALL_SCORE` on the
+  vector channel alone (0.24 on this machine's normal configuration).
+  The partition and the marked spillover are what keep it from being
+  read as the shape's answer.
+- **The consolidation cycle cannot carry a third vector's
+  companions.** Folding an incomplete fact would keep its sentence and
+  lose the named absent pieces, so the cycle leaves one alone whatever
+  its age — which means an incomplete fact the corpus never uses stays
+  in the tree until a human retires it.
 
 ## `fleet doctor`'s recall line
 
