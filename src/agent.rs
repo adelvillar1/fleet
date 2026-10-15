@@ -755,6 +755,13 @@ impl<'a> Agent<'a> {
         if admitted(tools::WEB_TOOL) {
             specs.push(tools::web_spec());
         }
+        // The desktop rides every run too, and unlike every other tool
+        // it asks in every mode — the ruling lives in the approvals
+        // gate, not here, so the declaration is the same shape as the
+        // rest and the gate is what makes it different.
+        if admitted(tools::COMPUTER_USE_TOOL) {
+            specs.push(tools::computer_use_spec());
+        }
         specs
     }
 
@@ -1585,6 +1592,31 @@ impl<'a> Agent<'a> {
                 },
             });
         }
+        if name == tools::COMPUTER_USE_TOOL {
+            // The desktop. The driver's launch spec resolves here — the
+            // pattern the judge runs for sys1 — so the tool works with
+            // the empty specs map a plain `fleet run` passes. The
+            // approval gate is what makes this tool different from
+            // every other: `ALWAYS_ASK_TOOLS` holds its name, so it
+            // asks in every mode including `yes`.
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => match cua_driver_spec() {
+                    Err(error) => settled(format!("error: the cua driver cannot launch: {error}")),
+                    Ok(spec) => Prepared::Ready(Work::ComputerUse {
+                        spec,
+                        arguments,
+                        out_dir: self
+                            .session
+                            .path()
+                            .parent()
+                            .map(|dir| dir.to_path_buf())
+                            .unwrap_or_default(),
+                    }),
+                },
+            });
+        }
+
         if name == tools::WEB_TOOL {
             // The live source: blend1's web leg, called directly. The
             // lane spec resolves here — the pattern `judge()` runs for
@@ -1914,6 +1946,16 @@ enum Work {
     /// torn down after it. The spec rides the work because it is
     /// resolved where the launch is known, the way the judge's is.
     Web { spec: crate::mcp::ServerSpec, arguments: serde_json::Value },
+    /// One desktop action through the cua driver. `out_dir` is where a
+    /// screenshot's PNG lands: the driver can write the file instead of
+    /// base64, and a screenshot's bytes must never ride the session log
+    /// as text (the model-visible⟺logged rule was written for text, and
+    /// an image is the first thing to break it).
+    ComputerUse {
+        spec: crate::mcp::ServerSpec,
+        arguments: serde_json::Value,
+        out_dir: std::path::PathBuf,
+    },
     /// One proposal filed into the home's store.
     Improve {
         home: std::path::PathBuf,
@@ -1993,6 +2035,19 @@ async fn run_work(work: Work) -> (String, bool) {
                 output: crate::improve::file_from_tool(&home, &repo, &arguments),
                 truncated: false,
             });
+            (outcome.output, outcome.truncated)
+        }
+        Work::ComputerUse { spec, arguments, out_dir } => {
+            // The driver is spawned for the call and torn down after it.
+            // The action the model asked for maps to one of the driver's
+            // own tools, and a screenshot is redirected to a file beside
+            // the session: the image rides to the model, the path rides
+            // the log, and the bytes ride neither as text.
+            let answer = match cua_call(&spec, &arguments, &out_dir).await {
+                Ok(text) => text,
+                Err(error) => format!("error: {error}"),
+            };
+            let outcome = tools::bound(ToolOutcome { output: answer, truncated: false });
             (outcome.output, outcome.truncated)
         }
         Work::Web { spec, arguments } => {
@@ -2170,6 +2225,173 @@ fn bounded_phrase(text: &str) -> String {
     bounded
 }
 
+/// The cua driver's launch spec, behind the lookup seam so the test
+/// proves the resolution without mutating a process-global environment
+/// other tests read — the same reason `calib::resolve_root` takes its
+/// home as a parameter and `memory::endpoint_from` takes its lookup.
+fn cua_driver_spec_from(
+    explicit: Option<String>,
+    list: impl Fn(&std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>>,
+) -> Result<crate::mcp::ServerSpec, String> {
+    // An env var names the binary directly, referenced by NAME only —
+    // never a value (the standing credential rule).
+    if let Some(path) = explicit.filter(|path| !path.is_empty()) {
+        return Ok(crate::mcp::ServerSpec {
+            program: path,
+            args: vec!["mcp".to_string()],
+            env: Vec::new(),
+            passthrough: Vec::new(),
+            cwd: None,
+        });
+    }
+    // Absent one, the Hermes tools directory's driver resolves by
+    // version glob, so a machine that has the driver installed for any
+    // reason finds it.
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    let tools = std::path::Path::new(&home).join(".hermes/tools");
+    let mut found: Vec<std::path::PathBuf> = list(&tools)
+        .map_err(|error| format!("the tools directory is unreadable: {error}"))?
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("cua-driver-"))
+        })
+        .filter(|path| path.is_dir())
+        .collect();
+    // The newest version wins: a machine carrying two drivers should
+    // run the one it would run by hand.
+    found.sort();
+    let driver = found
+        .last()
+        .ok_or_else(|| "no cua-driver under ~/.hermes/tools; set FLEET_CUA_DRIVER".to_string())?;
+    let binary = driver.join("CuaDriver.app/Contents/MacOS/cua-driver");
+    if !binary.exists() {
+        return Err(format!("{} carries no driver binary", driver.display()));
+    }
+    Ok(crate::mcp::ServerSpec {
+        program: binary.display().to_string(),
+        args: vec!["mcp".to_string()],
+        env: Vec::new(),
+        passthrough: Vec::new(),
+        cwd: None,
+    })
+}
+
+/// The cua driver's launch spec as this machine resolves it. A machine
+/// with neither the env var nor an installed driver gets a named
+/// refusal, not a tool that appears to exist and then fails at call
+/// time.
+/// The cua driver's launch spec as this machine resolves it. Public
+/// because `fleet doctor` names whether the desktop tool can launch at
+/// all — a tool that appears in every run's declaration and then fails
+/// at call time is exactly the silent degradation that line prevents.
+pub fn cua_driver_spec() -> Result<crate::mcp::ServerSpec, String> {
+    cua_driver_spec_from(std::env::var("FLEET_CUA_DRIVER").ok(), |tools| {
+        Ok(std::fs::read_dir(tools)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .collect())
+    })
+}
+
+/// The action the model asked for, mapped to the driver tool that
+/// performs it. A small named surface over the driver's own 56 tools:
+/// the model asks for a screenshot, not for the driver's capture
+/// policy, and the mapping is the one place the two vocabularies meet.
+/// An action outside the set is a named refusal — the declaration's
+/// enum is what the model reads, and a non-conforming call meets the
+/// same answer here.
+fn cua_tool_for(action: &str) -> Option<&'static str> {
+    match action {
+        "screenshot" => Some("get_desktop_state"),
+        "click" => Some("click"),
+        "type" => Some("type_text"),
+        "key" => Some("press_key"),
+        "hotkey" => Some("hotkey"),
+        "scroll" => Some("scroll"),
+        "drag" => Some("drag"),
+        _ => None,
+    }
+}
+
+/// One desktop action: spawn the driver, map the action, call, tear
+/// down. A screenshot is redirected to a file beside the session — the
+/// driver writes the PNG instead of base64, so the image reaches the
+/// model and the path reaches the log while the bytes reach neither as
+/// text.
+async fn cua_call(
+    spec: &crate::mcp::ServerSpec,
+    arguments: &serde_json::Value,
+    out_dir: &std::path::Path,
+) -> Result<String, String> {
+    let action = arguments
+        .get("action")
+        .and_then(|action| action.as_str())
+        .ok_or("the call names no action")?;
+    let Some(tool) = cua_tool_for(action) else {
+        return Err(format!("`{action}` is not one of the desktop actions"));
+    };
+    // The driver's own arguments: the model's fields passed through
+    // under the names the driver reads, so a coordinate the model gave
+    // is the coordinate the driver uses.
+    let mut driver_arguments = serde_json::Map::new();
+    for (key, value) in arguments.as_object().into_iter().flatten() {
+        if key != "action" {
+            driver_arguments.insert(key.clone(), value.clone());
+        }
+    }
+    // The screenshot's file: a name that cannot collide, beside the
+    // session that asked for it.
+    if action == "screenshot" {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis())
+            .unwrap_or_default();
+        driver_arguments.insert(
+            "screenshot_out_file".to_string(),
+            serde_json::Value::String(
+                out_dir
+                    .join(format!("screenshot-{stamp}.png"))
+                    .display()
+                    .to_string(),
+            ),
+        );
+    }
+    let server = crate::mcp::McpServer::spawn(spec).map_err(|error| error.to_string())?;
+    let call = server
+        .call_tool(tool, serde_json::Value::Object(driver_arguments))
+        .await
+        .map_err(|error| error.to_string());
+    let _ = server.close().await;
+    let call = call?;
+    let text = call.text();
+    // The path rides the log; the bytes never do. A driver that
+    // answered with base64 anyway — an older build without the out-file
+    // — is truncated here rather than allowed to flood the record.
+    if action == "screenshot" {
+        if let Some(path) = arguments_path(&text) {
+            return Ok(format!("screenshot saved to {path}"));
+        }
+        return Ok(format!(
+            "screenshot captured ({} chars of image data, not logged)",
+            text.len()
+        ));
+    }
+    Ok(text)
+}
+
+/// The file path a screenshot's answer named, when it named one.
+fn arguments_path(text: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    value
+        .get("path")
+        .or_else(|| value.get("file"))
+        .or_else(|| value.get("screenshot_out_file"))
+        .and_then(|path| path.as_str())
+        .map(|path| path.to_string())
+}
+
 /// Land one approved supersession and render what the model reads. The
 /// provenance gate is the caller's ([`Agent::prepare_supersede`]); this
 /// is the write and its sentence.
@@ -2240,6 +2462,7 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
             // run together — the lane's own bounds are the clamp, not
             // this planner's.
             Work::Web { .. } => None,
+            Work::ComputerUse { .. } => None,
             Work::UseSkill { .. } => None,
             Work::Builtin { tool, arguments, .. } => match tool {
                 Tool::Bash => Some("shell".to_string()),
@@ -2746,6 +2969,19 @@ fn call_summary(call: &ToolCall) -> String {
         return crate::skills::requested_skill(&call.function.arguments)
             .unwrap_or_else(|| call.function.name.clone());
     }
+    if call.function.name == tools::COMPUTER_USE_TOOL || call.function.name == tools::WEB_TOOL {
+        // The desktop action or the live-source query: the fact a user
+        // needs to answer "may this run?" — and for the desktop, the
+        // answer is always required, so the line has to carry the
+        // action's own name rather than the tool's.
+        let arguments = parse_arguments(&call.function.arguments);
+        let action = arguments
+            .get("action")
+            .or_else(|| arguments.get("query"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("(no action)");
+        return action.to_string();
+    }
     if call.function.name == tools::CONVENTION_TOOL {
         // The concept the lookup would answer about: the fact a user
         // needs to answer "may this run?", and the fact the progress
@@ -2811,6 +3047,8 @@ fn describe_call(call: &ToolCall) -> String {
     if call.function.name.starts_with(tools::REMEMBER_TOOL)
         || call.function.name.starts_with(tools::SUPERSEDE_TOOL)
         || tools::lane_of(&call.function.name).is_some()
+        || call.function.name == tools::WEB_TOOL
+        || call.function.name == tools::COMPUTER_USE_TOOL
     {
         return format!("{}: {}", call.function.name, call_summary(call));
     }
@@ -3465,7 +3703,8 @@ mod tests {
                 "supersede",
                 "subagent",
                 "convention",
-                "web"
+                "web",
+                "computer_use"
             ]
         );
 
@@ -3494,7 +3733,7 @@ mod tests {
         let plain =
             Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
                 .unwrap();
-        assert_eq!(plain.declarations().len(), 7);
+        assert_eq!(plain.declarations().len(), 8);
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
@@ -4065,7 +4304,46 @@ You are auditing a change. Read the diff before you judge it.
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// The one session log under `home`, for a result assertion.
+    /// The action surface is the plan's own small named set, mapped to
+    /// the driver's tools, and an action outside it is a named refusal
+    /// rather than a guess at which of the driver's 56 tools was meant.
+    #[test]
+    fn the_action_surface_maps_to_the_drivers_own_tools() {
+        for (action, tool) in [
+            ("screenshot", "get_desktop_state"),
+            ("click", "click"),
+            ("type", "type_text"),
+            ("key", "press_key"),
+            ("hotkey", "hotkey"),
+            ("scroll", "scroll"),
+            ("drag", "drag"),
+        ] {
+            assert_eq!(cua_tool_for(action), Some(tool), "{action}");
+        }
+        assert_eq!(cua_tool_for("browse"), None);
+        assert_eq!(cua_tool_for(""), None);
+    }
+
+    /// The driver resolves from the env var by NAME, and a machine with
+    /// neither the var nor an installed driver is a named refusal — the
+    /// tool never appears to exist and then fail at call time.
+    #[test]
+    fn the_driver_resolves_or_names_why_it_cannot() {
+        // With the var set, the spec is the var's own path.
+        let spec = cua_driver_spec_from(Some("/a/driver".to_string()), |_| Ok(Vec::new()))
+            .expect("an explicit path resolves");
+        assert_eq!(spec.program, "/a/driver");
+        assert_eq!(spec.args, vec!["mcp".to_string()]);
+        // Without it, and with no driver installed, the refusal names
+        // what to set.
+        let error = match cua_driver_spec_from(None, |_| Ok(Vec::new())) {
+            Ok(_) => panic!("an empty tools dir must not resolve a driver"),
+            Err(error) => error,
+        };
+        assert!(error.contains("FLEET_CUA_DRIVER"), "{error}");
+    }
+
+    /// The one session log under `home`, for a result assertion.    /// The one session log under `home`, for a result assertion.
     fn session_path_of(home: &std::path::Path) -> std::path::PathBuf {
         crate::home::sessions_dir(home)
             .join(

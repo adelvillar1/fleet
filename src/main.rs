@@ -5,7 +5,7 @@ use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
 use fleet::agent::{
-    Agent, AgentError, AgentOptions, ApproveAll, Approver, ConsoleApprover, DEFAULT_MAX_TURNS,
+    Agent, AgentError, AgentOptions, Approver, ConsoleApprover, DEFAULT_MAX_TURNS,
     RunReport, StopReason,
 };
 use fleet::api::{Client, DEFAULT_BASE_URL};
@@ -940,15 +940,23 @@ async fn drive(
         improve_home: Some(home.to_path_buf()),
             compact_now,
     };
-    let approver: Box<dyn Approver> = match fleet::approvals::resolve(
+    // Every non-interactive mode rides the Gate, never `ApproveAll`:
+    // the always-ask class (computer use) sits ABOVE the modes, and an
+    // approver without that check would let `--yes` waive the owner's
+    // ruling on the owner's behalf. Only `Ask` prompts, because only
+    // `Ask` has a user to ask.
+    let mode = fleet::approvals::resolve(
         yes.then_some(true),
         fleet::approvals::config_word(&home).as_deref(),
-    ) {
+    );
+    let approver: Box<dyn Approver> = match mode {
         // The default: every call asks. The owner's house rule stands.
         fleet::approvals::Mode::Ask => Box::new(ConsoleApprover::new()),
         // Everything runs, the destructive class included — the
-        // explicit `--yes` or a config that asked for it.
-        fleet::approvals::Mode::Yes => Box::new(ApproveAll),
+        // explicit `--yes` or a config that asked for it. The
+        // always-ask class still asks: that is the whole point of it
+        // sitting above the modes.
+        fleet::approvals::Mode::Yes => Box::new(fleet::approvals::Gate::new(fleet::approvals::Mode::Yes)),
         // Everything but the destructive class runs; a call in that
         // class still asks, and its denial names the rule that kept
         // it there.
@@ -1416,6 +1424,18 @@ fn doctor_checks() -> ExitCode {
         fleet::approvals::config_word(home.as_deref().unwrap_or(std::path::Path::new("."))).as_deref(),
     );
     println!("{}", doctor::render_approvals(mode));
+
+    // The desktop's line: whether the cua driver resolves. Read-only
+    // and never fatal — a machine without one simply has no desktop
+    // tool, and the line says so rather than letting the declaration
+    // imply a capability that is not there.
+    match fleet::agent::cua_driver_spec() {
+        Ok(spec) => println!(
+            "{}",
+            doctor::render_desktop(true, &format!("the cua driver answers at {}", spec.program))
+        ),
+        Err(error) => println!("{}", doctor::render_desktop(false, &error)),
+    }
 
     if failed {
         ExitCode::FAILURE

@@ -206,7 +206,7 @@ const BRIEF_PART_CAP: usize = 8 * 1024;
 /// that names it opens a second level, and a delegation that does not
 /// keeps the chain at one. It is stripped again at the cap, so the
 /// admission a depth-2 run can be given is empty by construction.
-pub const ADMISSIBLE_TOOLS: [&str; 7] = [
+pub const ADMISSIBLE_TOOLS: [&str; 8] = [
     "bash",
     "read_file",
     "write_file",
@@ -218,6 +218,10 @@ pub const ADMISSIBLE_TOOLS: [&str; 7] = [
     // to check a fact rather than guess at one, and the lane's own
     // bounds and fail-open travel with it.
     tools::WEB_TOOL,
+    // And the desktop, for the same reason — with the difference that
+    // its approval cannot be waived by any mode, so a child driving the
+    // desktop asks exactly as often as the owner does.
+    tools::COMPUTER_USE_TOOL,
 ];
 
 /// The tool set one subagent run is admitted to.

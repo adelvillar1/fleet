@@ -161,6 +161,28 @@ pub fn evaluate_recall(vector: Option<(&str, usize)>) -> Check {
     Check { name: "recall", ok: true, detail }
 }
 
+/// The desktop's line: whether the cua driver can be launched at all.
+/// A machine with no driver — or one whose binary moved — gets a named
+/// line saying so, because a tool that appears in every run's
+/// declaration and then fails at call time is exactly the silent
+/// degradation this line exists to prevent.
+pub fn render_desktop(reachable: bool, detail: &str) -> String {
+    // One color for both states: a machine without a driver is not a
+    // failure — it is a machine whose desktop tool is absent, and the
+    // line says so in the same tone as any other "not configured here".
+    let (word, color) = if reachable {
+        ("live", palette::TEXT)
+    } else {
+        ("absent", palette::DIM)
+    };
+    format!(
+        "{DIM}\u{2502}{RESET} {color}desktop {word} \u{b7} {detail}{RESET}",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+        color = color,
+    )
+}
+
 /// The approval mode's line. A run that stops asking must say so in
 /// one place rather than leaving the owner to infer it from a run that
 /// never prompted: the mode, and whether the destructive class is

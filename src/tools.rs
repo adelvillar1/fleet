@@ -74,6 +74,14 @@ pub const IMPROVE_TOOL: &str = "improve";
 /// home.
 pub const CONVENTION_TOOL: &str = "convention";
 
+/// The desktop tool: one action against the machine itself, through
+/// the cua driver. Declared on every run and admitted to a delegate's
+/// scope by default, and — unlike every other tool — it asks in EVERY
+/// execution mode, `yes` included. A click, a keystroke, or a
+/// screenshot has the machine as its blast radius, and no mode waives
+/// that (see `crate::approvals::ALWAYS_ASK_TOOLS`).
+pub const COMPUTER_USE_TOOL: &str = "computer_use";
+
 /// The live-source tool: search the web and fetch the top hits through
 /// blend1's web leg. Declared on every run and admitted to a
 /// delegate's scope by default, because a live source is as much the
@@ -124,7 +132,7 @@ pub fn subagent_spec() -> ToolSpec {
                     "description": "The capabilities this subtree needs, which IS the subagent's admitted scope: a declared tool is admitted and an undeclared one is refused by name. Naming subagent opens a second delegation level; at depth 2 it is stripped and the call is refused citing the cap. An empty list admits no tool at all.",
                     "items": {
                         "type": "string",
-                        "enum": ["bash", "read_file", "write_file", "list_dir", "use_skill", "subagent", "web"],
+                        "enum": ["bash", "read_file", "write_file", "list_dir", "use_skill", "subagent", "web", "computer_use"],
                     },
                 },
                 "max-turns": {
@@ -227,6 +235,42 @@ pub fn web_spec() -> ToolSpec {
                 },
             },
             "required": [ "query" ],
+        }),
+    )
+}
+
+/// The `computer_use` declaration: a small named action set over the
+/// cua driver's own 56-tool surface. The model asks for a screenshot,
+/// not for the driver's capture policy — the wrapper decides which of
+/// the driver's tools performs each action, so the surface the model
+/// sees stays small enough to reason about and every action rides the
+/// same approval.
+pub fn computer_use_spec() -> ToolSpec {
+    ToolSpec::function(
+        COMPUTER_USE_TOOL,
+        "Drive the desktop: take a screenshot, click, type, press a key or a combination, scroll, or drag. Use it for the things no file tool can reach — a native app with no CLI, a browser window with a form half filled, a thing a human would do with a mouse. Every call asks for approval, in every mode, because it acts on the machine itself. A screenshot's image rides to you as an image and its file path is named; never paste credentials into a `type` action you have not read back.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["screenshot", "click", "type", "key", "hotkey", "scroll", "drag"],
+                    "description": "What to do. `screenshot` captures the display; `click` clicks; `type` inserts text; `key` presses one key; `hotkey` presses a combination; `scroll` scrolls; `drag` drags.",
+                },
+                "x": { "type": "number", "description": "The x coordinate in screen points, for click/scroll/drag." },
+                "y": { "type": "number", "description": "The y coordinate in screen points, for click/scroll/drag." },
+                "text": { "type": "string", "description": "The text to insert, for `type`." },
+                "key": { "type": "string", "description": "The key name, for `key`." },
+                "keys": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "The combination, for `hotkey` — e.g. [\"cmd\", \"space\"].",
+                },
+                "to_x": { "type": "number", "description": "The drag's end x, for `drag`." },
+                "to_y": { "type": "number", "description": "The drag's end y, for `drag`." },
+                "amount": { "type": "number", "description": "The scroll amount, for `scroll`." },
+            },
+            "required": [ "action" ],
         }),
     )
 }

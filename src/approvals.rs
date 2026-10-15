@@ -529,17 +529,36 @@ impl crate::agent::Approver for Gate {
         self.approves_without_asking(call)
     }
 
-    /// The guarded denial's sentence, or `None` for the modes that
-    /// never deny on their own. The trait takes no call — the reason
-    /// is the run's, not one call's — so the gate keeps the offending
-    /// command from the call it just refused and names it here.
+    /// The denial's sentence, or `None` for the modes that never deny
+    /// on their own. The trait takes no call — the reason is the run's,
+    /// not one call's so the gate names the class it holds rather than
+    /// the command it just refused.
+    ///
+    /// Two classes deny here and both must be named honestly: the
+    /// destructive class under `yes-guarded`, and the always-ask class
+    /// under ANY mode. The second matters more — a run in `yes` that
+    /// stops on a desktop action must not report "the user did not
+    /// approve this call", because there was no user and the mode said
+    /// yes. The rule denied it, and the model has to be able to tell
+    /// the owner that.
     fn denial_reason(&self) -> Option<String> {
-        (self.mode == Mode::YesGuarded).then(|| {
-            format!(
+        if self.mode == Mode::YesGuarded {
+            return Some(format!(
                 "approvals are `{}` and this call is in the destructive class \
                  ({}), which the owner's rule keeps behind a prompt",
                 Mode::YesGuarded.label(),
                 DESTRUCTIVE.len()
+            ));
+        }
+        // `yes` (or a config of `yes`) with an always-ask tool in the
+        // declaration: the class that no mode waives.
+        (self.mode == Mode::Yes).then(|| {
+            format!(
+                "approvals are `{}` and this call is in the always-ask class \
+                 ({}), which no execution mode waives — the owner's ruling \
+                 for tools whose blast radius is the machine itself",
+                Mode::Yes.label(),
+                ALWAYS_ASK_TOOLS.join(", ")
             )
         })
     }
