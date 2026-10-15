@@ -12,12 +12,16 @@ description (src/subagents.rs:10-30, src/tools.rs's `subagent_spec`).
 What it lacks is everything that makes delegation *learn*: a structured
 brief, a stream that records what each brief actually drove, a judge
 that grades it, roles to specialize the child, concurrency to fan out,
-and control once a child is running.
+control once a child is running, and the depth to delegate twice.
 
-This slice lands all five, ordered by dependency: **the brief (D1), the
-loop (D2), the roles (D3), the fan-out (D4), the control (D5).** The
-loop is the heart; D1 makes its data gradeable, D3 gives it an actor
-dimension, D4 and D5 are the mechanics the loop then measures.
+This slice lands all six, ordered by dependency: **the brief (D1), the
+loop (D2), the roles (D3), the fan-out (D4), the control (D5), and the
+n+2 depth (D6).** The loop is the heart; D1 makes its data gradeable,
+D3 gives it an actor dimension, D4 and D5 are the mechanics the loop
+then measures, and D6 is the one place the loop's own framing bites
+back — a brief at depth 2 is a paraphrase of a paraphrase, so the
+parent chain that produced it has to be recorded from the first row
+rather than reconstructed later.
 
 ## The formal framing (the owner's, 2026-10-14)
 
@@ -68,11 +72,14 @@ because nothing pays attention to its direction.
 - **The gaps**, each with its evidence: (1) the brief is a goal string
   only — no `context`, no output contract (src/tools.rs's
   `subagent_spec`); (2) nothing grades a delegation's outcome — the
-  child's log lands (`SubagentResult.log`) and is never read;
-  (3) `Scope` is a tool list, not a role — the child takes the parent's
+  child's log lands (`SubagentResult.log`) and is never read; (3)
+  `Scope` is a tool list, not a role — the child takes the parent's
   compiled-in system prompt; (4) `src/agent.rs:873` executes tool calls
   serially (`for call in &message.tool_calls`), so no fan-out; (5) a
-  running child cannot be steered or stopped.
+  running child cannot be steered or stopped; (6) the chain stops at
+  one level — `SUBAGENT_MAX_DEPTH` reads 1 and the `subagent` tool is
+  outside a child's scope (src/subagents.rs:60, :69-70), so no row
+  anywhere records which brief produced which child.
 
 ## Acceptance criteria
 
@@ -95,8 +102,12 @@ because nothing pays attention to its direction.
 
 - A new op (`delegation_judged`) keyed by the child's session id,
   carrying the brief's shape, the scope, the outcome, the turns, the
-  spend, the duration, and the child's log path — redacted by design,
-  the summary text NOT among the evidence.
+  spend, the duration, the child's log path, **and the parent chain** —
+  the immediate parent's session id and the root's, beside the depth —
+  redacted by design, the summary text NOT among the evidence. The
+  chain is what makes a depth-2 row joinable to the brief that
+  actually set its direction (D6), and it is recorded from the first
+  row because a chain cannot be backfilled honestly.
 - **`fleet delegate [--day <date>] [--dry-run]`**: batch-only, one
   bounded ask per delegation row, judging it against its outcome
   evidence through the vendored sys1 lane — the ported discipline
@@ -200,6 +211,52 @@ because nothing pays attention to its direction.
 - The control's own effect is logged, so a steered child's trajectory
   is reconstructable.
 
+### D6 — the n+2 delegation model
+
+Fleet's chain today is agent → subagent and stops: the `subagent` tool
+is outside a child's admitted scope, so the loop refuses the call by
+name and `SUBAGENT_MAX_DEPTH` (src/subagents.rs:60) names the cap. This
+part raises it to two, matching the discipline that built fleet
+(`max_spawn_depth: 2` in Hermes's own config, exercised in the record:
+ten grandchild spawns observed across 587 spawn trees, none deeper).
+
+- **The cap becomes 2, still structural.** `SUBAGENT_MAX_DEPTH` reads 2;
+  the `subagent` tool is admitted to a depth-1 child's scope and absent
+  from a depth-2 child's, so the depth-2 call is refused by name citing
+  the cap — the existing refusal shape, not a new one. `Scope::depth`
+  already carries the accounting (src/subagents.rs:86).
+- **The parent chain rides every row** (D2's shape): the immediate
+  parent's session id, the root's, and the depth. A grandchild's row
+  joins to the brief that set its direction, and the chain is
+  reconstructable from the log alone (hard rule 5).
+- **The approval labelling compounds.** An approval prompt at depth 2
+  names the whole chain — root goal → parent goal → this goal — bounded
+  and delimited, because an owner approving a call whose originating
+  intent is two briefs away is approving a paraphrase. The same chain
+  rides the progress line and the TUI's subagent stage, indented.
+- **Turn caps inherit downward.** A child's cap cannot exceed its
+  parent's remaining turns, and `SUBAGENT_TURN_CAP`'s default steps
+  down with depth — a depth-2 chain cannot burn the parent's whole
+  budget on one branch. The rule is enforced at construction, like the
+  no-downgrade rule, not asked of the model.
+- **The calibration's cell gains depth.** The cell key is
+  (role × brief-shape × depth), because a depth-2 brief is a different
+  shape than a depth-1 brief: its information has been through one
+  more paraphrase, and its direction is correspondingly less reliable.
+  Depth-2 cells will almost always be thin, so the fit requirement
+  (slice 18's 8 rows) means they read unfit and inform nothing — which
+  is the correct conservative default, and the reason depth 2 is safe
+  is the fit rule, not the depth cap alone.
+- **The ride-back names the depth it is moving.** A skip or a note
+  caused by a depth-2 cell says so in the delegation row's reason, so
+  the owner can see that a thin deep sample moved a suggestion.
+- A deterministic eval scenario (`delegation-depth-two`) grades the
+  chain through scripted seams: a parent spawns a child, the child
+  spawns a grandchild, the grandchild's `subagent` call is refused by
+  name citing the cap; the rows carry the chain; the approval labelling
+  names it; the turn-cap inheritance holds; and a thin depth-2 cell
+  reads unfit and moves nothing.
+
 ## Design decisions
 
 1. **The loop is reused, never forked.** D2's beat is an ordinary
@@ -230,14 +287,24 @@ because nothing pays attention to its direction.
    cannot carry a steer's text and cannot be logged. The file is the
    child's own, under its own delegation directory, and reading it
    between turns costs nothing when it is absent.
-7. **Depth stays 1.** Parallel fan-out is breadth, not depth. A child
-   that delegates is a different slice with different blast radius,
-   and `SUBAGENT_MAX_DEPTH` names the cap until then.
+7. **Depth is two, and the fit rule is what makes it safe.** A brief
+   at depth 2 is a paraphrase of a paraphrase: its direction was set
+   two hand-offs ago, which is exactly the case the owner's framing
+   says to distrust — high semantic density, no verified direction. The
+   depth cap bounds the blast radius; the fit requirement (a thin
+   depth-2 cell reads unfit and informs nothing) bounds the influence.
+   Neither alone would do: the cap without the fit rule lets a lucky
+   deep sample move routing, and the fit rule without the cap lets an
+   unbounded chain form. `SUBAGENT_MAX_DEPTH` names the cap, and a
+   depth-3 call is refused structurally.
 
 ## Out of scope
 
-- Depth-2 delegation (a subagent spawning subagents) —
-  `SUBAGENT_MAX_DEPTH` stays 1 and names the follow-on.
+- Depth-3 delegation and beyond. Two levels is the cap this slice lands
+  and the record it was drawn from (Hermes's `max_spawn_depth: 2`, with
+  no depth-2 spawn observed across 587 trees); a third level is a
+  different argument with a different blast radius, and the structural
+  refusal already names the cap that would have to move.
 - Cross-machine or cross-process delegation; the child is an ordinary
   in-process `Agent` over an ordinary `Session`.
 - The ops surface (boards, dispatchers, scheduled fan-out) — fleet is
@@ -261,3 +328,9 @@ because nothing pays attention to its direction.
 - The concurrency bound of 3 is sized for a single owner's machine and
   the embedder's single slot; a heavier bound is a config change, not
   a code change.
+- A depth-2 brief is composed by the model at depth 1, so the chain's
+  direction is only as good as the middle brief. That is why the cell
+  keys on depth and why the fit requirement — not the depth cap — is
+  what keeps a thin deep sample from moving anything: the slice assumes
+  depth 2 will be rare enough to stay unfit, and if it stops being rare
+  the calibration will say so.
