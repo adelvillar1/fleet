@@ -16,19 +16,21 @@ control once a child is running, the depth to delegate twice, and the
 project's own vocabulary to name things the way the project already
 names them.
 
-This slice lands all eight, ordered by dependency: **the brief (D1),
+This slice lands all nine, ordered by dependency: **the brief (D1),
 the loop (D2), the roles (D3), the fan-out (D4), the control (D5), the
-n+2 depth (D6), the nomenclature guard (D7), and the dependency graph
-(D8).** The loop is the heart; D1 makes its data gradeable, D3 gives it
-an actor dimension, D4 and D5 are the mechanics the loop then measures,
-D6 is the one place the loop's own framing bites back — a brief at
-depth 2 is a paraphrase of a paraphrase, so the parent chain that
-produced it has to be recorded from the first row rather than
-reconstructed later — D7 is the part that pays for the rest, because
-drift caught at write time costs one pass while drift caught in review
-costs a fix round, and D8 is what makes the other seven finish sooner:
-the graph lets a unit start the moment its prerequisites clear instead
-of waiting for its slowest sibling.
+n+2 depth (D6), the nomenclature guard (D7), the dependency graph
+(D8), and the capability declaration (D9).** The loop is the heart; D1
+makes its data gradeable, D3 gives it an actor dimension, D4 and D5 are
+the mechanics the loop then measures, D6 is the one place the loop's
+own framing bites back — a brief at depth 2 is a paraphrase of a
+paraphrase, so the parent chain that produced it has to be recorded
+from the first row rather than reconstructed later — D7 is the part
+that pays for the rest, because drift caught at write time costs one
+pass while drift caught in review costs a fix round, D8 is what makes
+the other seven finish sooner by letting a unit start the moment its
+prerequisites clear instead of waiting for its slowest sibling, and D9
+is what keeps a unit from discovering at turn nine that it was never
+admitted to the tool it needed.
 
 ## The formal framing (the owner's, 2026-10-14)
 
@@ -77,6 +79,17 @@ chain, and the node that appears in the most scores is the one whose
 completion moves the most work. The estimate shapes the path to zero;
 only a verified completion moves the score, so the zero is exact.
 
+**And the capability declaration is the law applied to planning
+itself.** The orchestrator's prediction of what a subtree will need is
+a *suggested result*; the subtree's actual usage is the recorded
+outcome. "You can always record the suggested result and what the other
+lanes record as the right outcome" — so the prediction is written down
+and graded, and a shape whose predictions hold gains while a shape that
+repeatedly misses loses. A capability the subtree needed and was never
+admitted is the expensive miss, and the refusal that produces it is the
+evidence that corrects the next prediction: the loop's own failure mode
+is its training signal.
+
 ## The problem shape (PS-E, the delegation half)
 
 "**Which brief shapes actually drive toward done, and which only look
@@ -116,7 +129,10 @@ because nothing pays attention to its direction.
   the orchestrator gates on reports rather than on the artifacts that
   would let a unit start, which is the same self-report rule the
   `subagent` tool's own description states, unapplied to the layer
-  above it.
+  above it; (9) nothing predicts the capabilities a subtree will need,
+  so a unit discovers an unadmitted tool at the call rather than at
+  decomposition, and the only record of the miss is a session-log line
+  nothing reads for that purpose.
 
 ## Acceptance criteria
 
@@ -441,6 +457,60 @@ rule.)
   whose prerequisite failed does not unlock and its reason is named;
   the render names the critical path.
 
+### D9 — the capability declaration at decomposition
+
+When the orchestrator decomposes a root task, each node names the
+capabilities its subtree is **likely** to need: the tools, the skills,
+the workflows, and the loops. The declaration is a prediction, it is
+written down, and it is graded.
+
+Without it, a subtree discovers at turn nine that it was never admitted
+to the tool it needed — after the parent has already spent the turns
+that produced the refusal, and the only record is a line in a session
+log nobody reads for this purpose. The declaration moves that
+discovery to decomposition, where the fix is one line in the graph.
+
+It earns its place four ways. **It is a pre-flight:** a subtree needing
+an unadmitted tool fails at the call, where declared at decomposition
+it fails at planning — the same class of win as D7, one level up. **It
+derives the scope:** D3's roles carry a hand-written tool list, and the
+declaration derives the node's admitted set from the predicted need, so
+the scope is a consequence of the plan rather than a guess beside it.
+**It is a new calibration dimension:** the prediction is the suggested
+result and the child's actual usage is the recorded outcome, giving
+three numbers per cell — declared-and-used, declared-and-unused, and
+used-and-undeclared, the last being the one that costs turns. **And it
+sharpens the cost estimate:** a node whose subtree will spawn a lane
+install costs more than one that reads files, so D8's dependency score
+gets better inputs.
+
+- **The declaration.** Each node carries four lists: **tools** (from
+  the admissible set), **skills** (by name), **workflows** (named, with
+  an unavailable one rendered as unavailable rather than omitted), and
+  **loops** (the recurring processes the subtree triggers or depends
+  on — the judge batch, the consolidation cycle, a cron registration).
+- **The declaration IS the scope.** A declared tool is admitted; an
+  undeclared one is refused by name. Not a hint beside a hand-written
+  list — otherwise it is decoration, and the whole part is theatre.
+- **The refusal teaches.** A child refused a capability it needed
+  records the need in its result. That record is the evidence that
+  corrects the orchestrator's next prediction for that shape, which is
+  the same closure D2's loop makes — the failure mode is the training
+  signal.
+- **The declaration rides the brief** (D1's `context`), so the child
+  knows what it has and, by omission, what it does not — and can ask
+  for the delta in its result rather than failing silently.
+- **The surface.** Each node's card carries its declaration, so the
+  graph reads as "this branch needs the lane tools and the vendoring
+  skill" at a glance rather than requiring the owner to open every
+  node.
+- **A deterministic eval scenario** (`capability-declaration`): a
+  declared tool is admitted and an undeclared one refused by name; a
+  child refused a needed capability records the need and the next
+  prediction for that shape carries it; the three calibration numbers
+  are computed from a scripted day and pinned; an unavailable workflow
+  renders as unavailable rather than vanishing.
+
 ## Design decisions
 
 1. **The loop is reused, never forked.** D2's beat is an ordinary
@@ -532,6 +602,21 @@ rule.)
     it, which is where it was being violated. The completion predicate
     is D2's judge, so the graph and the loop share one mechanism
     rather than carrying two.
+15. **The capability declaration is the scope, not a hint.** A declared
+    tool is admitted and an undeclared one is refused by name. A
+    declaration that sits beside a hand-written scope is decoration,
+    and decoration is worse than nothing because it looks like a
+    guarantee. This is also why the declaration can be a *prediction*:
+    being wrong costs a named refusal that teaches, which is a
+    recoverable error in exactly the direction that produces the
+    correction.
+16. **Under-declare, and let the refusal teach.** The two miss
+    directions are not symmetric. Over-declaring costs a calibration
+    signal and a wider blast radius per node; under-declaring costs one
+    named refusal whose record corrects the next prediction for that
+    shape. So the declaration is written narrowly and the loop is
+    trusted to widen it — the same reason D7's guard flags rather than
+    forbids.
 
 ## Out of scope
 
@@ -549,6 +634,12 @@ rule.)
   constraint already catches the case that matters (two nodes, one
   path). Edges are declared, and the declared graph plus the mandatory
   resource constraint is the whole mechanism.
+- **Automatic capability inference from the code.** Reading which
+  imports a file carries to predict what a subtree needs is the same
+  fragile inference as edge inference: an import is not a need, a
+  missed need is invisible, and the refusal is a better teacher than a
+  guess. The declaration is the orchestrator's, and the loop corrects
+  it.
 - Depth-3 delegation and beyond. Two levels is the cap this slice lands
   and the record it was drawn from (Hermes's `max_spawn_depth: 2`, with
   no depth-2 spawn observed across 587 trees); a third level is a
