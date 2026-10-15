@@ -3,7 +3,9 @@
 //! registry, the git-tracked memory substrate with hybrid retrieval, the
 //! self-maintenance loop's gated proposals, the three read-only boards
 //! over the machine's own sources, the explanation beat over the blend1
-//! lane, the TUI, and the doctor's checks.
+//! lane, the delegation judgment beat over the same stream, the
+//! dependency graph that schedules delegated work, the project's canonical
+//! identifier vocabulary, the TUI, and the doctor's checks.
 
 pub mod agent;
 pub mod api;
@@ -12,9 +14,11 @@ pub mod calib;
 pub mod cli;
 pub mod compaction;
 pub mod cron;
+pub mod delegate;
 pub mod doctor;
 pub mod eval;
 pub mod explain;
+pub mod graph;
 pub mod home;
 pub mod improve;
 pub mod install;
@@ -23,6 +27,7 @@ pub mod lanes;
 pub mod mcp;
 pub mod memory;
 pub mod net;
+pub mod nomenclature;
 pub mod route;
 pub mod session;
 pub mod skills;
