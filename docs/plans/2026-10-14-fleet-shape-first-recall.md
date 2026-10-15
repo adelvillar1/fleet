@@ -1,6 +1,6 @@
 # Slice 19 — shape-first recall: the shape drives, the words corroborate (2026-10-14)
 
-status: planned
+status: landed-pending-review (2026-10-14; 243e76e the shape-first recall, e3ea0e2 the review round's fixes — the rebalanced weights, the third vector, the outcome axis)
 
 ## Goal
 
@@ -43,12 +43,12 @@ owner's latest ruling governs the channels: the semantic channels
 — while the direction channels (trajectory, history, provenance)
 measure which way the vector points, and **direction outranks
 proximity**: a fact with maximum semantic density and no direction must
-not outrank a fact pointing at the minima. The landed weighting is
-under review against that ruling, verified by arithmetic rather than
-intuition. Fleet's recall today
-has it backwards: 0.80 of the scoring weight is word-based (vector 0.55
-+ keyword 0.25) and the shape is a 0.15 additive boost — a tiebreaker
-under the words.
+not outrank a fact pointing at the minima. The weighting that landed
+first failed that ruling (a proximity-max fact scored 0.55 against a
+direction-strong fact's 0.49) and was rebalanced in the review round to
+vector 0.15 + keyword 0.15 (proximity 0.30) against trajectory 0.30 +
+history 0.25 + provenance 0.05 (direction 0.60), with the invariant
+pinned by a test whose vector channel is live for both facts.
 
 ## The problem shape (PS-D, the recall half)
 
@@ -96,7 +96,9 @@ approaches that fit the shape (prevention) and the shapes that broke
 - **M5 — the eval scenarios.** Deterministic scenarios for the
   inversion (M1's test at the corpus level), the spillover's
   conditions, the failure-shape recall, and the phrases' round-trip —
-  scripted seams, no paid calls.
+  scripted seams, no paid calls. Landed as four scenarios in the memory
+  family (`memory-shape-inversion`, `memory-spillover-routes`,
+  `memory-failure-shape-recall`, `memory-phrases-round-trip`).
 - **M6 — the surface and the docs.** `fleet memories --recall` shows
   the partition: the primary pool's facts, then the spillover marked
   off-shape, at the house bar (never a plain-text table).
@@ -106,6 +108,18 @@ approaches that fit the shape (prevention) and the shapes that broke
 - **M7 — the gate.** The full suite green, nothing deleted,
   warning-free; every error or warning encountered lands in the ledger
   with its evidence.
+- **M8 — the third vector.** A third sign derived from an outcome tag
+  (`incomplete`) beside the structure and failure axes: the direction
+  was right and the minima was unreached for want of a companion. A
+  `missing` frontmatter field names the absent companions and is
+  deliberately excluded from the indexed text (an absent companion is
+  not the fact's direction). An incomplete vector ranks exactly as a
+  resolution — same pool, same weights, no penalty — and its marker and
+  companions ride the assembly line, the recall card, and the corpus
+  card. The write path and both tool descriptions carry it, and the
+  consolidation cycle's decision is pinned: an incomplete durable
+  inferred fact is never folded, because a summary bullet would keep
+  the sentence and lose the absent pieces.
 
 ## Design decisions
 
@@ -145,3 +159,9 @@ approaches that fit the shape (prevention) and the shapes that broke
   MIN_RECALL_SCORE, stated with the reasoning.
 - The recall-hit feedback (the recall-count re-ranking) keeps its
   meaning within the new ordering.
+- The tags are three axes, not one: the structure shapes (what kind
+  of problem), the failure shapes (what kind of thing broke), and the
+  outcome tags (what became of the trajectory — resolved, incomplete,
+  or neither). The sign is derived from them, so no stored field can
+  contradict the tags; the partition matches the first two axes and
+  the sign reads the third.

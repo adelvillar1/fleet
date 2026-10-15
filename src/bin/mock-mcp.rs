@@ -79,6 +79,15 @@ struct ScriptEntry {
     /// buffer. The client drains stderr, so this must not wedge the call.
     #[serde(default)]
     stderr_bytes: usize,
+    /// Answer only the requests whose raw line contains this substring.
+    /// An entry with no `match` behaves exactly as before (consumed once,
+    /// in script order). A matched entry is removed when it answers, so
+    /// it is one-shot per child — each child serves exactly one ask. The
+    /// judge spawns a fresh child per ask and every child reads the
+    /// script from its head, so the ask's own CONTENT is the only thing
+    /// that differs between two asks' children.
+    #[serde(default)]
+    r#match: Option<String>,
 }
 
 fn main() {
@@ -104,7 +113,7 @@ fn main() {
         let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
         // A notification carries no id and is never answered.
         let Some(request_id) = request.get("id").cloned() else { continue };
-        let Some(entry) = pop_entry(&mut entries) else {
+        let Some(entry) = pop_entry(&mut entries, &line) else {
             // A dry script ends the server: the client sees a closed
             // child, which is the honest answer to an unscripted request.
             std::process::exit(0);
@@ -207,12 +216,20 @@ fn own_environment() -> String {
     serde_json::to_string(&map).expect("the environment is serializable JSON")
 }
 
-/// Pop the next script entry, or `None` when the script is dry.
-fn pop_entry(entries: &mut Vec<ScriptEntry>) -> Option<ScriptEntry> {
+/// Pop the entry that answers this request, or `None` when the script
+/// is dry. An entry carrying a `match` answers only the requests whose
+/// raw line contains that substring and is consumed when it does; an
+/// entry without one is consumed by the next request in script order,
+/// exactly as before. Every existing script has no `match`, so the
+/// position is always 0 and the behaviour is byte-identical.
+fn pop_entry(entries: &mut Vec<ScriptEntry>, line: &str) -> Option<ScriptEntry> {
     if entries.is_empty() {
         return None;
     }
-    Some(entries.remove(0))
+    let position = entries
+        .iter()
+        .position(|entry| entry.r#match.as_deref().is_none_or(|needle| line.contains(needle)))?;
+    Some(entries.remove(position))
 }
 
 /// A reply frame whose `id` is the string `"$echo"` takes the request's

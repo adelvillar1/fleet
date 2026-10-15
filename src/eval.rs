@@ -2550,7 +2550,21 @@ fn judged_row_line(
 /// the tool list, and one `tools/call` reply per ask the batch makes.
 /// The reply is the `sys1_classify` answer's own shape, so fleet's side
 /// of the contract is what the scenario grades.
-fn judge_lane_entries(answers: &[serde_json::Value]) -> Vec<serde_json::Value> {
+///
+/// `hashes` carries one route row's `input_hash` per answer: each call
+/// entry is keyed on `input hash: <hash>`, the line compose_prompt
+/// emits, so an ask's own CONTENT selects its answer. The judge spawns
+/// a fresh child per ask and every child reads the script from its
+/// head, so without the key every ask would receive the first entry —
+/// the batch's confidences would all read alike and the fit leg would
+/// grade an accident rather than the design.
+///
+/// The tool list is ONE entry, not one per ask: each child makes
+/// exactly one `tools/list` request before its call, and an entry
+/// carrying no `match` is consumed by whatever request arrives next —
+/// so a tool list left between two keyed calls would be served to the
+/// call and the beat would read a tool list as an answer.
+fn judge_lane_entries(answers: &[serde_json::Value], hashes: &[String]) -> Vec<serde_json::Value> {
     let handshake = serde_json::json!({ "reply": {
         "jsonrpc": "2.0", "id": "$echo",
         "result": {
@@ -2559,23 +2573,27 @@ fn judge_lane_entries(answers: &[serde_json::Value]) -> Vec<serde_json::Value> {
             "serverInfo": { "name": "sys1", "version": "0.1.0" },
         },
     } });
-    // One ask costs the lane TWO script entries — the tool list the beat
-    // reads before every call, then the call itself — because each ask
-    // spawns, handshakes, lists, calls, and tears its child down.
-    let mut entries = vec![handshake];
-    for answer in answers {
-        entries.push(serde_json::json!({ "reply": {
-            "jsonrpc": "2.0", "id": "$echo",
-            "result": { "tools": [{ "name": "sys1_classify", "description": "one classify",
-                                    "inputSchema": { "type": "object" } }] },
-        } }));
-        entries.push(serde_json::json!({ "reply": {
+    let tool_list = serde_json::json!({ "reply": {
+        "jsonrpc": "2.0", "id": "$echo",
+        "result": { "tools": [{ "name": "sys1_classify", "description": "one classify",
+                                "inputSchema": { "type": "object" } }] },
+    } });
+    let mut entries = vec![handshake, tool_list];
+    for (answer, hash) in answers.iter().zip(hashes.iter()) {
+        entries.push(serde_json::json!({
+            "match": format!("input hash: {hash}"),
+            "reply": {
             "jsonrpc": "2.0", "id": "$echo",
             "result": { "content": [{ "type": "text", "text": answer.to_string() }],
                         "isError": false },
         } }));
     }
     entries
+}
+
+/// One `input_hash` per ask: the route fixtures' own `{index:032x}`.
+fn judge_hashes(count: usize) -> Vec<String> {
+    (0..count).map(|index| format!("{index:032x}")).collect()
 }
 
 /// One `sys1_classify` answer over the route task: a workload label with
@@ -2699,19 +2717,17 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     }
     let keys: Vec<String> = route_rows.iter().map(|row| calib::route_key(row)).collect();
 
-    // The lane answers each row with the workload its provider was
-    // chosen for, at a confidence that walks down the day — so the
-    // sample carries span as well as rows.
-    let answers: Vec<serde_json::Value> = (0..10u32)
-        .map(|index| {
-            if index < 8 {
-                sys1_answer("hard", 0.95 - index as f64 * 0.05)
-            } else {
-                sys1_answer("quick", 0.95 - index as f64 * 0.05)
-            }
-        })
-        .collect();
-    let lane = match ScriptedLane::start(&mcp_bin, judge_lane_entries(&answers)) {
+    // The lane judges every route against the `hard` workload, at a
+    // confidence that walks down the day — so the sample carries span as
+    // well as rows, and the two `quick` routes are re-judged as `hard`
+    // and graded wrong ('never attempted'): the loop catches a real
+    // disagreement rather than agreeing with itself. Each ask's child
+    // serves the entry keyed on that route row's own `input hash`, which
+    // is what makes the walk reach the rows rather than every ask
+    // receiving the script's first answer.
+    let answers: Vec<serde_json::Value> =
+        (0..10u32).map(|index| sys1_answer("hard", 0.95 - index as f64 * 0.05)).collect();
+    let lane = match ScriptedLane::start(&mcp_bin, judge_lane_entries(&answers, &judge_hashes(10))) {
         Ok(lane) => lane,
         Err(error) => return ScenarioOutcome::fail(NAME, family, error),
     };
@@ -2822,15 +2838,27 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     };
     checks.push(("the eight-row cell counts eight rows", zai.judged == 8));
     checks.push(("the two-row cell counts two rows", kit.judged == 2));
-    // The scripted seam answers every ask at one confidence, so both
-    // cells carry zero span — the flat-sample case the span requirement
-    // exists to refuse. Neither is fit, so neither draws a score, and
-    // the surface says what each still needs.
-    checks.push(("a flat sample is unfit however many rows it carries", zai.fit == calib::FitState::Unfit));
+    // The scripted seam answers each ask at its own walked confidence,
+    // keyed on the route row's input hash — so the eight `hard` rows
+    // span 0.35 (0.95 down to 0.60) and the cell is FIT. The walk is
+    // pinned here rather than assumed: without the key every ask would
+    // receive the script's first answer, the rows would all read 0.95,
+    // the span would be zero, and the fit leg would grade an accident.
     checks.push((
-        "the unfit cell names what it needs and draws no score",
+        "the walked confidence reaches the rows the beat wrote",
+        outcome.judged.iter().enumerate().all(|(index, row)| {
+            (row.confidence - (0.95 - index as f64 * 0.05)).abs() < 1e-9
+        }),
+    ));
+    checks.push((
+        "the eight-row cell is fit on its span and needs no more of it",
+        zai.fit == calib::FitState::Fit
+            && (zai.confidence_span - 0.35).abs() < 1e-9
+            && zai.needs_span() == 0.0,
+    ));
+    checks.push((
+        "the two-row cell names what it needs and draws no score",
         kit.needs_rows() > 0
-            && zai.needs_span() > 0.0
             && calib::render_calibration(&root, &day, true).contains("no score is drawn"),
     ));
     checks.push((
@@ -2914,6 +2942,39 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         "an unfit cell never moves routing however wrong it looks",
         route::calibration_skips(&unfit_root, &day, &roster, "router-kit", "hard").is_empty(),
     ));
+    // The span requirement's own fixture: eight rows — enough rows — all
+    // at ONE confidence. The rows requirement is satisfied and the cell
+    // is still unfit, because a flat sample carries no information about
+    // how sure the lane was. The beat's own batch cannot build this
+    // shape any more (its lane walks), so it is stated directly.
+    let flat_root = match scratch_dir("calib-flat") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let flat_rows: Vec<serde_json::Value> = (0..8u32)
+        .map(|index| {
+            judged_row_line(
+                &format!("{day}T14:30:{index:02}Z"),
+                &format!("flat-key-{index:016x}"),
+                "zai-coding-plan",
+                "hard",
+                calib::VERDICT_WRONG,
+                0.9,
+            )
+        })
+        .collect();
+    write_day_file(&flat_root, &day, &flat_rows);
+    let flat_day = calib::read_day(&flat_root, &day, 64);
+    let flat_cells = calib::calibration(&flat_day);
+    checks.push((
+        "a flat sample is unfit however many rows it carries",
+        calib::cell(&flat_cells, "zai-coding-plan", "hard").is_some_and(|cell| {
+            cell.judged == 8
+                && cell.fit == calib::FitState::Unfit
+                && cell.needs_span() > 0.0
+                && calib::render_calibration(&flat_root, &day, true).contains("no score is drawn")
+        }),
+    ));
     // A provider outside the roster is never skipped either: the
     // calibration names the day's cells, and the walk only skips what it
     // could otherwise attempt.
@@ -2961,10 +3022,11 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     write_day_file(&open_root_for_third, &day, &third_rows);
     let third_answers: Vec<serde_json::Value> =
         (0..8u32).map(|index| sys1_answer("hard", 0.95 - index as f64 * 0.05)).collect();
-    let third_lane = match ScriptedLane::start(&mcp_bin, judge_lane_entries(&third_answers)) {
-        Ok(lane) => lane,
-        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
-    };
+    let third_lane =
+        match ScriptedLane::start(&mcp_bin, judge_lane_entries(&third_answers, &judge_hashes(8))) {
+            Ok(lane) => lane,
+            Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+        };
     let third = crate::judge::judge(crate::judge::JudgeRequest {
         root: &open_root_for_third,
         home: &home,
@@ -2987,19 +3049,12 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
             row.reason.contains("direction was right") && row.reason.contains("want of a companion")
         }),
     ));
-    let third_day_rows: Vec<serde_json::Value> = (0..8u32)
-        .map(|index| {
-            judged_row_line(
-                &format!("{day}T15:30:{index:02}Z"),
-                &format!("insufficient-key-{index:016x}"),
-                "xiaomi-mimo",
-                "hard",
-                calib::VERDICT_INSUFFICIENT,
-                0.95 - index as f64 * 0.05,
-            )
-        })
-        .collect();
-    write_day_file(&open_root_for_third, &day, &third_day_rows);
+    // The cell is read from THE BEAT'S OWN ROWS: the day file is not
+    // rewritten with a hand-made fixture, so the chain beat → row →
+    // cell → ride-back runs end to end for the third vector. The
+    // previous shape truncated the file with a fixture and graded the
+    // fixture, which meant the beat's confidence never reached the cell
+    // math at all.
     let third_day = calib::read_day(&open_root_for_third, &day, 64);
     let third_cells = calib::calibration(&third_day);
     let mimo = calib::cell(&third_cells, "xiaomi-mimo", "hard");
@@ -3055,7 +3110,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     }));
     let fail_lane = match ScriptedLane::start(
         &mcp_bin,
-        judge_lane_entries(&vec![fallback; 10]),
+        judge_lane_entries(&vec![fallback; 10], &judge_hashes(10)),
     ) {
         Ok(lane) => lane,
         Err(error) => return ScenarioOutcome::fail(NAME, family, error),
@@ -3111,7 +3166,15 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
                 }),
     ));
 
-    for scratch in [&home, &root, &wrong_root, &unfit_root, &open_root, &open_root_for_third] {
+    for scratch in [
+        &home,
+        &root,
+        &wrong_root,
+        &unfit_root,
+        &flat_root,
+        &open_root,
+        &open_root_for_third,
+    ] {
         let _ = std::fs::remove_dir_all(scratch);
     }
     grade(NAME, family, &checks)
