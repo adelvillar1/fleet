@@ -16,21 +16,24 @@ control once a child is running, the depth to delegate twice, and the
 project's own vocabulary to name things the way the project already
 names them.
 
-This slice lands all nine, ordered by dependency: **the brief (D1),
+This slice lands all ten, ordered by dependency: **the brief (D1),
 the loop (D2), the roles (D3), the fan-out (D4), the control (D5), the
 n+2 depth (D6), the nomenclature guard (D7), the dependency graph
-(D8), and the capability declaration (D9).** The loop is the heart; D1
-makes its data gradeable, D3 gives it an actor dimension, D4 and D5 are
-the mechanics the loop then measures, D6 is the one place the loop's
-own framing bites back — a brief at depth 2 is a paraphrase of a
-paraphrase, so the parent chain that produced it has to be recorded
-from the first row rather than reconstructed later — D7 is the part
-that pays for the rest, because drift caught at write time costs one
-pass while drift caught in review costs a fix round, D8 is what makes
-the other seven finish sooner by letting a unit start the moment its
-prerequisites clear instead of waiting for its slowest sibling, and D9
-is what keeps a unit from discovering at turn nine that it was never
-admitted to the tool it needed.
+(D8), the capability declaration (D9), and the delta report (D10).**
+The loop is the heart; D1 makes its data gradeable, D3 gives it an
+actor dimension, D4 and D5 are the mechanics the loop then measures,
+D6 is the one place the loop's own framing bites back — a brief at
+depth 2 is a paraphrase of a paraphrase, so the parent chain that
+produced it has to be recorded from the first row rather than
+reconstructed later. D7 is the part that pays for the rest, because
+drift caught at write time costs one pass while drift caught in review
+costs a fix round. D8 makes the other parts finish sooner by letting a
+unit start the moment its prerequisites clear instead of waiting for
+its slowest sibling. D9 keeps a unit from discovering at turn nine
+that it was never admitted to the tool it needed. And D10 is the one
+that makes every other part sharper over time: the delta between the
+solution a node was handed and the one it executed is the only signal
+that tells the orchestrator which brief shapes actually work.
 
 ## The formal framing (the owner's, 2026-10-14)
 
@@ -90,6 +93,19 @@ admitted is the expensive miss, and the refusal that produces it is the
 evidence that corrects the next prediction: the loop's own failure mode
 is its training signal.
 
+**And the delta is the angle between two vectors.** The brief's
+approach is a predicted vector; the child's executed solution is an
+actual one. The delta is the angle between them, and the aggregate diff
+score is the plan's total angular error — the measure of how far the
+orchestrator's model of the work sat from the work itself. A small
+angle means the plan described the territory; a large one means the
+orchestrator was navigating a map that did not match, and the honest
+response is to redraw the map *now* rather than to finish walking the
+wrong route and resolve to do better next time. That is what makes D10
+the part that compounds: every other part gets sharper because the
+orchestrator's model of the work is being continuously corrected by the
+only participant who sees both sides of every decision.
+
 ## The problem shape (PS-E, the delegation half)
 
 "**Which brief shapes actually drive toward done, and which only look
@@ -132,7 +148,11 @@ because nothing pays attention to its direction.
   above it; (9) nothing predicts the capabilities a subtree will need,
   so a unit discovers an unadmitted tool at the call rather than at
   decomposition, and the only record of the miss is a session-log line
-  nothing reads for that purpose.
+  nothing reads for that purpose; (10) a child's deviation from the
+  approach it was handed is never recorded, so the orchestrator cannot
+  tell a plan that described the territory from one that did not — and
+  nothing aggregates that signal into a reason to replan while the tree
+  is still executing.
 
 ## Acceptance criteria
 
@@ -141,13 +161,22 @@ because nothing pays attention to its direction.
 - The `subagent` tool gains two optional arguments: **`context`** (the
   background the child needs and cannot see) and **`output`** (the
   shape of the answer the parent will accept — the definition of done).
-- The child's first user message composes the three parts between
-  explicit markers (`TASK`, `CONTEXT`, `WHAT DONE LOOKS LIKE`), so a
-  non-conforming model cannot read the background as the task.
-- **Backward compatible**: an absent `context`/`output` composes
-  exactly today's message; every existing caller and test is unchanged.
+- **`approach`** — the orchestrator's proposed solution for this
+  subtree. Required by D10: a delta needs two sides, and a brief that
+  states only a goal gives the child nothing to diff against, which
+  reduces its report to a summary — the thing the discipline already
+  distrusts. Bounded, and stated as a proposal rather than an
+  instruction, so a child that finds a better route is deviating from
+  a suggestion rather than disobeying an order.
+- The child's first user message composes the four parts between
+  explicit markers (`TASK`, `APPROACH`, `CONTEXT`, `WHAT DONE LOOKS
+  LIKE`), so a non-conforming model cannot read the background as the
+  task or the proposal as an instruction.
+- **Backward compatible**: an absent `context`/`output`/`approach`
+  composes exactly today's message; every existing caller and test is
+  unchanged.
 - The description states the contract in the tool's own words, and the
-  approval prompt and the progress line render the brief's three parts
+  approval prompt and the progress line render the brief's four parts
   (bounded, never a raw dump).
 - The brief's shape is recorded on the delegation row D2 reads.
 
@@ -511,6 +540,76 @@ gets better inputs.
   are computed from a scripted day and pinned; an unavailable workflow
   renders as unavailable rather than vanishing.
 
+### D10 — the delta report, and the replan it drives
+
+Two halves, and the second is what makes the first worth collecting.
+
+**Half one — the report upward.** On completion a node reports (a) the
+solution it actually produced and (b) how it differs from the one it
+received, with the reason. The child is the only participant who knows
+both sides: the approach it was handed and the one it executed. Today
+that difference is the highest-value information in the system and
+nobody records it — the child's summary describes what it did, and the
+brief's approach is never compared against it.
+
+**Half two — the replan.** The orchestrator aggregates the deltas
+across the tree into a single **diff score** and reviews the plan
+against it. A large aggregate means the plan was probably not optimal,
+and the response is to act on the *current* tree rather than only
+learning for the next one: revise the remaining nodes' approaches,
+resequence the graph as new dependencies surface, prune a node whose
+work a completed sibling already did, or split one that deviated far
+enough that its brief was really two tasks.
+
+- **The report.** The result carries a structured `delta`: `followed`
+  or `deviated`, the deviation's **reason** (a named category), what
+  was done instead, and whether the deviation was **forced** (a
+  blocker) or **chosen** (a better route). Free text rides beside it
+  and is never graded — the categories are what the loop reads.
+- **The reason categories**, which are what make the aggregate
+  meaningful rather than a count: the approach was **infeasible** (a
+  missing path, a wrong assumption — the brief drove away); a
+  **companion was missing** (the approach was right and incomplete —
+  the insufficient case, and the companion is named); the approach was
+  **right and followed**; or the approach was right and the child found
+  a **better route** to the same minima. The last is a gain, not a
+  loss, and conflating it with the others would teach the orchestrator
+  to punish improvement.
+- **The diff score.** An aggregate over the completed nodes' deltas —
+  the deviation magnitude weighted by the reason category, so a forced
+  deviation and a chosen one do not read alike. It is a project-level
+  plan-quality number: the lower it runs, the better the orchestrator's
+  model of the work.
+- **The replan's triggers.** A named threshold on the aggregate, and a
+  per-node threshold on a single large deviation. Either can revise
+  the remaining approaches, resequence the graph, prune, or split. The
+  replan lands as a **new graph revision** — append-only, with the
+  revision that caused it named — so the tree's history is
+  reconstructable rather than overwritten.
+- **Resequencing is D8's graph revised.** New edges discovered by a
+  completion, a node whose dependency score changed because a sibling
+  did its work, a node that becomes unnecessary. The graph is not
+  static; it is the orchestrator's current best model, and the
+  completions are the evidence that corrects it.
+- **Deltas ride the parent chain verbatim** (D6). At depth 2 the
+  middle node preserves its children's deltas rather than summarizing
+  them, because a summarized delta cannot be graded — and the loss is
+  invisible, which is the worst kind.
+- **The delta is verified against the child's session log** — the same
+  join D2 does. A claimed deviation the log does not show is a false
+  report, which is itself a `wrong` verdict and the most serious kind.
+- **The surface.** The graph's render carries the diff score and each
+  node's delta reason; a replan is announced with what it changed and
+  why, so the owner sees the plan being corrected rather than
+  silently mutated.
+- **A deterministic eval scenario** (`delta-replan`): a followed brief
+  produces a `followed` delta and no replan; a forced deviation
+  produces its reason and a replan that revises the remaining
+  approaches; a chosen improvement is recorded as a gain and moves
+  nothing; a large aggregate triggers the replan and names the
+  revision; a delta the log contradicts is refused; a middle node
+  preserves its child's delta verbatim up the chain.
+
 ## Design decisions
 
 1. **The loop is reused, never forked.** D2's beat is an ordinary
@@ -617,6 +716,26 @@ gets better inputs.
     shape. So the declaration is written narrowly and the loop is
     trusted to widen it — the same reason D7's guard flags rather than
     forbids.
+17. **A deviation is not a failure, and the reason category is what
+    keeps it that way.** The four reasons separate "the brief drove
+    away" from "the brief was right and incomplete" from "the brief was
+    right and the child found better." Collapsing them into one
+    deviation count would make a chosen improvement read as a defect,
+    and an orchestrator that punishes improvement gets children that
+    stop reporting honestly — which destroys the only signal the part
+    runs on. The categories are load-bearing, not documentation.
+18. **The replan acts on the current tree, not only on the next one.**
+    A calibration that moves future preference is worth having, but a
+    plan that is demonstrably wrong should be corrected while it is
+    still being executed. The diff score is the trigger; the replan
+    revises approaches, resequences, prunes, or splits; and it lands as
+    a new graph revision rather than an overwrite, so the tree's
+    history stays reconstructable.
+19. **The replan is bounded, or it thrashes.** A named threshold on
+    the aggregate and a per-node threshold on a single deviation, with
+    a cap on revisions per run. An orchestrator that replans on every
+    deviation never finishes anything, and a tree that changes under
+    its own children is worse than a tree that was wrong once.
 
 ## Out of scope
 
