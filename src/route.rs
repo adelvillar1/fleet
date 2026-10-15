@@ -134,7 +134,13 @@ pub enum CandidateKind {
 /// is the owner's standing directive, and this table does not reorder it.
 /// The owner's config (a pin, or a chain entry) decides Liquid's real
 /// position whenever they want it there.
-fn default_roster() -> Vec<Candidate> {
+/// The compiled-in roster, before any config file merges over it.
+/// Public because the settings writer needs to tell "revert this
+/// provider to its compiled-in default" (an override whose id is in
+/// here) from "remove this provider from the roster entirely" (an id
+/// that is not) — the two are different edits with different blast
+/// radius, and the second is the destructive one.
+pub fn default_roster() -> Vec<Candidate> {
     vec![
         Candidate {
             id: "router-kit".into(),

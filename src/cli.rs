@@ -486,6 +486,9 @@ usage:
                                 row and checks the artifact only: no ask, no
                                 row, no file
   fleet settings [set <key> <value>]
+  fleet settings provider add '<json>' | remove <id> [--force]
+  fleet settings workload set <name> \"<provider/model,...>\"
+  fleet settings workload remove <name> [--force]
                                 every configurable surface as cards, or
                                 write one — the same writer the TUI calls
   fleet install [--lanes]        create the home layout (sessions, memories,
@@ -718,6 +721,61 @@ fn parse_settings(args: &[String]) -> Result<Command, String> {
                 let key = take_value(args, &mut index, "set")?;
                 let value = take_value(args, &mut index, "set")?;
                 set = Some((key, value));
+            }
+            // The list-shaped surfaces: a provider override and a
+            // workload preference are added and removed rather than
+            // assigned, and a comma-separated candidate list is the
+            // workload's own shape.
+            "provider" => {
+                let sub = take_value(args, &mut index, "provider")?;
+                match sub.as_str() {
+                    "add" => {
+                        let entry = take_value(args, &mut index, "provider add")?;
+                        set = Some((format!("provider.add:{entry}"), String::new()));
+                    }
+                    "remove" => {
+                        let id = take_value(args, &mut index, "provider remove")?;
+                        let force = args
+                            .get(index + 1)
+                            .map(|next| next == "--force")
+                            .unwrap_or(false);
+                        if force {
+                            index += 1;
+                        }
+                        set = Some((format!("provider.remove:{id}"), force.to_string()));
+                    }
+                    other => {
+                        return Err(format!(
+                            "`provider {other}` is not a provider action; `add` or `remove`"
+                        ));
+                    }
+                }
+            }
+            "workload" => {
+                let sub = take_value(args, &mut index, "workload")?;
+                match sub.as_str() {
+                    "set" => {
+                        let name = take_value(args, &mut index, "workload set")?;
+                        let list = take_value(args, &mut index, "workload set")?;
+                        set = Some((format!("workload.set:{name}"), list));
+                    }
+                    "remove" => {
+                        let name = take_value(args, &mut index, "workload remove")?;
+                        let force = args
+                            .get(index + 1)
+                            .map(|next| next == "--force")
+                            .unwrap_or(false);
+                        if force {
+                            index += 1;
+                        }
+                        set = Some((format!("workload.remove:{name}"), force.to_string()));
+                    }
+                    other => {
+                        return Err(format!(
+                            "`workload {other}` is not a workload action; `set` or `remove`"
+                        ));
+                    }
+                }
             }
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown settings option `{arg}`"));

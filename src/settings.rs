@@ -752,6 +752,116 @@ fn wrap_detail(text: &str, width: usize) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod list_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-settings-list-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A provider override validates through the roster's own schema, so
+    /// a misspelled field is a named refusal rather than a silently
+    /// ignored key.
+    #[test]
+    fn a_provider_entry_validates_through_the_rosters_own_schema() {
+        let home = scratch("provider-schema");
+        let error = set_provider(&home, r#"{"id":"x","keyenv":"STEPFUN_API_KEY"}"#)
+            .expect_err("a misspelled field must refuse");
+        assert!(error.contains("unknown field") || error.contains("keyenv"), "{error}");
+        // And a well-formed one lands.
+        let id = set_provider(
+            &home,
+            r#"{"id":"blend1","base_url":"http://127.0.0.1:8300/v1","key_env":"BLEND1_KEY","kind":"lane"}"#,
+        )
+        .unwrap();
+        assert_eq!(id, "blend1");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The destructive rule: removing an override of a compiled-in
+    /// provider reverts it; removing one the file added removes the
+    /// provider from the roster entirely, and needs `force`.
+    #[test]
+    fn removing_an_added_provider_needs_force_and_a_compiled_in_one_does_not() {
+        let home = scratch("provider-remove");
+        set_provider(&home, r#"{"id":"stepfun","enabled":false}"#).unwrap();
+        set_provider(&home, r#"{"id":"my-own-gateway","base_url":"http://127.0.0.1:9/v1"}"#).unwrap();
+        // The compiled-in one reverts without a fight.
+        remove_provider(&home, "stepfun", false).unwrap();
+        // The added one refuses, and the refusal names why.
+        let error = remove_provider(&home, "my-own-gateway", false)
+            .expect_err("removing an added provider must refuse without force");
+        assert!(error.contains("--force"), "{error}");
+        assert!(
+            error.contains("removes the provider from every walk"),
+            "{error}"
+        );
+        // And it is still there.
+        let text = fs::read_to_string(home.join("config.json")).unwrap();
+        assert!(text.contains("my-own-gateway"), "{text}");
+        // With force, it goes.
+        remove_provider(&home, "my-own-gateway", true).unwrap();
+        let text = fs::read_to_string(home.join("config.json")).unwrap();
+        assert!(!text.contains("my-own-gateway"), "{text}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A workload's candidates must be `provider/model` pairs — the same
+    /// rule `load_routing` enforces, so a typo fails here rather than at
+    /// the next startup.
+    #[test]
+    fn a_workloads_candidates_must_be_provider_model_pairs() {
+        let home = scratch("workload-shape");
+        let error = set_workload(&home, "quick", &["stepfun".to_string()])
+            .expect_err("a bare provider is not a pair");
+        assert!(error.contains("provider/model"), "{error}");
+        // An empty list is refused: a workload nothing can serve.
+        let error = set_workload(&home, "quick", &[]).expect_err("no candidates must refuse");
+        assert!(error.contains("at least one"), "{error}");
+        // And a well-formed one lands, replacing in place.
+        set_workload(&home, "quick", &["stepfun/step-3.7-flash".to_string()]).unwrap();
+        set_workload(&home, "quick", &["zai-coding-plan/GLM-5.3-Flash".to_string()]).unwrap();
+        let text = fs::read_to_string(home.join("routing.json")).unwrap();
+        assert_eq!(text.matches("\"quick\"").count(), 1, "{text}");
+        assert!(text.contains("GLM-5.3-Flash"), "{text}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The same destructive rule on the workloads: a compiled-in
+    /// workload's preference reverts, an added one needs force.
+    #[test]
+    fn removing_an_added_workload_needs_force() {
+        let home = scratch("workload-remove");
+        set_workload(&home, "quick", &["stepfun/step-3.7-flash".to_string()]).unwrap();
+        set_workload(&home, "my-own-shape", &["stepfun/step-3.7-flash".to_string()]).unwrap();
+        remove_workload(&home, "quick", false).unwrap();
+        let error = remove_workload(&home, "my-own-shape", false)
+            .expect_err("removing an added workload must refuse without force");
+        assert!(error.contains("--force"), "{error}");
+        remove_workload(&home, "my-own-shape", true).unwrap();
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The compiled-in sets are the rule's source, and they are read
+    /// from the crate rather than duplicated here.
+    #[test]
+    fn the_compiled_in_sets_are_the_rules_source() {
+        let providers = compiled_in_providers();
+        assert!(providers.contains(&"stepfun".to_string()), "{providers:?}");
+        assert!(providers.contains(&"deepseek".to_string()), "{providers:?}");
+        let workloads = compiled_in_workloads();
+        assert!(workloads.contains(&"quick".to_string()), "{workloads:?}");
+        assert!(workloads.contains(&"composed".to_string()), "{workloads:?}");
+    }
+}
+
+#[cfg(test)]
 mod render_tests {
     use super::*;
 
@@ -804,4 +914,187 @@ mod render_tests {
         );
         let _ = fs::remove_dir_all(&home);
     }
+}
+
+// --- the list-shaped surfaces ----------------------------------------------
+
+/// The ids the compiled-in roster carries, before any config merges
+/// over them. The settings writer's whole destructive rule reads this
+/// set: an override whose id is in here can be removed (it reverts to
+/// the compiled-in default), and an id that is not in here is a
+/// provider the config file itself added — removing it removes the
+/// provider from the roster entirely.
+pub fn compiled_in_providers() -> Vec<String> {
+    crate::route::default_roster()
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect()
+}
+
+/// The workload names the compiled-in preference table carries. The
+/// same rule as the providers: removing an override reverts, removing
+/// an added workload deletes it.
+pub fn compiled_in_workloads() -> Vec<String> {
+    crate::route::default_preferences()
+        .into_iter()
+        .map(|preference| preference.workload.to_string())
+        .collect()
+}
+
+/// Add or replace one provider override. The entry validates through
+/// the roster's own schema — the same `deny_unknown_fields` struct
+/// `load_roster` reads — so a proposal cannot introduce a field the
+/// roster would refuse, and a misspelled key fails here, by name,
+/// before anything is written. An entry that already exists is
+/// replaced in place, preserving the file's order.
+pub fn set_provider(home: &Path, entry: &str) -> Result<String, String> {
+    let value: Value = serde_json::from_str(entry)
+        .map_err(|error| format!("the entry is not valid JSON: {error}"))?;
+    // The loader's own validator: a misspelled field is a named refusal
+    // rather than a silently ignored key.
+    let parsed = crate::route::validate_provider_entry(&value)?;
+    let id = parsed.id().to_string();
+    if id.is_empty() {
+        return Err("the entry names no provider id".to_string());
+    }
+    let path = home.join("config.json");
+    let mut document = read_json(&path)?;
+    let providers = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?
+        .entry("providers")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let array = providers
+        .as_array_mut()
+        .ok_or_else(|| "`providers` is not a list".to_string())?;
+    // Replace in place when the id is already there, so a re-configuration
+    // does not reorder the file underneath its owner.
+    let position = array
+        .iter()
+        .position(|existing| existing.get("id").and_then(|id| id.as_str()) == Some(id.as_str()));
+    match position {
+        Some(index) => array[index] = value,
+        None => array.push(value),
+    }
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
+    )?;
+    Ok(id)
+}
+
+/// Remove one provider override. The destructive rule, and the reason
+/// this is not a bare delete: an id the compiled-in roster carries is
+/// an override, and removing it reverts the provider to its compiled-in
+/// default. An id the roster does NOT carry was added by this file, and
+/// removing it removes the provider from the roster entirely — which is
+/// the edit that can break every walk that names it, so it is refused
+/// unless the owner says `force`.
+pub fn remove_provider(home: &Path, id: &str, force: bool) -> Result<(), String> {
+    let path = home.join("config.json");
+    let mut document = read_json(&path)?;
+    let providers = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?
+        .get_mut("providers")
+        .and_then(|providers| providers.as_array_mut())
+        .ok_or_else(|| "`providers` is not a list".to_string())?;
+    let position = providers
+        .iter()
+        .position(|existing| existing.get("id").and_then(|id| id.as_str()) == Some(id));
+    let Some(index) = position else {
+        return Err(format!(
+            "`{id}` has no override in config.json; the compiled-in roster carries {}",
+            compiled_in_providers().join(", ")
+        ));
+    };
+    if !compiled_in_providers().iter().any(|known| known == id) && !force {
+        return Err(format!(
+            "`{id}` is not in the compiled-in roster, so removing its override removes the provider from every walk that names it; pass --force to do it anyway"
+        ));
+    }
+    providers.remove(index);
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
+    )
+}
+
+/// Write one workload's preference list. Each candidate must be a
+/// `provider/model` pair — the same rule `load_routing` enforces, so a
+/// typo fails here rather than at the next startup. An empty list is
+/// refused: a workload with no candidates is a workload nothing can
+/// serve, and the loader would walk it into the fallback.
+pub fn set_workload(home: &Path, workload: &str, candidates: &[String]) -> Result<(), String> {
+    if candidates.is_empty() {
+        return Err(format!(
+            "`{workload}` needs at least one `provider/model` candidate"
+        ));
+    }
+    for candidate in candidates {
+        if !candidate.contains('/') {
+            return Err(format!(
+                "`{candidate}` is not a `provider/model` pair, the shape routing.json reads"
+            ));
+        }
+    }
+    let path = home.join("routing.json");
+    let mut document = read_json(&path)?;
+    let workloads = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?
+        .entry("workloads")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let array = workloads
+        .as_array_mut()
+        .ok_or_else(|| "`workloads` is not a list".to_string())?;
+    let entry = serde_json::json!({
+        "workload": workload,
+        "candidates": candidates,
+    });
+    let position = array
+        .iter()
+        .position(|existing| existing.get("workload").and_then(|w| w.as_str()) == Some(workload));
+    match position {
+        Some(index) => array[index] = entry,
+        None => array.push(entry),
+    }
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
+    )
+}
+
+/// Remove one workload's preference. The same destructive rule as the
+/// providers: a compiled-in workload's override reverts to the
+/// compiled-in table, and a workload this file added is deleted — which
+/// the loader would then walk into its default, so it needs `force`.
+pub fn remove_workload(home: &Path, workload: &str, force: bool) -> Result<(), String> {
+    let path = home.join("routing.json");
+    let mut document = read_json(&path)?;
+    let workloads = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?
+        .get_mut("workloads")
+        .and_then(|workloads| workloads.as_array_mut())
+        .ok_or_else(|| "`workloads` is not a list".to_string())?;
+    let position = workloads.iter().position(|existing| {
+        existing.get("workload").and_then(|w| w.as_str()) == Some(workload)
+    });
+    let Some(index) = position else {
+        return Err(format!(
+            "`{workload}` has no preference in routing.json; the compiled-in table carries {}",
+            compiled_in_workloads().join(", ")
+        ));
+    };
+    if !compiled_in_workloads().iter().any(|known| known == workload) && !force {
+        return Err(format!(
+            "`{workload}` is not in the compiled-in table, so removing its preference leaves the workload with no candidates at all; pass --force to do it anyway"
+        ));
+    }
+    workloads.remove(index);
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
+    )
 }

@@ -1248,6 +1248,65 @@ fn settings_command(set: Option<(&str, &str)>) -> ExitCode {
         }
     };
     if let Some((key, value)) = set {
+        // The list-shaped surfaces arrive as a tagged key: the writer's
+        // scalar path handles the plain ones, and the two list actions
+        // are dispatched here rather than inventing a second command
+        // tree the TUI would have to mirror.
+        if let Some(entry) = key.strip_prefix("provider.add:") {
+            return match fleet::settings::set_provider(&home, entry) {
+                Ok(id) => {
+                    println!("provider `{id}` written \u{2014} `fleet providers` shows the roster");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        if let Some(id) = key.strip_prefix("provider.remove:") {
+            let force = value == "true";
+            return match fleet::settings::remove_provider(&home, id, force) {
+                Ok(()) => {
+                    println!("provider `{id}`'s override removed \u{2014} it reverts to the compiled-in default");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        if let Some(name) = key.strip_prefix("workload.set:") {
+            let candidates: Vec<String> = value
+                .split(',')
+                .map(|candidate| candidate.trim().to_string())
+                .filter(|candidate| !candidate.is_empty())
+                .collect();
+            return match fleet::settings::set_workload(&home, name, &candidates) {
+                Ok(()) => {
+                    println!("workload `{name}` written \u{2014} {} candidate(s)", candidates.len());
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        if let Some(name) = key.strip_prefix("workload.remove:") {
+            let force = value == "true";
+            return match fleet::settings::remove_workload(&home, name, force) {
+                Ok(()) => {
+                    println!("workload `{name}`'s preference removed \u{2014} it reverts to the compiled-in table");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         return match fleet::settings::set(&home, key, value) {
             Ok(()) => {
                 println!("`{key}` written \u{2014} `fleet settings` shows the resolved value");
