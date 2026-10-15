@@ -88,3 +88,26 @@ changes.
   surface nobody has asked for.
 - Interactive approval in the TUI beyond what exists. The TUI already
   renders the prompt.
+
+## The ruling that outranks the modes: computer use always asks
+
+Recorded 2026-10-15, decided before the tool exists.
+
+Computer use through the cua driver drives the real desktop: a click,
+a keystroke, a screenshot of whatever is on screen. Its blast radius
+is the machine itself rather than a file or a process, so **no
+execution mode waives it** — not `yes`, not a config that asked for
+`yes`, not an unattended cron job. It requests approval every time.
+
+The ruling is encoded, not just written down: `ALWAYS_ASK_TOOLS` in
+`src/approvals.rs` names the tool before it exists, and
+`Gate::approves_without_asking` returns false for a call in that class
+regardless of mode. A forwarded `subagent → computer_use` call is
+caught too, because the arrow prefix is what the prompt reads, not
+what the rule keys on. The implementation plan is
+`docs/plans/2026-10-15-computer-use-tool.md`.
+
+This is the tier above `yes-guarded`: the destructive class still asks
+under `yes-guarded` but runs under `yes`; computer use asks under
+every mode including `yes`. The distinction is not severity — it is
+whose machine is at risk.
