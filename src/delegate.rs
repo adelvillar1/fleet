@@ -2157,6 +2157,79 @@ pub fn disposition_card(row: &DelegationJudgedRow, day: &str) -> String {
     )
 }
 
+/// Write one owner control beside the session's own log: a steer's
+/// text or a stop, in the shape the agent's turn loop reads before
+/// each model call. The file is the session's own log's path with the
+/// extension swapped — `<sessions>/<session>.control` — the convention
+/// the loop's reader owns, restated here so the surface and the reader
+/// cannot drift.
+///
+/// A control naming a session whose log does not exist is a named
+/// refusal: the control rides beside a log that exists, and writing
+/// one for a session that never ran would be a file nothing reads.
+pub fn write_control(
+    home: &Path,
+    session: &str,
+    steer: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    let sessions = crate::home::sessions_dir(home);
+    let log = sessions.join(format!("{session}.jsonl"));
+    if !log.exists() {
+        return Err(format!(
+            "no session named `{session}` under {} — a control rides beside a log that exists",
+            sessions.display()
+        ));
+    }
+    let path = sessions.join(format!("{session}.control"));
+    let body = match steer {
+        Some(text) => serde_json::json!({ "steer": text }),
+        None => serde_json::json!({ "stop": true }),
+    };
+    std::fs::write(&path, format!("{body}\n"))
+        .map_err(|error| format!("the control file could not be written: {error}"))?;
+    Ok(path)
+}
+
+/// The card one control write lands with: the session it steers, the
+/// control's kind, where it rides, and — for a steer — the text's
+/// bounded preview. A control is one-shot by the reader's own
+/// discipline, and the card says so rather than leaving the owner to
+/// wonder whether it will ride again.
+pub fn control_card(session: &str, steer: Option<&str>, path: &Path) -> String {
+    let (word, color, preview) = match steer {
+        Some(text) => ("steer", OK, bound(text, SESSION_CAP * 2)),
+        None => ("stop", WARN, String::new()),
+    };
+    let mut body = vec![format!(
+        "{BOLD}{color}{word}{RESET} {DIM}\u{b7}{RESET} {TEXT}session {session}{RESET}",
+        session = bound(session, SESSION_CAP)
+    )];
+    if steer.is_some() {
+        body.push(format!("{DIM}\u{b7}{RESET} {TEXT}{preview}{RESET}"));
+    }
+    body.push(format!(
+        "{DIM}\u{b7} rides {path}{RESET}",
+        path = bound(&path.display().to_string(), CARD_WIDTH.saturating_sub(16))
+    ));
+    frame(
+        "delegate",
+        "the owner's control",
+        body,
+        "one-shot: the child's turn loop reads it before its next model call, then consumes it",
+    )
+}
+
+/// The card for a control that named no session: the named refusal,
+/// and the surface that lists the sessions.
+pub fn control_refusal_card(reason: &str) -> String {
+    frame(
+        "delegate",
+        "the owner's control",
+        vec![format!("{WARN}refused{RESET} {DIM}\u{b7}{RESET} {TEXT}{reason}{RESET}")],
+        "a control rides beside a log that exists; `fleet sessions` lists them",
+    )
+}
+
 /// The card for a disposition that named no judged row: the named
 /// refusal, and the surface that lists the keys.
 pub fn disposition_refusal_card(day: &str, reason: &str) -> String {

@@ -769,6 +769,26 @@ async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
             }
         };
     }
+    // The owner's control over a running session: the surface writes
+    // the file beside the session's log, and the turn loop reads it
+    // before its next model call. A control naming no session is a
+    // named refusal — the control rides beside a log that exists.
+    if let Some(control) = &options.control {
+        let (session, steer) = match control {
+            cli::DelegateControl::Steer { session, text } => (session.clone(), Some(text.clone())),
+            cli::DelegateControl::Stop { session } => (session.clone(), None),
+        };
+        return match fleet::delegate::write_control(&home, &session, steer.as_deref()) {
+            Ok(path) => {
+                print!("{}", fleet::delegate::control_card(&session, steer.as_deref(), &path));
+                ExitCode::SUCCESS
+            }
+            Err(reason) => {
+                print!("{}", fleet::delegate::control_refusal_card(&reason));
+                ExitCode::FAILURE
+            }
+        };
+    }
     let outcome = fleet::delegate::judge(fleet::delegate::JudgeRequest {
         root: &root,
         home: &home,

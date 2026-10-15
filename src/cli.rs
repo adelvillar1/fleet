@@ -136,6 +136,8 @@ pub struct DelegateOptions {
     pub dry_run: bool,
     /// The owner's disposition, and the judged row's key it addresses.
     pub disposition: Option<DelegateDisposition>,
+    /// The owner's control over a running session: a steer or a stop.
+    pub control: Option<DelegateControl>,
 }
 
 /// One `fleet delegate --agree/--disagree/--waive` request: the word,
@@ -146,6 +148,21 @@ pub struct DelegateDisposition {
     pub word: String,
     /// The judged row's key, as `fleet delegate`'s card names it.
     pub key: String,
+}
+
+/// One owner control over a running session: a steer's text for its
+/// next turn, or a stop. The control rides beside the session's own
+/// log and the turn loop consumes it — the surface writes, the loop
+/// reads. The two kinds do not combine, and neither combines with the
+/// batch or with a disposition: every form is its own write.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DelegateControl {
+    /// Text the owner wants the session's next turn to take, framed as
+    /// the owner's and never as the model's own words.
+    Steer { session: String, text: String },
+    /// The owner wants the session to end now; the partial result
+    /// lands with the typed reason and the run's log path.
+    Stop { session: String },
 }
 
 /// Options for `fleet skills`. The bare command lists the live skills;
@@ -348,6 +365,12 @@ usage:
   fleet delegate --disagree <key> delegation row: agreed confirms the
   fleet delegate --waive <key>    automated verdict, disagreed inverts it,
                                 waived sets it aside
+  fleet delegate --steer <session> <text>
+                                steer a running session: the text rides its
+                                next turn, framed as the owner's
+  fleet delegate --stop <session>
+                                stop a running session: the partial result
+                                lands with the typed reason and its log path
   fleet skills [--proposed] [--curate] [--show <name>]
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
@@ -679,6 +702,7 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
     let mut dry_run = false;
     let mut disposition: Option<(String, String)> = None;
+    let mut control: Option<(bool, String, Option<String>)> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -708,12 +732,38 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
                 disposition = Some((word, key.clone()));
                 index += 1;
             }
+            "--steer" => {
+                // A steer names its session and its text: the session
+                // first, then the owner's words as one argument.
+                let session = take_value(args, &mut index, arg)?;
+                let text = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| {
+                        format!(
+                            "`--steer` needs the session's id and the owner's text: \
+                             `fleet delegate --steer <session> <text>`"
+                        )
+                    })?;
+                if control.is_some() {
+                    return Err("delegate takes one control: --steer or --stop".to_string());
+                }
+                control = Some((true, session, Some(text.clone())));
+                index += 1;
+            }
+            "--stop" => {
+                let session = take_value(args, &mut index, arg)?;
+                if control.is_some() {
+                    return Err("delegate takes one control: --steer or --stop".to_string());
+                }
+                control = Some((false, session, None));
+            }
             other if other.starts_with('-') && other != "-" => {
                 return Err(format!("unknown delegate option `{other}`"));
             }
             other => {
                 return Err(format!(
-                    "`{other}` takes no value here; delegate names a day with --day and a judged row with --agree, --disagree, or --waive"
+                    "`{other}` takes no value here; delegate names a day with --day, a judged row with --agree, --disagree, or --waive, and a running session with --steer or --stop"
                 ));
             }
         }
@@ -735,13 +785,32 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
         }
     }
     let disposition = disposition.map(|(word, key)| DelegateDisposition { word, key });
-    if disposition.is_some() && dry_run {
+    let control = control
+        .map(|(steer, session, text)| match (steer, text) {
+            (true, Some(text)) if !text.trim().is_empty() => {
+                Ok(DelegateControl::Steer { session, text })
+            }
+            (true, _) => Err(
+                "--steer needs the owner's text: `fleet delegate --steer <session> <text>`"
+                    .to_string(),
+            ),
+            (false, _) => Ok(DelegateControl::Stop { session }),
+        })
+        .transpose()?;
+    // Every form is its own write: a batch that spends, a disposition
+    // that records the owner's grading, a control that rides one turn.
+    // A caller asking for two is asking two questions.
+    if disposition.is_some() && control.is_some() {
+        return Err("delegate takes one form: a batch, a disposition, or a control".to_string());
+    }
+    if dry_run && (disposition.is_some() || control.is_some()) {
         return Err(
-            "--dry-run rehearses the batch; a disposition is a write and takes no rehearsal"
+            "--dry-run rehearses the batch; a disposition and a control are writes and take no \
+             rehearsal"
                 .to_string(),
         );
     }
-    Ok(Command::Delegate(DelegateOptions { day, dry_run, disposition }))
+    Ok(Command::Delegate(DelegateOptions { day, dry_run, disposition, control }))
 }
 
 /// `fleet skills`: the bare command lists the live skills; `--proposed`
@@ -1412,7 +1481,8 @@ mod tests {
             Command::Delegate(DelegateOptions {
                 day: None,
                 dry_run: false,
-                disposition: None
+                disposition: None,
+                control: None,
             })
         );
         assert_eq!(
@@ -1420,7 +1490,8 @@ mod tests {
             Command::Delegate(DelegateOptions {
                 day: Some("2026-10-13".to_string()),
                 dry_run: true,
-                disposition: None
+                disposition: None,
+                control: None,
             })
         );
         for (flag, word) in [
@@ -1436,7 +1507,8 @@ mod tests {
                     disposition: Some(DelegateDisposition {
                         word: word.to_string(),
                         key: "a1b2c3d4e5f60718".to_string()
-                    })
+                    }),
+                    control: None,
                 })
             );
         }
@@ -1449,6 +1521,48 @@ mod tests {
         assert!(error.contains("no rehearsal"), "{error}");
         assert!(parse(&args(&["delegate", "--day", "yesterday"])).is_err());
         assert!(parse(&args(&["delegate", "--json"])).is_err());
+    }
+
+    #[test]
+    fn delegate_parses_the_owners_control_over_a_running_session() {
+        // A steer names its session and its text; a stop names only
+        // its session. The control is its own write and never combines
+        // with the batch, a disposition, or the other control.
+        assert_eq!(
+            parse(&args(&["delegate", "--steer", "sess-1", "focus on the parser"])).unwrap(),
+            Command::Delegate(DelegateOptions {
+                day: None,
+                dry_run: false,
+                disposition: None,
+                control: Some(DelegateControl::Steer {
+                    session: "sess-1".to_string(),
+                    text: "focus on the parser".to_string(),
+                }),
+            })
+        );
+        assert_eq!(
+            parse(&args(&["delegate", "--stop", "sess-1"])).unwrap(),
+            Command::Delegate(DelegateOptions {
+                day: None,
+                dry_run: false,
+                disposition: None,
+                control: Some(DelegateControl::Stop { session: "sess-1".to_string() }),
+            })
+        );
+        // The refusals, each naming what was wrong.
+        let error = parse(&args(&["delegate", "--steer", "sess-1"])).unwrap_err();
+        assert!(error.contains("--steer"), "{error}");
+        let error = parse(&args(&["delegate", "--steer"])).unwrap_err();
+        assert!(error.contains("--steer"), "{error}");
+        let error = parse(&args(&["delegate", "--steer", "sess-1", "text", "--stop", "sess-2"]))
+            .unwrap_err();
+        assert!(error.contains("one control"), "{error}");
+        let error =
+            parse(&args(&["delegate", "--steer", "sess-1", "text", "--agree", "key"])).unwrap_err();
+        assert!(error.contains("one form"), "{error}");
+        let error = parse(&args(&["delegate", "--stop", "sess-1", "--dry-run"])).unwrap_err();
+        assert!(error.contains("no rehearsal"), "{error}");
+        assert!(parse(&args(&["delegate", "--steer", "sess-1", "   "])).is_err());
     }
 
     #[test]

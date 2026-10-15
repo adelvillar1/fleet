@@ -2640,6 +2640,63 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
     std::fs::remove_dir_all(&home).ok();
 }
 
+/// The owner's control, from the surface's end: a steer lands beside
+/// the session's own log in the shape the turn loop's reader consumes
+/// (one JSON object naming `steer` or `stop`), a stop lands its own
+/// shape, and a control naming a session with no log is a named
+/// refusal — the control rides beside a log that exists.
+#[tokio::test]
+async fn an_owners_control_lands_beside_the_log_it_steers() {
+    let home = temp_home("delegate-control");
+    let sessions = fleet::home::sessions_dir(&home);
+    std::fs::create_dir_all(&sessions).unwrap();
+    // One live session: its log is what a control rides beside.
+    std::fs::write(
+        sessions.join("sess-live.jsonl"),
+        "{\"type\":\"start\",\"v\":1,\"model\":\"test-model\",\"created\":\"2026-10-14T12:00:00Z\"}\n",
+    )
+    .unwrap();
+
+    let steer_path = fleet::delegate::write_control(&home, "sess-live", Some("focus on the parser"))
+        .expect("the steer lands");
+    assert_eq!(steer_path, sessions.join("sess-live.control"));
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&steer_path).unwrap()).unwrap();
+    // The reader's contract: `steer` names the text, and the file is
+    // consumed on read — the surface writes exactly that shape.
+    assert_eq!(written["steer"], "focus on the parser");
+    assert!(written.get("stop").is_none());
+
+    let stop_path =
+        fleet::delegate::write_control(&home, "sess-live", None).expect("the stop lands");
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&stop_path).unwrap()).unwrap();
+    assert_eq!(written["stop"], true);
+
+    // A control naming a session whose log does not exist refuses by
+    // name — never a file nothing reads.
+    let error = fleet::delegate::write_control(&home, "sess-absent", Some("text")).unwrap_err();
+    assert!(error.contains("no session named `sess-absent`"), "{error}");
+    assert!(error.contains("beside a log that exists"), "{error}");
+
+    // The card is a card: framed, naming the session and the kind, and
+    // the path it rides — bounded, the card's own discipline. (The
+    // width discipline is pinned in delegate's own tests beside the
+    // disposition card's.)
+    let card = fleet::delegate::control_card("sess-live", Some("focus on the parser"), &steer_path);
+    assert!(card.contains('\u{250c}') && card.contains('\u{2518}'), "{card}");
+    assert!(card.contains("steer"), "{card}");
+    assert!(card.contains("session sess-live"), "{card}");
+    assert!(card.contains("focus on the parser"), "{card}");
+    assert!(card.contains("rides"), "{card}");
+    assert!(card.contains("one-shot"), "{card}");
+    // A stop's card names the stop and no preview.
+    let stop_card = fleet::delegate::control_card("sess-live", None, &stop_path);
+    assert!(stop_card.contains("stop"), "{stop_card}");
+    assert!(!stop_card.contains("focus on the parser"), "{stop_card}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
 /// A real-lane probe of `sys1_classify`'s schema: if the vendored sys1 lane
 /// boots on this machine, confirm the call shape the route judgment relies
 /// on. If it does not boot (no python3, an import failure), log it and do
