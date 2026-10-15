@@ -1,6 +1,6 @@
 # Slice 21 — the router as intended: the kit's pattern, internal and plugin-shaped (2026-10-15)
 
-status: planned (rewritten 2026-10-15 after the owner's architecture rulings — supersedes the earlier attribution-only scope)
+status: in-progress (the routing core landed 2026-10-15: the ported table, the plugin config, the order-walk with the gates, the pin semantics, and the honest surface are committed and gate-green; the blend1 lane-serving path — AC4's client-boundary half and AC9's composed leg — is the remaining increment)
 
 ## The architecture this slice lands (the owner's rulings, 2026-10-15)
 
@@ -122,23 +122,23 @@ live table is the owner's tuned state and wins:
    refusal, never a silent default. This is what makes "pin to
    step-5-preview" and "pin to stepfun" different requests, both
    answerable.
-7. **The honest surface** (already partially landed in-tree,
+8. **The honest surface** (already partially landed in-tree,
    uncommitted): the decision carries provider+model; `fleet run`
    prepares the route before creating the session, so the first line
    and the session log's `start` record name the routed provider and
    model, never the CLI default; the walk line reports the attempts in
    order with the no-key skips naming the env var each wanted.
-8. **Verified with real runs**: a quick-shaped task lands on
+9. **Verified with real runs**: a quick-shaped task lands on
    stepfun/step-3.7-flash; a hard-shaped task on stepfun/step-5-preview;
    a composed-shaped task on blend1 through the lane; a low-confidence
    judgment routes to standard_code's list; a provider pin routes every
    shape through that provider's own models — each with the honest
    attribution in the output and the session log, and the route rows in
    the stream agreeing.
-9. **Gate green** (`cargo test`, `cargo build --release`; rustfmt and
-   clippy are absent on this machine and are not run), this plan's
-   status updated in the same turn, recap landed, committed with
-   explicit paths.
+10. **Gate green** (`cargo test`, `cargo build --release`; rustfmt and
+    clippy are absent on this machine and are not run), this plan's
+    status updated in the same turn, recap landed, committed with
+    explicit paths.
 
 ## Out of scope
 

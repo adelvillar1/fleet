@@ -2295,7 +2295,9 @@ fn resolved(id: &str, base_url: String, key_required: bool, key: Option<&str>) -
             id: id.to_string(),
             base_url,
             key_env: format!("{}_KEY", id.to_uppercase().replace('-', "_")),
-            model: format!("{id}-model"),
+            models: vec![format!("{id}-model")],
+            billing: fleet::route::Billing::Plan,
+            kind: fleet::route::CandidateKind::Http,
             enabled: true,
             key_required,
             disabled_reason: None,
@@ -2325,12 +2327,19 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
     ];
     let decision = RouteDecision {
         provider: "cand-head".to_string(),
-        model: "test-model".to_string(),
+        model: "cand-head-model".to_string(),
         how: How::Fallback,
         workload: None,
         verdict: None,
         reason: "test head".to_string(),
         start_index: 0,
+        // The walk is the order, each entry carrying the model its own
+        // candidate serves — the failover steps to the second entry,
+        // not to the roster's next candidate.
+        order: vec![
+            ("cand-head".to_string(), "cand-head-model".to_string()),
+            ("cand-two".to_string(), "cand-two-model".to_string()),
+        ],
     };
     let router = Arc::new(Router::new(resolved, decision));
     let client = Client::routed(router.clone());
@@ -2387,8 +2396,11 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
 }
 
 /// sys1 judges the route through the injected-spec seam: the fake lane
-/// answers `sys1_classify` with a `hard` workload, which maps to the zai
-/// candidate — a judged route, not the head.
+/// answers `sys1_classify` with a `hard` workload, which routes to the
+/// table's first `hard` candidate — a judged route, not the head. The
+/// table is declared here rather than borrowed from the compiled-in
+/// default so the seam's proof — the lane's verdict routes to whatever
+/// the table names first — holds whatever the owner's default prefers.
 #[tokio::test]
 async fn sys1_judges_the_route_through_the_injected_spec() {
     let fake = FakeMcp::start(vec![
@@ -2403,17 +2415,30 @@ async fn sys1_judges_the_route_through_the_injected_spec() {
     let mut specs = std::collections::HashMap::new();
     specs.insert("sys1".to_string(), fake.spec());
 
+    let preferences = vec![fleet::route::Preference {
+        workload: "hard",
+        candidates: vec![("zai-coding-plan", "GLM-5.3-Flash"), ("router-kit", "auto")],
+    }];
     let resolved = vec![
         resolved("router-kit", "http://127.0.0.1:8300/v1".to_string(), false, None),
         resolved("zai-coding-plan", "https://api.z.ai".to_string(), true, Some("sk-fake-test")),
     ];
-    let (decision, _latency) =
-        fleet::route::select(&resolved, None, "refactor the crate", &specs).await;
+    let (decision, _latency) = fleet::route::select(
+        &resolved,
+        None,
+        "refactor the crate",
+        &specs,
+        &preferences,
+        fleet::route::Gates::default(),
+    )
+    .await;
     assert_eq!(decision.how, How::Judged);
     assert_eq!(decision.provider, "zai-coding-plan");
     assert_eq!(decision.workload.as_deref(), Some("hard"));
     assert_eq!(decision.verdict.as_deref(), Some("pass"));
-    assert_eq!(decision.start_index, 1);
+    // The walk starts at the selection — the order's head, position
+    // zero — never at the candidate's roster position.
+    assert_eq!(decision.start_index, 0);
 }
 
 /// A real-lane probe of `sys1_classify`'s schema: if the vendored sys1 lane
@@ -2699,6 +2724,30 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         .to_string(),
     )
     .unwrap();
+    // The plugin-shaped routing table this scenario declares for
+    // itself: `hard` walks zai, then the kit, then mimo, then stepfun.
+    // Declared rather than borrowed from the compiled-in default so
+    // the scenario proves the mechanics — the judgment's selection is
+    // respected, the demotion reorders the walk — whatever the owner's
+    // default table prefers. The kit sits mid-list on purpose: the
+    // demotion must move it out of the walk's way, and without the
+    // demotion the walk would reach it (its mock answers) before
+    // stepfun.
+    std::fs::write(
+        home.join("routing.json"),
+        serde_json::json!({
+            "workloads": [
+                { "workload": "hard", "candidates": [
+                    "zai-coding-plan/GLM-5.3-Flash",
+                    "router-kit/auto",
+                    "xiaomi-mimo/mimo-v2.6-flash",
+                    "stepfun/step-5-preview"
+                ] }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
 
     // Three graded failures against the kit, in the stream's own
     // vocabulary: three route rows whose walk failed at the kit.
@@ -2727,8 +2776,8 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
     }
     std::fs::write(&path, scripted).unwrap();
 
-    // sys1 judges `hard`, which maps to zai: the selection is the
-    // judgment's, and the demotion must not touch it.
+    // sys1 judges `hard`, whose declared table names zai first: the
+    // selection is the judgment's, and the demotion must not touch it.
     let fake = FakeMcp::start(vec![
         serde_json::json!({ "reply": initialize_reply() }),
         serde_json::json!({ "reply": {
@@ -4030,12 +4079,15 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
     let resolved = vec![resolved("cand-one", mock.url(), false, None)];
     let decision = RouteDecision {
         provider: "cand-one".to_string(),
-        model: "test-model".to_string(),
+        model: "cand-one-model".to_string(),
         how: How::Pinned,
         workload: None,
         verdict: None,
         reason: "pinned for the test".to_string(),
         start_index: 0,
+        // The walk's entry names the candidate's own model — that is
+        // what every request on this route carries.
+        order: vec![("cand-one".to_string(), "cand-one-model".to_string())],
     };
     let client = Client::routed(Arc::new(Router::new(resolved, decision)));
     let options = AgentOptions {
@@ -4139,7 +4191,7 @@ async fn a_subagent_cannot_spawn_a_subagent() {
     let child = child_summary(&home);
     let (output, _) = tool_result(&session::replay(&child.path).unwrap(), "subagent");
     assert!(output.contains("a subagent cannot spawn subagents"), "{output}");
-    assert!(output.contains("depth cap 1"), "{output}");
+    assert!(output.contains("depth cap 2"), "{output}");
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -4949,6 +5001,7 @@ impl CronHarness {
             verdict: None,
             reason: "the mock is the only candidate".to_string(),
             start_index: 0,
+            order: vec![("cand-mock".to_string(), "test-model".to_string())],
         };
         CronHarness { home, router: Arc::new(Router::new(resolved, decision)), mock }
     }

@@ -58,9 +58,10 @@ const JUDGE_TASK: &str = "route";
 
 // --- the roster -------------------------------------------------------------
 
-/// One roster entry: an OpenAI-compatible gateway, where it lives, the
-/// *name* of the env var holding its key (never a value), and the model it
-/// serves. `enabled`/`key_required` gate whether a run may use it.
+/// One roster entry: a provider — where it lives, the *name* of the env
+/// var holding its key (never a value), the models it serves, how it is
+/// billed, and how a request reaches it.
+/// `enabled`/`key_required` gate whether a run may use it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub id: String,
@@ -69,7 +70,22 @@ pub struct Candidate {
     /// value is resolved at runtime from the environment, `<home>/.env`,
     /// or the harness credential store — never stored here.
     pub key_env: String,
-    pub model: String,
+    /// The provider's models, in the provider's own preference order;
+    /// the first is its default. The preference of execution chooses
+    /// among these per workload — and a provider pin routes every shape
+    /// through this provider's own models.
+    pub models: Vec<String>,
+    /// How this provider is billed. The plan providers are the
+    /// preference; a pay-as-you-go provider is declared and targeted by
+    /// no default workload — the kit's `allowPayg: false` ported as
+    /// policy, which is what makes the reserve unable to serve
+    /// silently.
+    pub billing: Billing,
+    /// How a request reaches this provider: an OpenAI-compatible HTTP
+    /// endpoint, or a vendored lane driven over fleet's own MCP client
+    /// (blend1's composed ask — the grounding provider, smaller models
+    /// composed with the specialized legs).
+    pub kind: CandidateKind,
     pub enabled: bool,
     /// Whether a key is required to attempt this candidate. False only for
     /// the loopback router kit, which is attempted even before its local
@@ -79,6 +95,32 @@ pub struct Candidate {
     /// A named reason when the entry is disabled, so the chain still works
     /// and the reason is visible rather than silent.
     pub disabled_reason: Option<String>,
+}
+
+impl Candidate {
+    /// The provider's default model — the first of its list.
+    pub fn model(&self) -> &str {
+        self.models.first().map(String::as_str).unwrap_or_default()
+    }
+}
+
+/// How a provider is billed. The preference of execution targets plan
+/// providers; a payg one is the declared reserve a pin can still reach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Billing {
+    Plan,
+    Payg,
+}
+
+/// How a request reaches a provider. `Http` is an OpenAI-compatible
+/// chat-completions endpoint; `Lane` is a vendored lane driven over the
+/// MCP client — the self-contained shape, no separate component.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CandidateKind {
+    Http,
+    Lane,
 }
 
 /// The compiled-in defaults, in the owner's declared chain order. Every
@@ -97,7 +139,9 @@ fn default_roster() -> Vec<Candidate> {
             id: "router-kit".into(),
             base_url: "http://127.0.0.1:8300/v1".into(),
             key_env: "AGNOSTIC_ROUTER_TOKEN".into(),
-            model: "auto".into(),
+            models: vec!["auto".into()],
+            billing: Billing::Plan,
+            kind: CandidateKind::Http,
             enabled: true,
             key_required: false,
             disabled_reason: None,
@@ -106,7 +150,9 @@ fn default_roster() -> Vec<Candidate> {
             id: "zai-coding-plan".into(),
             base_url: "https://api.z.ai/api/coding/paas/v4".into(),
             key_env: "ZAI_CODING_API_KEY".into(),
-            model: "GLM-5.3-Flash".into(),
+            models: vec!["GLM-5.3-Flash".into()],
+            billing: Billing::Plan,
+            kind: CandidateKind::Http,
             enabled: true,
             key_required: true,
             disabled_reason: None,
@@ -115,7 +161,14 @@ fn default_roster() -> Vec<Candidate> {
             id: "xiaomi-mimo".into(),
             base_url: "https://token-plan-sgp.xiaomimimo.com/v1".into(),
             key_env: "XIAOMI_MIMO_API_KEY".into(),
-            model: "mimo-v2.6-flash".into(),
+            models: vec![
+                "mimo-v2.6-flash".into(),
+                "mimo-v2.6-pro".into(),
+                "mimo-v2.5-pro".into(),
+                "mimo-v2.5".into(),
+            ],
+            billing: Billing::Plan,
+            kind: CandidateKind::Http,
             enabled: true,
             key_required: true,
             disabled_reason: None,
@@ -124,7 +177,14 @@ fn default_roster() -> Vec<Candidate> {
             id: "stepfun".into(),
             base_url: "https://api.stepfun.ai/step_plan/v1".into(),
             key_env: "STEPFUN_API_KEY".into(),
-            model: "step-5-preview".into(),
+            models: vec![
+                "step-3.7-flash".into(),
+                "step-3.5-flash".into(),
+                "step-3.5-flash-2603".into(),
+                "step-5-preview".into(),
+            ],
+            billing: Billing::Plan,
+            kind: CandidateKind::Http,
             enabled: true,
             key_required: true,
             disabled_reason: None,
@@ -133,7 +193,9 @@ fn default_roster() -> Vec<Candidate> {
             id: "token-plan".into(),
             base_url: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1".into(),
             key_env: "TOKEN_PLAN_API_KEY".into(),
-            model: "qwen3.8-flash".into(),
+            models: vec!["qwen3.8-flash".into()],
+            billing: Billing::Plan,
+            kind: CandidateKind::Http,
             enabled: true,
             key_required: true,
             disabled_reason: None,
@@ -142,7 +204,9 @@ fn default_roster() -> Vec<Candidate> {
             id: "deepseek".into(),
             base_url: crate::api::DEFAULT_BASE_URL.into(),
             key_env: "DEEPSEEK_API_KEY".into(),
-            model: crate::api::DEFAULT_MODEL.into(),
+            models: vec![crate::api::DEFAULT_MODEL.into()],
+            billing: Billing::Payg,
+            kind: CandidateKind::Http,
             enabled: true,
             key_required: true,
             disabled_reason: None,
@@ -161,12 +225,126 @@ fn default_roster() -> Vec<Candidate> {
             id: "liquid".into(),
             base_url: "https://api.liquid.ai/openai/v1".into(),
             key_env: "LIQUID_API_KEY".into(),
-            model: "lfm2.5-24b-a2b".into(),
+            models: vec!["lfm2.5-24b-a2b".into()],
+            billing: Billing::Plan,
+            kind: CandidateKind::Http,
             enabled: true,
             key_required: true,
             disabled_reason: None,
         },
+        // blend1 — the grounding provider: the composed ask (Liquid's
+        // hosted lfm 24B synthesizer over the specialized legs sys1 /
+        // sdm1 / sem1 / gen1), which exists to give better grounded
+        // responses from smaller models. A lane-kind candidate: the
+        // vendored lane's own surface (`/v1/ask`, port 8420), driven
+        // through fleet's MCP client rather than an external component.
+        // The `composed` workload targets it; no other workload does.
+        Candidate {
+            id: "blend1".into(),
+            base_url: "http://127.0.0.1:8420".into(),
+            key_env: "BLEND1_BEARER_TOKEN".into(),
+            models: vec!["blend1".into()],
+            billing: Billing::Plan,
+            kind: CandidateKind::Lane,
+            enabled: true,
+            key_required: false,
+            disabled_reason: None,
+        },
     ]
+}
+
+// --- the preference of execution --------------------------------------------
+
+/// One workload's preference of execution: the ordered (provider, model)
+/// candidates — the target first, then the fallbacks in preference order.
+/// The walk is THIS list, not a global chain: a failure advances to the
+/// workload's own next candidate, and an exhausted list fails the run by
+/// name rather than falling through to a candidate no workload asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Preference {
+    pub workload: &'static str,
+    pub candidates: Vec<(&'static str, &'static str)>,
+}
+
+/// The compiled-in preference table, ported from the live
+/// zcode-router-kit's `routing.workloads` (verified 2026-10-15) — the
+/// owner's tuned state, at (provider, model) granularity. Two
+/// divergences from the source, both deliberate: `quick`'s duplicated
+/// stepfun entry is deduped, and no workload targets deepseek (the payg
+/// reserve — the kit's `allowPayg: false` ported as policy, so the
+/// reserve cannot serve unless the owner pins it).
+pub fn default_preferences() -> Vec<Preference> {
+    vec![
+        Preference {
+            workload: "quick",
+            candidates: vec![
+                ("stepfun", "step-3.7-flash"),
+                ("xiaomi-mimo", "mimo-v2.6-flash"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+            ],
+        },
+        Preference {
+            workload: "standard_code",
+            candidates: vec![
+                ("stepfun", "step-3.7-flash"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+                ("xiaomi-mimo", "mimo-v2.6-flash"),
+            ],
+        },
+        Preference {
+            workload: "hard",
+            candidates: vec![
+                ("stepfun", "step-5-preview"),
+                ("xiaomi-mimo", "mimo-v2.6-pro"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+            ],
+        },
+        Preference {
+            workload: "prose",
+            candidates: vec![
+                ("stepfun", "step-3.7-flash"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+                ("token-plan", "qwen3.8-flash"),
+            ],
+        },
+        Preference {
+            workload: "deep_context",
+            candidates: vec![
+                ("stepfun", "step-5-preview"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+                ("xiaomi-mimo", "mimo-v2.6-pro"),
+            ],
+        },
+        Preference {
+            workload: "composed",
+            candidates: vec![
+                ("blend1", "blend1"),
+                ("stepfun", "step-3.7-flash"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+                ("xiaomi-mimo", "mimo-v2.6-flash"),
+            ],
+        },
+    ]
+}
+
+/// The judgment gates, ported from the kit's `routing` block: a verdict
+/// below `min_confidence` routes to `default_workload` rather than to
+/// the guessed shape.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Gates {
+    pub min_confidence: f64,
+    pub default_workload: &'static str,
+}
+
+impl Default for Gates {
+    fn default() -> Self {
+        Gates { min_confidence: 0.6, default_workload: "standard_code" }
+    }
+}
+
+/// A workload's preference, or `None` for a workload no table names.
+pub fn preference_for<'a>(table: &'a [Preference], workload: &str) -> Option<&'a Preference> {
+    table.iter().find(|entry| entry.workload == workload)
 }
 
 /// A roster plus its optional pin. The chain order is the compiled-in
@@ -175,9 +353,18 @@ fn default_roster() -> Vec<Candidate> {
 #[derive(Debug, Clone)]
 pub struct Roster {
     pub candidates: Vec<Candidate>,
-    /// When set, this provider id is pinned: selection skips sys1 judgment
-    /// and routes straight to it (the `pinned` progress-line mode).
+    /// When set, this provider (or `provider/model` pair) is pinned: a
+    /// provider pin still judges the workload and routes every shape
+    /// through that provider's own models; a pair pins both halves and
+    /// skips the judgment (the `pinned` progress-line mode).
     pub pin: Option<String>,
+    /// The preference of execution: each workload's ordered
+    /// (provider, model) candidates. Compiled-in defaults, overridden
+    /// per workload by `<FLEET_HOME>/routing.json`.
+    pub preferences: Vec<Preference>,
+    /// The judgment gates. Compiled-in defaults, overridden by
+    /// `<FLEET_HOME>/routing.json`.
+    pub gates: Gates,
 }
 
 /// Why a config file could not be used. A typed, named value: an invalid
@@ -236,6 +423,12 @@ pub struct ProviderEntry {
     pub key_env: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub models: Option<Vec<String>>,
+    #[serde(default)]
+    pub billing: Option<Billing>,
+    #[serde(default)]
+    pub kind: Option<CandidateKind>,
     #[serde(default)]
     pub enabled: Option<bool>,
     #[serde(default)]
@@ -356,14 +549,114 @@ pub fn load_roster(home: &Path) -> Result<Roster, ConfigError> {
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Roster { candidates: default_roster(), pin: None });
+            // No config.json is the defaults — but routing.json is its
+            // own plugin file and loads either way.
+            let (preferences, gates) = load_routing(home)?;
+            return Ok(Roster {
+                candidates: default_roster(),
+                pin: None,
+                preferences,
+                gates,
+            });
         }
         Err(error) => return Err(ConfigError::Read(error)),
     };
     let file: ConfigFile = serde_json::from_str(&text)
         .map_err(|error| ConfigError::Parse(format!("{}: {error}", path.display())))?;
     let (candidates, pin) = merge(default_roster(), &file)?;
-    Ok(Roster { candidates, pin })
+    let (preferences, gates) = load_routing(home)?;
+    Ok(Roster { candidates, pin, preferences, gates })
+}
+
+/// The `<FLEET_HOME>/routing.json` plugin file: the preference of
+/// execution as data. Every field optional; a workload entry replaces
+/// that workload's list, and the gates merge field by field. Unknown
+/// fields are rejected the way a provider's are — loud beats silent.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoutingFile {
+    #[serde(default)]
+    workloads: Vec<PreferenceEntry>,
+    #[serde(default)]
+    gates: Option<GatesEntry>,
+}
+
+/// One workload's preference in the plugin file: the workload's name
+/// and its ordered candidates, each a `"provider/model"` string.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreferenceEntry {
+    workload: String,
+    candidates: Vec<String>,
+}
+
+/// The gates as the plugin file names them.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GatesEntry {
+    #[serde(default)]
+    min_confidence: Option<f64>,
+    #[serde(default)]
+    default_workload: Option<String>,
+}
+
+/// The preference table and gates: the compiled-in defaults, with
+/// `<FLEET_HOME>/routing.json` merged over them. An absent file is the
+/// defaults; a malformed one is a typed named error that fails startup
+/// loud, the way a bad provider entry does.
+fn load_routing(home: &Path) -> Result<(Vec<Preference>, Gates), ConfigError> {
+    let path = home.join("routing.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((default_preferences(), Gates::default()));
+        }
+        Err(error) => return Err(ConfigError::Read(error)),
+    };
+    let file: RoutingFile = serde_json::from_str(&text)
+        .map_err(|error| ConfigError::Parse(format!("{}: {error}", path.display())))?;
+    // The plugin file's strings are leaked once per load: a roster is
+    // loaded a handful of times per process, and the table's
+    // `&'static str` shape is what the rest of the crate reads.
+    let mut preferences = default_preferences();
+    for entry in &file.workloads {
+        let mut candidates = Vec::with_capacity(entry.candidates.len());
+        for candidate in &entry.candidates {
+            let (provider, model) = candidate.split_once('/').ok_or_else(|| {
+                ConfigError::BadEntry(format!(
+                    "routing.json's `{}` candidate `{candidate}` is not a `provider/model` pair",
+                    entry.workload
+                ))
+            })?;
+            candidates.push((leak_str(provider), leak_str(model)));
+        }
+        if let Some(slot) = preferences.iter_mut().find(|slot| slot.workload == entry.workload) {
+            slot.candidates = candidates;
+        } else {
+            preferences.push(Preference {
+                workload: leak_str(&entry.workload),
+                candidates,
+            });
+        }
+    }
+    let mut gates = Gates::default();
+    if let Some(entry) = &file.gates {
+        if let Some(value) = entry.min_confidence {
+            gates.min_confidence = value;
+        }
+        if let Some(value) = &entry.default_workload {
+            gates.default_workload = leak_str(value);
+        }
+    }
+    Ok((preferences, gates))
+}
+
+/// Leak one string for the table's `'static` lifetime. The routing
+/// plugin file is read a handful of times per process at most; the
+/// alternative — an owned table threaded through every signature —
+/// buys nothing a roster load does not already cost.
+fn leak_str(value: &str) -> &'static str {
+    Box::leak(value.to_string().into_boxed_str())
 }
 
 /// The config file's calibration log root, when it names one. Read
@@ -419,8 +712,19 @@ fn merge(
             if let Some(value) = &entry.key_env {
                 existing.key_env = value.clone();
             }
+            if let Some(value) = &entry.models {
+                existing.models = value.clone();
+            }
             if let Some(value) = &entry.model {
-                existing.model = value.clone();
+                // The singular form sets a one-model list — the
+                // backward-compatible spelling of `models: [value]`.
+                existing.models = vec![value.clone()];
+            }
+            if let Some(value) = entry.billing {
+                existing.billing = value;
+            }
+            if let Some(value) = entry.kind {
+                existing.kind = value;
             }
             if let Some(value) = entry.enabled {
                 existing.enabled = value;
@@ -432,12 +736,18 @@ fn merge(
                 existing.disabled_reason = Some(value.clone());
             }
         } else {
-            match (&entry.base_url, &entry.key_env, &entry.model) {
-                (Some(base_url), Some(key_env), Some(model)) => candidates.push(Candidate {
+            let models = entry
+                .models
+                .clone()
+                .or_else(|| entry.model.clone().map(|model| vec![model]));
+            match (&entry.base_url, &entry.key_env, &models) {
+                (Some(base_url), Some(key_env), Some(models)) => candidates.push(Candidate {
                     id: entry.id.clone(),
                     base_url: base_url.clone(),
                     key_env: key_env.clone(),
-                    model: model.clone(),
+                    models: models.clone(),
+                    billing: entry.billing.unwrap_or(Billing::Plan),
+                    kind: entry.kind.unwrap_or(CandidateKind::Http),
                     enabled: entry.enabled.unwrap_or(true),
                     key_required: entry.key_required.unwrap_or(true),
                     disabled_reason: entry.disabled_reason.clone(),
@@ -445,7 +755,8 @@ fn merge(
                 _ => {
                     return Err(ConfigError::BadEntry(format!(
                         "provider `{}` is not a built-in roster entry and does not name \
-                         base_url, key_env, and model, so there is nothing to merge it onto",
+                         base_url, key_env, and a model (or models), so there is nothing to \
+                         merge it onto",
                         entry.id
                     )))
                 }
@@ -556,112 +867,233 @@ pub struct RouteDecision {
     pub reason: String,
     /// The chain index failover begins walking from.
     pub start_index: usize,
+    /// The walk order: the (provider, model) pairs this route walks, the
+    /// target first — the workload's own preference list, a provider pin
+    /// filtering it, or an exact pair. The walk is THIS list, never a
+    /// global chain: an exhausted list fails the run by name.
+    pub order: Vec<(String, String)>,
 }
 
-/// The workload→candidate map, honoring the owner's "the kit is primary":
-/// routine work (`quick`, `standard_code`) routes through the primary smart
-/// router, and the specialized plans are the judged targets for the
-/// workloads that benefit from a direct route. This is the one genuinely
-/// tunable policy in the slice; it is ported from the kit's own tier table
-/// with the owner's primary-route directive applied.
-///
-/// Public because the judgment beat grades a recorded decision against
-/// the lane's independent workload label through this same table — the
-/// one construction, so a judgment and a selection cannot disagree about
-/// what a workload maps to.
+/// The candidate a workload's preference targets — the first of its
+/// list. Public because the judgment beat grades a recorded decision
+/// against the lane's independent workload label through this same
+/// table, so a judgment and a selection cannot disagree about what a
+/// workload maps to.
 pub fn workload_candidate(workload: &str) -> Option<&'static str> {
-    match workload {
-        "quick" | "standard_code" => Some(HEAD_ID),
-        "hard" => Some("zai-coding-plan"),
-        "prose" => Some("xiaomi-mimo"),
-        "deep_context" => Some("stepfun"),
-        _ => None,
-    }
+    default_preferences()
+        .into_iter()
+        .find(|preference| preference.workload == workload)
+        .and_then(|preference| preference.candidates.first().map(|(provider, _)| *provider))
 }
 
-/// Choose the route for `task`: a pin wins, else sys1 judges the workload,
-/// else the declared HEAD. Never fails and never blocks a run — every
-/// failure path is a named fallback. Returns the decision and how long the
-/// judgment took (for the decision row's `latency_ms`).
+/// Choose the route for `task`: a pin wins (a provider pin still lets
+/// the router decide the model), else sys1 judges the workload and the
+/// workload's own preference list is the walk. Never fails and never
+/// blocks a run — every failure path is a named fallback. Returns the
+/// decision and how long the judgment took (for the decision row's
+/// `latency_ms`).
 pub async fn select(
     resolved: &[Resolved],
     pin: Option<&str>,
     task: &str,
     specs: &HashMap<String, ServerSpec>,
+    table: &[Preference],
+    gates: Gates,
 ) -> (RouteDecision, u128) {
     let started = Instant::now();
     let head = head_index(resolved);
-    let decision = if let Some(pin_id) = pin {
-        match resolved.iter().position(|entry| entry.id() == pin_id && entry.usable()) {
-            Some(index) => decision_at(
-                resolved,
-                index,
-                How::Pinned,
-                None,
-                None,
-                format!("pinned to {pin_id}"),
+    // A pin naming an exact `provider/model` pair is the one pin that
+    // skips the judgment: both halves are already decided.
+    if let Some(pin_id) = pin {
+        if let Some((provider, model)) = pin_id.split_once('/') {
+            return (
+                decision_from(
+                    vec![(provider.to_string(), model.to_string())],
+                    How::Pinned,
+                    None,
+                    None,
+                    format!("pinned to {provider}/{model}"),
+                ),
+                started.elapsed().as_millis(),
+            );
+        }
+    }
+    let provider_pin = pin.filter(|pin_id| {
+        resolved.iter().any(|entry| entry.id() == *pin_id) || pin_id.contains('/')
+    });
+    let unknown_pin = pin
+        .filter(|pin_id| !pin_id.contains('/') && !resolved.iter().any(|entry| entry.id() == *pin_id))
+        .map(|pin_id| format!("pin `{pin_id}` names no roster provider; "));
+
+    let judged = judge(task, specs).await;
+    // The workload this route serves: sys1's, or the gates' default when
+    // the judgment is absent or below the confidence floor. The
+    // confidence itself rides the gate note in the reason — the lane's
+    // own number, named where it changed the route. A gated route is a
+    // FALLBACK, not a judgment: the row must not claim sys1 chose it.
+    let (workload, verdict, _confidence, gate_note, gated) = match &judged {
+        Some((label, confidence, verdict)) if *confidence >= gates.min_confidence => (
+            label.clone(),
+            Some(verdict.clone()),
+            *confidence,
+            String::new(),
+            false,
+        ),
+        Some((label, confidence, _)) => (
+            gates.default_workload.to_string(),
+            judged.as_ref().map(|(_, _, verdict)| verdict.clone()),
+            *confidence,
+            format!(
+                "sys1 judged `{label}` at {confidence:.2}, below the {:.2} gate; ",
+                gates.min_confidence
             ),
-            None => fallback(resolved, head, &format!("pin `{pin_id}` is not usable; using the head")),
-        }
-    } else {
-        match judge(task, specs).await {
-            Some((workload, verdict)) => {
-                match workload_candidate(&workload)
-                    .and_then(|id| resolved.iter().position(|entry| entry.id() == id))
-                {
-                    Some(index) if resolved[index].usable() => decision_at(
-                        resolved,
-                        index,
-                        How::Judged,
-                        Some(workload.clone()),
-                        Some(verdict),
-                        format!("sys1 judged `{workload}`"),
+            true,
+        ),
+        None => (
+            gates.default_workload.to_string(),
+            None,
+            0.0,
+            "sys1 gave no usable verdict; ".to_string(),
+            true,
+        ),
+    };
+
+    let decision = match preference_for(table, &workload) {
+        Some(preference) => {
+            // The walk is the workload's own list — a provider pin
+            // filters it to that provider, and the router still decides
+            // the model from what the workload asks of it.
+            let order: Vec<(String, String)> = preference
+                .candidates
+                .iter()
+                .filter(|(provider, _)| provider_pin.is_none_or(|pin| pin == *provider))
+                .map(|(provider, model)| (provider.to_string(), model.to_string()))
+                .collect();
+            let (order, reason) = if order.is_empty() {
+                // The workload names no candidate from the pinned
+                // provider: the provider's own default model serves,
+                // and the reason says so rather than silently
+                // substituting some other provider.
+                match provider_pin {
+                    Some(pin) => (
+                        vec![(
+                            pin.to_string(),
+                            resolved
+                                .iter()
+                                .find(|entry| entry.id() == pin)
+                                .map(|entry| entry.candidate.model().to_string())
+                                .unwrap_or_default(),
+                        )],
+                        format!(
+                            "`{workload}` names no {pin} candidate; using {pin}'s default model"
+                        ),
                     ),
-                    Some(index) => fallback(
-                        resolved,
-                        head,
-                        &format!("sys1 judged `{workload}` but `{}` has no key; using the head", resolved[index].id()),
-                    ),
-                    None => fallback(
-                        resolved,
-                        head,
-                        &format!("sys1 judged an unmapped workload `{workload}`; using the head"),
-                    ),
+                    None => (Vec::new(), format!("`{workload}`'s preference is empty")),
                 }
+            } else {
+                let reason = if let Some(pin) = provider_pin {
+                    format!("pinned to {pin}; sys1 judged `{workload}`")
+                } else {
+                    format!("sys1 judged `{workload}`")
+                };
+                (order, reason)
+            };
+            let note = format!(
+                "{}{}",
+                unknown_pin.as_deref().unwrap_or_default(),
+                gate_note,
+            );
+            if order.is_empty() {
+                fallback(resolved, head, table, gates, &format!("{note}{reason}"))
+            } else {
+                let how = if provider_pin.is_some() {
+                    How::Pinned
+                } else if gated {
+                    How::Fallback
+                } else {
+                    How::Judged
+                };
+                decision_from(
+                    order,
+                    how,
+                    Some(workload.clone()),
+                    verdict.clone(),
+                    format!("{note}{reason}"),
+                )
             }
-            None => fallback(resolved, head, "sys1 gave no usable verdict; using the head"),
         }
+        None => fallback(
+            resolved,
+            head,
+            table,
+            gates,
+            &format!(
+                "{}sys1 judged an unmapped workload `{workload}`; ",
+                unknown_pin.as_deref().unwrap_or_default()
+            ),
+        ),
     };
     (decision, started.elapsed().as_millis())
 }
 
-/// A decision for the candidate at `index` — the one construction, so
-/// no site forgets the model the route will actually serve. An index
-/// past the roster reads as the head's id with no model rather than
-/// panicking: a decision is a record, never a crash.
-fn decision_at(
-    resolved: &[Resolved],
-    index: usize,
+/// A decision over an explicit walk order — the one construction, so
+/// the order, the target, and the model can never disagree.
+fn decision_from(
+    order: Vec<(String, String)>,
     how: How,
     workload: Option<String>,
     verdict: Option<String>,
     reason: String,
 ) -> RouteDecision {
-    let entry = resolved.get(index);
-    RouteDecision {
-        provider: entry.map(Resolved::id).unwrap_or(HEAD_ID).to_string(),
-        model: entry.map(|entry| entry.candidate.model.clone()).unwrap_or_default(),
-        how,
-        workload,
-        verdict,
-        reason,
-        start_index: index,
-    }
+    let (provider, model) = order
+        .first()
+        .cloned()
+        .unwrap_or_else(|| (HEAD_ID.to_string(), String::new()));
+    // The walk starts at the selection, and the selection IS the
+    // order's head — so the start index is an ORDER position, always
+    // zero here. It is not the candidate's roster position: that was
+    // the pre-port walk's semantics (the walk was the declared chain),
+    // and using it here would start a multi-entry preference's walk
+    // mid-list, silently skipping the very candidate sys1 selected.
+    // `prepare` recomputes the same value after the demotion reorder,
+    // which also keeps the selected candidate at the head.
+    let start_index = 0;
+    RouteDecision { provider, model, how, workload, verdict, reason, start_index, order }
 }
 
-/// A fallback decision to the declared HEAD.
-fn fallback(resolved: &[Resolved], head: usize, reason: &str) -> RouteDecision {
-    decision_at(resolved, head, How::Fallback, None, None, reason.to_string())
+/// A fallback decision: the gates' default workload's preference, named
+/// with `reason`. There is no silent fall-through to a candidate no
+/// workload asked for — the default workload's list IS the fallback.
+fn fallback(
+    resolved: &[Resolved],
+    head: usize,
+    table: &[Preference],
+    gates: Gates,
+    reason: &str,
+) -> RouteDecision {
+    let order = preference_for(table, gates.default_workload)
+        .map(|preference| {
+            preference
+                .candidates
+                .iter()
+                .map(|(provider, model)| (provider.to_string(), model.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut decision = decision_from(order, How::Fallback, None, None, reason.to_string());
+    // An empty table (a config that named no workloads) still has to
+    // walk something: the declared chain's head, as the pre-slice
+    // behavior did.
+    if decision.order.is_empty() {
+        let provider = resolved.get(head).map(Resolved::id).unwrap_or(HEAD_ID).to_string();
+        decision.provider = provider.clone();
+        decision.start_index = head;
+        decision.order = resolved
+            .iter()
+            .map(|entry| (entry.id().to_string(), entry.candidate.model().to_string()))
+            .collect();
+    }
+    decision
 }
 
 /// Ask sys1 for a routing judgment: spawn the lane (like any other), call
@@ -669,7 +1101,7 @@ fn fallback(resolved: &[Resolved], head: usize, reason: &str) -> RouteDecision {
 /// failure — the lane cannot launch, the handshake or call fails, the
 /// answer has no workload — is `None`, which the caller turns into a
 /// fallback. The child is always torn down.
-async fn judge(task: &str, specs: &HashMap<String, ServerSpec>) -> Option<(String, String)> {
+async fn judge(task: &str, specs: &HashMap<String, ServerSpec>) -> Option<(String, f64, String)> {
     let spec = match specs.get(JUDGE_LANE) {
         Some(spec) => spec.clone(),
         None => lanes::spec_for(JUDGE_LANE).ok()?,
@@ -683,7 +1115,7 @@ async fn judge(task: &str, specs: &HashMap<String, ServerSpec>) -> Option<(Strin
 /// The live judgment over an already-spawned sys1 server. The call shape
 /// is the tool's own schema (`tools/list`): `sys1_classify` takes `text`
 /// (required) and `task` (the registered task name).
-async fn judge_live(server: &McpServer, task: &str) -> Option<(String, String)> {
+async fn judge_live(server: &McpServer, task: &str) -> Option<(String, f64, String)> {
     server.initialize().await.ok()?;
     let call = server
         .call_tool("sys1_classify", json!({ "task": JUDGE_TASK, "text": task }))
@@ -694,21 +1126,25 @@ async fn judge_live(server: &McpServer, task: &str) -> Option<(String, String)> 
 
 /// Read the workload verdict out of a `sys1_classify` answer. The answer's
 /// text is a JSON object whose `answers` maps provider id → head id →
-/// answer; the routing signal is the `workload` head's `label`. The
-/// top-level `verdict` rides along for the decision row. A missing or
-/// empty workload label is `None` (an unusable verdict → fallback).
-fn parse_workload(text: &str) -> Option<(String, String)> {
+/// answer; the routing signal is the `workload` head's `label` and its
+/// `confidence`. The top-level `verdict` rides along for the decision
+/// row. A missing or empty workload label is `None` (an unusable verdict
+/// → fallback); a missing confidence reads as 0.0, which the gate then
+/// routes to the default workload.
+fn parse_workload(text: &str) -> Option<(String, f64, String)> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     let verdict = value.get("verdict").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let answers = value.get("answers")?.as_object()?;
     for heads in answers.values() {
-        if let Some(label) = heads
-            .get("workload")
-            .and_then(|workload| workload.get("label"))
-            .and_then(|label| label.as_str())
-            .filter(|label| !label.is_empty())
-        {
-            return Some((label.to_string(), verdict));
+        if let Some(workload) = heads.get("workload").and_then(|workload| workload.as_object()) {
+            if let Some(label) = workload
+                .get("label")
+                .and_then(|label| label.as_str())
+                .filter(|label| !label.is_empty())
+            {
+                let confidence = workload.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0);
+                return Some((label.to_string(), confidence, verdict));
+            }
         }
     }
     None
@@ -850,6 +1286,14 @@ pub struct Router {
     /// turns so each gateway's connection pool survives.
     clients: Vec<Client>,
     resolved: Vec<Resolved>,
+    /// The walk order: positions into `resolved`, in the order this
+    /// session's preference walks them — the workload's own candidate
+    /// list, demotion applied.
+    order: Vec<usize>,
+    /// The model each order position serves: the preference names
+    /// (provider, model) pairs, and a provider's default is not what
+    /// every workload asks for.
+    models: Vec<String>,
     decision: RouteDecision,
     state: Mutex<RouterState>,
     /// The candidates the calibration skips in this walk's preference, as
@@ -882,10 +1326,39 @@ impl Router {
                 Client::new(entry.candidate.base_url.as_str(), entry.key.clone().unwrap_or_default())
             })
             .collect();
-        let index = decision.start_index.min(resolved.len().saturating_sub(1));
+        // The walk order: the decision's own (provider, model) list as
+        // positions into `resolved`, each position's model beside it. A
+        // decision that carries no order (a hand-built one, or an empty
+        // preference table) walks the declared chain with each
+        // candidate's default model — the pre-slice shape.
+        let (order, models) = if decision.order.is_empty() {
+            let order: Vec<usize> = (0..resolved.len()).collect();
+            let models: Vec<String> = resolved
+                .iter()
+                .map(|entry| entry.candidate.model().to_string())
+                .collect();
+            (order, models)
+        } else {
+            let mut order = Vec::with_capacity(decision.order.len());
+            let mut models = Vec::with_capacity(decision.order.len());
+            for (provider, model) in &decision.order {
+                let position = resolved.iter().position(|entry| entry.id() == *provider);
+                // A preference naming a provider the roster does not
+                // carry is skipped, not fatal: the walk is a record of
+                // what it could try.
+                if let Some(position) = position {
+                    order.push(position);
+                    models.push(model.clone());
+                }
+            }
+            (order, models)
+        };
+        let index = decision.start_index.min(order.len().saturating_sub(1));
         Router {
             clients,
             resolved,
+            order,
+            models,
             decision,
             state: Mutex::new(RouterState {
                 index,
@@ -915,23 +1388,25 @@ impl Router {
     /// a candidate is skipped only when a later candidate in the declared
     /// chain is healthy. Everything between is the preference the
     /// calibration moves.
-    fn calibration_skip(&self, index: usize, start: usize) -> Option<String> {
-        if index <= start || self.calibration_skips.is_empty() {
+    fn calibration_skip(&self, position: usize, start: usize) -> Option<String> {
+        if position <= start || self.calibration_skips.is_empty() {
             return None;
         }
-        let provider = self.resolved.get(index)?.id().to_string();
+        let provider = self.resolved.get(self.order[position])?.id().to_string();
         let cell = self
             .calibration_skips
             .iter()
             .find(|cell| cell.provider == provider)?;
         // A skip that would leave the walk with nothing to try is not a
-        // skip: the last healthy candidate is always attempted.
+        // skip: the last healthy candidate in THIS walk's order is
+        // always attempted.
         let healthy_later = self
-            .resolved
+            .order
             .iter()
             .enumerate()
-            .skip(index + 1)
-            .any(|(_, entry)| entry.usable());
+            .skip(position + 1)
+            .filter_map(|(_, &index)| self.resolved.get(index))
+            .any(|entry| entry.usable());
         healthy_later.then(|| {
             format!(
                 "; calibration skipped {provider} for shape `{}` in the failover preference \
@@ -951,17 +1426,17 @@ impl Router {
     /// candidate in its preference (slice 18).
     pub fn row(&self, task: &str, latency_ms: u128) -> calib::RouteRow {
         let state = lock(&self.state);
-        let served_index = state.served;
-        let provider = served_index
-            .and_then(|index| self.resolved.get(index))
-            .or_else(|| self.resolved.get(self.decision.start_index))
-            .map(Resolved::id)
-            .unwrap_or(HEAD_ID)
-            .to_string();
-        let model = served_index
-            .and_then(|index| self.resolved.get(index))
-            .map(|entry| entry.candidate.model.clone())
-            .unwrap_or_default();
+        // What served: the position that served, read through the walk
+        // order into the roster — or the decision's own target when
+        // nothing did.
+        let served = state.served.and_then(|position| {
+            let index = *self.order.get(position)?;
+            let entry = self.resolved.get(index)?;
+            Some((entry.id().to_string(), self.models.get(position).cloned().unwrap_or_default()))
+        });
+        let (provider, model) = served
+            .clone()
+            .unwrap_or_else(|| (self.decision.provider.clone(), self.decision.model.clone()));
         let providers_used: Vec<String> = state
             .attempts
             .iter()
@@ -996,10 +1471,13 @@ impl Router {
     /// stream; this is the owner-facing half.
     pub fn walk_report(&self) -> WalkReport {
         let state = lock(&self.state);
-        let served = state.served.and_then(|index| {
-            self.resolved.get(index).map(|entry| {
-                (entry.id().to_string(), entry.candidate.model.clone())
-            })
+        let served = state.served.and_then(|position| {
+            let index = *self.order.get(position)?;
+            let entry = self.resolved.get(index)?;
+            Some((
+                entry.id().to_string(),
+                self.models.get(position).cloned().unwrap_or_default(),
+            ))
         });
         let unkeyed = state
             .attempts
@@ -1050,7 +1528,8 @@ impl Router {
         }
 
         let mut last_error: Option<ClientError> = None;
-        for index in start..self.resolved.len() {
+        for position in start..self.order.len() {
+            let index = self.order[position];
             if !self.resolved[index].candidate.enabled {
                 self.record(Attempt {
                     provider: self.resolved[index].id().to_string(),
@@ -1071,7 +1550,7 @@ impl Router {
             // a fit-and-wrong candidate is passed over in favour of a
             // healthy later one, and the clause that says why rides the
             // decision row's reason (see `prepare`).
-            if let Some(clause) = self.calibration_skip(index, start) {
+            if let Some(clause) = self.calibration_skip(position, start) {
                 lock(&self.state).calibration_clauses.push(clause);
                 self.record(Attempt {
                     provider: self.resolved[index].id().to_string(),
@@ -1080,7 +1559,7 @@ impl Router {
                 });
                 continue;
             }
-            match self.one_attempt(index, request, on_event).await {
+            match self.one_attempt(position, request, on_event).await {
                 Ok(response) => {
                     self.record(Attempt {
                         provider: self.resolved[index].id().to_string(),
@@ -1088,9 +1567,9 @@ impl Router {
                         class: None,
                     });
                     let mut state = lock(&self.state);
-                    state.index = index;
+                    state.index = position;
                     state.committed = true;
-                    state.served = Some(index);
+                    state.served = Some(position);
                     return Ok(response);
                 }
                 Err((error, streamed)) => {
@@ -1116,18 +1595,20 @@ impl Router {
             .unwrap_or_else(|| ClientError::Network("no usable roster candidate remained".to_string())))
     }
 
-    /// One candidate's attempt: build the request with the candidate's
+    /// One candidate's attempt: build the request with the position's
     /// model, wrap `on_event` so the first token marks the stream
     /// committed, and return the response or the error plus whether it
     /// streamed.
     async fn one_attempt(
         &self,
-        index: usize,
+        position: usize,
         request: &ChatRequest<'_>,
         on_event: &mut (dyn FnMut(StreamEvent) + '_),
     ) -> Result<ChatResponse, (ClientError, bool)> {
+        let index = self.order[position];
+        let model = self.models[position].clone();
         let routed = ChatRequest {
-            model: self.resolved[index].candidate.model.as_str(),
+            model: &model,
             messages: request.messages,
             tools: request.tools.clone(),
         };
@@ -1183,7 +1664,15 @@ pub async fn prepare(
 ) -> Result<Prepared, ConfigError> {
     let roster = load_roster(home)?;
     let resolved = resolve(&roster.candidates, dotenv);
-    let (mut decision, latency_ms) = select(&resolved, roster.pin.as_deref(), task, specs).await;
+    let (mut decision, latency_ms) = select(
+        &resolved,
+        roster.pin.as_deref(),
+        task,
+        specs,
+        &roster.preferences,
+        roster.gates,
+    )
+    .await;
     // The calibration stream, and its first read: today's graded rows
     // demote a candidate that keeps failing to the end of this session's
     // walk (slice 5's last acceptance criterion).
@@ -1196,7 +1685,10 @@ pub async fn prepare(
         &calib::today(),
         &resolved.iter().map(Resolved::id).collect::<Vec<_>>(),
     );
-    let resolved = reorder_for_demotion(resolved, &decision.provider, &demoted);
+    // Demotion reorders THIS session's walk — the workload's own list —
+    // never the selection, and never the declared roster the surfaces
+    // render.
+    decision.order = reorder_for_demotion(&decision.order, &decision.provider, &demoted);
     if !demoted.is_empty() {
         // The demotion is auditable: it rides in the decision row's
         // reason, so a later reader sees why the walk was ordered as it
@@ -1244,8 +1736,11 @@ pub async fn prepare(
     for cell in &notes {
         decision.reason.push_str(&calibration_note_clause(cell));
     }
-    decision.start_index =
-        resolved.iter().position(|entry| entry.id() == decision.provider).unwrap_or(0);
+    decision.start_index = decision
+        .order
+        .iter()
+        .position(|(provider, _)| provider == &decision.provider)
+        .unwrap_or(0);
     let router = Arc::new(Router::build(resolved, decision.clone(), skips));
     Ok(Prepared { router, decision, latency_ms, calib })
 }
@@ -1331,25 +1826,26 @@ pub fn calibration_note_clause(cell: &calib::CalibrationCell) -> String {
     )
 }
 
-/// Reorder the chain for this session's walk: the selected candidate keeps
-/// the head of the walk — sys1's judgment is untouched — every other
-/// candidate keeps its declared order, and the demoted ones move to the
-/// end. A candidate that is both selected and demoted stays at the head:
+/// Reorder one walk's order for this session: the selected candidate
+/// keeps the head — the judgment is untouched — every other candidate
+/// keeps its preference order, and the demoted ones move to the end. A
+/// candidate that is both selected and demoted stays the head:
 /// demotion reorders the walk, it does not override the selection.
 pub fn reorder_for_demotion(
-    resolved: Vec<Resolved>,
+    order: &[(String, String)],
     selected: &str,
     demoted: &[String],
-) -> Vec<Resolved> {
-    let (mut demoted_entries, mut kept): (Vec<Resolved>, Vec<Resolved>) = resolved
-        .into_iter()
-        .partition(|entry| demoted.iter().any(|id| id == entry.id()) && entry.id() != selected);
-    let mut ordered = Vec::with_capacity(kept.len() + demoted_entries.len());
-    if let Some(index) = kept.iter().position(|entry| entry.id() == selected) {
+) -> Vec<(String, String)> {
+    let (demoted_entries, mut kept): (Vec<(String, String)>, Vec<(String, String)>) = order
+        .iter()
+        .cloned()
+        .partition(|(provider, _)| demoted.iter().any(|id| id == provider) && provider != selected);
+    let mut ordered = Vec::with_capacity(order.len());
+    if let Some(index) = kept.iter().position(|(provider, _)| provider == selected) {
         ordered.push(kept.remove(index));
     }
     ordered.append(&mut kept);
-    ordered.append(&mut demoted_entries);
+    ordered.extend(demoted_entries);
     ordered
 }
 
@@ -1483,7 +1979,7 @@ fn render_card(entry: &Resolved, is_head: bool) -> String {
             TEXT = palette::TEXT,
             name = entry.candidate.key_env,
             state = key_state,
-            model = entry.candidate.model,
+            model = entry.candidate.model(),
         ),
     ];
     if let Some(reason) = &entry.candidate.disabled_reason {
@@ -1636,12 +2132,52 @@ mod tests {
     // --- the sys1 verdict → candidate mapping ---
 
     #[test]
-    fn the_workload_map_routes_the_kit_primary_and_the_plans_direct() {
-        assert_eq!(workload_candidate("quick"), Some(HEAD_ID));
-        assert_eq!(workload_candidate("standard_code"), Some(HEAD_ID));
-        assert_eq!(workload_candidate("hard"), Some("zai-coding-plan"));
-        assert_eq!(workload_candidate("prose"), Some("xiaomi-mimo"));
+    fn the_preference_table_is_the_kits_live_table() {
+        // The compiled-in default is the live zcode-router-kit's
+        // routing.workloads, at (provider, model) granularity, with
+        // quick's duplicated stepfun entry deduped.
+        let table = default_preferences();
+        let quick = preference_for(&table, "quick").expect("quick");
+        assert_eq!(
+            quick.candidates,
+            vec![
+                ("stepfun", "step-3.7-flash"),
+                ("xiaomi-mimo", "mimo-v2.6-flash"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+            ]
+        );
+        let hard = preference_for(&table, "hard").expect("hard");
+        assert_eq!(hard.candidates[0], ("stepfun", "step-5-preview"));
+        // The composed workload targets the grounding provider.
+        let composed = preference_for(&table, "composed").expect("composed");
+        assert_eq!(composed.candidates[0], ("blend1", "blend1"));
+        // No default workload targets the payg reserve — the
+        // allowPayg:false policy, so deepseek cannot serve unpinned.
+        for preference in &table {
+            assert!(
+                !preference.candidates.iter().any(|(provider, _)| *provider == "deepseek"),
+                "`{}` targets the reserve",
+                preference.workload
+            );
+        }
+        assert!(preference_for(&table, "something_else").is_none());
+    }
+
+    #[test]
+    fn the_gates_default_to_the_kits_routing_block() {
+        let gates = Gates::default();
+        assert!((gates.min_confidence - 0.6).abs() < 1e-9);
+        assert_eq!(gates.default_workload, "standard_code");
+    }
+
+    #[test]
+    fn the_workload_map_names_the_first_candidate_of_each_preference() {
+        assert_eq!(workload_candidate("quick"), Some("stepfun"));
+        assert_eq!(workload_candidate("standard_code"), Some("stepfun"));
+        assert_eq!(workload_candidate("hard"), Some("stepfun"));
+        assert_eq!(workload_candidate("prose"), Some("stepfun"));
         assert_eq!(workload_candidate("deep_context"), Some("stepfun"));
+        assert_eq!(workload_candidate("composed"), Some("blend1"));
         assert_eq!(workload_candidate("something_else"), None);
     }
 
@@ -1650,7 +2186,13 @@ mod tests {
         let workload = parse_workload(
             r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"hard","confidence":0.9}}}}"#,
         );
-        assert_eq!(workload, Some(("hard".to_string(), "pass".to_string())));
+        assert_eq!(workload, Some(("hard".to_string(), 0.9, "pass".to_string())));
+        // A missing confidence reads as 0.0 — the gate then routes to
+        // the default workload rather than trusting a guess.
+        let no_confidence = parse_workload(
+            r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"hard"}}}}"#,
+        );
+        assert_eq!(no_confidence, Some(("hard".to_string(), 0.0, "pass".to_string())));
     }
 
     #[test]
@@ -1667,16 +2209,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unusable_verdict_falls_back_to_the_head() {
-        // A roster whose only keyed candidate is the deepseek reserve; the
-        // judged `hard` maps to zai, which has no key, so it falls back.
+    async fn an_unusable_verdict_falls_back_to_the_default_workload() {
+        // A roster whose only keyed candidate is the deepseek reserve;
+        // the judge cannot run, so the gates' default workload's
+        // preference is the walk.
         let resolved = vec![
             Resolved {
                 candidate: Candidate {
                     id: "router-kit".into(),
                     base_url: "http://127.0.0.1:8300/v1".into(),
                     key_env: "AGNOSTIC_ROUTER_TOKEN".into(),
-                    model: "auto".into(),
+                    models: vec!["auto".into()],
+                    billing: Billing::Plan,
+                    kind: CandidateKind::Http,
                     enabled: true,
                     key_required: false,
                     disabled_reason: None,
@@ -1688,7 +2233,9 @@ mod tests {
                     id: "zai-coding-plan".into(),
                     base_url: "https://api.z.ai".into(),
                     key_env: "ZAI_CODING_API_KEY".into(),
-                    model: "GLM-5.3-Flash".into(),
+                    models: vec!["GLM-5.3-Flash".into()],
+                    billing: Billing::Plan,
+                    kind: CandidateKind::Http,
                     enabled: true,
                     key_required: true,
                     disabled_reason: None,
@@ -1697,11 +2244,11 @@ mod tests {
             },
         ];
         // The judge cannot run: the injected spec names a program that
-        // cannot spawn, so `select` falls back to the head. Hermetic on
-        // purpose — the vendored sys1 lane IS present in this repo and
-        // answers (KI-191's lane fix), and before that fix this test
-        // passed only because the lane crashed on every call, which is
-        // a test passing for the wrong reason (KI-202).
+        // cannot spawn, so `select` falls back. Hermetic on purpose —
+        // the vendored sys1 lane IS present in this repo and answers
+        // (KI-191's lane fix), and before that fix this test passed
+        // only because the lane crashed on every call, which is a test
+        // passing for the wrong reason (KI-202).
         let mut specs = HashMap::new();
         specs.insert(
             JUDGE_LANE.to_string(),
@@ -1713,45 +2260,119 @@ mod tests {
                 cwd: None,
             },
         );
-        let (decision, _latency) = select(&resolved, None, "do a thing", &specs).await;
+        let (decision, _latency) = select(
+            &resolved,
+            None,
+            "do a thing",
+            &specs,
+            &default_preferences(),
+            Gates::default(),
+        )
+        .await;
         assert_eq!(decision.how, How::Fallback);
-        assert_eq!(decision.provider, HEAD_ID);
-        assert_eq!(decision.start_index, 0);
+        // The default workload's preference is the walk — stepfun
+        // first, exactly as the table says.
+        assert_eq!(decision.provider, "stepfun");
+        assert_eq!(decision.model, "step-3.7-flash");
+        assert_eq!(
+            decision.order,
+            vec![
+                ("stepfun".to_string(), "step-3.7-flash".to_string()),
+                ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
+                ("xiaomi-mimo".to_string(), "mimo-v2.6-flash".to_string()),
+            ]
+        );
+        assert!(decision.reason.contains("sys1 gave no usable verdict"), "{}", decision.reason);
     }
 
     #[tokio::test]
-    async fn a_pin_routes_straight_to_its_candidate() {
-        let resolved = vec![
-            Resolved {
-                candidate: Candidate {
-                    id: "router-kit".into(),
-                    base_url: "http://127.0.0.1:8300/v1".into(),
-                    key_env: "AGNOSTIC_ROUTER_TOKEN".into(),
-                    model: "auto".into(),
-                    enabled: true,
-                    key_required: false,
-                    disabled_reason: None,
-                },
-                key: None,
+    async fn a_provider_pin_routes_every_shape_through_that_provider() {
+        // The pin's purpose, in its test: a provider carrying a large
+        // unused quota. The router still decides the MODEL — the
+        // workload's preference filtered to the pinned provider.
+        let resolved = resolve(&default_roster(), &HashMap::new());
+        let mut specs = HashMap::new();
+        specs.insert(
+            JUDGE_LANE.to_string(),
+            ServerSpec {
+                program: "fleet-test-no-such-lane-program".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                passthrough: Vec::new(),
+                cwd: None,
             },
-            Resolved {
-                candidate: Candidate {
-                    id: "deepseek".into(),
-                    base_url: "https://api.deepseek.com".into(),
-                    key_env: "DEEPSEEK_API_KEY".into(),
-                    model: "deepseek-chat".into(),
-                    enabled: true,
-                    key_required: true,
-                    disabled_reason: None,
-                },
-                key: Some("sk-fake".to_string()),
-            },
-        ];
-        let (decision, _latency) =
-            select(&resolved, Some("deepseek"), "anything", &HashMap::new()).await;
+        );
+        // No usable verdict → the default workload (standard_code) →
+        // its list filtered to stepfun: stepfun's model for that shape.
+        let (decision, _latency) = select(
+            &resolved,
+            Some("stepfun"),
+            "anything",
+            &specs,
+            &default_preferences(),
+            Gates::default(),
+        )
+        .await;
         assert_eq!(decision.how, How::Pinned);
-        assert_eq!(decision.provider, "deepseek");
-        assert_eq!(decision.start_index, 1);
+        assert_eq!(decision.provider, "stepfun");
+        assert_eq!(decision.model, "step-3.7-flash");
+        assert!(decision.reason.contains("pinned to stepfun"), "{}", decision.reason);
+    }
+
+    #[tokio::test]
+    async fn a_provider_model_pair_pins_both_halves_exactly() {
+        let resolved = resolve(&default_roster(), &HashMap::new());
+        // An exact pair skips the judgment entirely — no spec needed,
+        // which is what makes this hermetic.
+        let (decision, _latency) = select(
+            &resolved,
+            Some("stepfun/step-5-preview"),
+            "anything",
+            &HashMap::new(),
+            &default_preferences(),
+            Gates::default(),
+        )
+        .await;
+        assert_eq!(decision.how, How::Pinned);
+        assert_eq!(decision.provider, "stepfun");
+        assert_eq!(decision.model, "step-5-preview");
+        assert_eq!(
+            decision.order,
+            vec![("stepfun".to_string(), "step-5-preview".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_pin_is_named_not_silently_defaulted() {
+        let resolved = resolve(&default_roster(), &HashMap::new());
+        let mut specs = HashMap::new();
+        specs.insert(
+            JUDGE_LANE.to_string(),
+            ServerSpec {
+                program: "fleet-test-no-such-lane-program".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                passthrough: Vec::new(),
+                cwd: None,
+            },
+        );
+        let (decision, _latency) = select(
+            &resolved,
+            Some("no-such-provider"),
+            "anything",
+            &specs,
+            &default_preferences(),
+            Gates::default(),
+        )
+        .await;
+        // The selection proceeds normally, and the reason names the bad
+        // pin — never a silent substitution.
+        assert_eq!(decision.how, How::Fallback);
+        assert!(
+            decision.reason.contains("pin `no-such-provider` names no roster provider"),
+            "{}",
+            decision.reason
+        );
     }
 
     // --- the config merge ---
@@ -1763,7 +2384,7 @@ mod tests {
                 "pin": "deepseek",
                 "providers": [
                     { "id": "router-kit", "enabled": false },
-                    { "id": "zai-coding-plan", "model": "GLM-5.3-Pro" },
+                    { "id": "zai-coding-plan", "models": ["GLM-5.3-Pro"] },
                     { "id": "deepseek", "base_url": "https://example.invalid/v1" }
                 ]
             }"#,
@@ -1775,14 +2396,26 @@ mod tests {
         let kit = candidates.iter().find(|c| c.id == "router-kit").unwrap();
         assert!(!kit.enabled);
         assert_eq!(kit.base_url, "http://127.0.0.1:8300/v1");
-        // The zai model changed; its endpoint and key env did not.
+        // The zai model list changed; its endpoint and key env did not.
         let zai = candidates.iter().find(|c| c.id == "zai-coding-plan").unwrap();
-        assert_eq!(zai.model, "GLM-5.3-Pro");
+        assert_eq!(zai.models, vec!["GLM-5.3-Pro".to_string()]);
         assert_eq!(zai.key_env, "ZAI_CODING_API_KEY");
         // The deepseek endpoint changed; its key env did not.
         let deepseek = candidates.iter().find(|c| c.id == "deepseek").unwrap();
         assert_eq!(deepseek.base_url, "https://example.invalid/v1");
         assert_eq!(deepseek.key_env, "DEEPSEEK_API_KEY");
+    }
+
+    #[test]
+    fn a_singular_model_override_sets_a_one_model_list() {
+        // The backward-compatible spelling: `model` is `models: [model]`.
+        let file: ConfigFile = serde_json::from_str(
+            r#"{ "providers": [ { "id": "xiaomi-mimo", "model": "mimo-v2.6-pro" } ] }"#,
+        )
+        .unwrap();
+        let (candidates, _) = merge(default_roster(), &file).unwrap();
+        let mimo = candidates.iter().find(|c| c.id == "xiaomi-mimo").unwrap();
+        assert_eq!(mimo.models, vec!["mimo-v2.6-pro".to_string()]);
     }
 
     #[test]
@@ -1819,14 +2452,68 @@ mod tests {
         let home = std::env::temp_dir().join(format!("fleet-route-nocfg-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&home);
         let roster = load_roster(&home).unwrap();
-        assert_eq!(roster.candidates.len(), 7);
+        assert_eq!(roster.candidates.len(), 8);
         assert_eq!(roster.candidates[0].id, HEAD_ID);
         assert_eq!(roster.candidates[5].id, "deepseek");
         // Liquid is declared after DeepSeek and enters no declared
         // position: it is available to the owner's config, and moving it
         // into the chain is that config's one-line change.
         assert_eq!(roster.candidates[6].id, "liquid");
+        assert_eq!(roster.candidates[7].id, "blend1");
         assert_eq!(roster.pin, None);
+        // The preference table and the gates are the compiled-in
+        // defaults when no routing.json names any.
+        assert_eq!(roster.preferences.len(), 6);
+        assert!((roster.gates.min_confidence - 0.6).abs() < 1e-9);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_routing_plugin_file_overrides_the_preference_and_the_gates() {
+        let home = std::env::temp_dir().join(format!("fleet-route-routing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        // `hard`'s list is replaced; every other workload keeps the
+        // compiled-in default. The gates merge field by field.
+        std::fs::write(
+            home.join("routing.json"),
+            r#"{
+                "workloads": [
+                    { "workload": "hard", "candidates": ["zai-coding-plan/GLM-5.3-Pro", "stepfun/step-5-preview"] }
+                ],
+                "gates": { "min_confidence": 0.75 }
+            }"#,
+        )
+        .unwrap();
+        let roster = load_roster(&home).unwrap();
+        let hard = preference_for(&roster.preferences, "hard").expect("hard");
+        assert_eq!(
+            hard.candidates,
+            vec![("zai-coding-plan", "GLM-5.3-Pro"), ("stepfun", "step-5-preview")]
+        );
+        // The untouched workload keeps its default.
+        let quick = preference_for(&roster.preferences, "quick").expect("quick");
+        assert_eq!(quick.candidates[0], ("stepfun", "step-3.7-flash"));
+        // The named gate moved; the unnamed one kept its default.
+        assert!((roster.gates.min_confidence - 0.75).abs() < 1e-9);
+        assert_eq!(roster.gates.default_workload, "standard_code");
+        // A candidate that is not a provider/model pair is a typed named
+        // error, not a silent drop.
+        std::fs::write(
+            home.join("routing.json"),
+            r#"{ "workloads": [ { "workload": "hard", "candidates": ["zai-coding-plan"] } ] }"#,
+        )
+        .unwrap();
+        match load_roster(&home) {
+            Err(ConfigError::BadEntry(detail)) => {
+                assert!(detail.contains("hard"), "{detail}");
+                assert!(detail.contains("provider/model"), "{detail}");
+            }
+            other => panic!("expected a BadEntry error, got {other:?}"),
+        }
+        // An unknown field is rejected the way a provider's is.
+        std::fs::write(home.join("routing.json"), r#"{ "workload": [] }"#).unwrap();
+        assert!(matches!(load_roster(&home), Err(ConfigError::Parse(_))));
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -1854,14 +2541,21 @@ mod tests {
             workload: Some("hard".to_string()),
             verdict: Some("pass".to_string()),
             reason: "sys1 judged `hard`".to_string(),
-            start_index: 1,
+            start_index: 0,
+            order: vec![
+                ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
+                ("xiaomi-mimo".to_string(), "mimo-v2.6-pro".to_string()),
+                ("stepfun".to_string(), "step-5-preview".to_string()),
+            ],
         };
         let router = Router::new(resolved, decision);
         lock(&router.state).attempts.extend([
             Attempt { provider: "router-kit".to_string(), outcome: "failed", class: Some("auth") },
             Attempt { provider: "zai-coding-plan".to_string(), outcome: "served", class: None },
         ]);
-        lock(&router.state).served = Some(1);
+        // Position 0 of the walk order is zai — the order the decision
+        // carries, not the roster's declared order.
+        lock(&router.state).served = Some(0);
         let row = router.row("refactor the parser", 812);
         // The row is serialized through the stream's tag, which is what
         // puts `op` in the JSON.
@@ -1890,26 +2584,21 @@ mod tests {
 
     #[test]
     fn the_demotion_reorders_the_walk_and_leaves_the_selection_alone() {
-        let chain = vec![
-            resolved_for_test("router-kit"),
-            resolved_for_test("zai-coding-plan"),
-            resolved_for_test("xiaomi-mimo"),
+        let order = vec![
+            ("router-kit".to_string(), "auto".to_string()),
+            ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
+            ("xiaomi-mimo".to_string(), "mimo-v2.6-flash".to_string()),
         ];
-        // A demoted candidate moves to the end; the selected one keeps the
-        // head of the walk.
-        let ordered = reorder_for_demotion(chain, "zai-coding-plan", &["router-kit".to_string()]);
-        let ids: Vec<&str> = ordered.iter().map(Resolved::id).collect();
+        // A demoted candidate moves to the end; the selected one keeps
+        // the head of the walk.
+        let ordered = reorder_for_demotion(&order, "zai-coding-plan", &["router-kit".to_string()]);
+        let ids: Vec<&str> = ordered.iter().map(|(provider, _)| provider.as_str()).collect();
         assert_eq!(ids, vec!["zai-coding-plan", "xiaomi-mimo", "router-kit"]);
 
         // A candidate that is both selected and demoted stays the head:
         // demotion reorders the walk, it never overrides the judgment.
-        let chain = vec![
-            resolved_for_test("router-kit"),
-            resolved_for_test("zai-coding-plan"),
-            resolved_for_test("xiaomi-mimo"),
-        ];
-        let ordered = reorder_for_demotion(chain, "router-kit", &["router-kit".to_string()]);
-        let ids: Vec<&str> = ordered.iter().map(Resolved::id).collect();
+        let ordered = reorder_for_demotion(&order, "router-kit", &["router-kit".to_string()]);
+        let ids: Vec<&str> = ordered.iter().map(|(provider, _)| provider.as_str()).collect();
         assert_eq!(ids, vec!["router-kit", "zai-coding-plan", "xiaomi-mimo"]);
     }
 
@@ -1920,7 +2609,9 @@ mod tests {
                 id: id.to_string(),
                 base_url: "http://127.0.0.1:1/v1".to_string(),
                 key_env: format!("{}_KEY", id.to_uppercase().replace('-', "_")),
-                model: format!("{id}-model"),
+                models: vec![format!("{id}-model")],
+                billing: Billing::Plan,
+                kind: CandidateKind::Http,
                 enabled: true,
                 key_required: false,
                 disabled_reason: None,
@@ -2045,6 +2736,7 @@ mod tests {
             verdict: None,
             reason: "test".to_string(),
             start_index: 0,
+            order: vec![(HEAD_ID.to_string(), "auto".to_string())],
         };
         let router = Router::new(resolved, decision);
         // A router built the pre-slice way skips nothing, whatever the
@@ -2220,6 +2912,12 @@ mod tests {
             verdict: None,
             reason: "sys1 gave no usable verdict".to_string(),
             start_index: 0,
+            order: vec![
+                ("router-kit".to_string(), "auto".to_string()),
+                ("zai-coding-plan".to_string(), "zai-coding-plan-model".to_string()),
+                ("xiaomi-mimo".to_string(), "xiaomi-mimo-model".to_string()),
+                ("stepfun".to_string(), "stepfun-model".to_string()),
+            ],
         };
         // The walk's preference passes zai over: mimo and stepfun are
         // both usable, so a later healthy candidate exists.
@@ -2262,19 +2960,24 @@ mod tests {
         // No keys are set in this process, so the remote plans read `no key`
         // and the loopback kit reads `absent (optional)`.
         let rendered = render(&resolved);
-        assert_eq!(rendered.matches('\u{250c}').count(), 7, "{rendered}");
+        assert_eq!(rendered.matches('\u{250c}').count(), 8, "{rendered}");
         // The head is marked and named.
         assert!(rendered.contains("head router-kit"), "{rendered}");
         // Key env-var NAMES appear; no value ever does.
         assert!(rendered.contains("ZAI_CODING_API_KEY"), "{rendered}");
         assert!(rendered.contains("DEEPSEEK_API_KEY"), "{rendered}");
-        // Liquid rides as the seventh card: declared, available to the
-        // owner's config, its endpoint and model named.
+        // Liquid rides as a declared card: available to the owner's
+        // config, its endpoint and model named.
         assert!(rendered.contains("LIQUID_API_KEY"), "{rendered}");
         assert!(rendered.contains("https://api.liquid.ai/openai/v1"), "{rendered}");
         assert!(rendered.contains("model lfm2.5-24b-a2b"), "{rendered}");
-        // The endpoints and the models ride along.
+        // blend1 rides as the grounding provider, a lane-kind candidate.
+        assert!(rendered.contains("blend1"), "{rendered}");
+        assert!(rendered.contains("http://127.0.0.1:8420"), "{rendered}");
+        assert!(rendered.contains("BLEND1_BEARER_TOKEN"), "{rendered}");
+        // The endpoints and the default models ride along.
         assert!(rendered.contains("https://api.z.ai/api/coding/paas/v4"), "{rendered}");
+        assert!(rendered.contains("model step-3.7-flash"), "{rendered}");
         assert!(rendered.contains("model deepseek-chat"), "{rendered}");
         // No plain-text table.
         assert!(!rendered.contains("| id |"), "{rendered}");
@@ -2284,11 +2987,11 @@ mod tests {
     fn the_declared_chain_is_the_owners_order() {
         let roster = default_roster();
         let ids: Vec<&str> = roster.iter().map(|candidate| candidate.id.as_str()).collect();
-        // Liquid is appended at the END and asserted here because it
-        // changes the compiled-in list — but it enters no declared
-        // position: the chain's order is the owner's standing directive
-        // and this table does not reorder it. The owner's config (a pin,
-        // or a chain entry) decides liquid's real position.
+        // blend1 is appended after liquid and asserted here because it
+        // changes the compiled-in list — but it enters no declared chain
+        // position of its own: the workload table is what targets it.
+        // The chain's order is the owner's standing directive and this
+        // table does not reorder it.
         assert_eq!(
             ids,
             vec![
@@ -2298,15 +3001,17 @@ mod tests {
                 "stepfun",
                 "token-plan",
                 "deepseek",
-                "liquid"
+                "liquid",
+                "blend1"
             ]
         );
         // The kit is the head and needs no key; DeepSeek is the
-        // declared order's last and does; Liquid is declared beside it
-        // with its own key required.
+        // declared order's last plan entry and does; blend1 is a
+        // lane-kind candidate that needs no key.
         assert!(!roster[0].key_required);
         assert!(roster[5].key_required);
-        assert_eq!(roster[6].id, "liquid");
-        assert!(roster[6].key_required);
+        assert_eq!(roster[7].id, "blend1");
+        assert_eq!(roster[7].kind, CandidateKind::Lane);
+        assert!(!roster[7].key_required);
     }
 }

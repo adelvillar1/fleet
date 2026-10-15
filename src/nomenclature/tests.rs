@@ -531,15 +531,19 @@ fn the_proof_the_thing_that_judges_a_route_finds_judge() {
     let vocabulary = vocabulary(&repo_root());
     let hit = lookup_in(&vocabulary, "the thing that judges a route");
     assert!(!hit.miss, "the concept reaches an established term");
-    // The answer is the concept's best-established token, `route`
-    // (47 identifier files), and the sites prove it. This is the
-    // lookup's boundary, stated rather than papered over: `judge` is
-    // the token a human means (16 identifier files), but no compound
-    // `judge_route` is established in this tree — `route_judged` is —
-    // so establishment decides and the most-established token wins.
-    // A human picks the head noun; a lexical lookup cannot, which is
-    // exactly why the vector channel is not consulted for naming.
-    assert_eq!(hit.term.as_deref(), Some("route"));
+    // The answer is the compound `judge_route`, and this is the
+    // compound-preference rule proved on the REAL tree: the agent loop
+    // writes the compound (agent.rs carries `judge_route` — the
+    // route-judging helper the delegation work added), so the compound
+    // answers. The retired boundary, recorded for honesty: when this
+    // proof was written the tree carried only the parts (`route`,
+    // `judge`) and `route_judged`, no compound `judge_route` — so
+    // establishment decided and the most-established token, `route`
+    // (40 identifier files), won over the token a human means, `judge`
+    // (16). A human picks the head noun; a lexical lookup cannot, which
+    // is exactly why the vector channel is not consulted for naming.
+    // Once the tree writes the compound, the compound is the answer.
+    assert_eq!(hit.term.as_deref(), Some("judge_route"));
     assert!(hit.from_identifiers);
     assert!(!hit.sites.is_empty(), "the answer carries its file:line sites");
     // `judge` itself is established, one key down, with its own sites.
@@ -613,10 +617,14 @@ fn the_proof_the_redacted_row_stream_reaches_the_calibration_stream() {
 fn the_proof_two_concepts_come_back_as_honest_misses() {
     let vocabulary = vocabulary(&repo_root());
     // Every token of both concepts verified absent from the tree (grep
-    // over src/, docs/, services/, CLAUDE.md): a concept with no
-    // established term is an honest miss — not an empty list, and not a
-    // ranked list of near-synonyms.
-    for concept in ["the frobnicator gizmo", "the umbrella xylophone"] {
+    // over src/, docs/, services/, CLAUDE.md — zero hits for either
+    // word): a concept with no established term is an honest miss — not
+    // an empty list, and not a ranked list of near-synonyms. The pair
+    // is deliberately fresh nonsense: the previous pair's first word
+    // became an identifier in the tree (a test fixture named it), which
+    // retired its own miss — the vocabulary is derived from the tree,
+    // so a proof of absence is only as durable as the word's obscurity.
+    for concept in ["the zorbnicator gadget", "the umbrella xylophone"] {
         let miss = lookup_in(&vocabulary, concept);
         assert!(miss.miss, "{concept} must come back as an honest miss");
         assert!(miss.term.is_none());

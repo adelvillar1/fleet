@@ -413,13 +413,23 @@ fn a_lanes_fail_open_parses_its_status_and_names_its_reason() {
 
 // --- the grade ---
 
+/// The provider the preference table maps `hard` to today — derived,
+/// never named. The judge grades a row against this same table, so a
+/// fixture built from it can never disagree with the grader, and when
+/// the owner's table moves the fixtures move with it instead of
+/// breaking. Panics if the table ever stops mapping `hard`, which
+/// would be a table bug, not a fixture one.
+fn hard_target() -> &'static str {
+    crate::route::workload_candidate("hard").expect("the table maps `hard`")
+}
+
 #[test]
 fn the_grade_is_right_when_the_lanes_workload_maps_to_the_candidate_that_served() {
     let route = route_row(
         "2026-10-14T12:00:00Z",
-        "zai-coding-plan",
+        hard_target(),
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[("router-kit", "failed", Some("auth")), (hard_target(), "served", None)],
         "a1b2c3d4e5f60718",
     );
     let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
@@ -427,25 +437,25 @@ fn the_grade_is_right_when_the_lanes_workload_maps_to_the_candidate_that_served(
     assert_eq!(judgment.verdict, VERDICT_RIGHT);
     assert!((judgment.confidence - 0.91).abs() < 1e-9);
     assert!(judgment.reason.contains("`hard`"), "{}", judgment.reason);
-    assert!(judgment.reason.contains("zai-coding-plan"), "{}", judgment.reason);
+    assert!(judgment.reason.contains(hard_target()), "{}", judgment.reason);
 }
 
 #[test]
 fn the_grade_is_insufficient_when_a_failover_followed_the_served_turn() {
-    // The lane says `hard` → zai; the walk tried zai, it failed on an
-    // availability class, and mimo served in its place. The owner's
-    // third vector: the direction was RIGHT, but the minima was not
-    // reached for want of a companion (the required provider's
-    // availability). It is not a wrong — a wrong drove away — and it is
-    // not a right either, because the right provider never served. The
-    // failover must not skip mimo on it.
+    // The lane says `hard` → the table's target; the walk tried that
+    // target, it failed on an availability class, and mimo served in
+    // its place. The owner's third vector: the direction was RIGHT,
+    // but the minima was not reached for want of a companion (the
+    // required provider's availability). It is not a wrong — a wrong
+    // drove away — and it is not a right either, because the right
+    // provider never served. The failover must not skip mimo on it.
     let route = route_row(
         "2026-10-14T12:00:00Z",
         "xiaomi-mimo",
         "hard",
         &[
             ("router-kit", "failed", Some("auth")),
-            ("zai-coding-plan", "failed", Some("rate-limit")),
+            (hard_target(), "failed", Some("rate-limit")),
             ("xiaomi-mimo", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -467,9 +477,9 @@ fn the_grade_is_insufficient_when_the_answer_needed_the_escalation_leg() {
     // companion that is the leg itself.
     let mut route = route_row(
         "2026-10-14T12:00:00Z",
-        "zai-coding-plan",
+        hard_target(),
         "hard",
-        &[("zai-coding-plan", "served", None)],
+        &[(hard_target(), "served", None)],
         "a1b2c3d4e5f60718",
     );
     route.verdict = "escalate".to_string();
@@ -489,9 +499,9 @@ fn the_grade_is_insufficient_when_the_attempt_succeeded_but_the_task_did_not_com
     // is not actionable (the plan's C1).
     let route = route_row(
         "2026-10-14T12:00:00Z",
-        "zai-coding-plan",
+        hard_target(),
         "hard",
-        &[("zai-coding-plan", "served", None)],
+        &[(hard_target(), "served", None)],
         "a1b2c3d4e5f60718",
     );
     let turn = turn_row("a1b2c3d4e5f60718", "failed", "failed");
@@ -516,9 +526,9 @@ fn the_stalled_reason_names_the_companion_each_stop_reason_was_missing() {
     // companion" would leave the operator to guess which.
     let route = route_row(
         "2026-10-14T12:00:00Z",
-        "zai-coding-plan",
+        hard_target(),
         "hard",
-        &[("zai-coding-plan", "served", None)],
+        &[(hard_target(), "served", None)],
         "a1b2c3d4e5f60718",
     );
     let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
@@ -546,9 +556,9 @@ fn an_owner_interrupted_run_grades_on_the_selection_alone() {
     // prevent.
     let route = route_row(
         "2026-10-14T12:00:00Z",
-        "zai-coding-plan",
+        hard_target(),
         "hard",
-        &[("zai-coding-plan", "served", None)],
+        &[(hard_target(), "served", None)],
         "a1b2c3d4e5f60718",
     );
     let turn = turn_row("a1b2c3d4e5f60718", "failed", "interrupted");
@@ -561,7 +571,7 @@ fn an_owner_interrupted_run_grades_on_the_selection_alone() {
         "2026-10-14T12:00:00Z",
         "router-kit",
         "hard",
-        &[("router-kit", "served", None), ("zai-coding-plan", "skipped", Some("no-key"))],
+        &[("router-kit", "served", None), (hard_target(), "skipped", Some("no-key"))],
         "a1b2c3d4e5f60718",
     );
     let judgment = grade(&wrong, Some(&turn), &reply);
@@ -574,9 +584,9 @@ fn a_completed_turn_keeps_a_right_selection_right() {
     // the third state is read from the outcome rather than assumed.
     let route = route_row(
         "2026-10-14T12:00:00Z",
-        "zai-coding-plan",
+        hard_target(),
         "hard",
-        &[("zai-coding-plan", "served", None)],
+        &[(hard_target(), "served", None)],
         "a1b2c3d4e5f60718",
     );
     let turn = turn_row("a1b2c3d4e5f60718", "ok", "completed");
@@ -606,15 +616,15 @@ fn a_wrong_direction_outranks_an_incomplete_one() {
 
 #[test]
 fn the_grade_is_wrong_when_a_different_candidate_served_and_the_required_one_was_skipped() {
-    // The lane says `hard` → zai; the walk never tried zai (it has no
-    // key, so it was skipped) and the head served.
+    // The lane says `hard` → the table's target; the walk never tried
+    // it (it has no key, so it was skipped) and the head served.
     let route = route_row(
         "2026-10-14T12:00:00Z",
         "router-kit",
         "hard",
         &[
             ("router-kit", "served", None),
-            ("zai-coding-plan", "skipped", Some("no-key")),
+            (hard_target(), "skipped", Some("no-key")),
         ],
         "a1b2c3d4e5f60718",
     );
@@ -626,17 +636,17 @@ fn the_grade_is_wrong_when_a_different_candidate_served_and_the_required_one_was
 
 #[test]
 fn the_grade_is_wrong_when_the_required_candidate_failed_in_a_way_that_was_its_own() {
-    // The lane says `hard` → zai; zai was tried and failed on a
-    // client-error, which is the request's own shape rather than the
-    // provider's availability. A provider that answers 400 for this
-    // workload is the wrong provider for it.
+    // The lane says `hard` → the table's target; that target was tried
+    // and failed on a client-error, which is the request's own shape
+    // rather than the provider's availability. A provider that answers
+    // 400 for this workload is the wrong provider for it.
     let route = route_row(
         "2026-10-14T12:00:00Z",
         "xiaomi-mimo",
         "hard",
         &[
             ("router-kit", "failed", Some("auth")),
-            ("zai-coding-plan", "failed", Some("client-error")),
+            (hard_target(), "failed", Some("client-error")),
             ("xiaomi-mimo", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -655,11 +665,11 @@ fn an_unmapped_workload_grade_against_the_declared_head() {
     let route = route_row(
         "2026-10-14T12:00:00Z",
         "router-kit",
-        "quick",
+        "something_else",
         &[("router-kit", "served", None)],
         "a1b2c3d4e5f60718",
     );
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("quick", 0.7)).unwrap());
+    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("something_else", 0.7)).unwrap());
     let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_RIGHT);
     assert!(judgment.reason.contains(crate::route::HEAD_ID), "{}", judgment.reason);
@@ -1302,9 +1312,9 @@ async fn a_days_route_rows_are_judged_beside_themselves_and_the_rows_land() {
     let root = scratch("judged-calib");
     let route = route_row(
         "2026-10-14T12:00:00Z",
-        "zai-coding-plan",
+        hard_target(),
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[("router-kit", "failed", Some("auth")), (hard_target(), "served", None)],
         "a1b2c3d4e5f60718",
     );
     write_day(&root, &day(), &[route_row_value(route.clone())]);
@@ -1313,7 +1323,7 @@ async fn a_days_route_rows_are_judged_beside_themselves_and_the_rows_land() {
     assert!(outcome.refusal.is_none(), "{:?}", outcome.refusal);
     assert_eq!(outcome.judged.len(), 1, "{:?}", outcome.refusals);
     let row = &outcome.judged[0];
-    assert_eq!(row.provider, "zai-coding-plan");
+    assert_eq!(row.provider, hard_target());
     assert_eq!(row.verdict, VERDICT_RIGHT);
     // The shape rides the row, so the calibration is keyed by
     // (provider × shape) rather than averaged per provider.
@@ -1334,14 +1344,14 @@ async fn a_days_route_rows_are_judged_beside_themselves_and_the_rows_land() {
     assert!((day_spend(&root, &home, &day()) - 0.0002).abs() < 1e-9);
     let calibration = calib::calibration(&rows);
     assert_eq!(calibration.len(), 1);
-    assert_eq!(calibration[0].provider, "zai-coding-plan");
+    assert_eq!(calibration[0].provider, hard_target());
     assert_eq!(calibration[0].workload, "hard");
     assert_eq!(calibration[0].judged, 1);
     // The card is a card, never a dump, and it names the key the owner
     // addresses.
     let text = plain(&outcome.card);
     assert!(text.contains("judged"), "{text}");
-    assert!(text.contains("zai-coding-plan"), "{text}");
+    assert!(text.contains(hard_target()), "{text}");
     assert!(text.contains(&calib::route_key(&route)), "{text}");
     assert!(outcome.card.contains('\u{250c}') && outcome.card.contains('\u{2514}'), "{}", outcome.card);
     for line in outcome.card.lines() {

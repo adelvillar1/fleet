@@ -2613,19 +2613,35 @@ fn sys1_answer(label: &str, confidence: f64) -> serde_json::Value {
     })
 }
 
+/// The provider the preference table maps `hard` to today — derived,
+/// never named. The judge grades a route row against this same table,
+/// so a corpus built from it can never disagree with the grader, and
+/// when the owner's table moves (a different provider preferred for
+/// `hard`) the corpus moves with it instead of breaking. The fallback
+/// is the declared head, which is what the judge itself falls back to
+/// for an unmapped workload.
+fn hard_target() -> &'static str {
+    route::workload_candidate("hard").unwrap_or(route::HEAD_ID)
+}
+
 /// The ten route rows the scenario's day holds: eight judged routes to
-/// zai-coding-plan (the `hard` workload's target) and two judged routes
-/// to the declared head, with the first a full walk.
+/// the `hard` workload's target in the preference table and two judged
+/// routes to the declared head, with the first a full walk.
 fn calibration_day_rows() -> Vec<serde_json::Value> {
+    let hard = hard_target();
     (0..10u32)
         .map(|index| {
+            // The eight `hard` rows are served by the table's target;
+            // the two `quick` rows are served by the head. The lane
+            // re-judges every row as `hard`, so the quick rows grade
+            // wrong — the required candidate never served on them.
             let (provider, workload) = if index < 8 {
-                ("zai-coding-plan", "hard")
+                (hard, "hard")
             } else {
-                ("router-kit", "quick")
+                (route::HEAD_ID, "quick")
             };
             let attempts: Vec<(&str, &str, &str)> = if index == 0 {
-                vec![("router-kit", "failed", "auth"), ("zai-coding-plan", "served", "")]
+                vec![(route::HEAD_ID, "failed", "auth"), (hard, "served", "")]
             } else {
                 vec![(provider, "served", "")]
             };
@@ -2650,12 +2666,14 @@ fn write_day_file(root: &Path, day: &str, rows: &[serde_json::Value]) {
 
 /// The three roster candidates the ride-back's checks walk.
 fn calibration_roster() -> Vec<route::Resolved> {
-    let candidate = |id: &str, base_url: &str, key_env: &str, model: &str| route::Resolved {
+    let candidate = |id: &str, base_url: &str, key_env: &str, models: &[&str]| route::Resolved {
         candidate: route::Candidate {
             id: id.to_string(),
             base_url: base_url.to_string(),
             key_env: key_env.to_string(),
-            model: model.to_string(),
+            models: models.iter().map(|model| model.to_string()).collect(),
+            billing: route::Billing::Plan,
+            kind: route::CandidateKind::Http,
             enabled: true,
             key_required: false,
             disabled_reason: None,
@@ -2663,13 +2681,13 @@ fn calibration_roster() -> Vec<route::Resolved> {
         key: None,
     };
     vec![
-        candidate("router-kit", "http://127.0.0.1:8300/v1", "AGNOSTIC_ROUTER_TOKEN", "auto"),
-        candidate("zai-coding-plan", "https://api.z.ai", "ZAI_CODING_API_KEY", "GLM-5.3-Flash"),
+        candidate("router-kit", "http://127.0.0.1:8300/v1", "AGNOSTIC_ROUTER_TOKEN", &["auto"]),
+        candidate("zai-coding-plan", "https://api.z.ai", "ZAI_CODING_API_KEY", &["GLM-5.3-Flash"]),
         candidate(
             "xiaomi-mimo",
             "https://token-plan-sgp.xiaomimimo.com/v1",
             "XIAOMI_MIMO_API_KEY",
-            "mimo-v2.6-flash",
+            &["mimo-v2.6-flash"],
         ),
     ]
 }
@@ -2826,17 +2844,17 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     ));
     drop(lane);
 
-    // The fit rule: zai carries eight rows spanning 0.35, so it is fit;
-    // the head carries two, so it is not — and an unfit provider renders
-    // no score.
+    // The fit rule: the `hard` target carries eight rows spanning 0.35,
+    // so it is fit; the head carries two, so it is not — and an unfit
+    // provider renders no score.
     let cells = calib::calibration(&rows);
-    let zai = calib::cell(&cells, "zai-coding-plan", "hard");
-    let kit = calib::cell(&cells, "router-kit", "quick");
-    checks.push(("the calibration names both cells", zai.is_some() && kit.is_some()));
-    let (Some(zai), Some(kit)) = (zai, kit) else {
+    let hard_cell = calib::cell(&cells, hard_target(), "hard");
+    let kit = calib::cell(&cells, route::HEAD_ID, "quick");
+    checks.push(("the calibration names both cells", hard_cell.is_some() && kit.is_some()));
+    let (Some(hard_cell), Some(kit)) = (hard_cell, kit) else {
         return grade(NAME, family, &checks);
     };
-    checks.push(("the eight-row cell counts eight rows", zai.judged == 8));
+    checks.push(("the eight-row cell counts eight rows", hard_cell.judged == 8));
     checks.push(("the two-row cell counts two rows", kit.judged == 2));
     // The scripted seam answers each ask at its own walked confidence,
     // keyed on the route row's input hash — so the eight `hard` rows
@@ -2852,9 +2870,9 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     ));
     checks.push((
         "the eight-row cell is fit on its span and needs no more of it",
-        zai.fit == calib::FitState::Fit
-            && (zai.confidence_span - 0.35).abs() < 1e-9
-            && zai.needs_span() == 0.0,
+        hard_cell.fit == calib::FitState::Fit
+            && (hard_cell.confidence_span - 0.35).abs() < 1e-9
+            && hard_cell.needs_span() == 0.0,
     ));
     checks.push((
         "the two-row cell names what it needs and draws no score",
@@ -2863,7 +2881,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     ));
     checks.push((
         "an unfit cell informs nothing however wrong it looks",
-        !zai.informs_failover() && !kit.informs_failover(),
+        !hard_cell.informs_failover() && !kit.informs_failover(),
     ));
 
     // The conservative ride-back: a fit-and-wrong provider is skipped in
@@ -3012,7 +3030,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
                 "hard",
                 &[
                     ("router-kit", "failed", "auth"),
-                    ("zai-coding-plan", "failed", "rate-limit"),
+                    (hard_target(), "failed", "rate-limit"),
                     ("xiaomi-mimo", "served", ""),
                 ],
                 &format!("{index:032x}"),
