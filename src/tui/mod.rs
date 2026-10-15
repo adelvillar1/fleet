@@ -252,6 +252,14 @@ fn dispatch_key(
         open_lanes_view(app, lanes_tx);
         return;
     }
+    // The settings pane reads the home's files and writes through the
+    // same writer the CLI calls, so the loop hands the state machine the
+    // home and the pane does the rest. No lane call: a setting is a file
+    // read, never an ask.
+    if matches!(action, Action::OpenSettings) {
+        app.open_settings(home.to_path_buf());
+        return;
+    }
     // The explanation card is a read of the beat's own artifact — the
     // file its row indexes — so the loop reads it and hands the state
     // machine the lines. No lane call: the card is what was already

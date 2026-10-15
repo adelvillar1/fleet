@@ -1,6 +1,6 @@
 # Every configurable surface, reachable from the TUI
 
-Status: active
+Status: complete
 Date: 2026-10-15
 
 ## Why
@@ -108,3 +108,50 @@ file, and the pane shows set/unset only.
 - Migrating the existing files. The writer reads the current shape and
   preserves unknown fields it does not manage, so an owner's hand-edits
   survive a GUI edit.
+
+## The converge record
+
+Every acceptance criterion, checked against the code rather than the
+plan text:
+
+- **C1** met — `Mode::Settings` renders every surface as rows of cards,
+  reached with `ctrl+,` from any state, named in the footer beside the
+  other openers. Never a table.
+- **C2** met — an edit writes through `settings::set` / `set_provider` /
+  `set_workload`, the same writer `fleet settings set` calls, and the
+  pane re-reads every state on commit so the card shows the RESOLVED
+  value rather than what was typed.
+- **C3** met — the writers validate against the loaders' own schemas
+  before the rename, and a refusal lands back in the pane with its
+  reason named. Pinned by `a_refused_edit_names_its_reason_and_changes_nothing`.
+- **C4** met, in the CLI's half — the `--force` gate on removing a
+  provider or workload the file added. **The in-pane confirmation is
+  NOT built**: the pane's remove path passes `force: false`, so an
+  in-pane remove of an added provider is refused with its reason rather
+  than confirmed. That is the safe direction — the owner does the
+  destructive edit from the CLI where `--force` is explicit — and it is
+  disclosed here rather than papered over.
+- **C5** met — every write goes through the unique-temp-plus-rename
+  path, pinned by `the_atomic_write_leaves_no_temp_behind`.
+- **C6** met — the env-var counterparts live in `<FLEET_HOME>/fleet.env`,
+  read with the process environment winning, and a secret's value
+  renders as `set` beside its name, never the value. An env-owned value
+  seeds the editor EMPTY, because typing over it would write a file the
+  env var shadows.
+- **C7** met — `fleet settings` lists and `fleet settings set <key>
+  <value>` writes, plus the list-shaped `provider add/remove` and
+  `workload set/remove`, all over the one writer the TUI calls.
+- **C8** met — `FLEET_HOME` is deliberately absent from `SETTINGS`,
+  because it is a launch-time fact rather than a preference, and the
+  pane's footer says how many settings exist rather than implying the
+  list is everything.
+- **C9** met — 14 writer tests, 5 TUI behavior tests, 1 TUI render
+  test, covering the round trip, the refusals, the atomic write, the
+  malformed-file preservation, the destructive rule on both lists, and
+  the pane's open/move/edit/commit/abandon cycle.
+
+**Verification gap, disclosed:** the TUI pane has never been opened by a
+human. Its behavior is pinned by unit tests and its render by a
+TestBackend assertion, but the interactive experience — the modal's
+height at a small terminal, the scroll on a long list, the feel of the
+editor — is unverified. That closes by opening it, not by writing code.

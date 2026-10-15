@@ -106,6 +106,10 @@ pub enum Mode {
     Lanes,
     /// The latest explanation card is open over the conversation.
     Explain,
+    /// The settings pane is open over the conversation.
+    Settings,
+    /// One setting is being edited inside the settings pane.
+    SettingsEdit,
 }
 
 /// One key press, translated for the current mode.
@@ -133,6 +137,12 @@ pub enum Action {
     Quit,
     /// Open the session picker.
     OpenSessions,
+    /// Open the settings pane.
+    OpenSettings,
+    /// Commit the setting being edited.
+    SettingsCommit,
+    /// Abandon the setting being edited.
+    SettingsCancel,
     /// Open the lane health view.
     OpenLanes,
     /// Open the latest explanation card.
@@ -234,6 +244,17 @@ pub struct App {
     /// modal is open.
     pub lanes_probe: u64,
     pub selected: usize,
+    /// The settings pane's rows, exactly as `settings::states` returns
+    /// them, and the one being edited: its key and the buffer the owner
+    /// types into. The buffer starts as the setting's current value, so
+    /// an edit is a change rather than a retype.
+    pub settings: Vec<crate::settings::State>,
+    pub settings_home: Option<std::path::PathBuf>,
+    pub editing: Option<(String, String)>,
+    /// A settings write's outcome, named on one line rather than
+    /// silently changing nothing: a refusal the loader would have made
+    /// is shown here, in the pane, where the owner is looking.
+    pub settings_note: Option<String>,
     pub approval: Option<ApprovalPrompt>,
     pub status: Status,
     /// A failure banner for the conversation pane.
@@ -266,6 +287,10 @@ impl App {
             lanes_loading: false,
             lanes_probe: 0,
             explain: None,
+            settings: Vec::new(),
+            settings_home: None,
+            editing: None,
+            settings_note: None,
             selected: 0,
             approval: None,
             status: Status {
@@ -300,6 +325,55 @@ impl App {
                     Some(Effect::Answer(decision))
                 }
                 // Quitting under a modal drops the responder, which denies.
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                _ => None,
+            },
+            // The settings pane is a menu over a typed list: move,
+            // edit the selection, close. Editing is the only way out
+            // that changes anything, and the writer is the CLI's own.
+            Mode::Settings => match action {
+                Action::Move(delta) => {
+                    self.move_selection(delta, self.settings.len());
+                    None
+                }
+                Action::Pick => {
+                    self.edit_selected_setting();
+                    None
+                }
+                Action::CloseOverlay => {
+                    self.mode = Mode::Chat;
+                    self.settings_note = None;
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                _ => None,
+            },
+            // The editor types, commits, or abandons. A commit that the
+            // loader's own validation refuses lands back in the pane
+            // with its reason named, having changed nothing.
+            Mode::SettingsEdit => match action {
+                Action::Input(character) => {
+                    self.edit_push(character);
+                    None
+                }
+                Action::Backspace => {
+                    self.edit_pop();
+                    None
+                }
+                Action::Submit => {
+                    self.commit_setting();
+                    None
+                }
+                Action::CloseOverlay => {
+                    self.cancel_setting();
+                    None
+                }
                 Action::Quit => {
                     self.should_quit = true;
                     Some(Effect::Quit)
@@ -586,6 +660,106 @@ impl App {
         self.sessions = sessions;
         self.selected = 0;
         self.mode = Mode::Sessions;
+    }
+
+    /// Open the settings pane over the conversation, with the states the
+    /// writer reads. The home rides the pane because a write needs it,
+    /// and a pane that could show a value it could not change would be a
+    /// lie about what is configurable here.
+    pub fn open_settings(&mut self, home: std::path::PathBuf) {
+        self.settings = crate::settings::states(&home);
+        self.settings_home = Some(home);
+        self.editing = None;
+        self.settings_note = None;
+        self.selected = 0;
+        self.mode = Mode::Settings;
+    }
+
+    /// Begin editing the selected setting. The buffer starts as the
+    /// setting's current value, so an edit is a change rather than a
+    /// retype — and a value the environment owns starts empty, because
+    /// typing over it would be writing a file the env var shadows.
+    pub fn edit_selected_setting(&mut self) {
+        let Some(state) = self.settings.get(self.selected) else { return };
+        let seed = if state.from_env {
+            String::new()
+        } else {
+            state.value.clone().unwrap_or_default()
+        };
+        self.editing = Some((state.key.to_string(), seed));
+        self.settings_note = None;
+        self.mode = Mode::SettingsEdit;
+    }
+
+    /// Commit the setting being edited, through the same writer the CLI
+    /// calls. The pane then re-reads every state, so the card the owner
+    /// is looking at is the resolved value rather than what they typed —
+    /// a clamped similarity or a rejected word shows its real result.
+    pub fn commit_setting(&mut self) {
+        let Some((key, buffer)) = self.editing.take() else { return };
+        let Some(home) = self.settings_home.clone() else { return };
+        let outcome = if key.starts_with("provider.add:") {
+            crate::settings::set_provider(&home, &buffer).map(|id| format!("provider `{id}` written"))
+        } else if key.starts_with("provider.remove:") {
+            crate::settings::remove_provider(&home, &buffer, false)
+                .map(|()| "provider override removed".to_string())
+        } else if key.starts_with("workload.set:") {
+            let candidates: Vec<String> = buffer
+                .split(',')
+                .map(|candidate| candidate.trim().to_string())
+                .filter(|candidate| !candidate.is_empty())
+                .collect();
+            crate::settings::set_workload(&home, &buffer, &candidates)
+                .map(|()| "workload written".to_string())
+        } else if key.starts_with("workload.remove:") {
+            crate::settings::remove_workload(&home, &buffer, false)
+                .map(|()| "workload preference removed".to_string())
+        } else {
+            crate::settings::set(&home, &key, &buffer).map(|()| "written".to_string())
+        };
+        match outcome {
+            Ok(message) => {
+                self.settings_note = Some(message);
+                self.settings = crate::settings::states(&home);
+            }
+            Err(error) => {
+                // A refusal is a value the owner reads: it names the rule
+                // that stopped the edit, and nothing changed.
+                self.settings_note = Some(error);
+            }
+        }
+        self.mode = Mode::Settings;
+    }
+
+    /// Abandon the edit, leaving the file untouched.
+    pub fn cancel_setting(&mut self) {
+        self.editing = None;
+        self.settings_note = None;
+        self.mode = Mode::Settings;
+    }
+
+    /// The key of the setting being edited, or `None` outside the editor.
+    pub fn editing_key(&self) -> Option<&str> {
+        self.editing.as_ref().map(|(key, _)| key.as_str())
+    }
+
+    /// The buffer of the setting being edited, or `None` outside it.
+    pub fn editing_buffer(&self) -> Option<&str> {
+        self.editing.as_ref().map(|(_, buffer)| buffer.as_str())
+    }
+
+    /// Push one character into the edit buffer.
+    pub fn edit_push(&mut self, character: char) {
+        if let Some((_, buffer)) = self.editing.as_mut() {
+            buffer.push(character);
+        }
+    }
+
+    /// Drop the character before the buffer's end.
+    pub fn edit_pop(&mut self) {
+        if let Some((_, buffer)) = self.editing.as_mut() {
+            buffer.pop();
+        }
     }
 
     /// Open the explanation card over the conversation, with the lines
@@ -891,6 +1065,148 @@ mod tests {
 
     fn app() -> App {
         App::new("deepseek-chat", "session-1")
+    }
+
+    /// A scratch home the settings pane can read and write.
+    fn settings_home(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fleet-tui-settings-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The pane opens over every setting, moves its selection, and
+    /// closes — the menu shape, over the writer's own states.
+    #[test]
+    fn the_settings_pane_opens_moves_and_closes() {
+        let home = settings_home("menu");
+        let mut app = app();
+        app.open_settings(home.clone());
+        assert_eq!(app.mode, Mode::Settings);
+        assert!(!app.settings.is_empty(), "the pane carries the writer's states");
+        assert_eq!(app.selected, 0);
+        app.apply(Action::Move(1));
+        assert_eq!(app.selected, 1);
+        // The move is clamped at the list's end rather than wrapping.
+        for _ in 0..app.settings.len() + 4 {
+            app.apply(Action::Move(1));
+        }
+        assert_eq!(app.selected, app.settings.len() - 1);
+        app.apply(Action::Move(-99));
+        assert_eq!(app.selected, 0);
+        app.apply(Action::CloseOverlay);
+        assert_eq!(app.mode, Mode::Chat);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// An edit seeds from the setting's current value, commits through
+    /// the CLI's own writer, and the pane re-reads so the card shows the
+    /// RESOLVED value rather than what was typed — a clamped similarity
+    /// or a rejected word shows its real result.
+    #[test]
+    fn an_edit_seeds_from_the_value_and_commits_through_the_writer() {
+        let home = settings_home("edit");
+        let mut app = app();
+        app.open_settings(home.clone());
+        // Select the pin and edit it.
+        let pin = app
+            .settings
+            .iter()
+            .position(|state| state.key == "pin")
+            .expect("pin is a setting");
+        app.selected = pin;
+        app.apply(Action::Pick);
+        assert_eq!(app.mode, Mode::SettingsEdit);
+        assert_eq!(app.editing_key(), Some("pin"));
+        assert_eq!(app.editing_buffer(), Some(""), "an unset value seeds empty");
+        for character in "stepfun".chars() {
+            app.apply(Action::Input(character));
+        }
+        assert_eq!(app.editing_buffer(), Some("stepfun"));
+        app.apply(Action::Submit);
+        assert_eq!(app.mode, Mode::Settings, "a commit returns to the list");
+        // The write landed, and the pane re-read it.
+        let written = app
+            .settings
+            .iter()
+            .find(|state| state.key == "pin")
+            .expect("pin");
+        assert_eq!(written.value.as_deref(), Some("stepfun"));
+        assert_eq!(written.source(), "file");
+        // And the file itself carries it.
+        let text = std::fs::read_to_string(home.join("config.json")).unwrap();
+        assert!(text.contains("stepfun"), "{text}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A refused edit lands back in the pane with its reason named and
+    /// nothing changed — the GUI is never a way around the loader's own
+    /// validation.
+    #[test]
+    fn a_refused_edit_names_its_reason_and_changes_nothing() {
+        let home = settings_home("refused");
+        let mut app = app();
+        app.open_settings(home.clone());
+        let approvals = app
+            .settings
+            .iter()
+            .position(|state| state.key == "approvals")
+            .expect("approvals is a setting");
+        app.selected = approvals;
+        app.apply(Action::Pick);
+        for character in "yolo".chars() {
+            app.apply(Action::Input(character));
+        }
+        app.apply(Action::Submit);
+        assert_eq!(app.mode, Mode::Settings);
+        let note = app.settings_note.clone().expect("the refusal is named");
+        assert!(note.contains("approvals"), "{note}");
+        assert!(note.contains("yes-guarded"), "{note}");
+        // Nothing landed.
+        assert!(std::fs::read_to_string(home.join("config.json")).is_err());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Escape abandons an edit and leaves the file untouched.
+    #[test]
+    fn escape_abandons_an_edit() {
+        let home = settings_home("abandon");
+        let mut app = app();
+        app.open_settings(home.clone());
+        let pin = app
+            .settings
+            .iter()
+            .position(|state| state.key == "pin")
+            .expect("pin");
+        app.selected = pin;
+        app.apply(Action::Pick);
+        for character in "nonsense".chars() {
+            app.apply(Action::Input(character));
+        }
+        app.apply(Action::CloseOverlay);
+        assert_eq!(app.mode, Mode::Settings);
+        assert!(app.editing.is_none());
+        assert!(std::fs::read_to_string(home.join("config.json")).is_err());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A value the environment owns seeds the editor EMPTY: typing over
+    /// it would write a file the env var shadows, which is a change that
+    /// looks like it landed and does not.
+    #[test]
+    fn an_env_owned_value_seeds_the_editor_empty() {
+        let home = settings_home("env-owned");
+        let mut app = app();
+        app.open_settings(home.clone());
+        let endpoint = app
+            .settings
+            .iter()
+            .position(|state| state.key == "FLEET_EMBEDDING_ENDPOINT")
+            .expect("the endpoint is a setting");
+        app.selected = endpoint;
+        app.apply(Action::Pick);
+        assert_eq!(app.editing_buffer(), Some(""));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The card a seeded `bash` log record becomes.

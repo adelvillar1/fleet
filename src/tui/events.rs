@@ -28,6 +28,25 @@ pub fn action_for(app: &App, key: &KeyEvent) -> Option<Action> {
             KeyCode::Char('q') if !control => Some(Action::Quit),
             _ => None,
         },
+        // The settings pane is a menu: move, edit the selection, close.
+        // Enter opens the editor rather than picking, because the pane's
+        // whole job is to change something.
+        Mode::Settings => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
+            KeyCode::Enter => Some(Action::Pick),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Char('q') if !control => Some(Action::Quit),
+            _ => None,
+        },
+        // The editor: type, backspace, commit on Enter, abandon on Esc.
+        Mode::SettingsEdit => match key.code {
+            KeyCode::Enter => Some(Action::Submit),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Backspace => Some(Action::Backspace),
+            KeyCode::Char(character) if !control && !alt => Some(Action::Input(character)),
+            _ => None,
+        },
         // The lanes view is information with a cursor, not a menu.
         Mode::Lanes => match key.code {
             KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
@@ -81,6 +100,7 @@ fn chat_action(app: &App, key: &KeyEvent, control: bool, alt: bool) -> Option<Ac
         KeyCode::PageDown => Some(Action::Scroll(-10)),
         KeyCode::Char('o') if control => Some(Action::OpenSessions),
         KeyCode::Char('l') if control => Some(Action::OpenLanes),
+        KeyCode::Char(',') if control => Some(Action::OpenSettings),
         // The latest explanation card, in the lanes' own ctrl-key family.
         KeyCode::Char('x') if control => Some(Action::OpenExplain),
         // The board pane's cycle, in the lanes' own ctrl-key family.

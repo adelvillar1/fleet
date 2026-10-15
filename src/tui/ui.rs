@@ -64,7 +64,106 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Mode::Approval => render_approval(frame, app),
         Mode::Lanes => render_lanes(frame, app),
         Mode::Explain => render_explain(frame, app),
+        Mode::Settings | Mode::SettingsEdit => render_settings(frame, app),
     }
+}
+
+/// The settings pane: every addressable knob as a scrolled list of
+/// cards — never a plain-text table, the house UX rule — with the
+/// selection marked and the editor replacing the list while a value is
+/// being typed. The value's source rides each row, because a value the
+/// environment owns would shadow a file write and the owner deserves to
+/// know that before editing it.
+fn render_settings(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_sized(SETTINGS_MODAL_PERCENT, 80, frame.area());
+    frame.render_widget(Clear, area);
+    let editing = app.mode == Mode::SettingsEdit;
+    let title = if editing {
+        format!(
+            " settings — editing {} — enter writes, esc abandons ",
+            app.editing_key().unwrap_or("")
+        )
+    } else {
+        " settings — enter edits, esc close ".to_string()
+    };
+    let block = Block::bordered()
+        .title(title)
+        .title_style(title_style())
+        .border_style(Style::new().fg(palette::ACCENT));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
+    let width = inner.width as usize;
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if editing {
+        // The editor: the buffer as one line, with the setting's own
+        // summary above it so an edit is made against what it changes.
+        if let Some((key, buffer)) = &app.editing {
+            if let Some(state) = app.settings.iter().find(|state| state.key == key) {
+                lines.push(line_of(
+                    vec![(state.summary.to_string(), Style::new().fg(palette::DIM))],
+                    width,
+                ));
+            }
+            lines.push(Line::from(Span::styled(
+                format!("> {buffer}"),
+                Style::new().fg(palette::TEXT),
+            )));
+        }
+    } else {
+        for (index, state) in app.settings.iter().enumerate() {
+            let selected = index == app.selected;
+            let marker = if selected { "\u{25b8}" } else { " " };
+            let value = state.rendered();
+            let source = state.source();
+            let key_style = if selected {
+                Style::new().fg(palette::ACCENT)
+            } else {
+                Style::new().fg(palette::TEXT)
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{marker} "), key_style),
+                Span::styled(state.key.to_string(), key_style),
+                Span::styled(
+                    format!("  {value}"),
+                    Style::new().fg(if state.from_env { palette::PENDING } else { palette::TEXT }),
+                ),
+                Span::styled(format!("  ({source})"), Style::new().fg(palette::DIM)),
+            ]));
+            if selected {
+                // The selection's own summary, indented under it: what
+                // the knob does is what the owner needs before editing.
+                lines.push(line_of(
+                    vec![(format!("  {}", state.summary), Style::new().fg(palette::DIM))],
+                    width,
+                ));
+            }
+        }
+        // The last write's outcome, named: a refusal the loader would
+        // have made is shown here rather than silently changing nothing.
+        if let Some(note) = &app.settings_note {
+            lines.push(Line::from(Span::styled(
+                format!("{note}"),
+                Style::new().fg(palette::PENDING),
+            )));
+        }
+        lines.push(Line::from(Span::styled(
+            format!("{} settings", app.settings.len()),
+            Style::new().fg(palette::DIM),
+        )));
+    }
+    let visible = inner.height as usize;
+    if lines.len() > visible {
+        let hidden = lines.len() - visible + 1;
+        lines.truncate(visible.saturating_sub(1));
+        lines.push(Line::from(Span::styled(
+            format!(" +{hidden} more"),
+            Style::new().fg(palette::DIM),
+        )));
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Every pane's title, one style: the borders stay dim, the words on them
@@ -928,7 +1027,7 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
 /// The key hints.
 fn render_footer(frame: &mut Frame<'_>, area: Rect) {
     let hints =
-        "enter send · ctrl+o sessions · ctrl+l lanes · ctrl+x explain · ctrl+b board · q quit";
+        "enter send · ctrl+o sessions · ctrl+l lanes · ctrl+, settings · ctrl+x explain · ctrl+b board · q quit";
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hints, Style::new().fg(palette::TEXT)))),
         area,
@@ -1071,6 +1170,9 @@ fn explain_height(lines: usize) -> u16 {
 /// card's own lines, drawn verbatim in a modal that scrolls. The two
 /// surfaces agree because they are the same text — the loop reads the
 /// file the beat wrote and hands the state machine its lines.
+/// The settings modal's width, as a percentage of the frame.
+const SETTINGS_MODAL_PERCENT: u16 = 70;
+
 fn render_explain(frame: &mut Frame<'_>, app: &App) {
     let [columns] = Layout::horizontal([Constraint::Percentage(EXPLAIN_MODAL_PERCENT)])
         .flex(Flex::Center)
@@ -1647,6 +1749,54 @@ fn short_id(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The settings pane renders as a scrolled list of rows, never a
+    /// plain-text table, and the editor replaces the list while a value
+    /// is being typed. The buffer is the truth.
+    #[test]
+    fn the_settings_pane_renders_its_rows_and_the_editor_replaces_them() {
+        let home = std::env::temp_dir().join(format!("fleet-tui-render-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut app = App::new("deepseek-chat", "session-1");
+        app.open_settings(home.clone());
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let text = buffer_text(terminal.backend().buffer());
+        // The pane names itself and its keys.
+        assert!(text.contains("settings"), "{text}");
+        assert!(text.contains("enter edits"), "{text}");
+        assert!(text.contains("pin"), "{text}");
+        assert!(text.contains("approvals"), "{text}");
+        // Every setting's row carries its value and source.
+        assert!(text.contains("unset"), "{text}");
+        // Now the editor: the list is replaced by the buffer.
+        app.apply(Action::Pick);
+        for character in "stepfun".chars() {
+            app.apply(Action::Input(character));
+        }
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let editing = buffer_text(terminal.backend().buffer());
+        assert!(editing.contains("enter writes"), "{editing}");
+        assert!(editing.contains("> stepfun"), "{editing}");
+        // And the list's own rows are gone from the editor.
+        assert!(!editing.contains("enter edits"), "{editing}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// One buffer's text, as one string, for a render assertion.
+    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push(buffer[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
     use crate::agent::UiEvent;
     use crate::session::SessionSummary;
     use crate::tui::app::{Action, ApprovalPrompt, App, Entry, Mode};
