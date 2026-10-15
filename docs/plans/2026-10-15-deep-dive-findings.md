@@ -1,6 +1,9 @@
 # The deep dive's findings, addressed
 
-Status: draft
+Status: active — implementation began 2026-10-15; C19 resolved by the
+owner's "implement plan as designed" with the plan's recommended
+default (the bump and the row move to after the first successful model
+response)
 Date: 2026-10-15
 
 ## Why
