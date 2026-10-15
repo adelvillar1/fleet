@@ -12,16 +12,20 @@ description (src/subagents.rs:10-30, src/tools.rs's `subagent_spec`).
 What it lacks is everything that makes delegation *learn*: a structured
 brief, a stream that records what each brief actually drove, a judge
 that grades it, roles to specialize the child, concurrency to fan out,
-control once a child is running, and the depth to delegate twice.
+control once a child is running, the depth to delegate twice, and the
+project's own vocabulary to name things the way the project already
+names them.
 
-This slice lands all six, ordered by dependency: **the brief (D1), the
-loop (D2), the roles (D3), the fan-out (D4), the control (D5), and the
-n+2 depth (D6).** The loop is the heart; D1 makes its data gradeable,
-D3 gives it an actor dimension, D4 and D5 are the mechanics the loop
-then measures, and D6 is the one place the loop's own framing bites
-back — a brief at depth 2 is a paraphrase of a paraphrase, so the
-parent chain that produced it has to be recorded from the first row
-rather than reconstructed later.
+This slice lands all seven, ordered by dependency: **the brief (D1),
+the loop (D2), the roles (D3), the fan-out (D4), the control (D5), the
+n+2 depth (D6), and the nomenclature guard (D7).** The loop is the
+heart; D1 makes its data gradeable, D3 gives it an actor dimension, D4
+and D5 are the mechanics the loop then measures, D6 is the one place
+the loop's own framing bites back — a brief at depth 2 is a paraphrase
+of a paraphrase, so the parent chain that produced it has to be
+recorded from the first row rather than reconstructed later — and D7 is
+the part that pays for the rest, because drift caught at write time
+costs one pass while drift caught in review costs a fix round.
 
 ## The formal framing (the owner's, 2026-10-14)
 
@@ -48,6 +52,17 @@ completed and whose claim verified against the child's log is
 retrieval too: a brief that is semantically near a past brief but
 carries no direction evidence must not outrank one whose shape
 demonstrably drove.
+
+**Nomenclature is the case where proximity is distrusted outright.** A
+child naming something in a fresh context generates a plausible name
+from its own priors — a near-synonym with high semantic density and no
+direction, which is the drift D7 exists to catch. The ruling's
+corollary: for naming, *direction means the term is established in this
+tree*, and a name that means the right thing and appears nowhere must
+not be surfaced as canonical. That is why the lookup is lexical and
+evidence-bearing rather than semantic: a vector search returns the
+nearest term, and the nearest term to a concept is usually the synonym
+that is the drift.
 
 ## The problem shape (PS-E, the delegation half)
 
@@ -79,7 +94,11 @@ because nothing pays attention to its direction.
   running child cannot be steered or stopped; (6) the chain stops at
   one level — `SUBAGENT_MAX_DEPTH` reads 1 and the `subagent` tool is
   outside a child's scope (src/subagents.rs:60, :69-70), so no row
-  anywhere records which brief produced which child.
+  anywhere records which brief produced which child; (7) nothing
+  retrieves the project's canonical vocabulary at the moment of naming,
+  so a fresh context invents a near-synonym — the drift caught in
+  review rather than at write time (KI-137, KI-151, KI-152, and the
+  parent's own `"r#match"`).
 
 ## Acceptance criteria
 
@@ -257,6 +276,78 @@ ten grandchild spawns observed across 587 spawn trees, none deeper).
   names it; the turn-cap inheritance holds; and a thin depth-2 cell
   reads unfit and moves nothing.
 
+### D7 — the nomenclature guard
+
+This is the part that pays for the rest. Drift caught at write time
+costs one pass; drift caught in review costs a fix round, and this
+session spent four of them. The evidence is first-person: the parent's
+own `"r#match"` (the project's convention is serde's derived `match`,
+visible in every sibling field in that file), and the children's
+KI-137 (MIT against a vendored Apache-2.0 LICENSE), KI-151 (`main`
+against the branch that was actually the tip), KI-152
+(`"escalated":false`, a state the core never produces).
+
+The root cause is the fresh-context contract doing its job. The
+canonical vocabulary is distributed across the tree's identifiers and
+the docs' decisions, and nothing retrieves it at the moment of naming.
+So a child generates a plausible name from its own priors, and the
+result is a near-synonym with high semantic density and zero
+direction.
+
+- **A lexical convention lookup.** A new tool, `convention`, taking a
+  `concept`: "what does this project already call this?" The answer is
+  the established term with its file:line sites, or a plain statement
+  that no established term exists. **Never a ranked list of
+  near-synonyms** — see the design decision.
+- **The extractor is derived, never hand-maintained.** A new module
+  derives the project's identifier vocabulary from the tree — the
+  identifiers in the source files and the doc vocabulary — ranked by
+  establishment (how many distinct files carry the term, how recently).
+  Deterministic: no model sits in the retrieval path. Bounded and
+  cached, because the tree is large (the fleet corpus is 44 sources /
+  319 entries at 36.8s to build, so the lookup cannot re-derive per
+  call).
+- **The declaration rides the brief.** D1's `context` carries the task
+  domain's vocabulary, derived by the same extractor, so the child
+  starts with the canonical words in context rather than having to
+  remember to look.
+- **The write-time guard.** On `write_file`, the new identifiers are
+  checked against the vocabulary. A novel identifier with a canonical
+  near-neighbour is **flagged in the tool result with the candidate
+  named** — the model reads it and can rename. A near-exact variant (a
+  case or separator difference from an established term) is
+  **refused**, because that is drift with no other explanation. A
+  genuinely new concept is not flagged. Conservative by construction: a
+  guard that cries wolf gets ignored, and then it is worse than
+  nothing.
+- **Drift is a D2 verdict signal, not a separate mechanism.** A
+  delegation whose child introduced a novel identifier with a
+  canonical near-neighbour grades **wrong** — it drove away from the
+  project's trajectory. Mechanically checkable by reading the child's
+  session log's `write_file` calls against the vocabulary, the same
+  join the route rows already do.
+- **The surface.** `fleet convention <concept>` at the CLI and a card
+  in the TUI — the concept, the established term, its sites, and the
+  honest "no established term" state. The guard's flag rides the
+  `write_file` result the model already reads; no new approval gate.
+- **A deterministic eval scenario** (`nomenclature-guard`): a concept
+  with an established term returns it with sites; a concept with none
+  says so; a write introducing a near-exact variant is refused naming
+  the canonical term; a novel name for an existing concept is flagged
+  with the candidate; a genuinely new concept is not flagged; a
+  drifted delegation grades wrong.
+- **The ledger as a source, named as the follow-on.** Every KI row
+  records the wrong name and the right one, which makes the ledger a
+  labelled training set of exactly this drift. Once enough rows
+  accumulate they become the extractor's third source — named here,
+  not built.
+
+**File ownership, stated rather than discovered.** The extractor and
+the lookup are a new module and build in parallel with D1–D6. The tool
+declaration shares `src/tools.rs` with D1 and the write hook shares
+`src/agent.rs` with D4, so those two pieces sequence behind them — the
+one-writer-per-path discipline the parallel slices already learned.
+
 ## Design decisions
 
 1. **The loop is reused, never forked.** D2's beat is an ordinary
@@ -297,9 +388,37 @@ ten grandchild spawns observed across 587 spawn trees, none deeper).
    deep sample move routing, and the fit rule without the cap lets an
    unbounded chain form. `SUBAGENT_MAX_DEPTH` names the cap, and a
    depth-3 call is refused structurally.
+8. **Nomenclature is the one place proximity is distrusted outright.**
+   A semantic search returns the nearest term, and the nearest term to
+   a concept is usually a synonym — which is the drift. Slice 19 made
+   direction outweigh proximity for facts; for naming, direction means
+   *the term is established in this tree*, and a name that means the
+   right thing and appears nowhere must not be surfaced as canonical.
+   The lookup is lexical, evidence-bearing, and deterministic for that
+   reason, and the vector channel is not consulted for it.
+9. **The vocabulary is derived, never hand-maintained.** A hand-written
+   conventions file goes stale and then lies — the drift it was meant
+   to prevent, one step removed. The tree is the ground truth for what
+   is established; the docs' decisions are the tiebreaker when the tree
+   and the intent disagree; the ledger's wrong-name/right-name rows are
+   the labelled record of drift that already escaped.
+10. **The guard flags, it does not forbid — except near-exact.** A
+    novel name for an existing concept is flagged with the canonical
+    candidate named, so the model can rename; a case or separator
+    variant of an established term is refused, because that is drift
+    with no other explanation. A guard that refuses legitimate new
+    names gets ignored, and an ignored guard is worse than none.
 
 ## Out of scope
 
+- A hand-maintained conventions file as the vocabulary's source. The
+  extractor derives it from the tree; a curated file goes stale and
+  then lies, which is the drift one step removed. The docs' decisions
+  remain the tiebreaker when the tree and the intent disagree.
+- The ledger as a third extractor source (D7 names it as the
+  follow-on): the wrong-name/right-name pairs are a labelled training
+  set of this exact drift, and they become a source once enough rows
+  accumulate.
 - Depth-3 delegation and beyond. Two levels is the cap this slice lands
   and the record it was drawn from (Hermes's `max_spawn_depth: 2`, with
   no depth-2 spawn observed across 587 trees); a third level is a
