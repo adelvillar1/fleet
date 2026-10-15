@@ -16,16 +16,19 @@ control once a child is running, the depth to delegate twice, and the
 project's own vocabulary to name things the way the project already
 names them.
 
-This slice lands all seven, ordered by dependency: **the brief (D1),
+This slice lands all eight, ordered by dependency: **the brief (D1),
 the loop (D2), the roles (D3), the fan-out (D4), the control (D5), the
-n+2 depth (D6), and the nomenclature guard (D7).** The loop is the
-heart; D1 makes its data gradeable, D3 gives it an actor dimension, D4
-and D5 are the mechanics the loop then measures, D6 is the one place
-the loop's own framing bites back — a brief at depth 2 is a paraphrase
-of a paraphrase, so the parent chain that produced it has to be
-recorded from the first row rather than reconstructed later — and D7 is
-the part that pays for the rest, because drift caught at write time
-costs one pass while drift caught in review costs a fix round.
+n+2 depth (D6), the nomenclature guard (D7), and the dependency graph
+(D8).** The loop is the heart; D1 makes its data gradeable, D3 gives it
+an actor dimension, D4 and D5 are the mechanics the loop then measures,
+D6 is the one place the loop's own framing bites back — a brief at
+depth 2 is a paraphrase of a paraphrase, so the parent chain that
+produced it has to be recorded from the first row rather than
+reconstructed later — D7 is the part that pays for the rest, because
+drift caught at write time costs one pass while drift caught in review
+costs a fix round, and D8 is what makes the other seven finish sooner:
+the graph lets a unit start the moment its prerequisites clear instead
+of waiting for its slowest sibling.
 
 ## The formal framing (the owner's, 2026-10-14)
 
@@ -64,6 +67,16 @@ evidence-bearing rather than semantic: a vector search returns the
 nearest term, and the nearest term to a concept is usually the synonym
 that is the drift.
 
+**And the dependency score is a distance to the minima.** A node's
+score is the magnitude of work standing between it and unlocked; each
+verified completion is a vector with positive direction that subtracts
+from it. The score is monotone by construction, so it can be trusted
+in a way a boolean gate cannot: a node four dependencies deep is
+visibly closer than one none deep, the highest score is the longest
+chain, and the node that appears in the most scores is the one whose
+completion moves the most work. The estimate shapes the path to zero;
+only a verified completion moves the score, so the zero is exact.
+
 ## The problem shape (PS-E, the delegation half)
 
 "**Which brief shapes actually drive toward done, and which only look
@@ -98,7 +111,12 @@ because nothing pays attention to its direction.
   retrieves the project's canonical vocabulary at the moment of naming,
   so a fresh context invents a near-synonym — the drift caught in
   review rather than at write time (KI-137, KI-151, KI-152, and the
-  parent's own `"r#match"`).
+  parent's own `"r#match"`); (8) orchestration runs in waves, so a unit
+  whose prerequisites cleared early waits for its slowest sibling —
+  the orchestrator gates on reports rather than on the artifacts that
+  would let a unit start, which is the same self-report rule the
+  `subagent` tool's own description states, unapplied to the layer
+  above it.
 
 ## Acceptance criteria
 
@@ -348,6 +366,81 @@ declaration shares `src/tools.rs` with D1 and the write hook shares
 `src/agent.rs` with D4, so those two pieces sequence behind them — the
 one-writer-per-path discipline the parallel slices already learned.
 
+### D8 — the dependency graph and the dependency score
+
+Orchestration today runs in **waves**: a batch is dispatched, the
+orchestrator waits for all of it, then acts. A unit whose prerequisites
+cleared at minute five waits for a sibling that needed fifty.
+
+The cost is first-person and recent. Slice 19's fix round ran 53m47s
+and committed `e3ea0e2` near its end; the eval fix that needed only
+that commit sat idle until the round's *report* arrived, then ran. And
+slice 18's `src/eval.rs` change was held for the full 54 minutes by a
+file-ownership carve-out expressed as a hand-made rule in a brief —
+which a graph would have carried as a resource edge, and which would
+have let the change start the moment the file was free.
+
+The root cause is that the orchestrator gates on **reports, not
+facts**. A child's summary is a claim; the commit landing is the fact.
+(The discipline that built fleet already knows this — the `subagent`
+tool's own description says the summary is the child's report, not
+evidence — and the orchestration around it did not follow its own
+rule.)
+
+- **A declared graph.** Units of work are nodes with named
+  prerequisites, declared before dispatch rather than discovered
+  mid-flight. A node with no prerequisites is ready immediately.
+- **The dependency score.** Each node carries a **dependency score**:
+  the total remaining work in its dependency closure, computed from
+  every unfinished dependency's estimated cost and, recursively,
+  theirs. A verified completion subtracts that node's cost from every
+  dependent's score. The score is monotone — it only falls — and
+  **zero means unlocked**: every dependency's artifact is verified.
+  This is the critical-path method, and it buys four things a boolean
+  "all parents done" gate cannot:
+  - *Progress is visible.* A node four of five dependencies deep reads
+    differently from one none deep, so the graph breathes instead of
+    sitting binary.
+  - *The critical path names itself.* The highest score is the longest
+    chain, so the surface shows what is actually blocking the most
+    work rather than making the owner infer it from silence.
+  - *Unlock ordering falls out.* To drop the most scores soonest,
+    finish the node that appears in the most of them — a scheduling
+    decision the score answers directly.
+  - *Stall detection is free.* A score that has not moved means a
+    dependency is stuck, which a wave pattern reports only when the
+    whole batch times out.
+- **Where the costs come from.** Declared by the orchestrator when it
+  creates the node, and corrected by D2's calibration as actual costs
+  accumulate — so the estimates improve exactly as the loop closes,
+  and a shape whose briefs have historically cost N turns is estimated
+  at N. **The estimate affects only ordering and display; the zero is
+  exact,** because it is computed from verified completions rather
+  than from the estimates. A wrong estimate misorders the graph; it
+  cannot unlock a node whose dependency never landed.
+- **Unlock is two conditions, both necessary.** Score zero AND no
+  resource conflict. A node whose dependencies are all verified can
+  still be held by a running sibling on the same path — the resource
+  edge, D4's one-writer discipline generalized from tool calls to
+  delegation nodes — and the render names which of the two is holding
+  it.
+- **Dispatch to the bound.** Unlocked nodes are dispatched up to the
+  concurrency bound (D4's named constant); a node that unlocks
+  mid-flight starts without waiting for the wave to finish.
+- **The surface.** The graph renders as cards — nodes with status
+  dots, each carrying its score as a readiness bar beside the raw
+  remaining-work number, the edges named, the critical path
+  highlighted, and what is blocking what — so the owner sees *why*
+  something is waiting and how much work stands between it and
+  unlocked.
+- **A deterministic eval scenario** (`dependency-graph`): nodes that
+  clear at different times dispatch the later one without waiting for
+  the wave; a verified completion drops every dependent's score by the
+  completed node's cost and the arithmetic is pinned; a resource
+  conflict holds a zero-score node and names the conflict; a node
+  whose prerequisite failed does not unlock and its reason is named;
+  the render names the critical path.
+
 ## Design decisions
 
 1. **The loop is reused, never forked.** D2's beat is an ordinary
@@ -408,6 +501,37 @@ one-writer-per-path discipline the parallel slices already learned.
     variant of an established term is refused, because that is drift
     with no other explanation. A guard that refuses legitimate new
     names gets ignored, and an ignored guard is worse than none.
+11. **The resource constraint is the safety net; the graph is the
+    optimization.** A missing dependency edge costs serialization — the
+    node waits, and nothing breaks. An unmodeled resource edge costs
+    corruption: two children write one path and the tree is wrong in a
+    way no later gate catches cleanly (KI-172/173/177, three separate
+    occurrences of exactly this). So the graph errs toward edges, and
+    the resource constraint is mandatory rather than advisory. Land
+    both or neither — a graph without the constraint turns a scheduling
+    bug into a corrupted tree.
+12. **The score's estimates order the graph; they never gate it.** A
+    cost estimate can be wrong, and a wrong estimate would be
+    intolerable if it decided whether a node unlocks. It does not: the
+    score falls only on a *verified* completion, so zero is exact by
+    construction — every dependency's artifact is confirmed — and the
+    estimate shapes only the path to zero (the ordering, the critical
+    path, the readiness bar). D2's calibration corrects the estimates
+    as actual costs accumulate, so the display sharpens while the gate
+    stays sound.
+13. **Unlock is score-zero AND resource-free, and the render says
+    which.** A node can be fully unblocked by its dependencies and
+    still held by a sibling on its path. Collapsing the two into one
+    "blocked" state would hide the difference between "waiting on
+    work" and "waiting on a lock," and those call for different
+    actions from the owner.
+14. **Facts gate; reports corroborate.** The score falls on a verified
+    artifact, never on a child's word. This is the `subagent` tool's
+    own rule — its description already says the summary is the child's
+    report, not evidence — applied to the orchestration layer above
+    it, which is where it was being violated. The completion predicate
+    is D2's judge, so the graph and the loop share one mechanism
+    rather than carrying two.
 
 ## Out of scope
 
@@ -419,6 +543,12 @@ one-writer-per-path discipline the parallel slices already learned.
   follow-on): the wrong-name/right-name pairs are a labelled training
   set of this exact drift, and they become a source once enough rows
   accumulate.
+- **Automatic edge inference from the code.** Deriving the graph by
+  reading which files import which is tempting and fragile: an import
+  is not a prerequisite, a missed edge is invisible, and the resource
+  constraint already catches the case that matters (two nodes, one
+  path). Edges are declared, and the declared graph plus the mandatory
+  resource constraint is the whole mechanism.
 - Depth-3 delegation and beyond. Two levels is the cap this slice lands
   and the record it was drawn from (Hermes's `max_spawn_depth: 2`, with
   no depth-2 spawn observed across 587 trees); a third level is a
