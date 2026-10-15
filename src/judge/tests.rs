@@ -81,6 +81,21 @@ fn route_row(
     }
 }
 
+/// One `turn` row in the stream, the run's outcome where it joins a
+/// route by its input hash: the ending the run reached.
+fn turn_row(input_hash: &str, outcome: &str, stop_reason: &str) -> ReadRow {
+    ReadRow {
+        ts: "2026-10-14T12:00:30Z".to_string(),
+        op: OP_TURN.to_string(),
+        outcome: outcome.to_string(),
+        stop_reason: stop_reason.to_string(),
+        turns: 3,
+        input_hash: input_hash.to_string(),
+        input_chars: 812,
+        ..ReadRow::default()
+    }
+}
+
 /// One judged row in the stream, as the beat's writer lands it.
 fn judged_row(route_key: &str, provider: &str, workload: &str, verdict: &str, confidence: f64) -> RouteJudgedRow {
     RouteJudgedRow {
@@ -408,7 +423,7 @@ fn the_grade_is_right_when_the_lanes_workload_maps_to_the_candidate_that_served(
         "a1b2c3d4e5f60718",
     );
     let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
-    let judgment = grade(&route, &reply);
+    let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_RIGHT);
     assert!((judgment.confidence - 0.91).abs() < 1e-9);
     assert!(judgment.reason.contains("`hard`"), "{}", judgment.reason);
@@ -416,11 +431,14 @@ fn the_grade_is_right_when_the_lanes_workload_maps_to_the_candidate_that_served(
 }
 
 #[test]
-fn the_grade_is_right_when_the_required_candidate_was_unavailable_and_another_covered() {
+fn the_grade_is_insufficient_when_a_failover_followed_the_served_turn() {
     // The lane says `hard` → zai; the walk tried zai, it failed on an
-    // availability class, and mimo served in its place. The selection
-    // was right and the provider was unavailable, which is not the same
-    // thing as unfit.
+    // availability class, and mimo served in its place. The owner's
+    // third vector: the direction was RIGHT, but the minima was not
+    // reached for want of a companion (the required provider's
+    // availability). It is not a wrong — a wrong drove away — and it is
+    // not a right either, because the right provider never served. The
+    // failover must not skip mimo on it.
     let route = route_row(
         "2026-10-14T12:00:00Z",
         "xiaomi-mimo",
@@ -433,10 +451,90 @@ fn the_grade_is_right_when_the_required_candidate_was_unavailable_and_another_co
         "a1b2c3d4e5f60718",
     );
     let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.88)).unwrap());
-    let judgment = grade(&route, &reply);
-    assert_eq!(judgment.verdict, VERDICT_RIGHT);
+    let judgment = grade(&route, None, &reply);
+    assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT);
     assert!(judgment.reason.contains("rate-limit"), "{}", judgment.reason);
-    assert!(judgment.reason.contains("unavailable"), "{}", judgment.reason);
+    assert!(judgment.reason.contains("want of a companion"), "{}", judgment.reason);
+    assert!(judgment.reason.contains("direction was right"), "{}", judgment.reason);
+}
+
+#[test]
+fn the_grade_is_insufficient_when_the_answer_needed_the_escalation_leg() {
+    // The row's own sys1 verdict was `escalate`: the answer needed the
+    // escalation leg, and the record carries no evidence the leg ran.
+    // The required candidate served, so the direction was right; the
+    // minima (the escalated answer) was not reached for want of the
+    // companion that is the leg itself.
+    let mut route = route_row(
+        "2026-10-14T12:00:00Z",
+        "zai-coding-plan",
+        "hard",
+        &[("zai-coding-plan", "served", None)],
+        "a1b2c3d4e5f60718",
+    );
+    route.verdict = "escalate".to_string();
+    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let judgment = grade(&route, None, &reply);
+    assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT);
+    assert!(judgment.reason.contains("escalation leg"), "{}", judgment.reason);
+    assert!(judgment.reason.contains("want of a companion"), "{}", judgment.reason);
+}
+
+#[test]
+fn the_grade_is_insufficient_when_the_attempt_succeeded_but_the_task_did_not_complete() {
+    // The required candidate served — the direction was right — and the
+    // run ended `failed`: the attempt succeeded and the task did not
+    // complete. The minima was not reached for want of whatever the
+    // completion needed, which is not the provider's selection.
+    let route = route_row(
+        "2026-10-14T12:00:00Z",
+        "zai-coding-plan",
+        "hard",
+        &[("zai-coding-plan", "served", None)],
+        "a1b2c3d4e5f60718",
+    );
+    let turn = turn_row("a1b2c3d4e5f60718", "failed", "failed");
+    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let judgment = grade(&route, Some(&turn), &reply);
+    assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT);
+    assert!(judgment.reason.contains("did not complete"), "{}", judgment.reason);
+    assert!(judgment.reason.contains("`failed`"), "{}", judgment.reason);
+}
+
+#[test]
+fn a_completed_turn_keeps_a_right_selection_right() {
+    // The control: the same selection with a completed run is right, so
+    // the third state is read from the outcome rather than assumed.
+    let route = route_row(
+        "2026-10-14T12:00:00Z",
+        "zai-coding-plan",
+        "hard",
+        &[("zai-coding-plan", "served", None)],
+        "a1b2c3d4e5f60718",
+    );
+    let turn = turn_row("a1b2c3d4e5f60718", "ok", "completed");
+    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let judgment = grade(&route, Some(&turn), &reply);
+    assert_eq!(judgment.verdict, VERDICT_RIGHT);
+}
+
+#[test]
+fn a_wrong_direction_outranks_an_incomplete_one() {
+    // Both signals at once: the required candidate was skipped AND the
+    // run failed. The anti-vector is the actionable reading, so the
+    // grade is wrong — an incomplete trajectory whose direction was also
+    // wrong is a failure first.
+    let route = route_row(
+        "2026-10-14T12:00:00Z",
+        "router-kit",
+        "hard",
+        &[("router-kit", "served", None), ("zai-coding-plan", "skipped", Some("no-key"))],
+        "a1b2c3d4e5f60718",
+    );
+    let turn = turn_row("a1b2c3d4e5f60718", "failed", "max-turns");
+    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let judgment = grade(&route, Some(&turn), &reply);
+    assert_eq!(judgment.verdict, VERDICT_WRONG);
 }
 
 #[test]
@@ -454,7 +552,7 @@ fn the_grade_is_wrong_when_a_different_candidate_served_and_the_required_one_was
         "a1b2c3d4e5f60718",
     );
     let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
-    let judgment = grade(&route, &reply);
+    let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_WRONG);
     assert!(judgment.reason.contains("skipped (no-key)"), "{}", judgment.reason);
 }
@@ -477,7 +575,7 @@ fn the_grade_is_wrong_when_the_required_candidate_failed_in_a_way_that_was_its_o
         "a1b2c3d4e5f60718",
     );
     let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
-    let judgment = grade(&route, &reply);
+    let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_WRONG);
     assert!(judgment.reason.contains("client-error"), "{}", judgment.reason);
 }
@@ -495,7 +593,7 @@ fn an_unmapped_workload_grade_against_the_declared_head() {
         "a1b2c3d4e5f60718",
     );
     let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("quick", 0.7)).unwrap());
-    let judgment = grade(&route, &reply);
+    let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_RIGHT);
     assert!(judgment.reason.contains(crate::route::HEAD_ID), "{}", judgment.reason);
 }
@@ -747,6 +845,114 @@ fn a_cell_below_the_floor_is_fit_and_does_not_inform_the_failover() {
     assert_eq!(cells[0].fit, calib::FitState::Fit);
     assert!(cells[0].weighted_wrong_rate < calib::WRONG_RATE_FLOOR);
     assert!(!cells[0].informs_failover());
+}
+
+#[test]
+fn an_insufficient_cell_keeps_its_rate_apart_and_never_informs_the_failover() {
+    // The third vector in the math: eight rows spanning 0.35, all
+    // insufficient — the direction was right every time and the minima
+    // was not reached for want of a companion. The cell counts them
+    // apart from both the rights and the wrongs, the insufficient-rate
+    // is its own number, and it informs nothing: an incomplete solution
+    // is not a failure, so no provider is skipped on it.
+    let rows: Vec<ReadRow> = (0..calib::FIT_MIN_ROWS)
+        .map(|index| {
+            read_judged(
+                "zai-coding-plan",
+                "hard",
+                VERDICT_INSUFFICIENT,
+                0.95 - index as f64 * 0.05,
+                "",
+            )
+        })
+        .collect();
+    let cells = calib::calibration(&rows);
+    let cell = &cells[0];
+    assert_eq!(cell.judged, 8);
+    assert_eq!(cell.right, 0);
+    assert_eq!(cell.wrong, 0);
+    assert_eq!(cell.insufficient, 8);
+    assert_eq!(cell.fit, calib::FitState::Fit);
+    assert!(
+        (cell.weighted_insufficient_rate - 1.0).abs() < 1e-9,
+        "{}",
+        cell.weighted_insufficient_rate
+    );
+    assert!(cell.weighted_wrong_rate.abs() < 1e-9, "{}", cell.weighted_wrong_rate);
+    // The wrong-rate is the only thing that skips: a wholly insufficient
+    // cell moves no candidate, however high its rate.
+    assert!(!cell.informs_failover());
+    assert!(cell.notes_companions());
+}
+
+#[test]
+fn the_two_negative_vectors_are_never_folded_together() {
+    // Four wrong and four insufficient on one fit cell: the wrong-rate
+    // reads only the four wrongs, the insufficient-rate only the four
+    // insufficients, and the skip follows the wrong-rate alone. Folding
+    // them would skip a provider that was right-but-unaccompanied half
+    // the time.
+    let rows: Vec<ReadRow> = (0..calib::FIT_MIN_ROWS)
+        .map(|index| {
+            let (verdict, confidence) = if index < 4 {
+                (VERDICT_WRONG, 0.95 - index as f64 * 0.05)
+            } else {
+                (VERDICT_INSUFFICIENT, 0.75 - (index - 4) as f64 * 0.05)
+            };
+            read_judged("zai-coding-plan", "hard", verdict, confidence, "")
+        })
+        .collect();
+    let cells = calib::calibration(&rows);
+    let cell = &cells[0];
+    assert_eq!(cell.wrong, 4);
+    assert_eq!(cell.insufficient, 4);
+    assert_eq!(cell.right, 0);
+    // The wrongs carry 0.95+0.90+0.85+0.80 = 3.5 of the 6.2 total
+    // confidence weight; the insufficients the other 2.7.
+    assert!(
+        (cell.weighted_wrong_rate - 3.5 / 6.2).abs() < 1e-9,
+        "{}",
+        cell.weighted_wrong_rate
+    );
+    assert!(
+        (cell.weighted_insufficient_rate - 2.7 / 6.2).abs() < 1e-9,
+        "{}",
+        cell.weighted_insufficient_rate
+    );
+    // Above the floor on the wrongs, below it on the insufficients: the
+    // cell skips, and the skip is the wrongs' doing alone.
+    assert!(cell.informs_failover());
+    assert!(!cell.notes_companions());
+}
+
+#[test]
+fn a_disagreed_insufficient_row_is_the_ground_truth_that_the_companion_was_there() {
+    // The owner's disagree on an insufficient verdict is exactly the
+    // ground truth that says the companion WAS there: the minima was
+    // reached, so the row stands on right — not on wrong, and not on the
+    // automated insufficient. The judge is a signal; the owner is the
+    // ground truth.
+    let mut rows: Vec<ReadRow> = (0..calib::FIT_MIN_ROWS)
+        .map(|index| {
+            read_judged(
+                "zai-coding-plan",
+                "hard",
+                VERDICT_INSUFFICIENT,
+                0.95 - index as f64 * 0.05,
+                "",
+            )
+        })
+        .collect();
+    for row in rows.iter_mut().take(2) {
+        row.disposition = calib::DISPOSITION_DISAGREED.to_string();
+    }
+    let cells = calib::calibration(&rows);
+    let cell = &cells[0];
+    assert_eq!(cell.insufficient, 6);
+    assert_eq!(cell.right, 2);
+    assert_eq!(cell.wrong, 0);
+    assert_eq!(cell.overridden, 2);
+    assert!(!cell.informs_failover());
 }
 
 #[test]
@@ -1270,11 +1476,23 @@ fn the_calibration_surface_cards_the_cells_and_names_the_fit_state_and_the_floor
         ))
     }));
     rows.push(Row::RouteJudged(read_judged_value("xiaomi-mimo", "quick", VERDICT_RIGHT, 0.8, "")));
+    // The third state's cell: eight insufficient rows spanning 0.35 —
+    // fit, so it renders its own rate and the companion note, and it
+    // informs nothing.
+    rows.extend((0..calib::FIT_MIN_ROWS).map(|index| {
+        Row::RouteJudged(read_judged_value(
+            "xiaomi-mimo",
+            "prose",
+            VERDICT_INSUFFICIENT,
+            0.95 - index as f64 * 0.05,
+            "",
+        ))
+    }));
     write_day(&root, &day, &rows);
     let rendered = calib::render_calibration(&root, &day, true);
     // One card per cell, never a plain-text table and never a single
     // averaged per-provider score.
-    assert_eq!(rendered.matches('\u{250c}').count(), 3, "{rendered}");
+    assert_eq!(rendered.matches('\u{250c}').count(), 4, "{rendered}");
     assert!(!rendered.contains("| id |"), "{rendered}");
     // The cells are named by provider AND shape.
     assert!(rendered.contains("zai-coding-plan \u{b7} hard"), "{rendered}");
@@ -1288,6 +1506,14 @@ fn the_calibration_surface_cards_the_cells_and_names_the_fit_state_and_the_floor
     assert!(rendered.contains("no score is drawn from this sample"), "{rendered}");
     // The ride-back is shape-scoped on the card, not a global claim.
     assert!(rendered.contains("informs the failover for shape `hard` only"), "{rendered}");
+    // The third state renders as its own named number and its own rate,
+    // never folded into the wrong-rate, and the companion note names
+    // what the minima needs without moving anyone.
+    assert!(rendered.contains("0 right \u{b7} 0 wrong \u{b7} 8 insufficient"), "{rendered}");
+    assert!(rendered.contains("confidence-weighted insufficient-rate"), "{rendered}");
+    assert!(rendered.contains("the minima needs companions"), "{rendered}");
+    assert!(rendered.contains("is not skipped"), "{rendered}");
+    assert!(rendered.contains("naming the companions the minima needs"), "{rendered}");
     // The fit rule's thresholds and the ride-back's scope are named.
     assert!(rendered.contains(&format!("floor {:.2}", calib::WRONG_RATE_FLOOR)), "{rendered}");
     assert!(rendered.contains(&format!("{} rows", calib::FIT_MIN_ROWS)), "{rendered}");

@@ -2208,7 +2208,8 @@ fn calibration_roster() -> Vec<route::Resolved> {
 /// day's route rows are judged beside themselves, the fit rule trusts a
 /// sample only when it carries rows and span, the conservative
 /// ride-back skips a fit-and-wrong provider while leaving an unfit one
-/// alone, the dry run spends nothing, and a lane that fails open is
+/// alone, the third vector's insufficient state counts apart and moves
+/// nothing, the dry run spends nothing, and a lane that fails open is
 /// refused by name. No paid call: the lane is the scripted MCP child,
 /// the same seam the blend1 and explain scenarios drive.
 async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
@@ -2480,6 +2481,107 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
                 .is_some_and(|cell| !cell.informs_failover()),
     ));
 
+    // The third vector's leg: a day whose every route row's required
+    // candidate failed on an availability class while a companion
+    // served. The direction was right every time and the minima was not
+    // reached, so the batch grades INSUFFICIENT — the cell keeps the
+    // rate apart from the wrong-rate, the failover skips nothing, and
+    // the route row's reason names the companions the minima needs.
+    let open_root_for_third = match scratch_dir("calib-third") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let third_rows: Vec<serde_json::Value> = (0..8u32)
+        .map(|index| {
+            route_row_line(
+                &format!("{day}T15:00:{index:02}Z"),
+                "xiaomi-mimo",
+                "hard",
+                &[
+                    ("router-kit", "failed", "auth"),
+                    ("zai-coding-plan", "failed", "rate-limit"),
+                    ("xiaomi-mimo", "served", ""),
+                ],
+                &format!("{index:032x}"),
+            )
+        })
+        .collect();
+    write_day_file(&open_root_for_third, &day, &third_rows);
+    let third_answers: Vec<serde_json::Value> =
+        (0..8u32).map(|index| sys1_answer("hard", 0.95 - index as f64 * 0.05)).collect();
+    let third_lane = match ScriptedLane::start(&mcp_bin, judge_lane_entries(&third_answers)) {
+        Ok(lane) => lane,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let third = crate::judge::judge(crate::judge::JudgeRequest {
+        root: &open_root_for_third,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: crate::judge::LaneSource::Scripted(third_lane.spec()),
+    })
+    .await;
+    checks.push((
+        "a failover that followed the served turn grades insufficient, not wrong",
+        third.judged.len() == 8
+            && third
+                .judged
+                .iter()
+                .all(|row| row.verdict == calib::VERDICT_INSUFFICIENT),
+    ));
+    checks.push((
+        "the insufficient reason names the companion that was absent",
+        third.judged.iter().all(|row| {
+            row.reason.contains("direction was right") && row.reason.contains("want of a companion")
+        }),
+    ));
+    let third_day_rows: Vec<serde_json::Value> = (0..8u32)
+        .map(|index| {
+            judged_row_line(
+                &format!("{day}T15:30:{index:02}Z"),
+                &format!("insufficient-key-{index:016x}"),
+                "xiaomi-mimo",
+                "hard",
+                calib::VERDICT_INSUFFICIENT,
+                0.95 - index as f64 * 0.05,
+            )
+        })
+        .collect();
+    write_day_file(&open_root_for_third, &day, &third_day_rows);
+    let third_day = calib::read_day(&open_root_for_third, &day, 64);
+    let third_cells = calib::calibration(&third_day);
+    let mimo = calib::cell(&third_cells, "xiaomi-mimo", "hard");
+    checks.push((
+        "the insufficient cell counts apart from the wrongs and the rights",
+        mimo.is_some_and(|cell| {
+            cell.judged == 8
+                && cell.insufficient == 8
+                && cell.wrong == 0
+                && cell.right == 0
+                && cell.fit == calib::FitState::Fit
+                && cell.weighted_insufficient_rate >= calib::INSUFFICIENT_RATE_FLOOR
+                && cell.weighted_wrong_rate.abs() < 1e-9
+        }),
+    ));
+    checks.push((
+        "an insufficient cell informs nothing however high its rate",
+        mimo.is_some_and(|cell| !cell.informs_failover() && cell.notes_companions()),
+    ));
+    checks.push((
+        "the failover skips nothing on an insufficient cell",
+        route::calibration_skips(&open_root_for_third, &day, &roster, "router-kit", "hard")
+            .is_empty(),
+    ));
+    let notes = route::calibration_notes(&open_root_for_third, &day, &roster, "router-kit", "hard");
+    checks.push((
+        "the route row's reason names the companions the minima needs",
+        notes.len() == 1
+            && notes[0].provider == "xiaomi-mimo"
+            && route::calibration_note_clause(&notes[0]).contains("the minima needs companions")
+            && route::calibration_note_clause(&notes[0]).contains("is not skipped"),
+    ));
+    drop(third_lane);
+
     // The fail-open leg: the lane's own fallback shape is a named
     // refusal, not a judgment — no row, and the recorded decisions
     // stand. A fresh root holds the same ten route rows unjudged, so
@@ -2557,7 +2659,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
                 }),
     ));
 
-    for scratch in [&home, &root, &wrong_root, &unfit_root, &open_root] {
+    for scratch in [&home, &root, &wrong_root, &unfit_root, &open_root, &open_root_for_third] {
         let _ = std::fs::remove_dir_all(scratch);
     }
     grade(NAME, family, &checks)

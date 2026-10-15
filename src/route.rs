@@ -1162,6 +1162,24 @@ pub async fn prepare(
     } else {
         Vec::new()
     };
+    // The third vector's read: a fit cell whose selections keep stalling
+    // short of the minima for want of a companion names that in the
+    // decision row's reason and moves nothing — the direction was right,
+    // so the provider is not skipped. Same gate, same scope.
+    let notes = if calibration.informs_failover {
+        calibration_notes(
+            &calib.root(),
+            &calib::today(),
+            &resolved,
+            &decision.provider,
+            decision.workload.as_deref().unwrap_or_default(),
+        )
+    } else {
+        Vec::new()
+    };
+    for cell in &notes {
+        decision.reason.push_str(&calibration_note_clause(cell));
+    }
     decision.start_index =
         resolved.iter().position(|entry| entry.id() == decision.provider).unwrap_or(0);
     let router = Arc::new(Router::build(resolved, decision.clone(), skips));
@@ -1196,6 +1214,57 @@ pub fn calibration_skips(
         .filter(|cell| cell.provider != selected)
         .filter(|cell| resolved.iter().any(|entry| entry.id() == cell.provider))
         .collect()
+}
+
+/// The cells whose route rows should NAME that the minima needs
+/// companions: every roster candidate's cell for the current workload's
+/// shape (other than the selected one) whose sample is fit and whose
+/// confidence-weighted **insufficient**-rate is at or over
+/// [`calib::INSUFFICIENT_RATE_FLOOR`].
+///
+/// The third vector's read in the walk, and it is deliberately NOT a
+/// skip: an insufficient cell's direction was right — the trajectory
+/// drove partway and stalled for want of a companion — so the provider
+/// is passed over by nothing. What the cell earns is a clause in the
+/// decision row's reason naming the companions the minima needs, so a
+/// later reader sees why the walk behaved as it did rather than having
+/// to infer it. Pure and gated by its caller on the same config gate as
+/// [`calibration_skips`].
+pub fn calibration_notes(
+    root: &Path,
+    day: &str,
+    resolved: &[Resolved],
+    selected: &str,
+    workload: &str,
+) -> Vec<calib::CalibrationCell> {
+    let rows = calib::read_day(root, day, calib::READ_CAP);
+    calib::calibration(&rows)
+        .into_iter()
+        .filter(|cell| cell.notes_companions())
+        // A cell that is also fit-and-wrong is already a skip; the skip's
+        // own clause names it, and a second clause would say less.
+        .filter(|cell| !cell.informs_failover())
+        .filter(|cell| cell.workload == workload)
+        .filter(|cell| cell.provider != selected)
+        .filter(|cell| resolved.iter().any(|entry| entry.id() == cell.provider))
+        .collect()
+}
+
+/// The clause a companion-noting cell rides in the decision row's
+/// reason: the cell's own numbers, so the row says which
+/// (provider × shape) cell named the missing companions and at what
+/// rate. It is informational — it moves no candidate.
+pub fn calibration_note_clause(cell: &calib::CalibrationCell) -> String {
+    format!(
+        "; calibration notes {} for shape `{}`: {:.2} insufficient on a fit cell of {} rows \
+         (span {:.2}) — the direction is right, the minima needs companions, and the provider \
+         is not skipped",
+        cell.provider,
+        cell.shape(),
+        cell.weighted_insufficient_rate,
+        cell.judged,
+        cell.confidence_span,
+    )
 }
 
 /// Reorder the chain for this session's walk: the selected candidate keeps
@@ -1880,11 +1949,11 @@ mod tests {
     #[test]
     fn the_gate_off_leaves_the_pre_slice_behavior_exactly() {
         // The pure half of "a config that turns it off leaves the
-        // pre-slice behavior exactly": the skip set is computed by
-        // `prepare` only when the gate is on, so a caller that never
-        // calls it gets an empty set and a walk that attempts every
-        // candidate — and `Router::new` (the constructor every
-        // pre-slice caller uses) carries no skips at all.
+        // pre-slice behavior exactly": the skip set AND the companion
+        // notes are computed by `prepare` only when the gate is on, so a
+        // caller that never calls them gets an empty set and a walk that
+        // attempts every candidate — and `Router::new` (the constructor
+        // every pre-slice caller uses) carries no skips at all.
         let home = config_home("off", r#"{ "calib": { "informs_failover": false } }"#);
         assert!(!calibration_config(&home).informs_failover);
         let resolved = resolve(&default_roster(), &HashMap::new());
@@ -1994,6 +2063,67 @@ mod tests {
     }
 
     #[test]
+    fn a_fit_and_insufficient_cell_names_its_companions_and_skips_nothing() {
+        // The third vector's read in the walk. zai's `hard` cell is eight
+        // judged rows that are all INSUFFICIENT — the direction was right
+        // every time and the minima was not reached for want of a
+        // companion. The cell names the companions in the decision row's
+        // reason, and it skips nothing: only the wrong-rate is an
+        // anti-vector, and an incomplete solution is not a failure.
+        let root = std::env::temp_dir().join(format!("fleet-calib-notes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let day = "2026-10-14";
+        let lines: Vec<String> = (0..calib::FIT_MIN_ROWS)
+            .map(|index| {
+                judged_row(
+                    "zai-coding-plan",
+                    "hard",
+                    calib::VERDICT_INSUFFICIENT,
+                    0.95 - index as f64 * 0.05,
+                )
+            })
+            .collect();
+        write_day(&root, day, &lines);
+
+        let resolved = resolve(&default_roster(), &HashMap::new());
+        // The skip set is empty: an insufficient cell moves no candidate.
+        assert!(calibration_skips(&root, day, &resolved, HEAD_ID, "hard").is_empty());
+        // The note set names the cell, and the clause carries its own
+        // numbers so a later reader sees which cell spoke.
+        let notes = calibration_notes(&root, day, &resolved, HEAD_ID, "hard");
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].provider, "zai-coding-plan");
+        assert_eq!(notes[0].workload, "hard");
+        assert!(notes[0].weighted_insufficient_rate >= calib::INSUFFICIENT_RATE_FLOOR);
+        let clause = calibration_note_clause(&notes[0]);
+        assert!(clause.contains("calibration notes zai-coding-plan"), "{clause}");
+        assert!(clause.contains("for shape `hard`"), "{clause}");
+        assert!(clause.contains("1.00 insufficient"), "{clause}");
+        assert!(clause.contains("is not skipped"), "{clause}");
+        // The selection is never noted either: its place at the head of
+        // the walk is sys1's judgment's.
+        assert!(calibration_notes(&root, day, &resolved, "zai-coding-plan", "hard").is_empty());
+        // A shape the day holds no cell for notes nothing.
+        assert!(calibration_notes(&root, day, &resolved, HEAD_ID, "quick").is_empty());
+
+        // The fit requirement outranks the rate in this direction too: a
+        // single insufficient row at full confidence notes nothing,
+        // however stark the number looks.
+        let unfit = std::env::temp_dir().join(format!("fleet-calib-notes-unfit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&unfit);
+        std::fs::create_dir_all(&unfit).unwrap();
+        write_day(
+            &unfit,
+            day,
+            &[judged_row("zai-coding-plan", "hard", calib::VERDICT_INSUFFICIENT, 0.95)],
+        );
+        assert!(calibration_notes(&unfit, day, &resolved, HEAD_ID, "hard").is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&unfit);
+    }
+
+    #[test]
     fn the_walk_records_a_calibration_skip_and_names_its_cell_in_the_reason() {
         let resolved = vec![
             resolved_for_test("router-kit"),
@@ -2017,9 +2147,11 @@ mod tests {
             judged: 8,
             right: 0,
             wrong: 8,
+            insufficient: 0,
             waived: 0,
             overridden: 0,
             weighted_wrong_rate: 0.94,
+            weighted_insufficient_rate: 0.0,
             confidence_span: 0.35,
             fit: calib::FitState::Fit,
             spend_usd: 0.0016,

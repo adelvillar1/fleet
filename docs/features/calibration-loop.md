@@ -65,9 +65,10 @@ workload shape, the verdict and its reason, the model, the
 `providers_used` walk, the attempts and their outcomes, the input's
 character count, the task's content hash, and the joined `turn` row's
 outcome. **The task text never enters the prompt** — the route rows are
-redacted by design, and the prompt says so. The prompt frames the
-question as *was this selection right **for the workload shape it was
-made for***, not *was this provider right in general*.
+redacted by design, and the prompt says so. The prompt poses the
+three-way question (below) and asks *was this selection right **for the
+workload shape it was made for***, not *was this provider right in
+general*.
 
 **The judged row.** One `route_judged` row per graded route, keyed by
 `sha256(<canonical route-row line>)[:16]` — the devdec join shape. The
@@ -83,9 +84,61 @@ records the owner's disposition on a judged row. The disposition rides
 the **same append-only row** under the **same key**: the reader takes
 the freshest write per key, so the owner's grading is ground truth
 without rewriting what the lane said. The judge is a signal, not an
-authority. In the math, `disagreed` inverts the verdict (an overridden
-wrong becomes a right), and `waived` sets the row aside entirely —
-neither right nor wrong, excluded from the rate.
+authority. In the math, `disagreed` inverts the verdict — an overridden
+wrong becomes a right, and an overridden **insufficient** becomes a
+right too, because the owner's disagree on an incomplete solution is
+exactly the ground truth that says *the companion was there* — and
+`waived` sets the row aside entirely: neither right nor wrong,
+excluded from the rate.
+
+## The two kinds of negative vector (the owner's third vector)
+
+The owner's framing (2026-10-14): a problem is a minima in a
+multidimensional space, a solution is a vector driving toward it, and a
+value that is a minimum for one dimension can be meaningless in the
+whole. The corollary for grading: **there are two kinds of negative
+vector, and they are not the same information.**
+
+1. **A failure** — a trajectory that drove AWAY from the minima. In
+   routing: a different candidate served while the required one was
+   passed over or failed in a way that was its own. This is the
+   anti-vector, and it is what the failover drives away from.
+2. **An incomplete solution** — a vector whose DIRECTION was right but
+   which never reached the minima because the companions it needed were
+   absent. It did not diverge; it drove partway and stalled. Fleet's
+   own history is full of them: the install's venv bootstrap was
+   correct but unaccompanied by the torch stack; the launch spec's
+   `BLEND1_PYTHONPATH` was right but the sibling path-wiring was
+   missing; the adapter was correct but unaccompanied by the fail-open
+   status parse.
+
+So the judgment's verdict vocabulary is **three-way**, and the two
+negative states are never folded together:
+
+| Verdict | Meaning | The failover's read |
+|---|---|---|
+| `right` | The required candidate served, no failover preceded it, no escalation leg was called for, and the run completed where joinable. | nothing |
+| `wrong` | A different candidate served while the required one was passed over or failed in a way that was its own — an anti-vector. | **skips** the provider in the preference |
+| `insufficient` | The direction was right but the minima was not reached for want of a companion. | skips nothing; **names** the companions the minima needs |
+
+The three insufficient signals, each readable from the row's own
+outcome evidence:
+
+- **a failover followed the served turn** — the required candidate was
+  attempted and failed on an *availability* class (a key, a balance, a
+  permission, throttling, an outage, a timeout, an unreachable host)
+  and a later candidate served in its place;
+- **the turn's answer needed the escalation leg** — the row's own sys1
+  verdict was `escalate` and the record carries no evidence the leg ran;
+- **the attempt succeeded but the task did not complete** — the joined
+  `turn` row's stop reason is a non-completion (`failed`,
+  `interrupted`, `max-turns`).
+
+A wrong direction outranks an incomplete one: when both readings are
+available, the anti-vector is the actionable signal and the grade is
+`wrong`. The judge's prompt asks the three-way question and defines all
+three states, so the lane's workload judgment is made in the same frame
+the beat grades in.
 
 ## The discipline (ported from slice 17)
 
@@ -111,6 +164,14 @@ sized for fleet's volume rather than inherited from the sibling:
 | `calib::FIT_MIN_ROWS` | **8** | dev-decisions grades many heads across many tasks a day and asks for 20. Fleet is one owner's tool: a day's route rows are the runs they did — single digits on a quiet day, low double digits on a heavy one. Twenty rows would take a week and the calibration would never inform anything. Eight is reachable within a day or two, and it is chosen so the floor cannot be crossed by fewer than **three** wrong judgments: two of eight is 0.25 and three is 0.375, both below the 0.50 floor, so a small-sample swing never moves routing on its own. |
 | `calib::FIT_MIN_SPAN` | **0.30** | The wrong-rate is weighted by the lane's own confidence, so a sample whose confidences are all the same number carries no information about how confidence relates to correctness — the weighting degenerates and the "confidence-weighted" claim is vacuous. The sibling asks for 0.4 over its volume; fleet's rows per day are fewer and a decision model answering over one compact evidence record clusters high, so 0.4 would rarely be reachable at eight rows and would refuse samples that are genuinely informative. 0.30 is the span at which the weighting does real work at fleet's sample sizes. |
 | `calib::WRONG_RATE_FLOOR` | **0.50** | The sibling's calibration is a report and carries no such floor; fleet's ride-back needs one. 0.50 is the most conservative crossing that still means something: weighted by the judge's own confidence, the provider is wrong at least as often as it is right. A lower floor would move routing on a provider that is more right than wrong, which is not what "conservative" means. |
+| `calib::INSUFFICIENT_RATE_FLOOR` | **0.50** | The trigger for the companion NOTE, never for a skip: a fit cell whose confidence-weighted insufficient-rate is at or over this names that the minima needs companions. It is the same conservative crossing read against the other negative vector — at least half the cell's confidence weight sat on selections whose direction was right but whose minima was not reached. Below it the cell is mostly reaching its minima and the note would be noise. |
+
+A cell's math keeps the three states apart: the right-rate, the
+wrong-rate, and the insufficient-rate are three numbers, weighted by
+the lane's own confidence, and never folded. An insufficient row is not
+a wrong one — its direction was correct — so folding the two would skip
+a provider whose selections were right, and folding it into right would
+hide the companions the minima needs.
 
 An unfit cell renders as **unfit with what it still needs** — how many
 more rows, how much more span — and never as a score. The surface's own
@@ -146,6 +207,18 @@ Every skip names its calibration in the route row's reason:
 preference (judged wrong at 0.94 on a fit cell of 8 rows, span 0.35)
 ```
 
+**The insufficient cell's read.** A cell whose selections keep stalling
+short of the minima for want of a companion skips **nothing** — the
+direction was right, so the provider is passed over by no one. What it
+earns is a clause in the decision row's reason naming the companions,
+so a later reader sees why the walk behaved as it did:
+
+```
+; calibration notes xiaomi-mimo for shape `hard`: 1.00 insufficient on a
+fit cell of 8 rows (span 0.35) — the direction is right, the minima
+needs companions, and the provider is not skipped
+```
+
 **The gate.** `calibration.informs_failover` in `~/.fleet/config.toml`
 (default **on**; absent = on). Off restores the pre-slice behaviour
 exactly — no skip, no clause — which is pinned by a test, not asserted
@@ -158,18 +231,25 @@ fleet calib --calibration
 ```
 
 Per-cell cards, never a plain-text table and never an averaged
-per-provider score: the judged count, the right/wrong split (with the
-owner's overrides and waivers counted separately), the
-confidence-weighted wrong-rate, the cost per correct turn, and the fit
-state. The gate's state, the floor, the fit thresholds, and the
-ride-back's scope are named on the surface itself. `fleet calib`
-(today's rows by op) now also reports the day's cells in its detail
-line.
+per-provider score: the judged count, the right/wrong/**insufficient**
+split (with the owner's overrides and waivers counted separately), the
+confidence-weighted wrong-rate, the confidence-weighted
+insufficient-rate, the cost per correct turn, and the fit state. The
+gate's state, the floor, the fit thresholds, and the ride-back's scope
+are named on the surface itself. `fleet calib` (today's rows by op) now
+also reports the day's cells in its detail line.
+
+A fit cell carrying insufficient rows renders its own rate line and,
+when the rate is at or over `INSUFFICIENT_RATE_FLOOR`, the companion
+note — *the minima needs companions … the provider is not skipped*. The
+three states are three named numbers on the card, never a binary.
 
 `fleet judge` renders the batch's card (the asked, the refused, the
-spend against the budget), the dry-run's card (what would be asked and
-what it would cost), the fail-open refusal card, and the disposition
-card.
+right/wrong/insufficient tally, the spend against the budget), the
+dry-run's card (what would be asked and what it would cost), the
+fail-open refusal card, and the disposition card — where an
+insufficient verdict renders in its own colour, amber, between the
+green of a right and the red of a wrong.
 
 ## Combinations
 
@@ -188,10 +268,11 @@ card.
   join key, the idempotent second batch, the dry run's no-spend, the
   fail-open refusal, the fit rule, and the conservative influence
   (a fit-and-wrong cell skipped, the same provider's right cell not
-  skipped for the other shape, an unfit cell never moving routing) —
-  through scripted seams only, with no paid live calls. When the eval
-  corpus regresses, the regression is itself a row the calibration
-  reads.
+  skipped for the other shape, an unfit cell never moving routing, and
+  the third vector's insufficient cell skipping nothing while its
+  companion note names what the minima needs) — through scripted seams
+  only, with no paid live calls. When the eval corpus regresses, the
+  regression is itself a row the calibration reads.
 
 ## Not built
 

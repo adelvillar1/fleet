@@ -346,7 +346,12 @@ pub struct RouteJudgedRow {
     /// provider that is right for one shape and wrong for another has
     /// two cells, and neither hides the other.
     pub workload: String,
-    /// `right` or `wrong` — see [`VERDICT_RIGHT`] and [`VERDICT_WRONG`].
+    /// `right`, `wrong`, or `insufficient` — see [`VERDICT_RIGHT`],
+    /// [`VERDICT_WRONG`], and [`VERDICT_INSUFFICIENT`]. The three states
+    /// are the owner's two kinds of negative vector: `wrong` is a
+    /// trajectory that drove away from the minima, `insufficient` one
+    /// whose direction was right but which stalled for want of a
+    /// companion. They are never folded together.
     pub verdict: String,
     /// The lane's confidence in its own workload judgment, in `[0, 1]`.
     /// It is the weight the confidence-weighted wrong-rate applies, so a
@@ -488,17 +493,31 @@ pub const ACTION_FORGET: &str = "forget";
 pub const ACTIONS: [&str; 3] = [ACTION_COMPRESS, ACTION_SUPERSEDE, ACTION_FORGET];
 
 /// The judgment's verdict when the routing decision was right: the lane's
-/// workload label mapped to the candidate that served, or to a candidate
-/// that was tried and failed on an availability class while a later one
-/// served in its place.
+/// workload label mapped to the candidate that served, the walk reached
+/// it without a failover, and the run completed where the outcome is
+/// joinable.
 pub const VERDICT_RIGHT: &str = "right";
 /// The judgment's verdict when the routing decision was wrong: the lane's
 /// workload label mapped to a different candidate than the one that
 /// served, and that candidate was never tried or failed in a way that
-/// was its own.
+/// was its own. A wrong judgment is an anti-vector — a trajectory that
+/// drove AWAY from the minima — and it is the only verdict the failover
+/// skips on.
 pub const VERDICT_WRONG: &str = "wrong";
-/// Every judgment verdict, in the order the surface tallies them.
-pub const JUDGMENT_VERDICTS: [&str; 2] = [VERDICT_RIGHT, VERDICT_WRONG];
+/// The judgment's third verdict, the owner's third vector (2026-10-14):
+/// the selection's DIRECTION was right, but the outcome evidence shows
+/// the minima was not reached for want of a companion — a failover
+/// followed the served turn, the turn's answer needed the escalation
+/// leg, or the attempt succeeded but the task did not complete. An
+/// insufficient judgment is not a wrong one: the trajectory drove
+/// partway and stalled rather than diverging, so it never moves the
+/// failover. It says the minima needs companions, and the surface and
+/// the route row both say so.
+pub const VERDICT_INSUFFICIENT: &str = "insufficient";
+/// Every judgment verdict, in the order the surface tallies them: the
+/// three states are never folded together, because an incomplete
+/// solution and a failure are not the same information.
+pub const JUDGMENT_VERDICTS: [&str; 3] = [VERDICT_RIGHT, VERDICT_WRONG, VERDICT_INSUFFICIENT];
 
 /// The owner's disposition confirming the automated verdict: the judge
 /// was right, and the owner says so.
@@ -1551,6 +1570,18 @@ pub const FIT_MIN_SPAN: f64 = 0.30;
 /// wrong, which is not what "conservative" means.
 pub const WRONG_RATE_FLOOR: f64 = 0.50;
 
+/// The confidence-weighted insufficient-rate at or above which a **fit**
+/// cell's route rows name that the minima needs companions.
+///
+/// The skip reads only [`WRONG_RATE_FLOOR`]; this is the note's trigger,
+/// and it is the same conservative crossing read against the other
+/// negative vector: weighted by the judge's own confidence, at least
+/// half the cell's weight sat on selections whose direction was right
+/// but whose minima was not reached for want of a companion. Below it
+/// the cell is mostly reaching its minima and the note would be noise.
+/// The note never skips — an incomplete solution is not a failure.
+pub const INSUFFICIENT_RATE_FLOOR: f64 = 0.50;
+
 /// Whether a provider's judged sample is fit to have its floor trusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FitState {
@@ -1595,8 +1626,14 @@ pub struct CalibrationCell {
     /// applied.
     pub right: usize,
     /// The rows that graded wrong after the owner's disposition is
-    /// applied.
+    /// applied: the anti-vectors, the only rows the failover skips on.
     pub wrong: usize,
+    /// The rows that graded insufficient after the owner's disposition
+    /// is applied: the direction was right and the minima was not
+    /// reached for want of a companion. Kept apart from `wrong` — an
+    /// incomplete solution is not a failure, and folding the two would
+    /// skip a provider whose selections were correct.
+    pub insufficient: usize,
     /// The rows the owner set aside: neither right nor wrong, excluded
     /// from the rate.
     pub waived: usize,
@@ -1607,6 +1644,11 @@ pub struct CalibrationCell {
     /// or the plain wrong fraction when every confidence is zero (a
     /// sample that reported no confidence at all).
     pub weighted_wrong_rate: f64,
+    /// `sum(confidence * insufficient) / sum(confidence)` over the
+    /// graded rows, on the same weighting. It is reported and rendered,
+    /// and it never enters the skip: the failover reads the wrong-rate
+    /// alone.
+    pub weighted_insufficient_rate: f64,
     /// `max(confidence) - min(confidence)` across the graded rows.
     pub confidence_span: f64,
     pub fit: FitState,
@@ -1631,9 +1673,19 @@ impl CalibrationCell {
 
     /// Whether this cell may move the failover's preference: fit, and
     /// its confidence-weighted wrong-rate at or over
-    /// [`WRONG_RATE_FLOOR`].
+    /// [`WRONG_RATE_FLOOR`]. The insufficient-rate is deliberately
+    /// absent here — an incomplete solution's direction was right, so
+    /// the provider is not skipped on it.
     pub fn informs_failover(&self) -> bool {
         self.fit == FitState::Fit && self.weighted_wrong_rate >= WRONG_RATE_FLOOR
+    }
+
+    /// Whether this cell's route rows should name that the minima needs
+    /// companions: fit, and its confidence-weighted insufficient-rate at
+    /// or over [`INSUFFICIENT_RATE_FLOOR`]. The note is informational —
+    /// it rides the decision row's reason and never skips anyone.
+    pub fn notes_companions(&self) -> bool {
+        self.fit == FitState::Fit && self.weighted_insufficient_rate >= INSUFFICIENT_RATE_FLOOR
     }
 
     /// The shape this cell grades, as the surface names it. A route with
@@ -1687,10 +1739,12 @@ pub fn calibration(rows: &[ReadRow]) -> Vec<CalibrationCell> {
 fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCell {
     let mut right = 0usize;
     let mut wrong = 0usize;
+    let mut insufficient = 0usize;
     let mut waived = 0usize;
     let mut overridden = 0usize;
     let mut weight_sum = 0.0f64;
     let mut weighted_wrong = 0.0f64;
+    let mut weighted_insufficient = 0.0f64;
     let mut spend = 0.0f64;
     let mut confidences: Vec<f64> = Vec::new();
     for row in rows {
@@ -1712,23 +1766,37 @@ fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCe
         };
         let Some(graded) = graded else { continue };
         confidences.push(row.confidence);
-        if graded == VERDICT_WRONG {
-            wrong += 1;
-            weighted_wrong += row.confidence;
-        } else {
-            right += 1;
+        // The three states are counted apart and never folded: an
+        // insufficient row's direction was right, so counting it as a
+        // wrong one would skip a provider whose selections were correct,
+        // and counting it as a right one would hide the companions the
+        // minima needs.
+        match graded.as_str() {
+            VERDICT_WRONG => {
+                wrong += 1;
+                weighted_wrong += row.confidence;
+            }
+            VERDICT_INSUFFICIENT => {
+                insufficient += 1;
+                weighted_insufficient += row.confidence;
+            }
+            _ => right += 1,
         }
         weight_sum += row.confidence;
     }
-    let graded_count = right + wrong;
-    let weighted_wrong_rate = if weight_sum > 0.0 {
-        weighted_wrong / weight_sum
+    let graded_count = right + wrong + insufficient;
+    let (weighted_wrong_rate, weighted_insufficient_rate) = if weight_sum > 0.0 {
+        (weighted_wrong / weight_sum, weighted_insufficient / weight_sum)
     } else if graded_count > 0 {
         // A sample that reported no confidence at all: the weighting has
-        // nothing to weight by, so the honest rate is the plain fraction.
-        wrong as f64 / graded_count as f64
+        // nothing to weight by, so the honest rates are the plain
+        // fractions.
+        (
+            wrong as f64 / graded_count as f64,
+            insufficient as f64 / graded_count as f64,
+        )
     } else {
-        0.0
+        (0.0, 0.0)
     };
     let confidence_span = match confidences.iter().copied().fold(None::<(f64, f64)>, |bounds, confidence| {
         Some(match bounds {
@@ -1750,9 +1818,11 @@ fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCe
         judged: rows.len(),
         right,
         wrong,
+        insufficient,
         waived,
         overridden,
         weighted_wrong_rate: weighted_wrong_rate + 0.0,
+        weighted_insufficient_rate: weighted_insufficient_rate + 0.0,
         confidence_span: confidence_span + 0.0,
         fit,
         spend_usd: spend + 0.0,
@@ -1760,12 +1830,17 @@ fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCe
     }
 }
 
-/// The opposite verdict, for a row the owner disagreed with.
+/// The verdict a row the owner disagreed with stands on. The owner's
+/// grading is the ground truth, and the two negative vectors invert
+/// differently: a disagreed WRONG was a failure that was not one, so it
+/// becomes right; a disagreed INSUFFICIENT is exactly the ground truth
+/// that says the companion WAS there — the minima was reached — so it
+/// also becomes right. A disagreed RIGHT becomes wrong.
 fn invert(verdict: &str) -> String {
-    if verdict == VERDICT_WRONG {
-        VERDICT_RIGHT.to_string()
-    } else {
+    if verdict == VERDICT_RIGHT {
         VERDICT_WRONG.to_string()
+    } else {
+        VERDICT_RIGHT.to_string()
     }
 }
 
@@ -2320,11 +2395,11 @@ fn calibration_dot(cell: &CalibrationCell) -> (&'static str, &'static str) {
     }
 }
 
-/// One cell's card: the judged count, the right/wrong split, the
-/// confidence-weighted wrong-rate, the cost per correct call, and the
-/// fit state — all inside the cell, never averaged across shapes. An
-/// unfit cell renders as unfit with what it still needs and never as a
-/// score.
+/// One cell's card: the judged count, the right/wrong/insufficient
+/// split, the confidence-weighted wrong-rate, the insufficient-rate, the
+/// cost per correct call, and the fit state — all inside the cell, never
+/// averaged across shapes. An unfit cell renders as unfit with what it
+/// still needs and never as a score.
 fn calibration_card(cell: &CalibrationCell) -> String {
     let (dot, color) = calibration_dot(cell);
     let title = format!("{} \u{b7} {}", cell.provider, cell.shape());
@@ -2341,13 +2416,15 @@ fn calibration_card(cell: &CalibrationCell) -> String {
         right = header_right,
     );
     let mut lines = vec![format!(
-        "{DIM}\u{2502}{RESET} {TEXT}{judged} judged \u{b7} {right} right \u{b7} {wrong} wrong{extra}{RESET}",
+        "{DIM}\u{2502}{RESET} {TEXT}{judged} judged \u{b7} {right} right \u{b7} {wrong} wrong \u{b7} \
+         {insufficient} insufficient{extra}{RESET}",
         DIM = palette::DIM,
         RESET = palette::RESET,
         TEXT = palette::TEXT,
         judged = cell.judged,
         right = cell.right,
         wrong = cell.wrong,
+        insufficient = cell.insufficient,
         extra = if cell.waived == 0 && cell.overridden == 0 {
             String::new()
         } else {
@@ -2374,6 +2451,23 @@ fn calibration_card(cell: &CalibrationCell) -> String {
             floor = WRONG_RATE_FLOOR,
             span = cell.confidence_span,
         ));
+        if cell.insufficient > 0 {
+            // The third state's rate, rendered beside the wrong-rate and
+            // never folded into it. A cell can be mostly insufficient
+            // and still skip no one: the direction was right. The words
+            // about companions ride the wrapped note below rather than
+            // this line, which stays inside the house width.
+            let insufficient_color = if cell.notes_companions() { palette::WARN } else { palette::OK };
+            lines.push(format!(
+                "{DIM}\u{2502}{RESET} {TEXT}confidence-weighted insufficient-rate \
+                 {insufficient_color}{rate:.2}{RESET} {DIM}\u{b7} not a skip{RESET}",
+                DIM = palette::DIM,
+                RESET = palette::RESET,
+                TEXT = palette::TEXT,
+                insufficient_color = insufficient_color,
+                rate = cell.weighted_insufficient_rate,
+            ));
+        }
         if cell.informs_failover() {
             // Wrapped rather than clipped: the clause says what the
             // ride-back does, and a reader should not have to guess at a
@@ -2383,6 +2477,20 @@ fn calibration_card(cell: &CalibrationCell) -> String {
                 &format!(
                     "informs the failover for shape `{}` only: skipped in the preference when a \
                      later candidate is healthy",
+                    cell.shape()
+                ),
+                CARD_WIDTH - 4,
+            ) {
+                lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{line}{RESET}"));
+            }
+        } else if cell.notes_companions() {
+            // The companion note: the direction was right, the minima
+            // was not reached, and the route row's reason says so. It is
+            // informational — the failover's preference does not move.
+            for line in wrap_detail(
+                &format!(
+                    "the minima needs companions for shape `{}`: the direction is right and the \
+                     provider is not skipped",
                     cell.shape()
                 ),
                 CARD_WIDTH - 4,
@@ -2475,6 +2583,7 @@ pub fn render_calibration(root: &Path, day: &str, informs_failover: bool) -> Str
     let judged: usize = cells.iter().map(|cell| cell.judged).sum();
     let fit = cells.iter().filter(|cell| cell.fit == FitState::Fit).count();
     let informing = cells.iter().filter(|cell| cell.informs_failover()).count();
+    let companions = cells.iter().filter(|cell| cell.notes_companions()).count();
     let mut providers: Vec<&str> = cells.iter().map(|cell| cell.provider.as_str()).collect();
     providers.sort_unstable();
     providers.dedup();
@@ -2484,7 +2593,8 @@ pub fn render_calibration(root: &Path, day: &str, informs_failover: bool) -> Str
     out.push_str(&format!(
         "{DIM}{judged} judged row{judged_plural} \u{b7} {cells} cell{cells_plural} over \
          {providers} provider{provider_plural}{RESET}\n\
-         {DIM}{fit} fit \u{b7} {informing} informing the failover{RESET}\n",
+         {DIM}{fit} fit \u{b7} {informing} informing the failover{RESET}\n\
+         {DIM}{companions} naming the companions the minima needs{RESET}\n",
         judged_plural = plural(judged),
         cells_plural = plural(cells.len()),
         provider_plural = plural(providers.len()),
