@@ -1,6 +1,6 @@
 # Slice 18 — the calibration loop closes: fleet's routes are judged (2026-10-14)
 
-status: landed-pushed-pending-review (2026-10-14; ebcfa48 + f55be4c, the third vector riding its own commit)
+status: landed-pending-review (2026-10-14; ebcfa48 + f55be4c, the third vector riding its own commit; 294eeae the round-two review fixes; the eval fit leg's fix pending)
 
 ## Goal
 
@@ -61,7 +61,12 @@ missing is the judgment and the ride-back.
   for want of a companion (a failover followed the served turn, the
   answer needed the escalation leg, or the attempt succeeded but the
   task did not complete), and each insufficient reason NAMES the absent
-  companion. Wrong outranks insufficient in the grade. Every failure named; a lane that
+  companion. Wrong outranks insufficient in the grade. The round-two
+  review narrowed the third signal: an `interrupted` run grades on the
+  selection alone, because in this crate it is the word for a session
+  log that never recorded an ending — absent outcome evidence rather
+  than a named absence, and the third vector is defined by the
+  companion that was absent. Every failure named; a lane that
   fails open answers with its own fallback prose, so the status is
   parsed and a non-ok judgment is a named refusal — no row, no
   influence, the recorded decision standing (the consuming-lanes rule).
@@ -85,7 +90,9 @@ missing is the judgment and the ride-back.
   sibling's readiness rule ported (a provider's floor is trusted only
   when its judged sample carries enough rows and enough confidence
   span; the thresholds are named constants, stated for fleet's volume
-  with the reasoning). An unfit provider renders as unfit with what it
+  with the reasoning — the round-two review found the stated reasoning
+  false in both directions it argued, and corrected it in the code and
+  the doc (KI-184)). An unfit provider renders as unfit with what it
   still needs, never as a score.
 - **C4 — the ride-back, conservative and named.** The failover's
   preference consults the calibration: a provider whose
@@ -111,7 +118,12 @@ missing is the judgment and the ride-back.
   the judged rows beside the routes, the calibration's fit rule, the
   conservative failover influence (a fit-and-wrong provider skipped, an
   unfit one not), the dry-run's no-spend, and the fail-open refusal —
-  all through scripted seams, no paid live calls.
+  all through scripted seams, no paid live calls. The round-two review
+  found the fit leg accidental (the mock re-served its first answer to
+  every ask, so the beat's own rows all carried one confidence and the
+  fit cells were hand-written fixtures): the content-keyed fix lands in
+  the parent's round, after which the beat's confidence reaches the
+  cell math through the scenario (KI-190).
 - **C7 — the UX at the house bar.** The calibration cards and the
   judgment's surface render visually (status dots, per-provider cards,
   the fit state named) — never a plain-text table — verified through
