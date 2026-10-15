@@ -2110,6 +2110,7 @@ mod tests {
             workload: Some("hard".to_string()),
             verdict: Some("pass".to_string()),
             reason: "sys1 judged `hard`".to_string(),
+            judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string())],
         };
