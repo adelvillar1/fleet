@@ -852,6 +852,10 @@ async fn drive(
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
         skills,
+        // The parent's own run carries no role: a role is a
+        // delegation's specialization, and the overlay rides a child's
+        // prompt, never the owner's session.
+        role_overlay: None,
         memory,
         scope: None,
         // The self-maintenance tool rides every surface that knows its

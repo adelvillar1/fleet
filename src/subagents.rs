@@ -1396,6 +1396,11 @@ pub struct Delegation<'a> {
     /// because `use_skill` is in its admitted scope and a tool whose
     /// every call fails is not a tool.
     pub skills: Vec<Skill>,
+    /// The home the child's role resolves under — the owner's home,
+    /// where `<home>/roles/<name>.md` lives. `None` is a run with no
+    /// home: a brief that names a role then meets the named refusal,
+    /// never a silent default.
+    pub home: Option<PathBuf>,
     /// The child's delegation depth.
     pub depth: usize,
 }
@@ -1433,6 +1438,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         ui_tx,
         calib,
         skills,
+        home,
         depth,
     } = delegation;
 
@@ -1441,6 +1447,73 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // builds the child is not the module that composes the message, and
     // the parts are what the row, the label, and the delta read.
     let brief = Brief::parse(&goal);
+    // The role, when the brief named one: resolved against the owner's
+    // home BEFORE anything is created, so an unknown role is a named
+    // refusal the caller sees rather than a child that ran without its
+    // specialization. A run with no home refuses the same way — the
+    // role's file has nowhere to live.
+    let role = match &brief.role {
+        Some(name) => {
+            let Some(home) = home.as_deref() else {
+                return SubagentResult::refused(format!(
+                    "the brief names role `{name}` but this run has no home to resolve it under — \
+                     a role lives at <home>/roles/<name>.md"
+                ));
+            };
+            match crate::roles::load(home, name) {
+                Ok(role) => Some(role),
+                Err(reason) => return SubagentResult::refused(reason),
+            }
+        }
+        None => None,
+    };
+    // The role narrows the declaration: its admitted set is the
+    // specialization, and a tool outside it is not merely uncallable in
+    // the child, it is absent from what the child saw. A role that
+    // names no tools narrows nothing.
+    //
+    // The base is the set the child would otherwise have run with —
+    // the call's own declaration when it carried one, the harness's
+    // default-admitted set when it did not — because narrowing an
+    // absent declaration would leave the child with nothing at all.
+    let tools = match &role {
+        Some(role) if !role.tools.is_empty() => Some(
+            tools
+                .unwrap_or_else(Scope::default_admitted)
+                .into_iter()
+                .filter(|tool| role.admits(tool))
+                .collect(),
+        ),
+        _ => tools,
+    };
+    // The role's skills ride beside the parent's, loaded from the same
+    // home; a role naming a skill that is not there is named on one
+    // line and skipped, the skills loader's own forgiving shape.
+    let skills = match (&role, home.as_deref()) {
+        (Some(role), Some(home)) if !role.skills.is_empty() => {
+            let mut skills = skills;
+            let live = crate::skills::load(home);
+            for name in &role.skills {
+                match live.iter().find(|skill| &skill.name == name) {
+                    Some(skill) if !skills.iter().any(|carried| carried.name == skill.name) => {
+                        skills.push(skill.clone());
+                    }
+                    Some(_) => {}
+                    None => eprintln!(
+                        "fleet: roles: role `{}` names skill `{name}`, which is not in the home's \
+                         skills — skipped",
+                        role.name
+                    ),
+                }
+            }
+            skills
+        }
+        _ => skills,
+    };
+    // The overlay rides the child's system prompt beside the compiled-in
+    // one, delimited so the child knows what is standing instruction
+    // for this delegation's role and what is the harness prompt.
+    let role_overlay = role.as_ref().map(crate::roles::overlay_prompt).filter(|frame| !frame.is_empty());
     // The declaration is the scope, and the depth cap is the one thing
     // the declaration cannot override.
     let scope = Scope::child(tools, depth);
@@ -1501,6 +1574,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         lane_specs: None,
         calib,
         skills,
+        role_overlay,
         memory: None,
         scope: Some(scope),
         // The child sees nothing of the parent: no memory, no lanes, no

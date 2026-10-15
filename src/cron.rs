@@ -918,6 +918,9 @@ pub async fn execute(
         lane_specs: None,
         calib,
         skills,
+        // A scheduled run has no owner present to steer it and no role
+        // to run under: the prompt is the constant, byte for byte.
+        role_overlay: None,
         memory,
         scope: None,
         // The self-maintenance tool rides the surfaces where a session's

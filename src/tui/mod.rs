@@ -482,6 +482,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             lane_specs: None,
                             calib: Some(prepared.calib.clone()),
                             skills: skills.clone(),
+                            role_overlay: None,
                             memory,
                             scope: None,
                             // The self-maintenance tool rides the

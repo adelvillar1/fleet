@@ -1118,6 +1118,7 @@ async fn drive_over(
         lane_specs,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory,
         scope: None,
         improve_home: None,

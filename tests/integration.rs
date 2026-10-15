@@ -352,6 +352,7 @@ async fn run_on(
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -376,6 +377,7 @@ async fn run_on_probe(
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -404,6 +406,7 @@ async fn run_with_lanes(
         lane_specs,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -935,6 +938,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -997,6 +1001,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -1032,6 +1037,7 @@ async fn a_denied_call_reports_its_result_event() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -1087,6 +1093,7 @@ async fn a_failed_run_reports_a_failure_event() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -2001,6 +2008,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             lane_specs: Some(lane_specs(&fake)),
             calib: None,
             skills: Vec::new(),
+            role_overlay: None,
             memory: None,
             scope: None,
             improve_home: None,
@@ -2350,6 +2358,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -2502,6 +2511,7 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -2607,6 +2617,7 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -2697,6 +2708,128 @@ async fn an_owners_control_lands_beside_the_log_it_steers() {
     std::fs::remove_dir_all(&home).ok();
 }
 
+/// A role is the delegation's specialization, and it shows up where
+/// the model will read it: the child's own request carries the role's
+/// overlay in its system prompt, delimited, and its declarations are
+/// the role's admitted set — the tools outside it are not merely
+/// uncallable in the child, they are absent from what the child saw.
+#[tokio::test]
+async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
+    let home = temp_home("role-overlay");
+    std::fs::create_dir_all(fleet::roles::roles_dir(&home)).unwrap();
+    std::fs::write(
+        fleet::roles::roles_dir(&home).join("auditor.md"),
+        "---\ndescription: reads a diff and names what it proves\ntools: bash,read_file\n---\n\nYou are auditing a change. Read the diff before you judge it.\n",
+    )
+    .unwrap();
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &serde_json::json!({
+                "goal": "audit the change",
+                "role": "auditor",
+            })
+            .to_string(),
+        ),
+        assistant_stream("the audit is complete"),
+        assistant_stream("the child audited it"),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: Some(home.clone()),
+    };
+    let report = {
+        let mut progress = Vec::new();
+        let mut agent =
+            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        agent.run("delegate the audit").await.unwrap()
+    };
+    assert_eq!(report.stop_reason, StopReason::Completed);
+
+    // The child's own request: its system prompt carries the role's
+    // overlay, delimited so the child knows what is standing
+    // instruction and what is the harness prompt.
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 3, "{bodies:?}");
+    let child_system = bodies[1]["messages"][0]["content"].as_str().unwrap();
+    assert!(child_system.contains("ROLE OVERLAY BEGIN"), "{child_system}");
+    assert!(child_system.contains("role `auditor`"), "{child_system}");
+    assert!(
+        child_system.contains("Read the diff before you judge it."),
+        "{child_system}"
+    );
+    // And its declarations are the role's admitted set — the harness
+    // prompt rode along, but write_file was never declared to it.
+    let declared = declared_tools(&bodies[1]);
+    assert_eq!(declared, vec!["bash", "read_file"], "{declared:?}");
+    // The parent's own prompt is untouched: a role is a delegation's
+    // specialization, never the owner's session's.
+    let parent_system = bodies[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(!parent_system.contains("ROLE OVERLAY"), "{parent_system}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A role that names no role under the home is a named refusal, never
+/// a silent default: the child never runs, the tool result says why,
+/// and the parent's run continues without it.
+#[tokio::test]
+async fn an_unknown_role_is_refused_by_name_and_the_child_never_runs() {
+    let home = temp_home("role-unknown");
+    std::fs::create_dir_all(fleet::roles::roles_dir(&home)).unwrap();
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &serde_json::json!({
+                "goal": "audit the change",
+                "role": "no-such-role",
+            })
+            .to_string(),
+        ),
+        assistant_stream("the role did not resolve, so I will do it myself"),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: Some(home.clone()),
+    };
+    let report = {
+        let mut progress = Vec::new();
+        let mut agent =
+            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        agent.run("delegate the audit").await.unwrap()
+    };
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    // Only the parent's two requests: the child never ran.
+    assert_eq!(mock.bodies().len(), 2);
+    // The refusal is the tool result the model read, and it names the
+    // role and where roles live.
+    let (output, _) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
+    assert!(output.contains("no role named `no-such-role`"), "{output}");
+    assert!(output.contains("fleet roles"), "{output}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
 /// A real-lane probe of `sys1_classify`'s schema: if the vendored sys1 lane
 /// boots on this machine, confirm the call shape the route judgment relies
 /// on. If it does not boot (no python3, an import failure), log it and do
@@ -2781,6 +2914,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         lane_specs: None,
         calib: Some(stream.clone()),
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -2839,6 +2973,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         lane_specs: None,
         calib: Some(stream.clone()),
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -2882,6 +3017,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         lane_specs: None,
         calib: Some(stream.clone()),
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -2925,6 +3061,7 @@ async fn a_run_without_a_stream_records_nothing() {
             lane_specs: None,
             calib: None,
             skills: Vec::new(),
+            role_overlay: None,
             memory: None,
             scope: None,
             improve_home: None,
@@ -3068,6 +3205,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -3146,6 +3284,7 @@ async fn run_with_skills(
         lane_specs: None,
         calib: None,
         skills,
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -3771,6 +3910,7 @@ async fn run_with_memory(
         lane_specs: None,
         calib,
         skills: Vec::new(),
+        role_overlay: None,
         memory,
         scope: None,
         improve_home: None,
@@ -4063,6 +4203,7 @@ async fn run_with_improve(
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: Some(home.to_path_buf()),
@@ -4353,6 +4494,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
@@ -4711,6 +4853,7 @@ async fn run_capturing(
         lane_specs: None,
         calib: None,
         skills: Vec::new(),
+        role_overlay: None,
         memory: None,
         scope: None,
         improve_home: None,
