@@ -472,6 +472,21 @@ fn remember_command(options: &cli::RememberOptions) -> ExitCode {
             object.insert(flag.to_string(), serde_json::Value::String(value.clone()));
         }
     }
+    // The two list fields ride as arrays, split on commas the way
+    // `--shape` is: the writer validates the count and the per-item
+    // bound, so a malformed list is its named refusal rather than a
+    // silent truncation here.
+    for (flag, value) in [("phrases", &options.phrases), ("missing", &options.missing)] {
+        let items: Vec<serde_json::Value> = value
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(|item| serde_json::Value::String(item.to_string()))
+            .collect();
+        if !items.is_empty() {
+            object.insert(flag.to_string(), serde_json::Value::Array(items));
+        }
+    }
     match fleet::memory::Remember::parse(&arguments).and_then(|request| memory.remember(&request)) {
         Ok(fact) => {
             print!("{}", fleet::memory::render_one(&fact));

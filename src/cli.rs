@@ -226,6 +226,15 @@ pub struct RememberOptions {
     pub tier: String,
     /// Optional for a durable fact, required for a working one.
     pub valid_until: String,
+    /// Optional; comma-separated resolution phrases — the trajectory's
+    /// own vocabulary, the direction channel's input. Empty means the
+    /// fact carries no recorded direction.
+    pub phrases: String,
+    /// Optional; comma-separated missing companions — the absent pieces
+    /// that kept a correct direction from reaching the minima. Empty
+    /// means the trajectory either completed or was never recorded as
+    /// stalled.
+    pub missing: String,
     pub body: String,
 }
 
@@ -430,9 +439,14 @@ usage:
   fleet remember --name <name> --description \"<fact>\" --basis confirmed-by|inferred
                                 [--type <kind>] [--shape a,b] [--tier working|durable]
                                 [--valid-until <date>] [--body \"<text>\"]
+                                [--phrases \"a,b\"] [--missing \"a,b\"]
                                 write one fact into the memory corpus — the CLI
                                 form of the remember tool; basis is required, and
-                                valid-until is required for a working-tier fact
+                                valid-until is required for a working-tier fact.
+                                --phrases carries the resolution's own vocabulary
+                                (the direction channel's input, the largest term
+                                in the ranking) and --missing the companions an
+                                incomplete trajectory lacked
   fleet doctor                   check credentials, home, API, shell, roster,
                                 ledger, and the MCP cores; a broken layer is
                                 named with its reason
@@ -1069,6 +1083,8 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
     let mut tier: Option<String> = None;
     let mut valid_until: Option<String> = None;
     let mut body: Option<String> = None;
+    let mut phrases: Option<String> = None;
+    let mut missing: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -1082,6 +1098,12 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
             "--tier" => tier = Some(take_value(args, &mut index, arg)?),
             "--valid-until" => valid_until = Some(take_value(args, &mut index, arg)?),
             "--body" => body = Some(take_value(args, &mut index, arg)?),
+            // The trajectory's own vocabulary and the stall's absent
+            // companions: the two list fields the direction channel
+            // reads, so the CLI speaks the writer's whole shape rather
+            // than a subset that leaves the largest channel dark.
+            "--phrases" => phrases = Some(take_value(args, &mut index, arg)?),
+            "--missing" => missing = Some(take_value(args, &mut index, arg)?),
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown remember option `{arg}`"));
             }
@@ -1103,6 +1125,8 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
         tier: tier.unwrap_or_default(),
         valid_until: valid_until.unwrap_or_default(),
         body: body.unwrap_or_default(),
+        phrases: phrases.unwrap_or_default(),
+        missing: missing.unwrap_or_default(),
     }))
 }
 
@@ -1860,6 +1884,8 @@ mod tests {
                 tier: String::new(),
                 valid_until: String::new(),
                 body: String::new(),
+                phrases: String::new(),
+                missing: String::new(),
             })
         );
         // Every flag parses in any position.
@@ -1873,6 +1899,13 @@ mod tests {
             "--type", "project",
             "--shape", "deploy, build",
             "--body", "The full content.",
+            // The direction channel's two inputs: the resolution's own
+            // vocabulary and the stall's absent companions. The CLI
+            // speaks the writer's whole shape, so the largest channel
+            // in the ranking is writable from the surface and not only
+            // from the model-visible tool.
+            "--phrases", "read the error, fix one thing, rerun the same tool",
+            "--missing", "the torch stack",
         ]))
         .unwrap();
         let Command::Remember(options) = command else { panic!("not a remember") };
@@ -1882,6 +1915,11 @@ mod tests {
         assert_eq!(options.valid_until, "2026-10-20");
         assert_eq!(options.shape, "deploy, build");
         assert_eq!(options.body, "The full content.");
+        assert_eq!(
+            options.phrases,
+            "read the error, fix one thing, rerun the same tool"
+        );
+        assert_eq!(options.missing, "the torch stack");
         // The three required flags are named when missing.
         assert!(parse(&args(&["remember"])).is_err());
         assert!(parse(&args(&["remember", "--name", "x"])).is_err());
