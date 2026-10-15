@@ -25,6 +25,8 @@ pub enum Command {
     /// the sys1 lane, or record the owner's disposition on a judged
     /// delegation row.
     Delegate(DelegateOptions),
+    /// List the named roles a delegation can run under, as cards.
+    Roles,
     /// The skills surface: the live skills, the drafts awaiting the
     /// slice-12 gate, and the usage-scan curation.
     Skills(SkillsOptions),
@@ -371,6 +373,10 @@ usage:
   fleet delegate --stop <session>
                                 stop a running session: the partial result
                                 lands with the typed reason and its log path
+  fleet roles                    list the named roles a delegation can run
+                                under: description, what each narrows, and
+                                its file — the `subagent` tool's `role`
+                                argument names one
   fleet skills [--proposed] [--curate] [--show <name>]
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
@@ -498,6 +504,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "calib" => parse_calib(rest),
         "judge" => parse_judge(rest),
         "delegate" => parse_delegate(rest),
+        "roles" => no_flags(rest, Command::Roles),
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),

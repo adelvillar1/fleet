@@ -41,6 +41,7 @@ async fn main() -> ExitCode {
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Judge(options)) => judge_command(&options).await,
         Ok(Command::Delegate(options)) => delegate_command(&options).await,
+        Ok(Command::Roles) => roles_command(),
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
@@ -682,6 +683,19 @@ fn calib_command(options: &cli::CalibOptions) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     print!("{}", fleet::calib::render(&root, &day));
+    ExitCode::SUCCESS
+}
+
+/// `fleet roles`: the named roles a delegation can run under, as
+/// cards — each role's description, what it narrows, and its file. The
+/// `subagent` tool's `role` argument names one; an unknown name is a
+/// named refusal, never a silent default.
+fn roles_command() -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    print!("{}", fleet::roles::render(&fleet::roles::load_all(&home)));
     ExitCode::SUCCESS
 }
 
