@@ -37,7 +37,15 @@ ranking, because the per-dimension minimum is exactly the failure mode
 (a homonym across shapes, a synonym within one). An anti-vector that
 matches the current trajectory is highly relevant — the avoidance half
 of the shelf — and surfaces as prominently as a resolution, marked, so
-the model never reads a failure as a candidate solution. Fleet's recall today
+the model never reads a failure as a candidate solution. And the
+owner's latest ruling governs the channels: the semantic channels
+(vector, keyword) measure PROXIMITY — how near a fact sits to the query
+— while the direction channels (trajectory, history, provenance)
+measure which way the vector points, and **direction outranks
+proximity**: a fact with maximum semantic density and no direction must
+not outrank a fact pointing at the minima. The landed weighting is
+under review against that ruling, verified by arithmetic rather than
+intuition. Fleet's recall today
 has it backwards: 0.80 of the scoring weight is word-based (vector 0.55
 + keyword 0.25) and the shape is a 0.15 additive boost — a tiebreaker
 under the words.
