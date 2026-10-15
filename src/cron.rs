@@ -927,6 +927,7 @@ pub async fn execute(
         // owner is present; an unattended scheduled run does not carry
         // it, so no proposal is filed by a run nobody is watching.
         improve_home: None,
+            compact_now: false,
     };
     let gate = Gate::for_job(job);
     // The log's identity is read before the agent borrows the session

@@ -1101,7 +1101,8 @@ pub fn render_hits(hits: &[ScoredHit], instruction: &str) -> String {
 
 /// `fleet sessions`: the archive as cards, replacing the plain-text
 /// table the surface used to print. A session is a piece of work with
-/// an outcome, not a row.
+/// an outcome, not a row. Newest first: the reader wants the work they
+/// just did, and `session::list` hands them over oldest first.
 pub fn render_list(summaries: &[crate::session::SessionSummary]) -> String {
     let mut out = format!(
         "{BOLD}fleet sessions{RESET} {DIM}\u{2014} the archive, newest first{RESET}\n\n"
@@ -1112,7 +1113,7 @@ pub fn render_list(summaries: &[crate::session::SessionSummary]) -> String {
         ));
         return out;
     }
-    for summary in summaries {
+    for summary in summaries.iter().rev() {
         let kind = summary.kind.as_deref().unwrap_or("session");
         let markers = if summary.compacted {
             format!("{kind} \u{b7} compacted")
@@ -1158,10 +1159,19 @@ fn dashes_for(left: &str, right: &str) -> String {
 /// not a summary of it: every tool call is named with its outcome, and
 /// a failure is named rather than smoothed over, because a session
 /// whose failures are hidden is a session nobody can learn from.
+///
+/// The budget state rides the header: the measured tokens against the
+/// budget the automatic fold fires at, so the owner can see how close a
+/// session is before it folds rather than finding out afterwards.
 pub fn render_detail(id: &str, created: &str, records: &[crate::session::Record]) -> String {
     use crate::session::Record;
+    let conversation = crate::session::conversation(records);
+    let measured = crate::compaction::estimate_tokens(&conversation.messages);
+    let budget = crate::compaction::COMPACTION_TOKEN_BUDGET;
+    let pct = (measured as f64 / budget as f64 * 100.0).min(999.0);
     let mut out = format!(
-        "{BOLD}fleet sessions{RESET} {DIM}\u{2014} {id} \u{b7} {created}{RESET}\n\n"
+        "{BOLD}fleet sessions{RESET} {DIM}\u{2014} {id} \u{b7} {created}{RESET}\n\n\
+         {DIM}context ~{measured} tokens \u{b7} the fold fires at {budget} \u{b7} {pct:.0}% of it{RESET}\n\n"
     );
     let mut turns = 0usize;
     let mut calls = 0usize;

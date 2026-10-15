@@ -13,6 +13,8 @@ pub enum Command {
     /// The archive: listed as cards, ranked for an instruction with
     /// `--recall`, or one session opened by name.
     SessionsView { recall: Option<String>, view: Option<String> },
+    /// Fold one session's stored context on demand.
+    Compact { session: Option<String>, force: bool },
     /// Probe the four vendored lanes' health.
     Lanes,
     /// List the routing roster in declared chain order with per-provider state.
@@ -83,6 +85,9 @@ pub struct RunOptions {
     pub yes: bool,
     /// Session id to resume, when given.
     pub session: Option<String>,
+    /// Force the context fold on the next turn boundary, whatever the
+    /// token budget says.
+    pub compact_now: bool,
 }
 
 /// Options for `fleet chat`.
@@ -357,7 +362,14 @@ fleet — a native Rust agent based on DeepSeek Harness
 usage:
   fleet run \"<task>\" [options]   run one task to completion
   fleet chat [options]           interactive multi-turn session
-  fleet sessions                 list saved sessions
+  fleet sessions [--recall \"<q>\"] [<id>]
+                                the archive as cards, ranked for an
+                                instruction, or one session opened
+  fleet compact [<session>] [--force]
+                                fold one session's stored context on
+                                demand — the same fold the token budget
+                                fires on its own; --force folds one that
+                                is still under it
   fleet lanes                    probe the four vendored lanes' health
   fleet providers                list the routing roster and per-provider state
   fleet calib [--day <date>] [--calibration]
@@ -486,6 +498,8 @@ options for run and chat:
   --model <name>      model to use (default deepseek-chat)
   --max-turns <n>     tool-loop turn cap for run (default 25)
   --yes, -y           approve every tool call without prompting
+--compact-now       fold the context on the next turn boundary, whatever
+                                the token budget says
   --session <id>      resume a saved session (see fleet sessions)
 
 options for calib:
@@ -533,6 +547,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "run" => parse_run(rest),
         "chat" => parse_chat(rest),
         "sessions" => parse_sessions(rest),
+        "compact" => parse_compact(rest),
         "lanes" => no_flags(rest, Command::Lanes),
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
@@ -562,12 +577,14 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
     let mut max_turns = DEFAULT_MAX_TURNS;
     let mut yes = false;
     let mut session: Option<String> = None;
+    let mut compact_now = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
         match arg {
             "--help" | "-h" => return Ok(Command::Help),
             "--yes" | "-y" => yes = true,
+            "--compact-now" => compact_now = true,
             "--model" => model = take_value(args, &mut index, arg)?,
             "--max-turns" => {
                 let value = take_value(args, &mut index, arg)?;
@@ -590,6 +607,7 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
         max_turns,
         yes,
         session,
+        compact_now,
     }))
 }
 
@@ -644,6 +662,38 @@ fn parse_sessions(args: &[String]) -> Result<Command, String> {
         index += 1;
     }
     Ok(Command::SessionsView { recall, view })
+}
+
+/// `fleet compact [<session>]`: fold one session's stored context on
+/// demand. A bare command takes the most recent session; a positional
+/// names one. The fold is the same summarize-and-continue the budget
+/// fires on its own — one request through the run's own routed client,
+/// the summary replacing the region and the record naming the range —
+/// so a compacted session resumes as the compacted conversation it is.
+fn parse_compact(args: &[String]) -> Result<Command, String> {
+    let mut session: Option<String> = None;
+    let mut force = false;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--force" => force = true,
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown compact option `{arg}`"));
+            }
+            _ => {
+                if session.is_some() {
+                    return Err(format!(
+                        "`{arg}` is a second session; `fleet compact` folds one at a time"
+                    ));
+                }
+                session = Some(arg.to_string());
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Compact { session, force })
 }
 
 fn parse_calib(args: &[String]) -> Result<Command, String> {

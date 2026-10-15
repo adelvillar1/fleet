@@ -108,6 +108,13 @@ fn skills_prompt_growth_line(declared: usize) -> Option<String> {
 pub struct AgentOptions {
     pub model: String,
     pub max_turns: usize,
+    /// Force the fold on the next turn boundary, whatever the budget
+    /// says — `fleet run --compact-now`. The budget decides *when*
+    /// compaction fires on its own; this is the owner's hand on it, for
+    /// a run that is about to do work the owner wants a clean checkpoint
+    /// before. A forced fold on a conversation with nothing to replace
+    /// is a named no-op, not a second summary.
+    pub compact_now: bool,
     /// Where live UI events go; `None` is the headless path, which keeps
     /// its progress-write behavior exactly as it was.
     pub ui_tx: Option<UnboundedSender<UiEvent>>,
@@ -177,6 +184,7 @@ impl Default for AgentOptions {
             memory: None,
             scope: None,
             improve_home: None,
+            compact_now: false,
         }
     }
 }
@@ -555,6 +563,8 @@ pub struct Agent<'a> {
     /// also what keeps a tail that is itself over the window — or a
     /// fold that keeps failing — from being retried every turn.
     compaction_latch: bool,
+    /// The forced-fold flag, read once per turn boundary.
+    compact_now: bool,
     /// The API-reported `prompt_tokens` of the last response, or `None`
     /// when it reported none — in which case the window check falls back
     /// to the chars/4 estimate of the assembled messages.
@@ -577,6 +587,9 @@ impl<'a> Agent<'a> {
         let memory = options.memory.clone();
         let scope = options.scope.clone();
         let improve_home = options.improve_home.clone();
+        // Read before the options are consumed by the roster below: the
+        // forced-fold flag is a copy, not a move.
+        let compact_now = options.compact_now;
         // An injected spec map wins for the lanes it names; every other
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
@@ -606,6 +619,7 @@ impl<'a> Agent<'a> {
             message_turns: turns,
             next_turn,
             compaction_latch: false,
+            compact_now,
             last_prompt_tokens: None,
             improve_home,
         })
@@ -1096,10 +1110,19 @@ impl<'a> Agent<'a> {
         let measured = self
             .last_prompt_tokens
             .unwrap_or_else(|| compaction::estimate_tokens(&self.messages));
-        if measured < compaction::COMPACTION_TOKEN_BUDGET {
+        // A forced fold ignores the budget but not the latch: the
+        // owner asked for a checkpoint, not an unbounded chain of
+        // summaries, and one fold per turn boundary is what the latch
+        // already buys.
+        if !self.compact_now && measured < compaction::COMPACTION_TOKEN_BUDGET {
             self.compaction_latch = false;
             return Ok(());
         }
+        // The request is honored here whether or not there is anything
+        // to fold. Leaving the flag armed would fold a LATER
+        // conversation nobody asked about — that is the budget's job,
+        // not the flag's.
+        self.compact_now = false;
         // Over the budget. Nothing to replace means nothing to compact:
         // the whole conversation is the verbatim tail already.
         let tail_start = compaction::tail_start(&self.messages);
@@ -3169,6 +3192,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            compact_now: false,
         };
         let mut progress = Vec::new();
         let agent =
@@ -3412,6 +3436,7 @@ mod tests {
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            compact_now: false,
         };
         Agent::new(client, options, session, approver, Box::leak(Box::new(Vec::new()))).unwrap()
     }
@@ -3463,6 +3488,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            compact_now: false,
         };
         let mut progress = Vec::new();
         let plain =
@@ -3514,6 +3540,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            compact_now: false,
         };
         let mut progress = Vec::new();
         let agent =
@@ -3535,6 +3562,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            compact_now: false,
         };
         let mut progress = Vec::new();
         let plain =
@@ -3572,6 +3600,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            compact_now: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent =
@@ -3993,6 +4022,49 @@ You are auditing a change. Read the diff before you judge it.
             .expect("the remember confirmation in the log")
     }
 
+    /// The forced fold: `--compact-now` ignores the budget but not the
+    /// latch, and a conversation with nothing to replace is a named
+    /// no-op rather than a second summary. This is the plan's C8.
+    #[tokio::test]
+    async fn a_forced_fold_ignores_the_budget_and_a_no_op_is_named() {
+        let home = scratch("compact-now");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let options = AgentOptions {
+            model: "m".to_string(),
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            compact_now: true,
+        };
+        let mut progress = Vec::new();
+        let mut agent =
+            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
+                .unwrap();
+        // A conversation far under the budget, with nothing before the
+        // tail: the fold has nothing to replace, so it declines rather
+        // than summarizing the verbatim tail into itself.
+        agent.push_message(Message::text(Role::User, "one short task")).unwrap();
+        agent.maybe_compact("system").await.unwrap();
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        assert!(
+            !records
+                .iter()
+                .any(|record| matches!(record, Record::Compaction { .. })),
+            "a forced fold with nothing to replace is a no-op, not a second summary"
+        );
+        // And the flag is one-shot: consumed at the boundary it fired
+        // on, so a later turn's ordinary budget reading decides again.
+        assert!(!agent.compact_now, "the forced fold is consumed once");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// The one session log under `home`, for a result assertion.
     fn session_path_of(home: &std::path::Path) -> std::path::PathBuf {
         crate::home::sessions_dir(home)
@@ -4024,6 +4096,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            compact_now: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         Agent::new(client, options, session, Box::new(ApproveAll), progress).unwrap()
@@ -4361,6 +4434,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            compact_now: false,
         };
         Agent::new(client, options, session, approver, progress).unwrap()
     }

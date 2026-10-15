@@ -615,6 +615,7 @@ pub const VERDICT_WAITING: &str = "waiting";
 /// The consolidation action that folds old working memory into an
 /// episodic summary. The vocabulary lives here, beside the op, so the
 /// writer and the reader name the same three words.
+pub const ACTION_COMPACT: &str = "compact";
 pub const ACTION_COMPRESS: &str = "compress";
 /// The consolidation action that retires a stale inferred fact from
 /// recall without deleting it.
@@ -622,7 +623,7 @@ pub const ACTION_SUPERSEDE: &str = "supersede";
 /// The consolidation action that archives an expired fact.
 pub const ACTION_FORGET: &str = "forget";
 /// Every consolidation action, in the order the surface tallies them.
-pub const ACTIONS: [&str; 3] = [ACTION_COMPRESS, ACTION_SUPERSEDE, ACTION_FORGET];
+pub const ACTIONS: [&str; 4] = [ACTION_COMPACT, ACTION_COMPRESS, ACTION_SUPERSEDE, ACTION_FORGET];
 
 /// The judgment's verdict when the routing decision was right: the lane's
 /// workload label mapped to the candidate that served, the walk reached
@@ -3488,7 +3489,7 @@ mod tests {
         assert_eq!(value["reason"], "inferred, never recalled, older than 180 days");
         // The three actions are the vocabulary the writer emits and the
         // reader tallies — one home, beside the op.
-        assert_eq!(ACTIONS, ["compress", "supersede", "forget"]);
+        assert_eq!(ACTIONS, ["compact", "compress", "supersede", "forget"]);
         assert_eq!(OP_CONSOLIDATE, "consolidate");
     }
 

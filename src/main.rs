@@ -36,6 +36,9 @@ async fn main() -> ExitCode {
         Ok(Command::Run(options)) => run_command(&options).await,
         Ok(Command::Chat(options)) => chat_command(&options).await,
         Ok(Command::SessionsView { recall, view }) => sessions_command(recall.as_deref(), view.as_deref()),
+        Ok(Command::Compact { session, force }) => {
+            compact_command(session.as_deref(), force).await
+        }
         Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
@@ -152,6 +155,7 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         prepared.decision.model.clone(),
         options.max_turns,
         options.yes,
+        options.compact_now,
         &mut session,
         &options.task,
         skills,
@@ -265,6 +269,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
             prepared.decision.model.clone(),
             DEFAULT_MAX_TURNS,
             options.yes,
+            false,
             &mut session,
             trimmed,
             skills.clone(),
@@ -897,6 +902,7 @@ async fn drive(
     model: String,
     max_turns: usize,
     yes: bool,
+    compact_now: bool,
     session: &mut Session,
     task: &str,
     skills: Vec<fleet::skills::Skill>,
@@ -932,6 +938,7 @@ async fn drive(
         // home: a session can file a proposal, and only the owner's
         // `fleet improve apply` runs one.
         improve_home: Some(home.to_path_buf()),
+            compact_now,
     };
     let approver: Box<dyn Approver> = match fleet::approvals::resolve(
         yes.then_some(true),
@@ -972,6 +979,194 @@ fn open_session(home: &std::path::Path, id: Option<&str>, model: &str) -> Result
             Session::open(&path).map_err(|error| format!("could not open session `{id}`: {error}"))
         }
     }
+}
+
+/// `fleet compact [<session>]`: fold one session's stored context on
+/// demand. The fold is the same summarize-and-continue the budget fires
+/// on its own — one request through the run's own routed client, no
+/// separate provider and no separate model — so a compacted session
+/// resumes as the compacted conversation it is rather than as the raw
+/// records.
+///
+/// A session already under the budget is a named no-op, not a second
+/// summary: the honest answer to "compact this" when there is nothing
+/// to fold is that there is nothing to fold. The log stays append-only
+/// either way — the fold is a `compaction` record replay honors, never
+/// a rewrite of what came before.
+async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let sessions_dir = fleet::home::sessions_dir(&home);
+    let summaries = match session::list(&home) {
+        Ok(summaries) => summaries,
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if summaries.is_empty() {
+        eprintln!("fleet: no sessions yet — run `fleet run \"<task>\"` to start one");
+        return ExitCode::FAILURE;
+    }
+    // A bare command takes the most recent session — the list is oldest
+    // first, so that is its last element — and a positional names one,
+    // with an unknown name refused rather than silently falling back to
+    // the newest.
+    let summary = match session_id {
+        Some(id) => match summaries.iter().find(|summary| summary.id == id) {
+            Some(summary) => summary,
+            None => {
+                eprintln!("fleet: no session named `{id}`; `fleet sessions` lists them");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => summaries.last().expect("the list is non-empty"),
+    };
+    let path = sessions_dir.join(format!("{}.jsonl", summary.id));
+    let records = match session::replay(&path) {
+        Ok(records) => records,
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let conversation = session::conversation(&records);
+    let measured = fleet::compaction::estimate_tokens(&conversation.messages);
+    let budget = fleet::compaction::COMPACTION_TOKEN_BUDGET;
+    // Already compacted, or already under the budget: nothing to fold.
+    if summary.compacted {
+        println!(
+            "`{}` is already compacted \u{2014} the log carries a fold, and a second one \
+             would summarize a summary",
+            summary.id
+        );
+        return ExitCode::SUCCESS;
+    }
+    if measured < budget && !force {
+        println!(
+            "`{}` is at ~{measured} tokens against the {budget} budget \u{2014} nothing to \
+             fold, so nothing was folded (--force folds it anyway)",
+            summary.id
+        );
+        return ExitCode::SUCCESS;
+    }
+    let tail_start = fleet::compaction::tail_start(&conversation.messages);
+    if tail_start == 0 {
+        println!(
+            "`{}` is all verbatim tail \u{2014} there is no earlier region to replace",
+            summary.id
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    // The routed client, the same path every other request takes. The
+    // compaction request is judged like any other: it is a real call
+    // with a real cost, and pretending it is free would put a lie in
+    // the decision row.
+    let dotenv = fleet::home::read_dotenv(&home);
+    let prepared = match fleet::route::prepare(&home, &dotenv, "compact a session", &HashMap::new())
+        .await
+    {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            eprintln!("fleet: the route could not be prepared: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let client = fleet::api::Client::routed(prepared.router.clone());
+    let first_turn = conversation.turns.first().copied().unwrap_or(1);
+    let last_turn = conversation.turns[..tail_start]
+        .iter()
+        .zip(&conversation.messages[..tail_start])
+        .filter(|(_, message)| message.role == fleet::api::Role::Assistant)
+        .map(|(turn, _)| *turn)
+        .last()
+        .unwrap_or(first_turn);
+    let turns = fleet::compaction::turns_in_range(first_turn, last_turn);
+
+    let mut request_messages = Vec::with_capacity(tail_start + 2);
+    request_messages.push(fleet::api::Message::text(
+        fleet::api::Role::System,
+        fleet::agent::SYSTEM_PROMPT,
+    ));
+    request_messages.extend(conversation.messages[..tail_start].iter().cloned());
+    request_messages.push(fleet::api::Message::text(
+        fleet::api::Role::User,
+        fleet::compaction::COMPACTION_INSTRUCTION,
+    ));
+    let request = fleet::api::ChatRequest {
+        model: &prepared.decision.model,
+        messages: &request_messages,
+        tools: Vec::new(),
+    };
+    let summary_text = match client.chat_stream(&request, |_| {}).await {
+        Ok(response) => response
+            .choices
+            .first()
+            .and_then(|choice| choice.message.content.clone())
+            .unwrap_or_default(),
+        Err(error) => {
+            // The fold is auxiliary: its failure costs the session its
+            // checkpoint and nothing else. Named, never fatal.
+            eprintln!("fleet: the compaction call failed: {error}; the log is unchanged");
+            return ExitCode::FAILURE;
+        }
+    };
+    if summary_text.trim().is_empty() {
+        eprintln!("fleet: the compaction call returned nothing; the log is unchanged");
+        return ExitCode::FAILURE;
+    }
+    let tokens_after = fleet::compaction::estimate_tokens(&[fleet::api::Message::text(
+        fleet::api::Role::User,
+        fleet::compaction::summary_frame(first_turn, last_turn, &summary_text),
+    )]);
+
+    // The record, appended: the log stays append-only, and replay folds
+    // at the record exactly as it folds at a live run's.
+    let mut log = match session::Session::open(&path) {
+        Ok(log) => log,
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(error) = log.record(&session::Record::Compaction {
+        summary: summary_text,
+        first_turn,
+        last_turn,
+        tokens_before: measured,
+        tokens_after,
+    }) {
+        eprintln!("fleet: {error}");
+        return ExitCode::FAILURE;
+    }
+    // The row, so the fold's arithmetic is auditable rather than
+    // assumed: what it replaced, what it cost, and what it saved.
+    let stream = fleet::calib::Stream::open(fleet::calib::resolve_root(
+        &home,
+        std::env::var("HOME").ok().as_deref(),
+    ));
+    stream.record(fleet::calib::Row::Consolidate(fleet::calib::ConsolidateRow {
+        ts: fleet::calib::stamp(),
+        action: "compact".to_string(),
+        fact: summary.id.clone(),
+        reason: format!(
+            "{turns} turn{} \u{2192} 1 summary, ~{measured} \u{2192} ~{tokens_after} tokens",
+            if turns == 1 { "" } else { "s" }
+        ),
+    }));
+    println!(
+        "`{}` compacted \u{2014} {turns} turn{} \u{2192} 1 summary (~{measured} \u{2192} \
+         ~{tokens_after} tokens)",
+        summary.id,
+        if turns == 1 { "" } else { "s" }
+    );
+    ExitCode::SUCCESS
 }
 
 /// `fleet sessions` — three surfaces over one archive. Bare, it lists

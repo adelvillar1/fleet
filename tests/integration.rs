@@ -356,6 +356,7 @@ async fn run_on(
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -381,6 +382,7 @@ async fn run_on_probe(
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let mut agent =
         Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
@@ -410,6 +412,7 @@ async fn run_with_lanes(
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
@@ -945,6 +948,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1008,6 +1012,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1044,6 +1049,7 @@ async fn a_denied_call_reports_its_result_event() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1100,6 +1106,7 @@ async fn a_failed_run_reports_a_failure_event() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -2019,6 +2026,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             memory: None,
             scope: None,
             improve_home: None,
+        compact_now: false,
         };
         let report = {
             let mut agent =
@@ -2370,6 +2378,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let mut progress = Vec::new();
     let report = {
@@ -2609,6 +2618,7 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2715,6 +2725,7 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2842,6 +2853,7 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
         memory: None,
         scope: None,
         improve_home: Some(home.clone()),
+    compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -2906,6 +2918,7 @@ async fn an_unknown_role_is_refused_by_name_and_the_child_never_runs() {
         memory: None,
         scope: None,
         improve_home: Some(home.clone()),
+    compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3012,6 +3025,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3071,6 +3085,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let outcome = {
         let mut progress = Vec::new();
@@ -3115,6 +3130,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3159,6 +3175,7 @@ async fn a_run_without_a_stream_records_nothing() {
             memory: None,
             scope: None,
             improve_home: None,
+            compact_now: false,
         },
         &mut session,
         Box::new(ApproveAll),
@@ -3303,6 +3320,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3382,6 +3400,7 @@ async fn run_with_skills(
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let mut progress = Vec::new();
     let mut agent =
@@ -4009,6 +4028,7 @@ async fn run_with_memory(
         memory,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -4302,6 +4322,7 @@ async fn run_with_improve(
         memory: None,
         scope: None,
         improve_home: Some(home.to_path_buf()),
+    compact_now: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -4594,6 +4615,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let mut progress = Vec::new();
     let mut agent =
@@ -4953,6 +4975,7 @@ async fn run_capturing(
         memory: None,
         scope: None,
         improve_home: None,
+    compact_now: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
