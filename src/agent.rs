@@ -3,6 +3,26 @@
 //!
 //! Every message is recorded to the session log as it happens, so the log
 //! always contains exactly what the model saw.
+//!
+//! Three disciplines hold this loop's shape, and each is structural
+//! rather than advisory:
+//!
+//! - **A turn's independent calls run together, bounded.** The batch is
+//!   planned into waves no larger than [`DELEGATION_CONCURRENCY`]; a call
+//!   that mutates shared state takes its writer's slot and runs serially
+//!   in the model's own order — never reordered, never silently
+//!   ([`plan_batch`]). The gate is crossed one call at a time, so the
+//!   owner decides every call in the batch, never the model and never
+//!   two at once.
+//! - **A running session can be steered and stopped** through a control
+//!   file beside its own log, read before each model call. A steer rides
+//!   the next turn as a message labelled as the owner's; a stop lands
+//!   the partial result with the typed reason ([`Control`]).
+//! - **A write is checked against the project's vocabulary** before it
+//!   lands: a case or separator variant of an established term is
+//!   refused, a novel name with a canonical near-neighbour is flagged
+//!   with the candidate named, and a genuinely new concept is written
+//!   untouched ([`write_guard`]).
 
 use crate::api::{ChatRequest, Client, ClientError, Message, Role, StreamEvent, ToolCall, Usage};
 use crate::compaction;
@@ -11,9 +31,11 @@ use crate::mcp::{CallResult, McpServer, ServerSpec, ToolInfo};
 use crate::memory::{self, Memory};
 use crate::session::{Conversation, Record, Session};
 use crate::tools::{self, LaneTool, LaneTools, Tool, ToolOutcome};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Poll;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 /// System prompt sent with every request.
@@ -29,6 +51,47 @@ pub const DEFAULT_MAX_TURNS: usize = 25;
 /// unbounded list is an unbounded per-turn cost; curation retiring
 /// unused skills is the lever that brings it back down.
 pub const SKILLS_PROMPT_SOFT_CAP: usize = 50;
+
+/// How many of one turn's independent tool calls may run at once.
+///
+/// Three, sized for a single owner's machine and the embedder's single
+/// slot. The bound is a ceiling and never a floor: the one config seam
+/// ([`concurrency_bound`]'s `FLEET_CONCURRENCY` read) can only lower it,
+/// because an unbounded fan-out turns one bad brief into N bad briefs on
+/// one clock. A heavier machine is a change to this constant, not a
+/// config value.
+pub const DELEGATION_CONCURRENCY: usize = 3;
+
+/// The one config seam over [`DELEGATION_CONCURRENCY`]: an environment
+/// variable naming a smaller positive number. It lives here, beside the
+/// constant it lowers, so there is exactly one place the bound can move.
+const FLEET_CONCURRENCY: &str = "FLEET_CONCURRENCY";
+
+/// The bound this process executes batches under: the named constant,
+/// lowered by the config seam when it names a smaller positive number.
+///
+/// Read once per batch rather than cached, because a run is one process
+/// and a batch is one turn: the cost is one environment lookup per turn,
+/// and a long-lived surface that wants the bound to move mid-run gets
+/// it without a restart.
+fn concurrency_bound() -> usize {
+    clamp_concurrency(DELEGATION_CONCURRENCY, std::env::var(FLEET_CONCURRENCY).ok().as_deref())
+}
+
+/// The clamp, pure so it is testable without touching the environment:
+/// `requested` when it names a positive number at or under `ceiling`,
+/// else the ceiling itself.
+///
+/// A malformed or absent request leaves the constant standing — a bound
+/// that silently becomes one because of a typo is a bound nobody asked
+/// for — and a request above the ceiling is refused rather than honored,
+/// which is what "config can only lower" means.
+fn clamp_concurrency(ceiling: usize, requested: Option<&str>) -> usize {
+    requested
+        .and_then(|requested| requested.trim().parse::<usize>().ok())
+        .filter(|requested| *requested >= 1)
+        .map_or(ceiling, |requested| requested.min(ceiling))
+}
 
 /// The one logged line when a run declares more than
 /// [`SKILLS_PROMPT_SOFT_CAP`] skills; `None` at or under the cap.
@@ -223,6 +286,11 @@ pub struct RunReport {
 pub enum AgentError {
     Api(ClientError),
     Io(std::io::Error),
+    /// The owner stopped this run through its control file. The typed
+    /// reason is the sentence itself: a stop lands the partial result
+    /// with this reason and the run's own log path, never silence, so
+    /// the one thing the error must not do is be vague.
+    Stopped,
 }
 
 impl std::fmt::Display for AgentError {
@@ -230,11 +298,31 @@ impl std::fmt::Display for AgentError {
         match self {
             AgentError::Api(error) => write!(f, "{error}"),
             AgentError::Io(error) => write!(f, "session log write failed: {error}"),
+            AgentError::Stopped => write!(f, "stopped by the owner"),
         }
     }
 }
 
 impl std::error::Error for AgentError {}
+
+/// What a run's control file says, read once and consumed.
+///
+/// The channel is a file rather than a signal (design decision 6): a
+/// signal cannot carry a steer's text and cannot be logged. The file is
+/// the run's own — `<sessions_dir>/<session_id>.control`, beside the log
+/// it steers — and reading an absent one costs a single failed open, so
+/// the turn loop checks it before every model call without a watcher, a
+/// thread, or a poll.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Control {
+    /// Text the owner wants this run to take into its next turn. It
+    /// rides as a user-role message labelled as the owner's, never as
+    /// the model's own words.
+    Steer(String),
+    /// The owner wants this run to end now. The partial result lands
+    /// with the typed reason and the run's own log path.
+    Stop,
+}
 
 /// Decides whether one tool call may execute.
 pub trait Approver {
@@ -749,6 +837,15 @@ impl<'a> Agent<'a> {
             Err(AgentError::Io(_)) => {
                 (crate::calib::TurnStop::Interrupted, Some("io".to_string()))
             }
+            // An owner's stop is `interrupted` in the calibration's own
+            // vocabulary — the class that means "stopped from outside",
+            // which is absent outcome evidence rather than a named
+            // absence, so a stopped run never reads as a stall that was
+            // missing a companion — and the typed reason rides the row.
+            Err(AgentError::Stopped) => (
+                crate::calib::TurnStop::Interrupted,
+                Some("stopped by the owner".to_string()),
+            ),
         };
         let (turns, usage) = match outcome {
             Ok(report) => (report.turns, report.usage),
@@ -823,6 +920,17 @@ impl<'a> Agent<'a> {
             self.emit(UiEvent::Turn(self.turns));
             let _ = writeln!(self.progress, "\u{2014} turn {}", self.turns);
             let _ = self.progress.flush();
+
+            // The control channel, read before every model call. An
+            // absent file is one failed open and nothing else; a steer
+            // rides this turn's request as a message labelled as the
+            // owner's; a stop ends the run here, before another token
+            // is spent and with the partial result still in hand.
+            match self.read_control() {
+                Some(Control::Steer(text)) => self.apply_steer(&text)?,
+                Some(Control::Stop) => return self.stop_by_owner(),
+                None => {}
+            }
 
             // The system prompt is the compiled-in constant plus this
             // run's skills list, which the `skills` record above carries:
@@ -903,16 +1011,14 @@ impl<'a> Agent<'a> {
 
             let tool_calls = message.tool_calls.clone();
             self.push_message(message)?;
-            for call in tool_calls {
-                // One `Box::pin` in the cycle, and only because the cycle
-                // now exists: `execute_call` → `subagents::run` →
-                // `Agent::run` → `run_task` → `execute_call`. A recursive
-                // `async fn` needs one indirection to have a finite future
-                // size, the same shape `api::chat_stream` needed when the
-                // router called back into it. The delegation path is the
-                // only recursion this loop has, and depth one caps it.
-                Box::pin(self.execute_call(&call)).await?;
-            }
+            // The batch: the gate one call at a time, the approved calls
+            // under the plan, every result recorded in the batch's own
+            // order. The recursion this loop carries — a delegation runs
+            // a child agent that reaches this same line — is pinned by
+            // the one `Box::pin` on the serial lane inside
+            // `execute_calls`, the same indirection `api::chat_stream`
+            // needed when the router called back into it.
+            self.execute_calls(&tool_calls).await?;
             // Between turns: the window check. It runs after the last
             // response landed and before the next request is built, so
             // the message list it measures is the one the next request
@@ -1092,41 +1198,264 @@ impl<'a> Agent<'a> {
         Ok(())
     }
 
-    /// Execute one call behind the approval gate and record what the model
-    /// will see. Unknown tools and malformed arguments are model-visible
-    /// error results, so the model can correct itself.
+    /// Where this run's control file lives: its own log's path with the
+    /// extension swapped, so a child's control file is
+    /// `<sessions_dir>/<child_session_id>.control` — the file the owner
+    /// writes, beside the log it steers.
+    fn control_path(&self) -> std::path::PathBuf {
+        self.session.path().with_extension("control")
+    }
+
+    /// Read the control file, consuming it. `None` when there is nothing
+    /// to read, and an absent file is one failed open — the whole cost
+    /// of checking before every model call.
     ///
-    /// A lane call goes through the same gate, the same result record, and
-    /// the same conversation message a built-in does. It differs only in
-    /// where the work happens: the lane's own child process, spawned on
-    /// this call if the run has not met the lane yet.
+    /// Both shapes are one-shot: consumed on read, so a steer rides
+    /// exactly one turn and a stop is not read twice. A file that is not
+    /// a control file — unreadable JSON, or JSON naming neither a steer
+    /// nor a stop — is named on one progress line and left in place: a
+    /// malformed file is evidence of something, and silently eating it
+    /// would hide that (hard rule 10).
+    fn read_control(&mut self) -> Option<Control> {
+        let path = self.control_path();
+        let text = std::fs::read_to_string(&path).ok()?;
+        let control = match serde_json::from_str::<serde_json::Value>(&text) {
+            Err(error) => {
+                let _ = writeln!(
+                    self.progress,
+                    "\u{2014} control: {} is not valid JSON ({error}); ignored",
+                    path.display()
+                );
+                let _ = self.progress.flush();
+                return None;
+            }
+            Ok(value) => parse_control(&value),
+        };
+        match control {
+            None => {
+                let _ = writeln!(
+                    self.progress,
+                    "\u{2014} control: {} names no steer and no stop; ignored",
+                    path.display()
+                );
+                let _ = self.progress.flush();
+                None
+            }
+            Some(control) => {
+                // Consumed on read. A removal that fails is not a
+                // failure: the control already rode, and a second read
+                // of the same text would be a duplicate, not a
+                // corruption.
+                let _ = std::fs::remove_file(&path);
+                Some(control)
+            }
+        }
+    }
+
+    /// Land a steer as the next turn's first message: a user-role
+    /// message framed as the owner's, recorded through `push_message`
+    /// like every other model-visible message (hard rule 5), so a
+    /// steered run's trajectory is reconstructable from its log alone.
+    fn apply_steer(&mut self, text: &str) -> Result<(), AgentError> {
+        let bounded = steer_text(text);
+        let _ = writeln!(self.progress, "\u{2014} steer: {}", preview(&bounded, 72));
+        let _ = self.progress.flush();
+        self.push_message(Message::text(Role::User, &steer_frame(&bounded)))
+    }
+
+    /// Land an owner's stop: the progress line, the log's own ending
+    /// naming who stopped it, and the typed error the caller turns into
+    /// the partial result. The run's log path and its last words are
+    /// what the delegation path replays, so a stop is never silence.
+    fn stop_by_owner(&mut self) -> Result<RunReport, AgentError> {
+        let turns = self.turns;
+        let _ = writeln!(self.progress, "\u{2014} stopped by the owner (control file)");
+        let _ = self.progress.flush();
+        self.record(&Record::End { stop_reason: "stopped by the owner".to_string(), turns })?;
+        Err(AgentError::Stopped)
+    }
+
+    /// Execute one turn's batch of tool calls.
+    ///
+    /// Three phases, in this order and for these reasons:
+    ///
+    /// 1. **The gate, one call at a time, in the model's order.** A
+    ///    concurrent batch's calls still reach the owner through the
+    ///    parent's approver serially — the owner decides, never the
+    ///    model, and never two prompts at once. A denial, a scope
+    ///    refusal, a refused provenance gate, or an argument error
+    ///    settles here: the call will not run and its result is known.
+    /// 2. **The plan, then the waves.** [`plan_batch`] walks the batch
+    ///    in the model's own order and places each call in a wave: a
+    ///    call that mutates shared state lands after the last wave that
+    ///    carried its writer, so two writes to one path run serially in
+    ///    the model's order rather than being silently reordered; every
+    ///    wave holds at most [`DELEGATION_CONCURRENCY`] calls, so the
+    ///    fan-out is bounded whatever the batch's size. Within a wave,
+    ///    the calls that need the loop's own borrow for their whole
+    ///    execution run first and alone, and the rest run together
+    ///    under the bound.
+    /// 3. **Every result recorded in the batch's own order.** The log
+    ///    and the next request read exactly as the serial loop wrote
+    ///    them; what changed is that the work overlapped, not what the
+    ///    model sees.
+    ///
+    /// Unknown tools and malformed arguments are model-visible error
+    /// results, so the model can correct itself — the rule the
+    /// single-call path always had.
+    async fn execute_calls(&mut self, calls: &[ToolCall]) -> Result<(), AgentError> {
+        // Phase 1: the gate.
+        let mut prepared: Vec<Option<Prepared>> = Vec::with_capacity(calls.len());
+        for call in calls {
+            prepared.push(Some(self.prepare_call(call)?));
+        }
+        // Phase 2: the plan, then the waves.
+        let plan = plan_batch(&prepared, concurrency_bound());
+        if let Some(line) = plan.line(calls) {
+            let _ = writeln!(self.progress, "{line}");
+            let _ = self.progress.flush();
+        }
+        let bound = plan.bound;
+        // The plan's split: each wave's concurrent work and serial
+        // calls, taken out of the gates so the settled results stay in
+        // place for the finalize.
+        let mut concurrent: Vec<Vec<(usize, Work)>> = vec![Vec::new(); plan.waves];
+        let mut serial: Vec<Vec<(usize, ToolCall)>> = vec![Vec::new(); plan.waves];
+        for (index, gate) in prepared.iter_mut().enumerate() {
+            // A settled call keeps its result where it is: it will not
+            // run, so the plan has nothing to schedule for it.
+            if matches!(gate, Some(Prepared::Settled { .. })) {
+                continue;
+            }
+            let Some(gate) = gate.take() else { continue };
+            match gate {
+                Prepared::Settled { .. } => unreachable!("settled calls were skipped above"),
+                Prepared::Ready(work) => concurrent[plan.steps[index].wave].push((index, work)),
+                Prepared::Serial { call } => serial[plan.steps[index].wave].push((index, call)),
+            }
+        }
+        let mut outcomes: Vec<Option<(String, bool)>> = calls.iter().map(|_| None).collect();
+        for wave in 0..plan.waves {
+            // The serial lane first: a delegation borrows the parent's
+            // gate and progress sink for its whole run, and a lane call
+            // borrows the run's roster, so neither can overlap another
+            // call. One `Box::pin` in the cycle, and only because the
+            // cycle now exists: this path → the delegation path → a
+            // child's own loop → back here. A recursive `async fn`
+            // needs one indirection to have a finite future size, the
+            // same shape `api::chat_stream` needed when the router
+            // called back into it.
+            for (index, call) in &serial[wave] {
+                let outcome = Box::pin(self.run_serial(call)).await?;
+                outcomes[*index] = Some(outcome);
+            }
+            // The concurrent lane: the calls whose work is owned, run
+            // together under the bound. The wave's work was pushed in
+            // the batch's own order and `run_bounded` answers in that
+            // order, so each result lands on the call that produced it.
+            let wave_work = std::mem::take(&mut concurrent[wave]);
+            let indices: Vec<usize> = wave_work.iter().map(|(index, _)| *index).collect();
+            let outputs = run_bounded(
+                wave_work.into_iter().map(|(_, work)| run_work(work)).collect(),
+                bound,
+            )
+            .await;
+            for (index, output) in indices.into_iter().zip(outputs) {
+                outcomes[index] = Some(output);
+            }
+        }
+        // Phase 3: every result, in the batch's own order.
+        for (index, call) in calls.iter().enumerate() {
+            let (approved, output, truncated) = match &prepared[index] {
+                Some(Prepared::Settled { approved, output, truncated }) => {
+                    (*approved, output.clone(), *truncated)
+                }
+                // Every call the plan scheduled landed in its wave; a
+                // hole here would leave the model without a result for
+                // a call it made, which is the one thing the log cannot
+                // do.
+                _ => {
+                    let (output, truncated) = outcomes[index]
+                        .clone()
+                        .expect("every call the plan scheduled landed in its wave");
+                    (true, output, truncated)
+                }
+            };
+            let _ = writeln!(
+                self.progress,
+                "\u{2190} {}",
+                if approved { preview(&output, 80) } else { "denied".to_string() },
+            );
+            let _ = self.progress.flush();
+            self.emit(UiEvent::ToolResult {
+                name: call.function.name.clone(),
+                preview: preview(&output, 80),
+                approved,
+            });
+            self.record(&Record::ToolResult {
+                call_id: call.id.clone(),
+                name: call.function.name.clone(),
+                output: output.clone(),
+                truncated,
+                approved,
+            })?;
+            // The same turn rule `push_message` applies: a tool result
+            // belongs to the turn whose request carried it, and it does
+            // not advance the turn.
+            self.message_turns.push(self.next_turn);
+            self.messages.push(Message::tool_result(call.id.clone(), output));
+        }
+        Ok(())
+    }
+
+    /// Execute one call behind the approval gate and record what the
+    /// model will see — the single-call form of [`Agent::execute_calls`],
+    /// kept because a test drives one call at a time the way the loop
+    /// does. The loop itself always goes through the batch.
+    #[cfg(test)]
     async fn execute_call(&mut self, call: &ToolCall) -> Result<(), AgentError> {
+        self.execute_calls(std::slice::from_ref(call)).await
+    }
+
+    /// The gate half of one call: the approval, the screening row, and
+    /// what the call turned into — a settled result, owned work, or a
+    /// call that needs the loop's own borrow.
+    ///
+    /// The branch order is the one the single-call path always had, and
+    /// it is load-bearing: the denial first (the owner said no), then
+    /// the scope refusal (a child reaching outside what it was given),
+    /// then each tool in its own order. A lane call goes through the
+    /// same gate and the same result record a built-in does; it differs
+    /// only in where the work happens — the lane's own child process,
+    /// spawned on this call if the run has not met the lane yet.
+    fn prepare_call(&mut self, call: &ToolCall) -> Result<Prepared, AgentError> {
         let approved = self.approver.approve(call);
         // The screening verdict, recorded after the decision: the gate's
         // own answer, one row per call, never inside the decision itself.
         self.record_screen(call, approved);
-        let tool = Tool::from_name(&call.function.name);
-        let (output, truncated) = if !approved {
+        if !approved {
             // The denial the model reads. The ordinary gate names the
             // user who was asked and said no; an approver that denies
             // where no user exists — the unattended job gate — names
             // its own policy instead (KI-088). Either way the text
             // rides the ordinary `tool_result` path into the log, so
             // model-visible stays model-visible (hard rule 5).
-            (
-                self.approver
-                    .denial_reason()
-                    .unwrap_or_else(|| "denied: the user did not approve this call.".to_string()),
-                false,
-            )
-        } else if let Some(refusal) = self.scope_refusal(&call.function.name) {
+            let output = self
+                .approver
+                .denial_reason()
+                .unwrap_or_else(|| "denied: the user did not approve this call.".to_string());
+            return Ok(Prepared::Settled { approved: false, output, truncated: false });
+        }
+        if let Some(refusal) = self.scope_refusal(&call.function.name) {
             // A subagent reaching outside its admitted scope. The
             // declarations already excluded the tool; this is the
             // refusal that meets a call that arrived anyway, and it
             // names the tool and the scope so the model can correct
             // itself rather than retry.
-            (refusal, false)
-        } else if call.function.name == tools::USE_SKILL_TOOL {
+            return Ok(Prepared::Settled { approved: true, output: refusal, truncated: false });
+        }
+        let name = call.function.name.as_str();
+        if name == tools::USE_SKILL_TOOL {
             // A skill's body is model-visible content, so it crosses the
             // same approval gate every other tool crosses — approving a
             // body into context is the same decision as approving any
@@ -1134,35 +1463,35 @@ impl<'a> Agent<'a> {
             // bounded tool_result path: the log records exactly the body
             // the model received, with the same truncation marker a
             // built-in's cut carries.
-            match serde_json::from_str(&call.function.arguments) {
-                Err(error) => (format!("error: arguments were not valid JSON: {error}"), false),
-                Ok(arguments) => {
-                    let outcome = tools::bound(ToolOutcome {
-                        output: crate::skills::use_skill_result(&self.skills, &arguments),
-                        truncated: false,
-                    });
-                    (outcome.output, outcome.truncated)
-                }
-            }
-        } else if call.function.name == tools::REMEMBER_TOOL {
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => Prepared::Ready(Work::UseSkill {
+                    skills: self.skills.clone(),
+                    arguments,
+                }),
+            });
+        }
+        if name == tools::REMEMBER_TOOL {
             // A durable write is a side effect, so it crosses the same
             // approval gate every other tool crosses — the summary
             // names the fact and its basis — and rides the same bounded
             // tool_result path. The write itself is one fact file, the
             // record the loader reads back.
-            match serde_json::from_str(&call.function.arguments) {
-                Err(error) => (format!("error: arguments were not valid JSON: {error}"), false),
-                Ok(arguments) => {
-                    let outcome =
-                        tools::bound(ToolOutcome { output: self.remember(&arguments), truncated: false });
-                    (outcome.output, outcome.truncated)
-                }
-            }
-        } else if call.function.name.starts_with(tools::SUPERSEDE_TOOL) {
-            self.supersede(call, approved)
-        } else if call.function.name == tools::SUBAGENT_TOOL {
-            self.run_subagent(call).await?
-        } else if call.function.name == tools::IMPROVE_TOOL {
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => match self.memory.clone() {
+                    None => settled("error: memory is not wired in this run".to_string()),
+                    Some(memory) => Prepared::Ready(Work::Remember { memory, arguments }),
+                },
+            });
+        }
+        if name.starts_with(tools::SUPERSEDE_TOOL) {
+            return self.prepare_supersede(call);
+        }
+        if name == tools::SUBAGENT_TOOL {
+            return Ok(Prepared::Serial { call: call.clone() });
+        }
+        if name == tools::IMPROVE_TOOL {
             // A self-maintenance proposal is filed, never applied: the
             // tool writes one markdown file into the home's proposals
             // store and the owner's `fleet improve apply` runs the same
@@ -1170,79 +1499,117 @@ impl<'a> Agent<'a> {
             // every other tool — the summary names the proposal — and
             // the confirmation rides the same bounded tool_result path,
             // so model-visible stays model-visible (hard rule 5).
-            match self.improve_home.clone() {
-                None => (
+            return Ok(match self.improve_home.clone() {
+                None => settled(
                     "error: no home is wired in this run, so there is nowhere to file a proposal"
                         .to_string(),
-                    false,
                 ),
                 Some(home) => match serde_json::from_str(&call.function.arguments) {
-                    Err(error) => {
-                        (format!("error: arguments were not valid JSON: {error}"), false)
-                    }
-                    Ok(arguments) => {
+                    Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                    Ok(arguments) => Prepared::Ready(Work::Improve {
+                        home,
                         // The draft stamps its targets against the
                         // working tree this process runs in — the same
                         // repo `fleet improve apply` resolves — so the
                         // apply can refuse a target that drifted while
                         // the proposal waited.
-                        let repo = std::env::current_dir().unwrap_or_default();
-                        let outcome = tools::bound(ToolOutcome {
-                            output: crate::improve::file_from_tool(&home, &repo, &arguments),
-                            truncated: false,
-                        });
-                        (outcome.output, outcome.truncated)
-                    }
+                        repo: std::env::current_dir().unwrap_or_default(),
+                        arguments,
+                    }),
                 },
-            }
-        } else if let Some((lane, lane_tool)) = tools::lane_of(&call.function.name) {
-            self.call_lane(call, lane, lane_tool).await?
-        } else {
-            match tool {
-                None => (
-                    format!("error: unknown tool `{}`", call.function.name),
-                    false,
-                ),
-                Some(tool) => match serde_json::from_str(&call.function.arguments) {
-                    Err(error) => (format!("error: arguments were not valid JSON: {error}"), false),
-                    Ok(arguments) => {
-                        // KI-017: tool execution is blocking work (a `bash`
-                        // child can run for minutes), so it leaves the async
-                        // context on the blocking pool instead of stalling
-                        // the runtime's worker thread.
-                        match tokio::task::spawn_blocking(move || tool.execute(&arguments)).await {
-                            Err(error) => (format!("error: the tool task failed: {error}"), false),
-                            Ok(Ok(outcome)) => (outcome.output, outcome.truncated),
-                            Ok(Err(message)) => (format!("error: {message}"), false),
-                        }
-                    }
-                },
-            }
+            });
+        }
+        if tools::lane_of(name).is_some() {
+            return Ok(Prepared::Serial { call: call.clone() });
+        }
+        match Tool::from_name(name) {
+            None => Ok(settled(format!("error: unknown tool `{name}`"))),
+            Some(tool) => match serde_json::from_str(&call.function.arguments) {
+                Err(error) => Ok(settled(format!("error: arguments were not valid JSON: {error}"))),
+                Ok(arguments) => Ok(Prepared::Ready(Work::Builtin {
+                    tool,
+                    arguments,
+                    // The project root the write-time guard reads the
+                    // vocabulary from: the working directory this run
+                    // works in.
+                    root: std::env::current_dir().unwrap_or_default(),
+                })),
+            },
+        }
+    }
+
+    /// The supersede call's gate half: parse, the provenance gate, and
+    /// the owned work that lands the write.
+    ///
+    /// Split from the write itself so a batch's mutating calls can be
+    /// approved one at a time through the owner's gate — including the
+    /// second, provenance confirmation a confirmed-by fact needs — and
+    /// then executed without borrowing the loop.
+    fn prepare_supersede(&mut self, call: &ToolCall) -> Result<Prepared, AgentError> {
+        let Some(memory) = self.memory.clone() else {
+            return Ok(settled("error: memory is not wired in this run".to_string()));
         };
-        let _ = writeln!(
-            self.progress,
-            "\u{2190} {}",
-            if approved { preview(&output, 80) } else { "denied".to_string() },
-        );
-        let _ = self.progress.flush();
-        self.emit(UiEvent::ToolResult {
-            name: call.function.name.clone(),
-            preview: preview(&output, 80),
+        let arguments = match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+            Err(error) => {
+                return Ok(settled(format!("error: arguments were not valid JSON: {error}")))
+            }
+            Ok(arguments) => arguments,
+        };
+        let request = match memory::Supersede::parse(&arguments) {
+            Err(error) => return Ok(settled(format!("error: {error}"))),
+            Ok(request) => request,
+        };
+        let mut approved = true;
+        if let Some(fact) =
+            memory::load_facts(memory.root()).into_iter().find(|fact| fact.name == request.name)
+        {
+            if fact.basis == memory::Basis::ConfirmedBy {
+                let _ = writeln!(
+                    self.progress,
+                    "\u{2192} supersede `{}` is confirmed-by \u{2014} asking for explicit approval",
+                    fact.name
+                );
+                let _ = self.progress.flush();
+                // The prompt names the fact and its confirmed-by basis:
+                // the synthetic call's name carries the basis, and its
+                // summary carries the fact and the justification.
+                let provenance = ToolCall {
+                    id: format!("{}-provenance", call.id),
+                    kind: "function".to_string(),
+                    function: crate::api::FunctionCall {
+                        name: format!("{} (confirmed-by)", tools::SUPERSEDE_TOOL),
+                        arguments: call.function.arguments.clone(),
+                    },
+                };
+                approved = self.approver.approve(&provenance);
+                if !approved {
+                    return Ok(Prepared::Settled {
+                        approved: true,
+                        output: "denied: the fact is confirmed-by and its modification was not approved."
+                            .to_string(),
+                        truncated: false,
+                    });
+                }
+            }
+        }
+        Ok(Prepared::Ready(Work::Supersede {
+            memory,
+            calib: self.calib.clone(),
+            request,
             approved,
-        });
-        self.record(&Record::ToolResult {
-            call_id: call.id.clone(),
-            name: call.function.name.clone(),
-            output: output.clone(),
-            truncated,
-            approved,
-        })?;
-        // The same turn rule `push_message` applies: a tool result belongs
-        // to the turn whose request carried it, and it does not advance the
-        // turn.
-        self.message_turns.push(self.next_turn);
-        self.messages.push(Message::tool_result(call.id.clone(), output));
-        Ok(())
+        }))
+    }
+
+    /// Run one call that needs the loop's own borrow for its whole
+    /// execution: a delegation, which borrows the parent's gate and
+    /// progress sink, and a lane call, which borrows the run's roster.
+    async fn run_serial(&mut self, call: &ToolCall) -> Result<(String, bool), AgentError> {
+        if call.function.name == tools::SUBAGENT_TOOL {
+            return self.run_subagent(call).await;
+        }
+        let (lane, lane_tool) = tools::lane_of(&call.function.name)
+            .expect("a serial call is a delegation or a lane call");
+        self.call_lane(call, lane, lane_tool).await
     }
 
     /// Run one delegated task in its own child session, on this run's
@@ -1313,101 +1680,6 @@ impl<'a> Agent<'a> {
         .await;
         let outcome = crate::subagents::bound_result(&result);
         Ok((outcome.output, outcome.truncated))
-    }
-
-    /// Execute one `remember` call against this run's corpus. The
-    /// result is the model-visible confirmation or the typed refusal,
-    /// in the same shape a built-in's output takes — a failure is a
-    /// value the model can read and react to.
-    fn remember(&self, arguments: &serde_json::Value) -> String {
-        let Some(memory) = &self.memory else {
-            return "error: memory is not wired in this run".to_string();
-        };
-        match memory::Remember::parse(arguments) {
-            Err(error) => format!("error: {error}"),
-            Ok(request) => match memory.remember(&request) {
-                Err(error) => format!("error: {error}"),
-                Ok(fact) => format!(
-                    "remembered `{}` \u{2014} {}, {} \u{b7} {}",
-                    fact.name,
-                    fact.tier.label(),
-                    fact.basis.label(),
-                    fact.path.display()
-                ),
-            },
-        }
-    }
-
-    /// Execute one `supersede` call behind the provenance gate. The
-    /// ordinary gate approved the tool call; a confirmed-by target then
-    /// asks the Approver a second time, with a prompt that names the
-    /// fact and its confirmed-by basis — the ordinary gate approves
-    /// tool calls, and this one approves the modification of a
-    /// load-bearing fact. A latched approver (`--yes`, the `a` key)
-    /// answers both without a prompt, which is what `--yes` means.
-    ///
-    /// The corpus is read from disk, not from the run's snapshot: a
-    /// fact an earlier turn remembered in this same run is already a
-    /// file, and the gate must see the basis the file carries.
-    fn supersede(&mut self, call: &ToolCall, approved: bool) -> (String, bool) {
-        let Some(memory) = self.memory.clone() else {
-            return ("error: memory is not wired in this run".to_string(), false);
-        };
-        let arguments = match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
-            Err(error) => return (format!("error: arguments were not valid JSON: {error}"), false),
-            Ok(arguments) => arguments,
-        };
-        let request = match memory::Supersede::parse(&arguments) {
-            Err(error) => return (format!("error: {error}"), false),
-            Ok(request) => request,
-        };
-        let mut approved = approved;
-        if let Some(fact) =
-            memory::load_facts(memory.root()).into_iter().find(|fact| fact.name == request.name)
-        {
-            if fact.basis == memory::Basis::ConfirmedBy {
-                let _ = writeln!(
-                    self.progress,
-                    "\u{2192} supersede `{}` is confirmed-by \u{2014} asking for explicit approval",
-                    fact.name
-                );
-                let _ = self.progress.flush();
-                // The prompt names the fact and its confirmed-by basis:
-                // the synthetic call's name carries the basis, and its
-                // summary carries the fact and the justification.
-                let provenance = ToolCall {
-                    id: format!("{}-provenance", call.id),
-                    kind: "function".to_string(),
-                    function: crate::api::FunctionCall {
-                        name: format!("{} (confirmed-by)", tools::SUPERSEDE_TOOL),
-                        arguments: call.function.arguments.clone(),
-                    },
-                };
-                approved = self.approver.approve(&provenance);
-                if !approved {
-                    return (
-                        "denied: the fact is confirmed-by and its modification was not approved."
-                            .to_string(),
-                        false,
-                    );
-                }
-            }
-        }
-        match memory.supersede(&request, approved, self.calib.as_ref()) {
-            Err(error) => (format!("error: {error}"), false),
-            Ok(memory::Superseded::By { from, into }) => (
-                format!(
-                    "superseded `{from}` by `{into}` \u{2014} `{from}` stays on disk, retired from recall"
-                ),
-                false,
-            ),
-            Ok(memory::Superseded::Forgotten { fact }) => (
-                format!(
-                    "forgot `{fact}` \u{2014} expired with its retirement noted; the cycle archives the file"
-                ),
-                false,
-            ),
-        }
     }
 
     /// Execute one lane tool call behind the approval gate: the lane's
@@ -1487,6 +1759,676 @@ impl<'a> Agent<'a> {
     fn record(&mut self, record: &Record) -> Result<(), AgentError> {
         self.session.record(record).map_err(AgentError::Io)
     }
+}
+
+/// What the gate decided for one call.
+#[derive(Debug, Clone)]
+enum Prepared {
+    /// The call will not run: its result is already known — a denial, a
+    /// scope refusal, a refused provenance gate, an argument error, or
+    /// an unknown tool. `approved` is the gate's own answer, which is
+    /// what the log records.
+    Settled { approved: bool, output: String, truncated: bool },
+    /// The call runs on the concurrent lane: its work is owned, so it
+    /// borrows nothing from the loop and can overlap its siblings.
+    Ready(Work),
+    /// The call needs the loop's own `&mut self` for its whole
+    /// execution, so it never overlaps another call.
+    Serial { call: ToolCall },
+}
+
+/// A settled result for a call that will not run. `approved` is true:
+/// the call crossed the gate and was refused for a reason of its own,
+/// which is what distinguishes it from a denial.
+fn settled(output: String) -> Prepared {
+    Prepared::Settled { approved: true, output, truncated: false }
+}
+
+/// One concurrent call's work: everything the call needs, owned.
+///
+/// Ownership is the whole point. None of these borrows the loop, so a
+/// batch's calls can be in flight together without the borrow checker
+/// serializing them — the only serialization left is the one the
+/// one-writer discipline asks for.
+#[derive(Debug, Clone)]
+enum Work {
+    /// A built-in tool's execution, against `root` for the write-time
+    /// guard.
+    Builtin { tool: Tool, arguments: serde_json::Value, root: std::path::PathBuf },
+    /// A skill's body, fetched from this run's declared list.
+    UseSkill { skills: Vec<crate::skills::Skill>, arguments: serde_json::Value },
+    /// One fact written into this run's corpus.
+    Remember { memory: Arc<Memory>, arguments: serde_json::Value },
+    /// One proposal filed into the home's store.
+    Improve {
+        home: std::path::PathBuf,
+        repo: std::path::PathBuf,
+        arguments: serde_json::Value,
+    },
+    /// One supersession, already past its provenance gate.
+    Supersede {
+        memory: Arc<Memory>,
+        calib: Option<crate::calib::Stream>,
+        request: memory::Supersede,
+        approved: bool,
+    },
+}
+
+/// Run one concurrent call's work to the `(output, truncated)` pair
+/// every tool's result takes.
+async fn run_work(work: Work) -> (String, bool) {
+    match work {
+        Work::Builtin { tool, arguments, root } => {
+            if tool == Tool::WriteFile {
+                // The write-time guard runs before the write, and it
+                // runs on the blocking pool: reading the vocabulary and
+                // matching names against it is CPU work, the same reason
+                // a tool's own execution leaves the async context
+                // (KI-017).
+                let guard = {
+                    let root = root.clone();
+                    let arguments = arguments.clone();
+                    match tokio::task::spawn_blocking(move || write_guard(&root, &arguments)).await
+                    {
+                        Err(error) => {
+                            return (format!("error: the guard task failed: {error}"), false)
+                        }
+                        Ok(guard) => guard,
+                    }
+                };
+                match guard {
+                    // A near-exact variant of an established term is
+                    // drift with no other explanation: the write does
+                    // not happen, and the refusal names both names.
+                    WriteGuard::Refused { reason } => return (reason, false),
+                    // A novel name with a canonical near-neighbour: the
+                    // write happens, and the flag rides the result the
+                    // model already reads.
+                    WriteGuard::Flagged { note } => {
+                        let (output, truncated) = run_builtin(tool, arguments).await;
+                        return (format!("{output}\n{note}"), truncated);
+                    }
+                    WriteGuard::Clean => {}
+                }
+            }
+            run_builtin(tool, arguments).await
+        }
+        Work::UseSkill { skills, arguments } => {
+            let outcome = tools::bound(ToolOutcome {
+                output: crate::skills::use_skill_result(&skills, &arguments),
+                truncated: false,
+            });
+            (outcome.output, outcome.truncated)
+        }
+        Work::Remember { memory, arguments } => {
+            let outcome = tools::bound(ToolOutcome {
+                output: land_remember(&memory, &arguments),
+                truncated: false,
+            });
+            (outcome.output, outcome.truncated)
+        }
+        Work::Improve { home, repo, arguments } => {
+            let outcome = tools::bound(ToolOutcome {
+                output: crate::improve::file_from_tool(&home, &repo, &arguments),
+                truncated: false,
+            });
+            (outcome.output, outcome.truncated)
+        }
+        Work::Supersede { memory, calib, request, approved } => {
+            land_supersede(&memory, &request, approved, calib.as_ref())
+        }
+    }
+}
+
+/// One built-in tool's execution, on the blocking pool.
+async fn run_builtin(tool: Tool, arguments: serde_json::Value) -> (String, bool) {
+    // KI-017: tool execution is blocking work (a `bash` child can run
+    // for minutes), so it leaves the async context on the blocking pool
+    // instead of stalling the runtime's worker thread.
+    match tokio::task::spawn_blocking(move || tool.execute(&arguments)).await {
+        Err(error) => (format!("error: the tool task failed: {error}"), false),
+        Ok(Ok(outcome)) => (outcome.output, outcome.truncated),
+        Ok(Err(message)) => (format!("error: {message}"), false),
+    }
+}
+
+/// Land one `remember` call against its corpus: the model-visible
+/// confirmation or the typed refusal, in the same shape a built-in's
+/// output takes — a failure is a value the model can read and react to.
+fn land_remember(memory: &Memory, arguments: &serde_json::Value) -> String {
+    match memory::Remember::parse(arguments) {
+        Err(error) => format!("error: {error}"),
+        Ok(request) => match memory.remember(&request) {
+            Err(error) => format!("error: {error}"),
+            Ok(fact) => format!(
+                "remembered `{}` \u{2014} {}, {} \u{b7} {}",
+                fact.name,
+                fact.tier.label(),
+                fact.basis.label(),
+                fact.path.display()
+            ),
+        },
+    }
+}
+
+/// Land one approved supersession and render what the model reads. The
+/// provenance gate is the caller's ([`Agent::prepare_supersede`]); this
+/// is the write and its sentence.
+fn land_supersede(
+    memory: &Memory,
+    request: &memory::Supersede,
+    approved: bool,
+    calib: Option<&crate::calib::Stream>,
+) -> (String, bool) {
+    match memory.supersede(request, approved, calib) {
+        Err(error) => (format!("error: {error}"), false),
+        Ok(memory::Superseded::By { from, into }) => (
+            format!(
+                "superseded `{from}` by `{into}` \u{2014} `{from}` stays on disk, retired from recall"
+            ),
+            false,
+        ),
+        Ok(memory::Superseded::Forgotten { fact }) => (
+            format!(
+                "forgot `{fact}` \u{2014} expired with its retirement noted; the cycle archives the file"
+            ),
+            false,
+        ),
+    }
+}
+
+/// The shared state one prepared call mutates, named — or `None` for a
+/// call that touches no shared state this plan can name.
+///
+/// The one-writer discipline, made structural rather than advisory (the
+/// KI-172/173/177 lesson — three separate occurrences of two writers on
+/// one path — and the memory writer's lost-update class):
+///
+/// - `remember` and `supersede` take the memory writer's slot: two
+///   concurrent writes to one corpus is the lost update.
+/// - `write_file` takes the path's own slot, so two writes to one path
+///   run serially in the model's order rather than being silently
+///   reordered.
+/// - `bash` takes the shell's slot: a shell command can write anything,
+///   so two of them are two writers on the whole tree.
+/// - `improve` takes the proposals store's slot, and a lane call takes
+///   its lane's.
+///
+/// Everything else — `read_file`, `list_dir`, `use_skill`, and a
+/// delegation, which is independent by construction — carries no writer
+/// and runs together. A `write_file` whose path does not parse carries
+/// none either: that write cannot happen, so there is no writer to hold
+/// apart.
+fn writer_of(prepared: &Prepared) -> Option<String> {
+    match prepared {
+        Prepared::Settled { .. } => None,
+        Prepared::Serial { call } => {
+            let name = call.function.name.as_str();
+            if name == tools::SUBAGENT_TOOL {
+                None
+            } else {
+                tools::lane_of(name).map(|(lane, _)| format!("lane:{lane}"))
+            }
+        }
+        Prepared::Ready(work) => match work {
+            Work::Remember { .. } | Work::Supersede { .. } => Some("memory".to_string()),
+            Work::Improve { .. } => Some("proposals".to_string()),
+            Work::UseSkill { .. } => None,
+            Work::Builtin { tool, arguments, .. } => match tool {
+                Tool::Bash => Some("shell".to_string()),
+                Tool::WriteFile => arguments
+                    .get("path")
+                    .and_then(|path| path.as_str())
+                    .filter(|path| !path.is_empty())
+                    .map(|path| format!("path:{path}")),
+                Tool::ReadFile | Tool::ListDir => None,
+            },
+        },
+    }
+}
+
+/// One call's place in the execution plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PlanStep {
+    /// The wave this call runs in. Waves run in order; the calls inside
+    /// one run together.
+    wave: usize,
+    /// True when the call needs the loop's own `&mut self` for its
+    /// whole execution, so it never overlaps another call. This is a
+    /// structural fact, not a conflict: a delegation borrows the
+    /// parent's gate and progress sink, and a lane call borrows the
+    /// run's roster.
+    exclusive: bool,
+}
+
+/// One named writer conflict: the shared state more than one call in
+/// the batch mutates, and the calls that carry it in the batch's own
+/// order.
+///
+/// The plan names the conflict rather than silently reordering
+/// anything: the concurrent execution of the pair is refused, the
+/// writer is named, and the calls run serially in the order the model
+/// asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WriterConflict {
+    /// The writer, named: `path:src/agent.rs`, `memory`, `shell`, ...
+    writer: String,
+    /// The batch positions that carry it, in the batch's own order.
+    positions: Vec<usize>,
+}
+
+/// The execution plan for one turn's batch.
+#[derive(Debug, Clone)]
+struct BatchPlan {
+    /// One step per prepared call, in the batch's own order.
+    steps: Vec<PlanStep>,
+    /// The writer conflicts the plan held apart, named.
+    conflicts: Vec<WriterConflict>,
+    /// How many waves the plan runs.
+    waves: usize,
+    /// The bound every wave is under.
+    bound: usize,
+}
+
+impl BatchPlan {
+    /// One progress line naming the batch: the calls, the waves, the
+    /// bound, and every writer conflict the plan held apart.
+    ///
+    /// `None` for the ordinary one-call turn, which is byte-for-byte
+    /// the run this crate has always had.
+    fn line(&self, calls: &[ToolCall]) -> Option<String> {
+        if self.steps.len() < 2 {
+            return None;
+        }
+        let mut line = format!(
+            "\u{2014} batch: {} call{} in {} wave{} (bound {})",
+            self.steps.len(),
+            if self.steps.len() == 1 { "" } else { "s" },
+            self.waves,
+            if self.waves == 1 { "" } else { "s" },
+            self.bound
+        );
+        for conflict in &self.conflicts {
+            let named: Vec<String> = conflict
+                .positions
+                .iter()
+                .filter_map(|position| calls.get(*position))
+                .map(|call| call.id.clone())
+                .collect();
+            line.push_str(&format!(
+                " \u{b7} one writer `{}`: {} run serially",
+                conflict.writer,
+                named.join(" \u{2192} ")
+            ));
+        }
+        Some(line)
+    }
+}
+
+/// Plan one turn's batch: which calls run together, which are held apart
+/// by a shared writer, and which conflicts that names.
+///
+/// The algorithm, stated so the plan is auditable rather than magical:
+///
+/// - the batch is walked in the model's own order, and nothing is ever
+///   reordered;
+/// - a call with a writer lands in the first wave *after* the last wave
+///   that carried the same writer, which is the one-writer discipline:
+///   two `write_file`s to one path run serially, in the model's order;
+/// - a call without one lands in the first wave with room;
+/// - no wave carries more than `bound` calls, so a batch larger than
+///   [`DELEGATION_CONCURRENCY`] never exceeds it however it is shaped.
+///
+/// The plan is a function of the batch and the bound and nothing else —
+/// no clock, no randomness — which is what makes it testable without a
+/// run.
+fn plan_batch(prepared: &[Option<Prepared>], bound: usize) -> BatchPlan {
+    let bound = bound.max(1);
+    let mut steps: Vec<PlanStep> = Vec::with_capacity(prepared.len());
+    let mut sizes: Vec<usize> = Vec::new();
+    let mut last_wave: HashMap<String, usize> = HashMap::new();
+    let mut carriers: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, gate) in prepared.iter().enumerate() {
+        let writer = gate.as_ref().and_then(writer_of);
+        if let Some(writer) = &writer {
+            carriers.entry(writer.clone()).or_default().push(index);
+        }
+        // A writer's next call cannot share a wave with its last one.
+        let earliest = writer
+            .as_ref()
+            .and_then(|writer| last_wave.get(writer))
+            .map_or(0, |wave| wave + 1);
+        let mut wave = earliest;
+        while wave < sizes.len() && sizes[wave] >= bound {
+            wave += 1;
+        }
+        if wave == sizes.len() {
+            sizes.push(0);
+        }
+        sizes[wave] += 1;
+        steps.push(PlanStep {
+            wave,
+            exclusive: matches!(gate, Some(Prepared::Serial { .. })),
+        });
+        if let Some(writer) = writer {
+            last_wave.insert(writer, wave);
+        }
+    }
+    let mut conflicts: Vec<WriterConflict> = carriers
+        .into_iter()
+        .filter(|(_, positions)| positions.len() > 1)
+        .map(|(writer, positions)| WriterConflict { writer, positions })
+        .collect();
+    // Sorted by writer, so the line the plan prints — and any later
+    // record that carries it — reads the same on every run.
+    conflicts.sort_by(|left, right| left.writer.cmp(&right.writer));
+    BatchPlan { steps, conflicts, waves: sizes.len(), bound }
+}
+
+/// Drive `works` to completion with at most `bound` in flight,
+/// answering in the order the works were given.
+///
+/// The bounded runner is the one place the fan-out's ceiling is real, so
+/// it is stated here and tested directly rather than inferred from a
+/// wave's shape. It polls the running futures and starts a queued one
+/// the moment a slot frees — the packing a semaphore would give, without
+/// spawning, so no future has to be `Send` and a panic propagates
+/// instead of vanishing into a join error.
+///
+/// Every future is polled to completion before this returns, so the
+/// answer carries one entry per work, in order, with no holes.
+async fn run_bounded<T, F>(works: Vec<F>, bound: usize) -> Vec<T>
+where
+    F: std::future::Future<Output = T>,
+{
+    let bound = bound.max(1);
+    let total = works.len();
+    let mut queue: VecDeque<Pin<Box<F>>> = works.into_iter().map(Box::pin).collect();
+    let mut running: Vec<(usize, Pin<Box<F>>)> = Vec::with_capacity(bound.min(total));
+    let mut done: Vec<Option<T>> = (0..total).map(|_| None).collect();
+    let mut next = 0usize;
+    std::future::poll_fn(|cx| {
+        loop {
+            // Poll everything in flight. Each running future is polled
+            // with this task's context, so a pending one has already
+            // arranged to wake it — returning `Pending` below parks the
+            // task rather than spinning.
+            let mut index = 0;
+            while index < running.len() {
+                match running[index].1.as_mut().poll(cx) {
+                    Poll::Ready(value) => {
+                        let (slot, _) = running.swap_remove(index);
+                        done[slot] = Some(value);
+                    }
+                    Poll::Pending => index += 1,
+                }
+            }
+            // Fill the freed slots, and poll the newly started futures
+            // on the next pass so an instantly-ready one does not wait
+            // for a wake nothing will send.
+            let mut started = 0;
+            while running.len() < bound {
+                let Some(work) = queue.pop_front() else { break };
+                running.push((next, work));
+                next += 1;
+                started += 1;
+            }
+            if started == 0 {
+                break;
+            }
+        }
+        if running.is_empty() && queue.is_empty() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    })
+    .await;
+    done.into_iter().flatten().collect()
+}
+
+/// What a control file's JSON says. `{"steer": "<text>"}` is a steer and
+/// `{"stop": true}` is a stop; anything else — an empty steer, a `stop`
+/// that is not true, a JSON array — is not a control, and the reader
+/// names it rather than guessing.
+fn parse_control(value: &serde_json::Value) -> Option<Control> {
+    if value.get("stop").and_then(|stop| stop.as_bool()) == Some(true) {
+        return Some(Control::Stop);
+    }
+    let text = value
+        .get("steer")
+        .and_then(|steer| steer.as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())?;
+    Some(Control::Steer(text.to_string()))
+}
+
+/// How long one steer reads before it is cut. A steer is an
+/// instruction, not a document; a novel belongs in the task, and an
+/// unbounded owner message is an unbounded context cost on every turn
+/// that follows.
+const STEER_LIMIT: usize = 2_000;
+
+/// The frame a steer rides in: a user-role message labelled as the
+/// owner's, never as the model's own words — the same discipline the
+/// approver already carries, where a forwarded call is named for the
+/// subagent it came from. A model that could not tell its own reasoning
+/// from the owner's interruption would read a steer as something it
+/// thought of.
+fn steer_frame(text: &str) -> String {
+    format!(
+        "[the owner of this run steered it through its control file \u{2014} this is the owner speaking, not you]\n{text}"
+    )
+}
+
+/// One steer's text, bounded, with the cut marked so the model knows
+/// whether the instruction arrived whole.
+fn steer_text(text: &str) -> String {
+    let mut bounded: String = text.chars().take(STEER_LIMIT).collect();
+    if text.chars().count() > STEER_LIMIT {
+        bounded.push('\u{2026}');
+    }
+    bounded
+}
+
+/// How many distinct new identifiers one `write_file` is checked for. A
+/// bound, not a proof: a file that introduces more is checked on its
+/// first `GUARD_CANDIDATES` names in order of appearance. The guard is a
+/// flag, not a certification, and an unbounded scan would stall the
+/// write it is meant to police.
+const GUARD_CANDIDATES: usize = 512;
+
+/// How many flags one write's note carries before it says how many more
+/// there are. A wall of notes is a note nobody reads — the guard that
+/// cries wolf gets ignored, and then it is worse than nothing.
+const GUARD_NOTES: usize = 3;
+
+/// What the write-time guard decided about one `write_file` call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WriteGuard {
+    /// Nothing the file introduces is new: the write proceeds.
+    Clean,
+    /// The write proceeds, and the model is told which name it
+    /// introduced and what the project already calls it.
+    Flagged { note: String },
+    /// The write does not happen: the file introduced a case or
+    /// separator variant of an established term.
+    Refused { reason: String },
+}
+
+/// Check the identifiers one `write_file` call introduces against the
+/// project's vocabulary, and say what to do about each.
+///
+/// The three verdicts, and why each is what it is:
+///
+/// - **Refused** — a case or separator variant of an established term
+///   (`judgeRoute` beside `judge_route`). That is drift with no other
+///   explanation, so the write does not land and the refusal names both
+///   names.
+/// - **Flagged** — a novel identifier with a canonical near-neighbour
+///   (`route_judge` beside `judge_route`). The write lands and the flag
+///   rides the result the model already reads, naming the candidate, so
+///   the model can rename.
+/// - **Clean** — a genuinely new concept, which the vocabulary does not
+///   carry and nothing is near. Not flagged, because a guard that
+///   refuses legitimate new names gets ignored.
+///
+/// Conservative by construction, and cheap by construction: the
+/// vocabulary is derived once per process per root and cached inside the
+/// nomenclature module, so this reads the cache rather than re-deriving
+/// per call, and a name the vocabulary already carries is skipped in one
+/// lookup instead of a scan.
+fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGuard {
+    let Some(content) = arguments.get("content").and_then(|content| content.as_str()) else {
+        // No content to name: nothing to check. A write with no content
+        // fails on its own, with its own reason.
+        return WriteGuard::Clean;
+    };
+    let vocabulary = crate::nomenclature::vocabulary(root);
+    let mut flagged: Vec<(String, String, String)> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for token in identifier_tokens(content).into_iter().take(GUARD_CANDIDATES) {
+        if seen.contains(&token) {
+            continue;
+        }
+        seen.push(token.clone());
+        // The vocabulary's canonical form for this name, in both
+        // spellings: the parts joined as written, and the parts
+        // lowercased. The vocabulary keeps a compound's own case when
+        // the tree wrote it camelCase (`recallCount` establishes
+        // `recall_Count`) beside the lowercased one, and a case or
+        // separator variant has to find its term in one lookup rather
+        // than a scan.
+        let parts = identifier_parts(&token);
+        let spellings = [
+            parts.join("_"),
+            parts.iter().map(|part| part.to_lowercase()).collect::<Vec<_>>().join("_"),
+        ];
+        let mut established = false;
+        for spelling in spellings {
+            let Some(entry) = vocabulary.get(&spelling) else { continue };
+            established = true;
+            // Established. The term itself is nothing to flag; a case or
+            // separator variant of it is drift with no other
+            // explanation, and the module's own verdict is what says so.
+            if token != entry.term && crate::nomenclature::is_near_exact(&token, &entry.term) {
+                let site = entry
+                    .sites
+                    .first()
+                    .map(|site| format!("{}:{}", site.file, site.line))
+                    .unwrap_or_else(|| "in this tree".to_string());
+                return WriteGuard::Refused {
+                    reason: format!(
+                        "error: `write_file` refused: `{token}` is a case or separator variant of the established term `{}` ({site}); rename it to the established term",
+                        entry.term
+                    ),
+                };
+            }
+            // The term itself: nothing to flag, and the other spelling
+            // is the same term.
+            break;
+        }
+        if established {
+            continue;
+        }
+        // Novel. Is there a canonical near-neighbour?
+        if let Some(convention) = crate::nomenclature::check_in(&vocabulary, &token) {
+            if let Some(canonical) = convention.term {
+                let site = convention
+                    .sites
+                    .first()
+                    .map(|site| format!("{}:{}", site.file, site.line))
+                    .unwrap_or_else(|| "in this tree".to_string());
+                flagged.push((token, canonical, site));
+            }
+        }
+    }
+    if flagged.is_empty() {
+        return WriteGuard::Clean;
+    }
+    let mut note = String::from(
+        "note: this write introduces names with canonical near-neighbours in this project's vocabulary:",
+    );
+    for (candidate, canonical, site) in flagged.iter().take(GUARD_NOTES) {
+        note.push_str(&format!(
+            "\n- `{candidate}` \u{2014} the established term is `{canonical}` ({site}); consider renaming"
+        ));
+    }
+    let more = flagged.len().saturating_sub(GUARD_NOTES);
+    if more > 0 {
+        note.push_str(&format!("\n- \u{2026}and {more} more"));
+    }
+    WriteGuard::Flagged { note }
+}
+
+/// The identifier-shaped names one file's text carries, in order of
+/// first appearance: a maximal run of letters, digits, and underscores
+/// that starts with a letter or an underscore — the same definition of a
+/// word the vocabulary's own extractor uses. Sub-three-character names
+/// are dropped: the vocabulary carries none, so nothing that short can
+/// be an established term or a variant of one.
+fn identifier_tokens(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        if character.is_alphanumeric() || character == '_' {
+            current.push(character);
+        } else if !current.is_empty() {
+            if current.chars().count() >= 3 {
+                out.push(std::mem::take(&mut current));
+            } else {
+                current.clear();
+            }
+        }
+    }
+    if current.chars().count() >= 3 {
+        out.push(current);
+    }
+    out
+}
+
+/// One identifier split on `_`, `-`, and camelCase boundaries, in order:
+/// `recall_count` -> recall, count; `recallCount` -> recall, count;
+/// `HTTPServer` -> http, server.
+///
+/// This mirrors the vocabulary's own splitter, which is private to the
+/// nomenclature module. The mirror is what lets the guard find a case or
+/// separator variant in one lookup — the vocabulary stores its terms in
+/// exactly this canonical form — instead of scanning every entry per
+/// candidate, which is the cost the module's own bounds exist to avoid.
+/// The verdict itself is the module's
+/// ([`crate::nomenclature::is_near_exact`]), so a divergence here costs
+/// a missed flag, never a wrong refusal.
+fn identifier_parts(identifier: &str) -> Vec<String> {
+    let mut parts: Vec<String> = Vec::new();
+    for segment in identifier.split(['_', '-']) {
+        if segment.is_empty() {
+            continue;
+        }
+        let chars: Vec<char> = segment.chars().collect();
+        let mut current = String::new();
+        for (index, character) in chars.iter().enumerate() {
+            let previous = if index == 0 { None } else { Some(chars[index - 1]) };
+            let next = chars.get(index + 1).copied();
+            let boundary = match (previous, character.is_uppercase()) {
+                (Some(previous), true) => {
+                    previous.is_lowercase()
+                        || previous.is_ascii_digit()
+                        || (next.map(|n| n.is_lowercase()).unwrap_or(false)
+                            && previous.is_uppercase())
+                }
+                _ => false,
+            };
+            if boundary && !current.is_empty() {
+                parts.push(std::mem::take(&mut current));
+            }
+            current.push(*character);
+        }
+        if !current.is_empty() {
+            parts.push(current);
+        }
+    }
+    parts
 }
 
 /// Parse a call's arguments for display only.
@@ -2677,5 +3619,676 @@ mod tests {
         assert_eq!(agent.message_turns.len(), agent.messages.len());
         assert_eq!(agent.message_turns[0], 1, "the summary carries the range's first turn");
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    // --- the bounded fan-out (D4) -----------------------------------------
+
+    /// The prepared form of one built-in call, for the plan tests: the
+    /// gate is not what those tests are about, so the call is prepared
+    /// by hand the way the gate would have.
+    fn ready_builtin(call: &ToolCall) -> Prepared {
+        let tool = Tool::from_name(&call.function.name).expect("a built-in tool");
+        let arguments = serde_json::from_str(&call.function.arguments).unwrap();
+        Prepared::Ready(Work::Builtin { tool, arguments, root: std::path::PathBuf::from("/root") })
+    }
+
+    /// The prepared form of a whole batch of built-in calls, in order.
+    fn prepared_of(calls: &[ToolCall]) -> Vec<Option<Prepared>> {
+        calls.iter().map(|call| Some(ready_builtin(call))).collect()
+    }
+
+    /// How many calls each wave of a plan carries, in wave order.
+    fn wave_sizes(plan: &BatchPlan) -> Vec<usize> {
+        let mut sizes = vec![0usize; plan.waves];
+        for step in &plan.steps {
+            sizes[step.wave] += 1;
+        }
+        sizes
+    }
+
+    #[test]
+    fn the_config_seam_can_only_lower_the_bound() {
+        // Absent, malformed, zero, or above the ceiling: the constant
+        // stands. A bound that silently becomes one because of a typo is
+        // a bound nobody asked for.
+        for requested in [None, Some(""), Some("  "), Some("abc"), Some("0"), Some("7"), Some("3")] {
+            assert_eq!(
+                clamp_concurrency(DELEGATION_CONCURRENCY, requested),
+                DELEGATION_CONCURRENCY,
+                "{requested:?} must leave the constant standing"
+            );
+        }
+        // A smaller positive number lowers it, and that is the only
+        // direction the seam moves.
+        assert_eq!(clamp_concurrency(DELEGATION_CONCURRENCY, Some("1")), 1);
+        assert_eq!(clamp_concurrency(DELEGATION_CONCURRENCY, Some(" 2 ")), 2);
+        assert_eq!(DELEGATION_CONCURRENCY, 3, "the default the plan names");
+    }
+
+    #[test]
+    fn a_batch_larger_than_the_bound_never_exceeds_it() {
+        // Seven disjoint reads under a bound of three: three waves, none
+        // larger than the bound, whatever the batch's size.
+        let calls: Vec<ToolCall> = (0..7)
+            .map(|index| {
+                call(&format!("c{index}"), "read_file", &format!(r#"{{"path":"/f{index}"}}"#))
+            })
+            .collect();
+        let plan = plan_batch(&prepared_of(&calls), DELEGATION_CONCURRENCY);
+        assert_eq!(plan.waves, 3, "{:?}", wave_sizes(&plan));
+        assert!(
+            wave_sizes(&plan).iter().all(|size| *size <= DELEGATION_CONCURRENCY),
+            "{:?}",
+            wave_sizes(&plan)
+        );
+        // The seam's lowered bound is honored: seven calls under two.
+        let tight = plan_batch(&prepared_of(&calls), clamp_concurrency(3, Some("2")));
+        assert_eq!(tight.bound, 2);
+        assert_eq!(tight.waves, 4, "{:?}", wave_sizes(&tight));
+        assert!(wave_sizes(&tight).iter().all(|size| *size <= 2), "{:?}", wave_sizes(&tight));
+    }
+
+    #[test]
+    fn disjoint_calls_run_together() {
+        // Three writes to three paths and two reads: the independent
+        // calls share a wave, and only the bound pushes the rest into the
+        // next one.
+        let calls = vec![
+            call("c1", "write_file", r#"{"path":"/a","content":"x"}"#),
+            call("c2", "write_file", r#"{"path":"/b","content":"x"}"#),
+            call("c3", "write_file", r#"{"path":"/c","content":"x"}"#),
+            call("c4", "read_file", r#"{"path":"/d"}"#),
+            call("c5", "read_file", r#"{"path":"/e"}"#),
+        ];
+        let plan = plan_batch(&prepared_of(&calls), DELEGATION_CONCURRENCY);
+        assert_eq!(plan.steps[0].wave, 0);
+        assert_eq!(plan.steps[1].wave, 0);
+        assert_eq!(plan.steps[2].wave, 0);
+        assert_eq!(plan.steps[3].wave, 1);
+        assert_eq!(plan.steps[4].wave, 1);
+        assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+    }
+
+    #[test]
+    fn two_writes_to_one_path_run_serially_and_the_conflict_is_named() {
+        let calls = vec![
+            call("c1", "write_file", r#"{"path":"/same","content":"first"}"#),
+            call("c2", "read_file", r#"{"path":"/other"}"#),
+            call("c3", "write_file", r#"{"path":"/same","content":"second"}"#),
+        ];
+        let plan = plan_batch(&prepared_of(&calls), DELEGATION_CONCURRENCY);
+        // The two writes to one path are held apart: the second runs
+        // after the first, in the model's own order — never silently
+        // reordered, and never together.
+        assert_eq!(plan.steps[0].wave, 0);
+        assert_eq!(plan.steps[2].wave, 1, "the second write waits for the first");
+        // The conflict is refused by name: the writer, and both calls in
+        // the batch's order.
+        assert_eq!(plan.conflicts.len(), 1);
+        assert_eq!(plan.conflicts[0].writer, "path:/same");
+        assert_eq!(plan.conflicts[0].positions, vec![0, 2]);
+        let line = plan.line(&calls).expect("a batch of three names itself");
+        assert!(line.contains("path:/same"), "{line}");
+        assert!(line.contains("c1 \u{2192} c3"), "{line}");
+        assert!(line.contains("run serially"), "{line}");
+    }
+
+    #[test]
+    fn the_memory_writes_serialize_against_each_other() {
+        // `remember` and `supersede` both mutate the corpus: two
+        // concurrent writes to one corpus is the lost-update class.
+        let root = corpus("plan-memory-corpus", &[]);
+        let memory = Arc::new(Memory::load_with(&root, Box::new(crate::memory::KeywordOnly)));
+        let request =
+            memory::Supersede::parse(&serde_json::json!({"name":"b","justification":"j"})).unwrap();
+        let prepared = vec![
+            Some(Prepared::Ready(Work::Remember {
+                memory: memory.clone(),
+                arguments: serde_json::json!({"name":"a"}),
+            })),
+            Some(Prepared::Ready(Work::Supersede {
+                memory,
+                calib: None,
+                request,
+                approved: true,
+            })),
+        ];
+        let plan = plan_batch(&prepared, DELEGATION_CONCURRENCY);
+        assert_ne!(plan.steps[0].wave, plan.steps[1].wave);
+        assert_eq!(plan.conflicts.len(), 1);
+        assert_eq!(plan.conflicts[0].writer, "memory");
+        assert_eq!(plan.conflicts[0].positions, vec![0, 1]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn two_shell_calls_take_the_one_writer() {
+        // A shell command can write anything, so two of them are two
+        // writers on the whole tree — the KI-172/173/177 class.
+        let calls = vec![
+            call("c1", "bash", r#"{"command":"ls"}"#),
+            call("c2", "bash", r#"{"command":"pwd"}"#),
+        ];
+        let plan = plan_batch(&prepared_of(&calls), DELEGATION_CONCURRENCY);
+        assert_ne!(plan.steps[0].wave, plan.steps[1].wave);
+        assert_eq!(plan.conflicts[0].writer, "shell");
+    }
+
+    #[tokio::test]
+    async fn the_bounded_runner_never_exceeds_the_bound() {
+        // Seven works, each recording how many were in flight when it
+        // ran: the peak is the bound and nothing above it, and every work
+        // answers in the order it was given.
+        let in_flight = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let peak = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let works: Vec<_> = (0..7)
+            .map(|index| {
+                let in_flight = in_flight.clone();
+                let peak = peak.clone();
+                async move {
+                    let now = in_flight.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    in_flight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    index
+                }
+            })
+            .collect();
+        let answers = run_bounded(works, DELEGATION_CONCURRENCY).await;
+        assert_eq!(answers, (0..7).collect::<Vec<_>>(), "the answers keep their order");
+        assert!(
+            peak.load(std::sync::atomic::Ordering::SeqCst) <= DELEGATION_CONCURRENCY,
+            "peak in flight was {}",
+            peak.load(std::sync::atomic::Ordering::SeqCst)
+        );
+        // A lowered bound is the runner's too.
+        let works: Vec<_> = (0..5).map(|index| async move {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            index
+        }).collect();
+        assert_eq!(run_bounded(works, 1).await, (0..5).collect::<Vec<_>>());
+    }
+
+    /// A progress sink that shares its bytes with the test, so a test can
+    /// read the lines the loop wrote once the agent is done with them.
+    #[derive(Clone, Default)]
+    struct SharedProgress(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedProgress {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl SharedProgress {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).to_string()
+        }
+    }
+
+    /// An agent over a fresh session under `home` with a shared progress
+    /// sink, for the batch tests. Its client is never called: they drive
+    /// `execute_calls` directly, the way the loop does.
+    fn agent_over_home<'a>(
+        home: &std::path::Path,
+        approver: Box<dyn Approver>,
+        progress: &'a mut dyn Write,
+    ) -> Agent<'a> {
+        let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
+        let session = Box::leak(Box::new(crate::session::Session::create(home, "m").unwrap()));
+        let options = AgentOptions {
+            model: "m".to_string(),
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            memory: None,
+            scope: None,
+            improve_home: None,
+        };
+        Agent::new(client, options, session, approver, progress).unwrap()
+    }
+
+    /// The call ids a log's tool results carry, in the order they landed.
+    fn result_ids(records: &[Record]) -> Vec<String> {
+        records
+            .iter()
+            .filter_map(|record| match record {
+                Record::ToolResult { call_id, .. } => Some(call_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_batch_of_independent_writes_executes_and_every_outcome_is_logged() {
+        let home = scratch("batch-exec");
+        let files = scratch("batch-exec-files");
+        let mut progress = SharedProgress::default();
+        let mut agent = agent_over_home(&home, Box::new(ApproveAll), &mut progress);
+        let calls: Vec<ToolCall> = (0..5)
+            .map(|index| {
+                call(
+                    &format!("c{index}"),
+                    "write_file",
+                    &format!(
+                        r#"{{"path":"{}","content":"aaa"}}"#,
+                        files.join(format!("f{index}.txt")).display()
+                    ),
+                )
+            })
+            .collect();
+        // The assistant turn lands first, exactly as the loop records it
+        // before the batch runs: the batch is what that record carries.
+        agent
+            .push_message(Message {
+                role: Role::Assistant,
+                content: None,
+                tool_calls: calls.clone(),
+                tool_call_id: None,
+            })
+            .unwrap();
+        agent.execute_calls(&calls).await.unwrap();
+        drop(agent);
+        // Every file landed: the calls ran, together or in waves, and
+        // none was dropped.
+        for index in 0..5 {
+            let written = std::fs::read_to_string(files.join(format!("f{index}.txt"))).unwrap();
+            assert_eq!(written, "aaa");
+        }
+        // The log records the batch — the assistant turn carries every
+        // call, in the model's order — and each call's outcome, in that
+        // same order. The concurrency is reconstructable from the log
+        // alone (hard rule 5).
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let batch = records
+            .iter()
+            .find_map(|record| match record {
+                Record::Assistant { tool_calls, .. } => Some(tool_calls.clone()),
+                _ => None,
+            })
+            .expect("the assistant turn carries the batch");
+        let batch_ids: Vec<String> = batch.iter().map(|entry| entry.id.clone()).collect();
+        let call_ids: Vec<String> = calls.iter().map(|entry| entry.id.clone()).collect();
+        assert_eq!(batch_ids, call_ids);
+        assert_eq!(result_ids(&records), call_ids, "every outcome, in the batch's order");
+        let approved: Vec<bool> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::ToolResult { approved, .. } => Some(*approved),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(approved, vec![true; 5]);
+        // The plan named itself on the progress line: the bound, the
+        // waves, and — here — no conflict at all.
+        let written = progress.text();
+        assert!(written.contains("batch: 5 calls in 2 waves (bound 3)"), "{written}");
+        assert!(!written.contains("one writer"), "{written}");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&files);
+    }
+
+    #[tokio::test]
+    async fn two_writes_to_one_path_run_in_order_through_the_loop() {
+        let home = scratch("serial-exec");
+        let files = scratch("serial-exec-files");
+        let mut progress = SharedProgress::default();
+        let mut agent = agent_over_home(&home, Box::new(ApproveAll), &mut progress);
+        let path = files.join("one.txt");
+        let calls = vec![
+            call(
+                "c1",
+                "write_file",
+                &format!(r#"{{"path":"{}","content":"aaa"}}"#, path.display()),
+            ),
+            call(
+                "c2",
+                "write_file",
+                &format!(r#"{{"path":"{}","content":"bbb"}}"#, path.display()),
+            ),
+        ];
+        agent.execute_calls(&calls).await.unwrap();
+        drop(agent);
+        // Both writes landed, and the second is the one that stands: the
+        // model's order was kept, not silently reordered.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "bbb");
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        assert_eq!(result_ids(&records), vec!["c1".to_string(), "c2".to_string()]);
+        // And the conflict was named rather than reordered silently.
+        let written = progress.text();
+        assert!(written.contains("one writer `path:"), "{written}");
+        assert!(written.contains("c1 \u{2192} c2"), "{written}");
+        assert!(written.contains("run serially"), "{written}");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&files);
+    }
+
+    #[tokio::test]
+    async fn a_denied_call_in_a_batch_still_lands_its_denial() {
+        // The gate is crossed one call at a time even in a concurrent
+        // batch: a denial settles at the gate, the call never runs, and
+        // its result still rides the log.
+        let home = scratch("batch-denial");
+        let files = scratch("batch-denial-files");
+        let mut progress = SharedProgress::default();
+        let mut agent = agent_over_home(&home, Box::new(Scripted::new([true, false])), &mut progress);
+        let calls = vec![
+            call(
+                "c1",
+                "write_file",
+                &format!(r#"{{"path":"{}","content":"aaa"}}"#, files.join("kept.txt").display()),
+            ),
+            call(
+                "c2",
+                "write_file",
+                &format!(r#"{{"path":"{}","content":"bbb"}}"#, files.join("denied.txt").display()),
+            ),
+        ];
+        agent.execute_calls(&calls).await.unwrap();
+        drop(agent);
+        assert!(files.join("kept.txt").exists(), "the approved call ran");
+        assert!(!files.join("denied.txt").exists(), "the denied call did not run");
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let denied = records
+            .iter()
+            .find_map(|record| match record {
+                Record::ToolResult { call_id, approved, output, .. } if call_id == "c2" => {
+                    Some((*approved, output.clone()))
+                }
+                _ => None,
+            })
+            .expect("the denied call's result landed");
+        assert!(!denied.0, "the log carries the gate's own answer");
+        assert!(denied.1.contains("did not approve"), "{}", denied.1);
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&files);
+    }
+
+    // --- live control (D5) -------------------------------------------------
+
+    #[tokio::test]
+    async fn an_absent_control_file_costs_nothing() {
+        let home = scratch("control-absent");
+        let mut progress = SharedProgress::default();
+        let mut agent = agent_over_home(&home, Box::new(ApproveAll), &mut progress);
+        assert!(!agent.control_path().exists());
+        // Reading an absent file is one failed open: nothing, no line,
+        // no file created.
+        assert_eq!(agent.read_control(), None);
+        assert_eq!(agent.read_control(), None);
+        drop(agent);
+        assert!(progress.text().is_empty(), "{:?}", progress.text());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn a_steer_rides_the_next_turn_as_the_owners_message_and_is_consumed() {
+        let home = scratch("control-steer");
+        let mut progress = SharedProgress::default();
+        let mut agent = agent_over_home(&home, Box::new(ApproveAll), &mut progress);
+        let control = agent.control_path();
+        std::fs::write(&control, r#"{"steer":"check the gate first"}"#).unwrap();
+        // Read once: the steer rides, and the file is gone — one-shot, so
+        // it cannot ride two turns.
+        assert_eq!(
+            agent.read_control(),
+            Some(Control::Steer("check the gate first".to_string()))
+        );
+        assert!(!control.exists(), "the steer is consumed on read");
+        // A second read finds nothing.
+        assert_eq!(agent.read_control(), None);
+        // It rides the next turn as a user-role message labelled as the
+        // owner's, never as the model's own words.
+        agent.apply_steer("check the gate first").unwrap();
+        let last = agent.messages.last().expect("the steer rode");
+        assert_eq!(last.role, Role::User);
+        let content = last.content.clone().unwrap_or_default();
+        assert!(content.contains("the owner speaking, not you"), "{content}");
+        assert!(content.contains("check the gate first"), "{content}");
+        drop(agent);
+        // And it is logged like every other model-visible message, so a
+        // steered run's trajectory is reconstructable (hard rule 5).
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let steered = records
+            .iter()
+            .find(|record| matches!(record, Record::User { content } if content.contains("steered")));
+        match steered {
+            Some(Record::User { content }) => {
+                assert!(content.contains("check the gate first"), "{content}");
+            }
+            other => panic!("expected the steered user record, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn a_malformed_control_file_is_named_and_left_in_place() {
+        let home = scratch("control-malformed");
+        let mut progress = SharedProgress::default();
+        let mut agent = agent_over_home(&home, Box::new(ApproveAll), &mut progress);
+        let control = agent.control_path();
+        std::fs::write(&control, "{not json").unwrap();
+        assert_eq!(agent.read_control(), None);
+        // A malformed file is evidence of something, not litter: it stays,
+        // and one line names it (hard rule 10).
+        assert!(control.exists(), "the malformed file is left in place");
+        // A file naming neither a steer nor a stop is named too.
+        std::fs::write(&control, r#"{"halt":true}"#).unwrap();
+        assert_eq!(agent.read_control(), None);
+        drop(agent);
+        let written = progress.text();
+        assert!(written.contains("is not valid JSON"), "{written}");
+        assert!(written.contains("names no steer and no stop"), "{written}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn a_stop_lands_the_partial_result_with_the_typed_reason() {
+        let home = scratch("control-stop");
+        let mut progress = SharedProgress::default();
+        let mut agent = agent_over_home(&home, Box::new(ApproveAll), &mut progress);
+        // The owner writes the control file before the run's first model
+        // call: the stop lands at turn one, so the client is never asked
+        // and no token is spent after it.
+        std::fs::write(agent.control_path(), r#"{"stop": true}"#).unwrap();
+        let error = agent.run("the goal").await.unwrap_err();
+        // The typed reason, verbatim — the one thing the error must not do
+        // is be vague. It is what the delegation path lands as the
+        // stopped child's reason, beside the partial result it replays
+        // from the child's own log and the log path itself.
+        assert_eq!(error.to_string(), "stopped by the owner");
+        // The run's own log names who stopped it, so the stop is
+        // reconstructable rather than silent.
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        assert!(
+            matches!(records.last(), Some(Record::End { stop_reason, .. }) if stop_reason == "stopped by the owner"),
+            "{records:?}"
+        );
+        drop(agent);
+        assert!(progress.text().contains("stopped by the owner"), "{:?}", progress.text());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_steer_is_bounded_and_its_frame_names_the_owner() {
+        // A steer is an instruction, not a document.
+        assert_eq!(steer_text("short"), "short");
+        let long = "x".repeat(STEER_LIMIT + 10);
+        let bounded = steer_text(&long);
+        assert_eq!(bounded.chars().count(), STEER_LIMIT + 1);
+        assert!(bounded.ends_with('\u{2026}'), "{bounded}");
+        let framed = steer_frame("look at the gate");
+        assert!(framed.contains("the owner speaking, not you"), "{framed}");
+        assert!(framed.ends_with("look at the gate"), "{framed}");
+    }
+
+    #[test]
+    fn the_control_file_shapes_parse_and_nothing_else_does() {
+        assert_eq!(parse_control(&serde_json::json!({"stop": true})), Some(Control::Stop));
+        assert_eq!(
+            parse_control(&serde_json::json!({"steer": "go left"})),
+            Some(Control::Steer("go left".to_string()))
+        );
+        assert_eq!(parse_control(&serde_json::json!({"steer": "  go left  "})), Some(Control::Steer("go left".to_string())));
+        for not_a_control in [
+            serde_json::json!({}),
+            serde_json::json!({"stop": false}),
+            serde_json::json!({"steer": ""}),
+            serde_json::json!({"steer": 7}),
+            serde_json::json!([1, 2]),
+            serde_json::json!("stop"),
+        ] {
+            assert_eq!(parse_control(&not_a_control), None, "{not_a_control}");
+        }
+    }
+
+    // --- the write-time guard (D7) -----------------------------------------
+
+    /// A scratch project root whose `src/` establishes `judge_route` (and
+    /// its parts) in the identifier channel, for the guard's tests. The
+    /// vocabulary derives from the tree, so the tree is the fixture.
+    fn vocabulary_root(tag: &str) -> std::path::PathBuf {
+        let root = scratch(tag);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn judge_route() -> u8 { 1 }\npub fn judge_route_again() -> u8 { judge_route() }\n",
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn a_near_exact_variant_of_an_established_term_is_refused() {
+        // `judgeRoute` beside an established `judge_route` is a case
+        // variant with no other explanation: drift, refused, with both
+        // names named.
+        let root = vocabulary_root("guard-refuse");
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"/x","content":"let judgeRoute = judge_route();"}),
+        );
+        match guard {
+            WriteGuard::Refused { reason } => {
+                assert!(reason.contains("judgeRoute"), "the candidate is named: {reason}");
+                assert!(reason.contains("judge_route"), "the canonical term is named: {reason}");
+                assert!(reason.contains("src/lib.rs"), "the evidence rides: {reason}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        // A separator variant spelled with the camelCase boundary is the
+        // same drift, and a case variant with the separator kept.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"/x","content":"let Judge_Route = judge_route();"}),
+        );
+        assert!(matches!(guard, WriteGuard::Refused { .. }), "{guard:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_novel_name_with_a_canonical_neighbour_is_flagged_with_the_candidate() {
+        // `route_judge` beside an established `judge_route` is a novel
+        // name for an existing concept: the flag names the candidate, so
+        // the model can rename.
+        let root = vocabulary_root("guard-flag");
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"/x","content":"let route_judge = judge_route();"}),
+        );
+        match guard {
+            WriteGuard::Flagged { note } => {
+                assert!(note.contains("route_judge"), "the candidate is named: {note}");
+                assert!(note.contains("judge_route"), "the canonical term is named: {note}");
+            }
+            other => panic!("expected a flag, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_genuinely_new_concept_is_not_flagged() {
+        // The conservative half: a guard that refuses legitimate new
+        // names gets ignored, and then it is worse than nothing.
+        let root = vocabulary_root("guard-new");
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"/x","content":"let wobblegong_vexil = 1;"}),
+        );
+        assert_eq!(guard, WriteGuard::Clean);
+        // The established term itself is nothing to flag either.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"/x","content":"fn judge_route() -> u8 { judge_route() }"}),
+        );
+        assert_eq!(guard, WriteGuard::Clean);
+        // A write with no content has no names to check.
+        let guard = write_guard(&root, &serde_json::json!({"path":"/x"}));
+        assert_eq!(guard, WriteGuard::Clean);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn a_refused_write_does_not_land_and_a_flagged_one_carries_the_note() {
+        // The guard rides the write's own path: a refusal stops the
+        // write, a flag lets it land with the note on the result the
+        // model already reads, and neither adds an approval gate.
+        let root = vocabulary_root("guard-work");
+        let files = scratch("guard-work-files");
+        let refused = files.join("refused.rs");
+        let (output, _) = run_work(Work::Builtin {
+            tool: Tool::WriteFile,
+            arguments: serde_json::json!({
+                "path": refused.display().to_string(),
+                "content": "let judgeRoute = 1;"
+            }),
+            root: root.clone(),
+        })
+        .await;
+        assert!(output.contains("write_file` refused"), "{output}");
+        assert!(output.contains("judgeRoute"), "{output}");
+        assert!(!refused.exists(), "a refused write does not land");
+        let flagged = files.join("flagged.rs");
+        let (output, _) = run_work(Work::Builtin {
+            tool: Tool::WriteFile,
+            arguments: serde_json::json!({
+                "path": flagged.display().to_string(),
+                "content": "let route_judge = 1;"
+            }),
+            root: root.clone(),
+        })
+        .await;
+        assert_eq!(std::fs::read_to_string(&flagged).unwrap(), "let route_judge = 1;");
+        assert!(output.starts_with("wrote 20 bytes to"), "{output}");
+        assert!(output.contains("route_judge"), "the candidate is named: {output}");
+        assert!(output.contains("judge_route"), "the canonical term is named: {output}");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&files);
+    }
+
+    #[test]
+    fn the_guard_reads_the_vocabularys_canonical_form() {
+        // The lookup key mirrors the vocabulary's own: the same parts in
+        // the same order, however they are spelled.
+        assert_eq!(identifier_parts("recall_count"), vec!["recall", "count"]);
+        assert_eq!(identifier_parts("recallCount"), vec!["recall", "Count"]);
+        assert_eq!(identifier_parts("HTTPServer"), vec!["HTTP", "Server"]);
+        assert_eq!(identifier_parts("judge-route"), vec!["judge", "route"]);
+        // The tokens a file introduces are identifier-shaped, in order,
+        // and nothing that short can be an established term. A kebab
+        // spelling is two words to the tokenizer — the same definition
+        // the vocabulary's own extractor uses.
+        assert_eq!(
+            identifier_tokens("let judge_route = routeJudge(); // done"),
+            vec!["let", "judge_route", "routeJudge", "done"]
+        );
+        assert!(identifier_tokens("ab cd ef").is_empty(), "sub-three-character names are dropped");
     }
 }
