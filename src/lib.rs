@@ -34,6 +34,7 @@ pub mod route;
 pub mod route_cache;
 pub mod roles;
 pub mod session;
+pub mod settings;
 pub mod session_recall;
 pub mod skills;
 pub mod subagents;

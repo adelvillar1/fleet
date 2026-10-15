@@ -39,6 +39,9 @@ async fn main() -> ExitCode {
         Ok(Command::Compact { session, force }) => {
             compact_command(session.as_deref(), force).await
         }
+        Ok(Command::Settings { set }) => {
+            settings_command(set.as_ref().map(|(key, value)| (key.as_str(), value.as_str())))
+        }
         Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
@@ -1229,6 +1232,34 @@ fn sessions_command(recall: Option<&str>, view: Option<&str>) -> ExitCode {
         }
     }
     print!("{}", fleet::session_recall::render_list(&summaries));
+    ExitCode::SUCCESS
+}
+
+/// `fleet settings`: every addressable knob as cards, or one written
+/// through the same writer the TUI pane calls. A write that the file's
+/// own validation refuses names its reason and changes nothing — the
+/// CLI is not a way around the rules the loader enforces.
+fn settings_command(set: Option<(&str, &str)>) -> ExitCode {
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Some((key, value)) = set {
+        return match fleet::settings::set(&home, key, value) {
+            Ok(()) => {
+                println!("`{key}` written \u{2014} `fleet settings` shows the resolved value");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    print!("{}", fleet::settings::render(&home));
     ExitCode::SUCCESS
 }
 

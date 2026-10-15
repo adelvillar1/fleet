@@ -15,6 +15,8 @@ pub enum Command {
     SessionsView { recall: Option<String>, view: Option<String> },
     /// Fold one session's stored context on demand.
     Compact { session: Option<String>, force: bool },
+    /// The settings surface: list every knob, or write one.
+    Settings { set: Option<(String, String)> },
     /// Probe the four vendored lanes' health.
     Lanes,
     /// List the routing roster in declared chain order with per-provider state.
@@ -483,6 +485,9 @@ usage:
                                 never a second verdict. --dry-run resolves the
                                 row and checks the artifact only: no ask, no
                                 row, no file
+  fleet settings [set <key> <value>]
+                                every configurable surface as cards, or
+                                write one — the same writer the TUI calls
   fleet install [--lanes]        create the home layout (sessions, memories,
                                 skills, cron, proposals) and the config
                                 scaffold, then run the doctor gate — the
@@ -548,6 +553,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "chat" => parse_chat(rest),
         "sessions" => parse_sessions(rest),
         "compact" => parse_compact(rest),
+        "settings" => parse_settings(rest),
         "lanes" => no_flags(rest, Command::Lanes),
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
@@ -694,6 +700,37 @@ fn parse_compact(args: &[String]) -> Result<Command, String> {
         index += 1;
     }
     Ok(Command::Compact { session, force })
+}
+
+/// `fleet settings` lists every addressable knob; `fleet settings set
+/// <key> <value>` writes one. Both are views over the same writer the
+/// TUI pane calls, so a scripted change and a GUI change land
+/// identically. A key the surface does not own is refused by name
+/// rather than written where nothing reads it.
+fn parse_settings(args: &[String]) -> Result<Command, String> {
+    let mut set: Option<(String, String)> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "set" => {
+                let key = take_value(args, &mut index, "set")?;
+                let value = take_value(args, &mut index, "set")?;
+                set = Some((key, value));
+            }
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown settings option `{arg}`"));
+            }
+            _ => {
+                return Err(format!(
+                    "`{arg}` takes no value here; `fleet settings set <key> <value>` writes one"
+                ));
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Settings { set })
 }
 
 fn parse_calib(args: &[String]) -> Result<Command, String> {
