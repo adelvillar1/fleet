@@ -1512,7 +1512,11 @@ impl<'a> Agent<'a> {
                 Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
                 Ok(arguments) => match self.memory.clone() {
                     None => settled("error: memory is not wired in this run".to_string()),
-                    Some(memory) => Prepared::Ready(Work::Remember { memory, arguments }),
+                    Some(memory) => Prepared::Ready(Work::Remember {
+                        memory,
+                        arguments,
+                        derived: trajectory_phrases(&self.messages),
+                    }),
                 },
             });
         }
@@ -1849,8 +1853,15 @@ enum Work {
     Builtin { tool: Tool, arguments: serde_json::Value, root: std::path::PathBuf },
     /// A skill's body, fetched from this run's declared list.
     UseSkill { skills: Vec<crate::skills::Skill>, arguments: serde_json::Value },
-    /// One fact written into this run's corpus.
-    Remember { memory: Arc<Memory>, arguments: serde_json::Value },
+    /// One fact written into this run's corpus. The `derived`
+    /// direction rides the work because it is computed where the
+    /// conversation is visible — in `prepare_call` — and lands in the
+    /// writer only when the call itself left the phrases empty.
+    Remember {
+        memory: Arc<Memory>,
+        arguments: serde_json::Value,
+        derived: Vec<String>,
+    },
     /// One proposal filed into the home's store.
     Improve {
         home: std::path::PathBuf,
@@ -1914,9 +1925,13 @@ async fn run_work(work: Work) -> (String, bool) {
             });
             (outcome.output, outcome.truncated)
         }
-        Work::Remember { memory, arguments } => {
+        Work::Remember {
+            memory,
+            arguments,
+            derived,
+        } => {
             let outcome = tools::bound(ToolOutcome {
-                output: land_remember(&memory, &arguments),
+                output: land_remember(&memory, &arguments, &derived),
                 truncated: false,
             });
             (outcome.output, outcome.truncated)
@@ -1962,20 +1977,122 @@ async fn run_builtin(tool: Tool, arguments: serde_json::Value) -> (String, bool)
 /// Land one `remember` call against its corpus: the model-visible
 /// confirmation or the typed refusal, in the same shape a built-in's
 /// output takes — a failure is a value the model can read and react to.
-fn land_remember(memory: &Memory, arguments: &serde_json::Value) -> String {
+fn land_remember(memory: &Memory, arguments: &serde_json::Value, derived: &[String]) -> String {
     match memory::Remember::parse(arguments) {
         Err(error) => format!("error: {error}"),
-        Ok(request) => match memory.remember(&request) {
-            Err(error) => format!("error: {error}"),
-            Ok(fact) => format!(
-                "remembered `{}` \u{2014} {}, {} \u{b7} {}",
-                fact.name,
-                fact.tier.label(),
-                fact.basis.label(),
-                fact.path.display()
-            ),
-        },
+        Ok(mut request) => {
+            // The model's own phrases win. The harness fills only what
+            // the call left empty, and the confirmation says the
+            // direction was derived — a fact whose provenance the owner
+            // can read, never a silent substitution.
+            let filled = request.phrases.is_empty() && !derived.is_empty();
+            if filled {
+                request.phrases = derived.to_vec();
+            }
+            match memory.remember(&request) {
+                Err(error) => format!("error: {error}"),
+                Ok(fact) => {
+                    let mut text = format!(
+                        "remembered `{}` \u{2014} {}, {} \u{b7} {}",
+                        fact.name,
+                        fact.tier.label(),
+                        fact.basis.label(),
+                        fact.path.display()
+                    );
+                    if filled {
+                        text.push_str(&format!(
+                            "\ndirection derived from this task's trajectory: {}",
+                            fact.phrases.join(", ")
+                        ));
+                    }
+                    text
+                }
+            }
+        }
     }
+}
+
+/// The direction a `remember` call carries when the model supplied
+/// none: the current task's own trajectory, read off this run's
+/// conversation rather than asked of the model.
+///
+/// Two scopes keep the channel's meaning intact. The **window** is the
+/// tool calls after the last user message — the task this fact is
+/// about — because a fact about the router must not carry the phrases
+/// of an earlier task's work; that is proximity pollution, the exact
+/// failure the ranking's weights exist to prevent. And only the calls
+/// that **succeeded** count, because the phrase list is the vocabulary
+/// that drove toward the answer and a failed call drove somewhere
+/// else. A `bash` call contributes its command and a file call its
+/// path — the concrete vocabulary a later session would actually
+/// search with.
+///
+/// Most recent first, deduplicated, bounded by the writer's own cap:
+/// a direction sample, never a transcript.
+fn trajectory_phrases(messages: &[Message]) -> Vec<String> {
+    let window = messages
+        .iter()
+        .rposition(|message| message.role == Role::User)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    // The results, by call id: the join that makes "succeeded" a fact
+    // rather than a guess. A call with no result yet — the turn still
+    // in flight — has not succeeded, so it contributes nothing.
+    let mut results: HashMap<&str, &str> = HashMap::new();
+    for message in &messages[window..] {
+        if message.role == Role::Tool {
+            if let (Some(id), Some(content)) = (&message.tool_call_id, &message.content) {
+                results.insert(id.as_str(), content.as_str());
+            }
+        }
+    }
+    let mut phrases: Vec<String> = Vec::new();
+    for message in messages[window..].iter().rev() {
+        if message.role != Role::Assistant {
+            continue;
+        }
+        for call in message.tool_calls.iter().rev() {
+            let Some(output) = results.get(call.id.as_str()).copied() else { continue };
+            if output.starts_with("error:") || output.starts_with("denied") {
+                continue;
+            }
+            if let Some(phrase) = call_phrase(&call.function) {
+                if !phrases.contains(&phrase) {
+                    phrases.push(phrase);
+                }
+            }
+        }
+    }
+    phrases.truncate(crate::memory::MAX_PHRASES);
+    phrases
+}
+
+/// One successful call's phrase: the concrete vocabulary a later
+/// session would search with. A `bash` call contributes its command, a
+/// file call its path, and anything else contributes its own name —
+/// the mechanism is the vocabulary for a lane call or a delegation.
+/// `None` for a call whose arguments name nothing, because a phrase
+/// that says only the tool's name twice is noise.
+fn call_phrase(function: &crate::api::FunctionCall) -> Option<String> {
+    let key = match function.name.as_str() {
+        "bash" => "command",
+        "write_file" | "read_file" | "list_dir" => "path",
+        _ => return Some(bounded_phrase(&function.name)),
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&function.arguments).ok()?;
+    let value = parsed.get(key).and_then(|value| value.as_str())?;
+    Some(bounded_phrase(value))
+}
+
+/// One derived phrase, bounded to the writer's own per-item bound so
+/// a long command cannot flood the fact's frontmatter line.
+fn bounded_phrase(text: &str) -> String {
+    let trimmed = text.trim();
+    let mut bounded: String = trimmed.chars().take(crate::memory::MAX_PHRASE_CHARS).collect();
+    if trimmed.chars().count() > crate::memory::MAX_PHRASE_CHARS {
+        bounded.push('\u{2026}');
+    }
+    bounded
 }
 
 /// Land one approved supersession and render what the model reads. The
@@ -3641,6 +3758,181 @@ You are auditing a change. Read the diff before you judge it.
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The phrase-writing piece: a `remember` call that supplies no
+    /// phrases carries the direction this task's own successful calls
+    /// drove with — read off the conversation, not asked of the model.
+    #[tokio::test]
+    async fn a_remember_without_phrases_carries_the_tasks_own_trajectory() {
+        let home = scratch("remember-derived");
+        let root = corpus("remember-derived-corpus", &[]);
+        let mut agent = agent_over(&home, &root, Box::new(ApproveAll));
+        agent
+            .push_message(Message::text(Role::User, "find where the pin is read"))
+            .unwrap();
+        // Two calls in the same turn: one that succeeded and one that
+        // failed. Only the succeeded one is direction — the failed one
+        // drove somewhere else and must not ride the fact.
+        agent
+            .push_message(Message {
+                role: Role::Assistant,
+                content: None,
+                tool_calls: vec![
+                    call("c1", "bash", r#"{"command":"grep -n the_pin src/route.rs"}"#),
+                    call("c2", "bash", r#"{"command":"grep -n the_flibbertigibbet_sprocket src/route.rs"}"#),
+                ],
+                tool_call_id: None,
+            })
+            .unwrap();
+        agent
+            .push_message(Message::tool_result("c1", "src/route.rs:41: the pin is read"))
+            .unwrap();
+        agent
+            .push_message(Message::tool_result("c2", "error: no match"))
+            .unwrap();
+
+        let arguments = r#"{"name":"the-pin-is-read-in-route","description":"the pin is read in route.rs","basis":"inferred","tier":"working","valid-until":"2099-01-01"}"#;
+        agent
+            .execute_call(&call("c3", "remember", arguments))
+            .await
+            .unwrap();
+
+        let fact = &crate::memory::load_facts(&root)[0];
+        assert_eq!(
+            fact.phrases,
+            vec!["grep -n the_pin src/route.rs".to_string()],
+            "the successful command is the direction; the failed one drove elsewhere"
+        );
+        // The confirmation names the derivation, so the owner can see
+        // the direction came from the log and not from the model.
+        let output = last_remember_output(&home);
+        assert!(
+            output.contains("direction derived from this task's trajectory"),
+            "{output}"
+        );
+        assert!(output.contains("grep -n the_pin src/route.rs"), "{output}");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The derived window is the current task: a call from an earlier
+    /// task in the same session is not this fact's direction. Carrying
+    /// it would be proximity pollution — the failure the ranking's
+    /// weights exist to prevent.
+    #[tokio::test]
+    async fn the_derived_window_is_the_current_task() {
+        let home = scratch("remember-window");
+        let root = corpus("remember-window-corpus", &[]);
+        let mut agent = agent_over(&home, &root, Box::new(ApproveAll));
+        agent
+            .push_message(Message::text(Role::User, "survey the ecosystem doc"))
+            .unwrap();
+        agent
+            .push_message(Message {
+                role: Role::Assistant,
+                content: None,
+                tool_calls: vec![call("c1", "read_file", r#"{"path":"docs/ecosystem.md"}"#)],
+                tool_call_id: None,
+            })
+            .unwrap();
+        agent
+            .push_message(Message::tool_result("c1", "the eight repos"))
+            .unwrap();
+        // The current task begins here; everything above is another
+        // task's trajectory.
+        agent
+            .push_message(Message::text(Role::User, "find where the pin is read"))
+            .unwrap();
+        agent
+            .push_message(Message {
+                role: Role::Assistant,
+                content: None,
+                tool_calls: vec![call("c2", "bash", r#"{"command":"grep -n the_pin src/route.rs"}"#)],
+                tool_call_id: None,
+            })
+            .unwrap();
+        agent
+            .push_message(Message::tool_result("c2", "src/route.rs:41"))
+            .unwrap();
+
+        let arguments = r#"{"name":"the-pin-is-read-in-route","description":"the pin is read in route.rs","basis":"inferred"}"#;
+        agent
+            .execute_call(&call("c3", "remember", arguments))
+            .await
+            .unwrap();
+
+        let fact = &crate::memory::load_facts(&root)[0];
+        assert_eq!(
+            fact.phrases,
+            vec!["grep -n the_pin src/route.rs".to_string()],
+            "the earlier task's read is not this fact's direction"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The model's own phrases win: the harness fills only what the
+    /// call left empty, and a derivation is never substituted over a
+    /// supplied direction.
+    #[tokio::test]
+    async fn a_remember_with_phrases_keeps_the_models_own() {
+        let home = scratch("remember-supplied");
+        let root = corpus("remember-supplied-corpus", &[]);
+        let mut agent = agent_over(&home, &root, Box::new(ApproveAll));
+        agent
+            .push_message(Message::text(Role::User, "find where the pin is read"))
+            .unwrap();
+        agent
+            .push_message(Message {
+                role: Role::Assistant,
+                content: None,
+                tool_calls: vec![call("c1", "bash", r#"{"command":"grep -n the_pin src/route.rs"}"#)],
+                tool_call_id: None,
+            })
+            .unwrap();
+        agent
+            .push_message(Message::tool_result("c1", "src/route.rs:41"))
+            .unwrap();
+
+        let arguments = r#"{"name":"the-pin-is-read-in-route","description":"the pin is read in route.rs","basis":"inferred","phrases":["read the pin","the quota the vendor left unused"]}"#;
+        agent
+            .execute_call(&call("c2", "remember", arguments))
+            .await
+            .unwrap();
+
+        let fact = &crate::memory::load_facts(&root)[0];
+        assert_eq!(
+            fact.phrases,
+            vec![
+                "read the pin".to_string(),
+                "the quota the vendor left unused".to_string()
+            ],
+            "the supplied direction rides, unmodified"
+        );
+        assert!(
+            !last_remember_output(&home).contains("direction derived"),
+            "a supplied direction is not reported as derived"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The confirmation the last `remember` call in `home`'s log
+    /// rendered — the text the model itself read, which is the only
+    /// place the harness's derivation is announced.
+    fn last_remember_output(home: &std::path::Path) -> String {
+        let records = crate::session::replay(&session_path_of(home)).unwrap();
+        records
+            .iter()
+            .rev()
+            .find_map(|record| match record {
+                Record::ToolResult { name, output, .. } if name == "remember" => {
+                    Some(output.clone())
+                }
+                _ => None,
+            })
+            .expect("the remember confirmation in the log")
+    }
+
     /// The one session log under `home`, for a result assertion.
     fn session_path_of(home: &std::path::Path) -> std::path::PathBuf {
         crate::home::sessions_dir(home)
@@ -3901,6 +4193,7 @@ You are auditing a change. Read the diff before you judge it.
             Some(Prepared::Ready(Work::Remember {
                 memory: memory.clone(),
                 arguments: serde_json::json!({"name":"a"}),
+                derived: Vec::new(),
             })),
             Some(Prepared::Ready(Work::Supersede {
                 memory,

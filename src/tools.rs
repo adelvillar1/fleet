@@ -307,7 +307,7 @@ pub fn remember_spec() -> ToolSpec {
                 "phrases": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "The phrases that resolved the problem: the vocabulary that drove toward the answer, quoted as it was used. They ride the fact's indexed text and the trajectory channel, so a later recall for this shape matches them even when the question is worded differently. For a failure, the phrases of the trajectory that was tried and diverged.",
+                    "description": "The phrases that resolved the problem: the vocabulary that drove toward the answer, quoted as it was used. They ride the fact's indexed text and the trajectory channel, so a later recall for this shape matches them even when the question is worded differently. For a failure, the phrases of the trajectory that was tried and diverged. Optional: when you omit them the harness derives the direction from this task's own successful tool calls — the commands and file paths that actually ran, not what the conversation claims ran — and the confirmation names them. Supply them anyway when you know the resolution's vocabulary better than the log shows: a derivation is a sample of what ran, and your phrases carry what it meant.",
                 },
                 "missing": {
                     "type": "array",
