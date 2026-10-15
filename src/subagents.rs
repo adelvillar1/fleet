@@ -563,7 +563,8 @@ const OWN_PATH: &str = ".";
 const DELTA_FIELD_CAP: usize = 240;
 
 /// Whether the child followed the approach it was handed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DeltaState {
     /// The child executed the approach it was given.
     Followed,
@@ -600,7 +601,8 @@ impl DeltaState {
 /// children that stop reporting honestly — which destroys the only
 /// signal this part runs on. The categories are load-bearing, not
 /// documentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DeltaReason {
     /// The approach could not be executed: a missing path, a wrong
     /// assumption. The brief drove away.
@@ -646,7 +648,7 @@ impl DeltaReason {
 /// against the child's own session log rather than believed, because a
 /// claimed deviation the log does not show is a false report and the
 /// most serious kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Delta {
     /// Whether the child followed the approach it was handed.
     pub state: DeltaState,

@@ -635,6 +635,9 @@ pub fn corpus() -> Vec<Scenario> {
         Scenario::new("dependency-graph", ScenarioFamily::Nomenclature, |bin| {
             Box::pin(dependency_graph(bin))
         }),
+        Scenario::new("delta-replan", ScenarioFamily::Nomenclature, |bin| {
+            Box::pin(delta_replan(bin))
+        }),
     ]
 }
 
@@ -4121,6 +4124,168 @@ async fn dependency_graph(_mock_bin: PathBuf) -> ScenarioOutcome {
     grade(NAME, family, &checks)
 }
 
+/// `delta-replan`: the replan the delta report drives, graded with no
+/// model and no lane in the path.
+///
+/// The plan's checks over the public surface: the weights, the two
+/// triggers, the append-only revision, and the verbatim ride up the
+/// parent chain — the last through `Delta::parse_render`, which reads
+/// a rendered result back the way the parent chain actually carries
+/// it, so a middle node that summarized its children's deltas would
+/// fail this check rather than pass silently.
+async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
+    use crate::graph::{Graph, Node};
+    use crate::subagents::{Delta, DeltaReason, DeltaState};
+
+    const NAME: &str = "delta-replan";
+    let family = ScenarioFamily::Nomenclature;
+    let mut checks: Vec<(&str, bool)> = Vec::new();
+
+    let deviated = |reason: DeltaReason, forced: bool, instead: &str| Delta {
+        state: DeltaState::Deviated,
+        reason,
+        companion: String::new(),
+        instead: instead.to_string(),
+        forced,
+        children: Vec::new(),
+        contradiction: None,
+    };
+
+    // 1 — a followed brief produces a followed delta and no replan.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("do a")).unwrap();
+    graph
+        .record_delta(
+            "a",
+            Delta {
+                state: DeltaState::Followed,
+                reason: DeltaReason::RightAndFollowed,
+                companion: String::new(),
+                instead: String::new(),
+                forced: false,
+                children: Vec::new(),
+                contradiction: None,
+            },
+        )
+        .unwrap();
+    checks.push((
+        "a followed brief produces a followed delta and no replan",
+        graph.diff_score() == 0 && !graph.should_replan() && graph.replan().is_none(),
+    ));
+
+    // 2 — a forced deviation produces its reason and a replan that
+    // revises the remaining approaches, naming the revision.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("write src/gone.rs")).unwrap();
+    graph
+        .add(Node::new("b", 2).with_prereqs(["a"]).with_approach("read what a wrote"))
+        .unwrap();
+    graph
+        .record_delta("a", deviated(DeltaReason::Infeasible, true, "wrote src/here.rs instead"))
+        .unwrap();
+    let revision = graph.replan();
+    checks.push((
+        "a forced deviation produces its reason and a replan that revises the rest",
+        revision.is_some()
+            && graph.node("a").unwrap().approach == "wrote src/here.rs instead"
+            && graph
+                .revisions()
+                .first()
+                .map(|revision| revision.cause.contains("diff score 6"))
+                .unwrap_or(false),
+    ));
+
+    // 3 — a chosen improvement is recorded as a gain and moves nothing.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("do a the slow way")).unwrap();
+    graph
+        .record_delta("a", deviated(DeltaReason::BetterRoute, false, "did a the fast way"))
+        .unwrap();
+    checks.push((
+        "a chosen improvement is recorded as a gain and moves nothing",
+        graph.diff_score() == 0
+            && graph.replan().is_none()
+            && graph.node("a").unwrap().approach == "do a the slow way",
+    ));
+
+    // 4 — a large aggregate triggers the replan and names the revision.
+    let mut graph = Graph::new();
+    for id in ["a", "b", "c"] {
+        graph.add(Node::new(id, 1).with_approach("the infeasible way")).unwrap();
+        graph
+            .record_delta(id, deviated(DeltaReason::Infeasible, false, "the feasible way"))
+            .unwrap();
+    }
+    let revision = graph.replan();
+    checks.push((
+        "a large aggregate triggers the replan and names the revision",
+        revision.is_some()
+            && revision.map(|revision| revision.seq == 1 && revision.changes.len() == 3)
+                .unwrap_or(false),
+    ));
+
+    // 5 — a delta the log contradicts is priced as the false report it
+    // is, and the render says so.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("do a")).unwrap();
+    graph
+        .record_delta(
+            "a",
+            Delta {
+                contradiction: Some(
+                    "the child claimed a deviation but its own session log holds no tool call"
+                        .to_string(),
+                ),
+                ..deviated(DeltaReason::Infeasible, false, "")
+            },
+        )
+        .unwrap();
+    let cards = crate::graph::render(&graph);
+    checks.push((
+        "a delta the log contradicts is priced above every category and named",
+        graph.diff_score() == 5
+            && graph.should_replan()
+            && cards.contains("CONTRADICTED")
+            && cards.contains("diff score"),
+    ));
+
+    // 6 — a middle node preserves its child's delta verbatim up the
+    // chain: the rendered result carries both blocks, and the parse
+    // reads the child's back with every field intact rather than a
+    // summary of it. The seam is the production one — a rendered
+    // `SubagentResult` through `bound_result`, exactly what the
+    // parent's tool_result carries — so a middle node that summarized
+    // its children's deltas would fail this check rather than pass
+    // silently.
+    let child = deviated(DeltaReason::CompanionMissing, true, "wrote the parser first");
+    let mut parent = deviated(DeltaReason::Infeasible, false, "restructured first");
+    parent.children = vec![child.clone()];
+    let result = crate::subagents::SubagentResult {
+        summary: "restructured first".to_string(),
+        session: "sess-mid".to_string(),
+        log: std::path::PathBuf::from("/tmp/sessions/sess-mid.jsonl"),
+        turns: 2,
+        outcome: crate::subagents::Outcome::Completed,
+        reason: None,
+        delta: crate::subagents::DeltaReport {
+            own: Some(parent),
+            children: Vec::new(),
+            offered: true,
+        },
+    };
+    let rendered = crate::subagents::bound_result(&result).output;
+    let read = Delta::parse_render(&rendered).expect("the rendered result parses");
+    checks.push((
+        "a middle node preserves its child's delta verbatim up the chain",
+        read.children.len() == 1
+            && read.children[0] == child
+            && read.children[0].reason == DeltaReason::CompanionMissing
+            && rendered.contains("companion-missing"),
+    ));
+
+    grade(NAME, family, &checks)
+}
+
 /// One hand-written `delegation_judged` row, the shape a writer would
 /// have landed — the ride-back's own fixture.
 fn delegation_judged_line(
@@ -4615,6 +4780,7 @@ mod tests {
                 "delegation-loop-closes",
                 "nomenclature-guard",
                 "dependency-graph",
+                "delta-replan",
             ]
         );
     }

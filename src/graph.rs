@@ -182,6 +182,14 @@ pub struct Node {
     /// finds a better route is deviating from a suggestion rather than
     /// disobeying an order.
     pub approach: String,
+    /// The delta this node's run reported: the angle between the
+    /// approach it was handed and the one it executed, with the reason
+    /// category and — on a deviation that the child's own log
+    /// contradicted — the named contradiction. `None` until the
+    /// orchestrator lands one with [`Graph::record_delta`], because a
+    /// delta is a report a run made, never something the declaration
+    /// could know.
+    pub delta: Option<crate::subagents::Delta>,
     /// Where the node stands. Transitions go through the graph.
     pub status: Status,
     /// The highest score this node's closure has carried: the readiness
@@ -201,6 +209,7 @@ impl Node {
             paths: Vec::new(),
             capabilities: Capabilities::default(),
             approach: String::new(),
+            delta: None,
             status: Status::Pending,
             peak: 0,
         }
@@ -385,6 +394,12 @@ impl std::error::Error for GraphError {}
 /// nodes has actually landed.
 pub struct Graph {
     nodes: Vec<Node>,
+    /// The replans this run has landed, oldest first. Append-only: a
+    /// replan revises the tree and records what it did, and nothing
+    /// ever removes a revision, because the tree's history is what
+    /// makes a later reader able to check the current model against
+    /// the evidence that shaped it.
+    revisions: Vec<Revision>,
     /// The fact-gate. `None` is the conservative default: nothing
     /// verifies, nothing unlocks, and every score sits where it was
     /// declared.
@@ -414,6 +429,7 @@ impl Graph {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
+            revisions: Vec::new(),
             verify: None,
         }
     }
@@ -429,6 +445,7 @@ impl Graph {
     {
         Self {
             nodes: Vec::new(),
+            revisions: Vec::new(),
             verify: Some(Box::new(verify)),
         }
     }
@@ -1200,6 +1217,246 @@ fn node_state(node: &Node, unlock: &Unlock) -> (&'static str, &'static str, &'st
     }
 }
 
+// --- the replan -------------------------------------------------------------
+
+/// What one delta costs the aggregate.
+///
+/// The weights encode the plan's own semantics: a followed brief and a
+/// chosen improvement cost nothing — the last is a gain, and an
+/// orchestrator that priced improvement as a defect would teach its
+/// children to stop reporting honestly, which destroys the only signal
+/// the part runs on. An infeasible approach costs most, because the
+/// brief drove away; a missing companion costs less, because the
+/// direction was right and something was absent. A **forced**
+/// deviation weighs double: a blocker the child actually hit is a
+/// stronger statement about the brief than one it chose around.
+///
+/// The one weight that is not the category's is a **contradicted**
+/// report: a claimed deviation the child's own session log does not
+/// show is a false report, which is the most serious kind, and it is
+/// priced as such whatever the category claimed.
+pub fn diff_weight(delta: &crate::subagents::Delta) -> u64 {
+    if delta.contradiction.is_some() {
+        return CONTRADICTED_WEIGHT;
+    }
+    let base = match delta.reason {
+        crate::subagents::DeltaReason::RightAndFollowed
+        | crate::subagents::DeltaReason::BetterRoute => 0,
+        crate::subagents::DeltaReason::CompanionMissing => COMPANION_WEIGHT,
+        crate::subagents::DeltaReason::Infeasible => INFEASIBLE_WEIGHT,
+    };
+    if delta.forced {
+        base * 2
+    } else {
+        base
+    }
+}
+
+/// What a chosen deviation around a missing companion costs.
+const COMPANION_WEIGHT: u64 = 2;
+
+/// What a chosen deviation around an infeasible approach costs — the
+/// largest category weight, because "the brief drove away" is the
+/// statement the score exists to make.
+const INFEASIBLE_WEIGHT: u64 = 3;
+
+/// What a false report costs: a claimed deviation the child's own log
+/// contradicts. Priced above every category so one lies about the work
+/// moves the aggregate on its own.
+const CONTRADICTED_WEIGHT: u64 = 5;
+
+/// The aggregate trigger: a tree whose diff score reaches this has a
+/// plan that was probably not optimal, and the response is to act on
+/// the current tree rather than only learn for the next one.
+pub const DIFF_THRESHOLD: u64 = 4;
+
+/// The per-node trigger: a single deviation this large replans on its
+/// own, because one node that far off its brief is a fact about the
+/// plan even when the rest of the tree is clean.
+pub const NODE_DIFF_THRESHOLD: u64 = 5;
+
+/// How many revisions one run may land. The bound is what keeps the
+/// replan from thrashing: an orchestrator that replanned on every
+/// deviation would never finish anything, and a tree that changes
+/// under its own children is worse than a tree that was wrong once.
+pub const REPLAN_CAP: usize = 2;
+
+/// One replan, recorded append-only.
+///
+/// The revision is what makes the tree's history reconstructable
+/// rather than overwritten: the graph a replan produces is the current
+/// best model, and the revisions say how it got there and why — the
+/// score that triggered it, the node whose deviation did, and every
+/// change the replan made in words a later reader can check.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Revision {
+    /// The revision's sequence number, one-based: the first replan is
+    /// revision 1.
+    pub seq: usize,
+    /// Why the replan happened, named: the aggregate score and the
+    /// node whose deviation triggered it, or the aggregate alone.
+    pub cause: String,
+    /// What the replan changed, one line per change.
+    pub changes: Vec<String>,
+}
+
+impl Graph {
+    /// Land one run's delta on its node.
+    ///
+    /// The delta rides the node rather than a side table because the
+    /// score is derived from the nodes on every read — the same
+    /// discipline the dependency score follows — and a report that
+    /// lived anywhere else could not be part of the arithmetic. A node
+    /// the graph does not carry is a named error: a delta for work
+    /// nobody declared is a delta nobody can act on.
+    pub fn record_delta(
+        &mut self,
+        id: &str,
+        delta: crate::subagents::Delta,
+    ) -> Result<(), GraphError> {
+        let index = self
+            .index_of(id)
+            .ok_or_else(|| GraphError::UnknownNode(id.to_string()))?;
+        self.nodes[index].delta = Some(delta);
+        Ok(())
+    }
+
+    /// The aggregate diff score: the sum of every landed delta's
+    /// weight, plus the largest single node's weight as the per-node
+    /// trigger's input.
+    ///
+    /// Monotone by construction — a delta lands once and nothing
+    /// removes one — so the score only rises as the tree reports, and
+    /// the render can show it climbing toward the threshold without
+    /// the reader wondering whether it could fall back.
+    pub fn diff_score(&self) -> u64 {
+        self.nodes
+            .iter()
+            .filter_map(|node| node.delta.as_ref())
+            .map(diff_weight)
+            .sum()
+    }
+
+    /// The largest weight any single landed delta carries: the
+    /// per-node trigger's own input. Zero when nothing has reported.
+    pub fn worst_delta_weight(&self) -> u64 {
+        self.nodes
+            .iter()
+            .filter_map(|node| node.delta.as_ref())
+            .map(diff_weight)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Whether either trigger has fired: the aggregate at
+    /// [`DIFF_THRESHOLD`], or one node's deviation at
+    /// [`NODE_DIFF_THRESHOLD`].
+    pub fn should_replan(&self) -> bool {
+        self.diff_score() >= DIFF_THRESHOLD || self.worst_delta_weight() >= NODE_DIFF_THRESHOLD
+    }
+
+    /// The revisions this run has landed, oldest first.
+    pub fn revisions(&self) -> &[Revision] {
+        &self.revisions
+    }
+
+    /// Replan the tree against its deltas, and record what changed.
+    ///
+    /// The action is the plan's first one: **revise the remaining
+    /// nodes' approaches.** A node whose own run reported infeasible
+    /// gets its approach replaced with what the child did instead —
+    /// the one fact the tree now holds about a route that works — and
+    /// the nodes still waiting behind it carry the revision forward,
+    /// because a brief written against an approach its own tree just
+    /// falsified is a brief that will falsify again. A chosen
+    /// improvement revises nothing: it is a gain, and moving a node
+    /// because its child found a better route would punish exactly
+    /// the honesty the part runs on.
+    ///
+    /// `None` when nothing fired, when the revisions cap is reached,
+    /// or when no remaining node carries a falsified approach — the
+    /// three ways a replan can be a no-op, each of them a fact rather
+    /// than a failure. The cause names which trigger fired and which
+    /// node's deviation carried it.
+    pub fn replan(&mut self) -> Option<Revision> {
+        if !self.should_replan() || self.revisions.len() >= REPLAN_CAP {
+            return None;
+        }
+        // The falsified approaches, in declaration order: the nodes
+        // whose own runs reported infeasible and said what they did
+        // instead.
+        let falsified: Vec<(String, String)> = self
+            .nodes
+            .iter()
+            .filter_map(|node| match &node.delta {
+                Some(delta)
+                    if delta.reason == crate::subagents::DeltaReason::Infeasible
+                        && !delta.instead.trim().is_empty() =>
+                {
+                    Some((node.id.clone(), delta.instead.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        if falsified.is_empty() {
+            return None;
+        }
+        let mut changes = Vec::new();
+        for (id, instead) in &falsified {
+            let index = self.index_of(id).expect("a falsified node is in the graph");
+            self.nodes[index].approach = instead.clone();
+            changes.push(format!("`{id}`'s approach revised to what its own run did instead"));
+        }
+        // The nodes still waiting behind a revised one carry the
+        // revision forward: their briefs were written against an
+        // approach the tree has now falsified.
+        let revised: Vec<String> = falsified.iter().map(|(id, _)| id.clone()).collect();
+        for node in &mut self.nodes {
+            if node.status != Status::Pending || revised.iter().any(|id| id == &node.id) {
+                continue;
+            }
+            if node.prereqs.iter().any(|prereq| revised.contains(prereq)) {
+                changes.push(format!(
+                    "`{}`'s brief now descends from the revised approach{}",
+                    node.id,
+                    revised
+                        .iter()
+                        .filter(|id| node.prereqs.contains(id))
+                        .map(|id| format!(" of `{id}`"))
+                        .collect::<Vec<_>>()
+                        .join("")
+                ));
+            }
+        }
+        let worst = self.worst_node();
+        let cause = format!(
+            "diff score {} at the threshold {DIFF_THRESHOLD}{}",
+            self.diff_score(),
+            worst
+                .map(|(id, weight)| format!("; the largest single deviation is `{id}` at {weight}"))
+                .unwrap_or_default()
+        );
+        let revision = Revision {
+            seq: self.revisions.len() + 1,
+            cause,
+            changes,
+        };
+        self.revisions.push(revision.clone());
+        Some(revision)
+    }
+
+    /// The node whose landed delta weighs most, as `(id, weight)` —
+    /// the per-node trigger's own named input. `None` when nothing
+    /// has reported, or every report weighs nothing.
+    fn worst_node(&self) -> Option<(String, u64)> {
+        self.nodes
+            .iter()
+            .filter_map(|node| node.delta.as_ref().map(|delta| (node.id.clone(), diff_weight(delta))))
+            .max_by_key(|(_, weight)| *weight)
+            .filter(|(_, weight)| *weight > 0)
+    }
+}
+
 // --- the file ---------------------------------------------------------------
 
 /// The declared graph as it persists under the home: the declaration
@@ -1216,6 +1473,12 @@ fn node_state(node: &Node, unlock: &Unlock) -> (&'static str, &'static str, &'st
 pub struct GraphFile {
     /// The nodes, in declaration order.
     pub nodes: Vec<NodeFile>,
+    /// The replans the tree has landed, oldest first. Append-only on
+    /// disk exactly as it is in memory: the file is rewritten with the
+    /// revisions it carried plus the new one, and a reader can
+    /// reconstruct how the current model was shaped.
+    #[serde(default)]
+    pub revisions: Vec<Revision>,
 }
 
 /// One node as it persists: every declared field, and the state it
@@ -1232,6 +1495,13 @@ pub struct NodeFile {
     pub capabilities: Capabilities,
     #[serde(default)]
     pub approach: String,
+    /// The delta this node's run reported, when one has landed. It
+    /// rides the file because the diff score is derived from the
+    /// nodes: a graph that lost its deltas on save would read back as
+    /// a tree that never deviated, which is the one reading the
+    /// surface must never produce by accident.
+    #[serde(default)]
+    pub delta: Option<crate::subagents::Delta>,
     #[serde(default)]
     pub status: Status,
 }
@@ -1260,9 +1530,11 @@ impl Graph {
                     paths: node.paths.clone(),
                     capabilities: node.capabilities.clone(),
                     approach: node.approach.clone(),
+                    delta: node.delta.clone(),
                     status: node.status,
                 })
                 .collect(),
+            revisions: self.revisions.clone(),
         };
         let text = serde_json::to_string_pretty(&file)
             .map_err(|error| format!("the graph would not serialize: {error}"))?;
@@ -1290,6 +1562,7 @@ impl Graph {
         let mut graph = Graph::new();
         for node in file.nodes {
             let id = node.id.clone();
+            let delta = node.delta.clone();
             graph.add(
                 Node::new(node.id, node.cost)
                     .with_prereqs(node.prereqs)
@@ -1305,8 +1578,16 @@ impl Graph {
             // so the load restores it rather than re-declaring it.
             if let Some(added) = graph.nodes.iter_mut().find(|added| added.id == id) {
                 added.status = node.status;
+                // And so does the delta: the diff score is derived from
+                // the nodes, so a graph that lost its deltas on save
+                // would read back as a tree that never deviated.
+                added.delta = delta;
             }
         }
+        // The revisions ride the file append-only, exactly as they are
+        // held: the tree's history is what lets a later reader check
+        // the current model against the evidence that shaped it.
+        graph.revisions = file.revisions;
         Ok(graph)
     }
 }
@@ -1392,6 +1673,30 @@ fn summary_card(graph: &Graph, path: &[String]) -> String {
             "blocks the most",
             &format!("{blocker} \u{b7} appears in {count} score{}", plural(count)),
         ));
+    }
+    // The diff score: the aggregate over the tree's landed deltas, with
+    // the threshold it climbs toward. The owner sees the plan being
+    // corrected rather than silently mutated — a replan lands as a
+    // revision, and the score is what moved.
+    let score = graph.diff_score();
+    if score > 0 || !graph.revisions.is_empty() {
+        let at = score >= DIFF_THRESHOLD;
+        let color = if at { WARN } else { DIM };
+        let mut line = format!(
+            "{score} of the {DIFF_THRESHOLD} replan threshold",
+        );
+        if at {
+            line.push_str(" \u{b7} the replan has fired");
+        }
+        body.extend(summary_line("\u{25c6}", color, "diff score", &line));
+        for revision in &graph.revisions {
+            body.extend(summary_line(
+                "\u{b7}",
+                DIM,
+                &format!("revision {}", revision.seq),
+                &format!("{} \u{b7} {}", revision.cause, revision.changes.join("; ")),
+            ));
+        }
     }
     let ready = graph.ready();
     let running_ids: Vec<String> = graph
@@ -1501,6 +1806,20 @@ fn node_card(graph: &Graph, index: usize, path: &[String]) -> String {
             "approach: {}",
             bound(&node.approach, APPROACH_CHARS)
         )));
+    }
+    // The delta this node's run reported: the reason category, whether
+    // the deviation was forced, and — on a report the child's own log
+    // contradicted — the named contradiction, which is the most
+    // serious kind and reads as one.
+    if let Some(delta) = &node.delta {
+        let mut text = format!("delta: {}", delta.reason.label());
+        if delta.state == crate::subagents::DeltaState::Deviated {
+            text.push_str(if delta.forced { " (forced)" } else { " (chosen)" });
+        }
+        if let Some(contradiction) = &delta.contradiction {
+            text.push_str(&format!(" \u{b7} CONTRADICTED: {contradiction}"));
+        }
+        body.extend(rail_lines_colored(&text, if delta.contradiction.is_some() { ERROR } else { TEXT }));
     }
     card(&title, &format!("{dot} {word}"), color, body, "")
 }

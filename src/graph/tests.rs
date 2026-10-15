@@ -148,6 +148,197 @@ fn a_graph_that_will_not_read_is_named_rather_than_defaulted() {
     let _ = std::fs::remove_file(&malformed);
 }
 
+// --- the replan --------------------------------------------------------------
+
+use crate::subagents::{Delta, DeltaReason, DeltaState};
+
+/// A followed delta: the child executed the approach it was handed.
+fn followed() -> Delta {
+    Delta {
+        state: DeltaState::Followed,
+        reason: DeltaReason::RightAndFollowed,
+        companion: String::new(),
+        instead: String::new(),
+        forced: false,
+        children: Vec::new(),
+        contradiction: None,
+    }
+}
+
+/// A deviation with the given reason, forcedness, and — when the child
+/// did something instead — what it did.
+fn deviated(reason: DeltaReason, forced: bool, instead: &str) -> Delta {
+    Delta {
+        state: DeltaState::Deviated,
+        reason,
+        companion: String::new(),
+        instead: instead.to_string(),
+        forced,
+        children: Vec::new(),
+        contradiction: None,
+    }
+}
+
+#[test]
+fn a_followed_brief_produces_a_followed_delta_and_no_replan() {
+    // The plan's first case: a tree that did what it was told carries
+    // a zero diff score, and nothing replans.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("do a")).unwrap();
+    graph.record_delta("a", followed()).unwrap();
+    assert_eq!(graph.diff_score(), 0, "a followed delta weighs nothing");
+    assert!(!graph.should_replan());
+    assert!(graph.replan().is_none(), "nothing fired, so nothing replans");
+    assert!(graph.revisions().is_empty());
+}
+
+#[test]
+fn a_chosen_improvement_is_a_gain_and_moves_nothing() {
+    // The better-route case: a child that found a better route to the
+    // same minima reported honestly, and the tree must not punish it.
+    // It weighs nothing, triggers nothing, and revises nothing — an
+    // orchestrator that moved a node because its child improved would
+    // teach its children to stop reporting.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("do a the slow way")).unwrap();
+    graph
+        .record_delta("a", deviated(DeltaReason::BetterRoute, false, "did a the fast way"))
+        .unwrap();
+    assert_eq!(graph.diff_score(), 0);
+    assert!(!graph.should_replan());
+    assert!(graph.replan().is_none());
+    assert_eq!(
+        graph.node("a").unwrap().approach,
+        "do a the slow way",
+        "a gain revises nothing"
+    );
+}
+
+#[test]
+fn a_forced_deviation_revises_the_remaining_approaches_and_names_the_revision() {
+    // The plan's second case: the approach was infeasible, the child
+    // says what it did instead, and the tree acts on the current plan
+    // rather than only learning for the next one.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("write src/gone.rs")).unwrap();
+    graph
+        .add(Node::new("b", 2).with_prereqs(["a"]).with_approach("read what a wrote"))
+        .unwrap();
+    graph
+        .record_delta(
+            "a",
+            deviated(DeltaReason::Infeasible, true, "wrote src/here.rs instead"),
+        )
+        .unwrap();
+    // A forced infeasible is 3 doubled: 6, which is past both triggers.
+    assert_eq!(graph.diff_score(), 6);
+    assert!(graph.should_replan());
+
+    let revision = graph.replan().expect("the trigger fired");
+    assert_eq!(revision.seq, 1, "the first replan is revision 1");
+    assert!(revision.cause.contains("diff score 6"), "{}", revision.cause);
+    assert!(revision.cause.contains('a'), "the worst node is named: {}", revision.cause);
+    assert_eq!(
+        graph.node("a").unwrap().approach,
+        "wrote src/here.rs instead",
+        "the approach is revised to what the child's own run did"
+    );
+    // The node still waiting behind the revised one carries the
+    // revision forward: its brief was written against a falsified
+    // approach.
+    assert!(
+        revision.changes.iter().any(|change| change.contains('b')),
+        "{:?}",
+        revision.changes
+    );
+    assert_eq!(graph.revisions().len(), 1);
+}
+
+#[test]
+fn a_large_aggregate_triggers_the_replan_across_several_nodes() {
+    // The aggregate trigger on its own: three chosen infeasibles, no
+    // single one past the per-node threshold, and the sum past the
+    // aggregate's.
+    let mut graph = Graph::new();
+    for id in ["a", "b", "c"] {
+        graph.add(Node::new(id, 1).with_approach("the infeasible way")).unwrap();
+        graph
+            .record_delta(id, deviated(DeltaReason::Infeasible, false, "the feasible way"))
+            .unwrap();
+    }
+    assert_eq!(graph.diff_score(), 9, "three chosen infeasibles at 3 each");
+    assert_eq!(graph.worst_delta_weight(), 3, "no single node is past 5");
+    let revision = graph.replan().expect("the aggregate fired");
+    assert_eq!(revision.changes.len(), 3, "every falsified approach is revised");
+}
+
+#[test]
+fn a_contradicted_report_is_priced_above_every_category() {
+    // The most serious kind: a claimed deviation the child's own
+    // session log does not show. It weighs more than any category, so
+    // one false report moves the aggregate on its own.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("do a")).unwrap();
+    graph
+        .record_delta(
+            "a",
+            Delta {
+                contradiction: Some(
+                    "the child claimed a deviation but its own session log holds no tool call"
+                        .to_string(),
+                ),
+                ..deviated(DeltaReason::Infeasible, false, "")
+            },
+        )
+        .unwrap();
+    assert_eq!(graph.diff_score(), 5);
+    assert!(graph.should_replan(), "one false report is past the per-node trigger");
+    // And the render says so, in the colour a serious thing reads in.
+    let cards = crate::graph::render(&graph);
+    assert!(cards.contains("CONTRADICTED"), "{cards}");
+    assert!(cards.contains("diff score"), "{cards}");
+}
+
+#[test]
+fn the_replan_is_bounded_or_it_thrashes() {
+    // The cap: two revisions per run, and a third is refused however
+    // much the tree has to say. An orchestrator that replanned on
+    // every deviation would never finish anything.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("the infeasible way")).unwrap();
+    graph
+        .record_delta("a", deviated(DeltaReason::Infeasible, true, "the feasible way"))
+        .unwrap();
+    assert!(graph.replan().is_some(), "the first replan lands");
+    assert!(graph.replan().is_some(), "and the second");
+    assert!(graph.replan().is_none(), "and the third is refused by the cap");
+    assert_eq!(graph.revisions().len(), 2);
+    assert_eq!(graph.revisions()[1].seq, 2, "the sequence is the run's own");
+}
+
+#[test]
+fn the_deltas_and_the_revisions_ride_the_file() {
+    // The file carries the reports and the history: a graph that lost
+    // its deltas on save would read back as a tree that never
+    // deviated, and a graph that lost its revisions would read back as
+    // a plan that was never corrected.
+    let path = scratch("replan-file");
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1).with_approach("the infeasible way")).unwrap();
+    graph
+        .record_delta("a", deviated(DeltaReason::Infeasible, true, "the feasible way"))
+        .unwrap();
+    graph.replan().unwrap();
+    graph.save(&path).unwrap();
+
+    let loaded = Graph::load(&path).unwrap();
+    assert_eq!(loaded.diff_score(), 6, "the delta rode the file");
+    assert_eq!(loaded.node("a").unwrap().approach, "the feasible way");
+    assert_eq!(loaded.revisions().len(), 1, "and so did the revision");
+    assert_eq!(loaded.revisions()[0].seq, 1);
+    let _ = std::fs::remove_file(&path);
+}
+
 #[test]
 fn a_node_with_no_prerequisites_is_ready_immediately() {
     let mut graph = Graph::new();
