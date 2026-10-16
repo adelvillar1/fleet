@@ -1,6 +1,6 @@
 # The dogfooding viability fixes — the second dive's five, plus the toolchain that makes the gate whole
 
-Status: draft — filed 2026-10-15; becomes active when implementation begins.
+Status: active — implementation began 2026-10-15.
 Date: 2026-10-15
 
 ## Why
