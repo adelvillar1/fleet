@@ -21,6 +21,8 @@ pub enum Entry {
     Tool(ToolCard),
     /// One lane joining the run, with the tools it brought.
     Lane(LaneCard),
+    /// The skills library at session start, when something was skipped.
+    Skills(SkillsCard),
     /// One compaction: the turns it folded into a summary, and what the
     /// context cost before and after.
     Compaction(CompactionCard),
@@ -47,6 +49,16 @@ pub struct ToolCard {
 pub struct LaneCard {
     pub lane: String,
     pub tool_count: usize,
+}
+
+/// The skills library at session start, when something was skipped: how
+/// many loaded, and which directories did not. A fact about the
+/// library, not something the model said — its own card instead of bare
+/// stderr over the pane (KI-216).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillsCard {
+    pub loaded: usize,
+    pub skipped: Vec<String>,
 }
 
 /// One compaction as a card, in the same family as a tool card: how many
@@ -616,6 +628,14 @@ impl App {
                 self.flush_streaming();
                 self.entries
                     .push(Entry::Lane(LaneCard { lane, tool_count }));
+            }
+            UiEvent::SkillsLoaded { loaded, skipped } => {
+                // The library's session-start report: a fact about the
+                // library, not something the model said — its own card,
+                // never bare stderr over the pane (KI-216).
+                self.flush_streaming();
+                self.entries
+                    .push(Entry::Skills(SkillsCard { loaded, skipped }));
             }
             UiEvent::Routed { provider, how } => {
                 // The route this run takes: the status bar shows the active
@@ -2184,6 +2204,41 @@ mod tests {
                 Entry::Lane(LaneCard {
                     lane: "sem1".to_string(),
                     tool_count: 4
+                }),
+            ]
+        );
+    }
+
+    /// The library's session-start report lands as its own card, never
+    /// as stderr over the pane (KI-216) — and it flushes the streaming
+    /// tail the way every fact-about-the-session card does.
+    #[test]
+    fn the_skills_library_report_lands_as_its_own_card() {
+        let mut app = app();
+        app.apply_ui_event(UiEvent::Token("half a thought".to_string()));
+        app.apply_ui_event(UiEvent::SkillsLoaded {
+            loaded: 441,
+            skipped: vec![
+                "creative-ideation".to_string(),
+                "deli-autoresearch".to_string(),
+                "dev-decisions.bak-20260926-124047".to_string(),
+                "tools".to_string(),
+                ".git".to_string(),
+            ],
+        });
+        assert_eq!(
+            app.entries,
+            vec![
+                Entry::Assistant("half a thought".to_string()),
+                Entry::Skills(SkillsCard {
+                    loaded: 441,
+                    skipped: vec![
+                        "creative-ideation".to_string(),
+                        "deli-autoresearch".to_string(),
+                        "dev-decisions.bak-20260926-124047".to_string(),
+                        "tools".to_string(),
+                        ".git".to_string(),
+                    ],
                 }),
             ]
         );

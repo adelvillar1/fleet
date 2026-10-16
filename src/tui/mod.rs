@@ -454,10 +454,19 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             // that run actually saw.
             let user_home = std::env::var("HOME").ok();
             let skills_override = std::env::var("FLEET_SKILLS_DIR").ok();
-            let skills =
+            let (skills, skill_skips) =
                 crate::skills::resolve_skills_dir(skills_override.as_deref(), user_home.as_deref())
-                    .map(|dir| crate::skills::load(&dir))
+                    .map(|dir| crate::skills::load_reported(&dir))
                     .unwrap_or_default();
+            // The skips are a fact about the library, not something the
+            // model said: one card, never bare stderr over the pane
+            // (KI-216). A clean load sends nothing.
+            if !skill_skips.is_empty() {
+                let _ = ui_tx.send(crate::agent::UiEvent::SkillsLoaded {
+                    loaded: skills.len(),
+                    skipped: skill_skips.into_iter().map(|skip| skip.name).collect(),
+                });
+            }
             // The route is chosen once, on the first run, and the committed
             // router is reused for the rest of the session — one sys1
             // judgment, not one per task.
@@ -520,6 +529,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                         let options = AgentOptions {
                             model: model.clone(),
                             max_turns: DEFAULT_MAX_TURNS,
+                            identity: crate::home::read_soul(&home),
                             ui_tx: Some(ui_tx.clone()),
                             lane_specs: None,
                             calib: Some(prepared.calib.clone()),

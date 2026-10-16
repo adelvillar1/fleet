@@ -250,6 +250,14 @@ pub enum UiEvent {
     /// run whose assembly was empty emits nothing, so the memory-less
     /// run is unchanged.
     Memory { shape: String, facts: usize },
+    /// The skills library at session start: how many loaded and which
+    /// directories were skipped, each by name. Emitted once, when the
+    /// agent thread loads the canonical library and something was
+    /// skipped — a clean load emits nothing, so the ordinary launch is
+    /// unchanged. The skip detail is a fact about the library, not
+    /// something the model said, and it lands as its own card instead
+    /// of bare stderr over the pane (KI-216).
+    SkillsLoaded { loaded: usize, skipped: Vec<String> },
     /// Where a delegated child run stands, reported to the parent's
     /// live surface while the parent's turn waits for it.
     ///
@@ -722,7 +730,12 @@ impl<'a> Agent<'a> {
             return base.to_string();
         }
         if let Some(line) = skills_prompt_growth_line(self.skills.len()) {
-            eprintln!("{line}");
+            // A live surface owns its own pane: bare stderr paints over
+            // it (KI-216), and the TUI's session-start card already
+            // carried the count once. The headless path keeps the line.
+            if self.options.ui_tx.is_none() {
+                eprintln!("{line}");
+            }
         }
         let mut prompt = String::from(base);
         if !self.skills.is_empty() {

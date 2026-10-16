@@ -1363,10 +1363,16 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // When the router is active the model name is the resolved endpoint,
     // not the workload's real target: show routing mode instead.
     if status.route_how.is_none() {
-        spans.push(Span::styled(&status.model, Style::new().fg(palette::ACCENT)));
+        spans.push(Span::styled(
+            &status.model,
+            Style::new().fg(palette::ACCENT),
+        ));
     }
     spans.push(Span::styled("  session ", Style::new().fg(palette::DIM)));
-    spans.push(Span::styled(short_id(&status.session_id), Style::new().fg(palette::TEXT)));
+    spans.push(Span::styled(
+        short_id(&status.session_id),
+        Style::new().fg(palette::TEXT),
+    ));
     spans.push(Span::styled("  turn ", Style::new().fg(palette::DIM)));
     spans.push(Span::styled(turn, Style::new().fg(palette::TEXT)));
     spans.push(Span::styled("  tokens ", Style::new().fg(palette::DIM)));
@@ -2036,6 +2042,34 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                     Style::new().fg(palette::DIM),
                 ),
             ])]
+        }
+        Entry::Skills(card) => {
+            // The library's session-start report, in the lane-card
+            // family: a dot, the loaded count, and the skipped names —
+            // wrapped through the shared word-aware helper, because a
+            // fixed-width surface given a concatenated line cuts its
+            // tail (KI-078's class; KI-216 is this line's reason).
+            let mut detail = format!("{} loaded", card.loaded);
+            if !card.skipped.is_empty() {
+                let names = card.skipped.join(", ");
+                detail.push_str(&format!(" \u{b7} {} skipped: {names}", card.skipped.len()));
+            }
+            let mut lines = vec![Line::from(vec![
+                Span::styled(" \u{2713} ", Style::new().fg(palette::DONE)),
+                Span::styled(
+                    "skills",
+                    Style::new()
+                        .fg(palette::ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])];
+            for piece in wrap(&detail, width) {
+                lines.push(Line::from(Span::styled(
+                    format!("  {piece}"),
+                    Style::new().fg(palette::DIM),
+                )));
+            }
+            lines
         }
         Entry::Compaction(card) => {
             // A compaction is the same family as a tool card, rendered in

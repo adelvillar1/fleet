@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-16
 updated: 2026-10-16
 slug: tui-loader-diagnostics
@@ -40,13 +40,13 @@ where its diagnostics go:
 
 ## Acceptance criteria
 
-- [ ] D1: `load_reported` returns every skip with its reason; `load`
+- [x] D1: `load_reported` returns every skip with its reason; `load`
       still prints each (the CLI surfaces unchanged).
-- [ ] D2: the TUI renders one wrapped card naming the loaded count and
+- [x] D2: the TUI renders one wrapped card naming the loaded count and
       the skipped skills — never raw stderr over the pane.
-- [ ] D3: the growth line is stderr-only on the headless path.
-- [ ] D4: the gate runs whole, exit codes read directly.
-- [ ] D5: KI-216 is in the ledger with the launch evidence.
+- [x] D3: the growth line is stderr-only on the headless path.
+- [x] D4: the gate runs whole, exit codes read directly.
+- [x] D5: KI-216 is in the ledger with the launch evidence.
 
 ## Files
 
@@ -57,3 +57,24 @@ where its diagnostics go:
 
 Unit tests: `load_reported`'s skips; the app's card render; the growth
 line's gate on `ui_tx`. Gate per D4.
+
+## Convergence (graded 2026-10-16)
+
+The gate ran whole: all four legs exit 0, **1028 passed / 1 ignored**,
+exit codes read directly.
+
+- **D1 met** — `load_reported` returns every skip with its reason;
+  pinned by `load_reported_returns_the_skips_with_their_reasons`
+  (malformed fence, name mismatch, and a directory without a readable
+  `SKILL.md`, in directory order). `load` wraps it and prints each —
+  the CLI surfaces' bytes unchanged.
+- **D2 met** — the TUI's load site uses `load_reported` and sends one
+  `UiEvent::SkillsLoaded` only when skips exist; the app lands it as
+  `Entry::Skills`, rendered in the lane-card family with the detail
+  line wrapped through the shared word-aware helper at the pane width.
+  Pinned by `the_skills_library_report_lands_as_its_own_card`.
+- **D3 met** — `system_prompt`'s growth line prints only when
+  `options.ui_tx.is_none()`; the headless path unchanged, the TUI path
+  quiet (its startup card carried the count once).
+- **D4 met** — the gate, exit codes direct.
+- **D5 met** — KI-216 in the ledger, closed-fixed with this commit.

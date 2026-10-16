@@ -367,8 +367,19 @@ fn unquote(value: &str) -> &str {
     value
 }
 
-/// One log line naming the skill that was skipped and why. A broken
-/// skill is never silent and never fatal.
+/// One skipped skill directory: its name and the loader's reason. A
+/// broken skill is never silent — the *caller* decides where the report
+/// goes (the CLI prints each line; the TUI renders one card), which is
+/// what keeps bare stderr off a fixed-width pane (KI-216).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillSkip {
+    pub name: String,
+    pub reason: String,
+}
+
+// One stderr line naming the proposal that was skipped and why. The
+// proposals tree is fleet-local and read only by CLI surfaces, where
+// stderr is the right channel.
 fn skip_line(name: &str, reason: &str) {
     eprintln!("fleet: skills: skipping `{name}` \u{2014} {reason}");
 }
@@ -396,17 +407,32 @@ pub fn proposals_dir(home: &Path) -> PathBuf {
 }
 
 /// Load every live skill under the canonical library directory, sorted
-/// by name. A missing directory is no skills, not an error. A directory
-/// without a readable `SKILL.md`, or with a malformed one, is skipped by
-/// name with one logged line; the others still load.
-///
-/// A live skill whose frontmatter carries `proposed: true` is skipped —
-/// that is a proposal that somehow reached the live tree, and the loader
-/// refuses to promote it silently.
+/// by name, printing one stderr line per skip — the headless and CLI
+/// surfaces' shape. A surface that renders (the TUI) wants
+/// [`load_reported`] instead and decides where the report goes.
 pub fn load(canonical: &Path) -> Vec<Skill> {
+    let (skills, skips) = load_reported(canonical);
+    for skip in &skips {
+        eprintln!(
+            "fleet: skills: skipping `{}` \u{2014} {}",
+            skip.name, skip.reason
+        );
+    }
+    skills
+}
+
+/// Load every live skill under the canonical library directory, sorted
+/// by name, with the skips **reported, not printed**: a missing
+/// directory is no skills and no skips, not an error. A directory
+/// without a readable `SKILL.md`, or with a malformed one, comes back
+/// as a [`SkillSkip`]; the others still load. A live skill whose
+/// frontmatter carries `proposed: true` is skipped — that is a proposal
+/// that somehow reached the live tree, and the loader refuses to
+/// promote it silently.
+pub fn load_reported(canonical: &Path) -> (Vec<Skill>, Vec<SkillSkip>) {
     let dir = canonical;
     let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let mut directories: Vec<PathBuf> = entries
         .flatten()
@@ -415,6 +441,7 @@ pub fn load(canonical: &Path) -> Vec<Skill> {
         .collect();
     directories.sort();
     let mut skills: Vec<Skill> = Vec::new();
+    let mut skips: Vec<SkillSkip> = Vec::new();
     for path in directories {
         // Owned, so the path itself stays free to move into the skill.
         let Some(name) = path
@@ -428,7 +455,10 @@ pub fn load(canonical: &Path) -> Vec<Skill> {
         let text = match fs::read_to_string(&file) {
             Ok(text) => text,
             Err(_) => {
-                skip_line(&name, &format!("no readable {SKILL_FILE}"));
+                skips.push(SkillSkip {
+                    name,
+                    reason: format!("no readable {SKILL_FILE}"),
+                });
                 continue;
             }
         };
@@ -436,11 +466,11 @@ pub fn load(canonical: &Path) -> Vec<Skill> {
         match parse_document(&text).and_then(|document| live_skill(document, &name, file, modified))
         {
             Ok(skill) => skills.push(skill),
-            Err(reason) => skip_line(&name, &reason),
+            Err(reason) => skips.push(SkillSkip { name, reason }),
         }
     }
     skills.sort_by(|left, right| left.name.cmp(&right.name));
-    skills
+    (skills, skips)
 }
 
 /// The live-skill rules on top of the shared parse: `name` and
@@ -1670,6 +1700,40 @@ mod tests {
         // The loaded skills carry where they came from, for the card.
         assert!(skills[0].path.ends_with("good-one/SKILL.md"));
         assert!(skills[0].modified.is_some());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The reporting loader returns the skips with their reasons instead
+    /// of printing them — a rendering surface decides where the report
+    /// goes (KI-216).
+    #[test]
+    fn load_reported_returns_the_skips_with_their_reasons() {
+        let home = scratch("reported");
+        write_skill(&home, "good-one", &good_skill("good-one", "d", "body"));
+        write_skill(&home, "broken-name", &good_skill("other", "d", "body"));
+        write_skill(&home, "broken-fence", "# no fence here\n");
+        std::fs::create_dir_all(canon(&home).join("empty-dir")).unwrap();
+
+        let (skills, skips) = load_reported(&canon(&home));
+        assert_eq!(skill_names(&skills), vec!["good-one"]);
+        let named: Vec<(&str, &str)> = skips
+            .iter()
+            .map(|skip| (skip.name.as_str(), skip.reason.as_str()))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                (
+                    "broken-fence",
+                    "the file does not open with a `---` frontmatter fence"
+                ),
+                (
+                    "broken-name",
+                    "frontmatter name `other` does not match the directory `broken-name`"
+                ),
+                ("empty-dir", "no readable SKILL.md"),
+            ]
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
