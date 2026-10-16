@@ -34,6 +34,16 @@ into the criteria below — the trust trio (checkpoints, plan mode, diff
 review), the approval allowlist, the context meter, and spend
 visibility — each subordinate to ease, never as a cockpit.
 
+The owner then named the one surface that earns console density, with
+a screenshot of a macOS network-analysis dashboard as the reference:
+"this is a dashboard example of a good design, and what I would expect
+from the control tower" (2026-10-16). The tower — the observability of
+the whole system: what every project shipped, which harnesses are
+reporting, which claims conflicted with evidence, what is open right
+now — is the deliberate exception to the quiet rule. Chat stays the
+app; the tower is where the cockpit lives, because a control tower
+that isn't one would betray the name.
+
 The reference is on disk at `~/Projects/deepseek-harness`. Its GUI was
 `dsh fleet` — a web profile that started a loopback HTTP server
 (127.0.0.1:3080), opened the browser, and rendered a React SPA in a
@@ -72,7 +82,9 @@ that collapses to icons; the inspector drawer is optional and closed by
 default. Every surface is two actions from the conversation and Esc
 always comes home. This is the Codex/ZCode shape — one obvious action
 per screen, quiet chrome, keyboard-first — and the explicit rejection
-of hermes's clutter.
+of hermes's clutter. One surface is the named exception: the tower is
+a console because the owner asked for a console, and every other
+surface stays quiet.
 
 ### The seam
 
@@ -162,9 +174,25 @@ The panels — chat is the app; the rest are destinations you choose:
   with structured editors, cron jobs (a surface they have never had),
   SOUL.md, and the env status by name only. Every write goes through the
   one writer the CLI shares.
-- **tower** and **second-brain** — the two boards' reads, landing as
-  panels exactly as the fork's board icons did: same snapshot contract, a
-  refused read keeps the last good snapshot and names why.
+- **tower** — the control tower, and the one console surface (the
+  owner's named bar). Six zones, every number from a read: a KPI strip
+  (projects tracked, open tasks, open conflicts, reports today, dirty
+  worktrees — each a big number, a 12px label, one context line); a
+  hero two-series chart (reports filed per day against commits shipped
+  per day, with a legend); the harness-mix donut; the ranked projects
+  (trailing-30-day commits, bar, share, branch, head, a dirty badge,
+  ahead/behind, a health dot by lifecycle); the claims-vs-evidence rows
+  (each open conflict's claim against the reality that rejected it,
+  color-coded); and the report feed (every filed report, newest
+  first). A status bar names the snapshot's build time, the malformed
+  lines, the coverage, and the suppressed count. The feed is as fresh
+  as the derived state's last build and says so — it never pretends to
+  be live. A refused read keeps the last good snapshot and names why; a
+  bounded scan names what it left unread.
+- **second-brain** — the derived state: the gates board, the loops,
+  the maturity series, the harness runs, and the knowledge corpus with
+  its classified rows. The same card language, quieter — cards, bars,
+  and a week grid, never a plain-text table.
 
 ### The visual language
 
@@ -179,7 +207,11 @@ a theme attribute; the DeepSeek blue accent (rgb(65,118,230)); the fleet
 gradient brand; 12px card radius, 0.5px neutral hairlines, the SF text
 stack with SF Mono for code, tabular numerals for values, 22px card
 values over 12px tertiary labels. Cards, dots, bars, and graphs — never a
-plain-text table, the house UX bar (`CLAUDE.md:39`).
+plain-text table, the house UX bar (`CLAUDE.md:39`). The tower is where
+this density finally lands in full: KPI cards, tabular numerals
+throughout, bars and shares and health dots, the donut and the
+two-series chart — a console in the same card language, and the only
+surface allowed to be one.
 
 ### What the TUI keeps
 
@@ -216,16 +248,20 @@ JSON buffer the CLI already accepts.
   the curation.
 - **G6 — sessions and calibration.** The archive, replay, resume; the
   stream rows and gates.
-- **G7 — settings.** The full config surface through the one writer; the
+- **G7 — the boards.** The tower console (the six zones above, from the
+  boards' own reads, the snapshot contract holding) and the
+  second-brain panel. The tower_data parse grows to carry the console's
+  aggregates — parse-only, the read contract untouched.
+- **G8 — settings.** The full config surface through the one writer; the
   structured provider and workload editors; the allowlist rules as a
   third list surface; cron jobs; SOUL.md; and the fleet.env defect
   (below) closed or disclosed by name.
-- **G8 — the trust trio.** Checkpoints (a per-turn snapshot of the run's
+- **G9 — the trust trio.** Checkpoints (a per-turn snapshot of the run's
   file state, rewindable — the converged spec's most-requested gap),
   plan mode (read-only planning, then an editable plan, then Build —
   Cursor's plan-as-document shape), and diff review with per-hunk
   accept. All three ride the conversation; none adds a permanent panel.
-- **G9 — hardening and docs.** Token UX, error surfaces, the eval
+- **G10 — hardening and docs.** Token UX, error surfaces, the eval
   scenarios, the docs, the TUI-parity check, the recap.
 
 Each increment ends the same way: the four-leg gate, an explicit-path
@@ -262,6 +298,11 @@ disclosed gap ("the TUI pane has never been opened by a human,
   hunk, accepting some and rejecting the rest.
 - [ ] I: The session header always shows the spend so far and the
   context meter, so "where am I" never requires opening a panel.
+- [ ] J: The owner opens the tower and reads the whole system at a
+  glance — what each project shipped in the last thirty days, which
+  harnesses are reporting, which claims conflicted with evidence, what
+  is open right now — one screen, no panel-hopping, every number
+  traceable to a read.
 
 ## UX routes
 
@@ -278,8 +319,8 @@ ids worked:
 | `#/sessions` | archive, replay, resume | `session::list` / `session::replay` |
 | `#/calibration` | stream, fit samples, gates | `calib::read_day` and the gate state |
 | `#/settings` | every configurable surface | `settings::states`, the list surfaces, `jobs.json`, SOUL.md |
-| `#/tower` | git facts per project | `boards::read_tower` unchanged |
-| `#/second-brain` | derived state files | `boards::read_brain` unchanged |
+| `#/tower` | the control-tower console | `boards::read_tower` plus `read_brain`'s tower_data section, extended parse-only to carry the reports, conflicts, harness, and report_daily aggregates |
+| `#/second-brain` | the derived state + knowledge corpus | `boards::read_brain` unchanged |
 
 `#/chat` is the launch route. The expanded sidebar lists the surfaces in
 the order above — chat and the four intelligence surfaces first, the
@@ -335,6 +376,14 @@ Launch: `fleet gui [--port N] [--no-open] [--host H]`, default
 - [ ] C14: the session spend and the context meter render in the chat
   header from the run's own data — no panel required, no fabricated
   numbers.
+- [ ] C15: the tower renders the console from the boards' own reads —
+  the KPI strip, the two-series activity chart, the harness donut, the
+  ranked projects with bars, shares and health dots, the
+  claims-vs-evidence rows, the report feed, and the status bar. Every
+  number traces to a read and none is fabricated; a refused read keeps
+  the last good snapshot and names why; a bounded scan names its unread
+  count rather than hiding it; the feed names its build time. The
+  console density is the tower's alone — no other surface inherits it.
 
 ## Files to be touched
 
@@ -359,9 +408,12 @@ Launch: `fleet gui [--port N] [--no-open] [--host H]`, default
   through the writer; the ask/yes/yes-guarded gate consults the rules
   before it prompts
 - `src/home.rs` — the resolution chain walks `fleet.env` for the two
-  GUI-writable keys (the defect close), or the writes stop; G7 records
+  GUI-writable keys (the defect close), or the writes stop; G8 records
   which
 - `src/graph.rs` — the unlock-condition doc correction
+- `src/boards.rs` — the tower_data parse carries the reports, conflicts,
+  harness, and report_daily aggregates the console renders (parse-only;
+  the read contract, the bounds, and the snapshot rules unchanged)
 - `docs/features/gui.md` (new), `README.md`,
   `TECHNICAL-DOCUMENTATION.md`, `FUNCTIONAL-SPECIFICATIONS.md`,
   `docs/features/boards.md` (its deferred-browser-face paragraph is
@@ -471,6 +523,15 @@ cargo test --lib gui::header
 Expected: the chat header renders the session spend and the context
 meter from the run's own counters, with no panel opened.
 
+**Criterion C15: the tower console**
+```bash
+cargo test --lib gui::tower
+```
+Expected: the console's zones render from a fixture derived from the
+boards' own readers (TOWER_DATA_FIXTURE and a tower snapshot); the KPI
+numbers equal the fixture's counts; a truncated scan names its unread
+count; the feed names its build time; exit 0.
+
 ## Linked artifacts
 
 - `~/Projects/deepseek-harness` — the IA and visual-language reference
@@ -499,7 +560,9 @@ meter from the run's own counters, with no panel opened.
   and the owner named hermes as the anti-pattern for exactly this. The
   guard is structural, not vigilance: intelligence renders inline first
   (C11), the drawer defaults closed, and any new surface must justify
-  itself against C9 and C10 before it earns a rail slot.
+  itself against C9 and C10 before it earns a rail slot. The tower is
+  the named exception — the owner asked for a console there by name —
+  so the guard is that no other surface inherits the tower's density.
 
 ## Dependencies
 
@@ -516,7 +579,7 @@ meter from the run's own counters, with no panel opened.
   settings-surface plan, and the 2026-10-15 deep dive.
 - The boards.md deferral is superseded with its reason stated: tokio is
   already carried and the server is hand-rolled, so "dependencies this
-  crate does not carry" no longer applies. G9 corrects the doc.
+  crate does not carry" no longer applies. G10 corrects the doc.
 - **The owner's 2026-10-16 course correction, verbatim: "it also needs
   to be easy to use, more like codex and zcode and less than hermes,
   hermes UI is horrible."** Codex and ZCode are the positive references;
@@ -524,10 +587,35 @@ meter from the run's own counters, with no panel opened.
   always-on right rail became an optional inspector drawer, chat became
   the default and dominant surface, and the inline intelligence cards
   became the default answer to "it's hidden."
+- **The owner's 2026-10-16 tower reference, verbatim: "this is a
+  dashboard example of a good design, and what I would expect from the
+  control tower"** — sent with a screenshot of a macOS network-analysis
+  console (the TCP-Viewer pattern: KPI stat cards with context lines, a
+  hero time-series, a donut, ranked list cards with bars and shares,
+  color-coded analysis rows, a dense sidebar, a live status bar). The
+  tower is this plan's one console-density surface; the quiet rule
+  holds everywhere else, and the control-room-creep risk is amended to
+  name the exception.
+- Recon grounding for the tower's data. The tower-log ledger
+  (`~/.second-brain/events.jsonl`, one JSON line per report: ts, type,
+  task, project, project_known, harness, summary, and the optional
+  commit, commit_verified, and session) is derived by
+  `control_tower.py` into `tower_data.json`: the reports (doing,
+  pending_verification, sessions, reports_recent, the conflicts with
+  their claim-vs-reality, open_conflict_count, suppressed, trust,
+  coverage, report_daily), the harness mix, the projects, and the
+  shipped timeline. `boards::read_tower` adds the live git facts per
+  project (branch, head, when, commits_30d, dirty, ahead/behind,
+  notes, and the scan's beyond_bound and unread). Recon found
+  `TowerDataRead` carrying only generated_at, projects, and timeline —
+  the console's aggregates need the parse-only extension named in
+  Files. The tower's feed is as fresh as the derived state's last
+  build; the panel names its generated_at rather than pretending to be
+  live.
 - The harness-landscape research (memory:
   `harness-landscape-converged-spec-2026-10`) folds into this plan as
-  the trust trio (G8: checkpoints, plan mode, diff review), the approval
-  allowlist (G2 and G7, C12), and the context meter and spend line (G2,
+  the trust trio (G9: checkpoints, plan mode, diff review), the approval
+  allowlist (G2 and G8, C12), and the context meter and spend line (G2,
   C14). All of it is subordinate to ease — the meter is a hairline in
   the header, not a dashboard tile.
 - **The fleet.env defect, found during recon:** `settings::write_env`
@@ -535,7 +623,7 @@ meter from the run's own counters, with no panel opened.
   `<FLEET_HOME>/fleet.env`, but nothing in the runtime reads that file —
   `memory.rs` and `agent.rs` read the process env only. An edit from the
   TUI pane (or the GUI) changes what the pane shows, not what a run uses.
-  G7 closes it — the resolution chain walks fleet.env for those two keys
+  G8 closes it — the resolution chain walks fleet.env for those two keys
   — or discloses it by name; it must not ship papered over.
 - Increments G1+ follow this document; each lands gated and committed
   with explicit paths, and this file's `updated` field moves with the
