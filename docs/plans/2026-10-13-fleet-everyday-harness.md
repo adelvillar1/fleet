@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-10-13
-updated: 2026-10-14
+updated: 2026-10-17
 slug: fleet-everyday-harness
 ---
 
