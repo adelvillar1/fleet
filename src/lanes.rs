@@ -244,8 +244,8 @@ pub struct LaneHealth {
     /// The per-lane availability the lane's own `doctor` tool reported,
     /// for a lane that exposes one (blend1): each of its lanes — route,
     /// semantic, tabular, generate, validate — available or not, with
-    /// its named reason. Empty for the other four lanes, which expose
-    /// no `doctor` tool.
+    /// its named reason, and the web leg's own entry beside them. Empty
+    /// for the other four lanes, which expose no `doctor` tool.
     pub doctor: Vec<LaneAvailability>,
     /// The launch command when the lane is ok; the failure reason when it
     /// is not.
@@ -581,7 +581,13 @@ pub async fn probe_lane(lane: &Lane) -> LaneHealth {
     let doctor = match &outcome {
         Ok((_, tools)) if tools.iter().any(|tool| tool.name == DOCTOR_TOOL) => {
             match server.call_tool(DOCTOR_TOOL, json!({})).await {
-                Ok(call) => parse_doctor(&call.text()),
+                Ok(call) => {
+                    // The web leg rides the report beside the five
+                    // sub-lanes: the parse keeps the key, and the
+                    // card renders it as its own line.
+                    let report = parse_doctor(&call.text());
+                    report.lanes.into_iter().chain(report.web).collect()
+                }
                 Err(_) => Vec::new(),
             }
         }
@@ -622,45 +628,71 @@ const DOCTOR_TOOL: &str = "doctor";
 
 /// The sub-lanes a `doctor` report renders, in the blend's own order:
 /// the five lanes an `ask()` composes its answer from. The report also
-/// carries `escalation` and `score` (the escalation and sys1-score legs,
-/// upstream ab4ac55) beside `critics`, `voice` and `web`; the card
-/// renders these five.
+/// carries the escalation and sys1-score legs (upstream ab4ac55) beside
+/// the critic chain, the voice leg, and the web leg; the card renders
+/// these five, and the web leg as its own line — the web leg is not a
+/// blend sub-lane, it is the web leg blend1 serves.
 const DOCTOR_LANES: &[&str] = &["route", "semantic", "tabular", "generate", "validate"];
+
+/// The web leg's key in a `doctor` report. It rides the same object
+/// as the five sub-lanes but is not one of them, so the parse keeps
+/// it beside them and the card renders it as its own labeled line.
+const WEB_LEG: &str = "web";
+
+/// What a lane's `doctor` report parses into: the five sub-lanes the
+/// card renders, in the blend's own order, and the web leg's
+/// availability beside them — the key the report already carries
+/// that the parse used to drop as an unrendered extra.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DoctorReport {
+    lanes: Vec<LaneAvailability>,
+    web: Option<LaneAvailability>,
+}
 
 /// Read a `doctor` tool's answer into the per-lane availability the
 /// card renders. The answer's text is a JSON object keyed by lane
 /// name, each value `{available, reason, provider}` — a lane missing
 /// from the object, or a value without an `available` boolean, is
-/// skipped rather than guessed at. A report that cannot be read at all
-/// is an empty list: the card renders without it and the probe stays
-/// Ok, because a doctor that cannot answer is not a broken handshake.
-fn parse_doctor(text: &str) -> Vec<LaneAvailability> {
+/// skipped rather than guessed at. The web leg rides the same object
+/// under its own key and is kept beside the five. A report that
+/// cannot be read at all is empty: the card renders without it and
+/// the probe stays Ok, because a doctor that cannot answer is not a
+/// broken handshake.
+fn parse_doctor(text: &str) -> DoctorReport {
     let Ok(report) = serde_json::from_str::<serde_json::Value>(text) else {
-        return Vec::new();
+        return DoctorReport::default();
     };
     let Some(report) = report.as_object() else {
-        return Vec::new();
+        return DoctorReport::default();
     };
-    DOCTOR_LANES
+    let lanes = DOCTOR_LANES
         .iter()
-        .filter_map(|lane| {
-            let entry = report.get(*lane)?.as_object()?;
-            Some(LaneAvailability {
-                lane: (*lane).to_string(),
-                available: entry.get("available")?.as_bool()?,
-                reason: entry
-                    .get("reason")
-                    .and_then(|reason| reason.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                provider: entry
-                    .get("provider")
-                    .and_then(|provider| provider.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-            })
-        })
-        .collect()
+        .filter_map(|lane| parse_availability(lane, report.get(*lane)?))
+        .collect();
+    let web = report.get(WEB_LEG).and_then(|entry| parse_availability(WEB_LEG, entry));
+    DoctorReport { lanes, web }
+}
+
+/// One availability entry from a `doctor` report: the named lane,
+/// whether it can answer, its named reason, and the provider that
+/// backs it. None when the entry is absent, is not an object, or
+/// carries no boolean `available` — skipped rather than guessed at.
+fn parse_availability(lane: &str, entry: &serde_json::Value) -> Option<LaneAvailability> {
+    let entry = entry.as_object()?;
+    Some(LaneAvailability {
+        lane: lane.to_string(),
+        available: entry.get("available")?.as_bool()?,
+        reason: entry
+            .get("reason")
+            .and_then(|reason| reason.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        provider: entry
+            .get("provider")
+            .and_then(|provider| provider.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    })
 }
 
 /// The handshake half of a probe, kept separate so the caller owns
@@ -747,8 +779,9 @@ fn render_card(lane: &LaneHealth) -> String {
     // The lane's own `doctor` report, when it exposed one: one line per
     // sub-lane — a status dot and its named reason — at the house visual
     // bar, never a plain-text table. A wrapped continuation indents under
-    // the body, so a long reason reads as one line broken, not two.
-    for availability in &lane.doctor {
+    // the body, so a long reason reads as one line broken, not two. The
+    // web leg is not one of these rows; it renders its own line below.
+    for availability in lane.doctor.iter().filter(|entry| entry.lane != WEB_LEG) {
         let (dot, color) = if availability.available {
             ("\u{2713}", palette::OK)
         } else {
@@ -763,6 +796,30 @@ fn render_card(lane: &LaneHealth) -> String {
         for (index, chunk) in wrap_detail(&body, CARD_WIDTH - 4).iter().enumerate() {
             let indent = if index == 0 { "" } else { "  " };
             lines.push(format!("{DIM}│{RESET} {color}{indent}{chunk}{RESET}"));
+        }
+    }
+    // The web leg, its own line: the label leads in the accent color
+    // because the web leg is not one of the five blend sub-lanes — it
+    // is the web leg blend1 serves — and the card marks the difference
+    // at a glance. The reason is named either way, the same as the
+    // sub-lanes above: available says what backs it, unavailable says
+    // what is missing.
+    if let Some(web) = lane.doctor.iter().find(|entry| entry.lane == WEB_LEG) {
+        let (dot, color) = if web.available {
+            ("\u{2713}", palette::OK)
+        } else {
+            ("\u{25cb}", palette::DIM)
+        };
+        let named = if web.reason.is_empty() {
+            web.provider.as_str()
+        } else {
+            web.reason.as_str()
+        };
+        let label = format!("{ACCENT}web leg{RESET}");
+        let body = format!("{dot} — {named}");
+        for (index, chunk) in wrap_detail(&body, CARD_WIDTH - 12).iter().enumerate() {
+            let indent = if index == 0 { "" } else { "  " };
+            lines.push(format!("{DIM}│{RESET} {label} {color}{indent}{chunk}{RESET}"));
         }
     }
     if let Some(source) = &lane.source {
@@ -1158,10 +1215,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_doctor_reads_the_five_lanes_with_their_reasons() {
+    fn parse_doctor_keeps_the_five_lanes_and_the_web_key_with_its_reason() {
         // A doctor answer as the adapter returns it: the five lanes an
-        // ask() composes from, plus the report's other keys (critics,
-        // voice, web) that the card does not render.
+        // ask() composes from, the web leg the report carries beside
+        // them, and the other keys (the critic chain, the voice leg)
+        // that still ride along unrendered.
         let report = parse_doctor(
             r#"{
                 "route": {"available": true, "reason": null, "provider": "liquid (d1) via sys1"},
@@ -1171,30 +1229,46 @@ mod tests {
                 "validate": {"available": false, "reason": "missing FASTINO_API_KEY", "provider": "glide → d1"},
                 "critics": [{"critic": "qwen3.8-flash", "configured": false}],
                 "voice": {"available": false, "reason": "missing DASHSCOPE_API_KEY"},
-                "web": {"available": false, "reason": "missing TINYFISH_API_KEY"}
+                "web": {"available": false, "reason": "missing TINYFISH_API_KEY", "provider": "tinyfish (search + fetch)"}
             }"#,
         );
-        // The five lanes, in the blend's own order — the report's extra
-        // keys ride along unrendered, never as rows.
-        let lanes: Vec<&str> = report.iter().map(|entry| entry.lane.as_str()).collect();
+        // The five lanes, in the blend's own order — unchanged.
+        let lanes: Vec<&str> = report.lanes.iter().map(|entry| entry.lane.as_str()).collect();
         assert_eq!(lanes, vec!["route", "semantic", "tabular", "generate", "validate"]);
-        assert!(report[0].available);
+        assert!(report.lanes[0].available);
         // A null reason reads as the empty string, and the card falls
         // back to the provider for an available lane.
-        assert!(report[0].reason.is_empty());
-        assert_eq!(report[0].provider, "liquid (d1) via sys1");
-        for entry in &report[1..] {
+        assert!(report.lanes[0].reason.is_empty());
+        assert_eq!(report.lanes[0].provider, "liquid (d1) via sys1");
+        for entry in &report.lanes[1..] {
             assert!(!entry.available, "{} must be unavailable", entry.lane);
             assert!(!entry.reason.is_empty(), "{} names its reason", entry.lane);
         }
+        // The web leg: the key the report carries, kept beside the
+        // five with its named reason instead of dropped as an
+        // unrendered extra.
+        let web = report.web.expect("the report carries the web key");
+        assert_eq!(web.lane, "web");
+        assert!(!web.available);
+        assert_eq!(web.reason, "missing TINYFISH_API_KEY");
+        assert_eq!(web.provider, "tinyfish (search + fetch)");
+        // A report with no web key parses none, and the five still
+        // read as they always did.
+        let without =
+            parse_doctor(r#"{"route": {"available": true, "reason": null, "provider": "liquid (d1) via sys1"}}"#);
+        assert!(without.web.is_none(), "{:?}", without.web);
+        assert_eq!(without.lanes.len(), 1);
         // A report that cannot be read is empty, never a panic: the card
         // renders without it and the probe stays Ok.
-        assert!(parse_doctor("not json").is_empty());
-        assert!(parse_doctor("[]").is_empty());
+        let unreadable = parse_doctor("not json");
+        assert!(unreadable.lanes.is_empty());
+        assert!(unreadable.web.is_none());
+        assert!(parse_doctor("[]").lanes.is_empty());
         // A lane missing from the object, or one whose `available` is
         // not a boolean, is skipped rather than guessed at.
         let partial = parse_doctor(r#"{"route": {"available": "yes"}, "generate": {}}"#);
-        assert!(partial.is_empty(), "{partial:?}");
+        assert!(partial.lanes.is_empty(), "{partial:?}");
+        assert!(partial.web.is_none());
     }
 
     #[test]
@@ -1238,6 +1312,12 @@ mod tests {
                     reason: "missing FASTINO_API_KEY — the gate would ship ungated".to_string(),
                     provider: "glide → d1 (oversized states)".to_string(),
                 },
+                LaneAvailability {
+                    lane: "web".to_string(),
+                    available: false,
+                    reason: "missing TINYFISH_API_KEY (set it in ~/.config/blend1/env)".to_string(),
+                    provider: "tinyfish (search + fetch)".to_string(),
+                },
             ],
             detail: "BLEND1_PYTHONPATH=/repo/services/blend1/src python3 -u /repo/services/blend1/service/mcp_server.py".to_string(),
             elapsed_ms: 812,
@@ -1269,9 +1349,49 @@ mod tests {
         let route_at = rendered.find("route").expect("the route lane renders");
         let validate_at = rendered.find("validate").expect("the validate lane renders");
         assert!(route_at < validate_at, "{rendered}");
+        // The web leg: its own line on blend1's card, the accented
+        // label marking it as not one of the five sub-lane rows — it
+        // is the web leg blend1 serves — with its reason named.
+        assert!(
+            rendered.contains(&format!(
+                "{}web leg{RESET} {}○ — missing TINYFISH_API_KEY",
+                palette::ACCENT, palette::DIM
+            )),
+            "{rendered}"
+        );
+        // It never renders in the five's row shape: no bare web row
+        // among the sub-lanes.
+        assert!(!rendered.contains(&format!("{}○ web — ", palette::DIM)), "{rendered}");
         // A card, never a plain-text table.
         assert_eq!(rendered.matches('┌').count(), 1, "{rendered}");
         assert!(!rendered.contains("| lane |"), "{rendered}");
+    }
+
+    #[test]
+    fn a_report_without_a_web_key_renders_no_web_line() {
+        // A blend1 card whose doctor report carries the five sub-lanes
+        // and no web key: the five render, and no web line appears —
+        // the card never invents a leg the report did not name.
+        let health = vec![LaneHealth {
+            name: "blend1".to_string(),
+            role: "grounded".to_string(),
+            home: Some(PathBuf::from("/repo/services/blend1")),
+            source: Some(HomeSource::Bundled),
+            state: LaneState::Ok,
+            server_version: Some("0.1.0".to_string()),
+            tools: vec!["ask".to_string(), "doctor".to_string()],
+            doctor: vec![LaneAvailability {
+                lane: "route".to_string(),
+                available: true,
+                reason: String::new(),
+                provider: "liquid (d1) via sys1".to_string(),
+            }],
+            detail: "BLEND1_PYTHONPATH=/repo/services/blend1/src python3 -u /repo/services/blend1/service/mcp_server.py".to_string(),
+            elapsed_ms: 812,
+        }];
+        let rendered = render(&health);
+        assert!(rendered.contains("route"), "{rendered}");
+        assert!(!rendered.contains("web leg"), "{rendered}");
     }
 
     #[test]

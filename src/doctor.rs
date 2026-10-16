@@ -161,6 +161,38 @@ pub fn evaluate_recall(vector: Option<(&str, usize)>) -> Check {
     Check { name: "recall", ok: true, detail }
 }
 
+/// The web leg's line: whether the optional live-source tool is
+/// live. The key is resolved by name through the run's own
+/// precedence — the environment first, then FLEET_HOME/.env — and
+/// blend1's resolution state rides beside it, because the web leg is
+/// a leg blend1 serves: a key with no lane has nowhere to answer
+/// from. The evaluator takes the gathered facts and spawns nothing
+/// and opens no socket, like every other check here.
+///
+/// Informational, never a failing check: an unkeyed optional leg is
+/// a machine that chose not to run web, and the leg's own fail-open
+/// means a run still completes — the way the roster names an
+/// unkeyed candidate without failing. It passes in every state, and
+/// the exit-code contract does not move. A key NAME is named; a
+/// value never is, per the standing credential rule — the key rides
+/// in as a presence and its text is never read.
+pub fn evaluate_web_leg(key: Option<&str>, blend1_resolves: bool) -> Check {
+    let detail = match (key, blend1_resolves) {
+        (Some(_), true) => {
+            "TINYFISH_API_KEY set \u{2014} the web leg answers through blend1's web tool".to_string()
+        }
+        (Some(_), false) => {
+            "TINYFISH_API_KEY set \u{2014} blend1 cannot launch, so the web leg has no lane to serve it"
+                .to_string()
+        }
+        (None, _) => {
+            "TINYFISH_API_KEY not set \u{2014} the web leg fails open; set it to serve the web tool through blend1"
+                .to_string()
+        }
+    };
+    Check { name: "web", ok: true, detail }
+}
+
 /// The desktop's line: whether the cua driver can be launched at all.
 /// A machine with no driver — or one whose binary moved — gets a named
 /// line saying so, because a tool that appears in every run's
@@ -812,6 +844,48 @@ mod tests {
         // configuration, and doctor is the install gate — a clean
         // machine with no local model must stay green.
         assert!(render(&degraded).starts_with("recall"), "{}", render(&degraded));
+    }
+
+    #[test]
+    fn the_web_leg_line_names_the_key_by_name_and_never_a_value() {
+        // Keyed with blend1 resolving: the leg is live, and the line
+        // names the env var and the lane's own web tool. The value
+        // never appears — the signature makes that structural: the
+        // key rides in as a presence and its text is never read.
+        let live = evaluate_web_leg(Some("tf-super-secret-value"), true);
+        assert!(live.ok);
+        assert_eq!(live.name, "web");
+        assert!(live.detail.contains("TINYFISH_API_KEY set"), "{}", live.detail);
+        assert!(live.detail.contains("blend1"), "{}", live.detail);
+        assert!(!live.detail.contains("tf-super-secret-value"), "{}", live.detail);
+
+        // Unkeyed: the leg's own fail-open, named — informational,
+        // never a failure, so the exit-code contract does not move.
+        let unkeyed = evaluate_web_leg(None, true);
+        assert!(unkeyed.ok, "an unkeyed optional leg is never a failing check");
+        assert!(unkeyed.detail.contains("TINYFISH_API_KEY not set"), "{}", unkeyed.detail);
+        assert!(unkeyed.detail.contains("fails open"), "{}", unkeyed.detail);
+
+        // A key with no lane to serve it: informational, and it names
+        // the lane that cannot launch rather than implying the leg
+        // answers.
+        let no_lane = evaluate_web_leg(Some("tf-super-secret-value"), false);
+        assert!(no_lane.ok);
+        assert!(no_lane.detail.contains("blend1 cannot launch"), "{}", no_lane.detail);
+        assert!(!no_lane.detail.contains("tf-super-secret-value"), "{}", no_lane.detail);
+
+        // Unkeyed with no lane either: still informational.
+        let neither = evaluate_web_leg(None, false);
+        assert!(neither.ok);
+        assert!(neither.detail.contains("TINYFISH_API_KEY not set"), "{}", neither.detail);
+
+        // Every state renders through the shared renderer as a web
+        // line, and none of them renders a FAIL.
+        for check in [live, unkeyed, no_lane, neither] {
+            let line = render(&check);
+            assert!(line.starts_with("web"), "{line}");
+            assert!(!line.contains("FAIL"), "{line}");
+        }
     }
 
     // --- slice 13: the classification ---
