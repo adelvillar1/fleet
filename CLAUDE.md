@@ -16,12 +16,11 @@ The owner's intent (2026-10-13): Fleet is the self-contained Rust successor to t
 
 Verified inventory and per-repo state: [docs/architecture/ecosystem.md](docs/architecture/ecosystem.md). Current crate architecture: [docs/architecture/deep-dive-2026-10-15.md](docs/architecture/deep-dive-2026-10-15.md) (the current-state survey; `overview.md` is the slice-1 snapshot with a banner).
 
-## Today's state (2026-10-15)
+## Today's state (2026-10-16)
 
-- In-repo and green: `cargo test` → 977 passed, 2 ignored at the last increment's commit; release exit 0, warning-free. The crate is 45 modules (~70k lines): the agent core, the five vendored lanes over the hand-rolled MCP client, multi-provider routing with the sys1 judgment and failover, the git-tracked memory substrate with six-channel recall, session-archive recall, skills, delegation to depth 2 with the dependency graph and cron, the calibration stream with its judge/delegate/explain beats and the eval corpus, the settings writer, and the ratatui TUI. The 2026-10-15 session closed the web-tool and session-archive plans (each with one named deferred leg) and landed the deep dive above.
+- In-repo and green: `cargo test` → 1013 passed, 2 ignored at the last increment's commit; the gate runs whole locally — `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`, all four exit 0 (rustfmt and clippy were installed 2026-10-15, closing KI-007, and the first full clippy pass landed clean). The crate is 45 modules (~70k lines): the agent core, the five vendored lanes over the hand-rolled MCP client, multi-provider routing with the sys1 judgment and failover, the git-tracked memory substrate with six-channel recall, session-archive recall, skills, delegation to depth 2 with the dependency graph and cron, the calibration stream with its judge/delegate/explain beats and the eval corpus, the settings writer, and the ratatui TUI. The 2026-10-15 sessions landed the deep dive, its six-phase findings plan, and the dogfooding viability fixes (`docs/plans/2026-10-15-dogfooding-viability-fixes.md`: the bash wall-clock bound, the approval gate's label-blind class checks, the routing record's name, the consolidation fold's honesty, the torn-tail tolerance).
 - Environmental blockers, none of them code:
   - **CI is red by budget.** GitHub Actions minutes are exhausted; jobs never dispatch (job record: `runner_id: 0`, zero steps, ~3s). Until the budget resets, the gate must be run locally on every change.
-  - **rustfmt and clippy are not installed** on this machine (rustup `profile = "minimal"`, no rustup shim). `cargo fmt --check` and `cargo clippy -D warnings` cannot run here; match the existing style and say so in the recap when they were not run.
   - **DeepSeek is funded, and it is the chain's last resort** — owner-confirmed 2026-10-15 (the earlier 402 was transient; KI-008 records it): the account has balance, and the roster walks the other candidates first, so DeepSeek answers when no other viable provider remains (down or out of quota). The live-API e2e stays `#[ignore]`d by default and can run on demand with the key set.
 - Ecosystem repos (sys1, sdm1, sem1, gen1, dev-decisions, agnostic-router-kit, second-brain) live outside this repo; their git-level states are verified in the ecosystem doc. The fork stays the spec/integration lab, never a shipping competitor.
 
@@ -94,7 +93,7 @@ CLAUDE.local.md         gitignored: env var names, machine paths, local quirks (
 `cargo` is not on PATH on this machine — see the PATH line in `CLAUDE.local.md`.
 
 ```sh
-cargo test                          # the gate's core: 977 passed, 2 ignored at the last increment
+cargo test                          # the gate's core: 1013 passed, 2 ignored at the last increment
 cargo build --release               # binary at target/release/fleet
 cargo run --bin fleet -- doctor     # credentials, home, API, shell; masks the key to its last 4 chars
 cargo run --bin fleet -- run "<task>" --yes

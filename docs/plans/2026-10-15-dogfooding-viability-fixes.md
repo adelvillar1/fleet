@@ -1,6 +1,7 @@
 # The dogfooding viability fixes — the second dive's five, plus the toolchain that makes the gate whole
 
-Status: active — implementation began 2026-10-15.
+Status: complete — implemented 2026-10-15/16; every criterion graded in
+the Convergence section below.
 Date: 2026-10-15
 
 ## Why
@@ -276,6 +277,87 @@ matched by hand and disclosed per increment until then, the standing
 rule. Live proofs are the integration tests themselves: the
 backgrounded-descendant return (C9), the surviving-kill return (C10),
 the torn-tail resume (C23).
+
+## Convergence
+
+Graded against the committed code, phase by phase. Commits, oldest
+first: `c7741c9` (phase 0), `3e05dfe` (phase 2's fmt half), `7643cf7`
+(phase 2's clippy half), `8a3275e` (phase 3), `d7b93dd` (phase 4),
+`328faf5` (phase 5), `36facd6` (phase 6), `9b586dd` (phase 7). The
+final gate: `cargo fmt --all --check`, `cargo clippy --all-targets --
+-D warnings`, `cargo build --release`, `cargo test` — all four exit 0,
+1013 passed / 2 ignored, rustfmt 1.8.0 and clippy 0.1.89 installed
+before the code phases began, so every increment gated whole.
+
+- **C1, C2 — met.** KI-208..213 filed open at `c7741c9` with their
+  evidence, before any fix commit; docs-only, no behavior change.
+- **C3, C4 — met.** brew's rustup shim (keg-only, the path named in
+  CLAUDE.local.md), components added against the existing stable
+  toolchain; `cargo fmt --version` → 1.8.0, `cargo clippy --version` →
+  0.1.89; CLAUDE.local.md's quirk line updated in the same turn.
+  KI-007 closed.
+- **C5-C8 — met.** The fmt pass (`3e05dfe`, 49 files, no behavior
+  change) and the clippy pass (`7643cf7`, 27 files) are separate
+  increments; the first clippy run surfaced 64 lints across three
+  waves, each fixed in the crate's voice or annotated with a named
+  reason (the two `too_many_arguments` counts and the two
+  `await_holding_lock` test locks are the annotated ones, each with
+  its why beside the attribute); the four-leg gate ran green after
+  each; KI-097/KI-104's premises updated to name the machine repaired.
+- **C9-C12 — met, with one placement note.** The bounded drain landed
+  as designed (chunked channel sends, a 2s `DRAIN_GRACE` collect past
+  the reaped shell, the cut named and `truncated: true`, read failures
+  named, std-only). The pins live as unit tests in `src/tools.rs`'s
+  own module rather than in `tests/integration.rs` — `run_bash` is
+  module-private, and exposing it test-only through the public surface
+  would widen the crate's API for a test's sake; the substance the
+  criterion names (a bounded return, the named cut, both timeout-path
+  and holder-path) is pinned by
+  `a_background_process_holding_the_pipe_cannot_keep_the_call` and
+  `the_deadline_kills_a_hung_shell_and_the_collect_bounds_its_survivors`.
+  KI-211 closed.
+- **C13-C16 — met.** `unlabel` strips every `subagent → ` repetition
+  and unwraps the labelled wrapper's inner arguments; the destructive
+  class and the always-ask class both key on the bare call; the
+  labelled call the prompt shows is untouched. Pinned by four new
+  tests; the existing approval suite green unchanged. KI-209, KI-210
+  closed.
+- **C17-C19 — met.** The committed path maps its position through
+  `self.order` before naming the provider, pinned with a non-identity
+  walk order against a closed loopback port, and the recorded attempt
+  is fed through `calib::demoted_providers` in the same test, which
+  names the dialed provider and only it. The walk's other records were
+  already correct; the route suite green unchanged. KI-208 closed.
+- **C20, C21 — met.** `write_summary` returns its `Result`; on failure
+  the cycle stamps nothing, lands no rows, archives nothing (the
+  forget half follows the fold — the one shape the plan's text did not
+  spell out, where archiving an unstamped expired fact would have
+  lost it), and names the failure on stderr; the read-only-corpus test
+  asserts no stamp, no rows, and an untouched fact, then the retry
+  folds whole. The success path is byte-identical (the existing cycle
+  tests green unchanged). KI-212 closed.
+- **C22 — met, with its premise corrected.** The ordering move landed:
+  `record_recall_hits` fires strictly after the empty-choices check.
+  Writing the test exposed that the plan's degenerate shape — a
+  zero-choice 200 — is unreachable on the streamed client:
+  `chat_stream_plain` always assembles one choice from a completed
+  stream, so a `[DONE]`-only stream is a *completed run with an empty
+  answer*, and the hits firing there is correct (the model did
+  receive a response). The test lives in `tests/integration.rs`
+  (`a_degenerate_stream_is_still_one_answer_and_the_hits_fire_once`,
+  on the cross-process mock — an in-process loopback server shares the
+  process with the client, the exact shape the mock-server was built
+  to avoid) and pins the real behavior: completed, the bump exactly
+  one step, exactly one `recall_hit` row. The empty-choices guard
+  stays as defense for any future client path.
+- **C23-C26 — met.** The tolerance is exactly one shape — an
+  unparseable final line on a log that does not end with its newline —
+  dropped and named on stderr; a malformed line anywhere else still
+  fails loud naming file and line; a parseable final line is kept.
+  Pinned by three new tests in `session.rs`. C26's surface reads
+  through `session::list`, which derives its states from `replay`, so
+  a torn-tail session renders readable with no separate test — the
+  replay pins carry it.
 
 ## Linked artifacts
 
