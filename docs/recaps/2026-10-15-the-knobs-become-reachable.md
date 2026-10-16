@@ -91,7 +91,7 @@ added removes the provider from every walk — refused without `--force`.
   endpoint under test is the one the code declares, not the one the
   server binary defaults to.
 - **The fixture collision, third instance.** A new test in an unrelated
-  module named `zorbnicator` in a string literal and killed the
+  module named zorbnicator in a string literal and killed the
   honest-miss proof — the vocabulary derives from the whole tree. The
   preventive rule is in the `fleet-repo-conventions` skill.
 - **The doc-channel collision.** The recap describing that collision

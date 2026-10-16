@@ -1468,7 +1468,7 @@ fn doctor_checks() -> ExitCode {
     // The MCP cores, one named line each: whether each vendored lane's
     // home resolves. Named, not failed — a lane that does not resolve
     // degrades a run rather than blocking boot, and `fleet lanes` owns
-    // the deep MCP health probe. This line names which of the four is
+    // the deep MCP health probe. This line names which of the five is
     // unavailable and why, the way the plan's layer list asks.
     for lane in fleet::lanes::LANES.iter() {
         let resolved = match fleet::lanes::resolve_home(lane) {
@@ -1504,6 +1504,24 @@ fn doctor_checks() -> ExitCode {
     let probed = fleet::memory::probe(&fleet::memory::embedding_endpoint());
     let recall_check = doctor::evaluate_recall(probed.vector());
     println!("{}", doctor::render(&recall_check));
+
+    // The web-leg line: whether the live-source tool's credential is
+    // present, and whether blend1 — the lane the leg answers through —
+    // resolves. Informational, never a check: an unkeyed web leg is the
+    // lane's own designed fail-open rather than a broken machine, so
+    // the line names the state and never touches the exit code. The
+    // key rides as a presence — its text is never read — and the
+    // deeper truth, the lane's own doctor report, is what `fleet
+    // lanes` renders.
+    let tinyfish_key = setting("TINYFISH_API_KEY", &dotenv);
+    let blend1_resolves = fleet::lanes::LANES
+        .iter()
+        .find(|lane| lane.name == "blend1")
+        .is_some_and(|lane| {
+            matches!(fleet::lanes::resolve_home(lane), fleet::lanes::LaneHome::Resolved { .. })
+        });
+    let web_check = doctor::evaluate_web_leg(tinyfish_key.as_deref(), blend1_resolves);
+    println!("{}", doctor::render(&web_check));
 
     // The approval mode, named where a run that stopped asking can be
     // understood without inferring it. The doctor carries no `--yes`,

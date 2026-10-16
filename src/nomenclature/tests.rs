@@ -624,6 +624,12 @@ fn the_proof_two_concepts_come_back_as_honest_misses() {
     // became an identifier in the tree (a test fixture named it), which
     // retired its own miss — the vocabulary is derived from the tree,
     // so a proof of absence is only as durable as the word's obscurity.
+    // This pair's first word was retired a second way — the DOC
+    // channel: a recap reporting the fixture collision named it in a
+    // backtick span, and the docs' backticks are vocabulary. The recap
+    // now writes it in plain prose, which the doc channel does not
+    // read, and the miss is honest again. A third retirement is one
+    // more backtick away: never write the pair in backticks anywhere.
     for concept in ["the zorbnicator gadget", "the umbrella xylophone"] {
         let miss = lookup_in(&vocabulary, concept);
         assert!(miss.miss, "{concept} must come back as an honest miss");

@@ -384,9 +384,12 @@ async fn the_lane_probe_carries_blend1s_doctor_report() {
     assert!(health.tools.contains(&"doctor".to_string()), "{:?}", health.tools);
     assert!(health.detail.contains("python3 -u"), "{}", health.detail);
     // The doctor report rode back through the typed shape: the five
-    // lanes, in the blend's own order, each available or naming why not.
+    // lanes, in the blend's own order, each available or naming why
+    // not — and the web leg's own entry beside them, which is not a
+    // blend sub-lane but the web leg blend1 serves.
     let lanes: Vec<&str> = health.doctor.iter().map(|entry| entry.lane.as_str()).collect();
-    assert_eq!(lanes, DOCTOR_LANES.to_vec(), "{:?}", health.doctor);
+    assert_eq!(&lanes[..DOCTOR_LANES.len()], DOCTOR_LANES, "{:?}", health.doctor);
+    assert_eq!(lanes.last().copied(), Some("web"), "{:?}", health.doctor);
     for entry in &health.doctor {
         if !entry.available {
             assert!(
@@ -403,6 +406,7 @@ async fn the_lane_probe_carries_blend1s_doctor_report() {
     for lane_name in DOCTOR_LANES {
         assert!(rendered.contains(lane_name), "{lane_name} renders: {rendered}");
     }
+    assert!(rendered.contains("web leg"), "the web leg renders its own line: {rendered}");
     assert!(!rendered.contains("| lane |"), "{rendered}");
 }
 
