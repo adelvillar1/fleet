@@ -30,6 +30,36 @@ pub fn sessions_dir(home: &Path) -> PathBuf {
     home.join("sessions")
 }
 
+/// The identity slot's bound, in characters. A persona file rides every
+/// request; past this bound it is cut with a marked truncation rather
+/// than silently pasted whole.
+pub const MAX_SOUL_CHARS: usize = 8192;
+
+/// Read `home/SOUL.md` — the run's identity override. A missing or
+/// empty file is `None` (the compiled-in constant serves); a present
+/// one is sanitized the way the memory writer sanitizes: a leading BOM
+/// stripped, control characters removed (not replaced, so a stripped
+/// escape leaves its payload visible and inert), trimmed, then bounded
+/// at [`MAX_SOUL_CHARS`] with a marked cut — the prompt never carries
+/// the file raw.
+pub fn read_soul(home: &Path) -> Option<String> {
+    let text = fs::read_to_string(home.join("SOUL.md")).ok()?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let mut cleaned: String = text
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect();
+    cleaned = cleaned.trim().to_string();
+    if cleaned.is_empty() {
+        return None;
+    }
+    if cleaned.chars().count() > MAX_SOUL_CHARS {
+        let cut: String = cleaned.chars().take(MAX_SOUL_CHARS).collect();
+        cleaned = format!("{cut}\n[truncated at {MAX_SOUL_CHARS} characters]");
+    }
+    Some(cleaned)
+}
+
 /// Create `home` and its sessions directory when missing.
 /// @return the sessions directory path.
 pub fn ensure_sessions_dir(home: &Path) -> std::io::Result<PathBuf> {
@@ -72,6 +102,53 @@ pub fn resolve_setting(name: &str, dotenv: &HashMap<String, String>) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_absent_or_empty_soul_is_no_identity() {
+        let dir = std::env::temp_dir().join(format!("fleet-soul-absent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(read_soul(&dir).is_none(), "no file is no identity");
+        std::fs::write(dir.join("SOUL.md"), "   \n\n  ").unwrap();
+        assert!(read_soul(&dir).is_none(), "an empty file is no identity");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_soul_is_sanitized_bom_and_control_characters_removed() {
+        let dir = std::env::temp_dir().join(format!("fleet-soul-clean-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let raw = "\u{feff}You are Fleet.\n\nBe direct.\u{1}\n\tKeep the newline and tab.\n";
+        std::fs::write(dir.join("SOUL.md"), raw).unwrap();
+        let soul = read_soul(&dir).expect("the file loads");
+        assert!(!soul.contains('\u{feff}'), "{soul:?}");
+        assert!(
+            !soul.contains('\u{1}'),
+            "the control character is gone, not replaced: {soul:?}"
+        );
+        assert!(soul.starts_with("You are Fleet."));
+        assert!(soul.contains('\n'));
+        assert!(soul.contains('\t'));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_oversized_soul_is_bounded_with_a_marked_cut() {
+        let dir = std::env::temp_dir().join(format!("fleet-soul-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let body = "x".repeat(MAX_SOUL_CHARS + 500);
+        std::fs::write(dir.join("SOUL.md"), &body).unwrap();
+        let soul = read_soul(&dir).expect("the file loads");
+        assert!(soul.contains("[truncated at 8192 characters]"), "{soul:?}");
+        assert!(
+            soul.chars().count() < MAX_SOUL_CHARS + 100,
+            "the body is cut at the bound, not carried whole: {}",
+            soul.chars().count()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Set `name` for the duration of the guard, restoring whatever was
     /// there before — including its absence — on the way out.

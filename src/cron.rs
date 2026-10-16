@@ -1076,6 +1076,7 @@ pub async fn execute(
     let options = AgentOptions {
         model: DEFAULT_MODEL.to_string(),
         max_turns: DEFAULT_MAX_TURNS,
+        identity: crate::home::read_soul(home),
         ui_tx: None,
         lane_specs: None,
         calib,

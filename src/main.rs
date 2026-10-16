@@ -1038,6 +1038,7 @@ async fn drive(
     let options = AgentOptions {
         model,
         max_turns,
+        identity: crate::home::read_soul(home),
         ui_tx: None,
         lane_specs: None,
         calib: Some(prepared.calib.clone()),

@@ -1455,6 +1455,11 @@ pub struct Delegation<'a> {
     /// because `use_skill` is in its admitted scope and a tool whose
     /// every call fails is not a tool.
     pub skills: Vec<Skill>,
+    /// The parent's identity base, from its own options. The child
+    /// inherits it the way it inherits the parent's model — the voice
+    /// follows the model — while the rest of the parent's state (its
+    /// memory, its lanes, its home) stays the parent's own.
+    pub identity: Option<String>,
     /// The home the child's role resolves under — the owner's home,
     /// where `<home>/roles/<name>.md` lives. `None` is a run with no
     /// home: a brief that names a role then meets the named refusal,
@@ -1497,6 +1502,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         ui_tx,
         calib,
         skills,
+        identity,
         home,
         depth,
     } = delegation;
@@ -1632,6 +1638,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     let options = AgentOptions {
         model: child_route.model,
         max_turns,
+        identity,
         ui_tx: None,
         lane_specs: None,
         calib,

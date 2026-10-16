@@ -248,7 +248,7 @@ pub struct Status {
 
 /// What the agent thread reports beside the `UiEvent` stream: exact token
 /// accounting, which the stream does not carry.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum StatusUpdate {
     Usage(Usage),
 }
@@ -2019,6 +2019,7 @@ mod tests {
             prompt_tokens: 40,
             completion_tokens: 12,
             total_tokens: 52,
+            finish_reason: None,
         }));
         app.seed(&[Record::User {
             content: "old task".to_string(),
@@ -2030,6 +2031,7 @@ mod tests {
             prompt_tokens: 7,
             completion_tokens: 3,
             total_tokens: 10,
+            finish_reason: None,
         }));
         assert_eq!(app.status.prompt_tokens, 7);
         assert_eq!(app.status.completion_tokens, 3);
@@ -2366,11 +2368,13 @@ mod tests {
         app.apply_status(StatusUpdate::Usage(Usage {
             prompt_tokens: 10,
             completion_tokens: 5,
+            finish_reason: None,
             total_tokens: 15,
         }));
         app.apply_status(StatusUpdate::Usage(Usage {
             prompt_tokens: 20,
             completion_tokens: 7,
+            finish_reason: None,
             total_tokens: 27,
         }));
         assert_eq!(app.status.prompt_tokens, 30);

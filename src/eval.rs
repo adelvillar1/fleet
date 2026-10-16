@@ -1205,6 +1205,7 @@ async fn drive_over(
     let options = AgentOptions {
         model: "test-model".to_string(),
         max_turns,
+        identity: None,
         ui_tx: None,
         lane_specs,
         calib: None,

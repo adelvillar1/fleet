@@ -225,7 +225,7 @@ pub struct Choice {
 }
 
 /// Token accounting for one request. Absent fields read as zero.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     #[serde(default)]
     pub prompt_tokens: u64,
@@ -233,6 +233,8 @@ pub struct Usage {
     pub completion_tokens: u64,
     #[serde(default)]
     pub total_tokens: u64,
+    #[serde(default)]
+    pub finish_reason: Option<String>,
 }
 
 /// A non-2xx API answer.
@@ -409,7 +411,12 @@ impl Client {
             match &event {
                 StreamEvent::Content(delta) => content.push_str(delta),
                 StreamEvent::ToolCalls(calls) => tool_calls = calls.clone(),
-                StreamEvent::Usage(counted) => usage = *counted,
+                StreamEvent::Usage(counted) => {
+                    if counted.finish_reason.is_some() {
+                        usage.finish_reason = counted.finish_reason.clone();
+                    }
+                    usage = counted.clone();
+                }
             }
             on_event(event);
         }
@@ -425,6 +432,14 @@ impl Client {
                 "the stream ended without a completion".to_string(),
             ));
         }
+        let usage = Usage {
+            total_tokens: if usage.total_tokens == 0 {
+                usage.prompt_tokens.saturating_add(usage.completion_tokens)
+            } else {
+                usage.total_tokens
+            },
+            ..usage
+        };
         Ok(ChatResponse {
             choices: vec![Choice {
                 message: Message {
@@ -433,7 +448,7 @@ impl Client {
                     tool_calls,
                     tool_call_id: None,
                 },
-                finish_reason: None,
+                finish_reason: usage.finish_reason.clone(),
             }],
             usage,
         })
@@ -743,6 +758,7 @@ mod tests {
                     prompt_tokens: 10,
                     completion_tokens: 2,
                     total_tokens: 12,
+                    finish_reason: None,
                 }),
             ]
         );
@@ -782,6 +798,7 @@ mod tests {
             prompt_tokens: 3,
             completion_tokens: 4,
             total_tokens: 7,
+            finish_reason: None,
         })));
     }
 

@@ -3033,6 +3033,7 @@ mod tests {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: 15,
+                finish_reason: None,
             },
             input_chars: 4,
             input_hash: hash16("task"),

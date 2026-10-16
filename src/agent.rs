@@ -38,8 +38,15 @@ use std::sync::Arc;
 use std::task::Poll;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-/// System prompt sent with every request.
-pub const SYSTEM_PROMPT: &str = "You are Fleet, a native Rust coding agent based on the DeepSeek Harness design. Work in the user's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write. When a task is done, reply with a short summary of the outcome; if part of it failed, say exactly what failed and what you tried.";
+/// The compiled-in voice: the identity and behavioral contract every
+/// run carries. Sized like a persona file, not a manual — every line
+/// rides every request — and universal by design: repo knowledge
+/// arrives through recall and the repo's own docs, never here. The
+/// best-of-both ruling (2026-10-16): claim-time verification and
+/// execution discipline from the Hermes comparison, outcome-first
+/// communication and end-turn discipline from the ZCode side.
+/// `<FLEET_HOME>/SOUL.md` replaces this base when the owner writes one.
+pub const SYSTEM_PROMPT: &str = "You are Fleet, the owner's native Rust coding agent, working in the owner's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write — files and facts.\n\nEvery claim about live state, code, or completed work is backed by tool output from this session. Check the claim when you make it, not when you acted; if it is not verified, verify it first or say plainly that it is an assumption. Never present fabricated output as a result — an honest blocker beats an invented one. \"Done\" means every acceptance criterion is tool-verified.\n\nAct with your tools instead of describing action. When you say you will run, check, or build something, make the call in the same turn; a turn that ends in a promise of future work ended too early. Keep working until the task is actually complete, then stop — do not pad past the goal.\n\nBatch independent tool calls into one turn: the runtime runs them together, and every extra round-trip resends the whole conversation. Serialize only a call that genuinely depends on an earlier result.\n\nAfter a write that changes state outside the conversation — a file, an install, a config — read it back or re-run the check to confirm it landed. Reconcile counts before claiming completeness.\n\nMatch verification to the change: full suites for full-stack work, the touched module's tests for a module change, nothing for a change with no compile surface. Reflexive ceremony is not rigor.\n\nYour final message leads with the outcome: the first sentence answers what happened or what you found. Match its length to the weight of the ask. Finished work gets a recap — what changed, what is verified and how, what remains — never a replay of the process. Plain claims over adjectives; when unsure, say so plainly; agree because it is right, not because the user said it.";
 
 /// Turn cap when the caller does not choose one.
 pub const DEFAULT_MAX_TURNS: usize = 25;
@@ -111,6 +118,14 @@ fn skills_prompt_growth_line(declared: usize) -> Option<String> {
 pub struct AgentOptions {
     pub model: String,
     pub max_turns: usize,
+    /// The run's identity base, read from `<FLEET_HOME>/SOUL.md` at the
+    /// boundary (sanitized and bounded by [`crate::home::read_soul`]).
+    /// `None` is the compiled-in [`SYSTEM_PROMPT`] — the run this crate
+    /// has always had. Present, it replaces the identity base while the
+    /// skills and memory frames append as before, and a delegation
+    /// child inherits it the way it inherits the parent's model: the
+    /// voice follows the model, not the parent's session state.
+    pub identity: Option<String>,
     /// Force the fold on the next turn boundary, whatever the budget
     /// says — `fleet run --compact-now`. The budget decides *when*
     /// compaction fires on its own; this is the owner's hand on it, for
@@ -179,6 +194,7 @@ impl Default for AgentOptions {
         AgentOptions {
             model: crate::api::DEFAULT_MODEL.to_string(),
             max_turns: DEFAULT_MAX_TURNS,
+            identity: None,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -678,7 +694,7 @@ impl<'a> Agent<'a> {
 
     /// Token accounting accumulated across the run's requests.
     pub fn usage(&self) -> Usage {
-        self.usage
+        self.usage.clone()
     }
 
     /// The system prompt this run's requests carry: the compiled-in
@@ -696,17 +712,19 @@ impl<'a> Agent<'a> {
     /// is one logged line per run. Nothing is ever dropped from the
     /// list: the cap warns, it does not curate.
     fn system_prompt(&self, memory_block: Option<&str>) -> String {
-        // The plain run is the constant, byte for byte: no skills, no
-        // memory block, no role overlay. A run carrying a role's
-        // overlay is not plain, so it falls through and the frame is
-        // appended below.
+        // The identity base: the owner's SOUL.md when the boundary read
+        // one, else the compiled-in constant. The plain run is that
+        // base, byte for byte: no skills, no memory block, no role
+        // overlay. A run carrying a role's overlay is not plain, so it
+        // falls through and the frame is appended below.
+        let base = self.options.identity.as_deref().unwrap_or(SYSTEM_PROMPT);
         if self.skills.is_empty() && memory_block.is_none() && self.options.role_overlay.is_none() {
-            return SYSTEM_PROMPT.to_string();
+            return base.to_string();
         }
         if let Some(line) = skills_prompt_growth_line(self.skills.len()) {
             eprintln!("{line}");
         }
-        let mut prompt = String::from(SYSTEM_PROMPT);
+        let mut prompt = String::from(base);
         if !self.skills.is_empty() {
             prompt.push_str(
                 "\n\n## Skills\n\nSkills are procedural knowledge you can load on demand. Call `use_skill(name)` with one of these names when a task matches its description; the skill's body arrives as that call's result.\n",
@@ -989,8 +1007,8 @@ impl<'a> Agent<'a> {
             ),
         };
         let (turns, usage) = match outcome {
-            Ok(report) => (report.turns, report.usage),
-            Err(_) => (self.turns, self.usage),
+            Ok(report) => (report.turns, report.usage.clone()),
+            Err(_) => (self.turns, self.usage.clone()),
         };
         stream.record(crate::calib::Row::Turn(crate::calib::TurnRow {
             ts: crate::calib::stamp(),
@@ -1157,7 +1175,7 @@ impl<'a> Agent<'a> {
                 return Ok(RunReport {
                     stop_reason: StopReason::Completed,
                     turns,
-                    usage: self.usage,
+                    usage: self.usage.clone(),
                     final_message: Some(content),
                 });
             }
@@ -1191,7 +1209,7 @@ impl<'a> Agent<'a> {
         Ok(RunReport {
             stop_reason: StopReason::MaxTurns,
             turns,
-            usage: self.usage,
+            usage: self.usage.clone(),
             final_message: None,
         })
     }
@@ -1950,6 +1968,7 @@ impl<'a> Agent<'a> {
             ui_tx,
             calib,
             skills,
+            identity: self.options.identity.clone(),
             home,
             depth,
         })
@@ -3694,6 +3713,7 @@ mod tests {
             .collect();
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,
@@ -3987,6 +4007,7 @@ mod tests {
         ));
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,
@@ -4049,6 +4070,7 @@ mod tests {
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,
@@ -4097,6 +4119,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The owner's SOUL.md replaces the identity base; the skills frame
+    /// appends beside it as before.
+    #[test]
+    fn an_identity_replaces_the_base_and_the_frames_still_append() {
+        let identity = "You are Fleet, in the owner's own words.";
+        let build = |skills: Vec<crate::skills::Skill>| {
+            let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
+            let home = scratch("identity-prompt");
+            let session = Box::leak(Box::new(
+                crate::session::Session::create(&home, "m").unwrap(),
+            ));
+            let options = AgentOptions {
+                model: "m".to_string(),
+                identity: Some(identity.to_string()),
+                max_turns: 1,
+                ui_tx: None,
+                lane_specs: None,
+                calib: None,
+                skills,
+                role_overlay: None,
+                memory: None,
+                scope: None,
+                improve_home: None,
+                compact_now: false,
+            };
+            Agent::new(
+                client,
+                options,
+                session,
+                Box::new(ApproveAll),
+                Box::leak(Box::new(Vec::new())),
+            )
+            .unwrap()
+        };
+
+        let agent = build(Vec::new());
+        assert_eq!(agent.system_prompt(None), identity);
+
+        // With skills declared, the frame appends beside the identity —
+        // the slot replaces the base, never the assembled frames.
+        let agent = build(vec![crate::skills::Skill {
+            name: "demo".to_string(),
+            description: "a demo skill".to_string(),
+            body: "body".to_string(),
+            path: std::path::PathBuf::from("/x/SKILL.md"),
+            modified: None,
+        }]);
+        let prompt = agent.system_prompt(None);
+        assert!(prompt.starts_with(identity), "{prompt}");
+        assert!(prompt.contains("## Skills"), "{prompt}");
+        assert!(prompt.contains("- demo: a demo skill"), "{prompt}");
+    }
+
     #[test]
     fn the_system_prompt_appends_the_role_overlay_in_its_frame() {
         // A role's overlay rides the child's prompt beside the harness
@@ -4112,6 +4187,7 @@ You are auditing a change. Read the diff before you judge it.
 [ROLE OVERLAY END]";
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,
@@ -4140,6 +4216,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,
@@ -4201,6 +4278,7 @@ You are auditing a change. Read the diff before you judge it.
         ));
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,
@@ -4330,6 +4408,7 @@ You are auditing a change. Read the diff before you judge it.
         ));
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,
@@ -4835,6 +4914,7 @@ You are auditing a change. Read the diff before you judge it.
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,
@@ -4935,6 +5015,7 @@ You are auditing a change. Read the diff before you judge it.
         let session = Box::leak(Box::new(crate::session::Session::open(path).unwrap()));
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,
@@ -5322,6 +5403,7 @@ You are auditing a change. Read the diff before you judge it.
         ));
         let options = AgentOptions {
             model: "m".to_string(),
+            identity: None,
             max_turns: 1,
             ui_tx: None,
             lane_specs: None,

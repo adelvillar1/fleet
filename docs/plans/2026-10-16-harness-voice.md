@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-16
 updated: 2026-10-16
 slug: harness-voice
@@ -56,13 +56,13 @@ like `config.json` and `routing.json`. The owner adapts their Hermes
 
 ## Use cases
 
-- [ ] A: A run with no `SOUL.md` prompts exactly with the compiled-in
+- [x] A: A run with no `SOUL.md` prompts exactly with the compiled-in
       voice, byte for byte — the run this crate has always had, now
       with the full text.
-- [ ] B: A run whose home carries a `SOUL.md` prompts with it as the
+- [x] B: A run whose home carries a `SOUL.md` prompts with it as the
       base, skills and memory frames appended as before.
-- [ ] C: A delegation child's prompt carries the parent's identity.
-- [ ] D: An oversized or control-character-laden `SOUL.md` is bounded
+- [x] C: A delegation child's prompt carries the parent's identity.
+- [x] D: An oversized or control-character-laden `SOUL.md` is bounded
       and sanitized at read, never pasted raw into the prompt.
 
 ## UX routes
@@ -73,21 +73,21 @@ file, reconstructed per request, never logged.
 
 ## Acceptance criteria
 
-- [ ] C1: `SYSTEM_PROMPT` carries the best-of-both voice — claim-time
+- [x] C1: `SYSTEM_PROMPT` carries the best-of-both voice — claim-time
       verification, act-don't-describe + end-turn discipline, parallel
       batching, read-back after external writes, verification matched to
       the change, outcome-first recap — and no repo-specific content.
-- [ ] C2: the identity slot reads `<FLEET_HOME>/SOUL.md` per run —
+- [x] C2: the identity slot reads `<FLEET_HOME>/SOUL.md` per run —
       sanitized, bounded, absent → the constant, present → it replaces
       the base with frames unchanged.
-- [ ] C3: a delegation child inherits the parent's identity through
+- [x] C3: a delegation child inherits the parent's identity through
       `Delegation`.
-- [ ] C4: `eval`'s runs keep the compiled-in constant (the corpus
+- [x] C4: `eval`'s runs keep the compiled-in constant (the corpus
       grades behavior against the mock, deterministic).
-- [ ] C5: the gate runs whole — `cargo fmt --all --check`,
+- [x] C5: the gate runs whole — `cargo fmt --all --check`,
       `cargo clippy --all-targets -- -D warnings`,
       `cargo build --release`, `cargo test` — exit codes read directly.
-- [ ] C6: the records say it — `CLAUDE.local.md`'s machine-path list
+- [x] C6: the records say it — `CLAUDE.local.md`'s machine-path list
       names `<FLEET_HOME>/SOUL.md`, and a corpus fact records the voice
       ruling.
 
@@ -145,3 +145,40 @@ cargo fmt --all --check && cargo clippy --all-targets -- -D warnings \
   prompt stays universal by design.
 - `docs/plans/2026-10-16-canonical-skills-source.md` — the seam this
   prompt's skills frame already rides.
+
+## Convergence (graded 2026-10-16)
+
+The gate ran whole: all four legs exit 0, **1026 passed / 1 ignored**,
+exit codes read directly.
+
+- **C1 met** — `SYSTEM_PROMPT` is the best-of-both voice: claim-time
+  verification ("check the claim when you make it"; "Done means every
+  acceptance criterion is tool-verified"), act-don't-describe with the
+  end-turn rule ("a turn that ends in a promise of future work ended
+  too early"), the batching block with its round-trip rationale,
+  read-back after external writes with count reconciliation,
+  verification matched to the change, and the outcome-first recap —
+  and no repo-specific content: the orientation doc stays the channel
+  for that.
+- **C2 met** — `home::read_soul` reads `<FLEET_HOME>/SOUL.md` per run:
+  BOM stripped, control characters removed (not replaced), trimmed,
+  bounded at `MAX_SOUL_CHARS` (8192) with a marked cut; absent/empty →
+  the constant. Pinned by `an_absent_or_empty_soul_is_no_identity`,
+  `a_soul_is_sanitized_bom_and_control_characters_removed`, and
+  `an_oversized_soul_is_bounded_with_a_marked_cut`. The assembly seam
+  is `AgentOptions.identity`, consumed at `system_prompt()`'s base;
+  pinned by `an_identity_replaces_the_base_and_the_frames_still_append`
+  (identity alone is the prompt byte-for-byte; with skills the frame
+  appends beside it). The run, chat, cron, and TUI boundaries read the
+  slot; `eval` passes `None` on purpose.
+- **C3 met** — `Delegation` carries `identity`, populated from the
+  parent's options at the one construction site; the child's
+  `AgentOptions` takes it. The existing child-inheritance e2e passes
+  unchanged.
+- **C4 met** — `eval`'s constructor passes `identity: None` with a
+  comment naming why; no eval expectation moved (the run count
+  1019 → 1026 is this slice's own new tests).
+- **C5 met** — the gate, exit codes direct.
+- **C6 met** — `CLAUDE.local.md` names `<FLEET_HOME>/SOUL.md` in the
+  machine-path list; `memories/the-harness-voice-is-best-of-both.md`
+  records the ruling.
