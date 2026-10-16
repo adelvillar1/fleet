@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fleet</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main class="seam">
+  <header class="seam-head">
+    <h1>fleet</h1>
+    <p class="seam-sub">the browser face</p>
+  </header>
+
+  <section class="seam-card">
+    <div class="seam-row">
+      <span class="pill" id="link" data-state="waiting">waiting</span>
+      <span class="beats"><b id="beats">0</b> beats</span>
+    </div>
+    <p class="line" id="stream">opening the stream&hellip;</p>
+    <p class="line muted" id="face"></p>
+  </section>
+
+  <footer class="seam-foot muted">
+    loopback only &middot; one token per launch &middot; the run is the same one the terminal runs
+  </footer>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

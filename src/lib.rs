@@ -20,6 +20,7 @@ pub mod doctor;
 pub mod eval;
 pub mod explain;
 pub mod graph;
+pub mod gui;
 pub mod home;
 pub mod improve;
 pub mod install;

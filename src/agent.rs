@@ -187,6 +187,12 @@ pub struct AgentOptions {
     /// apply`, through the same gate, so a session can propose a change
     /// to the harness but never apply one.
     pub improve_home: Option<std::path::PathBuf>,
+    /// The standing line a GUI run's system prompt carries: the surface
+    /// the owner is talking through, with its loopback URL. `None` is
+    /// the run this crate has always had — no line, byte for byte. The
+    /// line names the surface and never the token: the browser holds
+    /// the token, and a prompt is the wrong place for a capability.
+    pub gui_prompt: Option<String>,
 }
 
 impl Default for AgentOptions {
@@ -203,6 +209,7 @@ impl Default for AgentOptions {
             memory: None,
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         }
     }
@@ -726,7 +733,11 @@ impl<'a> Agent<'a> {
         // overlay. A run carrying a role's overlay is not plain, so it
         // falls through and the frame is appended below.
         let base = self.options.identity.as_deref().unwrap_or(SYSTEM_PROMPT);
-        if self.skills.is_empty() && memory_block.is_none() && self.options.role_overlay.is_none() {
+        if self.skills.is_empty()
+            && memory_block.is_none()
+            && self.options.role_overlay.is_none()
+            && self.options.gui_prompt.is_none()
+        {
             return base.to_string();
         }
         if let Some(line) = skills_prompt_growth_line(self.skills.len()) {
@@ -762,6 +773,12 @@ impl<'a> Agent<'a> {
         if let Some(overlay) = &self.options.role_overlay {
             prompt.push_str("\n\n");
             prompt.push_str(overlay);
+        }
+        // The GUI's line rides last: the harness prompt, then the role,
+        // then the surface the owner is speaking through.
+        if let Some(line) = &self.options.gui_prompt {
+            prompt.push_str("\n\n");
+            prompt.push_str(line);
         }
         prompt
     }
@@ -3736,6 +3753,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         };
         let mut progress = Vec::new();
@@ -4030,6 +4048,7 @@ mod tests {
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         };
         Agent::new(
@@ -4093,6 +4112,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         };
         let mut progress = Vec::new();
@@ -4155,6 +4175,7 @@ mod tests {
                 memory: None,
                 scope: None,
                 improve_home: None,
+                gui_prompt: None,
                 compact_now: false,
             };
             Agent::new(
@@ -4210,6 +4231,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         };
         let mut progress = Vec::new();
@@ -4239,6 +4261,78 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            gui_prompt: None,
+            compact_now: false,
+        };
+        let mut progress = Vec::new();
+        let plain = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_system_prompt_rides_the_gui_line_last_in_its_own_frame() {
+        // The GUI's line rides after everything else — the harness
+        // prompt, then the role, then the surface the owner is speaking
+        // through. It carries the loopback URL and never the token: a
+        // prompt is the wrong place for a capability, and the browser
+        // already holds it.
+        let home = scratch("gui-prompt");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let line = crate::gui::prompt_line("http://127.0.0.1:3080");
+        let options = AgentOptions {
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            gui_prompt: Some(line.clone()),
+            compact_now: false,
+        };
+        let mut progress = Vec::new();
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        let prompt = agent.system_prompt(None);
+        assert!(prompt.starts_with(SYSTEM_PROMPT), "{prompt}");
+        assert!(prompt.ends_with(&line), "{prompt}");
+        assert!(prompt.contains("\n\n"), "the line rides in its own frame");
+        assert!(prompt.contains("127.0.0.1:3080"), "{prompt}");
+        assert!(!prompt.contains("token"), "the line never names the token");
+        // Without the line the same construction is the constant.
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let options = AgentOptions {
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         };
         let mut progress = Vec::new();
@@ -4301,6 +4395,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
@@ -4431,6 +4526,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
@@ -4937,6 +5033,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: true,
         };
         let mut progress = Vec::new();
@@ -5038,6 +5135,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
@@ -5426,6 +5524,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            gui_prompt: None,
             compact_now: false,
         };
         Agent::new(client, options, session, approver, progress).unwrap()

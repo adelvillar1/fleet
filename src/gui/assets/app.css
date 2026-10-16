@@ -1,0 +1,85 @@
+/* The seam's page. Dark and quiet on purpose: this is a console the
+   owner leaves open beside the work, not a poster. */
+:root {
+  --bg: #0e1116;
+  --panel: #161b22;
+  --line: #232a33;
+  --ink: #e6edf3;
+  --muted: #8b949e;
+  --accent: #4c8dff;
+  --ok: #3fb950;
+  --down: #f85149;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.seam { width: min(560px, calc(100vw - 48px)); }
+
+.seam-head h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.seam-sub {
+  margin: 2px 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.seam-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+
+.seam-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pill[data-state="live"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+.pill[data-state="down"] { color: var(--down); border-color: color-mix(in srgb, var(--down) 40%, var(--line)); }
+.pill[data-state="connecting"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+
+.beats { color: var(--muted); font-size: 12px; }
+.beats b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.line { margin: 0 0 6px; }
+.line.muted { color: var(--muted); font-size: 13px; margin: 0; }
+
+.seam-foot { margin-top: 16px; font-size: 12px; }
+.muted { color: var(--muted); }

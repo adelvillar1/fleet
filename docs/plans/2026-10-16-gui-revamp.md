@@ -580,6 +580,11 @@ count; the feed names its build time; exit 0.
 - The boards.md deferral is superseded with its reason stated: tokio is
   already carried and the server is hand-rolled, so "dependencies this
   crate does not carry" no longer applies. G10 corrects the doc.
+- G1 dependency disclosure: `TcpListener` needs tokio's `net` feature and
+  a clean Ctrl-C shutdown needs `signal`. Both are features of the crate
+  tokio this project already carries — no new crate enters the tree, so
+  the zero-new-crates claim stands. The features were added in G1 and
+  named here rather than discovered later.
 - **The owner's 2026-10-16 course correction, verbatim: "it also needs
   to be easy to use, more like codex and zcode and less than hermes,
   hermes UI is horrible."** Codex and ZCode are the positive references;

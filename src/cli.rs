@@ -76,10 +76,25 @@ pub enum Command {
     /// the corpus's — through the blend1 lane. Eval-only, batch-only,
     /// `--dry-run` spends nothing.
     Explain(ExplainOptions),
+    /// The browser face: a loopback server over the same agent core,
+    /// with the URL and its one-launch token printed to the terminal.
+    Gui(GuiOptions),
     /// Print the version.
     Version,
     /// Print help.
     Help,
+}
+
+/// Options for `fleet gui`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct GuiOptions {
+    /// The address to bind. Validated loopback before a socket exists.
+    pub host: String,
+    /// The port to bind; zero asks the operating system for a free one.
+    pub port: u16,
+    /// Open the browser anyway? `true` means do not: the URL and token
+    /// are printed, and the owner opens the page themselves.
+    pub no_open: bool,
 }
 
 /// Options for `fleet run`.
@@ -370,6 +385,13 @@ fleet — a native Rust agent based on DeepSeek Harness
 usage:
   fleet run \"<task>\" [options]   run one task to completion
   fleet chat [options]           interactive multi-turn session
+  fleet gui [--port <n>] [--host <address>] [--no-open]
+                                the browser face: a loopback server over the
+                                same agent core. The URL with its one-launch
+                                token is printed, the browser opens unless
+                                --no-open, and the run streams to the page.
+                                --host serves loopback only; a routable
+                                address is refused by name
   fleet sessions [--recall \"<q>\"] [<id>]
                                 the archive as cards, ranked for an
                                 instruction, or one session opened
@@ -579,6 +601,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "install" => parse_install(rest),
         "eval" => parse_eval(rest),
         "explain" => parse_explain(rest),
+        "gui" => parse_gui(rest),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
         other => Err(format!("unknown command `{other}` — try `fleet help`")),
@@ -1517,6 +1540,50 @@ fn parse_explain(args: &[String]) -> Result<Command, String> {
     }
 }
 
+/// `fleet gui [--host <address>] [--port <number>] [--no-open]`. Both
+/// values are checked here rather than at bind time: a host that is not
+/// loopback is refused by name, and a port that is not a number never
+/// reaches a socket. A face that cannot come up is a usage error, not a
+/// run that starts and dies.
+fn parse_gui(args: &[String]) -> Result<Command, String> {
+    let mut host = crate::gui::DEFAULT_HOST.to_string();
+    let mut port = crate::gui::DEFAULT_PORT;
+    let mut no_open = false;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--no-open" => no_open = true,
+            "--host" => {
+                let value = take_value(args, &mut index, "--host")?;
+                crate::gui::server::loopback_address(&value)?;
+                host = value;
+            }
+            "--port" => {
+                let value = take_value(args, &mut index, "--port")?;
+                port = value.parse::<u16>().map_err(|_| {
+                    format!("`--port {value}` is not a port; pick a number between 0 and 65535")
+                })?;
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown gui option `{other}`"));
+            }
+            other => {
+                return Err(format!(
+                    "`{other}` takes no value here; gui takes --host, --port, and --no-open"
+                ));
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Gui(GuiOptions {
+        host,
+        port,
+        no_open,
+    }))
+}
+
 /// Options for `fleet convention`: the one concept to ask about.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ConventionOptions {
@@ -1758,6 +1825,53 @@ mod tests {
     #[test]
     fn chat_rejects_stray_words() {
         assert!(parse(&args(&["chat", "hello"])).is_err());
+    }
+
+    #[test]
+    fn gui_defaults_to_loopback_and_opens_the_browser() {
+        let command = parse(&args(&["gui"])).unwrap();
+        assert_eq!(
+            command,
+            Command::Gui(GuiOptions {
+                host: crate::gui::DEFAULT_HOST.to_string(),
+                port: crate::gui::DEFAULT_PORT,
+                no_open: false,
+            })
+        );
+    }
+
+    #[test]
+    fn gui_takes_a_port_a_host_and_no_open() {
+        let command = parse(&args(&["gui", "--port", "0", "--no-open"])).unwrap();
+        let Command::Gui(options) = command else {
+            panic!("not a gui")
+        };
+        assert_eq!(options.port, 0);
+        assert!(options.no_open);
+        // `localhost` is this machine, so it is a host the face may serve.
+        let command = parse(&args(&["gui", "--host", "localhost"])).unwrap();
+        let Command::Gui(options) = command else {
+            panic!("not a gui")
+        };
+        assert_eq!(options.host, "localhost");
+    }
+
+    #[test]
+    fn gui_refuses_a_host_that_is_not_this_machine_by_name() {
+        for host in ["0.0.0.0", "192.168.1.5", "example.com"] {
+            let error = parse(&args(&["gui", "--host", host])).unwrap_err();
+            assert!(error.contains(host), "{error}");
+        }
+    }
+
+    #[test]
+    fn gui_refuses_a_port_that_is_not_a_number() {
+        let error = parse(&args(&["gui", "--port", "http"])).unwrap_err();
+        assert!(error.contains("--port http"), "{error}");
+        assert!(parse(&args(&["gui", "--port", "65536"])).is_err());
+        assert!(parse(&args(&["gui", "--loud"])).is_err());
+        assert!(parse(&args(&["gui", "extra"])).is_err());
+        assert!(parse(&args(&["gui", "--host"])).is_err());
     }
 
     #[test]

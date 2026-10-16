@@ -1215,6 +1215,7 @@ async fn drive_over(
         memory,
         scope: None,
         improve_home: None,
+        gui_prompt: None,
     };
     let mut progress = Vec::new();
     // The agent's own construction replays the session's log, so a

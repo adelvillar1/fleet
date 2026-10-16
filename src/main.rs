@@ -35,6 +35,7 @@ async fn main() -> ExitCode {
         }
         Ok(Command::Run(options)) => run_command(&options).await,
         Ok(Command::Chat(options)) => chat_command(&options).await,
+        Ok(Command::Gui(options)) => gui_command(&options).await,
         Ok(Command::SessionsView { recall, view }) => {
             sessions_command(recall.as_deref(), view.as_deref())
         }
@@ -296,6 +297,26 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     // The session is over: draft its lessons into proposals, best-effort.
     draft_lessons(&home, session.path());
     ExitCode::SUCCESS
+}
+
+/// `fleet gui`: the browser face. The parser has already checked the
+/// host and the port, so the one failure that reaches here is a bind the
+/// parser could not see coming — a port already taken — which is named
+/// and exits nonzero rather than falling back to another port the owner
+/// did not ask for.
+async fn gui_command(options: &cli::GuiOptions) -> ExitCode {
+    let options = fleet::gui::GuiOptions {
+        host: options.host.clone(),
+        port: options.port,
+        no_open: options.no_open,
+    };
+    match fleet::gui::serve(options).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// After a run: what the walk actually did. The attempts in order —
@@ -1053,6 +1074,7 @@ async fn drive(
         // home: a session can file a proposal, and only the owner's
         // `fleet improve apply` runs one.
         improve_home: Some(home.to_path_buf()),
+        gui_prompt: None,
         compact_now,
     };
     // Every non-interactive mode rides the Gate, never `ApproveAll`:
