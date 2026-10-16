@@ -1370,20 +1370,18 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
             Style::new().fg(palette::TEXT),
         ),
     ];
-    // The active provider and how it was chosen, once a routed run has
-    // reported one — the TUI's half of slice 5's route surfacing.
-    if let Some(provider) = &status.provider {
+    // The active routing mode and how it was chosen, once a routed run has
+    // reported one — the tui's half of slice 5's route surfacing.
+    if let Some(how) = &status.route_how {
         spans.push(Span::styled("  route ", Style::new().fg(palette::DIM)));
         spans.push(Span::styled(
-            provider.clone(),
+            "auto-router",
             Style::new().fg(palette::ACCENT),
         ));
-        if let Some(how) = &status.route_how {
-            spans.push(Span::styled(
-                format!(" ({how})"),
-                Style::new().fg(palette::DIM),
-            ));
-        }
+        spans.push(Span::styled(
+            format!(" ({how})"),
+            Style::new().fg(palette::DIM),
+        ));
     }
     // What the last run's assembled memory carried: the shape the
     // instruction routed under and the fact count. Slice 8 part 2's
