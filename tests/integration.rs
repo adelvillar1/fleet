@@ -642,6 +642,7 @@ async fn client_chat_stream_assembles_the_same_response_chat_returns() {
         prompt_tokens: 10,
         completion_tokens: 5,
         total_tokens: 15,
+        finish_reason: None,
     })));
 }
 
@@ -3793,10 +3794,16 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
 
 // --- skills (slice 7) ------------------------------------------------------
 
+/// The canonical skills library under a scratch home: the path the
+/// tests hand to `FLEET_SKILLS_DIR` and to `skills::load`.
+fn skills_canon(home: &Path) -> PathBuf {
+    home.join("canonical")
+}
+
 /// A scratch FLEET_HOME carrying one live skill.
 fn skills_home(tag: &str, name: &str, description: &str, body: &str) -> PathBuf {
     let home = temp_home(tag);
-    let dir = fleet::skills::skills_dir(&home).join(name);
+    let dir = skills_canon(&home).join(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("SKILL.md"),
@@ -3808,7 +3815,7 @@ fn skills_home(tag: &str, name: &str, description: &str, body: &str) -> PathBuf 
 
 /// Write one live skill into an existing home.
 fn write_skill(home: &Path, name: &str, description: &str) {
-    let dir = fleet::skills::skills_dir(home).join(name);
+    let dir = skills_canon(home).join(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("SKILL.md"),
@@ -3883,7 +3890,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     let report = run_with_skills(
         &mock,
         &mut session,
-        fleet::skills::load(&home),
+        fleet::skills::load(&skills_canon(&home)),
         "recover from it",
     )
     .await
@@ -3962,9 +3969,14 @@ async fn an_unknown_skill_is_a_typed_error_result() {
         assistant_stream("That skill does not exist; carrying on."),
     ]);
     let mut session = Session::create(&home, "test-model").unwrap();
-    let report = run_with_skills(&mock, &mut session, fleet::skills::load(&home), "try it")
-        .await
-        .unwrap();
+    let report = run_with_skills(
+        &mock,
+        &mut session,
+        fleet::skills::load(&skills_canon(&home)),
+        "try it",
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     let records = session::replay(session.path()).unwrap();
@@ -4040,7 +4052,7 @@ async fn a_sessions_failure_then_correction_drafts_a_proposal() {
         })
         .unwrap();
 
-    let filed = fleet::skills::draft_session(&home, session.path(), None);
+    let filed = fleet::skills::draft_session(&skills_canon(&home), &home, session.path(), None);
     assert_eq!(filed.len(), 1, "{filed:?}");
     let draft = std::fs::read_to_string(&filed[0]).unwrap();
     // The frontmatter carries the proposal flag, the kind, and the
@@ -4061,12 +4073,10 @@ async fn a_sessions_failure_then_correction_drafts_a_proposal() {
         filed[0].starts_with(fleet::skills::proposals_dir(&home)),
         "{filed:?}"
     );
-    let live = fleet::skills::load(&home);
+    let live = fleet::skills::load(&skills_canon(&home));
     assert_eq!(live.len(), 1, "{live:?}");
     assert_eq!(live[0].name, "unrelated");
-    assert!(!fleet::skills::skills_dir(&home)
-        .join("bash-recovery")
-        .exists());
+    assert!(!skills_canon(&home).join("bash-recovery").exists());
     // The proposal loads back through the loader, ready for the gate.
     let proposals = fleet::skills::load_proposals(&home);
     assert_eq!(proposals.len(), 1);
@@ -4079,7 +4089,7 @@ async fn a_sessions_failure_then_correction_drafts_a_proposal() {
 /// skill, an unused one, and a near-identical pair — one retire draft,
 /// one merge draft, and a live tree nothing touched.
 #[tokio::test]
-async fn the_usage_scan_curation_proposes_retirement_and_merge() {
+async fn the_usage_scan_curation_merges_and_retires_nothing_from_the_canonical_library() {
     let home = temp_home("curate");
     write_skill(
         &home,
@@ -4136,29 +4146,26 @@ async fn the_usage_scan_curation_proposes_retirement_and_merge() {
     })
     .unwrap();
 
-    let filed = fleet::skills::curate(&home, config.retire_after_sessions, config.merge_similarity);
+    let filed = fleet::skills::curate(
+        &skills_canon(&home),
+        &home,
+        config.retire_after_sessions,
+        config.merge_similarity,
+    );
     let names: Vec<String> = filed
         .iter()
         .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
         .collect();
-    assert!(names.contains(&"gamma".to_string()), "{names:?}");
     assert!(names.contains(&"alpha".to_string()), "{names:?}");
-    // beta is the absorbed half of the merge draft, so it gets no
-    // separate retire draft; delta was used, so it gets none either.
+    // The retirement rule is a no-op against the canonical library (the
+    // usage scan reads fleet's sessions only, KI-215): gamma was never
+    // selected and nothing is filed against it. beta is the absorbed
+    // half of the merge draft; delta was used.
+    assert!(!names.contains(&"gamma".to_string()), "{names:?}");
     assert!(!names.contains(&"beta".to_string()), "{names:?}");
     assert!(!names.contains(&"delta".to_string()), "{names:?}");
 
     let proposals = fleet::skills::load_proposals(&home);
-    let retire = proposals
-        .iter()
-        .find(|proposal| proposal.name == "gamma")
-        .expect("the retire");
-    assert_eq!(retire.kind, fleet::skills::ProposalKind::Retire);
-    assert!(
-        retire.evidence.contains("last 2 sessions"),
-        "{}",
-        retire.evidence
-    );
     let merge = proposals
         .iter()
         .find(|proposal| proposal.name == "alpha")
@@ -4168,7 +4175,7 @@ async fn the_usage_scan_curation_proposes_retirement_and_merge() {
     assert!(merge.evidence.contains("`beta`"), "{}", merge.evidence);
 
     // The live tree is exactly what it was.
-    let live = fleet::skills::load(&home);
+    let live = fleet::skills::load(&skills_canon(&home));
     let live_names: Vec<&str> = live.iter().map(|skill| skill.name.as_str()).collect();
     assert_eq!(live_names, vec!["alpha", "beta", "delta", "gamma"]);
     std::fs::remove_dir_all(&home).ok();
@@ -4189,6 +4196,7 @@ fn the_skills_command_lists_cards_proposals_and_a_draft() {
         std::process::Command::new(fleet)
             .args(args)
             .env("FLEET_HOME", &home)
+            .env("FLEET_SKILLS_DIR", skills_canon(&home))
             .output()
             .expect("run the fleet binary")
     };
@@ -4252,7 +4260,7 @@ fn the_skills_command_lists_cards_proposals_and_a_draft() {
             approved: true,
         })
         .unwrap();
-    let filed = fleet::skills::draft_session(&home, session.path(), None);
+    let filed = fleet::skills::draft_session(&skills_canon(&home), &home, session.path(), None);
     assert_eq!(filed.len(), 1, "{filed:?}");
 
     let shown = run(&["skills", "--show", "bash-recovery"]);
@@ -4273,11 +4281,15 @@ fn the_skills_command_lists_cards_proposals_and_a_draft() {
     // The gate boundary is named on the surface: nothing here applies.
     assert!(proposed_out.contains("slice 12"), "{proposed_out}");
 
-    // A home with no skills directory says so and still exits 0.
+    // A library with no skills directory says so and still exits 0.
+    // The seam is redirected explicitly: a bare FLEET_HOME would resolve
+    // to the machine's real `~/.agents/skills`, and a test never reads
+    // the owner's library.
     let bare = temp_home("skills-bare");
     let listed_bare = std::process::Command::new(fleet)
         .arg("skills")
         .env("FLEET_HOME", &bare)
+        .env("FLEET_SKILLS_DIR", bare.join("absent-library"))
         .output()
         .expect("run the fleet binary");
     assert!(listed_bare.status.success());
@@ -5871,7 +5883,7 @@ async fn a_child_inherits_the_parents_declared_skills() {
     run_with_skills(
         &mock,
         &mut session,
-        fleet::skills::load(&home),
+        fleet::skills::load(&skills_canon(&home)),
         "delegate the recovery",
     )
     .await

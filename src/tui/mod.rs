@@ -452,7 +452,12 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             // and declared on every run it drives: the files can change
             // between runs, and each run's `skills` record pins what
             // that run actually saw.
-            let skills = crate::skills::load(&home);
+            let user_home = std::env::var("HOME").ok();
+            let skills_override = std::env::var("FLEET_SKILLS_DIR").ok();
+            let skills =
+                crate::skills::resolve_skills_dir(skills_override.as_deref(), user_home.as_deref())
+                    .map(|dir| crate::skills::load(&dir))
+                    .unwrap_or_default();
             // The route is chosen once, on the first run, and the committed
             // router is reused for the rest of the session — one sys1
             // judgment, not one per task.
@@ -563,7 +568,16 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             // the slice-12 gate, best-effort, never applied here.
             let user_home = std::env::var("HOME").ok();
             let path = crate::session::session_path(&home, &current_session);
-            let filed = crate::skills::draft_session(&home, &path, user_home.as_deref());
+            let skills_override = std::env::var("FLEET_SKILLS_DIR").ok();
+            let filed = match crate::skills::resolve_skills_dir(
+                skills_override.as_deref(),
+                user_home.as_deref(),
+            ) {
+                Some(canonical) => {
+                    crate::skills::draft_session(&canonical, &home, &path, user_home.as_deref())
+                }
+                None => Vec::new(),
+            };
             if !filed.is_empty() {
                 eprintln!(
                     "fleet: skills: drafted {} proposal(s) awaiting the gate in {}",

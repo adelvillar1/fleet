@@ -51,9 +51,9 @@ mod palette {
 
 /// The home layout's directories, in creation order. One per consumer
 /// in the crate: `sessions` (the append-only JSONL logs), `memories`
-/// (the durable-fact corpus), `skills` (the SKILL.md tree), `cron`
-/// (the job store), `proposals` (the self-maintenance gate's pending
-/// changes).
+/// (the durable-fact corpus), `skills` (proposal drafts — live skills
+/// live in the canonical `~/.agents/skills` library), `cron` (the job
+/// store), `proposals` (the self-maintenance gate's pending changes).
 pub const LAYOUT_DIRS: &[&str] = &["sessions", "memories", "skills", "cron", "proposals"];
 
 /// The config file's name inside the home: the roster's override

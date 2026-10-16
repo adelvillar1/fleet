@@ -2,13 +2,19 @@
 //! through the `use_skill` tool, the self-authoring drafter, and
 //! usage-scan curation.
 //!
-//! The layout is the owner's own convention: one directory per skill
-//! under `<FLEET_HOME>/skills/`, each holding a `SKILL.md` whose YAML
-//! frontmatter carries at least `name` and `description`, with the body
-//! after the fence. The fork's `packages/skill` is the spec for the
-//! shape; the frontmatter parse is hand-rolled on purpose — the subset
-//! is `key: value` lines between `---` fences and nothing else, so a YAML
-//! dependency would buy nothing and cost a crate.
+//! The layout is the owner's own convention: one directory per skill in
+//! the canonical library — `$FLEET_SKILLS_DIR`, else
+//! `<user home>/.agents/skills`, the owner's cross-harness library, so a
+//! skill is authored once and every harness loads the same source —
+//! each directory holding a `SKILL.md` whose frontmatter carries at
+//! least `name` and `description`, with the body after the fence. The
+//! fork's `packages/skill` is the spec for the shape; the frontmatter
+//! parse is hand-rolled on purpose — the subset is `key: value` lines
+//! between `---` fences, plus the library's continuation blocks (a
+//! `key:` whose indented or `- item` lines follow ride the key as one
+//! opaque value), so a YAML dependency would buy nothing and cost a
+//! crate. Fleet's own `skills/` under the fleet home holds only
+//! proposal drafts.
 //!
 //! **Progressive disclosure.** Every run's system prompt carries the
 //! available skills as a name+description list — the same seam the tool
@@ -26,15 +32,15 @@
 //! tool sequence, or a turn graded failed with a named class — and
 //! drafts a SKILL.md creation or update into
 //! `<FLEET_HOME>/skills/proposals/`. A proposal is never applied here:
-//! applying one is slice 12's gate, and no code path in this slice moves
-//! a proposal into the live tree.
+//! applying one is slice 12's gate, whose apply path is what writes into
+//! the canonical library.
 //!
 //! **Curation is usage-scan, not semantic recall.** Past session logs are
-//! scanned for `use_skill` calls; a skill unused across the last N
-//! sessions is proposed for retirement, and two skills whose descriptions
-//! are near-identical (token Jaccard over the normalized text) are
-//! proposed for merge. Slice 8's recall upgrades this; until then the
-//! scan is honest about what it measures.
+//! scanned for `use_skill` calls. The merge rule (descriptions near-
+//! identical, token Jaccard) still drafts; the retirement rule is a
+//! no-op against the canonical library — the scan reads fleet's sessions
+//! only, and a skill no fleet session selected may be another harness's
+//! daily driver.
 //!
 //! A skill whose frontmatter is missing or malformed is **skipped by
 //! name** with one logged line naming it: a broken skill never blocks the
@@ -49,14 +55,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::session::Record;
 
-/// The directory under `<FLEET_HOME>` holding one directory per skill.
+/// The directory under the fleet home holding proposal drafts. Live
+/// skills live in the canonical library; this directory exists so the
+/// drafts have a fleet-local staging ground the gate reads.
 pub const SKILLS_DIR: &str = "skills";
 
 /// The file every skill directory carries.
 pub const SKILL_FILE: &str = "SKILL.md";
 
-/// The directory under `skills/` holding drafted proposals. It is never
-/// read as a skill: [`load`] skips it by name.
+/// The directory under `skills/` holding drafted proposals.
 pub const PROPOSALS_DIR: &str = "proposals";
 
 /// How many sessions a skill may go unused across before curation
@@ -249,6 +256,7 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
         return Err("the file does not open with a `---` frontmatter fence".to_string());
     }
     let mut fields: Vec<(String, String)> = Vec::new();
+    let mut pending: Option<String> = None;
     let mut closing: Option<usize> = None;
     for (index, line) in lines.iter().enumerate().skip(1) {
         if line.trim_end() == "---" {
@@ -259,13 +267,33 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
         if trimmed.is_empty() {
             continue;
         }
-        // A nested block, a list entry, or any indented line is YAML this
-        // parser does not speak: name it rather than guessing.
+        // The library's dialect: a `key:` whose block follows as indented
+        // lines or `- item` entries. The block rides the key as one opaque
+        // value — unknown keys are kept, and this is the kept form of a
+        // nested one.
         if line.starts_with(' ') || line.starts_with('\t') || trimmed.starts_with('-') {
-            return Err(format!(
-                "frontmatter line {} is not a `key: value` pair (nested YAML is not supported)",
-                index + 1
-            ));
+            let key = match pending.take() {
+                Some(awaited) => {
+                    fields.push((awaited.clone(), String::new()));
+                    awaited
+                }
+                None => match fields.last() {
+                    Some((key, _)) => key.clone(),
+                    None => {
+                        return Err(format!(
+                            "frontmatter line {} continues no key (a nested block or list entry must follow its `key:`)",
+                            index + 1
+                        ));
+                    }
+                },
+            };
+            if let Some((_, value)) = fields.iter_mut().find(|(seen, _)| *seen == key) {
+                if !value.is_empty() {
+                    value.push('\n');
+                }
+                value.push_str(line.trim_end());
+            }
+            continue;
         }
         let Some((key, value)) = trimmed.split_once(':') else {
             return Err(format!(
@@ -291,13 +319,35 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
             ));
         }
         let value = unquote(value.trim());
+        // An empty value opens a continuation block, which the next
+        // indented or `- item` line fills. A block that never comes is
+        // the old empty-value error under its new, more precise name.
         if value.is_empty() {
-            return Err(format!("frontmatter key `{key}` has an empty value"));
+            if let Some(awaited) = &pending {
+                return Err(format!(
+                    "frontmatter key `{awaited}` has an empty value with no continuation block"
+                ));
+            }
+            if fields.iter().any(|(seen, _)| seen == key) {
+                return Err(format!("frontmatter key `{key}` appears twice"));
+            }
+            pending = Some(key.to_string());
+            continue;
+        }
+        if let Some(awaited) = &pending {
+            return Err(format!(
+                "frontmatter key `{awaited}` has an empty value with no continuation block"
+            ));
         }
         if fields.iter().any(|(seen, _)| seen == key) {
             return Err(format!("frontmatter key `{key}` appears twice"));
         }
         fields.push((key.to_string(), value.to_string()));
+    }
+    if let Some(awaited) = &pending {
+        return Err(format!(
+            "frontmatter key `{awaited}` has an empty value with no continuation block"
+        ));
     }
     let Some(closing) = closing else {
         return Err("the frontmatter fence never closes".to_string());
@@ -325,28 +375,37 @@ fn skip_line(name: &str, reason: &str) {
 
 // --- loading ---------------------------------------------------------------
 
-/// `<home>/skills`.
-pub fn skills_dir(home: &Path) -> PathBuf {
-    home.join(SKILLS_DIR)
+/// The canonical skills library: `$FLEET_SKILLS_DIR` when set and
+/// non-empty, else `<user home>/.agents/skills` — the owner's
+/// cross-harness library, so a skill is authored once and every harness
+/// loads the same source. Both inputs are parameters (the `fleet_home`
+/// pattern: the caller's boundary decides its own environment
+/// precedence). `None` when neither is known, and the caller names it.
+pub fn resolve_skills_dir(env_value: Option<&str>, user_home: Option<&str>) -> Option<PathBuf> {
+    if let Some(dir) = env_value.filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    user_home.map(|home| Path::new(home).join(".agents").join("skills"))
 }
 
-/// `<home>/skills/proposals`.
+/// `<home>/skills/proposals` — the fleet home's own draft staging. Live
+/// skills live in the canonical library; a proposal is fleet's working
+/// state and never enters it unapplied.
 pub fn proposals_dir(home: &Path) -> PathBuf {
-    skills_dir(home).join(PROPOSALS_DIR)
+    home.join(SKILLS_DIR).join(PROPOSALS_DIR)
 }
 
-/// Load every live skill under `<home>/skills`, sorted by name. A missing
-/// directory is no skills, not an error. A directory without a readable
-/// `SKILL.md`, or with a malformed one, is skipped by name with one
-/// logged line; the others still load.
+/// Load every live skill under the canonical library directory, sorted
+/// by name. A missing directory is no skills, not an error. A directory
+/// without a readable `SKILL.md`, or with a malformed one, is skipped by
+/// name with one logged line; the others still load.
 ///
-/// The `proposals` directory is skipped by name: it holds drafts, and a
-/// draft is not a live skill. A live skill whose frontmatter carries
-/// `proposed: true` is skipped too — that is a proposal that somehow
-/// reached the live tree, and the loader refuses to promote it silently.
-pub fn load(home: &Path) -> Vec<Skill> {
-    let dir = skills_dir(home);
-    let Ok(entries) = fs::read_dir(&dir) else {
+/// A live skill whose frontmatter carries `proposed: true` is skipped —
+/// that is a proposal that somehow reached the live tree, and the loader
+/// refuses to promote it silently.
+pub fn load(canonical: &Path) -> Vec<Skill> {
+    let dir = canonical;
+    let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut directories: Vec<PathBuf> = entries
@@ -365,9 +424,6 @@ pub fn load(home: &Path) -> Vec<Skill> {
         else {
             continue;
         };
-        if name == PROPOSALS_DIR {
-            continue;
-        }
         let file = path.join(SKILL_FILE);
         let text = match fs::read_to_string(&file) {
             Ok(text) => text,
@@ -422,7 +478,7 @@ fn live_skill(
 /// with one logged line, and the others still list.
 pub fn load_proposals(home: &Path) -> Vec<Proposal> {
     let dir = proposals_dir(home);
-    let Ok(entries) = fs::read_dir(&dir) else {
+    let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut files: Vec<PathBuf> = entries
@@ -1027,7 +1083,12 @@ fn file_proposal(home: &Path, lesson: &Lesson) -> Option<PathBuf> {
 /// Returns the paths filed. A lesson whose name matches a live skill is
 /// filed as an update to that skill rather than a create, so the draft
 /// diffs against the file it would replace.
-pub fn draft_session(home: &Path, session_path: &Path, user_home: Option<&str>) -> Vec<PathBuf> {
+pub fn draft_session(
+    canonical: &Path,
+    home: &Path,
+    session_path: &Path,
+    user_home: Option<&str>,
+) -> Vec<PathBuf> {
     let Ok(records) = crate::session::replay(session_path) else {
         return Vec::new();
     };
@@ -1039,7 +1100,7 @@ pub fn draft_session(home: &Path, session_path: &Path, user_home: Option<&str>) 
         .and_then(|stem| stem.to_str())
         .unwrap_or_default()
         .to_string();
-    let live = load(home);
+    let live = load(canonical);
     let root = crate::calib::resolve_root(home, user_home);
     let rows = crate::calib::read_day(&root, &crate::calib::today(), crate::calib::READ_CAP);
     let mut filed: Vec<PathBuf> = Vec::new();
@@ -1057,44 +1118,43 @@ pub fn draft_session(home: &Path, session_path: &Path, user_home: Option<&str>) 
 
 // --- curation --------------------------------------------------------------
 
-/// Run the usage-scan curation and file what it finds: a retirement
-/// proposal for every skill unused across the whole window, and a merge
-/// proposal for every pair of skills whose descriptions are at least
+/// Run the usage-scan curation and file what it finds: merge proposals
+/// for pairs of skills whose descriptions are at least
 /// `merge_similarity` similar. Returns the paths filed.
 ///
-/// The retirement rule refuses to judge on a short window: with fewer
-/// sessions of history than the window, nothing is proposed — "unused
-/// across the last N sessions" means N sessions were actually there. A
-/// skill that is the absorbed half of a merge pair is not separately
-/// proposed for retirement: the merge draft already names it, and two
-/// drafts disposing of one skill is noise a reviewer should not have to
-/// reconcile.
-pub fn curate(home: &Path, retire_after: usize, merge_similarity: f64) -> Vec<PathBuf> {
-    let live = load(home);
+/// The retirement rule is a **no-op against the canonical library** and
+/// one logged line says so whenever the window is long enough to have
+/// judged: the usage scan reads fleet's own session logs only, and a
+/// skill no fleet session selected may be another harness's daily
+/// driver — "unused by fleet" is not unused across harnesses (KI-215).
+/// A hand-filed retirement proposal still goes through the gate; what
+/// stopped is the automatic drafting. A skill that is the absorbed half
+/// of a merge pair was never separately proposed, and the merge rule's
+/// evidence is the descriptions themselves, so it composes with the
+/// shared library fine.
+pub fn curate(
+    canonical: &Path,
+    home: &Path,
+    retire_after: usize,
+    merge_similarity: f64,
+) -> Vec<PathBuf> {
+    let live = load(canonical);
     let usage = scan_usage(home, retire_after);
     let mut lessons: Vec<Lesson> = Vec::new();
-    let mut absorbed: Vec<String> = Vec::new();
     for (index, left) in live.iter().enumerate() {
         for right in &live[index + 1..] {
             let similarity = description_similarity(&left.description, &right.description);
             if similarity >= merge_similarity {
                 let lesson =
                     merge_lesson(left, right, similarity, merge_similarity, usage.sessions);
-                absorbed.push(if left.name <= right.name {
-                    right.name.clone()
-                } else {
-                    left.name.clone()
-                });
                 lessons.push(lesson);
             }
         }
     }
     if usage.sessions >= retire_after {
-        for skill in &live {
-            if usage.count(&skill.name) == 0 && !absorbed.iter().any(|name| name == &skill.name) {
-                lessons.push(retire_lesson(skill, usage.sessions));
-            }
-        }
+        eprintln!(
+            "fleet: skills: retirement curation skipped \u{2014} the usage scan reads fleet's sessions only and the canonical library is cross-harness (KI-215)"
+        );
     }
     let mut filed: Vec<PathBuf> = Vec::new();
     for lesson in &lessons {
@@ -1103,33 +1163,6 @@ pub fn curate(home: &Path, retire_after: usize, merge_similarity: f64) -> Vec<Pa
         }
     }
     filed
-}
-
-/// The retirement lesson for one unused skill.
-fn retire_lesson(skill: &Skill, sessions: usize) -> Lesson {
-    let evidence = format!(
-        "unused across the last {sessions} sessions (0 `{}` calls)",
-        crate::tools::USE_SKILL_TOOL
-    );
-    let description = format!(
-        "Retire `{}`: {} It was never selected within the scanned window.",
-        skill.name, skill.description
-    );
-    let body = format!(
-        "# retire: {name}\n\n{description}\n\n## Proposed retirement\n\nThe skill was never selected: 0 `{tool}` calls across the last {sessions} scanned sessions.\n\n## Evidence\n\n{evidence}\n\n## What applying this means\n\nSlice 12's gate decides. Until it does, the live file stays on disk untouched and this draft is the record of what was proposed and why.\n",
-        name = skill.name,
-        description = description,
-        tool = crate::tools::USE_SKILL_TOOL,
-        sessions = sessions,
-        evidence = evidence,
-    );
-    Lesson {
-        kind: ProposalKind::Retire,
-        name: skill.name.clone(),
-        description,
-        evidence,
-        body,
-    }
 }
 
 /// The merge lesson for one near-identical pair. The survivor is the
@@ -1465,9 +1498,15 @@ mod tests {
         dir
     }
 
-    /// Write one live skill into `home`.
+    /// The tests' canonical library: a `canonical` directory under the
+    /// scratch home, distinct from the fleet home that holds proposals.
+    fn canon(home: &Path) -> PathBuf {
+        home.join("canonical")
+    }
+
+    /// Write one live skill into the canonical library.
     fn write_skill(home: &Path, name: &str, text: &str) -> PathBuf {
-        let dir = skills_dir(home).join(name);
+        let dir = canon(home).join(name);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(SKILL_FILE);
         std::fs::write(&path, text).unwrap();
@@ -1511,17 +1550,17 @@ mod tests {
         assert!(parse_document("---\nname: demo\n")
             .unwrap_err()
             .contains("never closes"));
-        // A nested block's indent — the YAML block-scalar shape, after
-        // one valid pair.
-        assert!(
+        // A nested block's indent after a valued key is the library's
+        // continuation dialect: the block rides the key as one opaque
+        // value, indicator line included.
+        let document =
             parse_document("---\nname: demo\ndescription: >\n  folded text\n---\nbody\n")
-                .unwrap_err()
-                .contains("nested YAML")
-        );
-        // A list entry.
+                .expect("the continuation parses");
+        assert_eq!(document.get("description"), Some(">\n  folded text"));
+        // A list entry with no key before it.
         assert!(parse_document("---\n- item\n---\nbody\n")
             .unwrap_err()
-            .contains("key: value"));
+            .contains("continues no key"));
         // A bare scalar line.
         assert!(parse_document("---\nbare\n---\nbody\n")
             .unwrap_err()
@@ -1559,7 +1598,7 @@ mod tests {
             "bommed",
             "\u{feff}---\nname: bommed\ndescription: d\n---\n\nbody\n",
         );
-        assert_eq!(skill_names(&load(&home)), vec!["bommed"]);
+        assert_eq!(skill_names(&load(&canon(&home))), vec!["bommed"]);
         // A BOM'd file that still fails names the BOM, so the reason is
         // not misdirected at the fence alone.
         let reason = parse_document("\u{feff}name: demo\n").unwrap_err();
@@ -1625,7 +1664,7 @@ mod tests {
         // The proposals directory is not a skill.
         std::fs::create_dir_all(proposals_dir(&home)).unwrap();
 
-        let skills = load(&home);
+        let skills = load(&canon(&home));
         assert_eq!(skill_names(&skills), vec!["good-one", "good-two"]);
         assert_eq!(skills[0].body, "body one");
         // The loaded skills carry where they came from, for the card.
@@ -1643,16 +1682,92 @@ mod tests {
             "misfiled",
             "---\nname: misfiled\ndescription: d\nproposed: true\n---\nbody\n",
         );
-        assert!(load(&home).is_empty());
+        assert!(load(&canon(&home)).is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
     fn a_missing_skills_directory_is_no_skills_not_an_error() {
         let home = scratch("absent");
-        assert!(load(&home).is_empty());
+        assert!(load(&canon(&home)).is_empty());
         assert!(load_proposals(&home).is_empty());
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The library's nested-metadata dialect — the `project-warmup`
+    /// shape: a `key:` whose indented block follows rides the key as one
+    /// opaque value, and the fields the loader requires still parse.
+    #[test]
+    fn a_nested_metadata_block_loads_as_one_opaque_value() {
+        let text = "---\nname: demo\ndescription: a library skill\nversion: 3.5.0\nmetadata:\n  hermes:\n    tags: [methodology]\n    related_skills: [other]\n---\n\nbody\n";
+        let document = parse_document(text).expect("the dialect parses");
+        assert_eq!(document.required("name").unwrap(), "demo");
+        assert_eq!(document.required("description").unwrap(), "a library skill");
+        assert_eq!(document.get("version"), Some("3.5.0"));
+        let metadata = document.get("metadata").expect("the block rides the key");
+        assert!(metadata.contains("hermes:"), "{metadata}");
+        assert!(metadata.contains("tags: [methodology]"), "{metadata}");
+    }
+
+    /// The library's list dialect — the `rss-feeds` shape: column-0
+    /// `- item` entries under an empty-valued key.
+    #[test]
+    fn a_list_block_loads_as_one_opaque_value() {
+        let text = "---\nname: demo\ndescription: reads feeds\nplatforms:\n- linux\n- macos\n---\n\nbody\n";
+        let document = parse_document(text).expect("the dialect parses");
+        assert_eq!(document.required("name").unwrap(), "demo");
+        assert_eq!(document.get("platforms"), Some("- linux\n- macos"));
+    }
+
+    /// A continuation with no key before it is still malformed, by name.
+    #[test]
+    fn a_leading_continuation_line_is_rejected_by_name() {
+        let error = parse_document("---\n- linux\nname: demo\n---\nbody\n")
+            .expect_err("no key to continue");
+        assert!(
+            error.contains("continues no key"),
+            "the reason names the shape: {error}"
+        );
+    }
+
+    /// An empty value whose block never comes is still malformed, by
+    /// name — the old empty-value error under its precise new one.
+    #[test]
+    fn an_empty_value_with_no_block_is_rejected_by_name() {
+        let error = parse_document("---\nname: demo\ndescription: d\nmetadata:\n---\nbody\n")
+            .expect_err("no block follows");
+        assert!(
+            error.contains("`metadata` has an empty value with no continuation block"),
+            "the reason names the key: {error}"
+        );
+    }
+
+    /// The resolution seam: the override wins, an empty one does not,
+    /// the user home is the default, and neither known is `None`.
+    #[test]
+    fn the_canonical_directory_resolves_override_then_user_home() {
+        assert_eq!(
+            resolve_skills_dir(Some("/tmp/lib"), Some("/usr/home")),
+            Some(PathBuf::from("/tmp/lib"))
+        );
+        assert_eq!(
+            resolve_skills_dir(Some(""), Some("/usr/home")),
+            Some(PathBuf::from("/usr/home/.agents/skills"))
+        );
+        assert_eq!(
+            resolve_skills_dir(None, Some("/usr/home")),
+            Some(PathBuf::from("/usr/home/.agents/skills"))
+        );
+        assert_eq!(resolve_skills_dir(None, None), None);
+    }
+
+    /// The proposals directory stays under the fleet home even when the
+    /// canonical library resolves elsewhere — drafts are fleet's own
+    /// working state.
+    #[test]
+    fn proposals_stay_under_the_fleet_home() {
+        let home = scratch("proposals-home");
+        assert_eq!(proposals_dir(&home), home.join("skills").join("proposals"));
     }
 
     #[test]
@@ -2045,7 +2160,7 @@ mod tests {
             "bash-recovery",
             &good_skill("bash-recovery", "live description", "# live body"),
         );
-        let live = load(&home);
+        let live = load(&canon(&home));
         let records = vec![
             Record::User {
                 content: "t".into(),
@@ -2055,7 +2170,7 @@ mod tests {
             assistant(vec![tool_call("c2", "bash", "{}")]),
             result("c2", "bash", "exit 0"),
         ];
-        let filed = draft_session(&home, &session_log(&home, &records), None);
+        let filed = draft_session(&canon(&home), &home, &session_log(&home, &records), None);
         assert_eq!(filed.len(), 1, "{filed:?}");
         let text = std::fs::read_to_string(&filed[0]).unwrap();
         assert!(text.contains("kind: update"), "{text}");
@@ -2065,7 +2180,7 @@ mod tests {
         assert!(text.contains("# live body"), "{text}");
         assert!(text.contains("## Proposed addition"), "{text}");
         // The live tree is untouched: one skill, unchanged on disk.
-        let after = load(&home);
+        let after = load(&canon(&home));
         assert_eq!(after, live);
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -2085,7 +2200,7 @@ mod tests {
         // One live skill that is NOT the drafted name, to prove the
         // drafter does not touch it.
         write_skill(&home, "unrelated", &good_skill("unrelated", "d", "body"));
-        let before = std::fs::read_to_string(skills_dir(&home).join("unrelated/SKILL.md")).unwrap();
+        let before = std::fs::read_to_string(canon(&home).join("unrelated/SKILL.md")).unwrap();
         let records = vec![
             Record::User {
                 content: "t".into(),
@@ -2095,35 +2210,34 @@ mod tests {
             assistant(vec![tool_call("c2", "read_file", "{}")]),
             result("c2", "read_file", "the text"),
         ];
-        let filed = draft_session(&home, &session_log(&home, &records), None);
+        let filed = draft_session(&canon(&home), &home, &session_log(&home, &records), None);
         assert_eq!(filed.len(), 1, "{filed:?}");
         assert!(filed[0].starts_with(proposals_dir(&home)), "{filed:?}");
         assert_eq!(filed[0].file_name().unwrap(), "read-file-recovery.md");
         // The live tree holds exactly the one skill it held before.
-        let mut entries: Vec<String> = std::fs::read_dir(skills_dir(&home))
+        let mut entries: Vec<String> = std::fs::read_dir(canon(&home))
             .unwrap()
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
         entries.sort();
-        assert_eq!(
-            entries,
-            vec!["proposals".to_string(), "unrelated".to_string()]
-        );
+        assert_eq!(entries, vec!["unrelated".to_string()]);
         assert_eq!(
             before,
-            std::fs::read_to_string(skills_dir(&home).join("unrelated/SKILL.md")).unwrap()
+            std::fs::read_to_string(canon(&home).join("unrelated/SKILL.md")).unwrap()
         );
         // A second draft of the same lesson files nothing new: the gate
         // disposes of what is already waiting.
-        assert!(draft_session(&home, &session_log(&home, &records), None).is_empty());
+        assert!(
+            draft_session(&canon(&home), &home, &session_log(&home, &records), None).is_empty()
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
     // --- curation ---
 
     #[test]
-    fn curation_proposes_retirement_for_the_unused_and_merge_for_the_twins() {
+    fn curation_merges_the_twins_and_retires_nothing_from_the_canonical_library() {
         let home = scratch("curate");
         write_skill(
             &home,
@@ -2168,24 +2282,13 @@ mod tests {
         );
         let _ = used;
 
-        let filed = curate(&home, 2, MERGE_SIMILARITY_THRESHOLD);
+        let filed = curate(&canon(&home), &home, 2, MERGE_SIMILARITY_THRESHOLD);
         let names: Vec<String> = filed
             .iter()
             .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
             .collect();
-        assert!(names.contains(&"gamma".to_string()), "{names:?}");
         assert!(names.contains(&"alpha".to_string()), "{names:?}");
         let proposals = load_proposals(&home);
-        let retire = proposals
-            .iter()
-            .find(|p| p.name == "gamma")
-            .expect("the retire draft");
-        assert_eq!(retire.kind, ProposalKind::Retire);
-        assert!(
-            retire.evidence.contains("last 2 sessions"),
-            "{}",
-            retire.evidence
-        );
         let merge = proposals
             .iter()
             .find(|p| p.name == "alpha")
@@ -2193,12 +2296,17 @@ mod tests {
         assert_eq!(merge.kind, ProposalKind::Merge);
         assert!(merge.evidence.contains("0.86"), "{}", merge.evidence);
         assert!(merge.evidence.contains("`beta`"), "{}", merge.evidence);
-        // alpha was used, so it is not retired. beta is the absorbed half
-        // of the merge draft, so it gets no separate retire draft — two
-        // drafts disposing of one skill is noise.
+        // The retirement rule is a no-op against the canonical library:
+        // the usage scan reads fleet's sessions only, so "unused by
+        // fleet" is not unused across harnesses (KI-215). gamma was never
+        // selected and nothing is filed against it.
+        assert!(!names.contains(&"gamma".to_string()), "{names:?}");
         assert!(!names.contains(&"beta".to_string()), "{names:?}");
         // The live tree is untouched.
-        assert_eq!(skill_names(&load(&home)), vec!["alpha", "beta", "gamma"]);
+        assert_eq!(
+            skill_names(&load(&canon(&home))),
+            vec!["alpha", "beta", "gamma"]
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -2219,6 +2327,7 @@ mod tests {
         // One session of history against a window of twenty: nothing is
         // proposed, because "unused across the last 20" is not knowable.
         assert!(curate(
+            &canon(&home),
             &home,
             DEFAULT_RETIRE_AFTER_SESSIONS,
             MERGE_SIMILARITY_THRESHOLD
@@ -2292,7 +2401,7 @@ mod tests {
             "alpha",
             &good_skill("alpha", "probe the embeddings worker", "a"),
         );
-        let skills = load(&home);
+        let skills = load(&canon(&home));
         let usage = scan_usage(&home, 20);
         let rendered = render(&skills, &usage);
         assert!(rendered.contains("fleet skills"), "{rendered}");

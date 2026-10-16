@@ -1240,6 +1240,10 @@ pub struct Apply<'a> {
     pub home: &'a Path,
     pub repo: &'a Path,
     pub gate: &'a Gate,
+    /// The canonical skills library — the apply and retire targets for
+    /// a skill proposal, resolved at the boundary (`$FLEET_SKILLS_DIR`,
+    /// else `<user home>/.agents/skills`).
+    pub skills_dir: &'a Path,
     /// Approval in the current turn: `fleet improve apply --approve`.
     pub approved: bool,
     pub stream: Option<&'a Stream>,
@@ -1581,9 +1585,7 @@ fn stage_write_skill(proposal: &Proposal, content: &str, ctx: &Apply<'_>) -> Res
             "the proposed SKILL.md carries `proposed: true` \u{2014} that is a draft, not a live skill".to_string(),
         ));
     }
-    let target = skills::skills_dir(ctx.home)
-        .join(name)
-        .join(skills::SKILL_FILE);
+    let target = ctx.skills_dir.join(name).join(skills::SKILL_FILE);
     let pre = fs::read_to_string(&target).ok();
     let stash = preimages_dir(ctx.home).join(format!("{}.md", proposal.name));
     if let Some(text) = &pre {
@@ -1614,11 +1616,11 @@ fn stage_write_skill(proposal: &Proposal, content: &str, ctx: &Apply<'_>) -> Res
 /// is what makes the destruction reversible.
 fn stage_retire_skill(proposal: &Proposal, name: &str, ctx: &Apply<'_>) -> Result<Landed, Hold> {
     bare_name(name).map_err(Hold::Refused)?;
-    let directory = skills::skills_dir(ctx.home).join(name);
+    let directory = ctx.skills_dir.join(name);
     if !directory.is_dir() {
         return Err(Hold::Refused(format!(
             "no skill named `{name}` under {}",
-            skills::skills_dir(ctx.home).display()
+            ctx.skills_dir.display()
         )));
     }
     let stash = preimages_dir(ctx.home).join(format!("{}.retired", proposal.name));
@@ -1960,7 +1962,7 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
 /// create added). The proposal's status returns to `pending`: the
 /// change is not in effect, and the ledger keeps the record that it
 /// once was.
-pub fn undo(name: &str, home: &Path, repo: &Path) -> Result<String, String> {
+pub fn undo(name: &str, home: &Path, repo: &Path, skills_dir: &Path) -> Result<String, String> {
     let name = bare_name(name)?;
     let Some(proposal) = load_one(home, name) else {
         return Err(format!(
@@ -1981,7 +1983,7 @@ pub fn undo(name: &str, home: &Path, repo: &Path) -> Result<String, String> {
             format!("reverted commit {commit}")
         }
         None => {
-            let Some(restore) = undo_restore(home, &proposal) else {
+            let Some(restore) = undo_restore(home, skills_dir, &proposal) else {
                 return Err(format!(
                     "`{name}` is a repo-side change with no recorded commit, so there is nothing structural to revert"
                 ));
@@ -1996,11 +1998,11 @@ pub fn undo(name: &str, home: &Path, repo: &Path) -> Result<String, String> {
 
 /// The pre-image an applied home-side proposal keeps for its undo.
 /// `None` for a repo-side target, whose undo is the commit's revert.
-fn undo_restore(home: &Path, proposal: &Proposal) -> Option<Restore> {
+fn undo_restore(home: &Path, skills_dir: &Path, proposal: &Proposal) -> Option<Restore> {
     let store = preimages_dir(home);
     match proposal.target {
         Target::Skill => {
-            let skill = skills::skills_dir(home).join(&proposal.target_name);
+            let skill = skills_dir.join(&proposal.target_name);
             let moved = store.join(format!("{}.retired", proposal.name));
             if moved.exists() {
                 return Some(Restore {
@@ -2348,6 +2350,13 @@ mod tests {
         }
     }
 
+    /// The tests' canonical skills library: a `canonical-skills`
+    /// directory under the scratch home, passed to [`Apply`] and
+    /// [`undo`] as their `skills_dir`.
+    fn skills_canon(home: &Path) -> PathBuf {
+        home.join("canonical-skills")
+    }
+
     fn skill_proposal(home: &Path, name: &str, target_name: &str, body: &str) -> PathBuf {
         let text = render_proposal(
             name,
@@ -2543,7 +2552,8 @@ mod tests {
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
         // A live skill to update, and the proposal's new body.
-        let skill_dir = skills::skills_dir(&home).join("demo");
+        let canonical = skills_canon(&home);
+        let skill_dir = canonical.join("demo");
         fs::create_dir_all(&skill_dir).unwrap();
         let live = "---\nname: demo\ndescription: the old body\n---\n\nold body\n";
         fs::write(skill_dir.join(skills::SKILL_FILE), live).unwrap();
@@ -2552,6 +2562,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-skill-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &canonical,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -2616,6 +2627,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-memories-bypass-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -2666,6 +2678,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-dirty-target-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -2745,6 +2758,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-drift-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -2801,6 +2815,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-no-drift-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -2845,6 +2860,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-source-red-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -2895,6 +2911,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-source-green-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -2918,7 +2935,7 @@ mod tests {
         let stamped = load_one(&home, "fix-the-ranker").unwrap();
         assert_eq!(stamped.commit.as_deref(), Some(commit.as_str()));
         // The undo reverts the commit structurally.
-        let reverted = undo("fix-the-ranker", &home, &repo).expect("the undo");
+        let reverted = undo("fix-the-ranker", &home, &repo, &home).expect("the undo");
         assert!(reverted.contains("reverted commit"), "{reverted}");
         assert!(fs::read_to_string(repo.join("src/lib.rs"))
             .unwrap()
@@ -2953,6 +2970,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-eval-regress-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -3027,6 +3045,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-eval-not-run-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -3086,6 +3105,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-eval-green-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -3120,7 +3140,8 @@ mod tests {
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
         // A live skill, and a proposal that retires it.
-        let skill_dir = skills::skills_dir(&home).join("demo");
+        let canonical = skills_canon(&home);
+        let skill_dir = canonical.join("demo");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(
             skill_dir.join(skills::SKILL_FILE),
@@ -3132,6 +3153,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("apply-destructive-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &canonical,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -3182,7 +3204,8 @@ mod tests {
         let log = tools.join("gate.log");
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
-        let skill_dir = skills::skills_dir(&home).join("demo");
+        let canonical = skills_canon(&home);
+        let skill_dir = canonical.join("demo");
         fs::create_dir_all(&skill_dir).unwrap();
         let live = "---\nname: demo\ndescription: the old body\n---\n\nold body\n";
         let live_path = skill_dir.join(skills::SKILL_FILE);
@@ -3192,6 +3215,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("undo-skill-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &canonical,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -3203,7 +3227,7 @@ mod tests {
             Verdict::Applied { .. }
         ));
         assert!(fs::read_to_string(&live_path).unwrap().contains("new body"));
-        let reverted = undo("demo-update", &home, &repo).expect("the undo");
+        let reverted = undo("demo-update", &home, &repo, &skills_canon(&home)).expect("the undo");
         assert!(reverted.contains("restored the pre-image"), "{reverted}");
         assert_eq!(fs::read_to_string(&live_path).unwrap(), live);
     }
@@ -3219,8 +3243,10 @@ mod tests {
         let change = r#"{"op": "write-skill", "content": "---\nname: fresh\ndescription: a new skill\n---\n\nbody\n"}"#;
         skill_proposal(&home, "create-fresh", "fresh", change);
         let stream = calib::Stream::open(scratch("undo-create-calib"));
+        let canonical = skills_canon(&home);
         let ctx = Apply {
             home: &home,
+            skills_dir: &canonical,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -3231,14 +3257,12 @@ mod tests {
             apply("create-fresh", &ctx),
             Verdict::Applied { .. }
         ));
-        let created = skills::skills_dir(&home)
-            .join("fresh")
-            .join(skills::SKILL_FILE);
+        let created = canonical.join("fresh").join(skills::SKILL_FILE);
         assert!(created.exists());
-        undo("create-fresh", &home, &repo).expect("the undo");
+        undo("create-fresh", &home, &repo, &canonical).expect("the undo");
         assert!(!created.exists(), "the created file is gone");
         assert!(
-            !skills::skills_dir(&home).join("fresh").exists(),
+            !skills_canon(&home).join("fresh").exists(),
             "the empty directory is gone too"
         );
     }
@@ -3251,7 +3275,8 @@ mod tests {
         let log = tools.join("gate.log");
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
-        let skill_dir = skills::skills_dir(&home).join("demo");
+        let canonical = skills_canon(&home);
+        let skill_dir = canonical.join("demo");
         fs::create_dir_all(&skill_dir).unwrap();
         let live = "---\nname: demo\ndescription: a demo\n---\n\nbody\n";
         fs::write(skill_dir.join(skills::SKILL_FILE), live).unwrap();
@@ -3260,6 +3285,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("undo-retire-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &canonical,
             repo: &repo,
             gate: &gate,
             approved: true,
@@ -3271,7 +3297,7 @@ mod tests {
             Verdict::Applied { .. }
         ));
         assert!(!skill_dir.exists());
-        undo("retire-demo", &home, &repo).expect("the undo");
+        undo("retire-demo", &home, &repo, &skills_canon(&home)).expect("the undo");
         assert_eq!(
             fs::read_to_string(skill_dir.join(skills::SKILL_FILE)).unwrap(),
             live
@@ -3337,6 +3363,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("provenance-inferred-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,
@@ -3378,6 +3405,7 @@ mod tests {
         let stream = calib::Stream::open(scratch("provenance-confirmed-calib"));
         let ctx = Apply {
             home: &home,
+            skills_dir: &home,
             repo: &repo,
             gate: &gate,
             approved: false,

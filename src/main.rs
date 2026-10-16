@@ -118,6 +118,7 @@ fn fleet_home() -> Result<std::path::PathBuf, String> {
 }
 
 async fn run_command(options: &RunOptions) -> ExitCode {
+    let user_home = std::env::var("HOME").ok();
     let home = match fleet_home() {
         Ok(home) => home,
         Err(message) => {
@@ -152,7 +153,7 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         prepared.decision.how.label(),
         prepared.decision.model
     );
-    let skills = fleet::skills::load(&home);
+    let skills = load_skills(user_home.as_deref());
     let outcome = drive(
         &prepared,
         prepared.decision.model.clone(),
@@ -225,7 +226,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     // The skills are loaded once per chat session and declared on every
     // run in it: the files can change between runs, and the per-run
     // `skills` record is what pins what each run actually saw.
-    let skills = fleet::skills::load(&home);
+    let skills = load_skills(user_home.as_deref());
     let stdin = std::io::stdin();
     // The route is chosen once, on the first task, and the committed router
     // is reused for the rest of the session — one sys1 judgment, not one
@@ -345,13 +346,35 @@ fn report_walk(prepared: &route::Prepared) {
 /// and fails nothing.
 fn draft_lessons(home: &std::path::Path, session_path: &std::path::Path) {
     let user_home = std::env::var("HOME").ok();
-    let filed = fleet::skills::draft_session(home, session_path, user_home.as_deref());
-    if !filed.is_empty() {
-        eprintln!(
-            "fleet: skills: drafted {} proposal(s) awaiting the gate in {}",
-            filed.len(),
-            fleet::skills::proposals_dir(home).display()
-        );
+    let skills_dir = std::env::var("FLEET_SKILLS_DIR").ok();
+    if let Some(canonical) =
+        fleet::skills::resolve_skills_dir(skills_dir.as_deref(), user_home.as_deref())
+    {
+        let filed =
+            fleet::skills::draft_session(&canonical, home, session_path, user_home.as_deref());
+        if !filed.is_empty() {
+            eprintln!(
+                "fleet: skills: drafted {} proposal(s) awaiting the gate in {}",
+                filed.len(),
+                fleet::skills::proposals_dir(home).display()
+            );
+        }
+    }
+}
+
+/// The canonical library's skills, for the surfaces that declare them:
+/// `$FLEET_SKILLS_DIR` wins, else `<user home>/.agents/skills`. When
+/// neither is known there are no skills, and one line says so.
+fn load_skills(user_home: Option<&str>) -> Vec<fleet::skills::Skill> {
+    let override_dir = std::env::var("FLEET_SKILLS_DIR").ok();
+    match fleet::skills::resolve_skills_dir(override_dir.as_deref(), user_home) {
+        Some(dir) => fleet::skills::load(&dir),
+        None => {
+            eprintln!(
+                "fleet: skills: no skills directory resolvable \u{2014} set FLEET_SKILLS_DIR or HOME"
+            );
+            Vec::new()
+        }
     }
 }
 
@@ -370,6 +393,7 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
         return ExitCode::from(2);
     };
+    let user_home = std::env::var("HOME").ok();
     if let Some(name) = &options.show {
         return match fleet::skills::read_proposal(&home, name) {
             Ok(text) => {
@@ -384,9 +408,23 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
     }
     if options.curate {
         let config = route::skills_config(&home);
-        let filed =
-            fleet::skills::curate(&home, config.retire_after_sessions, config.merge_similarity);
-        print!("{}", fleet::skills::render_curation(&filed));
+        let override_dir = std::env::var("FLEET_SKILLS_DIR").ok();
+        match fleet::skills::resolve_skills_dir(override_dir.as_deref(), user_home.as_deref()) {
+            Some(canonical) => {
+                let filed = fleet::skills::curate(
+                    &canonical,
+                    &home,
+                    config.retire_after_sessions,
+                    config.merge_similarity,
+                );
+                print!("{}", fleet::skills::render_curation(&filed));
+            }
+            None => {
+                eprintln!(
+                    "fleet: skills: no skills directory resolvable \u{2014} set FLEET_SKILLS_DIR or HOME"
+                );
+            }
+        }
     }
     if options.proposed {
         print!(
@@ -395,7 +433,7 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
         );
     } else if !options.curate {
         let config = route::skills_config(&home);
-        let skills = fleet::skills::load(&home);
+        let skills = load_skills(user_home.as_deref());
         let usage = fleet::skills::scan_usage(&home, config.retire_after_sessions);
         print!("{}", fleet::skills::render(&skills, &usage));
     }
@@ -656,6 +694,19 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
             // never waved through by an eval step that did not run, or
             // by a stale installed binary's green.
             let eval = Some(fleet::eval::subprocess_probe(&repo));
+            let skills_override = std::env::var("FLEET_SKILLS_DIR").ok();
+            let canonical = match fleet::skills::resolve_skills_dir(
+                skills_override.as_deref(),
+                user_home.as_deref(),
+            ) {
+                Some(dir) => dir,
+                None => {
+                    eprintln!(
+                        "fleet: improve: no skills directory resolvable \u{2014} set FLEET_SKILLS_DIR or HOME"
+                    );
+                    return ExitCode::FAILURE;
+                }
+            };
             let ctx = fleet::improve::Apply {
                 home: &home,
                 repo: &repo,
@@ -663,6 +714,7 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
                 approved: *approve,
                 stream: Some(&stream),
                 eval,
+                skills_dir: &canonical,
             };
             let verdict = fleet::improve::apply(name, &ctx);
             match &verdict {
@@ -678,13 +730,26 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
         }
         ImproveAction::Undo { name } => {
             let repo = std::env::current_dir().unwrap_or_default();
-            match fleet::improve::undo(name, &home, &repo) {
-                Ok(summary) => {
+            let user_home = std::env::var("HOME").ok();
+            let skills_override = std::env::var("FLEET_SKILLS_DIR").ok();
+            let canonical =
+                fleet::skills::resolve_skills_dir(skills_override.as_deref(), user_home.as_deref());
+            match canonical
+                .as_deref()
+                .map(|dir| fleet::improve::undo(name, &home, &repo, dir))
+            {
+                Some(Ok(summary)) => {
                     println!("fleet: improve: {summary}");
                     ExitCode::SUCCESS
                 }
-                Err(error) => {
+                Some(Err(error)) => {
                     eprintln!("fleet: improve: {error}");
+                    ExitCode::FAILURE
+                }
+                None => {
+                    eprintln!(
+                        "fleet: improve: no skills directory resolvable \u{2014} set FLEET_SKILLS_DIR or HOME"
+                    );
                     ExitCode::FAILURE
                 }
             }
