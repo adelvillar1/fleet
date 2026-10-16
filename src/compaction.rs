@@ -18,11 +18,48 @@
 
 use crate::api::{Message, Role};
 
-/// The token budget a conversation is compacted at. DeepSeek's window is
-/// 128k, so this fires at roughly 80% of it — early enough that the
-/// request that crosses it still fits, late enough that a run which
-/// never approaches the window pays nothing.
+/// The floor under every derived budget, and the budget itself for a
+/// model whose window is not declared. DeepSeek's window is 128k, so
+/// this fires at roughly 80% of it — early enough that the request that
+/// crosses it still fits, late enough that a run which never approaches
+/// the window pays nothing.
 pub const COMPACTION_TOKEN_BUDGET: u64 = 100_000;
+
+/// The fraction of a context window the conversation is folded at. Three
+/// fifths leaves two fifths for the fold's own summary and the turns
+/// that follow it, which is the headroom the window is actually spent on.
+const WINDOW_FRACTION_NUM: u64 = 3;
+const WINDOW_FRACTION_DEN: u64 = 5;
+
+/// The headroom kept below a window's edge. The fold's summary request
+/// carries the region being summarized plus a long response, so the
+/// budget never reaches the edge itself — but it is a reserve for a
+/// *typical* long response, not for the model's maximum selectable
+/// output: a model that can emit 256k tokens does not emit them every
+/// turn, and a budget sized to the maximum would fold every turn
+/// instead.
+const WINDOW_RESERVE: u64 = 32_000;
+
+/// The token budget one run compacts at, given the serving model's
+/// declared context window.
+///
+/// A fixed budget is the behaviour every run had before windows were
+/// declared, and it is tuned for the smallest window in the roster: on
+/// step-5-preview's 1M window it folds ten times more often than the
+/// window requires, and every fold costs a summary request and a
+/// lossier conversation. So the budget follows the window when it is
+/// known — a fraction of it, held at or above the floor for small
+/// windows and held below the edge for every one — and falls back to
+/// the floor when it is not, which is the behaviour a run with an
+/// undeclared model has always had.
+pub fn budget_for(window: Option<u64>) -> u64 {
+    let Some(window) = window.filter(|window| *window > 0) else {
+        return COMPACTION_TOKEN_BUDGET;
+    };
+    let fraction = window * WINDOW_FRACTION_NUM / WINDOW_FRACTION_DEN;
+    let edge = window.saturating_sub(WINDOW_RESERVE);
+    fraction.max(COMPACTION_TOKEN_BUDGET).min(edge)
+}
 
 /// How many of the most recent turns stay verbatim after a compaction.
 /// The summary is lossy by construction; the tail is not, so the work in
@@ -211,6 +248,37 @@ mod tests {
     fn the_budget_and_the_tail_are_named_constants() {
         assert_eq!(COMPACTION_TOKEN_BUDGET, 100_000);
         assert_eq!(COMPACTION_TAIL_TURNS, 4);
+    }
+
+    #[test]
+    fn the_budget_follows_the_window_and_falls_back_to_the_floor() {
+        // No window declared: the floor, which is the behaviour every run
+        // had before windows were declared.
+        assert_eq!(budget_for(None), 100_000);
+        assert_eq!(budget_for(Some(0)), 100_000);
+        // A small window is held at the floor and never past the edge:
+        // 60% of 128k is 76,800, so the floor wins, and the edge is what
+        // keeps it under the window itself.
+        assert_eq!(budget_for(Some(128_000)), 96_000);
+        assert_eq!(budget_for(Some(65_536)), 33_536);
+        // The roster's own stepfun window: three fifths of it, and the
+        // edge is nowhere near.
+        assert_eq!(budget_for(Some(262_144)), 157_286);
+        // step-5-preview's 1M window: the case this was built for. The
+        // fixed budget folded this model at 100k — ten times more often
+        // than its window requires.
+        assert_eq!(budget_for(Some(1_024_000)), 614_400);
+        // A window whose three fifths pass the edge is held at the edge.
+        assert_eq!(budget_for(Some(60_000)), 28_000);
+        // Every derived budget stays inside its window, which is what
+        // makes the request that crosses it still fit.
+        for window in [
+            65_536u64, 128_000, 262_144, 400_000, 1_000_000, 1_024_000, 1_048_576,
+        ] {
+            let budget = budget_for(Some(window));
+            assert!(budget <= window, "{budget} past {window}");
+            assert!(budget > 0, "{budget}");
+        }
     }
 
     #[test]

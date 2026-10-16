@@ -74,6 +74,46 @@ pub const JUDGE_LANE: &str = "sys1";
 /// The sys1 task that answers the routing judgment (workload + execution).
 const JUDGE_TASK: &str = "route";
 
+// --- the context windows ----------------------------------------------------
+
+/// One model's context window in tokens: the declaration the compaction
+/// budget is derived from.
+///
+/// Fleet's own table, because the own-home ruling forbids reading another
+/// harness's config at runtime — these values were taken once from the
+/// owner's own provider config and are declared here rather than
+/// mirrored, so a drift between the two is a declaration to update and
+/// not a second truth to reconcile. A model the roster does not declare
+/// has no window, and the compaction budget falls back to its floor,
+/// which is the behaviour every run had before windows were declared.
+const CONTEXT_WINDOWS: &[(&str, &str, u64)] = &[
+    ("zai-coding-plan", "GLM-5.3-Flash", 1_000_000),
+    ("xiaomi-mimo", "mimo-v2.6-flash", 1_000_000),
+    ("xiaomi-mimo", "mimo-v2.6-pro", 1_000_000),
+    ("xiaomi-mimo", "mimo-v2.5-pro", 128_000),
+    ("xiaomi-mimo", "mimo-v2.5", 128_000),
+    ("stepfun", "step-3.7-flash", 262_144),
+    ("stepfun", "step-3.5-flash", 262_144),
+    ("stepfun", "step-3.5-flash-2603", 262_144),
+    ("stepfun", "step-5-preview", 1_024_000),
+    ("token-plan", "qwen3.8-flash", 1_000_000),
+    ("deepseek", crate::api::DEFAULT_MODEL, 128_000),
+];
+
+/// The declared context window for one model, or `None` when the roster
+/// declares none.
+///
+/// The lookup is case-insensitive: the roster's own spelling is
+/// canonical, and a pin or an override that spells a model differently
+/// still resolves to the one declaration.
+pub fn context_window(provider: &str, model: &str) -> Option<u64> {
+    let (provider, model) = (provider.to_ascii_lowercase(), model.to_ascii_lowercase());
+    CONTEXT_WINDOWS
+        .iter()
+        .find(|(p, m, _)| p.to_ascii_lowercase() == provider && m.to_ascii_lowercase() == model)
+        .map(|(_, _, window)| *window)
+}
+
 // --- the roster -------------------------------------------------------------
 
 /// One roster entry: a provider — where it lives, the *name* of the env
@@ -2377,6 +2417,56 @@ fn plain(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- the context windows ---
+
+    #[test]
+    fn every_model_the_roster_serves_has_its_window_declared_or_named_absent() {
+        // The table's whole point is that a budget can be derived for the
+        // model that serves, so every model in the compiled roster is
+        // either declared here or deliberately absent — an absence is the
+        // floor, which is honest, but a typo that silently drops a model
+        // from the table is not.
+        let roster = default_roster();
+        let undeclared: Vec<String> = roster
+            .iter()
+            .flat_map(|candidate| {
+                candidate
+                    .models
+                    .iter()
+                    .map(move |model| format!("{}/{}", candidate.id, model))
+            })
+            .filter(|pair| {
+                let (provider, model) = pair.split_once('/').expect("a pair");
+                context_window(provider, model).is_none()
+            })
+            .collect();
+        // The vendored lane and the providers whose windows are not
+        // declared: a lane's window is the grounding provider's, not
+        // fleet's to state, and an undeclared one keeps the floor.
+        assert_eq!(
+            undeclared,
+            vec![
+                "liquid/lfm2.5-24b-a2b".to_string(),
+                "blend1/blend1".to_string()
+            ],
+            "{undeclared:?}"
+        );
+    }
+
+    #[test]
+    fn the_window_lookup_is_case_insensitive_and_names_an_unknown_model() {
+        assert_eq!(context_window("stepfun", "step-5-preview"), Some(1_024_000));
+        assert_eq!(context_window("STEPFUN", "STEP-5-PREVIEW"), Some(1_024_000));
+        assert_eq!(
+            context_window("zai-coding-plan", "glm-5.3-flash"),
+            Some(1_000_000)
+        );
+        // A model the roster does not declare has no window, and the
+        // compaction budget falls back to its floor for it.
+        assert_eq!(context_window("stepfun", "step-9-preview"), None);
+        assert_eq!(context_window("no-such-provider", "step-5-preview"), None);
+    }
 
     fn api(status: u16) -> ClientError {
         ClientError::Api(crate::api::ApiError {

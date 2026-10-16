@@ -1304,10 +1304,17 @@ impl<'a> Agent<'a> {
     /// The measure is the API-reported `prompt_tokens` of the last
     /// response when it carried one — the streamed usage does, so this is
     /// the ordinary case — and the chars/4 estimate of the assembled
-    /// messages when it did not. A conversation under
-    /// [`compaction::COMPACTION_TOKEN_BUDGET`] costs one comparison and
-    /// nothing else, so the run that never approaches the window is
-    /// byte-for-byte the run it has always been.
+    /// messages when it did not. A conversation under its budget costs
+    /// one comparison and nothing else, so the run that never approaches
+    /// the window is byte-for-byte the run it has always been.
+    ///
+    /// The budget is the serving model's own, derived from the window the
+    /// roster declares for it: a fixed budget is tuned for the smallest
+    /// window in the roster, and on a 1M model it folds ten times more
+    /// often than the window requires — each fold a summary request and
+    /// a lossier conversation. A model with no declared window keeps the
+    /// floor, which is the behaviour every run had before windows were
+    /// declared.
     ///
     /// One compaction per crossing: the latch holds from a compaction
     /// (or a failed or skipped one) until a measurement comes back under
@@ -1317,11 +1324,12 @@ impl<'a> Agent<'a> {
         let measured = self
             .last_prompt_tokens
             .unwrap_or_else(|| compaction::estimate_tokens(&self.messages));
+        let budget = compaction::budget_for(self.serving_window());
         // A forced fold ignores the budget but not the latch: the
         // owner asked for a checkpoint, not an unbounded chain of
         // summaries, and one fold per turn boundary is what the latch
         // already buys.
-        if !self.compact_now && measured < compaction::COMPACTION_TOKEN_BUDGET {
+        if !self.compact_now && measured < budget {
             self.compaction_latch = false;
             return Ok(());
         }
@@ -1337,6 +1345,19 @@ impl<'a> Agent<'a> {
             return Ok(());
         }
         self.compact(system_prompt, tail_start, measured).await
+    }
+
+    /// The context window of the model this run is actually serving, read
+    /// off the committed route rather than off the options: the route is
+    /// what the request reaches, and a run whose router walked past its
+    /// first choice is served by the model that walked to, not the one it
+    /// asked for. `None` when this run has no router — a plain client,
+    /// whose behaviour is the floor either way — or when the roster
+    /// declares no window for the model it is serving.
+    fn serving_window(&self) -> Option<u64> {
+        self.client
+            .route_decision()
+            .and_then(|decision| crate::route::context_window(&decision.provider, &decision.model))
     }
 
     /// Summarize-and-continue: one request through this run's own client
@@ -5121,6 +5142,114 @@ You are auditing a change. Read the diff before you judge it.
         // And the flag is one-shot: consumed at the boundary it fired
         // on, so a later turn's ordinary budget reading decides again.
         assert!(!agent.compact_now, "the forced fold is consumed once");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The window-aware budget: a run routed to a model whose window the
+    /// roster declares compacts at that window's budget, not at the
+    /// floor. This is the regression the owner felt — step-5-preview's 1M
+    /// window folding at 100k, ten times more often than the window
+    /// requires, each fold a summary request and a lossier conversation.
+    #[tokio::test]
+    async fn a_large_window_model_does_not_fold_at_the_floor() {
+        let home = scratch("window-aware");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let resolved = crate::route::resolve(&crate::route::default_roster(), &HashMap::new());
+        let decision = crate::route::RouteDecision {
+            provider: "stepfun".to_string(),
+            model: "step-5-preview".to_string(),
+            how: crate::route::How::Judged,
+            workload: Some("hard".to_string()),
+            verdict: Some("pass".to_string()),
+            reason: "sys1 judged `hard`".to_string(),
+            judged_from: crate::route::JudgedFrom::Fresh,
+            start_index: 0,
+            order: vec![("stepfun".to_string(), "step-5-preview".to_string())],
+        };
+        let client = crate::api::Client::routed(std::sync::Arc::new(crate::route::Router::new(
+            resolved, decision,
+        )));
+        let options = AgentOptions {
+            model: "step-5-preview".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            gui_prompt: None,
+            compact_now: false,
+        };
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+
+        // The window the run is actually serving reaches the budget, read
+        // off the committed route rather than off the options.
+        assert_eq!(agent.serving_window(), Some(1_024_000));
+        assert_eq!(
+            crate::compaction::budget_for(agent.serving_window()),
+            614_400
+        );
+
+        // 300k tokens: over the floor, well under the window's budget.
+        // Under the fixed budget this conversation folded here.
+        agent
+            .push_message(Message::text(Role::User, "x".repeat(1_200_000)))
+            .unwrap();
+        agent.last_prompt_tokens = Some(300_000);
+        agent.maybe_compact("system").await.unwrap();
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        assert!(
+            !records
+                .iter()
+                .any(|record| matches!(record, Record::Compaction { .. })),
+            "a 300k conversation on a 1M-window model must not fold"
+        );
+
+        // A plain client with no router keeps the floor, which is the
+        // behaviour every run had before windows were declared.
+        let plain = Client::new("http://127.0.0.1:9", "k");
+        let plain_options = AgentOptions {
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            gui_prompt: None,
+            compact_now: false,
+        };
+        let mut plain_session = crate::session::Session::create(&home, "m").unwrap();
+        let mut plain_progress = Vec::new();
+        let plain_agent = Agent::new(
+            &plain,
+            plain_options,
+            &mut plain_session,
+            Box::new(ApproveAll),
+            &mut plain_progress,
+        )
+        .unwrap();
+        assert_eq!(plain_agent.serving_window(), None);
+        assert_eq!(
+            crate::compaction::budget_for(plain_agent.serving_window()),
+            100_000
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
