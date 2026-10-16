@@ -653,9 +653,10 @@ impl App {
                 self.entries
                     .push(Entry::Skills(SkillsCard { loaded, skipped }));
             }
-            UiEvent::Routed { provider, how } => {
+            UiEvent::Routed { provider, how, .. } => {
                 // The route this run takes: the status bar shows the active
-                // provider and how it was chosen.
+                // provider and how it was chosen. The rest of the decision
+                // is the browser face's to render; the bar reads two facts.
                 self.status.provider = Some(provider);
                 self.status.route_how = Some(how);
             }

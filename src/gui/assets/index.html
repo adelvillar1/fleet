@@ -105,6 +105,17 @@
     </aside>
   </main>
 
+  <!-- The router. Two sources, and the panel says which is which: the
+       board's own read of Fleet's routing state, fetched from the one
+       route, and the live decision of the run in flight, which is the
+       `routed` event already in the log and so moves with the stream.
+       The cards are built in the script from the read document, because
+       what a day with no route rows looks like is a fact about the day
+       and not about the markup. -->
+  <main class="stage stage-board" id="panel-router" hidden>
+    <div class="board" id="router-board"></div>
+  </main>
+
   <!-- The other addresses of the plan's route table. They are keyed
        panels, not routes: the browser never asks the server for a page,
        and a surface that is not built yet says so instead of pretending. -->

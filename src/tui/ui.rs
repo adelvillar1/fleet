@@ -2991,6 +2991,7 @@ mod tests {
                     provider: "stepfun".to_string(),
                     model: "stepfun/step-3.7-flash".to_string(),
                     outcome: "served".to_string(),
+                    providers_used: vec!["stepfun".to_string()],
                     workload: Some("quick".to_string()),
                     ms: Some(2_000),
                     reason: None,
@@ -3000,9 +3001,22 @@ mod tests {
                     provider: "zai-coding-plan".to_string(),
                     model: "zai-coding-plan/GLM-5.3-Flash".to_string(),
                     outcome: "failed".to_string(),
+                    providers_used: vec!["stepfun".to_string(), "zai-coding-plan".to_string()],
                     workload: Some("standard_code".to_string()),
                     ms: Some(812),
                     reason: Some("upstream refused".to_string()),
+                },
+            ],
+            hours: vec![
+                crate::boards::HourColumn {
+                    hour: 9,
+                    calls: 12_004,
+                    errors: 141,
+                },
+                crate::boards::HourColumn {
+                    hour: 14,
+                    calls: 7_869,
+                    errors: 86,
                 },
             ],
             judge_counters: Some(crate::boards::JudgeCounters {

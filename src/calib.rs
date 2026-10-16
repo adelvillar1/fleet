@@ -1575,6 +1575,24 @@ pub struct ReadAttempt {
 /// op. An unreadable or absent file is an empty read: the reader is
 /// advisory, and "no evidence" is never an error.
 pub fn read_day(root: &Path, day: &str, cap: usize) -> Vec<ReadRow> {
+    tail_rows(root, day, cap, |_| true)
+}
+
+/// Read the last `cap` rows of one op from a day's stream, oldest first.
+///
+/// A day's file is mixed-op — the route rows share it with every turn,
+/// screen, recall and consolidation row — so a tail of the file is not a
+/// tail of any one op. On a busy day the last route row sits above
+/// hundreds of later rows, and a whole-stream cap reads none of them.
+/// Bounding the op instead keeps the board's rows the routes that were
+/// just served, whatever else has run since.
+pub fn read_op_day(root: &Path, day: &str, op: &str, cap: usize) -> Vec<ReadRow> {
+    tail_rows(root, day, cap, |row| row.op == op)
+}
+
+/// The shared reader behind both bounds: Fleet's rows only, the last
+/// `cap` of the ones `keep` accepts, oldest first.
+fn tail_rows(root: &Path, day: &str, cap: usize, keep: impl Fn(&ReadRow) -> bool) -> Vec<ReadRow> {
     if cap == 0 {
         return Vec::new();
     }
@@ -1608,10 +1626,12 @@ pub fn read_day(root: &Path, day: &str, cap: usize) -> Vec<ReadRow> {
             continue;
         };
         if let Some(row) = parse_row(text) {
-            if tail.len() == cap {
-                tail.pop_front();
+            if keep(&row) {
+                if tail.len() == cap {
+                    tail.pop_front();
+                }
+                tail.push_back(row);
             }
-            tail.push_back(row);
         }
     }
     tail.into()

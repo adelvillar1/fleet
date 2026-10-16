@@ -428,6 +428,10 @@ pub struct RouterSnapshot {
     pub models: Vec<ModelRow>,
     /// The recent route rows, newest first.
     pub recent: Vec<RecentRow>,
+    /// The day's calls bucketed by their own UTC hour, in clock order,
+    /// with the hours that saw no call left out. A day column chart is
+    /// this and nothing else: the shape of the day the ledger recorded.
+    pub hours: Vec<HourColumn>,
     pub judge_counters: Option<JudgeCounters>,
     /// The workload mix, busiest first.
     pub workloads: Vec<(String, u64)>,
@@ -477,6 +481,15 @@ pub struct ModelRow {
     pub total_tokens: u64,
 }
 
+/// One UTC hour of the day: the calls the ledger saw in it, and how many
+/// of those ended in a walk that served. The chart's own column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HourColumn {
+    pub hour: u32,
+    pub calls: u64,
+    pub errors: u64,
+}
+
 /// One recent route row, the board's "what Fleet just served" row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentRow {
@@ -486,6 +499,11 @@ pub struct RecentRow {
     pub model: String,
     /// The walk's own outcome word: `served`, `failed`, or `skipped`.
     pub outcome: String,
+    /// The candidates the walk actually attempted, in the order it
+    /// attempted them. This is the failover history: a row whose walk
+    /// took more than one candidate served because an earlier one did
+    /// not, and the row says which.
+    pub providers_used: Vec<String>,
     pub workload: Option<String>,
     pub ms: Option<u64>,
     pub reason: Option<String>,
@@ -513,11 +531,12 @@ pub struct JudgeCounters {
 /// A day with no rows is not a refusal: the chain renders and the ledger
 /// says so, the way a fresh install reads.
 pub fn read_router(state: &RouterState, day: &str) -> RouterSnapshot {
-    let rows = crate::calib::read_day(&state.root, day, ROUTER_ROW_CAP);
-    let route_rows: Vec<&crate::calib::ReadRow> = rows
-        .iter()
-        .filter(|row| row.op == crate::calib::OP_ROUTE)
-        .collect();
+    // The route rows are read by op, not as a tail of the file: a day's
+    // stream is mixed-op, and on a busy day the last route row sits above
+    // hundreds of later rows — a whole-stream cap reads none of them and
+    // the board renders an empty day over a day that routed.
+    let rows = crate::calib::read_op_day(&state.root, day, crate::calib::OP_ROUTE, ROUTER_ROW_CAP);
+    let route_rows: Vec<&crate::calib::ReadRow> = rows.iter().collect();
     RouterSnapshot {
         read_at: now_stamp(),
         judge: Some((
@@ -534,6 +553,7 @@ pub fn read_router(state: &RouterState, day: &str) -> RouterSnapshot {
         totals: route_totals(&route_rows),
         models: model_rows(&route_rows),
         recent: recent_rows(&route_rows),
+        hours: hour_columns(&route_rows),
         judge_counters: judge_counters(&route_rows),
         workloads: workload_mix(&route_rows),
         guidance: demotion_guidance(state),
@@ -591,6 +611,12 @@ fn payg_guard(
 /// in a `served` attempt counts as ok, and every other row counts as an
 /// error. Fleet's route rows carry no token counts, so the token fields
 /// stay zero rather than being estimated from a character count.
+///
+/// "Ended in" is the row's last attempt, not any attempt it walked
+/// through: a session's attempts accumulate across the calls it made, so
+/// a row whose first call served and whose second failed ended failed —
+/// the same reading the row's own state dot gives, and the reason the
+/// ledger and the row list cannot disagree about one run.
 fn route_totals(rows: &[&crate::calib::ReadRow]) -> Option<UsageTotals> {
     if rows.is_empty() {
         return None;
@@ -599,8 +625,8 @@ fn route_totals(rows: &[&crate::calib::ReadRow]) -> Option<UsageTotals> {
         .iter()
         .filter(|row| {
             row.attempts
-                .iter()
-                .any(|attempt| attempt.outcome == "served")
+                .last()
+                .is_some_and(|attempt| attempt.outcome == "served")
         })
         .count() as u64;
     Some(UsageTotals {
@@ -659,6 +685,7 @@ fn recent_rows(rows: &[&crate::calib::ReadRow]) -> Vec<RecentRow> {
                 provider: row.provider.clone(),
                 model: row.model.clone(),
                 outcome,
+                providers_used: row.providers_used.clone(),
                 workload: (!row.workload.is_empty()).then(|| row.workload.clone()),
                 ms: Some(row.latency_ms),
                 reason: (!row.reason.is_empty()).then(|| row.reason.clone()),
@@ -667,6 +694,45 @@ fn recent_rows(rows: &[&crate::calib::ReadRow]) -> Vec<RecentRow> {
         .collect();
     recent.truncate(6);
     recent
+}
+
+/// The day's calls bucketed by the hour their own stamp says, in clock
+/// order. An hour with no calls is not a zero-height column: the ledger
+/// has nothing to say about it, and a chart that drew it would be
+/// inventing the shape of a day it never saw. The stamp is the crate's
+/// one time vocabulary, so a row that carries no hour is simply not
+/// counted rather than guessed at.
+fn hour_columns(rows: &[&crate::calib::ReadRow]) -> Vec<HourColumn> {
+    let mut hours: Vec<HourColumn> = Vec::new();
+    for row in rows {
+        let hour = row
+            .ts
+            .as_bytes()
+            .get(11..13)
+            .and_then(|digits| std::str::from_utf8(digits).ok())
+            .and_then(|digits| digits.parse::<u32>().ok());
+        let Some(hour) = hour.filter(|hour| *hour < 24) else {
+            continue;
+        };
+        let served = row
+            .attempts
+            .iter()
+            .any(|attempt| attempt.outcome == "served");
+        if let Some(column) = hours.iter_mut().find(|column| column.hour == hour) {
+            column.calls += 1;
+            if !served {
+                column.errors += 1;
+            }
+        } else {
+            hours.push(HourColumn {
+                hour,
+                calls: 1,
+                errors: u64::from(!served),
+            });
+        }
+    }
+    hours.sort_by_key(|column| column.hour);
+    hours
 }
 
 /// The judgment split: a judgment made this run, one served from the
@@ -1868,6 +1934,19 @@ mod tests {
         .to_string()
     }
 
+    /// One `tool_screen` row, the shape the stream writes. A busy day's
+    /// screens are what bury the route rows, so the regression test
+    /// writes a day of them.
+    fn screen_row(ts: &str) -> String {
+        serde_json::json!({
+            "op": crate::calib::OP_TOOL_SCREEN,
+            "ts": ts,
+            "tool": "read",
+            "verdict": "allow",
+        })
+        .to_string()
+    }
+
     /// Write `lines` as one day's stream file under `root`.
     fn write_day(root: &Path, day: &str, lines: &[String]) {
         let path = crate::calib::day_path(root, day);
@@ -2015,6 +2094,23 @@ mod tests {
             Some("the lane judged the workload")
         );
         assert_eq!(snapshot.recent[1].ms, Some(3_311));
+        // The walk the row actually took, in the order it took it. This
+        // is the failover history: the row that served after a failure
+        // names both candidates, and the order says which one fell.
+        assert_eq!(
+            snapshot.recent[2].providers_used,
+            vec!["stepfun".to_string(), "zai-coding-plan".to_string()]
+        );
+        assert_eq!(
+            snapshot.recent[1].providers_used,
+            vec!["stepfun".to_string()],
+            "a row whose walk failed outright walked the one candidate it named"
+        );
+        assert_eq!(
+            snapshot.recent[0].providers_used,
+            vec!["stepfun".to_string()],
+            "a row that served first try walked one candidate"
+        );
         assert_eq!(
             snapshot.recent[0].workload.as_deref(),
             Some("quick"),
@@ -2036,6 +2132,101 @@ mod tests {
         assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
     }
 
+    /// The defect the board shipped with: a day's stream is mixed-op, and
+    /// the route rows were read as a tail of the whole file. On a busy day
+    /// the last route row sits above hundreds of later rows — here the
+    /// afternoon's screens, which is a real day's shape — so the whole
+    /// stream fell outside its cap and the ledger read an empty day over
+    /// a day that routed. The rows are read by op now.
+    #[test]
+    fn the_router_board_reads_a_busy_days_route_rows_past_the_other_ops() {
+        let scratch = Scratch::new("router-busy-day");
+        let day = "2026-10-16";
+        let mut lines = a_days_rows();
+        for index in 0..(ROUTER_ROW_CAP * 4) {
+            lines.push(screen_row(&format!(
+                "2026-10-16T14:{:02}:{:02}Z",
+                (index / 60) % 60,
+                index % 60
+            )));
+        }
+        write_day(scratch.path(), day, &lines);
+        let state = state(&scratch);
+
+        let snapshot = read_router(&state, day);
+
+        // The morning's four route rows survive the afternoon's screens.
+        assert_eq!(snapshot.recent.len(), 4);
+        assert_eq!(snapshot.recent[0].at, "2026-10-16T09:31:57Z");
+        let totals = snapshot.totals.expect("the day's totals");
+        assert_eq!(totals.calls, 4);
+        assert_eq!(totals.ok, 3);
+        assert_eq!(totals.errors, 1);
+        assert_eq!(totals.success_rate(), Some(75));
+        // The hour columns, the model mix and the workload mix all read
+        // off the same rows, so they are the day's rather than nothing.
+        assert_eq!(snapshot.models[0].calls, 2);
+        assert_eq!(snapshot.workloads.len(), 3);
+        assert!(
+            !snapshot.hours.is_empty(),
+            "the day's hour columns came from the route rows"
+        );
+        assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
+    }
+
+    /// The other half of the same day: a session's attempts accumulate
+    /// across the calls it made, so a row can walk through a served
+    /// attempt and still end failed. The ledger reads the attempt the
+    /// walk ended on — the same one the row's own state dot reads — or
+    /// the panel shows one run succeeding and failing at the same time.
+    #[test]
+    fn the_ledger_counts_a_row_by_the_attempt_its_walk_ended_on() {
+        let scratch = Scratch::new("router-ended");
+        let day = "2026-10-16";
+        write_day(
+            scratch.path(),
+            day,
+            &[
+                route_row(
+                    "2026-10-16T09:14:02Z",
+                    "stepfun",
+                    "stepfun/step-3.7-flash",
+                    "quick",
+                    "fresh",
+                    &[("stepfun", "served")],
+                    812,
+                ),
+                route_row(
+                    "2026-10-16T09:15:41Z",
+                    "stepfun",
+                    "stepfun/step-3.7-flash",
+                    "quick",
+                    "fresh",
+                    &[
+                        ("stepfun", "served"),
+                        ("stepfun", "failed"),
+                        ("stepfun", "failed"),
+                    ],
+                    1_223,
+                ),
+            ],
+        );
+        let state = state(&scratch);
+
+        let snapshot = read_router(&state, day);
+
+        let totals = snapshot.totals.expect("the day's totals");
+        assert_eq!((totals.calls, totals.ok, totals.errors), (2, 1, 1));
+        assert_eq!(totals.success_rate(), Some(50));
+        // The row list says the same thing about the same row, newest
+        // first: the 09:15 row is the one that walked through a serve and
+        // ended failed, and its dot says so.
+        assert!(!snapshot.recent[0].ok(), "the newest row ended failed");
+        assert_eq!(snapshot.recent[0].outcome, "failed");
+        assert_eq!(snapshot.recent[0].providers_used.len(), 3);
+        assert!(snapshot.recent[1].ok(), "the older row served first try");
+    }
+
     #[test]
     fn a_day_with_no_route_rows_is_an_empty_ledger_not_a_refusal() {
         // A fresh install, or a day Fleet has not routed on: the chain
@@ -2049,10 +2240,87 @@ mod tests {
         assert!(!snapshot.tiers.is_empty(), "the chain still renders");
         assert!(snapshot.totals.is_none());
         assert!(snapshot.recent.is_empty());
+        assert!(
+            snapshot.hours.is_empty(),
+            "a day with no rows has no columns, and the chart draws nothing rather than a row of zeroes"
+        );
         assert!(snapshot.judge_counters.is_none());
         assert!(snapshot.models.is_empty());
         assert!(snapshot.workloads.is_empty());
         assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
+    }
+
+    #[test]
+    fn the_day_columns_are_the_days_own_hour_shape() {
+        // A day's calls bucketed by the hour their own stamp says, in
+        // clock order, with the errors the walks made in each. The chart
+        // is this and nothing else — an hour the ledger never saw is
+        // left out rather than drawn as a zero, because a column for a
+        // quiet hour would be the board inventing the shape of a day.
+        let scratch = Scratch::new("router-hours");
+        let day = "2026-10-16";
+        let rows = vec![
+            route_row(
+                "2026-10-16T09:14:02Z",
+                "stepfun",
+                "stepfun/step-3.7-flash",
+                "quick",
+                "fresh",
+                &[("stepfun", "served")],
+                812,
+            ),
+            route_row(
+                "2026-10-16T09:31:57Z",
+                "stepfun",
+                "stepfun/step-3.7-flash",
+                "quick",
+                "fresh",
+                &[("stepfun", "served")],
+                744,
+            ),
+            route_row(
+                "2026-10-16T09:22:10Z",
+                "stepfun",
+                "stepfun/step-5-preview",
+                "hard",
+                "none",
+                &[("stepfun", "failed")],
+                3_311,
+            ),
+            route_row(
+                "2026-10-16T14:02:00Z",
+                "stepfun",
+                "stepfun/step-5-preview",
+                "hard",
+                "fresh",
+                &[("stepfun", "served")],
+                2_010,
+            ),
+        ];
+        write_day(scratch.path(), day, &rows);
+        let state = state(&scratch);
+
+        let snapshot = read_router(&state, day);
+
+        assert_eq!(
+            snapshot.hours,
+            vec![
+                HourColumn {
+                    hour: 9,
+                    calls: 3,
+                    errors: 1
+                },
+                HourColumn {
+                    hour: 14,
+                    calls: 1,
+                    errors: 0
+                },
+            ]
+        );
+        // The columns agree with the ledger they came out of.
+        let totals = snapshot.totals.expect("the day's totals");
+        let summed: u64 = snapshot.hours.iter().map(|column| column.calls).sum();
+        assert_eq!(summed, totals.calls);
     }
 
     #[test]

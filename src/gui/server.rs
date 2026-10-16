@@ -2,7 +2,7 @@
 //!
 //! Hand-rolled HTTP/1.1 over tokio's `TcpListener`, because the crate
 //! contract is one static Rust binary: a framework would buy this
-//! surface nothing it does not already do by hand — three GET routes,
+//! surface nothing it does not already do by hand — four GET routes,
 //! one SSE stream, three actions, and a token on every one of them.
 //!
 //! ## The security shape
@@ -33,6 +33,12 @@
 //! waiting on. A page that has just loaded reads `GET /api/state` for
 //! the replay, then subscribes for what comes next; the two agree
 //! because they are the same log.
+//!
+//! The read routes beyond `/api/state` are the panels': `GET
+//! /api/router` is the router board's own reads plus the
+//! route-decision cache's counts, read off the async worker. A panel's
+//! document is the board's facts, not a second opinion about them, and
+//! it never carries a credential.
 
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
@@ -179,6 +185,7 @@ async fn serve_connection(
             stream_events(&mut stream, base_url, heartbeat, bridge.subscribe()).await
         }
         ("GET", "/api/state") => write_reply(&mut stream, api(200, bridge.state())).await,
+        ("GET", "/api/router") => write_reply(&mut stream, api(200, bridge.router().await)).await,
         ("POST", "/api/run") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -665,10 +672,51 @@ mod tests {
     /// The bridge behind it is detached — no agent thread — so the
     /// routes answer exactly what the bridge holds and nothing the
     /// network would decide.
-    async fn launch() -> (String, u16) {
-        let home = std::env::temp_dir().join(format!("fleet-gui-server-{}", std::process::id()));
+    /// A fresh temp home, empty. Each call makes its own directory: a name
+    /// shared per process would let one test's `fresh_home` wipe another
+    /// test's home while its server is answering, and a home whose
+    /// config.json just vanished sends the board's read looking for the
+    /// machine's own calibration log instead of an empty tree.
+    fn fresh_home() -> std::path::PathBuf {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let home =
+            std::env::temp_dir().join(format!("fleet-gui-server-{}-{serial}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a temp home");
+        home
+    }
+
+    /// The home a router-panel test reads: a fresh home whose config
+    /// names its own calibration root, so the board's route rows come
+    /// from an empty tree rather than the machine the test runs on. The
+    /// file's only field is the log root, so the roster is the
+    /// compiled-in defaults — exactly what a fresh install reads.
+    fn router_home() -> std::path::PathBuf {
+        let home = fresh_home();
+        std::fs::write(
+            home.join("config.json"),
+            format!(
+                r#"{{"calib":{{"log_root":"{}"}}}}"#,
+                home.join("logs").display()
+            ),
+        )
+        .expect("a config naming the temp calibration root");
+        home
+    }
+
+    async fn launch() -> (String, u16) {
+        launch_at(fresh_home()).await
+    }
+
+    /// A live server on an OS-picked port, with a heartbeat short enough
+    /// that a test does not wait five seconds for a beat. The server
+    /// runs on its own task; the client below blocks on the test's
+    /// thread, which is why these tests ask for a multi-thread runtime.
+    /// The bridge behind it is detached — no agent thread — so the
+    /// routes answer exactly what the bridge holds and nothing the
+    /// network would decide.
+    async fn launch_at(home: std::path::PathBuf) -> (String, u16) {
         let (bridge, _sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
@@ -921,6 +969,73 @@ mod tests {
         assert!(state.contains("\"events\":[]"), "{state}");
         assert!(state.contains("\"approval\":null"), "{state}");
         assert!(state.contains("\"rules\":[]"), "{state}");
+    }
+
+    /// The router panel's document is the board's own reads: the declared
+    /// chain, the workload preference table, and the route-decision
+    /// cache's counts, read off the async worker. A fresh home renders
+    /// rather than refuses — a day with no rows is a ledger that says so.
+    /// And nothing in it carries a credential.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_router_document_is_the_boards_own_read() {
+        let (token, port) = launch_at(router_home()).await;
+        let anonymous = ask(
+            port,
+            "GET /api/router HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+        );
+        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        let reply = get(port, "/api/router", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("application/json"), "{reply}");
+        let body = reply
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("a body past the head");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["type"], "router");
+        // The declared chain, in the preference table's own order: each
+        // workload's first candidate is what a route selects for it, and
+        // the rest are what its failover walks.
+        let tiers = document["tiers"].as_array().expect("the tier chains");
+        assert!(!tiers.is_empty(), "{document}");
+        assert!(
+            tiers.iter().all(|tier| tier["candidates"]
+                .as_array()
+                .is_some_and(|candidates| !candidates.is_empty())),
+            "{document}"
+        );
+        // The lane that would judge, and no pin: nothing is pinned on a
+        // fresh install.
+        assert_eq!(document["judge"]["lane"], "sys1");
+        assert_eq!(document["pin"], serde_json::Value::Null);
+        // An empty day is a ledger with nothing in it, not a refusal.
+        assert_eq!(document["totals"], serde_json::Value::Null);
+        assert!(
+            document["recent"]
+                .as_array()
+                .is_some_and(|rows| rows.is_empty()),
+            "{document}"
+        );
+        assert!(
+            document["refused"]
+                .as_array()
+                .is_some_and(|refused| refused.is_empty()),
+            "{document}"
+        );
+        // The cache is empty, and the panel says so rather than
+        // presenting another lane's verdicts as this one's.
+        assert_eq!(document["cache"]["entries"], 0);
+        assert_eq!(document["cache"]["keyed"], false);
+        assert!(
+            document["cache"]["workloads"]
+                .as_array()
+                .is_some_and(|workloads| workloads.is_empty()),
+            "{document}"
+        );
+        // Names and presence, never values.
+        assert!(!body.contains("api_key"), "{body}");
+        assert!(!body.contains("DEEPSEEK_API_KEY"), "{body}");
     }
 
     #[tokio::test(flavor = "multi_thread")]

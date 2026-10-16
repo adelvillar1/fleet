@@ -141,6 +141,41 @@ impl Cache {
         }
         let _ = fs::rename(&temp, &self.path);
     }
+
+    /// What this cache holds, as counts — the panel's read, not a
+    /// second writer. The workload mix is what makes the number
+    /// legible: forty judgments over one workload and forty over nine
+    /// are different facts about a router, and the counts alone hide
+    /// which one this is.
+    pub fn stats(&self) -> Stats {
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        for verdict in self.entries.values() {
+            *counts.entry(verdict.workload.as_str()).or_insert(0) += 1;
+        }
+        let mut workloads: Vec<(String, usize)> = counts
+            .into_iter()
+            .map(|(workload, count)| (workload.to_string(), count))
+            .collect();
+        // Busiest first, then alphabetical, so the order is stable
+        // between reads of an unchanged file.
+        workloads.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        Stats {
+            entries: self.entries.len(),
+            workloads,
+        }
+    }
+}
+
+/// The cache's own counts, as a reader sees them. Read-only by
+/// construction: the browser face renders these and never writes one,
+/// so a panel cannot become a second producer of verdicts.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Stats {
+    /// Recorded judgments — one per task hash.
+    pub entries: usize,
+    /// The workload labels those judgments carry, busiest first, each
+    /// with the number of judgments that hold it.
+    pub workloads: Vec<(String, usize)>,
 }
 
 #[cfg(test)]
@@ -250,5 +285,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The stats a reader sees: how many judgments are recorded, and the
+    /// workload mix they carry. Two caches holding the same number of
+    /// entries over different mixes are different routers, and the mix
+    /// is what says which one this is.
+    #[test]
+    fn the_stats_count_the_entries_and_the_workload_mix() {
+        let home = scratch("route-cache-stats");
+        let mut cache = Cache::load(&home);
+        assert_eq!(cache.stats(), Stats::default(), "a fresh cache is empty");
+        cache.put("one".to_string(), verdict());
+        cache.put(
+            "two".to_string(),
+            Verdict {
+                workload: "deep_research".to_string(),
+                confidence: 0.8,
+                verdict: "pass".to_string(),
+            },
+        );
+        cache.put(
+            "three".to_string(),
+            Verdict {
+                workload: "hard".to_string(),
+                confidence: 0.7,
+                verdict: "escalate".to_string(),
+            },
+        );
+        let stats = cache.stats();
+        assert_eq!(stats.entries, 3);
+        // Busiest first, so the order is stable between reads.
+        assert_eq!(
+            stats.workloads,
+            vec![("hard".to_string(), 2), ("deep_research".to_string(), 1),]
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

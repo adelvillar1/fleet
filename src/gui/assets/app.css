@@ -265,6 +265,12 @@ body {
   min-height: 0;
 }
 
+/* A stage sets its own display, so the `hidden` attribute alone would
+   not hide it — the author rule would win over the user agent's. The
+   panels are switched by that attribute, so it has to hold here too.
+   Same rule, and the same reason, as `.log[hidden]` below. */
+.stage[hidden] { display: none; }
+
 .column {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
@@ -842,6 +848,360 @@ pre.raw {
 .derivation { color: var(--dsw-alias-ink-secondary); font-size: 12.5px; line-height: 1.55; }
 .derivation code { font-family: var(--font-mono); font-size: 12px; color: var(--dsw-alias-accent-lift); }
 
+/* --------------------------------------------------------- the router board
+
+   The board is a twelve-column field of cards. Every figure the plan
+   asks the router panel to show lands in a card, a bar or a hand-rolled
+   SVG chart — the house bar is that nothing here is a plain-text table.
+   The colour chain is the face's own three tiers; a chart segment picks
+   from the reference palette directly, because a segment's job is to be
+   told apart from its neighbour rather than to mean something. */
+
+.stage-board {
+  overflow-y: auto;
+  padding: 20px 20px 32px;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 14px;
+  align-content: start;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.board-card {
+  grid-column: span 12;
+  min-width: 0;
+  padding: var(--card-pad);
+  border: var(--card-hairline);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+}
+
+.board-card[data-span="7"] { grid-column: span 7; }
+.board-card[data-span="5"] { grid-column: span 5; }
+
+.board-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.board-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Which source the card read, and when. A board card that did not say
+   would be asking the owner to trust a number with no provenance. */
+.board-stamp {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.board-note {
+  margin: 0 0 12px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.board-note[hidden] { display: none; }
+
+.board-body { display: grid; gap: 14px; }
+
+/* The day's own shape, as tiles: the four numbers a day of routing is
+   made of, in the card's own 22px-over-12px voice. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 10px;
+}
+
+.tile {
+  padding: 10px 12px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface-raised);
+}
+
+.tile-value {
+  font-size: var(--card-value);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.tile-label {
+  margin-top: 3px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tile[data-tone="down"] .tile-value { color: var(--dsw-alias-down); }
+.tile[data-tone="ok"] .tile-value { color: var(--dsw-alias-ok); }
+
+/* The day column chart. Hand-rolled SVG: a baseline, one column per
+   hour the ledger actually saw, and the failed calls stacked at the top
+   of their own column in the down colour — so a column's height is the
+   hour's calls and its head is what did not serve. */
+.chart svg { display: block; width: 100%; height: auto; }
+
+.chart-base { stroke: var(--dsw-alias-hairline); stroke-width: 0.5; }
+.chart-col { fill: var(--dsw-alias-accent); }
+.chart-col[data-tone="down"] { fill: var(--dsw-alias-down); }
+.chart-cap {
+  fill: var(--dsw-alias-ink-secondary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-hour {
+  fill: var(--dsw-alias-ink-tertiary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The model-mix donut, and its legend. The donut is a set of arcs on one
+   circle, each drawn as a dash of the circumference: no path maths, and
+   a segment that shrinks to nothing simply stops being drawn. */
+.donut { display: flex; align-items: center; gap: 18px; }
+.donut svg { flex: 0 0 auto; }
+.donut-track { fill: none; stroke: var(--dsw-alias-surface-raised); }
+.donut-seg { fill: none; transition: stroke-dasharray 240ms ease; }
+
+.legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+
+.legend li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+
+.legend .swatch { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+
+.legend .legend-name {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--dsw-alias-ink-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.legend .legend-value {
+  margin-left: auto;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The declared chain: one row per workload, its candidates in the
+   table's own order, the primary named. This is the walk a route takes,
+   so the order is the whole content. */
+.chains { display: grid; gap: 8px; }
+
+.chain {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface-raised);
+}
+
+.chain-name { font-family: var(--font-mono); font-size: 12px; color: var(--dsw-alias-accent-lift); }
+
+.chain-candidates { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+.cand {
+  padding: 3px 8px;
+  border: var(--card-hairline);
+  border-radius: 6px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.cand[data-role="primary"] {
+  border-color: var(--dsw-alias-accent);
+  color: var(--dsw-alias-ink);
+}
+
+.chain-arrow { color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
+
+/* The gates, beside the chain: what is pinned, and whether the payg
+   reserve may serve. */
+.gates { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+.gate {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: var(--card-hairline);
+  border-radius: 999px;
+  background: var(--dsw-alias-surface-raised);
+  font-size: 12px;
+}
+
+.gate-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dsw-alias-ink-tertiary); }
+.gate[data-state="on"] .gate-dot { background: var(--dsw-alias-ok); }
+.gate[data-state="off"] .gate-dot { background: var(--dsw-alias-down); }
+.gate[data-state="pinned"] .gate-dot { background: var(--dsw-alias-accent); }
+.gate code { font-family: var(--font-mono); font-size: 11.5px; color: var(--dsw-alias-accent-lift); }
+
+/* Today's route rows: the audit trail's own tail. A row is the call, the
+   walk it took, and where it landed — never a plain-text table, so the
+   walk reads as the ordered chips it actually was. */
+.rows { display: grid; gap: 7px; }
+
+.rrow {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface-raised);
+}
+
+.rrow-at {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-ink-tertiary);
+}
+
+.rrow-what { min-width: 0; }
+
+.rrow-model {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--dsw-alias-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rrow-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11.5px;
+}
+
+.rrow-walk { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+
+.walk-step {
+  padding: 1px 6px;
+  border: var(--card-hairline);
+  border-radius: 5px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.walk-step[data-outcome="served"] { border-color: var(--dsw-alias-ok); color: var(--dsw-alias-ok); }
+.walk-step[data-outcome="failed"] { border-color: var(--dsw-alias-down); color: var(--dsw-alias-down); }
+
+.rrow-side { text-align: right; white-space: nowrap; }
+
+.rrow-outcome { display: block; font-size: 11.5px; font-weight: 600; }
+.rrow-outcome[data-ok="yes"] { color: var(--dsw-alias-ok); }
+.rrow-outcome[data-ok="no"] { color: var(--dsw-alias-down); }
+
+.rrow-ms { display: block; color: var(--dsw-alias-ink-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* The bars: a workload mix, a cache mix, a judged split. One shape, so
+   the three read as the same kind of claim. */
+.bars { display: grid; gap: 11px; }
+
+.bar { display: grid; gap: 5px; }
+
+.bar-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+
+.bar-label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--dsw-alias-ink-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-value { color: var(--dsw-alias-ink-tertiary); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.bar-track { height: 6px; border-radius: 999px; background: var(--dsw-alias-surface-raised); overflow: hidden; }
+
+.bar-fill { height: 100%; border-radius: 999px; background: var(--dsw-alias-accent); }
+.bar-fill[data-tone="ok"] { background: var(--dsw-alias-ok); }
+.bar-fill[data-tone="down"] { background: var(--dsw-alias-down); }
+
+/* The judged split is one bar of three shares, then the legend that names
+   them — the counts must be readable as counts, not inferred from a
+   width. */
+.split { display: grid; gap: 9px; }
+.split-track { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--dsw-alias-surface-raised); }
+.split-fill { height: 100%; }
+.split-fill[data-tone="fresh"] { background: var(--dsw-alias-accent); }
+.split-fill[data-tone="cached"] { background: var(--dsw-static-deepseek-300); }
+.split-fill[data-tone="errors"] { background: var(--dsw-alias-down); }
+
+.split-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.split-legend li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.split-legend .legend-value { margin-left: auto; }
+
+/* The live decision: the run's own `routed` event, which is the one card
+   on this panel that does not come from the board's read. */
+.decision-body { display: grid; gap: 12px; }
+
+.decision-what { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+
+.decision-model {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-ink);
+}
+
+.decision-provider {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--dsw-alias-accent-wash);
+  color: var(--dsw-alias-accent-lift);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.decision-how { color: var(--dsw-alias-ink-secondary); font-size: 12.5px; }
+
+.decision-reason { margin: 0; color: var(--dsw-alias-ink-secondary); font-size: 12.5px; line-height: 1.55; }
+
+.decision-order { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* A card with nothing to say says it, in the tertiary voice, rather than
+   drawing an empty frame. */
+.board-empty {
+  margin: 0;
+  padding: 18px 0;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 12.5px;
+  line-height: 1.55;
+  text-align: center;
+}
+
 /* ---------------------------------------------------------- narrow faces */
 
 /* Below the rail's width the rail folds under the conversation, and the
@@ -851,6 +1211,13 @@ pre.raw {
   .rail { border-left: 0; border-top: var(--card-hairline); }
   .face { grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr); height: auto; min-height: 100%; }
   .log { max-height: none; }
+  /* The board's twelve columns fold to one: a card that shared a row
+     with another keeps its own row, and a chart that needed the width
+     gets it back. */
+  .board-card[data-span="7"], .board-card[data-span="5"] { grid-column: span 12; }
+  .stage-board { padding: 16px 14px 28px; }
+  .donut { flex-direction: column; align-items: stretch; gap: 14px; }
+  .donut svg { align-self: center; }
 }
 
 @media (max-width: 720px) {
@@ -858,4 +1225,8 @@ pre.raw {
   .addresses { display: none; }
   .stat:nth-child(2) { display: none; }
   .drawer { width: 100vw; }
+  .chain { grid-template-columns: minmax(0, 1fr); gap: 7px; }
+  .rrow { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .rrow-side { text-align: left; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

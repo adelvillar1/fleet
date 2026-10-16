@@ -65,8 +65,11 @@ use crate::session;
 /// the roster at all; an owner who wants it adds it by config.
 pub const HEAD_ID: &str = "zai-coding-plan";
 
-/// The sys1 lane name whose `sys1_classify` tool judges a route.
-const JUDGE_LANE: &str = "sys1";
+/// The sys1 lane name whose `sys1_classify` tool judges a route. Public
+/// because a reader outside `select` — the browser face's router panel
+/// — asks the same question `judge` asks about the route-decision
+/// cache: is this the lane that would judge now.
+pub const JUDGE_LANE: &str = "sys1";
 
 /// The sys1 task that answers the routing judgment (workload + execution).
 const JUDGE_TASK: &str = "route";

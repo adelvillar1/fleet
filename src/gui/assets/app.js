@@ -37,9 +37,11 @@
   var el = {
     addresses: document.getElementById('addresses'),
     panelChat: document.getElementById('panel-chat'),
+    panelRouter: document.getElementById('panel-router'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
+    routerBoard: document.getElementById('router-board'),
     routePill: document.getElementById('route-pill'),
     statePill: document.getElementById('state-pill'),
     spend: document.getElementById('spend'),
@@ -96,7 +98,13 @@
     lastTurn: 0,
     stick: true,
     buffer: '',
-    flush: 0
+    flush: 0,
+    // Which keyed panel is showing, and the router board's last read. The
+    // read is the board's document; the live decision is not in it, and
+    // the panel keeps the two apart.
+    panel: 'chat',
+    router: null,
+    routerAt: 0
   };
 
   // A short mark for a tool, so a card reads at a glance without an
@@ -458,6 +466,11 @@
     paintRules();
     paintSeat();
     paintComposer();
+    // The router's live decision is the run's own `routed` event, so it
+    // is repainted with the stream rather than waiting for the board's
+    // clock. The rest of that panel is the board's read and does not move
+    // on an event.
+    if (face.panel === 'router') paintRouter();
   }
 
   function paintFacts() {
@@ -552,6 +565,507 @@
     } else {
       el.hint.textContent = 'Enter sends \u00b7 Shift+Enter is a newline';
     }
+  }
+
+  // ------------------------------------------------------- the router board
+
+  // Two sources feed this panel and the panel names both wherever a
+  // figure lands. The board's read is one document from one route: the
+  // chain, the ledger, the rows, the cache. The live decision is the
+  // `routed` event already in the log, so it moves with the stream and
+  // never waits for a refresh. Nothing here is derived twice, and a card
+  // with nothing to say says so.
+
+  // The donut's segments, in the order the legend lists them. These come
+  // off the reference palette directly: a segment's job is to be told
+  // apart from its neighbour, not to carry a meaning of its own.
+  var MIX_COLORS = [
+    'var(--dsw-alias-accent)',
+    'var(--dsw-static-deepseek-300)',
+    'var(--dsw-static-deepseek-600)',
+    'var(--dsw-static-ink-400)',
+    'var(--dsw-static-ink-500)',
+    'var(--dsw-static-ink-600)'
+  ];
+
+  function svg(name, attrs) {
+    var made = document.createElementNS('http://www.w3.org/2000/svg', name);
+    Object.keys(attrs || {}).forEach(function (key) { made.setAttribute(key, attrs[key]); });
+    return made;
+  }
+
+  function boardCard(span, title, stamp, note) {
+    var el0 = node('section', 'board-card');
+    if (span) el0.dataset.span = String(span);
+    var head = node('header', 'board-head');
+    head.appendChild(node('h2', null, title));
+    if (stamp) head.appendChild(node('span', 'board-stamp', stamp));
+    el0.appendChild(head);
+    if (note) {
+      var said = node('p', 'board-note', note);
+      el0.appendChild(said);
+    }
+    return el0;
+  }
+
+  function tile(value, label, tone) {
+    var el0 = node('div', 'tile');
+    if (tone) el0.dataset.tone = tone;
+    el0.appendChild(node('div', 'tile-value', String(value)));
+    el0.appendChild(node('div', 'tile-label', label));
+    return el0;
+  }
+
+  // The clock a stamp carries, not the stamp: a route row's own time is
+  // the crate's UTC vocabulary, and the panel shows the hour and minute
+  // the row was written at.
+  function clock(stamp) {
+    var at = String(stamp || '');
+    return at.length >= 16 ? at.slice(11, 16) : (at || '\u2014');
+  }
+
+  // The day column chart. One column per hour the ledger saw, its height
+  // the hour's calls, and the calls that did not serve stacked at the top
+  // in the down colour. An hour with no calls is not a zero-height column
+  // — the board already left those out, and a chart that drew them would
+  // be inventing the shape of a day it never saw.
+  function dayChart(hours) {
+    var wrap = node('div', 'chart');
+    var W = 320, H = 118, base = H - 18, top = 14, gap = 6;
+    var width = hours.length ? (W - gap * (hours.length - 1)) / hours.length : 0;
+    var most = hours.reduce(function (peak, column) { return Math.max(peak, column.calls); }, 0);
+    var plot = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img',
+      'aria-label': 'the day\u2019s calls by their own hour' });
+    plot.appendChild(svg('line', { x1: 0, y1: base + 0.5, x2: W, y2: base + 0.5, class: 'chart-base' }));
+    hours.forEach(function (column, index) {
+      var x = index * (width + gap);
+      var full = most ? Math.round((column.calls / most) * (base - top)) : 0;
+      var bad = column.calls ? Math.round((column.errors / column.calls) * full) : 0;
+      if (full > 0) {
+        plot.appendChild(svg('rect', { x: x, y: base - full, width: width, height: Math.max(1, full),
+          rx: 2, class: 'chart-col' }));
+      }
+      if (bad > 0) {
+        plot.appendChild(svg('rect', { x: x, y: base - full, width: width, height: Math.max(1, bad),
+          rx: 2, class: 'chart-col', 'data-tone': 'down' }));
+      }
+      if (column.calls) {
+        var cap = svg('text', { x: x + width / 2, y: base - full - 4, class: 'chart-cap',
+          'text-anchor': 'middle' });
+        cap.textContent = column.calls > 999 ? tokens(column.calls) : String(column.calls);
+        plot.appendChild(cap);
+      }
+      var hour = svg('text', { x: x + width / 2, y: H - 5, class: 'chart-hour', 'text-anchor': 'middle' });
+      hour.textContent = String(column.hour).padStart(2, '0');
+      plot.appendChild(hour);
+    });
+    wrap.appendChild(plot);
+    return wrap;
+  }
+
+  // The model-mix donut. Each segment is a dash of one circumference, so
+  // a model that took one call draws a hairline and one that took a third
+  // of the day draws an arc, and no path arithmetic is involved. The total
+  // is the day's calls, not its serves: the mix says where calls landed,
+  // and the ledger beside it already says how many served.
+  function donut(models) {
+    var wrap = node('div', 'donut');
+    var R = 34, C = 2 * Math.PI * R;
+    var total = models.reduce(function (sum, entry) { return sum + entry.calls; }, 0);
+    var plot = svg('svg', { width: 92, height: 92, viewBox: '0 0 92 92', role: 'img',
+      'aria-label': 'the day\u2019s calls by model' });
+    plot.appendChild(svg('circle', { cx: 46, cy: 46, r: R, class: 'donut-track', 'stroke-width': 13 }));
+    var run = 0;
+    models.forEach(function (entry, index) {
+      var share = total ? entry.calls / total : 0;
+      if (share <= 0) return;
+      plot.appendChild(svg('circle', {
+        cx: 46, cy: 46, r: R, class: 'donut-seg', 'stroke-width': 13,
+        stroke: MIX_COLORS[index % MIX_COLORS.length],
+        'stroke-dasharray': (share * C).toFixed(2) + ' ' + (C - share * C).toFixed(2),
+        'stroke-dashoffset': (-run * C).toFixed(2),
+        transform: 'rotate(-90 46 46)'
+      }));
+      run += share;
+    });
+    var mid = svg('text', { x: 46, y: 43, 'text-anchor': 'middle',
+      fill: 'var(--dsw-alias-ink)', 'font-size': 15, 'font-weight': 600 });
+    mid.textContent = total > 999 ? tokens(total) : String(total);
+    var under = svg('text', { x: 46, y: 56, 'text-anchor': 'middle',
+      fill: 'var(--dsw-alias-ink-tertiary)', 'font-size': 8 });
+    under.textContent = 'calls';
+    plot.appendChild(mid);
+    plot.appendChild(under);
+    wrap.appendChild(plot);
+    var legend = node('ul', 'legend');
+    models.forEach(function (entry, index) {
+      var item = node('li');
+      var swatch = node('span', 'swatch');
+      swatch.style.background = MIX_COLORS[index % MIX_COLORS.length];
+      item.appendChild(swatch);
+      item.appendChild(node('span', 'legend-name', entry.model));
+      item.appendChild(node('span', 'legend-value',
+        entry.calls + (total ? ' \u00b7 ' + Math.round((entry.calls / total) * 100) + '%' : '')));
+      legend.appendChild(item);
+    });
+    wrap.appendChild(legend);
+    return wrap;
+  }
+
+  // The declared chain: the workload preference table, in its own order.
+  // A workload's first candidate is what a route selects; the rest are
+  // what the workload's own failover walks, so the order is the content.
+  function chainCard(read) {
+    var el0 = boardCard(12, 'the declared chain', 'the board\u2019s read',
+      'Every workload\u2019s candidates in the table\u2019s own order. The first is what a route selects; the rest are what the walk attempts when it does not.');
+    var chains = node('div', 'chains');
+    read.tiers.forEach(function (chain) {
+      var line = node('div', 'chain');
+      line.appendChild(node('span', 'chain-name', chain.tier));
+      var row = node('div', 'chain-candidates');
+      chain.candidates.forEach(function (candidate, index) {
+        if (index) row.appendChild(node('span', 'chain-arrow', '\u203a'));
+        var chip = node('span', 'cand', candidate);
+        chip.dataset.role = index === 0 ? 'primary' : 'fallback';
+        chip.title = index === 0 ? 'what a route selects for this workload' : 'the walk\u2019s next candidate';
+        row.appendChild(chip);
+      });
+      line.appendChild(row);
+      chains.appendChild(line);
+    });
+    el0.appendChild(chains);
+    // The gates, beside the chain: what the owner pinned, and whether the
+    // payg reserve may serve at all.
+    var gates = node('div', 'gates');
+    var pin = node('div', 'gate');
+    pin.dataset.state = read.pin ? 'pinned' : 'off';
+    pin.appendChild(node('span', 'gate-dot'));
+    if (read.pin) {
+      pin.appendChild(node('span', null, 'pinned to '));
+      pin.appendChild(node('code', null, read.pin));
+    } else {
+      pin.appendChild(node('span', null, 'nothing pinned \u00b7 the table decides'));
+    }
+    gates.appendChild(pin);
+    var payg = node('div', 'gate');
+    payg.dataset.state = read.payg.allowed ? 'on' : 'off';
+    payg.appendChild(node('span', 'gate-dot'));
+    payg.appendChild(node('span', null, read.payg.allowed
+      ? 'payg may serve \u2014 a chain names it'
+      : 'payg may not serve \u2014 ' + (read.payg.providers.join(', ') || 'nothing') + ' is the reserve'));
+    gates.appendChild(payg);
+    var judge = node('div', 'gate');
+    judge.dataset.state = read.judge.lane ? 'on' : 'off';
+    judge.appendChild(node('span', 'gate-dot'));
+    judge.appendChild(node('span', null, read.judge.lane
+      ? 'the judge is ' + read.judge.lane +
+        (read.judge.default_workload ? ' \u00b7 an unmapped ask defaults to ' + read.judge.default_workload : '')
+      : 'no judge lane is configured'));
+    gates.appendChild(judge);
+    el0.appendChild(gates);
+    return el0;
+  }
+
+  // The live decision, off the run's own `routed` event. This is the one
+  // card on the panel that is not the board's read, and it says so.
+  function decisionCard() {
+    var el0 = boardCard(7, 'the live decision', 'the run\u2019s own routed event');
+    var body = node('div', 'decision-body');
+    var route = face.route;
+    if (!route) {
+      body.appendChild(node('p', 'board-empty',
+        'No route has been made this session. Send a task and the decision lands here, ' +
+        'and in the conversation, on the same event.'));
+      el0.appendChild(body);
+      return el0;
+    }
+    var what = node('div', 'decision-what');
+    what.appendChild(node('span', 'decision-model', route.model || route.provider));
+    what.appendChild(node('span', 'decision-provider', route.provider));
+    what.appendChild(node('span', 'decision-how', route.how));
+    body.appendChild(what);
+    if (route.reason) body.appendChild(node('p', 'decision-reason', route.reason));
+    var facts = node('dl', 'facts');
+    [
+      ['workload', route.workload || 'none judged'],
+      ['verdict', route.verdict || '\u2014'],
+      ['judged from', route.judged_from || 'none']
+    ].forEach(function (pair) {
+      var wrap = node('div', 'fact');
+      wrap.appendChild(node('dt', null, pair[0]));
+      wrap.appendChild(node('dd', null, pair[1]));
+      facts.appendChild(wrap);
+    });
+    body.appendChild(facts);
+    // The walk: the candidates the route attempted, in order. A walk of
+    // one candidate served on the first try or did not serve at all, and
+    // the card shows which without pretending to know more.
+    var order = route.order || [];
+    if (order.length) {
+      var label = node('p', 'board-note', 'the walk, in the order it was attempted');
+      body.appendChild(label);
+      var walk = node('div', 'decision-order');
+      order.forEach(function (step, index) {
+        if (index) walk.appendChild(node('span', 'chain-arrow', '\u203a'));
+        var chip = node('span', 'cand', step.model || step.provider);
+        chip.dataset.role = index === order.length - 1 ? 'primary' : 'fallback';
+        walk.appendChild(chip);
+      });
+      body.appendChild(walk);
+    }
+    el0.appendChild(body);
+    return el0;
+  }
+
+  // The cache stats: how many decisions the route-decision cache holds,
+  // whether they belong to the lane that would judge now, and the
+  // workload mix of what it has remembered.
+  function cacheCard(read) {
+    var cache = read.cache;
+    var el0 = boardCard(5, 'the decision cache', 'the board\u2019s read',
+      cache.keyed
+        ? 'A cache written by the lane that judges now, so these entries are the ones a route reads.'
+        : 'The cache on disk was written by another lane, which a route discards whole \u2014 so the entries below are held, not read.');
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(cache.entries, 'entries'));
+    tiles.appendChild(tile(cache.keyed ? 'live' : 'held', cache.keyed ? 'for this lane' : 'for another lane',
+      cache.keyed ? 'ok' : 'down'));
+    el0.appendChild(tiles);
+    if (cache.workloads && cache.workloads.length) {
+      var most = cache.workloads.reduce(function (peak, entry) { return Math.max(peak, entry.count); }, 0);
+      var bars = node('div', 'bars');
+      bars.style.marginTop = '14px';
+      cache.workloads.forEach(function (entry) {
+        var bar = node('div', 'bar');
+        var top = node('div', 'bar-top');
+        top.appendChild(node('span', 'bar-label', entry.workload));
+        top.appendChild(node('span', 'bar-value', String(entry.count)));
+        bar.appendChild(top);
+        var track = node('div', 'bar-track');
+        var fill = node('div', 'bar-fill');
+        fill.style.width = (most ? Math.max(3, Math.round((entry.count / most) * 100)) : 0) + '%';
+        track.appendChild(fill);
+        bar.appendChild(track);
+        bars.appendChild(bar);
+      });
+      el0.appendChild(bars);
+    } else {
+      el0.appendChild(node('p', 'board-empty', 'The cache holds no workload counts yet.'));
+    }
+    return el0;
+  }
+
+  // The day: the ledger's own tiles and the day column chart.
+  function dayCard(read) {
+    var el0 = boardCard(7, 'today\u2019s ledger', 'the board\u2019s read \u00b7 ' + clock(read.read_at));
+    var totals = read.totals;
+    if (!totals) {
+      el0.appendChild(node('p', 'board-empty',
+        'The ledger has seen no route rows today. The chain above still stands, and the tiles ' +
+        'fill in as the day is routed.'));
+      return el0;
+    }
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(tokens(totals.calls), 'calls'));
+    tiles.appendChild(tile(tokens(totals.ok), 'served', 'ok'));
+    tiles.appendChild(tile(tokens(totals.errors), 'failed', totals.errors ? 'down' : null));
+    tiles.appendChild(tile(totals.success_rate == null ? '\u2014' : totals.success_rate + '%', 'served rate'));
+    el0.appendChild(tiles);
+    if (read.hours && read.hours.length) {
+      var note = node('p', 'board-note',
+        'The day\u2019s calls by the hour their own stamp says. An hour with no calls is left out rather ' +
+        'than drawn as a zero.');
+      note.style.marginTop = '14px';
+      el0.appendChild(note);
+      el0.appendChild(dayChart(read.hours));
+    }
+    return el0;
+  }
+
+  // The model mix, as a donut and its legend: where the day's calls
+  // actually landed.
+  function mixCard(read) {
+    var el0 = boardCard(5, 'the model mix', 'the board\u2019s read');
+    if (!read.models || !read.models.length) {
+      el0.appendChild(node('p', 'board-empty', 'No model took a call today.'));
+      return el0;
+    }
+    el0.appendChild(donut(read.models));
+    return el0;
+  }
+
+  // Today's route rows: the audit trail's own tail, newest first. A row
+  // is the call, the walk it took, and where it landed.
+  function rowsCard(read) {
+    var el0 = boardCard(7, 'today\u2019s route rows', 'the board\u2019s read');
+    if (!read.recent || !read.recent.length) {
+      el0.appendChild(node('p', 'board-empty', 'No route rows today.'));
+      return el0;
+    }
+    var rows = node('div', 'rows');
+    read.recent.forEach(function (entry) {
+      var line = node('div', 'rrow');
+      line.appendChild(node('span', 'rrow-at', clock(entry.at)));
+      var what = node('div', 'rrow-what');
+      what.appendChild(node('span', 'rrow-model', entry.model));
+      var meta = [];
+      if (entry.workload) meta.push(entry.workload);
+      if (entry.reason) meta.push(entry.reason);
+      what.appendChild(node('span', 'rrow-meta', meta.length ? meta.join(' \u00b7 ') : 'no reason recorded'));
+      // The walk the row actually took. The board carries the candidates
+      // in the order they were attempted, and the last one is where the
+      // row landed — so the ones before it are the ones that did not.
+      var walk = entry.providers_used && entry.providers_used.length
+        ? entry.providers_used : [entry.provider];
+      var strip = node('div', 'rrow-walk');
+      walk.forEach(function (step, index) {
+        var chip = node('span', 'walk-step', step);
+        chip.dataset.outcome = index === walk.length - 1 ? entry.outcome : 'failed';
+        chip.title = index === walk.length - 1
+          ? 'where the row landed: ' + entry.outcome
+          : 'attempted and did not serve';
+        strip.appendChild(chip);
+      });
+      what.appendChild(strip);
+      line.appendChild(what);
+      var side = node('div', 'rrow-side');
+      side.appendChild(node('span', 'rrow-outcome', entry.outcome));
+      side.lastChild.dataset.ok = entry.ok ? 'yes' : 'no';
+      side.appendChild(node('span', 'rrow-ms', entry.ms == null ? '\u2014' : entry.ms + ' ms'));
+      line.appendChild(side);
+      rows.appendChild(line);
+    });
+    el0.appendChild(rows);
+    return el0;
+  }
+
+  // The workload mix and the judged split: where the day's routes went,
+  // and how many of the judgments were made rather than remembered.
+  function mixSplitCard(read) {
+    var el0 = boardCard(5, 'the workload mix', 'the board\u2019s read');
+    if (!read.workloads || !read.workloads.length) {
+      el0.appendChild(node('p', 'board-empty', 'No workload was judged today.'));
+    } else {
+      var most = read.workloads.reduce(function (peak, entry) { return Math.max(peak, entry.count); }, 0);
+      var total = read.workloads.reduce(function (sum, entry) { return sum + entry.count; }, 0);
+      var bars = node('div', 'bars');
+      read.workloads.forEach(function (entry) {
+        var bar = node('div', 'bar');
+        var top = node('div', 'bar-top');
+        top.appendChild(node('span', 'bar-label', entry.workload));
+        top.appendChild(node('span', 'bar-value',
+          entry.count + (total ? ' \u00b7 ' + Math.round((entry.count / total) * 100) + '%' : '')));
+        bar.appendChild(top);
+        var track = node('div', 'bar-track');
+        var fill = node('div', 'bar-fill');
+        fill.style.width = (most ? Math.max(3, Math.round((entry.count / most) * 100)) : 0) + '%';
+        track.appendChild(fill);
+        bar.appendChild(track);
+        bars.appendChild(bar);
+      });
+      el0.appendChild(bars);
+    }
+    var judged = read.judged;
+    if (judged) {
+      var note = node('p', 'board-note', 'How the day\u2019s judgments were obtained.');
+      note.style.margin = '14px 0 8px';
+      el0.appendChild(note);
+      var split = node('div', 'split');
+      var total = judged.fresh + judged.cached + judged.errors;
+      var track = node('div', 'split-track');
+      [['fresh', judged.fresh], ['cached', judged.cached], ['errors', judged.errors]]
+        .forEach(function (pair) {
+          var fill = node('div', 'split-fill');
+          fill.dataset.tone = pair[0];
+          fill.style.width = (total ? (pair[1] / total) * 100 : 0) + '%';
+          track.appendChild(fill);
+        });
+      split.appendChild(track);
+      var legend = node('ul', 'split-legend');
+      [['fresh', judged.fresh, 'judged this run'],
+       ['cached', judged.cached, 'served from the route-decision cache'],
+       ['errors', judged.errors, 'never obtained']]
+        .forEach(function (triple) {
+          var item = node('li');
+          var swatch = node('span', 'swatch');
+          swatch.style.background = triple[0] === 'fresh' ? 'var(--dsw-alias-accent)'
+            : triple[0] === 'cached' ? 'var(--dsw-static-deepseek-300)' : 'var(--dsw-alias-down)';
+          item.appendChild(swatch);
+          item.appendChild(node('span', 'legend-name', triple[0]));
+          item.appendChild(node('span', 'legend-value', triple[1] + ' \u00b7 ' + triple[2]));
+          legend.appendChild(item);
+        });
+      split.appendChild(legend);
+      el0.appendChild(split);
+    }
+    return el0;
+  }
+
+  // Fleet's own failover feedback: the candidates the calibration is
+  // demoting for this day, and the clause that says why. A day with no
+  // demotion draws no card at all rather than an empty one.
+  function guidanceCard(read) {
+    if (!read.guidance || !read.guidance.length) return null;
+    var el0 = boardCard(12, 'failover feedback', 'the calibration\u2019s own');
+    var rules = node('ul', 'rules');
+    read.guidance.forEach(function (entry) {
+      var item = node('li');
+      item.appendChild(node('span', 'rule-label', entry.candidate));
+      item.appendChild(node('span', 'rule-program', entry.clause));
+      rules.appendChild(item);
+    });
+    el0.appendChild(rules);
+    return el0;
+  }
+
+  function paintRouter() {
+    var read = face.router;
+    el.routerBoard.textContent = '';
+    // Before the first read lands, the panel says so rather than drawing
+    // an empty grid. The live decision is not in the read and paints
+    // either way, so it is drawn first in both cases.
+    if (!read) {
+      var waiting = boardCard(12, 'the router', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The board\u2019s read has not landed yet. The live decision below is the run\u2019s own event ' +
+        'and does not wait for it.'));
+      el.routerBoard.appendChild(waiting);
+      el.routerBoard.appendChild(decisionCard());
+      return;
+    }
+    el.routerBoard.appendChild(decisionCard());
+    el.routerBoard.appendChild(cacheCard(read));
+    el.routerBoard.appendChild(dayCard(read));
+    el.routerBoard.appendChild(mixCard(read));
+    el.routerBoard.appendChild(chainCard(read));
+    el.routerBoard.appendChild(rowsCard(read));
+    el.routerBoard.appendChild(mixSplitCard(read));
+    var guidance = guidanceCard(read);
+    if (guidance) el.routerBoard.appendChild(guidance);
+    if (read.refused && read.refused.length) {
+      var el0 = boardCard(12, 'reads that did not land', 'the board\u2019s read');
+      el0.appendChild(node('p', 'board-empty', read.refused.join(' \u00b7 ')));
+      el.routerBoard.appendChild(el0);
+    }
+  }
+
+  // The board's read is a document, not a derivation: it is fetched, and
+  // it is refreshed while the panel is showing because a day's ledger
+  // moves without the log saying anything.
+  function readRouter(force) {
+    var now = Date.now();
+    if (!force && face.router && now - face.routerAt < 4000) return Promise.resolve();
+    face.routerAt = now;
+    return fetch('/api/router', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.router = doc;
+        if (face.panel === 'router') paintRouter();
+      })
+      .catch(function () { });
   }
 
   // ------------------------------------------------------------- actions
@@ -742,7 +1256,10 @@
       'Use the URL fleet printed \u2014 it carries the launch token \u2014 then reload.';
     return;
   }
-  window.history.replaceState(null, '', window.location.pathname);
+  // The token leaves the address bar, so a copied URL or a screenshot
+  // carries no credential. The hash stays: it is the panel the owner
+  // opened, and the plan's route table is keyed on it.
+  window.history.replaceState(null, '', window.location.pathname + window.location.hash);
 
   el.offers.textContent = '';
   OFFERS.forEach(function (offer) {
@@ -809,9 +1326,22 @@
         button.removeAttribute('aria-current');
       }
     });
+    face.panel = address;
     if (address === 'chat') {
       el.panelChat.hidden = false;
+      el.panelRouter.hidden = true;
       el.panelLater.hidden = true;
+      return;
+    }
+    if (address === 'router') {
+      el.panelChat.hidden = true;
+      el.panelLater.hidden = true;
+      el.panelRouter.hidden = false;
+      // The board's read, fetched on arrival and then on the panel's own
+      // clock. The live decision is already in the log, so it paints now
+      // and again with the stream.
+      paintRouter();
+      readRouter(true).then(paintRouter);
       return;
     }
     var named = known || [which, which];
@@ -819,6 +1349,7 @@
     el.laterNote.textContent = named[1] + ' is a later increment of the same plan. ' +
       'The conversation is live now, and every surface reads the one event log this face already holds.';
     el.panelChat.hidden = true;
+    el.panelRouter.hidden = true;
     el.panelLater.hidden = false;
   }
 
@@ -831,6 +1362,13 @@
   });
   window.addEventListener('hashchange', showRoute);
   showRoute();
+
+  // The board's read on the panel's own clock, and only while the panel
+  // is showing: a day's ledger moves without the log saying anything, and
+  // a face nobody is looking at has nothing to refresh.
+  window.setInterval(function () {
+    if (face.panel === 'router') readRouter(false);
+  }, 5000);
 
   load().then(listen).catch(function (error) {
     if (error && error.message === 'token') {

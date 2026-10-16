@@ -256,11 +256,28 @@ pub enum UiEvent {
     /// A lane joined the run: its tools are in the model's tool set for
     /// the rest of the run, and its `lane_tools` record is in the log.
     LaneJoined { lane: String, tool_count: usize },
-    /// The route this run takes: the active provider and how it was chosen
-    /// (`judged`/`fallback`/`pinned`). Emitted once at the start of a
-    /// routed run; a plain single-endpoint client emits nothing, so the
-    /// unrouted and headless paths are unchanged.
-    Routed { provider: String, how: String },
+    /// The route this run takes, in full: the active provider and how it
+    /// was chosen (`judged`/`fallback`/`pinned`), the model it will
+    /// actually call, sys1's workload and verdict when there was a
+    /// judgment, where that judgment came from, the one-line reason, and
+    /// the walk order failover begins from. Emitted once at the start of
+    /// a routed run; a plain single-endpoint client emits nothing, so
+    /// the unrouted and headless paths are unchanged.
+    ///
+    /// The decision's own facts, whole: a surface that wants one of them
+    /// reads this event rather than asking the router again, so the TUI
+    /// status bar, the browser card, and the router panel cannot name
+    /// three different routes for one run.
+    Routed {
+        provider: String,
+        model: String,
+        how: String,
+        workload: Option<String>,
+        verdict: Option<String>,
+        judged_from: String,
+        reason: String,
+        order: Vec<(String, String)>,
+    },
     /// The conversation outgrew the window and was compacted: `turns`
     /// turns became one summary, and the context went from
     /// `tokens_before` to `tokens_after`. Emitted once per crossing,
@@ -1102,7 +1119,13 @@ impl<'a> Agent<'a> {
         if let Some(decision) = self.client.route_decision() {
             self.emit(UiEvent::Routed {
                 provider: decision.provider.clone(),
+                model: decision.model.clone(),
                 how: decision.how.label().to_string(),
+                workload: decision.workload.clone(),
+                verdict: decision.verdict.clone(),
+                judged_from: decision.judged_from.label().to_string(),
+                reason: decision.reason.clone(),
+                order: decision.order.clone(),
             });
         }
         // The skills this run declared, recorded once, at run start. The

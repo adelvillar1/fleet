@@ -240,6 +240,32 @@ impl Bridge {
         })
     }
 
+    /// The router panel's document: the router board's own reads, shaped
+    /// into the browser's card language, plus the route-decision cache's
+    /// counts. Read-only, and read off the async worker — it touches the
+    /// roster, the calibration log, and the cache file, and a page
+    /// request must not hold the runtime while they are read.
+    ///
+    /// The live decision is deliberately absent. It rides the event log
+    /// the conversation already carries — the `routed` event holds the
+    /// decision's own facts — so the panel reduces it client-side like
+    /// every other number on this page, and this document cannot
+    /// disagree with the conversation about which route served the run
+    /// in flight.
+    pub async fn router(&self) -> Value {
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || router_read(&home)).await {
+            Ok(document) => document,
+            // A join failure means the worker died, which this read has
+            // no path to: the panel says the read did not land rather
+            // than hanging the page on a document that never came.
+            Err(_) => json!({
+                "type": "router",
+                "refused": ["the router read did not land"],
+            }),
+        }
+    }
+
     /// Hand the browser's task to the agent thread. The owner's message
     /// lands in the log first, so a refresh replays what was asked and
     /// the header's running flag moves on the same event.
@@ -372,6 +398,99 @@ fn rule_value(rule: &approvals::Rule) -> Value {
     })
 }
 
+/// One read of the router board, shaped for the browser. Every field
+/// names what the board read, so the panel's cards are the board's own
+/// facts rather than a second opinion about them.
+fn router_read(home: &std::path::Path) -> Value {
+    let dotenv = crate::home::read_dotenv(home);
+    let sources = crate::boards::resolve_sources(home, &dotenv);
+    let snapshot = crate::boards::read_router(&sources.router, &crate::calib::today());
+    // The cache's counts, and whether the file on disk belongs to the
+    // lane that would judge now. A cache written by another lane is
+    // discarded by `select` whole, so the panel that showed its entries
+    // as live would be showing a router that does not read them.
+    let cache = crate::route_cache::Cache::load(home);
+    let key = crate::lanes::spec_for(crate::route::JUDGE_LANE)
+        .map(|spec| crate::route_cache::Cache::key_for(&spec))
+        .unwrap_or_default();
+    let stats = cache.stats();
+    let (judge_lane, default_workload) = match snapshot.judge {
+        Some((lane, workload)) => (lane, workload),
+        None => (String::new(), None),
+    };
+    let (payg_allowed, payg_providers) = snapshot.payg.unwrap_or((false, Vec::new()));
+    json!({
+        "type": "router",
+        "read_at": snapshot.read_at,
+        "judge": {
+            "lane": judge_lane,
+            "default_workload": default_workload,
+        },
+        "pin": snapshot.pin,
+        "payg": {"allowed": payg_allowed, "providers": payg_providers},
+        "tiers": snapshot.tiers.iter().map(|chain| json!({
+            "tier": chain.tier,
+            "primary": chain.primary,
+            "candidates": chain.candidates,
+        })).collect::<Vec<_>>(),
+        "totals": snapshot.totals.map(|totals| json!({
+            "calls": totals.calls,
+            "ok": totals.ok,
+            "errors": totals.errors,
+            "prompt_tokens": totals.prompt_tokens,
+            "completion_tokens": totals.completion_tokens,
+            "total_tokens": totals.total_tokens,
+            "success_rate": totals.success_rate(),
+        })),
+        "models": snapshot.models.iter().map(|row| json!({
+            "key": row.key,
+            "provider": row.provider,
+            "model": row.model,
+            "calls": row.calls,
+            "errors": row.errors,
+            "total_tokens": row.total_tokens,
+        })).collect::<Vec<_>>(),
+        "recent": snapshot.recent.iter().map(|row| json!({
+            "at": row.at,
+            "provider": row.provider,
+            "model": row.model,
+            "outcome": row.outcome,
+            "ok": row.ok(),
+            "providers_used": row.providers_used,
+            "workload": row.workload,
+            "ms": row.ms,
+            "reason": row.reason,
+        })).collect::<Vec<_>>(),
+        "hours": snapshot.hours.iter().map(|column| json!({
+            "hour": column.hour,
+            "calls": column.calls,
+            "errors": column.errors,
+        })).collect::<Vec<_>>(),
+        "judged": snapshot.judge_counters.map(|counters| json!({
+            "fresh": counters.fresh,
+            "cached": counters.cached,
+            "errors": counters.errors,
+        })),
+        "workloads": snapshot.workloads.iter().map(|(workload, count)| json!({
+            "workload": workload,
+            "count": count,
+        })).collect::<Vec<_>>(),
+        "guidance": snapshot.guidance.iter().map(|(candidate, clause)| json!({
+            "candidate": candidate,
+            "clause": clause,
+        })).collect::<Vec<_>>(),
+        "refused": snapshot.refused,
+        "cache": {
+            "entries": stats.entries,
+            "keyed": cache.keyed_for(&key),
+            "workloads": stats.workloads.iter().map(|(workload, count)| json!({
+                "workload": workload,
+                "count": count,
+            })).collect::<Vec<_>>(),
+        },
+    })
+}
+
 /// The poison-tolerant lock, the house idiom: a panic in one task must
 /// not make every later read of the face's state a panic too.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -446,9 +565,29 @@ fn describe(event: &UiEvent) -> Value {
         UiEvent::LaneJoined { lane, tool_count } => {
             json!({"type": "lane", "lane": lane, "tools": tool_count})
         }
-        UiEvent::Routed { provider, how } => {
-            json!({"type": "routed", "provider": provider, "how": how})
-        }
+        UiEvent::Routed {
+            provider,
+            model,
+            how,
+            workload,
+            verdict,
+            judged_from,
+            reason,
+            order,
+        } => json!({
+            "type": "routed",
+            "provider": provider,
+            "model": model,
+            "how": how,
+            "workload": workload,
+            "verdict": verdict,
+            "judged_from": judged_from,
+            "reason": reason,
+            "order": order
+                .iter()
+                .map(|(provider, model)| json!({"provider": provider, "model": model}))
+                .collect::<Vec<_>>(),
+        }),
         UiEvent::Compacted {
             turns,
             tokens_before,
@@ -1073,7 +1212,13 @@ mod tests {
             .ui
             .send(UiEvent::Routed {
                 provider: "stepfun".to_string(),
+                model: "step-5-preview".to_string(),
                 how: "judged".to_string(),
+                workload: Some("hard".to_string()),
+                verdict: Some("pass".to_string()),
+                judged_from: "fresh".to_string(),
+                reason: "the orchestrator walks hard's chain".to_string(),
+                order: vec![("stepfun".to_string(), "step-5-preview".to_string())],
             })
             .expect("the route lands");
         sources
@@ -1111,6 +1256,13 @@ mod tests {
         assert_eq!(events.len(), 4, "{events:?}");
         assert_eq!(events[0]["type"], "routed");
         assert_eq!(events[0]["provider"], "stepfun");
+        // The decision's own facts ride the event, whole: the page
+        // reduces the live decision out of the log like every other
+        // number rather than asking the router a second time.
+        assert_eq!(events[0]["model"], "step-5-preview");
+        assert_eq!(events[0]["workload"], "hard");
+        assert_eq!(events[0]["judged_from"], "fresh");
+        assert_eq!(events[0]["order"][0]["provider"], "stepfun");
         assert_eq!(events[1]["type"], "usage");
         assert_eq!(events[1]["prompt"], 1200);
         assert_eq!(events[2]["type"], "delegation");
