@@ -1746,8 +1746,11 @@ impl Router {
                 Ok(response) => Ok(response),
                 Err((error, _streamed)) => {
                     let class = failure_class(&error);
+                    // `start` is a walk position: the provider it names
+                    // is read through the order, the same mapping every
+                    // other record here applies (KI-208).
                     self.record(Attempt {
-                        provider: self.resolved[start].id().to_string(),
+                        provider: self.resolved[self.order[start]].id().to_string(),
                         outcome: "failed",
                         class: Some(class),
                     });
@@ -3146,6 +3149,79 @@ mod tests {
         assert!(router.calibration_skips.is_empty());
         assert_eq!(router.calibration_skip(3, 0), None);
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn a_committed_failure_records_the_provider_that_was_committed() {
+        // The judged-walk shape: three candidates whose walk order is
+        // not the roster order. Position 0 of the walk dials stepfun —
+        // roster position 2 — so a committed failure there must record
+        // stepfun, never router-kit (KI-208).
+        let resolved = vec![
+            resolved_for_test("router-kit"),
+            resolved_for_test("zai-coding-plan"),
+            resolved_for_test("stepfun"),
+        ];
+        let decision = RouteDecision {
+            provider: "stepfun".to_string(),
+            model: "stepfun-model".to_string(),
+            how: How::Judged,
+            workload: Some("hard".to_string()),
+            verdict: None,
+            reason: "test".to_string(),
+            judged_from: crate::route::JudgedFrom::Fresh,
+            start_index: 0,
+            order: vec![
+                ("stepfun".to_string(), "stepfun-model".to_string()),
+                ("router-kit".to_string(), "router-kit-model".to_string()),
+                (
+                    "zai-coding-plan".to_string(),
+                    "zai-coding-plan-model".to_string(),
+                ),
+            ],
+        };
+        let router = Router::new(resolved, decision);
+        // A previous turn was served by the walk's position 0; this
+        // turn's failure is committed, fatal, and recorded.
+        {
+            let mut state = lock(&router.state);
+            state.index = 0;
+            state.committed = true;
+        }
+        let message = crate::api::Message::text(crate::api::Role::User, "hi");
+        let request = crate::api::ChatRequest {
+            model: "stepfun-model",
+            messages: std::slice::from_ref(&message),
+            tools: Vec::new(),
+        };
+        // The endpoint is a closed loopback port: the attempt fails
+        // fast, the walk does not advance (committed), and the record
+        // is what this test is about.
+        let outcome = router.chat_stream(&request, &mut |_| {}).await;
+        assert!(outcome.is_err(), "the committed attempt fails");
+        let recorded = lock(&router.state).attempts.clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].provider, "stepfun");
+        assert_eq!(recorded[0].outcome, "failed");
+
+        // The record is the demotion loop's input: three of these
+        // failures in a day demote the provider that was dialed, and
+        // only it (the loop's arithmetic is calib's own; what this pins
+        // is that the name it reads is the dialed one).
+        let rows: Vec<calib::ReadRow> = [&recorded[0]; 3]
+            .iter()
+            .map(|attempt| {
+                serde_json::from_str(&format!(
+                    r#"{{"op":"route","attempts":[{{"provider":"{}","outcome":"{}"}}]}}"#,
+                    attempt.provider, attempt.outcome
+                ))
+                .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            calib::demoted_providers(&rows, calib::DEMOTION_THRESHOLD),
+            vec!["stepfun".to_string()]
+        );
     }
 
     /// One judged row as a JSON line, the shape the judgment beat's
