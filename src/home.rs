@@ -162,7 +162,10 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
 
         let name = "FLEET_TEST_HARNESS_ONLY_KEY";
-        let home = std::env::temp_dir().join(format!("fleet-home-test-{}", std::process::id()));
+        // Its own directory: the sibling dotenv test shares the pid-keyed
+        // path, and `cargo test` runs a module's tests on threads, so two
+        // tests writing and removing one directory race each other.
+        let home = std::env::temp_dir().join(format!("fleet-home-own-{}", std::process::id()));
         fs::create_dir_all(&home).unwrap();
         fs::write(home.join(".env"), "OWNED_KEY=from-fleets-own-env\n").unwrap();
 

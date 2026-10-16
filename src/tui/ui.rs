@@ -574,15 +574,11 @@ fn board_lines(kind: BoardKind, slot: &Slot, width: usize) -> Vec<Line<'static>>
     }
 }
 
-/// The router board: the kit's own routing state — the workload tier
-/// chains with their candidates, what it just served, and the usage
-/// ledger's counters with the per-model bars.
+/// The router board: Fleet's own routing state — the workload tier
+/// chains with their candidates, the gates, what Fleet just served, and
+/// the day's counts. Nothing here is dialed: the router is this crate's
+/// own, so the board reads what the router reads.
 fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'static>> {
-    let host = snapshot
-        .base_url
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .to_string();
     let judge = snapshot
         .judge
         .as_ref()
@@ -590,17 +586,28 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
         .unwrap_or_else(|| "\u{2014}".to_string());
     let mut lines = vec![line_of(
         vec![
-            (" kit ".to_string(), Style::new().fg(palette::DIM)),
-            (host, Style::new().fg(palette::TEXT)),
+            (" fleet ".to_string(), Style::new().fg(palette::DIM)),
+            ("router own".to_string(), Style::new().fg(palette::TEXT)),
             (format!("  judge {judge}"), Style::new().fg(palette::DIM)),
         ],
         width,
     )];
-    // The shape drift rides the top of the board, under the kit line: a
-    // section the kit's payload no longer carries is named where the
-    // operator will see it, not under a fold.
-    for (route, note) in &snapshot.drift {
-        lines.extend(drift_lines(route, note, width));
+    // The gates and the pin, the two facts that shape every route: what
+    // confidence a judgment needs to be trusted, what an unmapped ask
+    // defaults to, and what the owner pinned if anything.
+    if let Some((_, Some(default_workload))) = &snapshot.judge {
+        let pin = snapshot.pin.as_deref().unwrap_or("\u{2014}");
+        lines.push(line_of(
+            vec![
+                (" gates ".to_string(), Style::new().fg(palette::DIM)),
+                (
+                    format!("default {default_workload}"),
+                    Style::new().fg(palette::TEXT),
+                ),
+                (format!("  pin {pin}"), Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ));
     }
     lines.push(Line::from(""));
     lines.push(section("tiers"));
@@ -643,20 +650,44 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
         } else {
             ("\u{2715}", palette::DENIED)
         };
+        // The row names its own outcome, and the model it names is the
+        // served candidate's own: the provider prefix is what the tier
+        // lines above already say, so it is the part a narrow pane drops
+        // first. The workload rides the tail for the same reason — every
+        // workload is named in the tiers block.
+        let model = row
+            .model
+            .rsplit('/')
+            .next()
+            .unwrap_or(&row.model)
+            .to_string();
         let workload = row.workload.clone().unwrap_or_default();
+        let ms = row
+            .ms
+            .map(|ms| format!("{}ms", boards::grouped(ms)))
+            .unwrap_or_default();
+        let room =
+            width.saturating_sub(3 + row.outcome.chars().count() + 1 + ms.chars().count() + 1);
         lines.push(line_of(
             vec![
                 (format!(" {glyph} "), Style::new().fg(color)),
-                (row.status.to_string(), Style::new().fg(color)),
+                (row.outcome.clone(), Style::new().fg(color)),
                 (
-                    format!(
-                        "  {}",
-                        boards::trim_to(&row.model, width.saturating_sub(22))
-                    ),
+                    format!(" {}", boards::trim_to(&model, room)),
                     Style::new().fg(palette::TEXT),
                 ),
-                (format!("  {workload}"), Style::new().fg(palette::DIM)),
+                (format!(" {ms}"), Style::new().fg(palette::DIM)),
+                (format!(" {workload}"), Style::new().fg(palette::DIM)),
             ],
+            width,
+        ));
+    }
+    if snapshot.recent.is_empty() {
+        lines.push(line_of(
+            vec![(
+                " no route rows today".to_string(),
+                Style::new().fg(palette::DIM),
+            )],
             width,
         ));
     }
@@ -687,16 +718,14 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             ],
             width,
         ));
+        // The day's route rows carry no token counts, so the board says so
+        // rather than estimating one from a character count.
         lines.push(line_of(
             vec![
                 (" tokens ".to_string(), Style::new().fg(palette::DIM)),
                 (
-                    format!(
-                        "{} in \u{b7} {} out",
-                        boards::compact(totals.prompt_tokens),
-                        boards::compact(totals.completion_tokens)
-                    ),
-                    Style::new().fg(palette::TEXT),
+                    "not recorded on the route row".to_string(),
+                    Style::new().fg(palette::DIM),
                 ),
             ],
             width,
@@ -726,24 +755,7 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             width,
         ));
     }
-    if let Some(cascade) = &snapshot.cascade {
-        lines.push(line_of(
-            vec![
-                (" cascade ".to_string(), Style::new().fg(palette::DIM)),
-                (
-                    format!(
-                        "{} esc \u{b7} {} failed \u{b7} {} compared",
-                        boards::grouped(cascade.escalations),
-                        boards::grouped(cascade.failed),
-                        boards::grouped(cascade.compared)
-                    ),
-                    Style::new().fg(palette::TEXT),
-                ),
-            ],
-            width,
-        ));
-    }
-    // The workload mix: where the kit's traffic actually goes.
+    // The workload mix: where the day's routes actually went.
     if !snapshot.workloads.is_empty() {
         let mix: Vec<String> = snapshot
             .workloads
@@ -759,7 +771,7 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             width,
         ));
     }
-    // The kit's own routing guard: whether a pay-as-you-go provider may be
+    // Fleet's own routing guard: whether a pay-as-you-go provider may be
     // routed to at all, and which ones are payg.
     if let Some((allowed, providers)) = &snapshot.payg {
         let (label, color) = if *allowed {
@@ -1292,27 +1304,6 @@ fn refused_lines(name: &str, reason: &str, width: usize) -> Vec<Line<'static>> {
         ),
         line_of(
             vec![(format!("   {reason}"), Style::new().fg(palette::DIM))],
-            width,
-        ),
-    ]
-}
-
-/// One named shape drift on the router board: the route that carried the
-/// payload and what is absent from it, on the same two lines a refused
-/// read uses. A kit upgrade that renamed `resolved.workloads` or
-/// `judge.mode` would otherwise empty a section with no reason given —
-/// an upgrade must announce itself, not blank the board.
-fn drift_lines(route: &str, note: &str, width: usize) -> Vec<Line<'static>> {
-    vec![
-        line_of(
-            vec![(
-                format!(" \u{25b3} {route} shape changed"),
-                Style::new().fg(palette::PENDING),
-            )],
-            width,
-        ),
-        line_of(
-            vec![(format!("   {note}"), Style::new().fg(palette::DIM))],
             width,
         ),
     ]
@@ -2850,44 +2841,44 @@ mod tests {
         assert!(tiny.contains("lanes"), "{tiny}");
     }
 
-    /// A router snapshot with the kit's own facts, as the operator API's
-    /// payload reads back.
+    /// A router snapshot with Fleet's own routing facts: the compiled-in
+    /// chain and workload table, and a day of route rows.
     fn router_snapshot() -> crate::boards::RouterSnapshot {
         crate::boards::RouterSnapshot {
-            read_at: "2026-10-14T09:41Z".to_string(),
-            base_url: "http://127.0.0.1:8300".to_string(),
-            port: Some(8300),
-            judge: Some((
-                "cascade".to_string(),
-                Some("fastino/gliner2.5-multi-v1".to_string()),
-            )),
+            read_at: "2026-10-16T09:41Z".to_string(),
+            judge: Some(("sys1".to_string(), Some("standard_code".to_string()))),
+            pin: None,
             payg: Some((false, vec!["deepseek".to_string()])),
-            tiers: vec![
-                crate::boards::TierChain {
-                    tier: "standard_code".to_string(),
-                    primary: "stepfun/step-5-preview".to_string(),
-                    candidates: vec![
-                        "stepfun/step-5-preview".to_string(),
-                        "zai-coding-plan/GLM-5.3-Flash".to_string(),
-                    ],
-                },
-                crate::boards::TierChain {
-                    tier: "quick".to_string(),
-                    primary: "stepfun/step-3.7-flash".to_string(),
-                    candidates: vec![
-                        "stepfun/step-3.7-flash".to_string(),
-                        "xiaomi-mimo/mimo-v2.6-flash".to_string(),
-                        "zai-coding-plan/GLM-5.3-Flash".to_string(),
-                    ],
-                },
-            ],
+            // The tier chains are derived from the compiled-in preference
+            // table rather than hand-written, so a fixture can never
+            // disagree with the table about what a workload's own chain is.
+            tiers: crate::route::default_preferences()
+                .iter()
+                .filter(|preference| {
+                    ["standard_code", "quick", "hard"].contains(&preference.workload)
+                })
+                .map(|preference| {
+                    let candidates: Vec<String> = preference
+                        .candidates
+                        .iter()
+                        .map(|(provider, model)| format!("{provider}/{model}"))
+                        .collect();
+                    crate::boards::TierChain {
+                        tier: preference.workload.to_string(),
+                        primary: candidates.first().cloned().unwrap_or_default(),
+                        candidates,
+                    }
+                })
+                .collect(),
             totals: Some(crate::boards::UsageTotals {
                 calls: 19_873,
                 ok: 19_646,
                 errors: 227,
-                prompt_tokens: 88_197_905_869,
-                completion_tokens: 3_961_204_277,
-                total_tokens: 92_159_110_146,
+                // The route row carries no token counts, and the board
+                // says so rather than estimating them.
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
             }),
             models: vec![
                 crate::boards::ModelRow {
@@ -2895,8 +2886,8 @@ mod tests {
                     provider: "stepfun".to_string(),
                     model: "step-3.7-flash".to_string(),
                     calls: 3_720,
-                    errors: 5,
-                    total_tokens: 29_604_087_234,
+                    errors: 0,
+                    total_tokens: 0,
                 },
                 crate::boards::ModelRow {
                     key: "stepfun/step-5-preview".to_string(),
@@ -2904,24 +2895,24 @@ mod tests {
                     model: "step-5-preview".to_string(),
                     calls: 1_791,
                     errors: 0,
-                    total_tokens: 61_234_540_459,
+                    total_tokens: 0,
                 },
             ],
             recent: vec![
                 crate::boards::RecentRow {
-                    at: 1_791_918_037_872,
+                    at: "2026-10-16T09:31:57Z".to_string(),
                     provider: "stepfun".to_string(),
-                    model: "step-3.7-flash".to_string(),
-                    status: 200,
-                    workload: Some("standard_code".to_string()),
+                    model: "stepfun/step-3.7-flash".to_string(),
+                    outcome: "served".to_string(),
+                    workload: Some("quick".to_string()),
                     ms: Some(2_000),
                     reason: None,
                 },
                 crate::boards::RecentRow {
-                    at: 1_791_916_699_901,
+                    at: "2026-10-16T09:15:41Z".to_string(),
                     provider: "zai-coding-plan".to_string(),
-                    model: "GLM-5.3-Flash".to_string(),
-                    status: 500,
+                    model: "zai-coding-plan/GLM-5.3-Flash".to_string(),
+                    outcome: "failed".to_string(),
                     workload: Some("standard_code".to_string()),
                     ms: Some(812),
                     reason: Some("upstream refused".to_string()),
@@ -2932,26 +2923,19 @@ mod tests {
                 cached: 15_738,
                 errors: 321,
             }),
-            cascade: Some(crate::boards::CascadeCounters {
-                escalations: 787,
-                cold: 0,
-                failed: 570,
-                compared: 217,
-            }),
             workloads: vec![("standard_code".to_string(), 10_557)],
             guidance: vec![(
-                "quick".to_string(),
-                "the quick tier's head is exhausted".to_string(),
+                "stepfun".to_string(),
+                "demoted \u{2014} walked last".to_string(),
             )],
             refused: Vec::new(),
-            drift: Vec::new(),
         }
     }
 
     /// A second-brain snapshot with the derived state's own facts.
     fn brain_snapshot() -> crate::boards::BrainSnapshot {
         crate::boards::BrainSnapshot {
-            read_at: "2026-10-14T09:41Z".to_string(),
+            read_at: "2026-10-16T09:41Z".to_string(),
             home: std::path::PathBuf::from("/Users/owner/.second-brain"),
             gates: Section::Landed(crate::boards::GatesRead {
                 generated: "2026-10-04T16:13:35Z".to_string(),
@@ -3044,7 +3028,7 @@ mod tests {
     /// A tower snapshot with two projects' git facts.
     fn tower_snapshot() -> crate::boards::TowerSnapshot {
         crate::boards::TowerSnapshot {
-            read_at: "2026-10-14T09:41Z".to_string(),
+            read_at: "2026-10-16T09:41Z".to_string(),
             root: std::path::PathBuf::from("/Users/owner/Projects"),
             projects: vec![
                 crate::boards::ProjectFacts {
@@ -3086,36 +3070,47 @@ mod tests {
     }
 
     #[test]
-    fn the_router_board_renders_the_kits_routing_state() {
+    fn the_router_board_renders_fleets_own_routing_state() {
         let mut app = board_app(
             crate::boards::BoardKind::Router,
-            crate::boards::BoardData::Router(router_snapshot()),
+            crate::boards::BoardData::Router(Box::new(router_snapshot())),
         );
         let drawn = draw(&app, 120, 40);
         // The pane's title names the board, and the status bar repeats it.
         assert!(drawn.contains("board \u{2014} router"), "{drawn}");
         assert!(drawn.contains("board router"), "{drawn}");
-        // The kit, its judge, and the tier chains with their primaries.
-        assert!(drawn.contains("127.0.0.1:8300"), "{drawn}");
-        assert!(drawn.contains("judge cascade"), "{drawn}");
+        // The router is Fleet's own: the header says so, and names the
+        // judge and the workload an unmapped ask defaults to.
+        assert!(drawn.contains("router own"), "{drawn}");
+        assert!(drawn.contains("judge sys1"), "{drawn}");
+        assert!(drawn.contains("default standard_code"), "{drawn}");
+        assert!(drawn.contains("pin \u{2014}"), "{drawn}");
+        // No host, no port, no token: nothing here is dialed.
+        assert!(!drawn.contains("127.0.0.1"), "{drawn}");
+        // The tier chains with their primaries and their fallback counts.
         assert!(drawn.contains("standard_code"), "{drawn}");
         assert!(drawn.contains("stepfun/step-5-preview"), "{drawn}");
         assert!(drawn.contains("+2"), "{drawn}");
-        // What it just served, with the failed call's own dot.
+        // What it just served: the walk's own outcome word and dot, the
+        // model that served, the workload sys1 judged, the latency.
+        assert!(drawn.contains("served"), "{drawn}");
+        assert!(drawn.contains("failed"), "{drawn}");
         assert!(drawn.contains("step-3.7-flash"), "{drawn}");
-        assert!(drawn.contains("500"), "{drawn}");
+        assert!(drawn.contains("quick"), "{drawn}");
+        assert!(drawn.contains("2,000ms"), "{drawn}");
         assert!(drawn.contains("GLM-5.3-Flash"), "{drawn}");
-        // The ledger's counters and the per-model bars.
+        // The ledger's counters, and the honest token line.
         assert!(drawn.contains("19,873"), "{drawn}");
         assert!(drawn.contains("98%"), "{drawn}");
-        assert!(drawn.contains("88.2B in \u{b7} 4.0B out"), "{drawn}");
+        assert!(drawn.contains("not recorded on the route row"), "{drawn}");
         assert!(drawn.contains("3,720"), "{drawn}");
-        // The judge and cascade counters, the workload mix, and the kit's
-        // own payg guard.
+        // The judge split, the workload mix, and Fleet's own payg guard.
         assert!(drawn.contains("15,738 cached"), "{drawn}");
-        assert!(drawn.contains("787 esc"), "{drawn}");
         assert!(drawn.contains("standard_code 10,557"), "{drawn}");
         assert!(drawn.contains("guard payg off \u{b7} deepseek"), "{drawn}");
+        // Fleet's own failover feedback, out of the day's route rows.
+        assert!(drawn.contains("stepfun demoted"), "{drawn}");
+        assert!(drawn.contains("walked last"), "{drawn}");
         // The board is genuinely visual: a bar and a sparkline's glyphs.
         assert!(drawn.contains('\u{2588}'), "{drawn}");
         // A second cycle moves to the second-brain board.
@@ -3130,7 +3125,7 @@ mod tests {
     fn the_second_brain_board_renders_the_derived_state_as_cards() {
         let app = board_app(
             crate::boards::BoardKind::Brain,
-            crate::boards::BoardData::Brain(brain_snapshot()),
+            crate::boards::BoardData::Brain(Box::new(brain_snapshot())),
         );
         let drawn = draw(&app, 120, 40);
         assert!(drawn.contains("board \u{2014} second-brain"), "{drawn}");
@@ -3164,7 +3159,7 @@ mod tests {
     fn the_tower_board_renders_git_facts_per_project() {
         let app = board_app(
             crate::boards::BoardKind::Tower,
-            crate::boards::BoardData::Tower(tower_snapshot()),
+            crate::boards::BoardData::Tower(Box::new(tower_snapshot())),
         );
         let drawn = draw(&app, 120, 40);
         assert!(drawn.contains("board \u{2014} tower"), "{drawn}");
@@ -3183,25 +3178,27 @@ mod tests {
 
     #[test]
     fn a_refused_read_keeps_the_last_snapshot_and_names_the_error() {
+        // The pane's contract, carried by a board whose source can still
+        // fail: Fleet's own router read cannot refuse — there is nothing
+        // to dial — so the tower scan names its refusal.
         let mut app = board_app(
-            crate::boards::BoardKind::Router,
-            crate::boards::BoardData::Router(router_snapshot()),
+            crate::boards::BoardKind::Tower,
+            crate::boards::BoardData::Tower(Box::new(tower_snapshot())),
         );
-        // The kit goes away: the read is refused.
         app.apply_board(
-            crate::boards::BoardKind::Router,
-            Err("the kit at 8300 did not answer".to_string()),
+            crate::boards::BoardKind::Tower,
+            Err("the tower could not list /nowhere: no such file or directory".to_string()),
         );
         let drawn = draw(&app, 120, 40);
         // The last snapshot is still on screen, whole.
-        assert!(drawn.contains("standard_code"), "{drawn}");
-        assert!(drawn.contains("19,873"), "{drawn}");
+        assert!(drawn.contains("fleet"), "{drawn}");
+        assert!(drawn.contains("master"), "{drawn}");
         // And the refusal is named, with the time of the last good read.
-        assert!(drawn.contains("the kit at 8300 did not answer"), "{drawn}");
         assert!(
-            drawn.contains("last good read 2026-10-14T09:41Z"),
+            drawn.contains("the tower could not list /nowhere"),
             "{drawn}"
         );
+        assert!(drawn.contains("last good read"), "{drawn}");
     }
 
     #[test]
@@ -3246,7 +3243,7 @@ mod tests {
         }
         let app = board_app(
             crate::boards::BoardKind::Tower,
-            crate::boards::BoardData::Tower(snapshot),
+            crate::boards::BoardData::Tower(Box::new(snapshot)),
         );
         let drawn = draw(&app, 120, 24);
         assert!(drawn.contains("more"), "{drawn}");
@@ -3264,21 +3261,21 @@ mod tests {
             for (kind, snapshot) in [
                 (
                     crate::boards::BoardKind::Router,
-                    crate::boards::BoardData::Router(router_snapshot()),
+                    crate::boards::BoardData::Router(Box::new(router_snapshot())),
                 ),
                 (
                     crate::boards::BoardKind::Brain,
-                    crate::boards::BoardData::Brain(brain_snapshot()),
+                    crate::boards::BoardData::Brain(Box::new(brain_snapshot())),
                 ),
                 (
                     crate::boards::BoardKind::Tower,
-                    crate::boards::BoardData::Tower(tower_snapshot()),
+                    crate::boards::BoardData::Tower(Box::new(tower_snapshot())),
                 ),
             ] {
                 let app = board_app(kind, snapshot);
                 let drawn = draw(&app, width, height);
                 assert!(
-                    drawn.contains("read 2026-10-14T09:41Z"),
+                    drawn.contains("read 2026-10-16T09:41Z"),
                     "{width}x{height}: {drawn}"
                 );
                 // The pane never overflows its frame either.
@@ -3299,18 +3296,28 @@ mod tests {
         // carry their facts there (the KI-115 class).
         let router = board_app(
             crate::boards::BoardKind::Router,
-            crate::boards::BoardData::Router(router_snapshot()),
+            crate::boards::BoardData::Router(Box::new(router_snapshot())),
         );
         let drawn = draw(&router, 80, 24);
         assert!(drawn.contains("board \u{2014} router"), "{drawn}");
-        assert!(drawn.contains("127.0.0.1:8300"), "{drawn}");
-        assert!(drawn.contains("standard_code"), "{drawn}");
-        assert!(drawn.contains("19,873"), "{drawn}");
+        assert!(drawn.contains("router own"), "{drawn}");
+        assert!(drawn.contains("default standard_code"), "{drawn}");
         assert!(drawn.contains("step-3.7-flash"), "{drawn}");
+        // The chain and the rows it just served are the facts the narrowest
+        // pane carries. The ledger sits below the fold there, and the board
+        // names what it is holding back rather than clipping its tail
+        // silently — the count is the fixture's, the naming is the
+        // invariant (the KI-115 class).
+        assert!(
+            drawn
+                .lines()
+                .any(|line| line.contains(" more") && line.contains('+')),
+            "{drawn}"
+        );
 
         let brain = board_app(
             crate::boards::BoardKind::Brain,
-            crate::boards::BoardData::Brain(brain_snapshot()),
+            crate::boards::BoardData::Brain(Box::new(brain_snapshot())),
         );
         let drawn = draw(&brain, 80, 24);
         assert!(drawn.contains("board \u{2014} second-brain"), "{drawn}");
@@ -3327,7 +3334,7 @@ mod tests {
 
         let tower = board_app(
             crate::boards::BoardKind::Tower,
-            crate::boards::BoardData::Tower(tower_snapshot()),
+            crate::boards::BoardData::Tower(Box::new(tower_snapshot())),
         );
         let drawn = draw(&tower, 80, 24);
         assert!(drawn.contains("board \u{2014} tower"), "{drawn}");
@@ -3338,49 +3345,30 @@ mod tests {
     }
 
     #[test]
-    fn the_router_board_names_the_kits_shape_drift() {
-        // A kit whose payload renamed `resolved.workloads`: the tier
-        // section is empty and the drift is named, so an upgrade
-        // announces itself instead of blanking the board.
+    fn a_day_with_no_routes_renders_the_chain_and_says_the_ledger_is_empty() {
+        // A fresh install, or a day Fleet has not routed on: the tier
+        // chains still render and the ledger says it has seen nothing.
+        // There is nothing to dial, so there is no drift to name.
         let mut snapshot = router_snapshot();
-        snapshot.tiers = Vec::new();
-        snapshot.judge = None;
-        snapshot.drift = vec![
-            ("/api/state".to_string(), "judge.mode is absent".to_string()),
-            (
-                "/api/state".to_string(),
-                "resolved.workloads is absent".to_string(),
-            ),
-            (
-                "/api/usage".to_string(),
-                "0 of 1 model rows could not be read".to_string(),
-            ),
-        ];
+        snapshot.totals = None;
+        snapshot.models = Vec::new();
+        snapshot.recent = Vec::new();
+        snapshot.judge_counters = None;
+        snapshot.workloads = Vec::new();
+        snapshot.guidance = Vec::new();
         let app = board_app(
             crate::boards::BoardKind::Router,
-            crate::boards::BoardData::Router(snapshot),
+            crate::boards::BoardData::Router(Box::new(snapshot)),
         );
-        // Named at both widths: the drift rides the top of the board, so
-        // a short pane does not fold it out of sight.
         for (width, height) in [(120, 40), (80, 24)] {
             let drawn = draw(&app, width, height);
-            assert!(
-                drawn.contains("/api/state shape changed"),
-                "{width}: {drawn}"
-            );
-            assert!(drawn.contains("judge.mode is absent"), "{width}: {drawn}");
-            assert!(
-                drawn.contains("resolved.workloads is absent"),
-                "{width}: {drawn}"
-            );
-            assert!(
-                drawn.contains("/api/usage shape changed"),
-                "{width}: {drawn}"
-            );
-            assert!(
-                drawn.contains("model rows could not be read"),
-                "{width}: {drawn}"
-            );
+            assert!(drawn.contains("no route rows today"), "{width}: {drawn}");
+            // The chain is what a route selects, so it renders regardless.
+            assert!(drawn.contains("standard_code"), "{width}: {drawn}");
+            assert!(drawn.contains("stepfun/step-5-preview"), "{width}: {drawn}");
+            // The gates render, and the guard still names the reserve.
+            assert!(drawn.contains("default standard_code"), "{width}: {drawn}");
+            assert!(drawn.contains("guard payg off"), "{width}: {drawn}");
         }
     }
 
@@ -3390,7 +3378,7 @@ mod tests {
         snapshot.unread = 3;
         let app = board_app(
             crate::boards::BoardKind::Tower,
-            crate::boards::BoardData::Tower(snapshot),
+            crate::boards::BoardData::Tower(Box::new(snapshot)),
         );
         for (width, height) in [(120, 40), (80, 24)] {
             let drawn = draw(&app, width, height);
@@ -3409,15 +3397,15 @@ mod tests {
         for (kind, snapshot) in [
             (
                 crate::boards::BoardKind::Router,
-                crate::boards::BoardData::Router(router_snapshot()),
+                crate::boards::BoardData::Router(Box::new(router_snapshot())),
             ),
             (
                 crate::boards::BoardKind::Brain,
-                crate::boards::BoardData::Brain(brain_snapshot()),
+                crate::boards::BoardData::Brain(Box::new(brain_snapshot())),
             ),
             (
                 crate::boards::BoardKind::Tower,
-                crate::boards::BoardData::Tower(tower_snapshot()),
+                crate::boards::BoardData::Tower(Box::new(tower_snapshot())),
             ),
         ] {
             let app = board_app(kind, snapshot);

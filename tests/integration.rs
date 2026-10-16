@@ -2769,12 +2769,12 @@ async fn sys1_judges_the_route_through_the_injected_spec() {
 
     let preferences = vec![fleet::route::Preference {
         workload: "hard",
-        candidates: vec![("zai-coding-plan", "GLM-5.3-Flash"), ("router-kit", "auto")],
+        candidates: vec![("zai-coding-plan", "GLM-5.3-Flash"), ("stand-in", "auto")],
     }];
     let resolved = vec![
         resolved(
-            "router-kit",
-            "http://127.0.0.1:8300/v1".to_string(),
+            "stand-in",
+            "http://127.0.0.1:8400/v1".to_string(),
             false,
             None,
         ),
@@ -3009,15 +3009,16 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
 /// candidate serves — the consuming-lanes rule inside the walk.
 #[tokio::test]
 async fn a_lane_that_refuses_advances_the_walk_by_name() {
-    let kit = MockApi::start(vec![assistant_stream("Answered by the kit.")]);
+    let stand_in = MockApi::start(vec![assistant_stream("Answered by the stand-in.")]);
     let home = temp_home("composed-lane-refusal");
-    // A declared table: `composed` walks blend1, then the kit. The kit's
+    // A declared table: `composed` walks blend1, then the stand-in. The stand-in's
     // endpoint is the mock, so the failover leg lands somewhere real.
     std::fs::write(
         home.join("config.json"),
         serde_json::json!({
             "providers": [
-                { "id": "router-kit", "base_url": kit.url(), "key_required": false }
+                { "id": "stand-in", "base_url": stand_in.url(), "key_env": "STAND_IN_API_KEY",
+                  "models": ["auto"], "key_required": false }
             ]
         })
         .to_string(),
@@ -3027,7 +3028,7 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         home.join("routing.json"),
         serde_json::json!({
             "workloads": [
-                { "workload": "composed", "candidates": ["blend1/blend1", "router-kit/auto"] }
+                { "workload": "composed", "candidates": ["blend1/blend1", "stand-in/auto"] }
             ]
         })
         .to_string(),
@@ -3094,13 +3095,13 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         .unwrap();
         agent.run("compose the answer").await.unwrap()
     };
-    // The kit served: the lane's refusal advanced the walk.
+    // The stand-in served: the lane's refusal advanced the walk.
     assert_eq!(
         report.final_message.as_deref(),
-        Some("Answered by the kit.")
+        Some("Answered by the stand-in.")
     );
     let row = prepared.router.row("compose the answer", 0);
-    assert_eq!(row.provider, "router-kit");
+    assert_eq!(row.provider, "stand-in");
     let attempts: Vec<(&str, &str, Option<&str>)> = row
         .attempts
         .iter()
@@ -3110,7 +3111,7 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         attempts,
         vec![
             ("blend1", "failed", Some("lane")),
-            ("router-kit", "served", None)
+            ("stand-in", "served", None)
         ]
     );
     // The lane's own words ride the row: the refusal is named, not a
@@ -3604,7 +3605,7 @@ async fn a_run_without_a_stream_records_nothing() {
 #[tokio::test]
 async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
     // Four mocks, one per roster candidate that stays enabled.
-    let kit = MockApi::start(vec![assistant_stream("Answered by the kit.")]);
+    let stand_in = MockApi::start(vec![assistant_stream("Answered by the stand-in.")]);
     let zai = MockApi::start(vec![ScriptedResponse {
         status: "500 Internal Server Error".to_string(),
         body: r#"{"error":{"message":"zai is down"}}"#.to_string(),
@@ -3627,7 +3628,8 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         home.join("config.json"),
         serde_json::json!({
             "providers": [
-                { "id": "router-kit", "base_url": kit.url(), "key_required": false },
+                { "id": "stand-in", "base_url": stand_in.url(), "key_env": "STAND_IN_API_KEY",
+                  "models": ["auto"], "key_required": false },
                 { "id": "zai-coding-plan", "base_url": zai.url(), "key_required": false },
                 { "id": "xiaomi-mimo", "base_url": mimo.url(), "key_required": false },
                 { "id": "stepfun", "base_url": stepfun.url(), "key_required": false },
@@ -3640,11 +3642,11 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
     )
     .unwrap();
     // The plugin-shaped routing table this scenario declares for
-    // itself: `hard` walks zai, then the kit, then mimo, then stepfun.
+    // itself: `hard` walks zai, then the stand-in, then mimo, then stepfun.
     // Declared rather than borrowed from the compiled-in default so
     // the scenario proves the mechanics — the judgment's selection is
     // respected, the demotion reorders the walk — whatever the owner's
-    // default table prefers. The kit sits mid-list on purpose: the
+    // default table prefers. The stand-in sits mid-list on purpose: the
     // demotion must move it out of the walk's way, and without the
     // demotion the walk would reach it (its mock answers) before
     // stepfun.
@@ -3654,7 +3656,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
             "workloads": [
                 { "workload": "hard", "candidates": [
                     "zai-coding-plan/GLM-5.3-Flash",
-                    "router-kit/auto",
+                    "stand-in/auto",
                     "xiaomi-mimo/mimo-v2.6-flash",
                     "stepfun/step-5-preview"
                 ] }
@@ -3664,8 +3666,8 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
     )
     .unwrap();
 
-    // Three graded failures against the kit, in the stream's own
-    // vocabulary: three route rows whose walk failed at the kit.
+    // Three graded failures against the stand-in, in the stream's own
+    // vocabulary: three route rows whose walk failed at the stand-in.
     let day = fleet::calib::today();
     let path = fleet::calib::day_path(&calib_root, &day);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -3675,12 +3677,12 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
             &serde_json::json!({
                 "ts": "2026-10-13T12:00:00Z",
                 "op": "route",
-                "provider": "router-kit",
+                "provider": "stand-in",
                 "how": "fallback",
                 "reason": "sys1 gave no usable verdict",
                 "model": "auto",
-                "providers_used": ["router-kit"],
-                "attempts": [{ "provider": "router-kit", "outcome": "failed", "class": "auth" }],
+                "providers_used": ["stand-in"],
+                "attempts": [{ "provider": "stand-in", "outcome": "failed", "class": "auth" }],
                 "input_chars": 9,
                 "input_hash": "0000000000000000",
                 "latency_ms": 1
@@ -3713,13 +3715,13 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
     assert_eq!(prepared.decision.how, How::Judged);
     // The demotion is auditable: it rides in the decision row's reason.
     assert!(
-        prepared.decision.reason.contains("demoted router-kit"),
+        prepared.decision.reason.contains("demoted stand-in"),
         "{}",
         prepared.decision.reason
     );
 
     // The walk: zai fails, mimo fails, stepfun serves — and the demoted
-    // kit is never tried, because it now sits at the end of the chain.
+    // stand-in is never tried, because it now sits at the end of the chain.
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::routed(prepared.router.clone());
     let options = AgentOptions {
@@ -3753,7 +3755,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         Some("Answered by stepfun.")
     );
     assert_eq!(
-        kit.bodies().len(),
+        stand_in.bodies().len(),
         0,
         "the demoted candidate was never tried"
     );

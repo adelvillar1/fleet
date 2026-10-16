@@ -796,7 +796,7 @@ mod list_tests {
         // And a well-formed one lands.
         let id = set_provider(
             &home,
-            r#"{"id":"blend1","base_url":"http://127.0.0.1:8300/v1","key_env":"BLEND1_KEY","kind":"lane"}"#,
+            r#"{"id":"blend1","base_url":"http://127.0.0.1:8420/v1","key_env":"BLEND1_BEARER_TOKEN","kind":"lane"}"#,
         )
         .unwrap();
         assert_eq!(id, "blend1");

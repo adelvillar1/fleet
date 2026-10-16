@@ -3,9 +3,8 @@
 //!
 //! `select` judges every route from scratch — it spawns the sys1 MCP
 //! server, initializes it, calls `sys1_classify`, and closes it. The
-//! zcode-router-kit caches exactly this decision and its board reports
-//! a 27:1 cached-to-fresh ratio, so the same judgment repeats
-//! constantly in practice. This is fleet's own cache for it, local
+//! routing decision for a task is stable in practice, so the same
+//! judgment repeats constantly. This is Fleet's own cache for it, local
 //! state beside the roster it describes, on the recall-index's
 //! discipline.
 //!

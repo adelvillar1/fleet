@@ -306,9 +306,8 @@ answer is not a lane that broke.
 | key env | `LIQUID_API_KEY` (key required) |
 
 It is appended **at the end** of the declared default order on purpose.
-The declared chain — router kit → z.ai → mimo → stepfun → token plan →
-deepseek — is the owner's standing directive, and this slice does not
-reorder it. Liquid is *declared*: the owner's `config.json` decides its
+The declared chain — z.ai → mimo → stepfun → token plan → deepseek —
+is the owner's standing directive, and this slice does not reorder it. Liquid is *declared*: the owner's `config.json` decides its
 real position, and moving it into the chain is a one-line config change
 whenever the owner wants it.
 

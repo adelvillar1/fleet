@@ -3080,7 +3080,7 @@ mod tests {
 
     #[test]
     fn each_row_carries_devdecisions_field_names() {
-        let route = serde_json::to_string(&route_row(&[("router-kit", "failed")])).unwrap();
+        let route = serde_json::to_string(&route_row(&[("deepseek", "failed")])).unwrap();
         let value: serde_json::Value = serde_json::from_str(&route).unwrap();
         assert_eq!(value["op"], "route");
         for field in [
@@ -3270,7 +3270,7 @@ mod tests {
     fn the_writer_serializes_one_row_per_line_in_the_day_file() {
         let root = scratch("writer");
         let stream = Stream::open(&root);
-        stream.record(route_row(&[("router-kit", "served")]));
+        stream.record(route_row(&[("deepseek", "served")]));
         stream.record(turn_row(TurnStop::Completed, 3));
         stream.record(screen_row("bash", ScreenVerdict::Denied));
         // The last handle's drop drains the queue before the file is read:
@@ -3433,7 +3433,7 @@ mod tests {
             &root,
             "2026-10-13",
             &[
-                route_row(&[("router-kit", "failed"), ("zai-coding-plan", "served")]),
+                route_row(&[("deepseek", "failed"), ("zai-coding-plan", "served")]),
                 screen_row("bash", ScreenVerdict::Approved),
                 screen_row("mcp__sys1__classify", ScreenVerdict::Always),
                 turn_row(TurnStop::Completed, 2),

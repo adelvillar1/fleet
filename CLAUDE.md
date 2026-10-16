@@ -10,7 +10,7 @@ The owner's intent (2026-10-13): Fleet is the self-contained Rust successor to t
 
 - the sys1 house lanes — sys1 (judgment), sdm1 (tabular), sem1 (embeddings), gen1 (media), plus the composed blend1 lane — vendored as Python service cores under `services/`, driven through fleet's own MCP client
 - dev-decisions — the verification and calibration layer: absorbed as the calibration stream's row vocabulary and log root (`src/calib.rs`)
-- agnostic-router-kit — model routing: the roster and the workload preference table are ported (`src/route.rs`); the kit's operator API and `/dashboard` are read read-only through the router board
+- agnostic-router-kit — model routing: the precursor, not a dependency. Its roster and workload preference table were the reference for Fleet's own router (`src/route.rs`); the kit's operator API, `/dashboard`, and port 8300 are the precursor's own and are read by nothing in Fleet
 - second-brain — the localhost control tower: its derived state files are read read-only through the second-brain board (never exposed beyond the machine)
 - the dashboards — router board, second-brain board, and tower over the board seam: rendered read-only in the TUI's board pane (`src/boards.rs`) for fleet's own surface, replacing the fork's TypeScript plugins here
 
@@ -21,7 +21,7 @@ Verified inventory and per-repo state: [docs/architecture/ecosystem.md](docs/arc
 - In-repo and green: `cargo test` → 1012 passed, 2 ignored at the last increment's commit; the gate runs whole locally — `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`, all four exit 0 (rustfmt and clippy were installed 2026-10-15, closing KI-007, and the first full clippy pass landed clean). The crate is 45 modules (~70k lines): the agent core, the five vendored lanes over the hand-rolled MCP client, multi-provider routing with the sys1 judgment and failover, the git-tracked memory substrate with six-channel recall, session-archive recall, skills, delegation to depth 2 with the dependency graph and cron, the calibration stream with its judge/delegate/explain beats and the eval corpus, the settings writer, and the ratatui TUI. The 2026-10-15 sessions landed the deep dive, its six-phase findings plan, and the dogfooding viability fixes (`docs/plans/2026-10-15-dogfooding-viability-fixes.md`: the bash wall-clock bound, the approval gate's label-blind class checks, the routing record's name, the consolidation fold's honesty, the torn-tail tolerance). 2026-10-16 landed the owner's own-home ruling (`docs/plans/2026-10-16-own-home-credentials.md`): credentials resolve from the process environment and `<FLEET_HOME>/.env` only, with the DeepSeek Harness credential-store leg and its helpers removed outright.
 - Environmental blockers, none of them code:
   - **CI is red by budget.** GitHub Actions minutes are exhausted; jobs never dispatch (job record: `runner_id: 0`, zero steps, ~3s). Until the budget resets, the gate must be run locally on every change.
-  - **DeepSeek is funded, and it is the chain's last resort** — owner-confirmed 2026-10-15 (the earlier 402 was transient; KI-008 records it): the account has balance, and the roster walks the other candidates first, so DeepSeek answers when no other viable provider remains (down or out of quota). The live-API e2e stays `#[ignore]`d by default and can run on demand with the key set.
+  - **DeepSeek is funded, and it is the pay-as-you-go reserve** — owner-confirmed 2026-10-15 (the earlier 402 was transient; KI-008 records it): the account has balance, and the roster walks the other candidates first. DeepSeek is declared in no workload's chain, so it serves only when the owner pins it in `<FLEET_HOME>/routing.json` — the guard, not a silent last resort. The live-API e2e stays `#[ignore]`d by default and can run on demand with the key set.
 - Ecosystem repos (sys1, sdm1, sem1, gen1, dev-decisions, agnostic-router-kit, second-brain) live outside this repo; their git-level states are verified in the ecosystem doc. The fork stays the spec/integration lab, never a shipping competitor.
 
 ## Hard rules
@@ -44,7 +44,7 @@ Verified inventory and per-repo state: [docs/architecture/ecosystem.md](docs/arc
 src/main.rs             dispatch, credential resolution, run/chat/sessions/lanes/doctor wiring
 src/cli.rs              argument parsing, help text, usage errors
 src/api.rs              DeepSeek chat-completions client (ureq), streaming, typed errors
-src/boards.rs           the three read-only boards: the router kit's operator API, the second-brain's derived state files, git facts per project
+src/boards.rs           the three read-only boards: Fleet's own routing state, the second-brain's derived state files, git facts per project
 src/agent.rs            the tool loop, approvals, turn cap, progress reporting
 src/tools.rs            bash, read_file, write_file, list_dir; output capping; the tool-declaration vocabulary
 src/approvals.rs        the three-mode approval gate: ask, yes, yes-guarded, and the always-ask class
@@ -144,6 +144,6 @@ One line each; verified states and absorption notes in [docs/architecture/ecosys
 | sem1 | embeddings lane; MCP embed/probe/index/search | clean on `main`; no CLAUDE.md |
 | gen1 | media lane; MCP `gen1_imagine` | clean on `master` |
 | dev-decisions | calibration/verification layer; JSONL ledger | clean on `main` + 3 feature branches |
-| agnostic-router-kit | model router, workflow plane, `/dashboard` | `master`, 4 untracked docs dirs; full methodology present |
+| agnostic-router-kit | model router, workflow plane, `/dashboard` — the precursor to Fleet; a separate app, not a Fleet dependency | `master`, 4 untracked docs dirs; full methodology present |
 | second-brain | localhost control-tower dashboard | clean on `main`; last commit 2026-10-09 |
 | deepseek-harness (fork) | the TS "fleet profile": `packages/fleet/dsh-*` wires all of the above into the harness | parent repo; slice-1 and dashboards records originated here |

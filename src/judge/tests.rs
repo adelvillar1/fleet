@@ -324,7 +324,7 @@ fn the_prompt_carries_the_outcome_evidence_and_never_the_task_text() {
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -349,7 +349,7 @@ fn the_prompt_carries_the_outcome_evidence_and_never_the_task_text() {
         prompt.contains("provider that served: zai-coding-plan"),
         "{prompt}"
     );
-    assert!(prompt.contains("- router-kit failed (auth)"), "{prompt}");
+    assert!(prompt.contains("- deepseek failed (auth)"), "{prompt}");
     assert!(
         prompt.contains("- zai-coding-plan served (served)"),
         "{prompt}"
@@ -473,7 +473,7 @@ fn the_grade_is_right_when_the_lanes_workload_maps_to_the_candidate_that_served(
         hard_target(),
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             (hard_target(), "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -505,7 +505,7 @@ fn the_grade_is_insufficient_when_a_failover_followed_the_served_turn() {
         "xiaomi-mimo",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             (hard_target(), "failed", Some("rate-limit")),
             ("xiaomi-mimo", "served", None),
         ],
@@ -653,10 +653,10 @@ fn an_owner_interrupted_run_grades_on_the_selection_alone() {
     // ruling reads the outcome evidence, never the selection's.
     let wrong = route_row(
         "2026-10-14T12:00:00Z",
-        "router-kit",
+        "deepseek",
         "hard",
         &[
-            ("router-kit", "served", None),
+            ("deepseek", "served", None),
             (hard_target(), "skipped", Some("no-key")),
         ],
         "a1b2c3d4e5f60718",
@@ -691,10 +691,10 @@ fn a_wrong_direction_outranks_an_incomplete_one() {
     // wrong is a failure first.
     let route = route_row(
         "2026-10-14T12:00:00Z",
-        "router-kit",
+        "deepseek",
         "hard",
         &[
-            ("router-kit", "served", None),
+            ("deepseek", "served", None),
             ("zai-coding-plan", "skipped", Some("no-key")),
         ],
         "a1b2c3d4e5f60718",
@@ -712,10 +712,10 @@ fn the_grade_is_wrong_when_a_different_candidate_served_and_the_required_one_was
     // it (it has no key, so it was skipped) and the head served.
     let route = route_row(
         "2026-10-14T12:00:00Z",
-        "router-kit",
+        "deepseek",
         "hard",
         &[
-            ("router-kit", "served", None),
+            ("deepseek", "served", None),
             (hard_target(), "skipped", Some("no-key")),
         ],
         "a1b2c3d4e5f60718",
@@ -742,7 +742,7 @@ fn the_grade_is_wrong_when_the_required_candidate_failed_in_a_way_that_was_its_o
         "xiaomi-mimo",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             (hard_target(), "failed", Some("client-error")),
             ("xiaomi-mimo", "served", None),
         ],
@@ -760,15 +760,18 @@ fn the_grade_is_wrong_when_the_required_candidate_failed_in_a_way_that_was_its_o
 }
 
 #[test]
-fn an_unmapped_workload_grade_against_the_declared_head() {
+fn an_unmapped_workload_grades_against_the_default_workloads_target() {
     // The lane answered with a workload the router's table does not map
-    // (or with none at all): the required provider is the declared head,
-    // and the grade runs against that.
+    // (or with none at all): the router routes it through the gates'
+    // default workload, so that workload's own target is the required
+    // provider, and the grade runs against that — never against the
+    // declared head, which nothing dialed.
+    let target = crate::route::unmapped_workload_candidate();
     let route = route_row(
         "2026-10-14T12:00:00Z",
-        "router-kit",
+        target,
         "something_else",
-        &[("router-kit", "served", None)],
+        &[(target, "served", None)],
         "a1b2c3d4e5f60718",
     );
     let reply = JudgeReply::parse(
@@ -776,11 +779,18 @@ fn an_unmapped_workload_grade_against_the_declared_head() {
     );
     let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_RIGHT);
-    assert!(
-        judgment.reason.contains(crate::route::HEAD_ID),
-        "{}",
-        judgment.reason
+    assert!(judgment.reason.contains(target), "{}", judgment.reason);
+    // The declared head is not what an unmapped workload expects: a
+    // route that served it is wrong, because the table's default
+    // workload is what the router actually walked.
+    let head = route_row(
+        "2026-10-14T12:00:00Z",
+        crate::route::HEAD_ID,
+        "something_else",
+        &[(crate::route::HEAD_ID, "served", None)],
+        "a1b2c3d4e5f60718",
     );
+    assert_eq!(grade(&head, None, &reply).verdict, VERDICT_WRONG);
 }
 
 // --- the row, the reader, and the round trip ---
@@ -846,7 +856,7 @@ fn the_key_is_the_route_rows_identity_and_joins_the_two_ops() {
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -863,7 +873,7 @@ fn the_key_is_the_route_rows_identity_and_joins_the_two_ops() {
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "ffffffffffffffff",
@@ -1542,7 +1552,7 @@ async fn a_days_route_rows_are_judged_beside_themselves_and_the_rows_land() {
         hard_target(),
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             (hard_target(), "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -1609,7 +1619,7 @@ async fn a_second_batch_spends_nothing_on_a_route_it_already_judged() {
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -1642,7 +1652,7 @@ async fn a_dry_run_spends_nothing_and_shows_what_would_be_asked() {
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -1709,7 +1719,7 @@ async fn a_lane_that_cannot_answer_fails_open_naming_its_reason() {
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -1764,7 +1774,7 @@ async fn a_lane_that_fails_open_is_refused_by_name_not_shipped_as_a_judgment() {
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -1818,7 +1828,7 @@ async fn a_lanes_answer_with_no_confidence_is_refused_rather_than_graded_on_a_gu
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -1943,7 +1953,7 @@ async fn an_over_budget_day_is_refused_naming_the_spend() {
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "a1b2c3d4e5f60718",
@@ -1951,13 +1961,7 @@ async fn an_over_budget_day_is_refused_naming_the_spend() {
     write_day(&root, &day(), &[route_row_value(route.clone())]);
     // The day's spend already at the cap: the next ask is refused by
     // name, and the refusal carries both numbers.
-    let mut spent = judged_row(
-        "0000000000000000",
-        "router-kit",
-        "quick",
-        VERDICT_RIGHT,
-        0.9,
-    );
+    let mut spent = judged_row("0000000000000000", "deepseek", "quick", VERDICT_RIGHT, 0.9);
     spent.cost_usd = Some(JUDGE_BUDGET_USD_DAY);
     write_day(
         &root,
@@ -2008,7 +2012,7 @@ async fn a_row_the_writer_could_not_land_records_its_spend_to_the_sidecar_and_re
         "zai-coding-plan",
         "hard",
         &[
-            ("router-kit", "failed", Some("auth")),
+            ("deepseek", "failed", Some("auth")),
             ("zai-coding-plan", "served", None),
         ],
         "a1b2c3d4e5f60718",

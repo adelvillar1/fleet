@@ -1,8 +1,8 @@
 # The boards (slice 14)
 
 Three read-only surfaces over this machine's own sources, mounted in the
-TUI's board pane: the **router board** over the router kit's operator API,
-the **second-brain board** over its six derived state files, and the
+TUI's board pane: the **router board** over Fleet's own routing state, the
+**second-brain board** over its six derived state files, and the
 **tower** over git facts per project. The visual bar is directive 4 —
 cards, status dots, bars, real layout — never a plain-text table.
 
@@ -31,41 +31,36 @@ surface over the same reads.
 
 | Board | Source | What it renders |
 |---|---|---|
-| router | `GET http://127.0.0.1:8300/api/state`, `/api/usage`, `/api/suggest` | the workload tier chains with their resolved primary and fallback count, the judge's mode, what the kit just served (status dot per call), the usage ledger's counters, and the per-model call bars |
+| router | Fleet's own routing state, read three ways: the declared chain and each candidate's resolved key, the workload preference table, and the day's route rows under the calibration root | the workload tier chains with their candidates and resolved primary, the gates and the pin, what Fleet just served (status dot per call), the usage ledger's counters, the per-model call bars, the judge split, the workload mix, and the demotion guidance |
 | second-brain | `gates_state.json`, `harness_state.json`, `loops_state.json`, `reports_state.json`, `maturity_state.json`, `tower_data.json` under the second-brain home | the earned-autonomy gate board (verdicts, dispositions, graded progress, fit-ready), the HITL inbox, the harness loops, the quality loops and their graded rows, the maturity sparkline, the doing/conflict counts, the tower's project aggregates |
 | tower | `git` per immediate subdirectory of `~/Projects` | per-project cards: branch, dirty dot and count, head commit, the trailing-thirty-day commit count, ahead/behind against the upstream |
 
 Each board is a composed ratatui render of its source's real data — no
 board renders a placeholder, a prose paragraph, or a plain-text table.
 
-## The token, and where it comes from
+## The router board's own sources
 
-The kit's operator API authenticates with its `localToken`, which lives in
-the kit's own rendered runtime config — `<kit home>/router/config.json`,
-the file `kit apply` writes. `src/boards.rs` resolves that file the way the
-kit's own `lib/paths.mjs` resolves it:
+Fleet's router is this crate's own `route::select` (see
+[the routing feature](routing.md)):
+sys1 asks for a workload verdict, the workload preference table picks the
+provider, and failover walks the declared chain. There is no router process
+behind it, so there is no port to dial, no operator API to authenticate
+against, and no token to resolve — the owner's 2026-10-16 ruling is that
+Fleet is a self-contained app with a router it owns. The board reads the
+same three things the router reads:
 
-1. `$AGNOSTIC_ROUTER_DIR/config.json`
-2. `$AGNOSTIC_ROUTER_KIT_HOME/router/config.json`
-3. `~/.agnostic-router-kit/router/config.json` (the kit's documented default)
-4. `~/.zcode/router/config.json` — where this machine's running router
-   actually renders its runtime, one directory over from the documented
-   default. Named rather than assumed.
+1. **The declared chain**, loaded from `<FLEET_HOME>/config.json` exactly
+   as [`route::load_roster`] loads it, with each candidate's key resolved
+   the way the router resolves it.
+2. **The workload preference table**, each workload's own candidates in
+   order. A workload's first candidate is what a route selects for it; the
+   rest are what that workload's own failover walks.
+3. **The day's route rows**, the calibration log Fleet writes for every run
+   it serves, capped at `ROUTER_ROW_CAP = 64`.
 
-Two explicit overrides win over the file: `AGNOSTIC_ROUTER_URL` (the base
-URL) and `AGNOSTIC_ROUTER_TOKEN` (the bearer). Everything resolves through
-the same environment-then-`<FLEET_HOME>/.env` chain every other credential
-in this crate uses, and the port the board dials is read out of the same
-config file the token comes from. **The token is never written into a
-snapshot, a log line, or this repository** — it rides the `Authorization`
-header of the request it authorizes and is dropped, and two tests pin the
-invariant: one asserts the token string appears nowhere in a snapshot's
-serialization or in a refused read's named error, and one asserts it
-appears nowhere in the rendered board at either width.
-
-A bad or absent token is a **refused read**, not a crash: the kit answers
-401 with `router: bad local token`, the read names that sentence, and the
-pane keeps its last snapshot.
+The roster is the one the router itself runs on, so the board can never
+disagree with the router about what the chain is. A config too broken to
+parse is a **refused read** named in the pane, not a silently empty board.
 
 The second-brain home resolves as `$SECOND_BRAIN_HOME`, then
 `~/.second-brain`, then `~/Projects/second-brain`. The projects root
@@ -74,13 +69,14 @@ variable), then `~/Projects`.
 
 ## The snapshot contract
 
-Every board keeps the last snapshot that landed. A refused read — a dead
-port, a bad token, an unreadable or missing state file, a git failure —
-keeps that snapshot visible and names the error at the top of the pane on
-one line, with the minute of the last good read beneath it:
+Every board keeps the last snapshot that landed. A refused read — a
+`git` failure, an unreadable or missing state file, a roster config too
+broken to parse — keeps that snapshot visible and names the error at the
+top of the pane on one line, with the minute of the last good read
+beneath it:
 
 ```
- ! the kit at 8300 did not answer
+ ! tower scan did not answer
    last good read 2026-10-14T09:41Z
 ```
 
@@ -90,24 +86,17 @@ tell a second-old snapshot from a twelve-minute one, which is the whole
 difference between a live board and a stale one.
 
 A board that has never read successfully shows ` no snapshot yet` and the
-reason. Inside a snapshot, one read that did not land names itself (the
-second-brain board's six files are independent reads: a missing
-`maturity_state.json` names that file and the other five still render),
-and the router board's `/api/usage` or `/api/suggest` refusal names its
-path while `/api/state` — the spine — still renders.
+reason. Inside a snapshot, one read that did not land names itself: the
+second-brain board's six files are independent reads, so a missing
+`maturity_state.json` names that file and the other five still render.
 
-**Shape drift is named, never silent.** The router board's parser reads
-`judge.mode`, `guard.allowPayg`, `resolved.workloads`, and `/api/usage`'s
-`totals` and rows out of the kit's payloads. A kit upgrade that renames
-one of those would otherwise empty the section with no reason given, so
-the read names each absence the way the second-brain board names a state
-file that is not the shape it claims, and it rides the top of the board:
+**Shape drift is named, never silent.** A state file that is valid JSON
+but not the shape it claims — the gates state an object where a list
+belongs — is a named refusal rather than a section silently emptied, and
+it rides the top of the board:
 
 ```
- △ /api/state shape changed
-   resolved.workloads is absent
- △ /api/usage shape changed
-   0 of 1 model rows could not be read
+ △ gates_state.json returned a payload the board cannot read
 ```
 
 A row the board cannot read is named too (`N of M model rows could not be
@@ -137,7 +126,6 @@ reads is not itself bounded:
 
 | Bound | Value | What it covers |
 |---|---|---|
-| `READ_TIMEOUT_SECS` | 8 | one operator-API GET (the fork's carrier uses an 8s abort signal) |
 | `GIT_TIMEOUT_SECS` | 5 | one `git` call |
 | `TOWER_SCAN_BUDGET_SECS` | 20 | the **whole tower scan** — thirty projects × five calls is up to ~12.5 minutes of wall time, and a hung `git` on one repository must not cost the cadence behind it |
 | `BRAIN_READ_BUDGET_SECS` | 10 | the **whole six-file second-brain read** |
@@ -162,8 +150,9 @@ refresher and then asks it to read again.
 
 ## Read-only, everywhere
 
-The boards write nothing: the operator-API reads are GETs, the state files
-are read with `read_to_string` on a reader thread under a bound, and the
+The boards write nothing: the router board reads the roster Fleet already
+loaded, the preference table, and the day's route rows; the state files
+are read with `read_to_string` on a reader thread under a bound; and the
 tower's `git` calls are `symbolic-ref`, `log`, `rev-list`, and
 `status --porcelain` — all inspection. The ahead/behind comparison is
 `rev-list --left-right --count HEAD...@{upstream}`, a local comparison that
@@ -175,9 +164,9 @@ sources before and after a full read of all three boards.
 - **The browser face.** `dsh-board-seam`'s guarded HTTP route and the
   fork's React board pages are not ported; the TUI pane is this slice's
   surface, and the reads are the part a later web surface would reuse.
-- **Workflow runs and agents.** The fork's router board also reads
-  `/api/workflow-runs`; this board reads state, usage, and suggest, which
-  is what the kit on this machine answers.
+- **Workflow runs and agents.** The fork's router board also reads the
+  precursor's `/api/workflow-runs`; Fleet's own router has no such surface,
+  because it is this crate's own `route::select` rather than a service.
 - **A scroll cursor on the tower.** A scan of thirty repos shows as many
   cards as the pane holds and names the rest (` +N more`); the pane is a
   glance surface, and the projects are ordered dirtiest-first so the rows

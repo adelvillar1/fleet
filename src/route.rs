@@ -2,16 +2,27 @@
 //! owner's declared chain, sys1-judged per-task selection, failover across
 //! failure classes, and the calibration decision row.
 //!
-//! The roster is a list of [`Candidate`]s in the owner's declared order
-//! (directive 2026-10-13): the router kit at `127.0.0.1:8300` FIRST, then
-//! Z.ai Coding Plan, Xiaomi MiMo, StepFun, the Qwen Token plan, and
-//! DeepSeek direct last — DeepSeek is a working account held in reserve.
-//! Liquid is declared after DeepSeek and enters no declared position: it
-//! is available to the owner's config (a pin or a chain entry), and
-//! moving it into the chain is the owner's one-line config change, never
-//! this table's. Every fact in the compiled-in defaults is sourced from
-//! the fork's `agnostic-router-kit` `roster.json` (endpoints, key
-//! env-var *names*, model ids); no key value is ever stored here.
+//! The roster is a list of [`Candidate`]s. Fleet's own router is this
+//! module: [`select`] asks sys1 for a workload verdict, reads the workload
+//! preference table, and hands the request to that workload's own
+//! candidates, and [`Router::chat_stream`] walks the chain on failure.
+//! There is no router process behind it — the owner's 2026-10-16 ruling
+//! is that Fleet is a self-contained app with a dedicated router it owns,
+//! so nothing here dials an external router for it to re-route. The order
+//! is the owner's declared chain (directive 2026-10-13, amended by that
+//! ruling): Z.ai Coding Plan, Xiaomi MiMo, StepFun, the Qwen Token plan,
+//! DeepSeek direct. The `agnostic-router-kit` entry that once sat in this
+//! roster is gone: it was the precursor this crate supersedes, a separate
+//! process Fleet would have had to reach over loopback, and the owner's
+//! ruling is that the precursor is not Fleet's router. An owner who wants
+//! it back adds it with `fleet settings provider.add` — the roster is
+//! config-extendable — rather than finding it compiled in. Liquid is
+//! declared after the chain and enters no declared position: it is
+//! available to the owner's config (a pin or a chain entry), and moving
+//! it into the chain is the owner's one-line config change, never this
+//! table's. Every fact in the compiled-in defaults is sourced from the
+//! precursor's `roster.json` (endpoints, key env-var *names*, model ids);
+//! no key value is ever stored here.
 //!
 //! The three moving parts:
 //!
@@ -46,10 +57,13 @@ use crate::lanes;
 use crate::mcp::{McpServer, ServerSpec};
 use crate::session;
 
-/// The declared HEAD of the chain: the local router kit, the primary
-/// route, not the escape hatch. It aggregates the prepaid plans and
-/// routes `auto` by workload itself.
-pub const HEAD_ID: &str = "router-kit";
+/// The declared HEAD of the chain: Fleet's own first provider, the one
+/// the router itself targets. The owner's 2026-10-16 ruling put it
+/// here — Fleet is a self-contained app with a dedicated router this
+/// module owns, and no automatic path hands a request to an external
+/// router for it to re-route. The precursor's router-kit entry is not in
+/// the roster at all; an owner who wants it adds it by config.
+pub const HEAD_ID: &str = "zai-coding-plan";
 
 /// The sys1 lane name whose `sys1_classify` tool judges a route.
 const JUDGE_LANE: &str = "sys1";
@@ -79,9 +93,8 @@ pub struct Candidate {
     pub models: Vec<String>,
     /// How this provider is billed. The plan providers are the
     /// preference; a pay-as-you-go provider is declared and targeted by
-    /// no default workload — the kit's `allowPayg: false` ported as
-    /// policy, which is what makes the reserve unable to serve
-    /// silently.
+    /// no default workload, which is what makes the reserve unable to
+    /// serve silently.
     pub billing: Billing,
     /// How a request reaches this provider: an OpenAI-compatible HTTP
     /// endpoint, or a vendored lane driven over fleet's own MCP client
@@ -89,10 +102,10 @@ pub struct Candidate {
     /// composed with the specialized legs).
     pub kind: CandidateKind,
     pub enabled: bool,
-    /// Whether a key is required to attempt this candidate. False only for
-    /// the loopback router kit, which is attempted even before its local
-    /// token is configured (a keyless attempt is one fast 401 that
-    /// failover walks past).
+    /// Whether a key is required to attempt this candidate. False only
+    /// for the vendored lane, which is attempted even before its bearer
+    /// is configured (a keyless attempt is one fast 401 that failover
+    /// walks past).
     pub key_required: bool,
     /// A named reason when the entry is disabled, so the chain still works
     /// and the reason is visible rather than silent.
@@ -131,6 +144,14 @@ pub enum CandidateKind {
 /// which stays Fleet's own `deepseek-chat` default for consistency with the
 /// existing client and credential resolution.
 ///
+/// The chain is the owner's standing directive, and the owner's
+/// 2026-10-16 ruling rewrote it: Fleet is a self-contained app with a
+/// dedicated router this module owns, so the router-kit entry is not in
+/// the roster at all. The precursor was a separate process Fleet would
+/// have had to reach over loopback to have it re-route; the ruling is
+/// that the precursor is not Fleet's router. Every provider here is
+/// dialed directly by [`Router::chat_stream`].
+///
 /// Liquid is appended at the END and declared only: the chain order above
 /// is the owner's standing directive, and this table does not reorder it.
 /// The owner's config (a pin, or a chain entry) decides Liquid's real
@@ -143,17 +164,6 @@ pub enum CandidateKind {
 /// radius, and the second is the destructive one.
 pub fn default_roster() -> Vec<Candidate> {
     vec![
-        Candidate {
-            id: "router-kit".into(),
-            base_url: "http://127.0.0.1:8300/v1".into(),
-            key_env: "AGNOSTIC_ROUTER_TOKEN".into(),
-            models: vec!["auto".into()],
-            billing: Billing::Plan,
-            kind: CandidateKind::Http,
-            enabled: true,
-            key_required: false,
-            disabled_reason: None,
-        },
         Candidate {
             id: "zai-coding-plan".into(),
             base_url: "https://api.z.ai/api/coding/paas/v4".into(),
@@ -224,10 +234,10 @@ pub fn default_roster() -> Vec<Candidate> {
         // (lfm2.5-24b-a2b), declared here so the owner's config can pin
         // or chain it. Appended at the END of the default order on
         // purpose: the declared chain above is the owner's standing
-        // directive (router kit → z.ai → mimo → stepfun → token plan →
-        // deepseek) and this slice does not reorder it; the owner's
-        // config decides liquid's real position. Note the base URL's
-        // shape: Liquid's chat completions live under `/openai/v1`,
+        // directive (z.ai → mimo → stepfun → token plan → deepseek) and
+        // this slice does not reorder it; the owner's config decides
+        // liquid's real position. Note the base URL's shape: Liquid's
+        // chat completions live under `/openai/v1`,
         // not `/v1` (a `/v1` path 404s), and one key — LIQUID_API_KEY —
         // serves both the d1 router and the 24B generative lane.
         Candidate {
@@ -275,12 +285,11 @@ pub struct Preference {
     pub candidates: Vec<(&'static str, &'static str)>,
 }
 
-/// The compiled-in preference table, ported from the live
-/// zcode-router-kit's `routing.workloads` (verified 2026-10-15) — the
-/// owner's tuned state, at (provider, model) granularity. Two
-/// divergences from the source, both deliberate: `quick`'s duplicated
-/// stepfun entry is deduped, and no workload targets deepseek (the payg
-/// reserve — the kit's `allowPayg: false` ported as policy, so the
+/// The compiled-in preference table, ported from the precursor's
+/// `routing.workloads` (verified 2026-10-15) — the owner's tuned state,
+/// at (provider, model) granularity. Two divergences from the source,
+/// both deliberate: `quick`'s duplicated stepfun entry is deduped, and no
+/// workload targets deepseek (the payg reserve, kept as policy so the
 /// reserve cannot serve unless the owner pins it).
 pub fn default_preferences() -> Vec<Preference> {
     vec![
@@ -842,8 +851,10 @@ pub fn resolve(candidates: &[Candidate], dotenv: &HashMap<String, String>) -> Ve
         .collect()
 }
 
-/// The declared HEAD's index: the first enabled candidate. Normally the
-/// router kit at index 0; the next enabled one if the kit is disabled.
+/// The declared HEAD's index: the first enabled candidate. Normally
+/// z.ai, the roster's head under the owner's 2026-10-16 ruling; the
+/// next enabled one if the head is disabled, so the walk always starts
+/// at a candidate that may be dialed.
 fn head_index(resolved: &[Resolved]) -> usize {
     resolved
         .iter()
@@ -943,6 +954,19 @@ pub fn workload_candidate(workload: &str) -> Option<&'static str> {
         .into_iter()
         .find(|preference| preference.workload == workload)
         .and_then(|preference| preference.candidates.first().map(|(provider, _)| *provider))
+}
+
+/// The provider a route serves when sys1's workload names no entry in
+/// the preference table: the gates' default workload's own first
+/// candidate, which is the walk the router actually takes. A workload
+/// the table does not map still routes through the default workload, so
+/// that is what a grade of the route must expect — not the declared
+/// head, which is reached only when the table is empty too.
+///
+/// The compiled-in default workload is read here because the grade sees
+/// a ledger row, never the gates that produced it.
+pub fn unmapped_workload_candidate() -> &'static str {
+    workload_candidate(Gates::default().default_workload).unwrap_or(HEAD_ID)
 }
 
 /// Choose the route for `task`: a pin wins (a provider pin still lets
@@ -1174,7 +1198,9 @@ fn fallback(
     );
     // An empty table (a config that named no workloads) still has to
     // walk something: the declared chain's head, as the pre-slice
-    // behavior did.
+    // behavior did. Every candidate on that chain is Fleet's own — the
+    // precursor's entry is not in the roster at all, so there is nothing
+    // to walk past and nothing to dial.
     if decision.order.is_empty() {
         let provider = resolved
             .get(head)
@@ -2199,15 +2225,22 @@ pub fn render(resolved: &[Resolved]) -> String {
         RESET = palette::RESET,
         DIM = palette::DIM,
     ));
+    // The head the board marks is the head the router walks from: the
+    // first enabled candidate, the same index `head_index` returns. The
+    // card and the summary both read the resolved list rather than the
+    // `HEAD_ID` constant, so an owner who disables the declared head is
+    // shown a star on the provider that will actually be dialed.
+    let head = head_index(resolved);
     for (index, entry) in resolved.iter().enumerate() {
-        out.push_str(&render_card(entry, index == 0));
+        out.push_str(&render_card(entry, index == head));
     }
     let ready = resolved
         .iter()
         .filter(|entry| provider_state(entry) == ProviderState::Ready)
         .count();
+    let head_id = resolved.get(head).map(Resolved::id).unwrap_or(HEAD_ID);
     out.push_str(&format!(
-        "\n{DIM}{} providers \u{b7} {ready} configured \u{b7} {} not ready \u{b7} head {HEAD_ID}{RESET}\n",
+        "\n{DIM}{} providers \u{b7} {ready} configured \u{b7} {} not ready \u{b7} head {head_id}{RESET}\n",
         resolved.len(),
         resolved.len() - ready,
         DIM = palette::DIM,
@@ -2472,10 +2505,10 @@ mod tests {
     // --- the sys1 verdict → candidate mapping ---
 
     #[test]
-    fn the_preference_table_is_the_kits_live_table() {
-        // The compiled-in default is the live zcode-router-kit's
-        // routing.workloads, at (provider, model) granularity, with
-        // quick's duplicated stepfun entry deduped.
+    fn the_preference_table_is_the_owners_tuned_table() {
+        // The compiled-in default is the precursor's routing.workloads,
+        // at (provider, model) granularity, with quick's duplicated
+        // stepfun entry deduped.
         let table = default_preferences();
         let quick = preference_for(&table, "quick").expect("quick");
         assert_eq!(
@@ -2491,8 +2524,8 @@ mod tests {
         // The composed workload targets the grounding provider.
         let composed = preference_for(&table, "composed").expect("composed");
         assert_eq!(composed.candidates[0], ("blend1", "blend1"));
-        // No default workload targets the payg reserve — the
-        // allowPayg:false policy, so deepseek cannot serve unpinned.
+        // No default workload targets the payg reserve, so deepseek
+        // cannot serve unpinned.
         for preference in &table {
             assert!(
                 !preference
@@ -2507,7 +2540,7 @@ mod tests {
     }
 
     #[test]
-    fn the_gates_default_to_the_kits_routing_block() {
+    fn the_gates_default_to_the_routing_block() {
         let gates = Gates::default();
         assert!((gates.min_confidence - 0.6).abs() < 1e-9);
         assert_eq!(gates.default_workload, "standard_code");
@@ -2567,9 +2600,9 @@ mod tests {
         let resolved = vec![
             Resolved {
                 candidate: Candidate {
-                    id: "router-kit".into(),
-                    base_url: "http://127.0.0.1:8300/v1".into(),
-                    key_env: "AGNOSTIC_ROUTER_TOKEN".into(),
+                    id: "stand-in".into(),
+                    base_url: "http://127.0.0.1:1/v1".into(),
+                    key_env: "STAND_IN_TOKEN".into(),
                     models: vec!["auto".into()],
                     billing: Billing::Plan,
                     kind: CandidateKind::Http,
@@ -2638,6 +2671,59 @@ mod tests {
             decision.reason.contains("sys1 gave no usable verdict"),
             "{}",
             decision.reason
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_table_walks_fleets_own_chain_and_nothing_outside_it() {
+        // The owner's 2026-10-16 ruling, pinned: with no preference table
+        // to walk, the fallback walks Fleet's own declared chain. There is
+        // no router process in it and none behind it — the precursor's
+        // entry is not in the roster, so no automatic path hands a request
+        // to an external router for it to re-route.
+        let resolved = resolve(&default_roster(), &HashMap::new());
+        // Hermetic for the same reason the test above is: the injected
+        // spec names a program that cannot spawn.
+        let mut specs = HashMap::new();
+        specs.insert(
+            JUDGE_LANE.to_string(),
+            ServerSpec {
+                program: "fleet-test-no-such-lane-program".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                passthrough: Vec::new(),
+                cwd: None,
+            },
+        );
+        let (decision, _latency) = select(
+            &resolved,
+            None,
+            "do a thing",
+            &specs,
+            &[],
+            Gates::default(),
+            None,
+        )
+        .await;
+        assert_eq!(decision.how, How::Fallback);
+        assert_eq!(decision.provider, HEAD_ID);
+        assert_eq!(decision.start_index, 0);
+        let ids: Vec<&str> = decision
+            .order
+            .iter()
+            .map(|(provider, _)| provider.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "zai-coding-plan",
+                "xiaomi-mimo",
+                "stepfun",
+                "token-plan",
+                "deepseek",
+                "liquid",
+                "blend1"
+            ]
         );
     }
 
@@ -2748,7 +2834,7 @@ mod tests {
             r#"{
                 "pin": "deepseek",
                 "providers": [
-                    { "id": "router-kit", "enabled": false },
+                    { "id": "xiaomi-mimo", "enabled": false },
                     { "id": "zai-coding-plan", "models": ["GLM-5.3-Pro"] },
                     { "id": "deepseek", "base_url": "https://example.invalid/v1" }
                 ]
@@ -2757,10 +2843,10 @@ mod tests {
         .unwrap();
         let (candidates, pin) = merge(default_roster(), &file).unwrap();
         assert_eq!(pin.as_deref(), Some("deepseek"));
-        // The router kit was disabled; everything else on it survived.
-        let kit = candidates.iter().find(|c| c.id == "router-kit").unwrap();
-        assert!(!kit.enabled);
-        assert_eq!(kit.base_url, "http://127.0.0.1:8300/v1");
+        // The mimo entry was disabled; everything else on it survived.
+        let mimo = candidates.iter().find(|c| c.id == "xiaomi-mimo").unwrap();
+        assert!(!mimo.enabled);
+        assert_eq!(mimo.base_url, "https://token-plan-sgp.xiaomimimo.com/v1");
         // The zai model list changed; its endpoint and key env did not.
         let zai = candidates
             .iter()
@@ -2822,14 +2908,14 @@ mod tests {
         let home = std::env::temp_dir().join(format!("fleet-route-nocfg-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&home);
         let roster = load_roster(&home).unwrap();
-        assert_eq!(roster.candidates.len(), 8);
+        assert_eq!(roster.candidates.len(), 7);
         assert_eq!(roster.candidates[0].id, HEAD_ID);
-        assert_eq!(roster.candidates[5].id, "deepseek");
+        assert_eq!(roster.candidates[4].id, "deepseek");
         // Liquid is declared after DeepSeek and enters no declared
         // position: it is available to the owner's config, and moving it
         // into the chain is that config's one-line change.
-        assert_eq!(roster.candidates[6].id, "liquid");
-        assert_eq!(roster.candidates[7].id, "blend1");
+        assert_eq!(roster.candidates[5].id, "liquid");
+        assert_eq!(roster.candidates[6].id, "blend1");
         assert_eq!(roster.pin, None);
         // The preference table and the gates are the compiled-in
         // defaults when no routing.json names any.
@@ -2925,7 +3011,7 @@ mod tests {
         let router = Router::new(resolved, decision);
         lock(&router.state).attempts.extend([
             Attempt {
-                provider: "router-kit".to_string(),
+                provider: "deepseek".to_string(),
                 outcome: "failed",
                 class: Some("auth"),
             },
@@ -2952,10 +3038,10 @@ mod tests {
         assert_eq!(value["latency_ms"], 812);
         // Both attempts ride along, in order, and the served one is named.
         assert_eq!(value["attempts"].as_array().unwrap().len(), 2);
-        assert_eq!(value["attempts"][0]["provider"], "router-kit");
+        assert_eq!(value["attempts"][0]["provider"], "deepseek");
         assert_eq!(value["attempts"][0]["class"], "auth");
         assert_eq!(value["attempts"][1]["outcome"], "served");
-        assert_eq!(value["providers_used"][0], "router-kit");
+        assert_eq!(value["providers_used"][0], "deepseek");
         assert_eq!(value["providers_used"][1], "zai-coding-plan");
         // The task text is never logged — only its length and a hash.
         assert!(!line.contains("refactor the parser"));
@@ -2967,27 +3053,27 @@ mod tests {
     #[test]
     fn the_demotion_reorders_the_walk_and_leaves_the_selection_alone() {
         let order = vec![
-            ("router-kit".to_string(), "auto".to_string()),
+            ("deepseek".to_string(), "auto".to_string()),
             ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
             ("xiaomi-mimo".to_string(), "mimo-v2.6-flash".to_string()),
         ];
         // A demoted candidate moves to the end; the selected one keeps
         // the head of the walk.
-        let ordered = reorder_for_demotion(&order, "zai-coding-plan", &["router-kit".to_string()]);
+        let ordered = reorder_for_demotion(&order, "zai-coding-plan", &["deepseek".to_string()]);
         let ids: Vec<&str> = ordered
             .iter()
             .map(|(provider, _)| provider.as_str())
             .collect();
-        assert_eq!(ids, vec!["zai-coding-plan", "xiaomi-mimo", "router-kit"]);
+        assert_eq!(ids, vec!["zai-coding-plan", "xiaomi-mimo", "deepseek"]);
 
         // A candidate that is both selected and demoted stays the head:
         // demotion reorders the walk, it never overrides the judgment.
-        let ordered = reorder_for_demotion(&order, "router-kit", &["router-kit".to_string()]);
+        let ordered = reorder_for_demotion(&order, "deepseek", &["deepseek".to_string()]);
         let ids: Vec<&str> = ordered
             .iter()
             .map(|(provider, _)| provider.as_str())
             .collect();
-        assert_eq!(ids, vec!["router-kit", "zai-coding-plan", "xiaomi-mimo"]);
+        assert_eq!(ids, vec!["deepseek", "zai-coding-plan", "xiaomi-mimo"]);
     }
 
     /// One resolved candidate for the reorder tests.
@@ -3127,7 +3213,7 @@ mod tests {
         assert!(!calibration_config(&home).informs_failover);
         let resolved = resolve(&default_roster(), &HashMap::new());
         let decision = RouteDecision {
-            provider: HEAD_ID.to_string(),
+            provider: "deepseek".to_string(),
             model: "auto".to_string(),
             how: How::Fallback,
             workload: None,
@@ -3135,7 +3221,7 @@ mod tests {
             reason: "test".to_string(),
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
-            order: vec![(HEAD_ID.to_string(), "auto".to_string())],
+            order: vec![("deepseek".to_string(), "auto".to_string())],
         };
         let router = Router::new(resolved, decision);
         // A router built the pre-slice way skips nothing, whatever the
@@ -3152,7 +3238,7 @@ mod tests {
         // roster position 2 — so a committed failure there must record
         // stepfun, never router-kit (KI-208).
         let resolved = vec![
-            resolved_for_test("router-kit"),
+            resolved_for_test("deepseek"),
             resolved_for_test("zai-coding-plan"),
             resolved_for_test("stepfun"),
         ];
@@ -3167,7 +3253,7 @@ mod tests {
             start_index: 0,
             order: vec![
                 ("stepfun".to_string(), "stepfun-model".to_string()),
-                ("router-kit".to_string(), "router-kit-model".to_string()),
+                ("deepseek".to_string(), "deepseek-model".to_string()),
                 (
                     "zai-coding-plan".to_string(),
                     "zai-coding-plan-model".to_string(),
@@ -3287,21 +3373,24 @@ mod tests {
 
         let resolved = resolve(&default_roster(), &HashMap::new());
         // The `hard` walk skips zai, and only because of its `hard` cell.
-        let hard = calibration_skips(&root, day, &resolved, HEAD_ID, "hard");
+        // stepfun is the selection here — the `hard` workload's own
+        // target — because a walk's selection is never skipped.
+        let hard = calibration_skips(&root, day, &resolved, "stepfun", "hard");
         assert_eq!(hard.len(), 1);
         assert_eq!(hard[0].provider, "zai-coding-plan");
         assert_eq!(hard[0].workload, "hard");
         // The `prose` walk skips nothing: zai's prose cell is right, and
         // its hard cell is not this walk's to consult.
-        assert!(calibration_skips(&root, day, &resolved, HEAD_ID, "prose").is_empty());
+        assert!(calibration_skips(&root, day, &resolved, "stepfun", "prose").is_empty());
         // A shape the day holds no cell for moves nothing at all.
-        assert!(calibration_skips(&root, day, &resolved, HEAD_ID, "quick").is_empty());
+        assert!(calibration_skips(&root, day, &resolved, "stepfun", "quick").is_empty());
         // The selection is never skipped: its place at the head of the
         // walk is sys1's judgment's.
         assert!(calibration_skips(&root, day, &resolved, "zai-coding-plan", "hard").is_empty());
-        // A provider the roster does not carry is never named.
-        let one = vec![resolved[0].clone()];
-        assert!(calibration_skips(&root, day, &one, HEAD_ID, "hard").is_empty());
+        // A provider the list does not carry is never named, however fit
+        // its cell: zai's `hard` cell cannot skip anything here.
+        let one = vec![resolved_for_test("deepseek")];
+        assert!(calibration_skips(&root, day, &one, "stepfun", "hard").is_empty());
         // The two cells are separate records: neither hides the other.
         let cells = calib::calibration(&calib::read_day(&root, day, 512));
         assert_eq!(cells.len(), 3);
@@ -3343,10 +3432,10 @@ mod tests {
 
         let resolved = resolve(&default_roster(), &HashMap::new());
         // The skip set is empty: an insufficient cell moves no candidate.
-        assert!(calibration_skips(&root, day, &resolved, HEAD_ID, "hard").is_empty());
+        assert!(calibration_skips(&root, day, &resolved, "stepfun", "hard").is_empty());
         // The note set names the cell, and the clause carries its own
         // numbers so a later reader sees which cell spoke.
-        let notes = calibration_notes(&root, day, &resolved, HEAD_ID, "hard");
+        let notes = calibration_notes(&root, day, &resolved, "stepfun", "hard");
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].provider, "zai-coding-plan");
         assert_eq!(notes[0].workload, "hard");
@@ -3363,7 +3452,7 @@ mod tests {
         // the walk is sys1's judgment's.
         assert!(calibration_notes(&root, day, &resolved, "zai-coding-plan", "hard").is_empty());
         // A shape the day holds no cell for notes nothing.
-        assert!(calibration_notes(&root, day, &resolved, HEAD_ID, "quick").is_empty());
+        assert!(calibration_notes(&root, day, &resolved, "stepfun", "quick").is_empty());
 
         // The fit requirement outranks the rate in this direction too: a
         // single insufficient row at full confidence notes nothing,
@@ -3382,7 +3471,7 @@ mod tests {
                 0.95,
             )],
         );
-        assert!(calibration_notes(&unfit, day, &resolved, HEAD_ID, "hard").is_empty());
+        assert!(calibration_notes(&unfit, day, &resolved, "stepfun", "hard").is_empty());
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&unfit);
     }
@@ -3390,13 +3479,13 @@ mod tests {
     #[test]
     fn the_walk_records_a_calibration_skip_and_names_its_cell_in_the_reason() {
         let resolved = vec![
-            resolved_for_test("router-kit"),
+            resolved_for_test("deepseek"),
             resolved_for_test("zai-coding-plan"),
             resolved_for_test("xiaomi-mimo"),
             resolved_for_test("stepfun"),
         ];
         let decision = RouteDecision {
-            provider: "router-kit".to_string(),
+            provider: "deepseek".to_string(),
             model: "auto".to_string(),
             how: How::Fallback,
             workload: None,
@@ -3405,7 +3494,7 @@ mod tests {
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
             order: vec![
-                ("router-kit".to_string(), "auto".to_string()),
+                ("deepseek".to_string(), "auto".to_string()),
                 (
                     "zai-coding-plan".to_string(),
                     "zai-coding-plan-model".to_string(),
@@ -3456,11 +3545,11 @@ mod tests {
     fn the_providers_render_is_cards_with_the_head_marked_and_never_a_table() {
         let resolved = resolve(&default_roster(), &HashMap::new());
         // No keys are set in this process, so the remote plans read `no key`
-        // and the loopback kit reads `absent (optional)`.
+        // and the vendored lane reads `absent (optional)`.
         let rendered = render(&resolved);
-        assert_eq!(rendered.matches('\u{250c}').count(), 8, "{rendered}");
+        assert_eq!(rendered.matches('\u{250c}').count(), 7, "{rendered}");
         // The head is marked and named.
-        assert!(rendered.contains("head router-kit"), "{rendered}");
+        assert!(rendered.contains("head zai-coding-plan"), "{rendered}");
         // Key env-var NAMES appear; no value ever does.
         assert!(rendered.contains("ZAI_CODING_API_KEY"), "{rendered}");
         assert!(rendered.contains("DEEPSEEK_API_KEY"), "{rendered}");
@@ -3498,11 +3587,13 @@ mod tests {
         // changes the compiled-in list — but it enters no declared chain
         // position of its own: the workload table is what targets it.
         // The chain's order is the owner's standing directive and this
-        // table does not reorder it.
+        // table does not reorder it. The owner's 2026-10-16 ruling took
+        // the precursor's router-kit out of the roster entirely: Fleet is
+        // a self-contained app with a dedicated router this module owns,
+        // and the precursor is not Fleet's router.
         assert_eq!(
             ids,
             vec![
-                "router-kit",
                 "zai-coding-plan",
                 "xiaomi-mimo",
                 "stepfun",
@@ -3512,13 +3603,15 @@ mod tests {
                 "blend1"
             ]
         );
-        // The kit is the head and needs no key; DeepSeek is the
-        // declared order's last plan entry and does; blend1 is a
-        // lane-kind candidate that needs no key.
-        assert!(!roster[0].key_required);
-        assert!(roster[5].key_required);
-        assert_eq!(roster[7].id, "blend1");
-        assert_eq!(roster[7].kind, CandidateKind::Lane);
-        assert!(!roster[7].key_required);
+        // z.ai is the head and needs a key; DeepSeek is the declared
+        // order's last plan entry and does too; blend1 is a lane-kind
+        // candidate that needs no key.
+        assert_eq!(roster[0].id, HEAD_ID);
+        assert!(roster[0].key_required);
+        assert_eq!(roster[4].id, "deepseek");
+        assert!(roster[4].key_required);
+        assert_eq!(roster[6].id, "blend1");
+        assert_eq!(roster[6].kind, CandidateKind::Lane);
+        assert!(!roster[6].key_required);
     }
 }

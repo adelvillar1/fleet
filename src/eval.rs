@@ -2943,10 +2943,10 @@ fn calibration_roster() -> Vec<route::Resolved> {
     };
     vec![
         candidate(
-            "router-kit",
-            "http://127.0.0.1:8300/v1",
-            "AGNOSTIC_ROUTER_TOKEN",
-            &["auto"],
+            "deepseek",
+            "https://api.deepseek.com",
+            "DEEPSEEK_API_KEY",
+            &["deepseek-chat"],
         ),
         candidate(
             "zai-coding-plan",
@@ -3099,7 +3099,9 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
                 .judged
                 .iter()
                 .filter(|row| row.verdict == calib::VERDICT_WRONG)
-                .all(|row| row.provider == "router-kit" && row.reason.contains("never attempted")),
+                .all(|row| {
+                    row.provider == route::HEAD_ID && row.reason.contains("never attempted")
+                }),
     ));
     let rows = calib::read_day(&root, &day, 64);
     checks.push((
@@ -3218,7 +3220,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         .collect();
     write_day_file(&wrong_root, &day, &split_rows);
     let roster = calibration_roster();
-    let hard_walk = route::calibration_skips(&wrong_root, &day, &roster, "router-kit", "hard");
+    let hard_walk = route::calibration_skips(&wrong_root, &day, &roster, "deepseek", "hard");
     checks.push((
         "a fit-and-wrong cell is skipped in the preference",
         hard_walk.len() == 1
@@ -3227,11 +3229,11 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     ));
     checks.push((
         "the same provider's right-for-prose cell skips nothing for prose",
-        route::calibration_skips(&wrong_root, &day, &roster, "router-kit", "prose").is_empty(),
+        route::calibration_skips(&wrong_root, &day, &roster, "deepseek", "prose").is_empty(),
     ));
     checks.push((
         "a shape the day holds no cell for moves nothing",
-        route::calibration_skips(&wrong_root, &day, &roster, "router-kit", "quick").is_empty(),
+        route::calibration_skips(&wrong_root, &day, &roster, "deepseek", "quick").is_empty(),
     ));
     checks.push((
         "the selected provider is never skipped",
@@ -3258,7 +3260,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     );
     checks.push((
         "an unfit cell never moves routing however wrong it looks",
-        route::calibration_skips(&unfit_root, &day, &roster, "router-kit", "hard").is_empty(),
+        route::calibration_skips(&unfit_root, &day, &roster, "deepseek", "hard").is_empty(),
     ));
     // The span requirement's own fixture: eight rows — enough rows — all
     // at ONE confidence. The rows requirement is satisfied and the cell
@@ -3298,7 +3300,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     // could otherwise attempt.
     checks.push((
         "a provider the roster does not carry is never skipped",
-        route::calibration_skips(&wrong_root, &day, &roster[..1], "router-kit", "hard").is_empty(),
+        route::calibration_skips(&wrong_root, &day, &roster[..1], "deepseek", "hard").is_empty(),
     ));
     // The cells are separate records on the surface, and neither hides
     // the other.
@@ -3329,7 +3331,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
                 "xiaomi-mimo",
                 "hard",
                 &[
-                    ("router-kit", "failed", "auth"),
+                    ("deepseek", "failed", "auth"),
                     (hard_target(), "failed", "rate-limit"),
                     ("xiaomi-mimo", "served", ""),
                 ],
@@ -3397,10 +3399,10 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     ));
     checks.push((
         "the failover skips nothing on an insufficient cell",
-        route::calibration_skips(&open_root_for_third, &day, &roster, "router-kit", "hard")
+        route::calibration_skips(&open_root_for_third, &day, &roster, "deepseek", "hard")
             .is_empty(),
     ));
-    let notes = route::calibration_notes(&open_root_for_third, &day, &roster, "router-kit", "hard");
+    let notes = route::calibration_notes(&open_root_for_third, &day, &roster, "deepseek", "hard");
     checks.push((
         "the route row's reason names the companions the minima needs",
         notes.len() == 1

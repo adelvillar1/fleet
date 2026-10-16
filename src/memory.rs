@@ -6667,8 +6667,8 @@ mod tests {
     /// the tier and the ranking together.
     fn seed_shaped_corpus(root: &Path) {
         let protected: [(&str, &str, &str); 7] = [
-            ("p-handle", "user", "The owner's GitHub handle is adelvillar1 and he runs ZCode as his daily coding agent on his own macOS machine; his LLM access is prepaid subscription plans routed through his own router kit, with DeepSeek held as a working account in reserve"),
-            ("p-plans", "user", "The owner prefers spending the other plans' quota first and holds DeepSeek in reserve even though it has balance (owner clarification 2026-10-13); the router kit at 127.0.0.1:8300 is the primary route, not the escape hatch"),
+            ("p-handle", "user", "The owner's GitHub handle is adelvillar1 and he runs ZCode as his daily coding agent on his own macOS machine; his LLM access is prepaid subscription plans routed through Fleet's own router, with DeepSeek held as a working account in reserve"),
+            ("p-plans", "user", "The owner prefers spending the other plans' quota first and holds DeepSeek in reserve even though it has balance (owner clarification 2026-10-13); Fleet's own router selects the route (owner ruling 2026-10-16)"),
             ("p-english", "feedback", "Fleet's documentation is English-only \u{2014} no Chinese or other non-English docs anywhere in the repo \u{2014} a deliberate departure from the fork's bilingual convention (owner directive 2026-10-13)"),
             ("p-logging", "feedback", "Every error, warning, defect, gap, and improvement encountered in Fleet or any sibling repo lands in docs/known-issues.md with its evidence the moment it is seen; logging is not fixing and not scope, and 'not my code' is a reason to log, not to skip"),
             ("p-gate", "feedback", "Fleet's gate is local and permanent: cargo build --all-targets then cargo test, with the exit code read on the cargo invocation itself and never through a status-losing pipe; CI is disarmed by owner decision because the GitHub Actions budget is exhausted"),

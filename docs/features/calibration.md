@@ -135,7 +135,7 @@ provider down its chain". At route-prepare time, the stream is read back:
   its declared order, and the demoted ones move to the end. A candidate
   that is both selected and demoted stays at the head.
 - The demotion rides in the decision row's `reason`
-  (`; demoted router-kit (3 consecutive failures today)`), so a later
+  (`; demoted deepseek (3 consecutive failures today)`), so a later
   reader sees why the walk was ordered as it was instead of inferring it.
 - An unreadable or absent stream is a no-op. "No evidence" is never an
   error, and never a demotion.

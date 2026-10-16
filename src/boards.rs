@@ -1,22 +1,31 @@
 //! The boards: three read-only surfaces over this machine's own sources,
 //! mounted in the TUI's board pane.
 //!
-//! The three boards and their sources, exactly as the fork's
-//! `dsh-router-board`, `dsh-second-brain`, and `dsh-tower` read them:
+//! The three boards and their sources:
 //!
 //! | Board | Source | What it renders |
 //! |---|---|---|
-//! | router | the router kit's operator API at `127.0.0.1:8300` (`/api/state`, `/api/usage`, `/api/suggest`) | the workload tier chains with their candidates, the judge, the usage totals and per-model bars, the recent calls with their state dots |
+//! | router | Fleet's own routing state: the declared chain, the workload preference table, the gates, and the route rows Fleet writes for every run it serves | the workload tier chains with their candidates, what Fleet just served, and the day's counts |
 //! | second-brain | the six derived state files under the second-brain home (`gates_state`, `harness_state`, `loops_state`, `reports_state`, `maturity_state`, `tower_data`) | the earned-autonomy gate board, the HITL inbox, the quality loops and their graded rows, the maturity sparkline, the doing/conflict counts |
 //! | tower | git facts per project under `~/Projects` | per-project cards: branch, dirty dot, head commit, the trailing-thirty-day count, ahead/behind |
 //!
+//! **The router board reads nothing over the network.** Fleet's router is
+//! this crate's own [`crate::route::select`] — sys1 asks for a workload
+//! verdict, the workload preference table picks the provider, and
+//! failover walks the declared chain — so there is no router process to
+//! dial, no port, and no operator API. The owner's 2026-10-16 ruling is
+//! that Fleet is a self-contained app with a router it owns; the
+//! `agnostic-router-kit` this crate supersedes was a separate process,
+//! and the router on 8300 belongs to the zcode harness. This board reads
+//! the same three things the router reads and nothing else.
+//!
 //! **The snapshot contract.** Every board keeps the last snapshot that
-//! landed. A refused read — a dead port, a bad token, an unreadable or
-//! missing state file, a git failure — keeps that snapshot visible and
-//! names the error in the pane on one line beside the time of the last
-//! good read. A board that has never read successfully shows its empty
-//! state naming the reason. Nothing here writes to any source: the reads
-//! are loopback HTTP GETs, file reads, and `git` calls that only inspect.
+//! landed. A refused read — an unreadable or missing state file, a git
+//! failure — keeps that snapshot visible and names the error in the pane
+//! on one line beside the time of the last good read. A board that has
+//! never read successfully shows its empty state naming the reason.
+//! Nothing here writes to any source: the reads are file reads and `git`
+//! calls that only inspect.
 //!
 //! **The refresh.** [`spawn_refresher`] owns one thread with its own
 //! current-thread runtime — the `spawn_consolidator`/`open_lanes_view`
@@ -31,16 +40,10 @@
 //! because a sum of bounded reads is not itself bounded, and a hung `git`
 //! on one repository must not cost the whole cadence.
 //!
-//! **The token.** The router kit's operator API authenticates with its
-//! `localToken`, which lives in the kit's own rendered runtime config —
-//! `<kit home>/router/config.json`, resolved the way the kit resolves it
-//! (`AGNOSTIC_ROUTER_DIR`, then `AGNOSTIC_ROUTER_KIT_HOME/router`, then
-//! the kit's default home). The board reads that one file for the port
-//! and the token and nothing else. An explicit `AGNOSTIC_ROUTER_TOKEN`
-//! or `AGNOSTIC_ROUTER_URL` wins, resolved through the same
-//! environment-then-`.env` chain every other credential in this crate
-//! uses. The token is never written into a snapshot, a log line, or this
-//! repository.
+//! **No credential reaches this module.** The router board needs none:
+//! it reads Fleet's own routing state, which is this crate's data. The
+//! second-brain and tower boards read files and git facts. Nothing here
+//! authenticates to anything, and nothing here carries a key value.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -49,7 +52,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 // --- the seam ----------------------------------------------------------------
@@ -61,10 +64,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 /// calls over thirty repos) is what sets it.
 pub const BOARD_REFRESH_SECS: u64 = 30;
 
-/// The bound on one operator-API read. The fork's carrier uses an 8s
-/// abort signal; a kit that has not answered by then is a named refusal,
-/// not a hung pane.
-pub const READ_TIMEOUT_SECS: u64 = 8;
+/// How many of a day's route rows the router board reads. The day file is
+/// an audit trail, not a training set: the board shows what was just
+/// served, so a bounded tail is the whole point rather than a compromise.
+pub const ROUTER_ROW_CAP: usize = 64;
 
 /// The bound on one `git` call. The fork's portfolio scan uses 5s.
 pub const GIT_TIMEOUT_SECS: u64 = 5;
@@ -94,9 +97,6 @@ pub const FILE_READ_TIMEOUT_SECS: u64 = 5;
 /// than this names the rest rather than spawning an unbounded number of
 /// children on a background thread.
 pub const MAX_PROJECTS: usize = 64;
-
-/// The kit's own default port, used when no rendered config resolves.
-pub const DEFAULT_ROUTER_PORT: u64 = 8300;
 
 /// The three boards, in the order the cycle keybinding walks them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,11 +141,20 @@ impl BoardKind {
 /// One board's snapshot: the data its source carried at the instant it
 /// was read. Each variant carries its own `read_at`, the minute of the
 /// last good read, which is what the pane names beside a refusal.
+///
+/// All three variants are boxed. A snapshot is a message, not a value the
+/// caller holds: it is built once per read, carried over the update
+/// channel, matched by reference, and dropped — so the box costs one
+/// allocation per refresh and buys an enum the size of a pointer rather
+/// than the size of its largest variant. The brain snapshot's six
+/// `Section<T>` reads inline their reads into it and run to 616 bytes,
+/// which is more than five times the tower's; without the boxes the enum
+/// would be that large whichever board is actually being carried.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BoardData {
-    Router(RouterSnapshot),
-    Brain(BrainSnapshot),
-    Tower(TowerSnapshot),
+    Router(Box<RouterSnapshot>),
+    Brain(Box<BrainSnapshot>),
+    Tower(Box<TowerSnapshot>),
 }
 
 impl BoardData {
@@ -264,19 +273,28 @@ impl Boards {
 /// Where each board reads from, resolved once when the interface starts.
 #[derive(Debug, Clone)]
 pub struct Sources {
-    pub router: RouterSources,
+    pub router: RouterState,
     pub brain_home: Option<PathBuf>,
     pub tower_root: PathBuf,
     pub bounds: Bounds,
 }
 
-/// The router board's source: the operator API's base URL and the bearer
-/// it authenticates with. The base URL never carries the token, and the
-/// token is never carried anywhere but the request it authorizes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RouterSources {
-    pub base_url: String,
-    pub token: Option<String>,
+/// The router board's source: Fleet's own routing state, resolved once
+/// when the interface starts. There is no URL, no port and no token —
+/// Fleet's router is this crate's own, so the board reads what the router
+/// reads. A roster too broken to load would already have failed startup
+/// loud, so the compiled-in defaults are the fallback here.
+#[derive(Debug, Clone)]
+pub struct RouterState {
+    /// The declared chain, each candidate's key resolved the way the
+    /// router resolves it.
+    pub resolved: Vec<crate::route::Resolved>,
+    /// Each workload's own candidates, in the table's order.
+    pub preferences: Vec<crate::route::Preference>,
+    pub gates: crate::route::Gates,
+    pub pin: Option<String>,
+    /// The calibration log root Fleet writes its route rows under.
+    pub root: PathBuf,
 }
 
 /// The bounds every bounded read runs under. `git_bin` is a path or a
@@ -315,73 +333,36 @@ impl Default for Bounds {
 /// home's `.env` is the fallback, and the compiled-in defaults are last —
 /// the same resolution every credential in this crate uses. Nothing here
 /// reads a key out of a repository.
-pub fn resolve_sources(dotenv: &HashMap<String, String>) -> Sources {
+pub fn resolve_sources(home: &Path, dotenv: &HashMap<String, String>) -> Sources {
     let setting = |name: &str| crate::home::resolve_setting(name, dotenv);
     Sources {
-        router: router_sources(&setting),
+        router: router_state(home, dotenv),
         brain_home: brain_home(&setting),
         tower_root: tower_root(&setting),
         bounds: Bounds::default(),
     }
 }
 
-/// The router board's source. The kit's own rendered runtime config
-/// carries both facts the board needs — the port and the local token —
-/// so the board reads the same file the kit reads, and an explicit
-/// override wins over it.
-fn router_sources(setting: &impl Fn(&str) -> Option<String>) -> RouterSources {
-    let config = router_config(setting).and_then(|value| value.as_object().cloned());
-    let base_url = setting("AGNOSTIC_ROUTER_URL").unwrap_or_else(|| {
-        let port = config
-            .as_ref()
-            .and_then(|config| config.get("port"))
-            .and_then(Value::as_u64)
-            .unwrap_or(DEFAULT_ROUTER_PORT);
-        format!("http://127.0.0.1:{port}")
+/// The router board's source: Fleet's own routing state. The roster is
+/// the one the router itself runs on, loaded from `<home>/config.json`
+/// exactly as [`crate::route::load_roster`] loads it, and the calibration
+/// root is the one Fleet writes its route rows under. A config too broken
+/// to parse has already failed startup loud, so the compiled-in defaults
+/// are this reader's fallback rather than a silent second opinion.
+fn router_state(home: &Path, dotenv: &HashMap<String, String>) -> RouterState {
+    let roster = crate::route::load_roster(home).unwrap_or_else(|_| crate::route::Roster {
+        candidates: crate::route::default_roster(),
+        pin: None,
+        preferences: crate::route::default_preferences(),
+        gates: crate::route::Gates::default(),
     });
-    // The token resolves the way every other credential does and is
-    // dropped the moment the request it authorizes has been made.
-    let token = setting("AGNOSTIC_ROUTER_TOKEN").or_else(|| {
-        config
-            .as_ref()
-            .and_then(|config| config.get("localToken"))
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .filter(|token| !token.is_empty())
-    });
-    RouterSources { base_url, token }
-}
-
-/// The kit's rendered runtime config, `config.json`, resolved the way the
-/// kit's own `lib/paths.mjs` resolves it: `AGNOSTIC_ROUTER_DIR` first,
-/// then `AGNOSTIC_ROUTER_KIT_HOME/router`, then the kit's default home.
-/// The last fallback is where this machine's running router actually
-/// renders its runtime — the same file, one directory over from the
-/// documented default — and it is named rather than assumed.
-fn router_config(setting: &impl Fn(&str) -> Option<String>) -> Option<Value> {
-    let path = router_config_path(setting)?;
-    let text = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-/// The path of the kit's rendered runtime config, when one resolves.
-fn router_config_path(setting: &impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
-    if let Some(dir) = setting("AGNOSTIC_ROUTER_DIR") {
-        return Some(PathBuf::from(dir).join("config.json"));
+    RouterState {
+        resolved: crate::route::resolve(&roster.candidates, dotenv),
+        preferences: roster.preferences,
+        gates: roster.gates,
+        pin: roster.pin,
+        root: crate::calib::resolve_root(home, std::env::var("HOME").ok().as_deref()),
     }
-    if let Some(home) = setting("AGNOSTIC_ROUTER_KIT_HOME") {
-        return Some(PathBuf::from(home).join("router").join("config.json"));
-    }
-    let home = user_home()?;
-    let kit_default = home
-        .join(".agnostic-router-kit")
-        .join("router")
-        .join("config.json");
-    if kit_default.is_file() {
-        return Some(kit_default);
-    }
-    let deployed = home.join(".zcode").join("router").join("config.json");
-    deployed.is_file().then_some(deployed)
 }
 
 /// The second-brain home holding the six derived state files. The fork's
@@ -429,42 +410,36 @@ pub fn now_stamp() -> String {
 
 // --- the router board --------------------------------------------------------
 
-/// One board read of the router kit's operator API.
+/// One board read of Fleet's own routing state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouterSnapshot {
     pub read_at: String,
-    pub base_url: String,
-    pub port: Option<u64>,
-    /// The judge's mode and the model it runs on, when the kit names them.
+    /// The judgment source and the workload an unmapped ask defaults to.
     pub judge: Option<(String, Option<String>)>,
+    /// The declared pin, when the owner set one.
+    pub pin: Option<String>,
     /// Whether pay-as-you-go providers may be routed to, and their names.
     pub payg: Option<(bool, Vec<String>)>,
-    /// The workload tier chains, in the kit's own order: each workload's
-    /// resolved primary and the candidates behind it.
+    /// The workload tier chains, in the table's own order: each workload's
+    /// own candidates, the first of which is what a route selects.
     pub tiers: Vec<TierChain>,
     pub totals: Option<UsageTotals>,
     /// The per-model rows, busiest first.
     pub models: Vec<ModelRow>,
-    /// The recent calls, newest first.
+    /// The recent route rows, newest first.
     pub recent: Vec<RecentRow>,
     pub judge_counters: Option<JudgeCounters>,
-    pub cascade: Option<CascadeCounters>,
     /// The workload mix, busiest first.
     pub workloads: Vec<(String, u64)>,
-    /// The kit's own per-tier guidance sentences.
+    /// Fleet's own failover feedback: the candidates the calibration is
+    /// currently demoting, and the clause that says why.
     pub guidance: Vec<(String, String)>,
-    /// The reads that did not land, each named with its path and reason.
+    /// The reads that did not land, each named with its reason.
     pub refused: Vec<String>,
-    /// The named shape drift: `(the route that carried it, what is
-    /// absent from it)`. A kit upgrade that renames `resolved.workloads`
-    /// or `judge.mode` would otherwise empty a section with no reason
-    /// given, the way a state file that is not the shape it claims is
-    /// named on the second-brain board.
-    pub drift: Vec<(String, String)>,
 }
 
-/// One workload's tier chain: what the kit resolves it to and the
-/// candidates it walks on failure.
+/// One workload's tier chain: the candidates the workload names, in
+/// order, the first of which is what a route selects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TierChain {
     pub tier: String,
@@ -502,22 +477,24 @@ pub struct ModelRow {
     pub total_tokens: u64,
 }
 
-/// One recent call, the board's "what was just served" row.
+/// One recent route row, the board's "what Fleet just served" row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentRow {
-    pub at: u64,
+    /// The row's own stamp, exactly as the stream wrote it.
+    pub at: String,
     pub provider: String,
     pub model: String,
-    pub status: u16,
+    /// The walk's own outcome word: `served`, `failed`, or `skipped`.
+    pub outcome: String,
     pub workload: Option<String>,
     pub ms: Option<u64>,
     pub reason: Option<String>,
 }
 
 impl RecentRow {
-    /// Whether the call succeeded, which is what its state dot says.
+    /// Whether the row's walk served, which is what its state dot says.
     pub fn ok(&self) -> bool {
-        (200..300).contains(&self.status)
+        self.outcome == "served"
     }
 }
 
@@ -529,350 +506,219 @@ pub struct JudgeCounters {
     pub errors: u64,
 }
 
-/// The cascade's counters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CascadeCounters {
-    pub escalations: u64,
-    pub cold: u64,
-    pub failed: u64,
-    pub compared: u64,
-}
-
-/// Read the router kit's operator API. `/api/state` is the spine: without
-/// it there is nothing to render, so its refusal is the whole read's
-/// refusal. `/api/usage` and `/api/suggest` are independent reads whose
-/// refusals are named on the snapshot that still lands.
-pub fn read_router(sources: &RouterSources, timeout: Duration) -> Result<RouterSnapshot, String> {
-    let base = sources.base_url.trim_end_matches('/').to_string();
-    let state = get_json(
-        &format!("{base}/api/state"),
-        sources.token.as_deref(),
-        timeout,
-    )
-    .map_err(|reason| format!("the router board could not read the kit at {base}: {reason}"))?;
-    let usage = get_json(
-        &format!("{base}/api/usage"),
-        sources.token.as_deref(),
-        timeout,
-    );
-    let suggest = get_json(
-        &format!("{base}/api/suggest"),
-        sources.token.as_deref(),
-        timeout,
-    );
-
-    let mut refused = Vec::new();
-    let mut drift = state_drift(&state);
-    let usage_read = match usage {
-        Ok(usage) => parse_usage(&usage),
-        Err(reason) => {
-            refused.push(format!("/api/usage {reason}"));
-            UsageRead::default()
-        }
-    };
-    let guidance = match suggest {
-        Ok(suggest) => parse_suggest(&suggest),
-        Err(reason) => {
-            refused.push(format!("/api/suggest {reason}"));
-            Vec::new()
-        }
-    };
-    drift.extend(usage_read.drift);
-
-    Ok(RouterSnapshot {
-        read_at: now_stamp(),
-        base_url: base,
-        port: number(&state, "port"),
-        judge: parse_judge(&state),
-        payg: parse_payg(&state),
-        tiers: parse_tiers(&state),
-        totals: usage_read.totals,
-        models: usage_read.models,
-        recent: usage_read.recent,
-        judge_counters: usage_read.judge_counters,
-        cascade: usage_read.cascade,
-        workloads: usage_read.workloads,
-        guidance,
-        refused,
-        drift,
-    })
-}
-
-/// One bounded GET against the kit's operator API. The token rides the
-/// `Authorization` header and appears in no error, because an error
-/// names the URL and the kit's answer, never the credential.
-fn get_json(url: &str, token: Option<&str>, timeout: Duration) -> Result<Value, String> {
-    let agent = ureq::AgentBuilder::new().timeout(timeout).build();
-    let mut request = agent.get(url).set("accept", "application/json");
-    if let Some(token) = token {
-        request = request.set("authorization", &format!("Bearer {token}"));
-    }
-    match request.call() {
-        Ok(response) => response
-            .into_json::<Value>()
-            .map_err(|error| format!("answered a body the board cannot read: {error}")),
-        Err(ureq::Error::Status(code, response)) => {
-            let body = response.into_string().unwrap_or_default();
-            let named = error_message(&body).unwrap_or_else(|| body.trim().to_string());
-            let named = if named.is_empty() {
-                "no body".to_string()
-            } else {
-                named
-            };
-            Err(format!("answered HTTP {code}: {named}"))
-        }
-        Err(error) => Err(format!("could not be read: {error}")),
-    }
-}
-
-/// The kit's own error sentence, out of `{"error":{"message":…}}`.
-fn error_message(body: &str) -> Option<String> {
-    serde_json::from_str::<Value>(body)
-        .ok()?
-        .get("error")?
-        .get("message")?
-        .as_str()
-        .map(str::to_string)
-}
-
-/// What the usage ledger's read produced: the sections that landed and
-/// the shape drift it named on the way. The fork parses this payload
-/// into totals, model rows, day rows, recent calls, and the counter
-/// block; the board renders the totals, the models, the recent calls,
-/// and the counters.
-#[derive(Debug, Default)]
-struct UsageRead {
-    totals: Option<UsageTotals>,
-    models: Vec<ModelRow>,
-    recent: Vec<RecentRow>,
-    judge_counters: Option<JudgeCounters>,
-    cascade: Option<CascadeCounters>,
-    workloads: Vec<(String, u64)>,
-    /// The named shape drift: `(the route that carried it, what is
-    /// absent from it)`.
-    drift: Vec<(String, String)>,
-}
-
-fn parse_usage(usage: &Value) -> UsageRead {
-    let route = "/api/usage".to_string();
-    let mut drift = Vec::new();
-    let totals = usage.get("totals").and_then(parse_totals);
-    if totals.is_none() {
-        drift.push((route.clone(), "totals is absent".to_string()));
-    }
-    // A row the board cannot read is named rather than dropped in
-    // silence: a payload whose model rows changed shape is an upgrade
-    // announcing itself, not an empty ledger.
-    let offered = rows(usage.get("models"))
-        .map(|rows| rows.len())
-        .unwrap_or(0);
-    let mut models: Vec<ModelRow> = rows(usage.get("models"))
-        .into_iter()
-        .flatten()
-        .filter_map(parse_model)
-        .collect();
-    models.sort_by(|left, right| right.calls.cmp(&left.calls).then(left.key.cmp(&right.key)));
-    if models.len() < offered {
-        drift.push((
-            route.clone(),
-            format!("{} of {offered} model rows could not be read", models.len()),
-        ));
-    }
-    let offered_recent = rows(usage.get("recent"))
-        .map(|rows| rows.len())
-        .unwrap_or(0);
-    let parsed_recent: Vec<RecentRow> = rows(usage.get("recent"))
-        .into_iter()
-        .flatten()
-        .filter_map(parse_recent)
-        .collect();
-    if parsed_recent.len() < offered_recent {
-        drift.push((
-            route.clone(),
-            format!(
-                "{} of {offered_recent} recent rows could not be read",
-                parsed_recent.len()
-            ),
-        ));
-    }
-    let recent: Vec<RecentRow> = parsed_recent.into_iter().take(12).collect();
-    let judge_counters = parse_judge_counters(usage.get("judge"));
-    let cascade = parse_cascade_counters(usage.get("cascade"));
-    let workloads = number_map(usage.get("workloads"));
-    UsageRead {
-        totals,
-        models,
-        recent,
-        judge_counters,
-        cascade,
-        workloads,
-        drift,
-    }
-}
-
-/// The `/api/state` payload's shape, named where a member the board
-/// renders is absent from it. An empty section with no reason given is
-/// the failure this names: a kit upgrade that renames `resolved.workloads`
-/// or `judge.mode` would otherwise blank part of the board in silence,
-/// which is the drift the second-brain board already names for a state
-/// file that is not the shape it claims.
-fn state_drift(state: &Value) -> Vec<(String, String)> {
-    let route = "/api/state".to_string();
-    let named = |field: &str| (route.clone(), format!("{field} is absent"));
-    let mut drift = Vec::new();
-    if state
-        .get("judge")
-        .and_then(|judge| text(judge, "mode"))
-        .is_none()
-    {
-        drift.push(named("judge.mode"));
-    }
-    if state
-        .get("guard")
-        .and_then(|guard| guard.get("allowPayg"))
-        .is_none()
-    {
-        drift.push(named("guard.allowPayg"));
-    }
-    let workloads = state
-        .get("resolved")
-        .and_then(|resolved| resolved.get("workloads"));
-    match workloads {
-        None => drift.push(named("resolved.workloads")),
-        // Present but not the kit's own name-to-chain map: the tier
-        // chains cannot be read out of it at all.
-        Some(workloads) if workloads.as_object().is_none() => {
-            drift.push((
-                route,
-                "resolved.workloads is not the kit's own map".to_string(),
-            ));
-        }
-        Some(_) => {}
-    }
-    drift
-}
-
-fn parse_totals(value: &Value) -> Option<UsageTotals> {
-    Some(UsageTotals {
-        calls: number(value, "calls")?,
-        ok: number(value, "ok")?,
-        errors: number(value, "errors")?,
-        prompt_tokens: number(value, "promptTokens")?,
-        completion_tokens: number(value, "completionTokens")?,
-        total_tokens: number(value, "totalTokens")?,
-    })
-}
-
-fn parse_model(value: &Value) -> Option<ModelRow> {
-    Some(ModelRow {
-        key: text(value, "key")?,
-        provider: text(value, "providerId")?,
-        model: text(value, "model")?,
-        calls: number(value, "calls")?,
-        errors: number(value, "errors")?,
-        total_tokens: number(value, "totalTokens")?,
-    })
-}
-
-fn parse_recent(value: &Value) -> Option<RecentRow> {
-    Some(RecentRow {
-        at: number(value, "at")?,
-        provider: text(value, "providerId")?,
-        model: text(value, "model")?,
-        status: number(value, "status")?.min(u16::MAX as u64) as u16,
-        workload: text(value, "workload"),
-        ms: number(value, "ms"),
-        reason: text(value, "reason"),
-    })
-}
-
-/// The judge block: its mode and the model it runs on.
-fn parse_judge(state: &Value) -> Option<(String, Option<String>)> {
-    let judge = state.get("judge")?;
-    Some((text(judge, "mode")?, text(judge, "model")))
-}
-
-/// The guard block: whether payg is allowed and which providers are payg.
-fn parse_payg(state: &Value) -> Option<(bool, Vec<String>)> {
-    let guard = state.get("guard")?;
-    let allowed = guard.get("allowPayg").and_then(Value::as_bool)?;
-    let providers = rows(guard.get("paygProviders"))
-        .into_iter()
-        .flatten()
-        .filter_map(|value| value.as_str().map(str::to_string))
-        .collect();
-    Some((allowed, providers))
-}
-
-/// `resolved.workloads` into the tier chains, keeping the kit's own
-/// order. A workload whose resolution is not its candidate list's head
-/// leads the chain, the way the fork's `parseTiers` reads it.
-fn parse_tiers(state: &Value) -> Vec<TierChain> {
-    let Some(workloads) = state
-        .get("resolved")
-        .and_then(|resolved| resolved.get("workloads"))
-    else {
-        return Vec::new();
-    };
-    let Some(workloads) = workloads.as_object() else {
-        return Vec::new();
-    };
-    let mut chains = Vec::new();
-    for (tier, chain) in workloads {
-        let Some(chain) = chain.as_object() else {
-            continue;
-        };
-        let primary = hop(chain);
-        let mut candidates: Vec<String> = rows(chain.get("candidates"))
-            .into_iter()
-            .flatten()
-            .filter_map(|candidate| candidate.as_object().and_then(hop))
-            .collect();
-        if let Some(primary) = &primary {
-            let leads = candidates
-                .first()
-                .map(|head| head != primary)
-                .unwrap_or(true);
-            if leads {
-                candidates.insert(0, primary.clone());
-            }
-        }
-        let Some(primary) = candidates.first().cloned() else {
-            continue;
-        };
-        chains.push(TierChain {
-            tier: tier.clone(),
-            primary,
-            candidates,
-        });
-    }
-    chains
-}
-
-/// One hop as `provider/model`, the way both the kit's own payload and
-/// the board's rows name it.
-fn hop(value: &Map<String, Value>) -> Option<String> {
-    let provider = value.get("providerId").and_then(Value::as_str)?;
-    let model = value.get("model").and_then(Value::as_str)?;
-    Some(format!("{provider}/{model}"))
-}
-
-/// The kit's own per-tier guidance: `rationale` keyed `tiers.<tier>`, its
-/// non-tier entries left out.
-fn parse_suggest(suggest: &Value) -> Vec<(String, String)> {
-    let Some(rationale) = suggest.get("rationale").and_then(Value::as_object) else {
-        return Vec::new();
-    };
-    let mut guidance: Vec<(String, String)> = rationale
+/// Read Fleet's own routing state. Nothing is dialed: the router is this
+/// crate's own [`crate::route::select`], so the board reads the same three
+/// things the router reads — the declared chain, the workload preference
+/// table, and the route rows Fleet already wrote for the runs it served.
+/// A day with no rows is not a refusal: the chain renders and the ledger
+/// says so, the way a fresh install reads.
+pub fn read_router(state: &RouterState, day: &str) -> RouterSnapshot {
+    let rows = crate::calib::read_day(&state.root, day, ROUTER_ROW_CAP);
+    let route_rows: Vec<&crate::calib::ReadRow> = rows
         .iter()
-        .filter_map(|(key, sentence)| {
-            let tier = key.strip_prefix("tiers.")?;
-            let sentence = sentence.as_str()?;
-            Some((tier.to_string(), sentence.to_string()))
+        .filter(|row| row.op == crate::calib::OP_ROUTE)
+        .collect();
+    RouterSnapshot {
+        read_at: now_stamp(),
+        judge: Some((
+            "sys1".to_string(),
+            Some(state.gates.default_workload.to_string()),
+        )),
+        pin: state.pin.clone(),
+        payg: Some(payg_guard(
+            &state.resolved,
+            &state.preferences,
+            state.pin.as_deref(),
+        )),
+        tiers: tier_chains(&state.preferences),
+        totals: route_totals(&route_rows),
+        models: model_rows(&route_rows),
+        recent: recent_rows(&route_rows),
+        judge_counters: judge_counters(&route_rows),
+        workloads: workload_mix(&route_rows),
+        guidance: demotion_guidance(state),
+        refused: Vec::new(),
+    }
+}
+
+/// The workload tier chains, in the table's own order. Each workload's
+/// first candidate is what a route selects for it; the rest are what the
+/// workload's own failover walks.
+fn tier_chains(preferences: &[crate::route::Preference]) -> Vec<TierChain> {
+    preferences
+        .iter()
+        .map(|preference| {
+            let candidates: Vec<String> = preference
+                .candidates
+                .iter()
+                .map(|(provider, model)| format!("{provider}/{model}"))
+                .collect();
+            TierChain {
+                tier: preference.workload.to_string(),
+                primary: candidates.first().cloned().unwrap_or_default(),
+                candidates,
+            }
+        })
+        .collect()
+}
+
+/// The pay-as-you-go guard, Fleet's own: a payg candidate may not serve
+/// unless the owner pinned it or a workload names it, which is what makes
+/// the reserve unable to serve silently.
+fn payg_guard(
+    resolved: &[crate::route::Resolved],
+    preferences: &[crate::route::Preference],
+    pin: Option<&str>,
+) -> (bool, Vec<String>) {
+    use crate::route::Billing;
+    let providers: Vec<String> = resolved
+        .iter()
+        .filter(|entry| entry.candidate.billing == Billing::Payg)
+        .map(|entry| entry.id().to_string())
+        .collect();
+    // A workload's own chain is the walk, so a payg candidate a workload
+    // names may serve; a pin is the owner naming it directly. Neither
+    // names it, and the reserve is walked last by nothing at all.
+    let allowed = preferences
+        .iter()
+        .flat_map(|preference| preference.candidates.iter())
+        .any(|(provider, _)| providers.iter().any(|name| name == provider))
+        || pin.is_some_and(|pinned| providers.iter().any(|name| name == pinned));
+    (allowed, providers)
+}
+
+/// The day's route-row counts: one call per row, a row whose walk ended
+/// in a `served` attempt counts as ok, and every other row counts as an
+/// error. Fleet's route rows carry no token counts, so the token fields
+/// stay zero rather than being estimated from a character count.
+fn route_totals(rows: &[&crate::calib::ReadRow]) -> Option<UsageTotals> {
+    if rows.is_empty() {
+        return None;
+    }
+    let ok = rows
+        .iter()
+        .filter(|row| {
+            row.attempts
+                .iter()
+                .any(|attempt| attempt.outcome == "served")
+        })
+        .count() as u64;
+    Some(UsageTotals {
+        calls: rows.len() as u64,
+        ok,
+        errors: rows.len() as u64 - ok,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+    })
+}
+
+/// The per-model rows, busiest first: how often each served model was the
+/// one a route selected.
+fn model_rows(rows: &[&crate::calib::ReadRow]) -> Vec<ModelRow> {
+    let mut counts: Vec<(String, u64)> = Vec::new();
+    for row in rows {
+        if let Some(entry) = counts.iter_mut().find(|(key, _)| *key == row.model) {
+            entry.1 += 1;
+        } else {
+            counts.push((row.model.clone(), 1));
+        }
+    }
+    counts.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    counts
+        .into_iter()
+        .map(|(model, calls)| {
+            let provider = model.split('/').next().unwrap_or(&model).to_string();
+            ModelRow {
+                key: model.clone(),
+                provider,
+                model,
+                calls,
+                errors: 0,
+                total_tokens: 0,
+            }
+        })
+        .collect()
+}
+
+/// The recent route rows, newest first. The day file is an append-only
+/// audit trail, so its tail is what was just served.
+fn recent_rows(rows: &[&crate::calib::ReadRow]) -> Vec<RecentRow> {
+    let mut recent: Vec<RecentRow> = rows
+        .iter()
+        .rev()
+        .take(6)
+        .map(|row| {
+            let outcome = row
+                .attempts
+                .last()
+                .map(|attempt| attempt.outcome.clone())
+                .unwrap_or_else(|| "never attempted".to_string());
+            RecentRow {
+                at: row.ts.clone(),
+                provider: row.provider.clone(),
+                model: row.model.clone(),
+                outcome,
+                workload: (!row.workload.is_empty()).then(|| row.workload.clone()),
+                ms: Some(row.latency_ms),
+                reason: (!row.reason.is_empty()).then(|| row.reason.clone()),
+            }
         })
         .collect();
-    guidance.sort_by(|left, right| left.0.cmp(&right.0));
-    guidance
+    recent.truncate(6);
+    recent
+}
+
+/// The judgment split: a judgment made this run, one served from the
+/// route-decision cache, or one never obtained. A cached judgment is a
+/// recorded one, so the counts must not pretend otherwise.
+fn judge_counters(rows: &[&crate::calib::ReadRow]) -> Option<JudgeCounters> {
+    if rows.is_empty() {
+        return None;
+    }
+    let fresh = rows.iter().filter(|row| row.judged_from == "fresh").count() as u64;
+    let cached = rows
+        .iter()
+        .filter(|row| row.judged_from == "cached")
+        .count() as u64;
+    let errors = rows.iter().filter(|row| row.judged_from == "none").count() as u64;
+    Some(JudgeCounters {
+        fresh,
+        cached,
+        errors,
+    })
+}
+
+/// The workload mix, busiest first: where the day's routes actually went.
+fn workload_mix(rows: &[&crate::calib::ReadRow]) -> Vec<(String, u64)> {
+    let mut counts: Vec<(String, u64)> = Vec::new();
+    for row in rows {
+        let workload = if row.workload.is_empty() {
+            "\u{2014}".to_string()
+        } else {
+            row.workload.clone()
+        };
+        if let Some(entry) = counts.iter_mut().find(|(name, _)| *name == workload) {
+            entry.1 += 1;
+        } else {
+            counts.push((workload, 1));
+        }
+    }
+    counts.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    counts
+}
+
+/// Fleet's own failover feedback: the candidates the calibration is
+/// demoting for this day, and the clause that says why. This is the
+/// precursor's per-tier suggestion, read out of Fleet's own stream rather
+/// than another process's operator API.
+fn demotion_guidance(state: &RouterState) -> Vec<(String, String)> {
+    let ids: Vec<&str> = state.resolved.iter().map(|entry| entry.id()).collect();
+    let demoted = crate::calib::demotions(&state.root, &crate::calib::today(), &ids);
+    demoted
+        .into_iter()
+        .map(|id| (id.clone(), "demoted \u{2014} walked last".to_string()))
+        .collect()
 }
 
 // --- the second-brain board --------------------------------------------------
@@ -1793,9 +1639,11 @@ async fn read_all(sources: &Sources) -> Vec<BoardUpdate> {
     let tower_root = sources.tower_root.clone();
     let brain_bounds = sources.bounds.clone();
     let tower_bounds = sources.bounds.clone();
-    let timeout = Duration::from_secs(READ_TIMEOUT_SECS);
+    // The router board reads Fleet's own stream, so its day is today's —
+    // the same day the router's own rows are stamped with.
+    let day = crate::calib::today();
     let (router, brain, tower) = tokio::join!(
-        tokio::task::spawn_blocking(move || read_router(&router, timeout)),
+        tokio::task::spawn_blocking(move || Ok(read_router(&router, &day))),
         tokio::task::spawn_blocking(move || read_brain_source(&brain_home, &brain_bounds)),
         tokio::task::spawn_blocking(move || read_tower(&tower_root, &tower_bounds)),
     );
@@ -1809,20 +1657,23 @@ async fn read_all(sources: &Sources) -> Vec<BoardUpdate> {
         BoardUpdate {
             kind: BoardKind::Router,
             outcome: landed(
-                router.map(|inner| inner.map(BoardData::Router)),
+                router.map(|inner| inner.map(|snapshot| BoardData::Router(Box::new(snapshot)))),
                 "router board",
             ),
         },
         BoardUpdate {
             kind: BoardKind::Brain,
             outcome: landed(
-                brain.map(|inner| inner.map(BoardData::Brain)),
+                brain.map(|inner| inner.map(|snapshot| BoardData::Brain(Box::new(snapshot)))),
                 "second-brain board",
             ),
         },
         BoardUpdate {
             kind: BoardKind::Tower,
-            outcome: landed(tower.map(|inner| inner.map(BoardData::Tower)), "tower"),
+            outcome: landed(
+                tower.map(|inner| inner.map(|snapshot| BoardData::Tower(Box::new(snapshot)))),
+                "tower",
+            ),
         },
     ]
 }
@@ -1859,41 +1710,6 @@ fn number(value: &Value, key: &str) -> Option<u64> {
 /// One array member.
 fn rows(value: Option<&Value>) -> Option<&Vec<Value>> {
     value?.as_array()
-}
-
-/// A name-to-count map, busiest first.
-fn number_map(value: Option<&Value>) -> Vec<(String, u64)> {
-    let Some(map) = value.and_then(Value::as_object) else {
-        return Vec::new();
-    };
-    let mut counts: Vec<(String, u64)> = map
-        .iter()
-        .filter_map(|(name, count)| Some((name.clone(), count.as_u64()?)))
-        .collect();
-    counts.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
-    counts
-}
-
-/// The judge's counters; `None` when the block is absent, because a
-/// payload that names no block is not read as one with zero counters.
-fn parse_judge_counters(value: Option<&Value>) -> Option<JudgeCounters> {
-    let value = value?;
-    Some(JudgeCounters {
-        fresh: number(value, "fresh")?,
-        cached: number(value, "cached")?,
-        errors: number(value, "errors")?,
-    })
-}
-
-/// The cascade's counters, on the same rule.
-fn parse_cascade_counters(value: Option<&Value>) -> Option<CascadeCounters> {
-    let value = value?;
-    Some(CascadeCounters {
-        escalations: number(value, "escalations")?,
-        cold: number(value, "cold")?,
-        failed: number(value, "failed")?,
-        compared: number(value, "compared")?,
-    })
 }
 
 // --- the render vocabulary ---------------------------------------------------
@@ -2006,11 +1822,58 @@ pub fn cell(text: &str, width: usize) -> String {
 mod tests {
     use super::*;
 
-    fn sources(base_url: &str) -> RouterSources {
-        RouterSources {
-            base_url: base_url.to_string(),
-            token: Some("test-token".to_string()),
+    /// Fleet's own routing state, the way the board reads it: the
+    /// compiled-in chain and table, and a scratch calibration root so the
+    /// rows a test writes are the rows it reads back.
+    fn state(scratch: &Scratch) -> RouterState {
+        RouterState {
+            resolved: crate::route::resolve(&crate::route::default_roster(), &HashMap::new()),
+            preferences: crate::route::default_preferences(),
+            gates: crate::route::Gates::default(),
+            pin: None,
+            root: scratch.path().to_path_buf(),
         }
+    }
+
+    /// One `route` row, the shape the stream writes. A test names the
+    /// provider that served, the workload sys1 judged, where the judgment
+    /// came from, and the walk's own attempts.
+    fn route_row(
+        ts: &str,
+        provider: &str,
+        model: &str,
+        workload: &str,
+        judged_from: &str,
+        attempts: &[(&str, &str)],
+        latency_ms: u64,
+    ) -> String {
+        serde_json::json!({
+            "op": crate::calib::OP_ROUTE,
+            "ts": ts,
+            "provider": provider,
+            "how": "judged",
+            "workload": workload,
+            "reason": "the lane judged the workload",
+            "model": model,
+            "providers_used": attempts.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
+            "attempts": attempts
+                .iter()
+                .map(|(p, outcome)| serde_json::json!({ "provider": p, "outcome": outcome }))
+                .collect::<Vec<_>>(),
+            "input_chars": 420,
+            "input_hash": "0123456789abcdef",
+            "latency_ms": latency_ms,
+            "judged_from": judged_from,
+        })
+        .to_string()
+    }
+
+    /// Write `lines` as one day's stream file under `root`.
+    fn write_day(root: &Path, day: &str, lines: &[String]) {
+        let path = crate::calib::day_path(root, day);
+        std::fs::create_dir_all(path.parent().expect("the day file's parent"))
+            .expect("the log directory");
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).expect("the day file");
     }
 
     /// A scratch directory that is removed when the test ends.
@@ -2036,373 +1899,314 @@ mod tests {
         }
     }
 
-    // --- the scripted operator API -------------------------------------------
-
-    /// A scripted stand-in for the router kit's operator API: one loopback
-    /// listener answering each route from a fixture, so the board's read
-    /// is driven by a deterministic payload instead of the live kit. An
-    /// unregistered path answers 404 with the kit's own unknown-path
-    /// sentence, the way the real router does.
-    struct ScriptedKit {
-        port: u16,
-        handle: Option<thread::JoinHandle<()>>,
-    }
-
-    impl ScriptedKit {
-        fn start(routes: &[(&str, u16, &'static str)]) -> ScriptedKit {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-            let port = listener.local_addr().expect("the bound port").port();
-            let routes: Vec<(String, u16, String)> = routes
-                .iter()
-                .map(|(path, status, body)| ((*path).to_string(), *status, (*body).to_string()))
-                .collect();
-            let handle = thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
-                // Polled rather than blocked: a route the board never asks
-                // for must not leave the server waiting on `accept` when
-                // the test's own `Drop` joins this thread.
-                let _ = listener.set_nonblocking(true);
-                let deadline = std::time::Instant::now() + Duration::from_secs(10);
-                loop {
-                    let Ok((mut stream, _)) = listener.accept() else {
-                        if std::time::Instant::now() >= deadline {
-                            return;
-                        }
-                        thread::sleep(Duration::from_millis(2));
-                        continue;
-                    };
-                    // A socket accepted from a non-blocking listener
-                    // inherits the flag on this platform, and a
-                    // non-blocking stream turns the response's own read
-                    // into `InvalidInput`: the connection goes back to
-                    // blocking before a word is written to it.
-                    let _ = stream.set_nonblocking(false);
-                    let peer = stream.try_clone().expect("the connection");
-                    let request = BufReader::new(peer)
-                        .lines()
-                        .map_while(Result::ok)
-                        .take_while(|line| !line.is_empty())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let path = request
-                        .lines()
-                        .next()
-                        .and_then(|line| line.split_whitespace().nth(1))
-                        .unwrap_or("/")
-                        .to_string();
-                    let (status, body) = routes
-                        .iter()
-                        .find(|(route, _, _)| route == &path)
-                        .map(|(_, status, body)| (*status, body.clone()))
-                        .unwrap_or((
-                            404,
-                            "{\"error\":{\"message\":\"router: unknown api path\"}}".to_string(),
-                        ));
-                    let reason = if status == 200 { "OK" } else { "Unauthorized" };
-                    let response = format!(
-                        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        body.len(),
-                        body
-                    );
-                    let _ = stream.write_all(response.as_bytes());
-                    let _ = stream.flush();
-                }
-            });
-            ScriptedKit {
-                port,
-                handle: Some(handle),
-            }
-        }
-
-        fn url(&self) -> String {
-            format!("http://127.0.0.1:{}", self.port)
-        }
-    }
-
-    impl Drop for ScriptedKit {
-        fn drop(&mut self) {
-            if let Some(handle) = self.handle.take() {
-                let _ = handle.join();
-            }
-        }
-    }
-
-    /// A listener that accepts and never answers: the hung source.
-    struct DeafKit(u16);
-
-    impl DeafKit {
-        fn start() -> DeafKit {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-            let port = listener.local_addr().expect("the bound port").port();
-            thread::spawn(move || {
-                for stream in listener.incoming().take(4).flatten() {
-                    // Hold the connection open without a word: the read
-                    // must name its own bound rather than wait forever.
-                    thread::spawn(move || {
-                        thread::sleep(Duration::from_secs(30));
-                        drop(stream);
-                    });
-                }
-            });
-            DeafKit(port)
-        }
-
-        fn url(&self) -> String {
-            format!("http://127.0.0.1:{}", self.0)
-        }
-    }
-
-    /// A port with nothing listening on it: the dead source.
-    fn dead_url() -> String {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-        let url = format!(
-            "http://127.0.0.1:{}",
-            listener.local_addr().expect("the bound port").port()
-        );
-        drop(listener);
-        url
-    }
-
-    const STATE_FIXTURE: &str = r#"{
-      "ok": true,
-      "port": 8300,
-      "kitRoot": "/Users/owner/Projects/agnostic-router-kit",
-      "judge": { "mode": "cascade", "model": "fastino/gliner2.5-multi-v1" },
-      "guard": { "allowPayg": false, "paygProviders": ["deepseek"] },
-      "resolved": {
-        "defaultWorkload": "standard_code",
-        "workloads": {
-          "quick": { "providerId": "stepfun", "model": "step-3.7-flash",
-                     "candidates": [ { "providerId": "stepfun", "model": "step-3.7-flash" },
-                                     { "providerId": "xiaomi-mimo", "model": "mimo-v2.6-flash" },
-                                     { "providerId": "zai-coding-plan", "model": "GLM-5.3-Flash" } ] },
-          "standard_code": { "providerId": "stepfun", "model": "step-5-preview",
-                     "candidates": [ { "providerId": "stepfun", "model": "step-5-preview" },
-                                     { "providerId": "zai-coding-plan", "model": "GLM-5.3-Flash" } ] }
-        }
-      }
-    }"#;
-
-    const USAGE_FIXTURE: &str = r#"{
-      "ok": true,
-      "totals": { "calls": 19873, "ok": 19646, "errors": 227,
-                  "promptTokens": 88197905869, "completionTokens": 3961204277, "totalTokens": 92159110146 },
-      "models": [
-        { "key": "stepfun/step-5-preview", "providerId": "stepfun", "model": "step-5-preview",
-          "calls": 1791, "ok": 1791, "errors": 0, "totalTokens": 61234540459, "lastUsedAt": 1791565120539 },
-        { "key": "stepfun/step-3.7-flash", "providerId": "stepfun", "model": "step-3.7-flash",
-          "calls": 3720, "ok": 3715, "errors": 5, "totalTokens": 29604087234, "lastUsedAt": 1791918037872 }
-      ],
-      "days": [ { "day": "2026-09-29", "calls": 2902, "promptTokens": 1, "completionTokens": 2 } ],
-      "recent": [
-        { "at": 1791918037872, "requested": "auto", "workload": "standard_code", "providerId": "stepfun",
-          "model": "step-3.7-flash", "status": 200, "ms": 2000, "promptTokens": 10279, "completionTokens": 509 },
-        { "at": 1791916699901, "requested": "auto", "workload": "standard_code", "providerId": "zai-coding-plan",
-          "model": "GLM-5.3-Flash", "status": 500, "ms": 812, "promptTokens": 13, "completionTokens": 5,
-          "reason": "upstream refused" }
-      ],
-      "judge": { "fresh": 581, "cached": 15738, "errors": 321 },
-      "cascade": { "escalations": 787, "cold": 0, "failed": 570, "compared": 217 },
-      "workloads": { "quick": 4726, "standard_code": 10557, "hard": 3520 }
-    }"#;
-
-    const SUGGEST_FIXTURE: &str = r#"{
-      "ok": true,
-      "suggested": { "tiers": { "quick": { "target": "xiaomi-mimo/mimo-v2.6-pro" } } },
-      "rationale": { "tiers.quick": "the quick tier's head is exhausted; move it",
-                     "general": "not a tier entry" },
-      "basis": { "recentRequests": 512, "modelsScored": 5 }
-    }"#;
-
     // --- the router board ----------------------------------------------------
 
-    /// The three routes a full router-board read makes.
-    fn scripted_kit() -> ScriptedKit {
-        ScriptedKit::start(&[
-            ("/api/state", 200, STATE_FIXTURE),
-            ("/api/usage", 200, USAGE_FIXTURE),
-            ("/api/suggest", 200, SUGGEST_FIXTURE),
-        ])
+    /// A day of route rows: two served, one served after a failover, one
+    /// whose walk failed outright. The mix is what lets the board prove
+    /// each counter reads its own column.
+    fn a_days_rows() -> Vec<String> {
+        vec![
+            route_row(
+                "2026-10-16T09:14:02Z",
+                "stepfun",
+                "stepfun/step-3.7-flash",
+                "quick",
+                "fresh",
+                &[("stepfun", "served")],
+                812,
+            ),
+            route_row(
+                "2026-10-16T09:15:41Z",
+                "zai-coding-plan",
+                "zai-coding-plan/GLM-5.3-Flash",
+                "standard_code",
+                "cached",
+                &[("stepfun", "failed"), ("zai-coding-plan", "served")],
+                1_904,
+            ),
+            route_row(
+                "2026-10-16T09:22:10Z",
+                "stepfun",
+                "stepfun/step-5-preview",
+                "hard",
+                "none",
+                &[("stepfun", "failed")],
+                3_311,
+            ),
+            route_row(
+                "2026-10-16T09:31:57Z",
+                "stepfun",
+                "stepfun/step-3.7-flash",
+                "quick",
+                "fresh",
+                &[("stepfun", "served")],
+                744,
+            ),
+        ]
     }
 
     #[test]
-    fn the_router_board_reads_the_kits_operator_api_into_its_snapshot() {
-        let kit = scripted_kit();
-        let snapshot = read_router(&sources(&kit.url()), Duration::from_secs(5))
-            .expect("the scripted kit answers");
+    fn the_router_board_reads_fleets_own_routing_state_into_its_snapshot() {
+        let scratch = Scratch::new("router-state");
+        let day = "2026-10-16";
+        write_day(scratch.path(), day, &a_days_rows());
+        let state = state(&scratch);
 
-        assert_eq!(snapshot.port, Some(8300));
+        let snapshot = read_router(&state, day);
+
+        // The judge and the gates are Fleet's own: sys1 asked the workload,
+        // and the workload table says what an unmapped ask defaults to.
         assert_eq!(
             snapshot.judge,
-            Some((
-                "cascade".to_string(),
-                Some("fastino/gliner2.5-multi-v1".to_string())
-            ))
+            Some(("sys1".to_string(), Some("standard_code".to_string())))
         );
-        assert_eq!(snapshot.payg, Some((false, vec!["deepseek".to_string()])));
-        // The tier chains keep the kit's own order and name the resolved
-        // primary as the chain's head.
+        assert!(snapshot.pin.is_none());
+        // The tier chains are the preference table, in its own order, and
+        // each workload's first candidate is what a route selects.
         let tiers: Vec<&str> = snapshot
             .tiers
             .iter()
             .map(|chain| chain.tier.as_str())
             .collect();
-        assert_eq!(tiers, vec!["quick", "standard_code"]);
+        assert_eq!(
+            tiers,
+            vec![
+                "quick",
+                "standard_code",
+                "hard",
+                "prose",
+                "deep_context",
+                "composed"
+            ]
+        );
         assert_eq!(snapshot.tiers[0].primary, "stepfun/step-3.7-flash");
         assert_eq!(snapshot.tiers[0].candidates.len(), 3);
-        // The usage ledger lands with its totals, its busiest-first
-        // models, and its recent calls.
-        let totals = snapshot.totals.expect("the usage totals");
-        assert_eq!(totals.calls, 19_873);
-        assert_eq!(totals.success_rate(), Some(98));
-        assert_eq!(snapshot.models[0].model, "step-3.7-flash");
-        assert_eq!(snapshot.recent.len(), 2);
-        assert!(snapshot.recent[0].ok());
-        assert!(!snapshot.recent[1].ok());
-        // The counters and the workload mix.
-        assert_eq!(snapshot.judge_counters.map(|c| c.cached), Some(15_738));
-        assert_eq!(snapshot.cascade.map(|c| c.escalations), Some(787));
-        assert_eq!(snapshot.workloads[0], ("standard_code".to_string(), 10_557));
-        // The guidance keeps only the kit's per-tier sentences.
         assert_eq!(
-            snapshot.guidance,
-            vec![(
-                "quick".to_string(),
-                "the quick tier's head is exhausted; move it".to_string()
-            )]
+            snapshot.tiers[1].candidates,
+            vec![
+                "stepfun/step-3.7-flash".to_string(),
+                "zai-coding-plan/GLM-5.3-Flash".to_string(),
+                "xiaomi-mimo/mimo-v2.6-flash".to_string(),
+            ]
         );
+        // The ledger's totals count the day's route rows.
+        let totals = snapshot.totals.expect("the day's totals");
+        assert_eq!(totals.calls, 4);
+        // Three rows ended in a `served` attempt — two directly, one after
+        // the walk failed over — and one row's walk failed outright.
+        assert_eq!(totals.ok, 3);
+        assert_eq!(totals.errors, 1);
+        assert_eq!(totals.success_rate(), Some(75));
+        // The route row carries no token counts, and the board says so
+        // rather than estimating them from the task's length.
+        assert_eq!((totals.prompt_tokens, totals.completion_tokens), (0, 0));
+        // The busiest model is the one the day served most.
+        assert_eq!(snapshot.models[0].model, "stepfun/step-3.7-flash");
+        assert_eq!(snapshot.models[0].calls, 2);
+        assert_eq!(snapshot.models[0].provider, "stepfun");
+        // The recent rows are newest first, and the walk's own outcome
+        // is what a row says.
+        assert_eq!(snapshot.recent.len(), 4);
+        assert_eq!(snapshot.recent[0].at, "2026-10-16T09:31:57Z");
+        assert!(snapshot.recent[0].ok());
+        assert_eq!(snapshot.recent[1].outcome, "failed");
+        assert_eq!(
+            snapshot.recent[1].reason.as_deref(),
+            Some("the lane judged the workload")
+        );
+        assert_eq!(snapshot.recent[1].ms, Some(3_311));
+        assert_eq!(
+            snapshot.recent[0].workload.as_deref(),
+            Some("quick"),
+            "the workload sys1 judged rides the row"
+        );
+        // The judge split, out of `judged_from`.
+        let judge = snapshot.judge_counters.expect("the judge counters");
+        assert_eq!((judge.fresh, judge.cached, judge.errors), (2, 1, 1));
+        // The workload mix, busiest first.
+        assert_eq!(
+            snapshot.workloads,
+            vec![
+                ("quick".to_string(), 2),
+                ("hard".to_string(), 1),
+                ("standard_code".to_string(), 1),
+            ]
+        );
+        // Nothing was refused: every read is Fleet's own file.
         assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
     }
 
     #[test]
-    fn a_dead_kit_port_is_a_named_refusal_not_a_panic() {
-        let error = read_router(&sources(&dead_url()), Duration::from_secs(2))
-            .expect_err("nothing is listening");
-        assert!(
-            error.contains("the router board could not read the kit"),
-            "{error}"
-        );
-    }
+    fn a_day_with_no_route_rows_is_an_empty_ledger_not_a_refusal() {
+        // A fresh install, or a day Fleet has not routed on: the chain
+        // still renders and the ledger says it has seen nothing. There
+        // is nothing to dial, so there is nothing that can refuse.
+        let scratch = Scratch::new("router-empty");
+        let state = state(&scratch);
 
-    #[test]
-    fn a_bad_token_is_named_with_the_kits_own_reason() {
-        let kit = ScriptedKit::start(&[(
-            "/api/state",
-            401,
-            "{\"error\":{\"message\":\"router: bad local token\"}}",
-        )]);
-        let source = RouterSources {
-            base_url: kit.url(),
-            token: Some("wrong".to_string()),
-        };
-        let error = read_router(&source, Duration::from_secs(5)).expect_err("the kit refuses");
-        assert!(error.contains("router: bad local token"), "{error}");
-    }
+        let snapshot = read_router(&state, "2026-10-16");
 
-    #[test]
-    fn a_hung_kit_read_is_bounded_by_its_own_timeout() {
-        let kit = DeafKit::start();
-        let started = std::time::Instant::now();
-        let error = read_router(&sources(&kit.url()), Duration::from_millis(300))
-            .expect_err("the kit never answers");
-        let elapsed = started.elapsed();
-        assert!(error.contains("could not be read"), "{error}");
-        // The bound held: the read named itself instead of waiting.
-        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
-    }
-
-    #[test]
-    fn one_refused_usage_read_names_itself_and_the_rest_lands() {
-        let kit = ScriptedKit::start(&[
-            ("/api/state", 200, STATE_FIXTURE),
-            ("/api/suggest", 200, SUGGEST_FIXTURE),
-        ]);
-        let snapshot = read_router(&sources(&kit.url()), Duration::from_secs(5))
-            .expect("the state read is the spine");
+        assert!(!snapshot.tiers.is_empty(), "the chain still renders");
         assert!(snapshot.totals.is_none());
-        assert_eq!(snapshot.refused.len(), 1);
-        assert!(
-            snapshot.refused[0].contains("/api/usage"),
-            "{}",
-            snapshot.refused[0]
-        );
+        assert!(snapshot.recent.is_empty());
+        assert!(snapshot.judge_counters.is_none());
+        assert!(snapshot.models.is_empty());
+        assert!(snapshot.workloads.is_empty());
+        assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
     }
 
     #[test]
-    fn the_router_board_names_the_kits_shape_drift() {
-        // A kit whose payload renamed the members the board reads. The
-        // sections that cannot be read come back empty, and each one
-        // names what it looked for: an upgrade announces itself instead
-        // of blanking part of the board.
-        let kit = ScriptedKit::start(&[
-            (
-                "/api/state",
-                200,
-                r#"{"port":8300,"judge":{"strategy":"cascade"},"guard":{"providers":["deepseek"]},"resolved":{"chains":{}}}"#,
-            ),
-            (
-                "/api/usage",
-                200,
-                r#"{"models":[{"key":"stepfun/step-3.7-flash","calls":1}],"recent":[]}"#,
-            ),
-        ]);
-        let snapshot = read_router(&sources(&kit.url()), Duration::from_secs(5))
-            .expect("the state read is the spine");
+    fn the_payg_guard_names_the_reserve_and_what_may_serve() {
+        // The reserve is payg: it may not serve unless the owner pinned it
+        // or a workload names it. No workload in the compiled-in table
+        // names deepseek, and nothing is pinned, so the guard says payg is
+        // off and names deepseek as the payg candidate.
+        let scratch = Scratch::new("router-payg");
+        let state = state(&scratch);
 
-        assert!(snapshot.judge.is_none());
-        assert!(snapshot.payg.is_none());
-        assert!(snapshot.tiers.is_empty());
-        assert!(snapshot.totals.is_none());
-        let routes: Vec<&str> = snapshot
-            .drift
-            .iter()
-            .map(|(route, _)| route.as_str())
+        let snapshot = read_router(&state, "2026-10-16");
+
+        let (allowed, providers) = snapshot.payg.expect("the guard reads");
+        assert!(!allowed, "no workload names a payg candidate");
+        assert_eq!(providers, vec!["deepseek".to_string()]);
+    }
+
+    #[test]
+    fn a_pinned_payg_candidate_may_serve() {
+        let scratch = Scratch::new("router-pin");
+        let mut state = state(&scratch);
+        state.pin = Some("deepseek".to_string());
+
+        let snapshot = read_router(&state, "2026-10-16");
+
+        let (allowed, _) = snapshot.payg.expect("the guard reads");
+        assert!(allowed, "the owner pinned the payg candidate");
+    }
+
+    #[test]
+    fn the_boards_guidance_reads_the_calibrations_own_demotions() {
+        // Fleet's own failover feedback, read out of the day's route rows:
+        // a candidate whose trailing attempts are all failed is demoted,
+        // and the board names it with the clause that says why.
+        let scratch = Scratch::new("router-demote");
+        // The calibration grades today's rows, so the fixture rides today.
+        let day = crate::calib::today();
+        let rows: Vec<String> = (0..crate::calib::DEMOTION_THRESHOLD)
+            .map(|index| {
+                route_row(
+                    &format!("2026-10-16T1{index}:00:00Z"),
+                    "stepfun",
+                    "stepfun/step-3.7-flash",
+                    "quick",
+                    "fresh",
+                    &[("stepfun", "failed")],
+                    500,
+                )
+            })
             .collect();
-        assert_eq!(
-            routes,
-            vec![
-                "/api/state",
-                "/api/state",
-                "/api/state",
-                "/api/usage",
-                "/api/usage"
-            ]
-        );
-        assert_eq!(snapshot.drift[0].1, "judge.mode is absent");
-        assert_eq!(snapshot.drift[1].1, "guard.allowPayg is absent");
-        assert_eq!(snapshot.drift[2].1, "resolved.workloads is absent");
-        assert_eq!(snapshot.drift[3].1, "totals is absent");
-        // A row the board cannot read is named too, rather than dropped.
-        assert_eq!(snapshot.drift[4].1, "0 of 1 model rows could not be read");
+        write_day(scratch.path(), &day, &rows);
+        let state = state(&scratch);
+
+        let snapshot = read_router(&state, &day);
+
+        let demoted: Vec<&str> = snapshot
+            .guidance
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(demoted, vec!["stepfun"]);
+        assert_eq!(snapshot.guidance[0].1, "demoted \u{2014} walked last");
     }
 
     #[test]
-    fn the_kit_token_never_enters_a_snapshot_or_a_named_error() {
-        const TOKEN: &str = "kit-local-token-4f9c2b7e";
-        let kit = scripted_kit();
-        let source = RouterSources {
-            base_url: kit.url(),
-            token: Some(TOKEN.to_string()),
-        };
-        let snapshot =
-            read_router(&source, Duration::from_secs(5)).expect("the scripted kit answers");
-        // The snapshot's serialization carries no credential...
-        assert!(
-            !format!("{snapshot:?}").contains(TOKEN),
-            "the snapshot carries the token"
-        );
-        // ...and neither does a read that refused: a hung kit names its
-        // URL and never the header it was sent.
-        let deaf = DeafKit::start();
-        let error = read_router(
-            &RouterSources {
-                base_url: deaf.url(),
-                token: Some(TOKEN.to_string()),
-            },
-            Duration::from_millis(300),
+    fn no_calibration_demotion_is_no_guidance() {
+        let scratch = Scratch::new("router-no-demote");
+        let day = "2026-10-16";
+        write_day(scratch.path(), day, &a_days_rows());
+        let state = state(&scratch);
+
+        let snapshot = read_router(&state, day);
+
+        assert!(snapshot.guidance.is_empty(), "{:?}", snapshot.guidance);
+    }
+
+    #[test]
+    fn the_boards_read_the_machines_real_sources() {
+        // The three boards against the machine's REAL sources: Fleet's own
+        // routing state under `~/.fleet`, the second-brain's derived state
+        // files, and the git facts per project under `~/Projects`.
+        //
+        // Ignored like the repo's live-API e2e, because it reads live local
+        // state the deterministic gate must not depend on. Run it with
+        // `cargo test --lib boards::tests::the_boards_read_the_machines_real_sources -- --ignored`.
+        //
+        // Every read is read-only: the file reads and the `git` calls
+        // inspect and write nothing.
+        let dotenv = HashMap::new();
+        let home = crate::home::fleet_home(
+            std::env::var("FLEET_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
         )
-        .expect_err("the kit never answers");
-        assert!(!error.contains(TOKEN), "{error}");
+        .expect("a fleet home is known");
+        let sources = resolve_sources(&home, &dotenv);
+        let snapshot = read_router(&sources.router, &crate::calib::today());
+        eprintln!(
+            "router: {} tiers, judge {:?}, totals {:?}, {} model(s), {} recent",
+            snapshot.tiers.len(),
+            snapshot.judge,
+            snapshot.totals.map(|totals| totals.calls),
+            snapshot.models.len(),
+            snapshot.recent.len()
+        );
+        // The chain Fleet itself routes on, out of the compiled-in roster.
+        assert!(!snapshot.tiers.is_empty(), "no workload was named");
+        assert_eq!(snapshot.tiers[0].tier, "quick");
+        assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
+
+        match sources.brain_home.as_ref() {
+            Some(home) => {
+                let brain = read_brain(home, &Bounds::default())
+                    .expect("the second-brain home is readable");
+                let landed = [
+                    brain.gates.landed().is_some(),
+                    brain.harness.landed().is_some(),
+                    brain.loops.landed().is_some(),
+                    brain.reports.landed().is_some(),
+                    brain.maturity.landed().is_some(),
+                    brain.tower.landed().is_some(),
+                ];
+                eprintln!(
+                    "second-brain: {} \u{b7} {} of six state files landed",
+                    home.display(),
+                    landed.iter().filter(|landed| **landed).count()
+                );
+                assert!(landed.iter().any(|landed| *landed), "no state file landed");
+            }
+            None => eprintln!("second-brain: no home resolved"),
+        }
+
+        let tower = read_tower(&sources.tower_root, &sources.bounds);
+        match &tower {
+            Ok(snapshot) => {
+                let dirty = snapshot
+                    .projects
+                    .iter()
+                    .filter(|project| project.dirty > 0)
+                    .count();
+                eprintln!(
+                    "tower: {} \u{b7} {} repos, {} dirty, {} skipped",
+                    snapshot.root.display(),
+                    snapshot.projects.len(),
+                    dirty,
+                    snapshot.skipped.len()
+                );
+                assert!(
+                    !snapshot.projects.is_empty(),
+                    "no project reported git facts"
+                );
+            }
+            Err(reason) => eprintln!("tower: refused \u{b7} {reason}"),
+        }
     }
 
     // --- the second-brain board ----------------------------------------------
@@ -2945,18 +2749,21 @@ mod tests {
 
     #[test]
     fn a_refused_read_keeps_the_last_snapshot_and_names_the_error() {
+        let scratch = Scratch::new("contract");
         let mut boards = Boards::new();
-        let kit = scripted_kit();
-        let good = read_router(&sources(&kit.url()), Duration::from_secs(5))
-            .expect("the scripted kit answers");
+        // Fleet's own router read cannot refuse: there is nothing to dial,
+        // so the router slot's snapshot lands and holds.
+        let good = read_router(&state(&scratch), "2026-10-16");
         let read_at = good.read_at.clone();
-        boards.apply(BoardKind::Router, Ok(BoardData::Router(good)));
+        boards.apply(BoardKind::Router, Ok(BoardData::Router(Box::new(good))));
         assert!(boards.slot(BoardKind::Router).error.is_none());
 
-        // The kit goes away: the read is refused.
-        let refused = read_router(&sources(&dead_url()), Duration::from_secs(2))
-            .expect_err("nothing is listening");
-        boards.apply(BoardKind::Router, Err(refused));
+        // A board whose read can still fail — the tower scan — refuses,
+        // and its refusal names itself without touching the router slot.
+        boards.apply(
+            BoardKind::Tower,
+            Err("the tower could not list /nowhere: no such file or directory".to_string()),
+        );
 
         let slot = boards.slot(BoardKind::Router);
         let snapshot = slot
@@ -2966,15 +2773,24 @@ mod tests {
         assert_eq!(snapshot.read_at(), read_at);
         match snapshot {
             BoardData::Router(snapshot) => {
-                assert_eq!(snapshot.totals.map(|t| t.calls), Some(19_873))
+                assert!(
+                    !snapshot.tiers.is_empty(),
+                    "the chain renders whatever the day's ledger says"
+                );
             }
             other => panic!("unexpected board data: {other:?}"),
         }
-        let error = slot.error.as_deref().expect("the error is named");
         assert!(
-            error.contains("the router board could not read the kit"),
-            "{error}"
+            slot.error.is_none(),
+            "one board's refusal is not another's: {:?}",
+            slot.error
         );
+        let error = boards
+            .slot(BoardKind::Tower)
+            .error
+            .as_deref()
+            .expect("the tower's error is named");
+        assert!(error.contains("the tower could not list"), "{error}");
     }
 
     #[test]
@@ -3020,7 +2836,9 @@ mod tests {
         let brain = root.join("brain");
         std::fs::create_dir_all(&brain).expect("the brain home");
         write_state(&brain, "gates_state", GATES_FIXTURE);
-        let kit = scripted_kit();
+        // The router board's own source: a calibration root under the
+        // scratch, read the way the board reads it.
+        let router = state(&Scratch::new("readonly-router"));
 
         let fingerprint = |path: &Path| -> Vec<(String, u64)> {
             fn walk(path: &Path, out: &mut Vec<(String, u64)>) {
@@ -3050,7 +2868,7 @@ mod tests {
         let before_projects = fingerprint(root);
         let before_brain = fingerprint(&brain);
 
-        let _ = read_router(&sources(&kit.url()), Duration::from_secs(5)).expect("the router read");
+        let _ = read_router(&router, "2026-10-16");
         let _ = read_brain(&brain, &Bounds::default()).expect("the brain read");
         let _ = read_tower(root, &Bounds::default()).expect("the tower read");
 
@@ -3078,7 +2896,6 @@ mod tests {
 
     #[test]
     fn the_refresher_lands_all_three_boards_from_its_own_thread() {
-        let kit = scripted_kit();
         let scratch = Scratch::new("refresher");
         let brain = scratch.path().join("brain");
         std::fs::create_dir_all(&brain).expect("the brain home");
@@ -3089,7 +2906,7 @@ mod tests {
         scratch_repo(scratch.path(), "alpha");
 
         let sources = Sources {
-            router: sources(&kit.url()),
+            router: state(&scratch),
             brain_home: Some(brain),
             tower_root: scratch.path().to_path_buf(),
             bounds: Bounds::default(),
@@ -3131,7 +2948,6 @@ mod tests {
 
     #[test]
     fn the_refresher_survives_a_read_that_panics_and_keeps_reading() {
-        let kit = scripted_kit();
         let scratch = Scratch::new("refresher-panic");
         let brain = scratch.path().join("brain");
         std::fs::create_dir_all(&brain).expect("the brain home");
@@ -3143,7 +2959,7 @@ mod tests {
         // for. The crate's hard-won CatchUnwind lesson from cron/eval,
         // pinned here rather than assumed.
         let sources = Sources {
-            router: sources(&kit.url()),
+            router: state(&scratch),
             brain_home: Some(brain),
             tower_root: scratch.path().to_path_buf(),
             bounds: Bounds {
@@ -3186,7 +3002,6 @@ mod tests {
 
     #[test]
     fn refreshes_asked_for_during_a_read_are_not_queued_behind_it() {
-        let kit = scripted_kit();
         let scratch = Scratch::new("refresher-dedupe");
         let brain = scratch.path().join("brain");
         std::fs::create_dir_all(&brain).expect("the brain home");
@@ -3196,7 +3011,7 @@ mod tests {
         // when the refreshes arrive, which is the case the dedupe is for.
         let bin = hung_git(scratch.path());
         let sources = Sources {
-            router: sources(&kit.url()),
+            router: state(&scratch),
             brain_home: Some(brain),
             tower_root: scratch.path().to_path_buf(),
             bounds: Bounds {
@@ -3237,96 +3052,6 @@ mod tests {
         assert_eq!(compact(19_873), "19,873");
         assert_eq!(compact(92_159_110_146), "92.2B");
         assert_eq!(compact(12_000_000), "12.0M");
-    }
-
-    /// The three boards against the machine's REAL sources: the router
-    /// kit's operator API at 127.0.0.1:8300, the second-brain's derived
-    /// state files, and the git facts per project under `~/Projects`.
-    ///
-    /// Ignored like the repo's live-API e2e, because it reads live local
-    /// state that the deterministic gate must not depend on — the kit may
-    /// be down, the pipeline may not have run. Run it with
-    /// `cargo test --lib boards::tests::the_boards_read_the_machines_real_sources -- --ignored`.
-    ///
-    /// Every read is read-only: the loopback GETs, the file reads, and the
-    /// `git` calls inspect and write nothing.
-    #[ignore = "reads live local sources; run it explicitly to verify the boards against the real kit, second-brain, and projects root"]
-    #[test]
-    fn the_boards_read_the_machines_real_sources() {
-        let sources = resolve_sources(&HashMap::new());
-        let router = read_router(&sources.router, Duration::from_secs(READ_TIMEOUT_SECS));
-        match &router {
-            Ok(snapshot) => {
-                eprintln!(
-                    "router: {} tiers, judge {:?}, totals {:?}, {} model(s), {} recent",
-                    snapshot.tiers.len(),
-                    snapshot.judge,
-                    snapshot.totals.map(|totals| totals.calls),
-                    snapshot.models.len(),
-                    snapshot.recent.len()
-                );
-                // The kit's own port, out of the kit's own rendered config.
-                assert_eq!(sources.router.base_url, "http://127.0.0.1:8300");
-                assert!(!snapshot.tiers.is_empty(), "the kit named no workload");
-                // The live canary for a kit upgrade: the payload still
-                // carries every member the board reads. An upgrade that
-                // renames one fails here, naming the drift, instead of
-                // quietly emptying a section on the board.
-                assert!(
-                    snapshot.drift.is_empty(),
-                    "the kit's shape drifted: {:?}",
-                    snapshot.drift
-                );
-            }
-            // A kit that is not answering is the contract's named refusal,
-            // not a failing test: the pane keeps its last snapshot.
-            Err(reason) => eprintln!("router: refused \u{b7} {reason}"),
-        }
-
-        match sources.brain_home.as_ref() {
-            Some(home) => {
-                let brain = read_brain(home, &Bounds::default())
-                    .expect("the second-brain home is readable");
-                let landed = [
-                    brain.gates.landed().is_some(),
-                    brain.harness.landed().is_some(),
-                    brain.loops.landed().is_some(),
-                    brain.reports.landed().is_some(),
-                    brain.maturity.landed().is_some(),
-                    brain.tower.landed().is_some(),
-                ];
-                eprintln!(
-                    "second-brain: {} \u{b7} {} of six state files landed",
-                    home.display(),
-                    landed.iter().filter(|landed| **landed).count()
-                );
-                assert!(landed.iter().any(|landed| *landed), "no state file landed");
-            }
-            None => eprintln!("second-brain: no home resolved"),
-        }
-
-        let tower = read_tower(&sources.tower_root, &sources.bounds);
-        match &tower {
-            Ok(snapshot) => {
-                let dirty = snapshot
-                    .projects
-                    .iter()
-                    .filter(|project| project.dirty > 0)
-                    .count();
-                eprintln!(
-                    "tower: {} \u{b7} {} repos, {} dirty, {} skipped",
-                    snapshot.root.display(),
-                    snapshot.projects.len(),
-                    dirty,
-                    snapshot.skipped.len()
-                );
-                assert!(
-                    !snapshot.projects.is_empty(),
-                    "no project reported git facts"
-                );
-            }
-            Err(reason) => eprintln!("tower: refused \u{b7} {reason}"),
-        }
     }
 
     #[test]

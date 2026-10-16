@@ -723,7 +723,11 @@ async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<JudgeReply, Strin
 pub fn grade(route: &ReadRow, turn: Option<&ReadRow>, reply: &JudgeReply) -> Judgment {
     let label = reply.workload.clone().unwrap_or_default();
     let confidence = reply.confidence.unwrap_or(0.0);
-    let expected = crate::route::workload_candidate(&label).unwrap_or(crate::route::HEAD_ID);
+    // A workload the table does not map still routes through the gates'
+    // default workload, so that is the provider this grade expects —
+    // the declared head would name a candidate nothing dialed.
+    let expected = crate::route::workload_candidate(&label)
+        .unwrap_or_else(crate::route::unmapped_workload_candidate);
     let served = route.provider.as_str();
     let covered = covered_by_availability(route, expected);
 

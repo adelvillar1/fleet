@@ -18,11 +18,15 @@ migration put every roster key, `DEEPSEEK_API_KEY` included, in
 `<FLEET_HOME>/.env`.
 
 Not in scope, ruled separately: the boards' read-only seams (the
-router kit's operator API, the second-brain state files) read live
+router board's own sources, the second-brain state files) read live
 state over an API/files the owner designed as dashboards — they are
 not config files, and this plan does not touch them. The 2026-10-16
 kit-key migration was a one-time copy into `<FLEET_HOME>/.env`; no
-runtime path references the kit's files.
+runtime path references the kit's files. **Ruled later the same day:**
+the router board's operator-API seam was removed outright by
+`2026-10-16-fleet-routes-through-its-own-router.md`, which is the
+stronger form of this same ruling — Fleet's router board now reads
+nothing outside Fleet's own home.
 
 ## Acceptance criteria
 

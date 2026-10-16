@@ -133,7 +133,8 @@ pub fn run(config: Config) -> Result<(), String> {
     // home's `.env`), and one refresher thread that reads all three on
     // its own cadence. The interface only ever receives finished reads.
     let dotenv = crate::home::read_dotenv(&config.home);
-    let (boards_tx, boards_rx) = boards::spawn_refresher(boards::resolve_sources(&dotenv));
+    let (boards_tx, boards_rx) =
+        boards::spawn_refresher(boards::resolve_sources(&config.home, &dotenv));
     let outcome = event_loop(
         &config.home,
         &mut app,

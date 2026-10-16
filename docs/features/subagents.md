@@ -203,7 +203,7 @@ its preview (`child <id> · 2 call(s) · last bash`), and the ordinary
 lines to the same sink the child's own turns write to:
 
 ```
-— subagent: List the entries … · child 20261014T014602Z-39b19298 · 20-turn cap on router-kit
+— subagent: List the entries … · child 20261014T014602Z-39b19298 · 20-turn cap on stepfun
 — turn 1
 → list_dir: .
 ← subagent completed · 2 turns

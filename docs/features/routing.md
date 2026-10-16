@@ -6,34 +6,47 @@ failure classes, and a calibration decision row per run.
 
 ## The roster
 
-Six candidates in the owner's declared order (directive 2026-10-13), stored
-as compiled-in defaults in `src/route.rs` and overridable per entry from
-`<FLEET_HOME>/config.json` (merge, not replace). Every endpoint, key
-env-var *name*, and model id is sourced from the fork's
-`agnostic-router-kit/roster.json`; no key value is ever stored.
+Seven candidates in the owner's declared order, stored as compiled-in
+defaults in `src/route.rs` and overridable per entry from
+`<FLEET_HOME>/config.json` (merge, not replace). The endpoints, key
+env-var *names*, and model ids were ported from the fork's
+`agnostic-router-kit/roster.json` when the precursor's decision core was
+absorbed; the roster is Fleet's own now, and no key value is ever stored.
 
 | # | id | base_url | key env var | model |
 |---|---|---|---|---|
-| 1 | `router-kit` (HEAD) | `http://127.0.0.1:8300/v1` | `AGNOSTIC_ROUTER_TOKEN` (optional) | `auto` |
-| 2 | `zai-coding-plan` | `https://api.z.ai/api/coding/paas/v4` | `ZAI_CODING_API_KEY` | `GLM-5.3-Flash` |
-| 3 | `xiaomi-mimo` | `https://token-plan-sgp.xiaomimimo.com/v1` | `XIAOMI_MIMO_API_KEY` | `mimo-v2.6-flash` |
-| 4 | `stepfun` | `https://api.stepfun.ai/step_plan/v1` | `STEPFUN_API_KEY` | `step-5-preview` |
-| 5 | `token-plan` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `TOKEN_PLAN_API_KEY` | `qwen3.8-flash` |
-| 6 | `deepseek` (reserve) | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| 1 | `zai-coding-plan` (HEAD) | `https://api.z.ai/api/coding/paas/v4` | `ZAI_CODING_API_KEY` | `GLM-5.3-Flash` |
+| 2 | `xiaomi-mimo` | `https://token-plan-sgp.xiaomimimo.com/v1` | `XIAOMI_MIMO_API_KEY` | `mimo-v2.6-flash` |
+| 3 | `stepfun` | `https://api.stepfun.ai/step_plan/v1` | `STEPFUN_API_KEY` | `step-5-preview` |
+| 4 | `token-plan` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `TOKEN_PLAN_API_KEY` | `qwen3.8-flash` |
+| 5 | `deepseek` (reserve) | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| 6 | `liquid` | `https://api.liquid.ai/openai/v1` | `LIQUID_API_KEY` | `lfm2.5-24b-a2b` |
+| 7 | `blend1` (lane) | `http://127.0.0.1:8420` | `BLEND1_BEARER_TOKEN` (optional) | `blend1` |
 
-The router kit is the primary route, not the escape hatch; DeepSeek is a
-working account held in reserve. The chain order is compiled in and starts
-declared — slice 6 grades outcomes and demotes a candidate with three
-consecutive failed attempts to the end of the session's walk, so the order
-becomes *calibrated* without ever overriding sys1's judgment.
+**Fleet's router is this module.** The owner's 2026-10-16 ruling is that
+Fleet is a self-contained app with a dedicated router it owns: `select`
+asks sys1 for a workload verdict, the workload preference table picks the
+provider, and failover walks the declared chain. There is no router
+process behind it, no port, and no operator API. The
+`agnostic-router-kit` entry that once sat at the head of this roster is
+gone — the kit is the precursor this crate supersedes, a separate process
+Fleet would have had to reach over loopback for it to re-route, and the
+precursor is not Fleet's router. Every candidate above is dialed directly
+by `Router::chat_stream`. The port 8300 on this machine belongs to the
+zcode harness's own router, which is not Fleet's business.
+
+The chain order is compiled in and starts declared — slice 6 grades
+outcomes and demotes a candidate with three consecutive failed attempts
+to the end of the session's walk, so the order becomes *calibrated*
+without ever overriding sys1's judgment.
 
 ## Selection
 
 Before a run, `route::select` asks `sys1_classify` (task `route`) over the
 slice-4 MCP client for a workload verdict (`quick`, `standard_code`, `hard`,
-`prose`, `deep_context`) and maps it to a candidate. The map honors "the kit
-is primary": routine work routes through the kit, and the specialized plans
-are the judged targets for hard/prose/deep_context. An unusable, absent, or
+`prose`, `deep_context`) and maps it to a candidate. Every workload's own
+candidate list is the walk, and stepfun heads five of the six in the
+compiled-in table. An unusable, absent, or
 failed verdict — or a mapped candidate with no key — falls back to the
 declared HEAD and says so. Routing never blocks a run: sys1 that cannot
 launch or cannot judge is a fallback, not an error. A configured `pin`
@@ -89,8 +102,8 @@ dev-decisions' own log root — `<user home>/.local/share/dev-decisions/logs/<YY
 {
   "pin": null,
   "providers": [
-    { "id": "router-kit", "enabled": true },
-    { "id": "zai-coding-plan", "model": "GLM-5.3-Pro" }
+    { "id": "zai-coding-plan", "model": "GLM-5.3-Pro" },
+    { "id": "xiaomi-mimo", "enabled": false }
   ]
 }
 ```
