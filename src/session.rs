@@ -194,9 +194,16 @@ impl Session {
         kind: Option<&str>,
         parent: Option<&str>,
     ) -> io::Result<Session> {
-        let id = format!("{}-{:06x}", compact_utc_stamp(SystemTime::now())?, unique_suffix());
+        let id = format!(
+            "{}-{:06x}",
+            compact_utc_stamp(SystemTime::now())?,
+            unique_suffix()
+        );
         let path = dir.join(format!("{id}.jsonl"));
-        let log = OpenOptions::new().create_new(true).append(true).open(&path)?;
+        let log = OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(&path)?;
         let mut session = Session { path, log };
         let created = iso_utc_stamp(SystemTime::now())?;
         session.record(&Record::Start {
@@ -212,7 +219,10 @@ impl Session {
     /// Open an existing log in append mode.
     pub fn open(path: &Path) -> io::Result<Session> {
         let log = OpenOptions::new().append(true).open(path)?;
-        Ok(Session { path: path.to_path_buf(), log })
+        Ok(Session {
+            path: path.to_path_buf(),
+            log,
+        })
     }
 
     /// This log's path; the file stem is the session id.
@@ -222,7 +232,10 @@ impl Session {
 
     /// The session id (file stem).
     pub fn id(&self) -> &str {
-        self.path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("")
+        self.path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("")
     }
 
     /// Append one record as one JSON line and flush it, so an interrupted
@@ -323,8 +336,18 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
             _ => None,
         };
         let ended = matches!(records.last(), Some(Record::End { .. }));
-        let compacted = records.iter().any(|record| matches!(record, Record::Compaction { .. }));
-        entries.push(SessionSummary { id, model, created, ended, kind, compacted, path });
+        let compacted = records
+            .iter()
+            .any(|record| matches!(record, Record::Compaction { .. }));
+        entries.push(SessionSummary {
+            id,
+            model,
+            created,
+            ended,
+            kind,
+            compacted,
+            path,
+        });
     }
     entries.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(entries)
@@ -399,7 +422,10 @@ pub fn conversation(records: &[Record]) -> Conversation {
                 messages.push(Message::text(Role::User, content.clone()));
                 turns.push(next_turn);
             }
-            Record::Assistant { content, tool_calls } => {
+            Record::Assistant {
+                content,
+                tool_calls,
+            } => {
                 messages.push(Message {
                     role: Role::Assistant,
                     content: content.clone(),
@@ -409,11 +435,18 @@ pub fn conversation(records: &[Record]) -> Conversation {
                 turns.push(next_turn);
                 next_turn += 1;
             }
-            Record::ToolResult { call_id, output, .. } => {
+            Record::ToolResult {
+                call_id, output, ..
+            } => {
                 messages.push(Message::tool_result(call_id.clone(), output.clone()));
                 turns.push(next_turn);
             }
-            Record::Compaction { summary, first_turn, last_turn, .. } => {
+            Record::Compaction {
+                summary,
+                first_turn,
+                last_turn,
+                ..
+            } => {
                 let tail = crate::compaction::tail_start(&messages);
                 messages = messages.split_off(tail);
                 turns = turns.split_off(tail);
@@ -440,7 +473,11 @@ pub fn conversation(records: &[Record]) -> Conversation {
         .map(|(turn, _)| *turn)
         .max()
         .map_or(next_turn, |last| last + 1);
-    Conversation { messages, turns, next_turn }
+    Conversation {
+        messages,
+        turns,
+        next_turn,
+    }
 }
 
 /// Resolve a `--session` id to its log path under `home`.
@@ -451,19 +488,26 @@ pub fn session_path(home: &Path, id: &str) -> PathBuf {
 /// `YYYYMMDDTHHMMSSZ` from the wall clock.
 fn compact_utc_stamp(at: SystemTime) -> io::Result<String> {
     let (year, month, day, hour, minute, second) = civil_utc(at)?;
-    Ok(format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}Z"))
+    Ok(format!(
+        "{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}Z"
+    ))
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ` from the wall clock.
 pub(crate) fn iso_utc_stamp(at: SystemTime) -> io::Result<String> {
     let (year, month, day, hour, minute, second) = civil_utc(at)?;
-    Ok(format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"))
+    Ok(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
+    ))
 }
 
 /// Split the wall clock into UTC civil fields.
 fn civil_utc(at: SystemTime) -> io::Result<(i64, u32, u32, u32, u32, u32)> {
     let elapsed = at.duration_since(UNIX_EPOCH).map_err(|error| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("clock before the epoch: {error}"))
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("clock before the epoch: {error}"),
+        )
     })?;
     let days = (elapsed.as_secs() / 86_400) as i64;
     let seconds_of_day = elapsed.as_secs() % 86_400;
@@ -482,7 +526,11 @@ fn civil_utc(at: SystemTime) -> io::Result<(i64, u32, u32, u32, u32, u32)> {
 /// calendar algorithm, valid over the full range that matters here.
 pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let shifted = days + 719_468;
-    let era = if shifted >= 0 { shifted } else { shifted - 146_096 } / 146_097;
+    let era = if shifted >= 0 {
+        shifted
+    } else {
+        shifted - 146_096
+    } / 146_097;
     let day_of_era = (shifted - era * 146_097) as u64;
     let year_of_era =
         (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
@@ -522,9 +570,16 @@ mod tests {
     fn create_records_start_and_round_trips() {
         let home = temp_home("create");
         let mut session = Session::create(&home, "deepseek-chat").unwrap();
-        session.record(&Record::User { content: "hello".into() }).unwrap();
         session
-            .record(&Record::End { stop_reason: "completed".into(), turns: 1 })
+            .record(&Record::User {
+                content: "hello".into(),
+            })
+            .unwrap();
+        session
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+            })
             .unwrap();
         let records = replay(&session.path()).unwrap();
         assert_eq!(records.len(), 3);
@@ -538,9 +593,20 @@ mod tests {
     #[test]
     fn messages_skip_bookkeeping_records() {
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
-            Record::User { content: "hi".into() },
-            Record::Assistant { content: Some("running".into()), tool_calls: vec![] },
+            Record::Start {
+                v: 1,
+                model: "m".into(),
+                created: "c".into(),
+                kind: None,
+                parent: None,
+            },
+            Record::User {
+                content: "hi".into(),
+            },
+            Record::Assistant {
+                content: Some("running".into()),
+                tool_calls: vec![],
+            },
             Record::ToolResult {
                 call_id: "call-1".into(),
                 name: "bash".into(),
@@ -548,7 +614,10 @@ mod tests {
                 truncated: false,
                 approved: true,
             },
-            Record::End { stop_reason: "completed".into(), turns: 1 },
+            Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+            },
         ];
         let messages = messages(&records);
         assert_eq!(messages.len(), 3);
@@ -578,11 +647,25 @@ mod tests {
         // message — it describes the tool set, not anything the model
         // said.
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
-            Record::User { content: "probe it".into() },
+            Record::Start {
+                v: 1,
+                model: "m".into(),
+                created: "c".into(),
+                kind: None,
+                parent: None,
+            },
+            Record::User {
+                content: "probe it".into(),
+            },
             lane_tools_record(),
-            Record::Assistant { content: None, tool_calls: Vec::new() },
-            Record::End { stop_reason: "completed".into(), turns: 1 },
+            Record::Assistant {
+                content: None,
+                tool_calls: Vec::new(),
+            },
+            Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+            },
         ];
         let messages = messages(&records);
         assert_eq!(messages.len(), 2, "{messages:?}");
@@ -601,12 +684,21 @@ mod tests {
         session.record(&lane_tools_record()).unwrap();
         let line = std::fs::read_to_string(session.path()).unwrap();
         let recorded = line.lines().nth(1).expect("the lane_tools line");
-        assert!(recorded.starts_with("{\"type\":\"lane_tools\""), "{recorded}");
+        assert!(
+            recorded.starts_with("{\"type\":\"lane_tools\""),
+            "{recorded}"
+        );
         assert!(recorded.contains("\"lane\":\"sem1\""), "{recorded}");
-        assert!(recorded.contains("\"name\":\"mcp__sem1__probe\""), "{recorded}");
+        assert!(
+            recorded.contains("\"name\":\"mcp__sem1__probe\""),
+            "{recorded}"
+        );
         // Both ends of the mapping ride along: the name the model saw and
         // the lane's own name the call carries.
-        assert!(recorded.contains("\"lane_tool\":\"sem1_probe\""), "{recorded}");
+        assert!(
+            recorded.contains("\"lane_tool\":\"sem1_probe\""),
+            "{recorded}"
+        );
 
         let records = replay(&session.path()).unwrap();
         match &records[1] {
@@ -616,7 +708,10 @@ mod tests {
                 assert_eq!(tools[0].name, "mcp__sem1__probe");
                 assert_eq!(tools[0].lane_tool, "sem1_probe");
                 assert_eq!(tools[0].description, "Capability and reachability probe");
-                assert_eq!(tools[0].input_schema, serde_json::json!({ "type": "object" }));
+                assert_eq!(
+                    tools[0].input_schema,
+                    serde_json::json!({ "type": "object" })
+                );
             }
             other => panic!("expected a lane_tools record, got {other:?}"),
         }
@@ -643,11 +738,25 @@ mod tests {
         // message — it describes the system prompt's skills list, not
         // anything the model said.
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
+            Record::Start {
+                v: 1,
+                model: "m".into(),
+                created: "c".into(),
+                kind: None,
+                parent: None,
+            },
             skills_record(),
-            Record::User { content: "do it".into() },
-            Record::Assistant { content: Some("done".into()), tool_calls: vec![] },
-            Record::End { stop_reason: "completed".into(), turns: 1 },
+            Record::User {
+                content: "do it".into(),
+            },
+            Record::Assistant {
+                content: Some("done".into()),
+                tool_calls: vec![],
+            },
+            Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+            },
         ];
         let messages = messages(&records);
         assert_eq!(messages.len(), 2, "{messages:?}");
@@ -667,7 +776,10 @@ mod tests {
         let line = std::fs::read_to_string(session.path()).unwrap();
         let recorded = line.lines().nth(1).expect("the skills line");
         assert!(recorded.starts_with("{\"type\":\"skills\""), "{recorded}");
-        assert!(recorded.contains("\"name\":\"bash-recovery\""), "{recorded}");
+        assert!(
+            recorded.contains("\"name\":\"bash-recovery\""),
+            "{recorded}"
+        );
         assert!(
             recorded.contains("\"description\":\"Recover a failed bash call\""),
             "{recorded}"
@@ -715,11 +827,25 @@ mod tests {
         // message: it describes the system prompt, not anything the
         // model said.
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
+            Record::Start {
+                v: 1,
+                model: "m".into(),
+                created: "c".into(),
+                kind: None,
+                parent: None,
+            },
             memory_record(),
-            Record::User { content: "the deploy is failing".into() },
-            Record::Assistant { content: Some("checking".into()), tool_calls: Vec::new() },
-            Record::End { stop_reason: "completed".into(), turns: 1 },
+            Record::User {
+                content: "the deploy is failing".into(),
+            },
+            Record::Assistant {
+                content: Some("checking".into()),
+                tool_calls: Vec::new(),
+            },
+            Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+            },
         ];
         let messages = messages(&records);
         assert_eq!(messages.len(), 2, "{messages:?}");
@@ -766,14 +892,25 @@ mod tests {
     fn list_reports_ended_state_and_skips_non_logs() {
         let home = temp_home("list");
         let mut ended = Session::create(&home, "m").unwrap();
-        ended.record(&Record::End { stop_reason: "completed".into(), turns: 0 }).unwrap();
+        ended
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 0,
+            })
+            .unwrap();
         let _open = Session::create(&home, "m2").unwrap();
         fs::write(home.join("sessions").join("notes.txt"), "not a log").unwrap();
         let summaries = list(&home).unwrap();
         assert_eq!(summaries.len(), 2);
-        let open = summaries.iter().find(|summary| summary.model == "m2").unwrap();
+        let open = summaries
+            .iter()
+            .find(|summary| summary.model == "m2")
+            .unwrap();
         assert!(!open.ended);
-        let closed = summaries.iter().find(|summary| summary.model == "m").unwrap();
+        let closed = summaries
+            .iter()
+            .find(|summary| summary.model == "m")
+            .unwrap();
         assert!(closed.ended);
         fs::remove_dir_all(&home).ok();
     }
@@ -795,22 +932,41 @@ mod tests {
         let home = temp_home("subagent-start");
         let dir = crate::home::ensure_sessions_dir(&home).unwrap();
         let mut child = Session::create_subagent(&dir, "test-model", "parent-session").unwrap();
-        child.record(&Record::User { content: "the delegated goal".into() }).unwrap();
         child
-            .record(&Record::End { stop_reason: "completed".into(), turns: 2 })
+            .record(&Record::User {
+                content: "the delegated goal".into(),
+            })
+            .unwrap();
+        child
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 2,
+            })
             .unwrap();
 
         let line = fs::read_to_string(child.path()).unwrap();
         let recorded = line.lines().next().expect("the start line");
         // The marker and the lineage ride the log's own first line, and
         // the format version is untouched.
-        assert!(recorded.starts_with("{\"type\":\"start\",\"v\":1"), "{recorded}");
+        assert!(
+            recorded.starts_with("{\"type\":\"start\",\"v\":1"),
+            "{recorded}"
+        );
         assert!(recorded.contains("\"kind\":\"subagent\""), "{recorded}");
-        assert!(recorded.contains("\"parent\":\"parent-session\""), "{recorded}");
+        assert!(
+            recorded.contains("\"parent\":\"parent-session\""),
+            "{recorded}"
+        );
 
         let records = replay(child.path()).unwrap();
         match &records[0] {
-            Record::Start { v, model, kind, parent, .. } => {
+            Record::Start {
+                v,
+                model,
+                kind,
+                parent,
+                ..
+            } => {
                 assert_eq!(*v, SESSION_FORMAT_VERSION);
                 assert_eq!(model, "test-model");
                 assert_eq!(kind.as_deref(), Some("subagent"));
@@ -877,8 +1033,11 @@ mod tests {
         let home = temp_home("badline");
         let dir = crate::home::ensure_sessions_dir(&home).unwrap();
         let path = dir.join("bad.jsonl");
-        fs::write(&path, "{\"type\":\"start\",\"v\":1,\"model\":\"m\",\"created\":\"c\"}\nnot json\n")
-            .unwrap();
+        fs::write(
+            &path,
+            "{\"type\":\"start\",\"v\":1,\"model\":\"m\",\"created\":\"c\"}\nnot json\n",
+        )
+        .unwrap();
         let error = replay(&path).unwrap_err();
         assert!(error.to_string().contains("line 2"), "{error}");
         fs::remove_dir_all(&home).ok();
@@ -902,7 +1061,9 @@ mod tests {
     /// Six turns of a tool-using conversation: a task, then per turn one
     /// assistant call and one tool result.
     fn six_turns() -> Vec<Record> {
-        let mut records = vec![Record::User { content: "the task".to_string() }];
+        let mut records = vec![Record::User {
+            content: "the task".to_string(),
+        }];
         for index in 0..6 {
             records.push(Record::Assistant {
                 content: None,
@@ -953,12 +1114,19 @@ mod tests {
         assert_eq!(messages[2].role, Role::Tool);
         assert_eq!(messages[2].tool_call_id.as_deref(), Some("call-2"));
         // The last turn is there whole, and nothing before turn 3 is.
-        assert_eq!(messages[messages.len() - 1].content.as_deref(), Some("output 5"));
+        assert_eq!(
+            messages[messages.len() - 1].content.as_deref(),
+            Some("output 5")
+        );
         assert!(
-            !messages.iter().any(|message| message.content.as_deref() == Some("output 0")),
+            !messages
+                .iter()
+                .any(|message| message.content.as_deref() == Some("output 0")),
             "{messages:?}"
         );
-        assert!(!messages.iter().any(|message| message.content.as_deref() == Some("the task")));
+        assert!(!messages
+            .iter()
+            .any(|message| message.content.as_deref() == Some("the task")));
     }
 
     #[test]
@@ -1041,7 +1209,10 @@ mod tests {
         session.record(&compaction_record()).unwrap();
         let line = fs::read_to_string(session.path()).unwrap();
         let recorded = line.lines().nth(1).expect("the compaction line");
-        assert!(recorded.starts_with("{\"type\":\"compaction\""), "{recorded}");
+        assert!(
+            recorded.starts_with("{\"type\":\"compaction\""),
+            "{recorded}"
+        );
         assert!(recorded.contains("\"first_turn\":1"), "{recorded}");
         assert!(recorded.contains("\"last_turn\":2"), "{recorded}");
         assert!(recorded.contains("\"tokens_before\":120000"), "{recorded}");
@@ -1049,7 +1220,13 @@ mod tests {
 
         let records = replay(session.path()).unwrap();
         match &records[1] {
-            Record::Compaction { summary, first_turn, last_turn, tokens_before, tokens_after } => {
+            Record::Compaction {
+                summary,
+                first_turn,
+                last_turn,
+                tokens_before,
+                tokens_after,
+            } => {
                 assert_eq!(summary, "- did the thing\n- then the other thing");
                 assert_eq!(*first_turn, 1);
                 assert_eq!(*last_turn, 2);
@@ -1069,7 +1246,11 @@ mod tests {
     fn a_log_without_a_compaction_lists_unmarked() {
         let home = temp_home("no-compaction");
         let mut session = Session::create(&home, "m").unwrap();
-        session.record(&Record::User { content: "hi".into() }).unwrap();
+        session
+            .record(&Record::User {
+                content: "hi".into(),
+            })
+            .unwrap();
         let summaries = list(&home).unwrap();
         assert_eq!(summaries.len(), 1);
         assert!(!summaries[0].compacted);
@@ -1086,7 +1267,10 @@ mod tests {
         let mut records = six_turns();
         records.push(compaction_record());
         // The interrupted turn's call landed and its result did not.
-        records.push(Record::Assistant { content: None, tool_calls: Vec::new() });
+        records.push(Record::Assistant {
+            content: None,
+            tool_calls: Vec::new(),
+        });
         records.push(Record::ToolResult {
             call_id: "call-9".to_string(),
             name: "bash".to_string(),

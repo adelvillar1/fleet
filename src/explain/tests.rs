@@ -52,7 +52,11 @@ fn refused_proposal_row(root: &Path, proposal: &str, sha: &str) {
         verdict: calib::VERDICT_REFUSED.to_string(),
         reason: "test failed: the_ranker_orders_a_corpus".to_string(),
         gate: vec![
-            calib::GateStepRow { step: "fmt".to_string(), ok: true, detail: "ok".to_string() },
+            calib::GateStepRow {
+                step: "fmt".to_string(),
+                ok: true,
+                detail: "ok".to_string(),
+            },
             calib::GateStepRow {
                 step: "test".to_string(),
                 ok: false,
@@ -86,7 +90,8 @@ fn proposal_file(home: &Path, name: &str, change: &str) {
 
 /// The change every end-to-end test explains: a patch whose content is
 /// the judged artifact.
-const CHANGE: &str = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+const CHANGE: &str =
+    r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
 
 /// The sha of [`CHANGE`]'s staged content, the join key the row carries.
 fn change_sha() -> String {
@@ -127,7 +132,10 @@ fn scripted_lane(reply: &str) -> Option<ServerSpec> {
             "result": { "content": [{ "type": "text", "text": reply }], "isError": false },
         } }),
     ];
-    let script = entries.iter().map(|entry| format!("{entry}\n")).collect::<String>();
+    let script = entries
+        .iter()
+        .map(|entry| format!("{entry}\n"))
+        .collect::<String>();
     std::fs::write(scratch.join("script.jsonl"), script).unwrap();
     Some(ServerSpec {
         program: bin.to_string_lossy().into_owned(),
@@ -164,12 +172,24 @@ async fn explain_over(
     dry_run: bool,
 ) -> ExplainOutcome {
     let lane = scripted_lane(&lane_reply(ANSWER, 0.0018)).expect("the scripted lane");
-    explain(ExplainRequest { root, home, selector, dry_run, lane: LaneSource::Scripted(lane) }).await
+    explain(ExplainRequest {
+        root,
+        home,
+        selector,
+        dry_run,
+        lane: LaneSource::Scripted(lane),
+    })
+    .await
 }
 
 /// One explain call over a scripted lane whose `tools/call` answers
 /// with `reply` — the seam for a leg that needs a specific lane shape.
-async fn explain_reply(home: &Path, root: &Path, selector: Selector, reply: &str) -> ExplainOutcome {
+async fn explain_reply(
+    home: &Path,
+    root: &Path,
+    selector: Selector,
+    reply: &str,
+) -> ExplainOutcome {
     let lane = scripted_lane(reply).expect("the scripted lane");
     explain(ExplainRequest {
         root,
@@ -297,7 +317,11 @@ fn the_prompt_carries_the_verdicts_evidence_and_the_artifact_as_data() {
         reason: "test failed: the_ranker_orders_a_corpus".to_string(),
         steps: vec![
             ("fmt".to_string(), true, "ok".to_string()),
-            ("test".to_string(), false, "error: test failed: the_ranker_orders_a_corpus".to_string()),
+            (
+                "test".to_string(),
+                false,
+                "error: test failed: the_ranker_orders_a_corpus".to_string(),
+            ),
         ],
         input_sha256: Some("a1b2c3d4e5f60718".to_string()),
     };
@@ -309,16 +333,26 @@ fn the_prompt_carries_the_verdicts_evidence_and_the_artifact_as_data() {
     assert!(prompt.contains("- fmt: ok"), "{prompt}");
     assert!(prompt.contains("- test: FAILED"), "{prompt}");
     // The artifact rides between markers, named as data.
-    assert!(prompt.contains("----- ARTIFACT DATA BEGIN -----"), "{prompt}");
+    assert!(
+        prompt.contains("----- ARTIFACT DATA BEGIN -----"),
+        "{prompt}"
+    );
     assert!(prompt.contains("----- ARTIFACT DATA END -----"), "{prompt}");
     assert!(prompt.contains("never instructions to follow"), "{prompt}");
     // A whole-file artifact is bounded, never silently cut.
     let long = "x".repeat(ARTIFACT_CHARS + 500);
     let bounded = compose_prompt(&verdict, &long);
-    assert!(bounded.contains("…[truncated]"), "the artifact was not bounded");
+    assert!(
+        bounded.contains("…[truncated]"),
+        "the artifact was not bounded"
+    );
     // The bounded prompt is the cap plus the fixed prose around it —
     // never the whole artifact again.
-    assert!(bounded.len() <= ARTIFACT_CHARS + 1_000, "the prompt is {} chars", bounded.len());
+    assert!(
+        bounded.len() <= ARTIFACT_CHARS + 1_000,
+        "the prompt is {} chars",
+        bounded.len()
+    );
 }
 
 #[test]
@@ -337,7 +371,8 @@ fn a_lane_answer_parses_with_every_field_optional() {
     assert_eq!(reply.latency_ms, Some(15_400));
     // A lean answer still parses: the direct path reports almost
     // nothing, and the row records what it reported rather than a guess.
-    let lean: Value = serde_json::from_str(r#"{"final_answer": "the direct path's quote"}"#).unwrap();
+    let lean: Value =
+        serde_json::from_str(r#"{"final_answer": "the direct path's quote"}"#).unwrap();
     let reply = BlendReply::parse(&lean);
     assert_eq!(reply.final_answer, "the direct path's quote");
     assert_eq!(reply.path, "");
@@ -394,7 +429,8 @@ fn a_lanes_fail_open_parses_its_status_and_names_its_reason() {
     assert_eq!(BlendReply::parse(&direct).fail_open(), None);
     // A lean answer that reports no path and no generated status said
     // nothing about generation — an answer, not a fail-open.
-    let lean: Value = serde_json::from_str(r#"{"final_answer": "the direct path's quote"}"#).unwrap();
+    let lean: Value =
+        serde_json::from_str(r#"{"final_answer": "the direct path's quote"}"#).unwrap();
     assert_eq!(BlendReply::parse(&lean).fail_open(), None);
     // A synthesized ask whose generative lane failed with no error
     // string still fails open, named by its status.
@@ -402,7 +438,9 @@ fn a_lanes_fail_open_parses_its_status_and_names_its_reason() {
         r#"{"final_answer": "fallback", "path": "synthesized", "generated": {"status": "error"}}"#,
     )
     .unwrap();
-    let reason = BlendReply::parse(&mute).fail_open().expect("named by its status");
+    let reason = BlendReply::parse(&mute)
+        .fail_open()
+        .expect("named by its status");
     assert!(reason.contains("error"), "{reason}");
 }
 
@@ -428,9 +466,18 @@ fn no_synchronous_path_references_the_explanation_beat() {
         ("improve.rs", include_str!("../improve.rs")),
         ("boards.rs", include_str!("../boards.rs")),
     ] {
-        assert!(!source.contains("explain::"), "{name} names the explanation beat");
-        assert!(!source.contains("crate::explain"), "{name} names the explanation beat");
-        assert!(!source.contains("EXPLAIN_LANE"), "{name} names the explanation beat");
+        assert!(
+            !source.contains("explain::"),
+            "{name} names the explanation beat"
+        );
+        assert!(
+            !source.contains("crate::explain"),
+            "{name} names the explanation beat"
+        );
+        assert!(
+            !source.contains("EXPLAIN_LANE"),
+            "{name} names the explanation beat"
+        );
     }
     // Two modules reach the beat by design, and each names why at its
     // call site: the TUI surface reads the beat's own artifact (the
@@ -489,7 +536,11 @@ fn an_explain_row_changes_no_verdict() {
         input_sha256: change_sha(),
         explanation_sha256: "5a6b7c8d9e0f1123".to_string(),
         explanation_chars: 300,
-        route: ExplainRouteRow { needs_generation: None, path: "direct".to_string(), answer_shape: String::new() },
+        route: ExplainRouteRow {
+            needs_generation: None,
+            path: "direct".to_string(),
+            answer_shape: String::new(),
+        },
         validation: ExplainValidationRow {
             outcome: "unreported".to_string(),
             answers_the_question: None,
@@ -505,7 +556,10 @@ fn an_explain_row_changes_no_verdict() {
     let rows = calib::read_day(&root, &day, 64);
     // The verdict rows are untouched, and the demotion reader — which
     // grades a day's route rows — sees nothing to demote.
-    let propose: Vec<&ReadRow> = rows.iter().filter(|row| row.op == calib::OP_PROPOSE).collect();
+    let propose: Vec<&ReadRow> = rows
+        .iter()
+        .filter(|row| row.op == calib::OP_PROPOSE)
+        .collect();
     assert_eq!(propose.len(), 1);
     assert_eq!(propose[0].verdict, calib::VERDICT_REFUSED);
     assert_eq!(propose[0].reason, "test failed: the_ranker_orders_a_corpus");
@@ -513,7 +567,10 @@ fn an_explain_row_changes_no_verdict() {
     assert!(!propose[0].gate[1].ok);
     assert!(calib::demoted_providers(&rows, calib::DEMOTION_THRESHOLD).is_empty());
     // The explanation row is the only one of its op, and it is marked.
-    let explained: Vec<&ReadRow> = rows.iter().filter(|row| row.op == calib::OP_EXPLAIN).collect();
+    let explained: Vec<&ReadRow> = rows
+        .iter()
+        .filter(|row| row.op == calib::OP_EXPLAIN)
+        .collect();
     assert_eq!(explained.len(), 1);
     assert!(explained[0].eval_only);
     let _ = std::fs::remove_dir_all(&root);
@@ -529,7 +586,13 @@ async fn a_refused_verdict_is_explained_beside_itself_with_the_text_recoverable(
     proposal_file(&home, "fix-the-ranker", CHANGE);
     refused_proposal_row(&root, "fix-the-ranker", &sha);
     let before = recorded_verdict(&root, &Selector::Proposal("fix-the-ranker".to_string()));
-    let outcome = explain_over(&home, &root, Selector::Proposal("fix-the-ranker".to_string()), false).await;
+    let outcome = explain_over(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        false,
+    )
+    .await;
 
     assert!(outcome.refusal.is_none(), "{:?}", outcome.refusal);
     let row = outcome.row.clone().expect("the row landed");
@@ -546,9 +609,15 @@ async fn a_refused_verdict_is_explained_beside_itself_with_the_text_recoverable(
     assert_eq!(row.explanation_chars, ANSWER.chars().count());
     let text = serde_json::to_string(&row).unwrap();
     for key in ["prompt", "answer", "final_answer", "text", "artifact"] {
-        assert!(!text.contains(&format!("\"{key}\"")), "the row carries `{key}`: {text}");
+        assert!(
+            !text.contains(&format!("\"{key}\"")),
+            "the row carries `{key}`: {text}"
+        );
     }
-    assert!(!text.contains(ANSWER), "the row carries the answer text: {text}");
+    assert!(
+        !text.contains(ANSWER),
+        "the row carries the answer text: {text}"
+    );
     // The text is recoverable by its sha, at the documented path.
     let path = explanation_path(&home, &sha);
     assert_eq!(path, explanations_dir(&home).join(format!("{sha}.md")));
@@ -570,12 +639,20 @@ async fn a_refused_verdict_is_explained_beside_itself_with_the_text_recoverable(
     assert!(text.contains("$0.0018"), "{text}");
     assert!(text.contains("eval-only"), "{text}");
     assert!(text.contains("recoverable by sha"), "{text}");
-    assert!(outcome.card.contains('\u{250c}') && outcome.card.contains('\u{2514}'), "{}", outcome.card);
+    assert!(
+        outcome.card.contains('\u{250c}') && outcome.card.contains('\u{2514}'),
+        "{}",
+        outcome.card
+    );
     // Every drawn line fits the house width, so nothing clips at 80
     // columns: the escapes are the terminal's, not the layout's.
     for line in outcome.card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     // The headless card and the TUI surface agree: the TUI reads the
     // file the row indexes and re-renders it, so the card it opens is
@@ -585,11 +662,20 @@ async fn a_refused_verdict_is_explained_beside_itself_with_the_text_recoverable(
     assert!(latest_text.contains("verdict refused"), "{latest_text}");
     // The prose rides wrapped, so the check names its opening rather
     // than the whole paragraph; the equality below is the real proof.
-    assert!(latest_text.contains("The `test` step refused the change"), "{latest_text}");
+    assert!(
+        latest_text.contains("The `test` step refused the change"),
+        "{latest_text}"
+    );
     assert!(latest_text.contains("$0.0018"), "{latest_text}");
     assert_eq!(
-        plain(&latest).lines().map(str::to_string).collect::<Vec<_>>(),
-        plain(&outcome.card).lines().map(str::to_string).collect::<Vec<_>>(),
+        plain(&latest)
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+        plain(&outcome.card)
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
         "the headless card and the TUI surface disagree"
     );
     let _ = std::fs::remove_dir_all(&home);
@@ -603,7 +689,13 @@ async fn a_dry_run_spends_nothing_and_shows_what_would_be_asked() {
     let sha = change_sha();
     proposal_file(&home, "fix-the-ranker", CHANGE);
     refused_proposal_row(&root, "fix-the-ranker", &sha);
-    let outcome = explain_over(&home, &root, Selector::Proposal("fix-the-ranker".to_string()), true).await;
+    let outcome = explain_over(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        true,
+    )
+    .await;
 
     assert!(outcome.refusal.is_none(), "{:?}", outcome.refusal);
     // No ask, no row, no file.
@@ -617,7 +709,11 @@ async fn a_dry_run_spends_nothing_and_shows_what_would_be_asked() {
     assert!(prompt.contains("GATE OP: propose"));
     assert!(prompt.contains("ARTIFACT DATA BEGIN"));
     assert!(outcome.card.contains("dry run"), "{}", outcome.card);
-    assert!(outcome.card.contains("no ask, no row, no file"), "{}", outcome.card);
+    assert!(
+        outcome.card.contains("no ask, no row, no file"),
+        "{}",
+        outcome.card
+    );
     assert!(outcome.card.contains("budget"), "{}", outcome.card);
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
@@ -632,17 +728,32 @@ async fn a_drifted_artifact_is_refused_by_name() {
     let root = scratch("drift-calib");
     proposal_file(&home, "fix-the-ranker", CHANGE);
     refused_proposal_row(&root, "fix-the-ranker", "ffffffffffffffff");
-    let outcome = explain_over(&home, &root, Selector::Proposal("fix-the-ranker".to_string()), false).await;
+    let outcome = explain_over(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        false,
+    )
+    .await;
 
     let refusal = outcome.refusal.clone().expect("a named refusal");
-    assert!(refusal.contains("refusing to explain a drifted artifact"), "{refusal}");
+    assert!(
+        refusal.contains("refusing to explain a drifted artifact"),
+        "{refusal}"
+    );
     assert!(refusal.contains(&change_sha()), "{refusal}");
     assert!(refusal.contains("ffffffffffffffff"), "{refusal}");
     assert!(outcome.row.is_none());
-    assert!(!explanations_dir(&home).join(format!("{}.md", change_sha())).exists());
+    assert!(!explanations_dir(&home)
+        .join(format!("{}.md", change_sha()))
+        .exists());
     assert!(explain_rows(&root).is_empty());
     // The verdict stands, and the card says so.
-    assert!(plain(&outcome.card).contains("the verdict stands exactly as recorded"), "{}", outcome.card);
+    assert!(
+        plain(&outcome.card).contains("the verdict stands exactly as recorded"),
+        "{}",
+        outcome.card
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -652,7 +763,13 @@ async fn an_unknown_selector_is_a_named_refusal() {
     let home = scratch("unknown-home");
     let root = scratch("unknown-calib");
     // No rows at all, and a proposal that names nothing the stream holds.
-    let outcome = explain_over(&home, &root, Selector::Proposal("never-filed".to_string()), false).await;
+    let outcome = explain_over(
+        &home,
+        &root,
+        Selector::Proposal("never-filed".to_string()),
+        false,
+    )
+    .await;
     let refusal = outcome.refusal.clone().expect("a named refusal");
     assert!(refusal.contains("never-filed"), "{refusal}");
     assert!(outcome.row.is_none());
@@ -691,7 +808,12 @@ async fn a_lane_that_cannot_answer_fails_open_naming_its_reason() {
     assert!(outcome.row.is_none());
     assert!(!explanations_dir(&home).join(format!("{sha}.md")).exists());
     assert!(explain_rows(&root).is_empty());
-    assert!(outcome.card.contains("never a fabricated explanation") || outcome.card.contains("the verdict stands"), "{}", outcome.card);
+    assert!(
+        outcome.card.contains("never a fabricated explanation")
+            || outcome.card.contains("the verdict stands"),
+        "{}",
+        outcome.card
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -714,7 +836,11 @@ async fn an_over_budget_day_is_refused_naming_the_spend() {
         input_sha256: "0f1e2d3c4b5a6978".to_string(),
         explanation_sha256: "5a6b7c8d9e0f1123".to_string(),
         explanation_chars: 400,
-        route: ExplainRouteRow { needs_generation: None, path: "synthesized".to_string(), answer_shape: String::new() },
+        route: ExplainRouteRow {
+            needs_generation: None,
+            path: "synthesized".to_string(),
+            answer_shape: String::new(),
+        },
         validation: ExplainValidationRow {
             outcome: "passed".to_string(),
             answers_the_question: None,
@@ -726,15 +852,30 @@ async fn an_over_budget_day_is_refused_naming_the_spend() {
         lane: EXPLAIN_LANE.to_string(),
     }));
     drop(stream);
-    let outcome = explain_over(&home, &root, Selector::Proposal("fix-the-ranker".to_string()), false).await;
+    let outcome = explain_over(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        false,
+    )
+    .await;
 
     let refusal = outcome.refusal.clone().expect("a named refusal");
     assert!(refusal.contains("daily budget"), "{refusal}");
-    assert!(refusal.contains(&format!("${EXPLAIN_BUDGET_USD_DAY:.2}")), "{refusal}");
+    assert!(
+        refusal.contains(&format!("${EXPLAIN_BUDGET_USD_DAY:.2}")),
+        "{refusal}"
+    );
     assert!(outcome.row.is_none());
     // A dry run still rehearses: it spends nothing, so the budget never
     // refuses it.
-    let dry = explain_over(&home, &root, Selector::Proposal("fix-the-ranker".to_string()), true).await;
+    let dry = explain_over(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        true,
+    )
+    .await;
     assert!(dry.refusal.is_none(), "{:?}", dry.refusal);
     assert!(dry.row.is_none());
     let _ = std::fs::remove_dir_all(&home);
@@ -802,7 +943,12 @@ async fn re_explaining_the_same_artifact_refuses_rather_than_overwriting() {
     )
     .await;
     assert!(first.refusal.is_none(), "{:?}", first.refusal);
-    let first_sha = first.row.as_ref().expect("the first row").explanation_sha256.clone();
+    let first_sha = first
+        .row
+        .as_ref()
+        .expect("the first row")
+        .explanation_sha256
+        .clone();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), ANSWER);
 
     // A second ask with different prose is refused, and the first file
@@ -819,7 +965,10 @@ async fn re_explaining_the_same_artifact_refuses_rather_than_overwriting() {
     assert!(refusal.contains("already exists"), "{refusal}");
     assert!(second.row.is_none());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), ANSWER);
-    assert_eq!(calib::hash16(&std::fs::read_to_string(&path).unwrap()), first_sha);
+    assert_eq!(
+        calib::hash16(&std::fs::read_to_string(&path).unwrap()),
+        first_sha
+    );
 
     // An identical re-ask is idempotent: the bytes are already correct,
     // so it lands another row against the same, unchanged file.
@@ -832,7 +981,10 @@ async fn re_explaining_the_same_artifact_refuses_rather_than_overwriting() {
     .await;
     assert!(again.refusal.is_none(), "{:?}", again.refusal);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), ANSWER);
-    assert_eq!(calib::hash16(&std::fs::read_to_string(&path).unwrap()), first_sha);
+    assert_eq!(
+        calib::hash16(&std::fs::read_to_string(&path).unwrap()),
+        first_sha
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -927,7 +1079,10 @@ async fn a_drifted_corpus_is_refused_by_name() {
 
     let refusal = outcome.refusal.clone().expect("a named refusal");
     assert!(refusal.contains("drifted artifact"), "{refusal}");
-    assert!(refusal.contains(&crate::eval::corpus_identity()), "{refusal}");
+    assert!(
+        refusal.contains(&crate::eval::corpus_identity()),
+        "{refusal}"
+    );
     assert!(outcome.row.is_none());
     assert!(!explanation_path(&home, &crate::eval::corpus_identity()).exists());
     let _ = std::fs::remove_dir_all(&home);
@@ -943,13 +1098,21 @@ async fn a_dry_run_never_prints_a_negative_zero_spend() {
     let sha = change_sha();
     proposal_file(&home, "fix-the-ranker", CHANGE);
     refused_proposal_row(&root, "fix-the-ranker", &sha);
-    let outcome =
-        explain_over(&home, &root, Selector::Proposal("fix-the-ranker".to_string()), true).await;
+    let outcome = explain_over(
+        &home,
+        &root,
+        Selector::Proposal("fix-the-ranker".to_string()),
+        true,
+    )
+    .await;
 
     assert!(outcome.refusal.is_none(), "{:?}", outcome.refusal);
     let text = plain(&outcome.card);
     assert!(text.contains("$0.0000"), "{text}");
-    assert!(!text.contains("$-0.0000"), "the card printed a negative zero: {text}");
+    assert!(
+        !text.contains("$-0.0000"),
+        "the card printed a negative zero: {text}"
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -996,7 +1159,10 @@ fn a_card_with_unbounded_fields_stays_inside_the_house_width() {
     );
     for line in card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
 }
-

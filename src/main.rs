@@ -5,8 +5,8 @@ use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
 use fleet::agent::{
-    Agent, AgentError, AgentOptions, Approver, ConsoleApprover, DEFAULT_MAX_TURNS,
-    RunReport, StopReason,
+    Agent, AgentError, AgentOptions, Approver, ConsoleApprover, RunReport, StopReason,
+    DEFAULT_MAX_TURNS,
 };
 use fleet::api::{Client, DEFAULT_BASE_URL};
 use fleet::cli::{self, ChatOptions, Command, CronAction, ImproveAction, RunOptions};
@@ -35,13 +35,14 @@ async fn main() -> ExitCode {
         }
         Ok(Command::Run(options)) => run_command(&options).await,
         Ok(Command::Chat(options)) => chat_command(&options).await,
-        Ok(Command::SessionsView { recall, view }) => sessions_command(recall.as_deref(), view.as_deref()),
-        Ok(Command::Compact { session, force }) => {
-            compact_command(session.as_deref(), force).await
+        Ok(Command::SessionsView { recall, view }) => {
+            sessions_command(recall.as_deref(), view.as_deref())
         }
-        Ok(Command::Settings { set }) => {
-            settings_command(set.as_ref().map(|(key, value)| (key.as_str(), value.as_str())))
-        }
+        Ok(Command::Compact { session, force }) => compact_command(session.as_deref(), force).await,
+        Ok(Command::Settings { set }) => settings_command(
+            set.as_ref()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        ),
         Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
@@ -108,13 +109,20 @@ fn setting(name: &str, dotenv: &std::collections::HashMap<String, String>) -> Op
 
 /// The `~/.fleet/.env` map, empty when no home is known.
 fn read_dotenv() -> std::collections::HashMap<String, String> {
-    fleet_home().ok().as_deref().map(home::read_dotenv).unwrap_or_default()
+    fleet_home()
+        .ok()
+        .as_deref()
+        .map(home::read_dotenv)
+        .unwrap_or_default()
 }
 
 /// The fleet home, failing loud when no home is known.
 fn fleet_home() -> Result<std::path::PathBuf, String> {
     let user_home = std::env::var("HOME").ok();
-    home::fleet_home(std::env::var("FLEET_HOME").ok().as_deref(), user_home.as_deref())
+    home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        user_home.as_deref(),
+    )
 }
 
 async fn run_command(options: &RunOptions) -> ExitCode {
@@ -137,14 +145,14 @@ async fn run_command(options: &RunOptions) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let mut session = match open_session(&home, options.session.as_deref(), &prepared.decision.model)
-    {
-        Ok(session) => session,
-        Err(message) => {
-            eprintln!("fleet: {message}");
-            return ExitCode::from(2);
-        }
-    };
+    let mut session =
+        match open_session(&home, options.session.as_deref(), &prepared.decision.model) {
+            Ok(session) => session,
+            Err(message) => {
+                eprintln!("fleet: {message}");
+                return ExitCode::from(2);
+            }
+        };
     eprintln!("fleet: session {}", session.id());
     eprintln!(
         "route: {} ({}) · model {}",
@@ -213,10 +221,8 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     // timer is the fix. The stream is the cycle's own, so the cycle
     // runs even before routing has produced one.
     let user_home = std::env::var("HOME").ok();
-    let calib_root =
-        fleet::calib::resolve_root(&home, user_home.as_deref());
-    let memories_root =
-        fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+    let calib_root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    let memories_root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
     fleet::memory::spawn_consolidator(memories_root, fleet::calib::Stream::open(&calib_root));
     // The scheduled jobs: the catch-up pass once at startup, then one
     // tick per second for the life of the session. The scheduler reads
@@ -325,7 +331,11 @@ fn report_walk(prepared: &route::Prepared) {
                 Some(env) => format!("{} skipped (no {})", attempt.provider, env),
                 None => format!("{} skipped", attempt.provider),
             },
-            _ => format!("{} failed ({})", attempt.provider, attempt.class.unwrap_or("unknown")),
+            _ => format!(
+                "{} failed ({})",
+                attempt.provider,
+                attempt.class.unwrap_or("unknown")
+            ),
         })
         .collect::<Vec<_>>()
         .join(" → ");
@@ -343,8 +353,7 @@ fn report_walk(prepared: &route::Prepared) {
 /// and fails nothing.
 fn draft_lessons(home: &std::path::Path, session_path: &std::path::Path) {
     let user_home = std::env::var("HOME").ok();
-    let filed =
-        fleet::skills::draft_session(home, session_path, user_home.as_deref());
+    let filed = fleet::skills::draft_session(home, session_path, user_home.as_deref());
     if !filed.is_empty() {
         eprintln!(
             "fleet: skills: drafted {} proposal(s) awaiting the gate in {}",
@@ -383,11 +392,15 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
     }
     if options.curate {
         let config = route::skills_config(&home);
-        let filed = fleet::skills::curate(&home, config.retire_after_sessions, config.merge_similarity);
+        let filed =
+            fleet::skills::curate(&home, config.retire_after_sessions, config.merge_similarity);
         print!("{}", fleet::skills::render_curation(&filed));
     }
     if options.proposed {
-        print!("{}", fleet::skills::render_proposals(&fleet::skills::load_proposals(&home)));
+        print!(
+            "{}",
+            fleet::skills::render_proposals(&fleet::skills::load_proposals(&home))
+        );
     } else if !options.curate {
         let config = route::skills_config(&home);
         let skills = fleet::skills::load(&home);
@@ -428,16 +441,9 @@ fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
         // resolve leaves the pass row-less, never failed.
         let stream = fleet_home().ok().map(|home| {
             let user_home = std::env::var("HOME").ok();
-            fleet::calib::Stream::open(fleet::calib::resolve_root(
-                &home,
-                user_home.as_deref(),
-            ))
+            fleet::calib::Stream::open(fleet::calib::resolve_root(&home, user_home.as_deref()))
         });
-        let result = fleet::memory::consolidate(
-            &root,
-            &fleet::calib::today(),
-            stream.as_ref(),
-        );
+        let result = fleet::memory::consolidate(&root, &fleet::calib::today(), stream.as_ref());
         print!("{}\n", fleet::memory::render_consolidation(&result));
     }
     // The corpus is loaded after the cycle, so the cards show what the
@@ -446,7 +452,10 @@ fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
     if let Some(instruction) = &options.recall {
         print!("{}", fleet::memory::render_recall(&memory, instruction));
     } else {
-        print!("{}", fleet::memory::render(&memory, options.shape.as_deref()));
+        print!(
+            "{}",
+            fleet::memory::render(&memory, options.shape.as_deref())
+        );
     }
     ExitCode::SUCCESS
 }
@@ -532,7 +541,12 @@ fn cron_command(options: &cli::CronOptions) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        CronAction::Add { name, schedule, task, auto_approve } => {
+        CronAction::Add {
+            name,
+            schedule,
+            task,
+            auto_approve,
+        } => {
             match fleet::cron::Store::open(&home).and_then(|mut store| {
                 let job = store.add(name, schedule, task, *auto_approve)?;
                 Ok(job)
@@ -543,8 +557,14 @@ fn cron_command(options: &cli::CronOptions) -> ExitCode {
                         .and_then(|schedule| schedule.next_after(now))
                         .map(|minute| format!(", next fire {}", minute.stamp()))
                         .unwrap_or_default();
-                    println!("fleet: cron: added `{}` \u{2014} {}{next}", job.name, job.schedule);
-                    print!("{}", fleet::cron::render(&home, std::slice::from_ref(&job), now));
+                    println!(
+                        "fleet: cron: added `{}` \u{2014} {}{next}",
+                        job.name, job.schedule
+                    );
+                    print!(
+                        "{}",
+                        fleet::cron::render(&home, std::slice::from_ref(&job), now)
+                    );
                     ExitCode::SUCCESS
                 }
                 Err(error) => {
@@ -553,25 +573,26 @@ fn cron_command(options: &cli::CronOptions) -> ExitCode {
                 }
             }
         }
-        CronAction::Enable { name } => {
-            mutate(&home, name, now, "enabled", true)
-        }
-        CronAction::Disable { name } => {
-            mutate(&home, name, now, "disabled", false)
-        }
-        CronAction::Remove { name } => match fleet::cron::Store::open(&home).and_then(|mut store| {
-            let job = store.remove(name)?;
-            Ok(job)
-        }) {
-            Ok(job) => {
-                println!("fleet: cron: removed `{}` \u{2014} {}", job.name, job.schedule);
-                ExitCode::SUCCESS
+        CronAction::Enable { name } => mutate(&home, name, now, "enabled", true),
+        CronAction::Disable { name } => mutate(&home, name, now, "disabled", false),
+        CronAction::Remove { name } => {
+            match fleet::cron::Store::open(&home).and_then(|mut store| {
+                let job = store.remove(name)?;
+                Ok(job)
+            }) {
+                Ok(job) => {
+                    println!(
+                        "fleet: cron: removed `{}` \u{2014} {}",
+                        job.name, job.schedule
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: {error}");
+                    ExitCode::FAILURE
+                }
             }
-            Err(error) => {
-                eprintln!("fleet: {error}");
-                ExitCode::FAILURE
-            }
-        },
+        }
     }
 }
 
@@ -586,8 +607,14 @@ fn mutate(
 ) -> ExitCode {
     match fleet::cron::Store::open(home).and_then(|mut store| store.set_enabled(name, enabled)) {
         Ok(job) => {
-            println!("fleet: cron: {verb} `{}` \u{2014} {}", job.name, job.schedule);
-            print!("{}", fleet::cron::render(home, std::slice::from_ref(&job), now));
+            println!(
+                "fleet: cron: {verb} `{}` \u{2014} {}",
+                job.name, job.schedule
+            );
+            print!(
+                "{}",
+                fleet::cron::render(home, std::slice::from_ref(&job), now)
+            );
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -617,16 +644,17 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
     };
     match &options.action {
         ImproveAction::List => {
-            print!("{}", fleet::improve::render(&fleet::improve::load_all(&home)));
+            print!(
+                "{}",
+                fleet::improve::render(&fleet::improve::load_all(&home))
+            );
             ExitCode::SUCCESS
         }
         ImproveAction::Apply { name, approve } => {
             let repo = std::env::current_dir().unwrap_or_default();
             let user_home = std::env::var("HOME").ok();
-            let stream = fleet::calib::Stream::open(fleet::calib::resolve_root(
-                &home,
-                user_home.as_deref(),
-            ));
+            let stream =
+                fleet::calib::Stream::open(fleet::calib::resolve_root(&home, user_home.as_deref()));
             let gate = fleet::improve::Gate::local(&repo);
             // The eval-corpus gate probe for a source target: it runs
             // `fleet eval` as a subprocess so the gate grades the
@@ -684,10 +712,7 @@ fn calib_command(options: &cli::CalibOptions) -> ExitCode {
         return ExitCode::from(2);
     };
     let root = fleet::calib::resolve_root(&home, std::env::var("HOME").ok().as_deref());
-    let day = options
-        .day
-        .clone()
-        .unwrap_or_else(fleet::calib::today);
+    let day = options.day.clone().unwrap_or_else(fleet::calib::today);
     if options.calibration {
         // The calibration surface: the per-provider judged quality, with
         // the fit rule's readiness and the ride-back's gate state read
@@ -736,10 +761,8 @@ fn roles_command() -> ExitCode {
 /// avoid.
 fn convention_command(options: &cli::ConventionOptions) -> ExitCode {
     let root = std::env::current_dir().unwrap_or_default();
-    let answer = fleet::tools::convention_result(
-        &root,
-        &serde_json::json!({ "concept": options.concept }),
-    );
+    let answer =
+        fleet::tools::convention_result(&root, &serde_json::json!({ "concept": options.concept }));
     print!("{answer}");
     ExitCode::SUCCESS
 }
@@ -850,13 +873,17 @@ async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
     let root = fleet::calib::resolve_root(&home, user_home.as_deref());
     let day = options.day.clone().unwrap_or_else(fleet::calib::today);
     if let Some(disposition) = &options.disposition {
-        return match fleet::delegate::disposition(&root, &day, &disposition.key, &disposition.word) {
+        return match fleet::delegate::disposition(&root, &day, &disposition.key, &disposition.word)
+        {
             Ok(row) => {
                 print!("{}", fleet::delegate::disposition_card(&row, &day));
                 ExitCode::SUCCESS
             }
             Err(reason) => {
-                print!("{}", fleet::delegate::disposition_refusal_card(&day, &reason));
+                print!(
+                    "{}",
+                    fleet::delegate::disposition_refusal_card(&day, &reason)
+                );
                 ExitCode::FAILURE
             }
         };
@@ -872,7 +899,10 @@ async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
         };
         return match fleet::delegate::write_control(&home, &session, steer.as_deref()) {
             Ok(path) => {
-                print!("{}", fleet::delegate::control_card(&session, steer.as_deref(), &path));
+                print!(
+                    "{}",
+                    fleet::delegate::control_card(&session, steer.as_deref(), &path)
+                );
                 ExitCode::SUCCESS
             }
             Err(reason) => {
@@ -896,10 +926,19 @@ async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
     // the cells were built for a consumer and this is it.
     let gate = fleet::route::calibration_config(&home).informs_failover;
     let candidate_ids: Vec<String> = fleet::route::load_roster(&home)
-        .map(|roster| roster.candidates.iter().map(|candidate| candidate.id.clone()).collect())
+        .map(|roster| {
+            roster
+                .candidates
+                .iter()
+                .map(|candidate| candidate.id.clone())
+                .collect()
+        })
         .unwrap_or_default();
     let candidates: Vec<&str> = candidate_ids.iter().map(String::as_str).collect();
-    print!("{}", fleet::delegate::render_ride_back_day(&root, &day, &candidates, gate));
+    print!(
+        "{}",
+        fleet::delegate::render_ride_back_day(&root, &day, &candidates, gate)
+    );
     if outcome.batch_answered() {
         ExitCode::SUCCESS
     } else {
@@ -951,7 +990,7 @@ async fn drive(
         // home: a session can file a proposal, and only the owner's
         // `fleet improve apply` runs one.
         improve_home: Some(home.to_path_buf()),
-            compact_now,
+        compact_now,
     };
     // Every non-interactive mode rides the Gate, never `ApproveAll`:
     // the always-ask class (computer use) sits ABOVE the modes, and an
@@ -969,11 +1008,15 @@ async fn drive(
         // explicit `--yes` or a config that asked for it. The
         // always-ask class still asks: that is the whole point of it
         // sitting above the modes.
-        fleet::approvals::Mode::Yes => Box::new(fleet::approvals::Gate::new(fleet::approvals::Mode::Yes)),
+        fleet::approvals::Mode::Yes => {
+            Box::new(fleet::approvals::Gate::new(fleet::approvals::Mode::Yes))
+        }
         // Everything but the destructive class runs; a call in that
         // class still asks, and its denial names the rule that kept
         // it there.
-        fleet::approvals::Mode::YesGuarded => Box::new(fleet::approvals::Gate::new(fleet::approvals::Mode::YesGuarded)),
+        fleet::approvals::Mode::YesGuarded => Box::new(fleet::approvals::Gate::new(
+            fleet::approvals::Mode::YesGuarded,
+        )),
     };
     let mut progress = std::io::stderr().lock();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress)?;
@@ -988,14 +1031,15 @@ async fn drive(
 /// logs.
 fn open_session(home: &std::path::Path, id: Option<&str>, model: &str) -> Result<Session, String> {
     match id {
-        None => {
-            Session::create(home, model)
-                .map_err(|error| format!("could not create the session: {error}"))
-        }
+        None => Session::create(home, model)
+            .map_err(|error| format!("could not create the session: {error}")),
         Some(id) => {
             let path = session::session_path(home, id);
             if !path.exists() {
-                return Err(format!("no session `{id}` under {}", home::sessions_dir(home).display()));
+                return Err(format!(
+                    "no session `{id}` under {}",
+                    home::sessions_dir(home).display()
+                ));
             }
             Session::open(&path).map_err(|error| format!("could not open session `{id}`: {error}"))
         }
@@ -1090,15 +1134,14 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
     // with a real cost, and pretending it is free would put a lie in
     // the decision row.
     let dotenv = fleet::home::read_dotenv(&home);
-    let prepared = match fleet::route::prepare(&home, &dotenv, "compact a session", &HashMap::new())
-        .await
-    {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            eprintln!("fleet: the route could not be prepared: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let prepared =
+        match fleet::route::prepare(&home, &dotenv, "compact a session", &HashMap::new()).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                eprintln!("fleet: the route could not be prepared: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
     let client = fleet::api::Client::routed(prepared.router.clone());
     let first_turn = conversation.turns.first().copied().unwrap_or(1);
     let last_turn = conversation.turns[..tail_start]
@@ -1172,15 +1215,17 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
         &home,
         std::env::var("HOME").ok().as_deref(),
     ));
-    stream.record(fleet::calib::Row::Consolidate(fleet::calib::ConsolidateRow {
-        ts: fleet::calib::stamp(),
-        action: "compact".to_string(),
-        fact: summary.id.clone(),
-        reason: format!(
-            "{turns} turn{} \u{2192} 1 summary, ~{measured} \u{2192} ~{tokens_after} tokens",
-            if turns == 1 { "" } else { "s" }
-        ),
-    }));
+    stream.record(fleet::calib::Row::Consolidate(
+        fleet::calib::ConsolidateRow {
+            ts: fleet::calib::stamp(),
+            action: "compact".to_string(),
+            fact: summary.id.clone(),
+            reason: format!(
+                "{turns} turn{} \u{2192} 1 summary, ~{measured} \u{2192} ~{tokens_after} tokens",
+                if turns == 1 { "" } else { "s" }
+            ),
+        },
+    ));
     println!(
         "`{}` compacted \u{2014} {turns} turn{} \u{2192} 1 summary (~{measured} \u{2192} \
          ~{tokens_after} tokens)",
@@ -1222,7 +1267,13 @@ fn sessions_command(recall: Option<&str>, view: Option<&str>) -> ExitCode {
             std::env::var("HOME").ok().as_deref(),
         ));
         for hit in &hits {
-            fleet::session_recall::record_hit(&sessions_dir, &hit.id, &hit.outcome, hit.score, Some(&stream));
+            fleet::session_recall::record_hit(
+                &sessions_dir,
+                &hit.id,
+                &hit.outcome,
+                hit.score,
+                Some(&stream),
+            );
         }
         print!("{}", fleet::session_recall::render_hits(&hits, instruction));
         return ExitCode::SUCCESS;
@@ -1308,7 +1359,10 @@ fn settings_command(set: Option<(&str, &str)>) -> ExitCode {
                 .collect();
             return match fleet::settings::set_workload(&home, name, &candidates) {
                 Ok(()) => {
-                    println!("workload `{name}` written \u{2014} {} candidate(s)", candidates.len());
+                    println!(
+                        "workload `{name}` written \u{2014} {} candidate(s)",
+                        candidates.len()
+                    );
                     ExitCode::SUCCESS
                 }
                 Err(error) => {
@@ -1352,7 +1406,10 @@ fn settings_command(set: Option<(&str, &str)>) -> ExitCode {
 async fn lanes_command() -> ExitCode {
     let health = fleet::lanes::health_all().await;
     print!("{}", fleet::lanes::render(&health));
-    if health.iter().all(|lane| lane.state == fleet::lanes::LaneState::Ok) {
+    if health
+        .iter()
+        .all(|lane| lane.state == fleet::lanes::LaneState::Ok)
+    {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -1380,7 +1437,10 @@ fn providers_command() -> ExitCode {
     };
     let resolved = route::resolve(&roster.candidates, &dotenv);
     print!("{}", route::render(&resolved));
-    if resolved.iter().any(|entry| route::provider_state(entry) == route::ProviderState::Ready) {
+    if resolved
+        .iter()
+        .any(|entry| route::provider_state(entry) == route::ProviderState::Ready)
+    {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -1498,7 +1558,10 @@ fn doctor_checks() -> ExitCode {
             fleet::lanes::LaneHome::Resolved { home, .. } => Ok(home),
             fleet::lanes::LaneHome::Unavailable { reason } => Err(reason),
         };
-        let check = doctor::evaluate_mcp_core(lane.name, resolved.as_deref().map_err(|reason| reason.clone()));
+        let check = doctor::evaluate_mcp_core(
+            lane.name,
+            resolved.as_deref().map_err(|reason| reason.clone()),
+        );
         println!("{}", doctor::render(&check));
     }
 
@@ -1541,7 +1604,10 @@ fn doctor_checks() -> ExitCode {
         .iter()
         .find(|lane| lane.name == "blend1")
         .is_some_and(|lane| {
-            matches!(fleet::lanes::resolve_home(lane), fleet::lanes::LaneHome::Resolved { .. })
+            matches!(
+                fleet::lanes::resolve_home(lane),
+                fleet::lanes::LaneHome::Resolved { .. }
+            )
         });
     let web_check = doctor::evaluate_web_leg(tinyfish_key.as_deref(), blend1_resolves);
     println!("{}", doctor::render(&web_check));
@@ -1552,7 +1618,8 @@ fn doctor_checks() -> ExitCode {
     // word's own answer, with the flag absent.
     let mode = fleet::approvals::resolve(
         None,
-        fleet::approvals::config_word(home.as_deref().unwrap_or(std::path::Path::new("."))).as_deref(),
+        fleet::approvals::config_word(home.as_deref().unwrap_or(std::path::Path::new(".")))
+            .as_deref(),
     );
     println!("{}", doctor::render_approvals(mode));
 
@@ -1676,18 +1743,19 @@ fn diagnose_command(session_id: &str, ledger: Option<&str>) -> ExitCode {
     // `docs/known-issues.md` resolved from the working directory (the
     // improve gate's cwd convention, KI-099's family). It is named either
     // way; only an explicit `--ledger` writes.
-    let named = ledger
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_default()
-                .join("docs")
-                .join("known-issues.md")
-        });
+    let named = ledger.map(std::path::PathBuf::from).unwrap_or_else(|| {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join("docs")
+            .join("known-issues.md")
+    });
     print!("{}", doctor::render_diagnosis(&diagnosis, &named));
     match ledger {
         Some(_) => {
-            let entry = doctor::LedgerEntry { severity: "defect", diagnosis };
+            let entry = doctor::LedgerEntry {
+                severity: "defect",
+                diagnosis,
+            };
             match doctor::file_ledger_row(&named, &entry) {
                 Ok(filed) => {
                     let id = match filed {
@@ -1782,9 +1850,7 @@ async fn explain_command(options: &cli::ExplainOptions) -> ExitCode {
         (Some(name), _) => fleet::explain::Selector::Proposal(name.clone()),
         (None, Some(scenario)) => fleet::explain::Selector::Scenario(scenario.clone()),
         (None, None) => {
-            eprintln!(
-                "fleet: explain: needs a selector: --proposal <name> or --eval <scenario>"
-            );
+            eprintln!("fleet: explain: needs a selector: --proposal <name> or --eval <scenario>");
             return ExitCode::from(2);
         }
     };

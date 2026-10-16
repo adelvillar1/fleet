@@ -63,7 +63,10 @@ pub fn estimate_tokens(messages: &[Message]) -> u64 {
     let chars: usize = messages
         .iter()
         .map(|message| {
-            let text = message.content.as_deref().map_or(0, |content| content.chars().count());
+            let text = message
+                .content
+                .as_deref()
+                .map_or(0, |content| content.chars().count());
             let calls: usize = message
                 .tool_calls
                 .iter()
@@ -74,7 +77,10 @@ pub fn estimate_tokens(messages: &[Message]) -> u64 {
                         + call.function.arguments.chars().count()
                 })
                 .sum();
-            let answered = message.tool_call_id.as_deref().map_or(0, |id| id.chars().count());
+            let answered = message
+                .tool_call_id
+                .as_deref()
+                .map_or(0, |id| id.chars().count());
             text + calls + answered
         })
         .sum();
@@ -107,7 +113,10 @@ pub fn summary_frame(first_turn: u64, last_turn: u64, summary: &str) -> String {
 /// on the same message list, so the split a compaction records and the
 /// split a replay reconstructs cannot drift.
 pub fn tail_start(messages: &[Message]) -> usize {
-    let assistants = messages.iter().filter(|message| message.role == Role::Assistant).count();
+    let assistants = messages
+        .iter()
+        .filter(|message| message.role == Role::Assistant)
+        .count();
     if assistants <= COMPACTION_TAIL_TURNS {
         return 0;
     }
@@ -190,7 +199,10 @@ mod tests {
         assert_eq!(start, 2, "the task plus the first answer are replaced");
         assert_eq!(messages[start].role, Role::Assistant);
         assert_eq!(
-            messages[start..].iter().filter(|m| m.role == Role::Assistant).count(),
+            messages[start..]
+                .iter()
+                .filter(|m| m.role == Role::Assistant)
+                .count(),
             COMPACTION_TAIL_TURNS
         );
     }
@@ -214,7 +226,10 @@ mod tests {
         assert!(calls > 0, "{calls}");
         // The tool result's text and its call id both count.
         let answered = estimate_tokens(&[tool_result()]);
-        assert_eq!(answered, ("the output".chars().count() + "call-1".chars().count()) as u64 / 4);
+        assert_eq!(
+            answered,
+            ("the output".chars().count() + "call-1".chars().count()) as u64 / 4
+        );
     }
 
     #[test]
@@ -261,7 +276,10 @@ mod tests {
         assert_eq!(messages[start].role, Role::Assistant);
         // Exactly four assistant messages survive.
         assert_eq!(
-            messages[start..].iter().filter(|m| m.role == Role::Assistant).count(),
+            messages[start..]
+                .iter()
+                .filter(|m| m.role == Role::Assistant)
+                .count(),
             COMPACTION_TAIL_TURNS
         );
         // And the tool results that follow their own assistant ride
@@ -271,7 +289,11 @@ mod tests {
         messages.extend(turn());
         let later = tail_start(&messages);
         assert_eq!(messages[later].role, Role::Assistant);
-        assert_eq!(later, start + 2, "one more turn is one assistant plus its result");
+        assert_eq!(
+            later,
+            start + 2,
+            "one more turn is one assistant plus its result"
+        );
     }
 
     #[test]

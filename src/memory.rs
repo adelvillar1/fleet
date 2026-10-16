@@ -494,7 +494,10 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
             ));
         }
         let Some((key, value)) = trimmed.split_once(':') else {
-            return Err(format!("frontmatter line {} is not a `key: value` pair", index + 1));
+            return Err(format!(
+                "frontmatter line {} is not a `key: value` pair",
+                index + 1
+            ));
         };
         // Keys unquote the way values do: `"name": x` is `name: x`,
         // which is what a writer that quotes every key emits.
@@ -540,8 +543,14 @@ fn unquote(value: &str) -> &str {
 /// lowercased, empties dropped. The three-tag cap is the writer's rule
 /// (part 2); the reader reads what the file carries.
 fn shape_tags(value: Option<&str>) -> Vec<String> {
-    let Some(value) = value else { return Vec::new() };
-    let Some(inner) = value.trim().strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    let Some(inner) = value
+        .trim()
+        .strip_prefix('[')
+        .and_then(|v| v.strip_suffix(']'))
+    else {
         return Vec::new();
     };
     inner
@@ -562,8 +571,14 @@ fn shape_tags(value: Option<&str>) -> Vec<String> {
 /// hand-written file cannot inflate the index. A bare scalar reads as
 /// no phrases, the shape field's own rule.
 fn phrase_list(value: Option<&str>) -> Vec<String> {
-    let Some(value) = value else { return Vec::new() };
-    let Some(inner) = value.trim().strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    let Some(inner) = value
+        .trim()
+        .strip_prefix('[')
+        .and_then(|v| v.strip_suffix(']'))
+    else {
         return Vec::new();
     };
     inner
@@ -584,8 +599,14 @@ fn phrase_list(value: Option<&str>) -> Vec<String> {
 /// [`MAX_PHRASE_CHARS`] with a marked cut. A bare scalar reads as no
 /// missing companions, the shape field's own rule.
 fn missing_list(value: Option<&str>) -> Vec<String> {
-    let Some(value) = value else { return Vec::new() };
-    let Some(inner) = value.trim().strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    let Some(inner) = value
+        .trim()
+        .strip_prefix('[')
+        .and_then(|v| v.strip_suffix(']'))
+    else {
         return Vec::new();
     };
     inner
@@ -637,8 +658,9 @@ fn fact(
         None => Basis::Inferred,
     };
     let tier = match document.get("tier") {
-        Some(text) => Tier::parse(text)
-            .ok_or_else(|| format!("unknown tier `{text}` (expected working, durable, or episodic)"))?,
+        Some(text) => Tier::parse(text).ok_or_else(|| {
+            format!("unknown tier `{text}` (expected working, durable, or episodic)")
+        })?,
         None => Tier::Durable,
     };
     let recall_count = match document.get("recall-count") {
@@ -701,7 +723,12 @@ pub fn file_stamp(path: &Path) -> Option<String> {
     let metadata = fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
     let duration = modified.duration_since(UNIX_EPOCH).ok()?;
-    Some(format!("{}:{}:{}", duration.as_secs(), duration.subsec_nanos(), metadata.len()))
+    Some(format!(
+        "{}:{}:{}",
+        duration.as_secs(),
+        duration.subsec_nanos(),
+        metadata.len()
+    ))
 }
 
 /// Load every fact under `root`, sorted by name. A missing directory is
@@ -726,7 +753,9 @@ fn load_facts_archived(root: &Path) -> Vec<Fact> {
 /// must equal the file's stem — every live-corpus read enforces it,
 /// the archive's read does not.
 fn load_facts_matching(root: &Path, stem_is_the_name: bool) -> Vec<Fact> {
-    let Ok(entries) = fs::read_dir(root) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
     let mut paths: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path())
@@ -738,8 +767,10 @@ fn load_facts_matching(root: &Path, stem_is_the_name: bool) -> Vec<Fact> {
     let mut facts: Vec<Fact> = Vec::new();
     for path in paths {
         // Owned, so the path itself stays free to move into the fact.
-        let Some(stem) =
-            path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string)
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
         else {
             continue;
         };
@@ -945,7 +976,11 @@ pub fn probe(endpoint: &str) -> Probe {
     match HttpEmbedder::probe(endpoint) {
         Some(http) => {
             let (endpoint, dims) = (http.endpoint.clone(), http.dims);
-            Probe { endpoint, dims: Some(dims), embedder: Box::new(http) }
+            Probe {
+                endpoint,
+                dims: Some(dims),
+                embedder: Box::new(http),
+            }
         }
         None => Probe {
             endpoint: endpoint.to_string(),
@@ -1198,7 +1233,15 @@ impl Score {
             + W_HISTORY * history
             + W_FRESHNESS * freshness
             + W_PROVENANCE * provenance;
-        Score { total, vector, keyword, trajectory, history, freshness, provenance }
+        Score {
+            total,
+            vector,
+            keyword,
+            trajectory,
+            history,
+            freshness,
+            provenance,
+        }
     }
 
     /// Every channel zero: the score of a fact that was never ranked.
@@ -1264,7 +1307,10 @@ fn keyword_coverage(query: &[String], fact: &[String]) -> f64 {
     if query.is_empty() {
         return 0.0;
     }
-    let covered = query.iter().filter(|token| fact.iter().any(|seen| seen == *token)).count();
+    let covered = query
+        .iter()
+        .filter(|token| fact.iter().any(|seen| seen == *token))
+        .count();
     covered as f64 / query.len() as f64
 }
 
@@ -1279,7 +1325,10 @@ fn trajectory_coverage(query: &[String], phrases: &[String]) -> f64 {
         return 0.0;
     }
     let carried: Vec<String> = phrases.iter().flat_map(|phrase| tokens(phrase)).collect();
-    let covered = query.iter().filter(|token| carried.iter().any(|seen| seen == *token)).count();
+    let covered = query
+        .iter()
+        .filter(|token| carried.iter().any(|seen| seen == *token))
+        .count();
     covered as f64 / query.len() as f64
 }
 
@@ -1289,7 +1338,9 @@ fn trajectory_coverage(query: &[String], phrases: &[String]) -> f64 {
 /// fork reader's own rule for an unreadable date.
 fn decay_factor(date: &str, today_days: Option<i64>) -> f64 {
     let Some(today) = today_days else { return 0.0 };
-    let Some(then) = parse_day(date) else { return 0.0 };
+    let Some(then) = parse_day(date) else {
+        return 0.0;
+    };
     let age = (today - then).max(0) as f64;
     0.5_f64.powf(age / DECAY_HALFLIFE_DAYS)
 }
@@ -1412,12 +1463,27 @@ pub const SHAPE_KEYWORDS: [(&str, &[&str]); 7] = [
     ),
     (
         "change",
-        &["refactor", "rename", "migration", "rewrite", "revert", "breaking change"],
+        &[
+            "refactor",
+            "rename",
+            "migration",
+            "rewrite",
+            "revert",
+            "breaking change",
+        ],
     ),
 ];
 
 /// The taxonomy in its own order, for the surface's naming.
-pub const SHAPES: [&str; 7] = ["rendering", "state-sync", "deploy", "build", "change", "deps", "docs"];
+pub const SHAPES: [&str; 7] = [
+    "rendering",
+    "state-sync",
+    "deploy",
+    "build",
+    "change",
+    "deps",
+    "docs",
+];
 
 /// The **failure shapes**: the avoidance half of the shelf, named for
 /// Fleet's own failure record in `docs/known-issues.md`. Each names a
@@ -1739,7 +1805,9 @@ pub struct Memory {
 /// poisoned lock means some unrelated panic tripped the flag and the
 /// corpus is still sound — the calibration writer's own rule.
 fn lock_facts(facts: &Mutex<Vec<Fact>>) -> std::sync::MutexGuard<'_, Vec<Fact>> {
-    facts.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    facts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The corpus's `Debug`: the root, the backend, and the fact count —
@@ -1815,7 +1883,10 @@ impl Memory {
                 if let Some(stamp) = &fact.stamp {
                     fresh.insert(
                         fact.name.clone(),
-                        IndexEntry { stamp: stamp.clone(), vector: vector.clone() },
+                        IndexEntry {
+                            stamp: stamp.clone(),
+                            vector: vector.clone(),
+                        },
                     );
                 }
                 vectors.insert(fact.name.clone(), vector);
@@ -1824,7 +1895,12 @@ impl Memory {
                 Index::write(root, key.as_ref(), &fresh);
             }
         }
-        Memory { root: root.to_path_buf(), embedder, facts: Mutex::new(facts), vectors }
+        Memory {
+            root: root.to_path_buf(),
+            embedder,
+            facts: Mutex::new(facts),
+            vectors,
+        }
     }
 
     /// Build a Memory over facts that did not come from a corpus root —
@@ -1858,7 +1934,12 @@ impl Memory {
         vectors: HashMap<String, Vec<f32>>,
         embedder: Box<dyn Embedder>,
     ) -> Memory {
-        Memory { root: PathBuf::new(), embedder, facts: Mutex::new(facts), vectors }
+        Memory {
+            root: PathBuf::new(),
+            embedder,
+            facts: Mutex::new(facts),
+            vectors,
+        }
     }
 
     /// The corpus root, `memories/`.
@@ -1941,7 +2022,11 @@ impl Memory {
                 Some(shape) => fact.carries_shape(shape),
                 None => true,
             };
-            let hit = ScoredFact { fact: fact.clone(), score, off_shape: !in_pool };
+            let hit = ScoredFact {
+                fact: fact.clone(),
+                score,
+                off_shape: !in_pool,
+            };
             if in_pool {
                 primary.push(hit);
             } else {
@@ -1950,7 +2035,11 @@ impl Memory {
         }
         by_rank(&mut primary);
         by_rank(&mut spillover);
-        Partition { shape, primary, spillover }
+        Partition {
+            shape,
+            primary,
+            spillover,
+        }
     }
 
     /// Ranked recall for one instruction: the shape-partitioned
@@ -1989,7 +2078,10 @@ impl Memory {
         // Most recent first: recent working memory is the point of the
         // tier, and the name is the deterministic tie-break.
         facts.sort_by(|left, right| {
-            right.date.cmp(&left.date).then_with(|| left.name.cmp(&right.name))
+            right
+                .date
+                .cmp(&left.date)
+                .then_with(|| left.name.cmp(&right.name))
         });
         facts
     }
@@ -2006,7 +2098,11 @@ impl Memory {
     /// best-effort: a file that cannot be rewritten logs one line and
     /// the hit is still recorded — the audit trail must not depend on
     /// the corpus being writable.
-    pub fn recall_hits(&self, instruction: &str, stream: Option<&calib::Stream>) -> Vec<ScoredFact> {
+    pub fn recall_hits(
+        &self,
+        instruction: &str,
+        stream: Option<&calib::Stream>,
+    ) -> Vec<ScoredFact> {
         let hits = self.recall(instruction);
         self.record_hits(&hits, classify_shape(instruction), stream);
         hits
@@ -2155,8 +2251,10 @@ pub struct ScoredFact {
 /// consequence for a failed rewrite.
 fn rewrite_field(path: &Path, key: &str, value: &str) -> Result<(), WriteError> {
     let Ok(text) = fs::read_to_string(path) else {
-        let reason =
-            format!("could not re-read {} to rewrite its `{key}`", path.display());
+        let reason = format!(
+            "could not re-read {} to rewrite its `{key}`",
+            path.display()
+        );
         eprintln!("fleet: memories: {reason}");
         return Err(WriteError::Io(reason));
     };
@@ -2180,7 +2278,10 @@ fn rewrite_field(path: &Path, key: &str, value: &str) -> Result<(), WriteError> 
     let rendered = format!("{key}: {value}");
     let mut written = false;
     for line in out_lines.iter_mut().take(closing).skip(1) {
-        let field = line.split_once(':').map(|(field, _)| field.trim()).unwrap_or_default();
+        let field = line
+            .split_once(':')
+            .map(|(field, _)| field.trim())
+            .unwrap_or_default();
         if field == key {
             *line = rendered.clone();
             written = true;
@@ -2204,8 +2305,7 @@ fn rewrite_field(path: &Path, key: &str, value: &str) -> Result<(), WriteError> 
                 Ok(())
             } else {
                 let _ = fs::remove_file(&temp);
-                let reason =
-                    format!("could not replace {} with its new `{key}`", path.display());
+                let reason = format!("could not replace {} with its new `{key}`", path.display());
                 eprintln!("fleet: memories: {reason}");
                 Err(WriteError::Io(reason))
             }
@@ -2227,8 +2327,10 @@ fn rewrite_field(path: &Path, key: &str, value: &str) -> Result<(), WriteError> 
 /// its action only once both the stamp and the note have landed.
 fn append_note(path: &Path, note: &str) -> Result<(), WriteError> {
     let Ok(mut text) = fs::read_to_string(path) else {
-        let reason =
-            format!("could not re-read {} to append its retirement note", path.display());
+        let reason = format!(
+            "could not re-read {} to append its retirement note",
+            path.display()
+        );
         eprintln!("fleet: memories: {reason}");
         return Err(WriteError::Io(reason));
     };
@@ -2249,8 +2351,10 @@ fn append_note(path: &Path, note: &str) -> Result<(), WriteError> {
                 Ok(())
             } else {
                 let _ = fs::remove_file(&temp);
-                let reason =
-                    format!("could not replace {} with its retirement note", path.display());
+                let reason = format!(
+                    "could not replace {} with its retirement note",
+                    path.display()
+                );
                 eprintln!("fleet: memories: {reason}");
                 Err(WriteError::Io(reason))
             }
@@ -2353,12 +2457,7 @@ impl Memory {
     /// (c) the budget has room after the pool is in. Every off-shape
     /// fact that enters is marked `off-shape` in its line. Never
     /// silently mixed.
-    pub fn assemble_within(
-        &self,
-        instruction: &str,
-        working: &[Fact],
-        budget: usize,
-    ) -> Assembly {
+    pub fn assemble_within(&self, instruction: &str, working: &[Fact], budget: usize) -> Assembly {
         let partition = self.partition(instruction);
         let shape = partition.shape;
         let protected = self.protected();
@@ -2755,7 +2854,10 @@ impl std::error::Error for WriteError {}
 /// mechanism, in the writer where the fork's writer owns the
 /// rendering.
 fn sanitize_line(text: &str, bound: usize) -> String {
-    let cleaned: String = text.chars().filter(|character| !character.is_control()).collect();
+    let cleaned: String = text
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
     let cleaned = cleaned.trim();
     if cleaned.chars().count() > bound {
         let cut: String = cleaned.chars().take(bound).collect();
@@ -2773,9 +2875,9 @@ fn sanitize_line(text: &str, bound: usize) -> String {
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.chars().count() <= MAX_NAME_CHARS
-        && name
-            .chars()
-            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-')
+        && name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
         && !name.starts_with('-')
         && !name.ends_with('-')
 }
@@ -2826,7 +2928,10 @@ impl Remember {
                 "`{name}` is not a fact name: lowercase letters, digits, and hyphens, up to {MAX_NAME_CHARS} characters, no leading or trailing hyphen"
             )));
         }
-        let description = sanitize_line(&string_argument(arguments, "description")?.unwrap_or_default(), MAX_DESCRIPTION_CHARS);
+        let description = sanitize_line(
+            &string_argument(arguments, "description")?.unwrap_or_default(),
+            MAX_DESCRIPTION_CHARS,
+        );
         if description.is_empty() {
             return Err(WriteError::Description(
                 "the `description` argument is required: the fact as one sentence".to_string(),
@@ -2918,14 +3023,13 @@ impl Remember {
 /// key is absent or null — the caller decides whether that is required
 /// — and a typed error when the key is present but is not a string, so
 /// a number where a sentence belongs is never a silent default.
-fn string_argument(
-    arguments: &serde_json::Value,
-    key: &str,
-) -> Result<Option<String>, WriteError> {
+fn string_argument(arguments: &serde_json::Value, key: &str) -> Result<Option<String>, WriteError> {
     match arguments.get(key) {
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::String(text)) => Ok(Some(text.clone())),
-        Some(_) => Err(WriteError::Name(format!("the `{key}` argument must be a string"))),
+        Some(_) => Err(WriteError::Name(format!(
+            "the `{key}` argument must be a string"
+        ))),
     }
 }
 
@@ -2950,7 +3054,9 @@ fn string_array_argument(
             })
             .collect::<Result<Vec<String>, WriteError>>()
             .map(Some),
-        Some(_) => Err(WriteError::Name(format!("the `{key}` argument must be an array of strings"))),
+        Some(_) => Err(WriteError::Name(format!(
+            "the `{key}` argument must be an array of strings"
+        ))),
     }
 }
 
@@ -2963,17 +3069,16 @@ fn string_array_argument(
 /// an anti-vector read as a resolution, and a typo'd outcome tag would
 /// silently make a stalled trajectory read as finished.
 fn parse_shape(value: &Option<String>) -> Result<Vec<String>, WriteError> {
-    let Some(value) = value else { return Ok(Vec::new()) };
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
     let mut tags: Vec<String> = Vec::new();
     for tag in value.split(',') {
         let tag = unquote(tag.trim()).trim().to_ascii_lowercase();
         if tag.is_empty() {
             continue;
         }
-        if !SHAPES.contains(&tag.as_str())
-            && !is_failure_shape(&tag)
-            && !is_outcome_shape(&tag)
-        {
+        if !SHAPES.contains(&tag.as_str()) && !is_failure_shape(&tag) && !is_outcome_shape(&tag) {
             return Err(WriteError::Shape(format!(
                 "`{tag}` is not a shape; the structure shapes are {}, the failure shapes are {}, and the outcome tags are {}",
                 SHAPES.join(", "),
@@ -2999,7 +3104,9 @@ fn parse_shape(value: &Option<String>) -> Result<Vec<String>, WriteError> {
 /// rule, because a companion is a name as it was written and a stall is
 /// a handful of names, not an inventory of everything absent.
 fn parse_missing(value: &Option<Vec<String>>) -> Result<Vec<String>, WriteError> {
-    let Some(value) = value else { return Ok(Vec::new()) };
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
     let mut missing: Vec<String> = Vec::new();
     for entry in value {
         let entry = sanitize_line(entry, MAX_MISSING_CHARS);
@@ -3023,7 +3130,9 @@ fn parse_missing(value: &Option<Vec<String>>) -> Result<Vec<String>, WriteError>
 /// stripped and the length bounded the way the description is, and
 /// nothing else.
 fn parse_phrases(value: &Option<Vec<String>>) -> Result<Vec<String>, WriteError> {
-    let Some(value) = value else { return Ok(Vec::new()) };
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
     let mut phrases: Vec<String> = Vec::new();
     for phrase in value {
         let phrase = sanitize_line(phrase, MAX_PHRASE_CHARS);
@@ -3096,9 +3205,8 @@ fn write_document(
     today: &str,
     refuse_existing: bool,
 ) -> Result<PathBuf, WriteError> {
-    fs::create_dir_all(root).map_err(|error| {
-        WriteError::Io(format!("could not create {}: {error}", root.display()))
-    })?;
+    fs::create_dir_all(root)
+        .map_err(|error| WriteError::Io(format!("could not create {}: {error}", root.display())))?;
     let path = root.join(format!("{}.md", request.name));
     if refuse_existing && path.exists() {
         return Err(WriteError::Exists(format!(
@@ -3117,12 +3225,18 @@ fn write_document(
                 Ok(path)
             } else {
                 let _ = fs::remove_file(&temp);
-                Err(WriteError::Io(format!("could not replace {}", path.display())))
+                Err(WriteError::Io(format!(
+                    "could not replace {}",
+                    path.display()
+                )))
             }
         }
         Err(error) => {
             let _ = fs::remove_file(&temp);
-            Err(WriteError::Io(format!("could not write {}: {error}", temp.display())))
+            Err(WriteError::Io(format!(
+                "could not write {}: {error}",
+                temp.display()
+            )))
         }
     }
 }
@@ -3211,8 +3325,10 @@ impl Supersede {
                 "`{name}` is not a fact name: lowercase letters, digits, and hyphens, up to {MAX_NAME_CHARS} characters, no leading or trailing hyphen"
             )));
         }
-        let justification =
-            sanitize_line(&string_argument(arguments, "justification")?.unwrap_or_default(), MAX_JUSTIFICATION_CHARS);
+        let justification = sanitize_line(
+            &string_argument(arguments, "justification")?.unwrap_or_default(),
+            MAX_JUSTIFICATION_CHARS,
+        );
         if justification.is_empty() {
             return Err(WriteError::Justification(
                 "the `justification` argument is required: why this fact is being retired, recorded in the calibration row and the replacement's body".to_string(),
@@ -3230,14 +3346,17 @@ impl Supersede {
             }
             None => None,
         };
-        let description =
-            sanitize_line(&string_argument(arguments, "description")?.unwrap_or_default(), MAX_DESCRIPTION_CHARS);
+        let description = sanitize_line(
+            &string_argument(arguments, "description")?.unwrap_or_default(),
+            MAX_DESCRIPTION_CHARS,
+        );
         if replacement.is_some() && description.is_empty() {
             return Err(WriteError::Description(
                 "the `description` argument is required with a replacement: the new fact as one sentence".to_string(),
             ));
         }
-        let fact_type = string_argument(arguments, "type")?.map(|text| sanitize_line(&text, MAX_TYPE_CHARS));
+        let fact_type =
+            string_argument(arguments, "type")?.map(|text| sanitize_line(&text, MAX_TYPE_CHARS));
         let shape = string_argument(arguments, "shape")?;
         // Absent is not the same as empty: an absent `missing`
         // argument inherits the superseded fact's companions, and an
@@ -3356,7 +3475,10 @@ impl Memory {
                     ));
                 }
                 let body = if request.body.is_empty() {
-                    format!("Supersedes `{}` \u{2014} {}\n", fact.name, request.justification)
+                    format!(
+                        "Supersedes `{}` \u{2014} {}\n",
+                        fact.name, request.justification
+                    )
                 } else {
                     request.body.clone()
                 };
@@ -3412,7 +3534,10 @@ impl Memory {
                         reason: request.justification.clone(),
                     }));
                 }
-                Ok(Superseded::By { from: fact.name, into: replacement.clone() })
+                Ok(Superseded::By {
+                    from: fact.name,
+                    into: replacement.clone(),
+                })
             }
             None => {
                 // Forget: the fact's validity ends the day before the
@@ -3469,12 +3594,21 @@ pub fn remember_summary(arguments: &str) -> String {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
         return "remember".to_string();
     };
-    let name = value.get("name").and_then(|value| value.as_str()).unwrap_or_default();
+    let name = value
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
     if name.is_empty() {
         return "remember".to_string();
     }
-    let basis = value.get("basis").and_then(|value| value.as_str()).unwrap_or("inferred");
-    let tier = value.get("tier").and_then(|value| value.as_str()).unwrap_or("durable");
+    let basis = value
+        .get("basis")
+        .and_then(|value| value.as_str())
+        .unwrap_or("inferred");
+    let tier = value
+        .get("tier")
+        .and_then(|value| value.as_str())
+        .unwrap_or("durable");
     format!("remember {name} ({basis} {tier})")
 }
 
@@ -3486,12 +3620,18 @@ pub fn supersede_summary(arguments: &str, basis: Option<Basis>) -> String {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
         return "supersede".to_string();
     };
-    let name = value.get("name").and_then(|value| value.as_str()).unwrap_or_default();
+    let name = value
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
     if name.is_empty() {
         return "supersede".to_string();
     }
     let justification = sanitize_line(
-        value.get("justification").and_then(|value| value.as_str()).unwrap_or_default(),
+        value
+            .get("justification")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default(),
         MAX_JUSTIFICATION_CHARS,
     );
     let basis = basis.map(Basis::label);
@@ -3604,11 +3744,7 @@ fn aged_out(fact: &Fact, today_days: Option<i64>, days: i64) -> bool {
 ///   summary carries is moved to [`ARCHIVE_DIR`]. Nothing is deleted.
 ///
 /// Every action appends one `consolidate` calibration row.
-pub fn consolidate(
-    root: &Path,
-    today: &str,
-    stream: Option<&calib::Stream>,
-) -> Consolidation {
+pub fn consolidate(root: &Path, today: &str, stream: Option<&calib::Stream>) -> Consolidation {
     let facts = load_facts(root);
     let today_days = parse_day(today);
     let mut out = Consolidation::default();
@@ -3700,8 +3836,7 @@ pub fn consolidate(
         if let Some(summary) = &summary {
             let _ = rewrite_field(&fact.path, "superseded-by", summary);
         }
-        let reason =
-            format!("inferred, never recalled, older than {STALE_AFTER_DAYS} days");
+        let reason = format!("inferred, never recalled, older than {STALE_AFTER_DAYS} days");
         record_cycle(stream, calib::ACTION_SUPERSEDE, &fact.name, &reason);
         out.actions.push(CycleAction {
             action: calib::ACTION_SUPERSEDE,
@@ -3753,13 +3888,19 @@ fn write_summary(root: &Path, today: &str, compressed: &[Fact], superseded: &[Fa
     if !compressed.is_empty() {
         body.push_str("\n## Compressed working memory\n\n");
         for fact in compressed {
-            body.push_str(&format!("- `{}` ({}): {}\n", fact.name, fact.date, fact.description));
+            body.push_str(&format!(
+                "- `{}` ({}): {}\n",
+                fact.name, fact.date, fact.description
+            ));
         }
     }
     if !superseded.is_empty() {
         body.push_str("\n## Superseded stale facts\n\n");
         for fact in superseded {
-            body.push_str(&format!("- `{}` ({}): {}\n", fact.name, fact.date, fact.description));
+            body.push_str(&format!(
+                "- `{}` ({}): {}\n",
+                fact.name, fact.date, fact.description
+            ));
         }
     }
     let base = format!("consolidation-{today}");
@@ -3813,7 +3954,11 @@ fn archive_target(archive: &Path, fact: &Fact) -> Result<PathBuf, std::io::Error
         } else {
             archive.join(format!("{}.{serial}.md", fact.name))
         };
-        match fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
             Ok(_) => return Ok(candidate),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => serial += 1,
             Err(error) => return Err(error),
@@ -3879,8 +4024,11 @@ pub fn spawn_consolidator(root: PathBuf, stream: calib::Stream) {
             let tally = calib::ACTIONS
                 .iter()
                 .filter_map(|action| {
-                    let count =
-                        result.actions.iter().filter(|one| one.action == *action).count();
+                    let count = result
+                        .actions
+                        .iter()
+                        .filter(|one| one.action == *action)
+                        .count();
                     (count > 0).then(|| format!("{count} {action}"))
                 })
                 .collect::<Vec<_>>()
@@ -3953,11 +4101,18 @@ fn dim_line(text: &str, width: usize) -> Vec<String> {
 pub fn render(memory: &Memory, shape: Option<&str>) -> String {
     let facts = memory.facts();
     let today = calib::today();
-    let live: Vec<&Fact> = facts.iter().filter(|fact| !fact.forgotten(&today)).collect();
+    let live: Vec<&Fact> = facts
+        .iter()
+        .filter(|fact| !fact.forgotten(&today))
+        .collect();
     let retired = facts.len() - live.len();
     let protected = live.iter().filter(|fact| fact.protected()).count();
     let shown: Vec<&Fact> = match shape {
-        Some(shape) => live.iter().copied().filter(|fact| fact.carries_shape(shape)).collect(),
+        Some(shape) => live
+            .iter()
+            .copied()
+            .filter(|fact| fact.carries_shape(shape))
+            .collect(),
         None => live.clone(),
     };
     let mut out = String::new();
@@ -4058,8 +4213,14 @@ fn render_card(fact: &Fact) -> String {
     for chunk in wrap_detail(&footer, CARD_WIDTH - 4) {
         lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{chunk}{RESET}"));
     }
-    lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{}{RESET}", fact.path.display()));
-    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    lines.push(format!(
+        "{DIM}\u{2502}{RESET} {DIM}{}{RESET}",
+        fact.path.display()
+    ));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -4119,7 +4280,10 @@ fn render_recall_at(memory: &Memory, instruction: &str, width: usize) -> String 
         .count();
     if live == 0 {
         for line in dim_line(
-            &format!("no facts to recall from \u{b7} {}/ holds no live facts", MEMORIES_DIR),
+            &format!(
+                "no facts to recall from \u{b7} {}/ holds no live facts",
+                MEMORIES_DIR
+            ),
             width,
         ) {
             out.push_str(&line);
@@ -4181,9 +4345,10 @@ fn render_recall_at(memory: &Memory, instruction: &str, width: usize) -> String 
     }
     let block = render_assembly(&assembly);
     if block.is_empty() {
-        for line in
-            dim_line("nothing would enter a turn's context for this instruction", width)
-        {
+        for line in dim_line(
+            "nothing would enter a turn's context for this instruction",
+            width,
+        ) {
             out.push_str(&line);
             out.push('\n');
         }
@@ -4260,7 +4425,9 @@ fn render_recall_card(hit: &ScoredFact, width: usize) -> String {
     };
     let standing = format!(
         "shape: {shape} \u{b7} history {} \u{b7} freshness {:.2} \u{b7} provenance {}",
-        hit.fact.recall_count, hit.score.freshness, hit.fact.basis.label()
+        hit.fact.recall_count,
+        hit.score.freshness,
+        hit.fact.basis.label()
     );
     let standing = if sign == Sign::Divergence {
         format!("{WARN}{standing}{RESET}")
@@ -4285,7 +4452,10 @@ fn render_recall_card(hit: &ScoredFact, width: usize) -> String {
             lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{chunk}{RESET}"));
         }
     }
-    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -4335,8 +4505,11 @@ pub fn render_consolidation(result: &Consolidation) -> String {
         return out;
     }
     for action in calib::ACTIONS {
-        let taken: Vec<&CycleAction> =
-            result.actions.iter().filter(|one| one.action == action).collect();
+        let taken: Vec<&CycleAction> = result
+            .actions
+            .iter()
+            .filter(|one| one.action == action)
+            .collect();
         if taken.is_empty() {
             continue;
         }
@@ -4353,7 +4526,10 @@ pub fn render_consolidation(result: &Consolidation) -> String {
                 lines.push(format!("{DIM}\u{2502}{RESET} {TEXT}{chunk}{RESET}"));
             }
         }
-        let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+        let bottom = format!(
+            "{DIM}\u{2514}{}\u{2518}{RESET}",
+            "\u{2500}".repeat(CARD_WIDTH - 2)
+        );
         let mut card = format!("{header}\n");
         for line in lines {
             card.push_str(&line);
@@ -4488,7 +4664,11 @@ mod tests {
             .arg(path)
             .status()
             .expect("`chflags` is available on this machine");
-        assert!(status.success(), "`chflags {flag}` failed on {}", path.display());
+        assert!(
+            status.success(),
+            "`chflags {flag}` failed on {}",
+            path.display()
+        );
     }
 
     /// A well-formed fact in the writer's field order.
@@ -4576,7 +4756,10 @@ mod tests {
         /// so the vectors stay exact indicators over fewer terms.
         fn at_dims(dims: usize) -> (Arc<AtomicUsize>, Box<ScriptedEmbedder>) {
             let calls = Arc::new(AtomicUsize::new(0));
-            (Arc::clone(&calls), Box::new(ScriptedEmbedder { calls, dims }))
+            (
+                Arc::clone(&calls),
+                Box::new(ScriptedEmbedder { calls, dims }),
+            )
         }
     }
 
@@ -4630,7 +4813,10 @@ mod tests {
         );
         // A bare optional field is present and empty, not absent.
         assert_eq!(document.get("superseded-by"), Some(""));
-        assert_eq!(shape_tags(document.get("shape")), vec!["business_analysis", "deploy"]);
+        assert_eq!(
+            shape_tags(document.get("shape")),
+            vec!["business_analysis", "deploy"]
+        );
         // Unknown keys are kept, not rejected: forward compatibility.
         assert_eq!(document.get("extra"), Some("ignored"));
         assert_eq!(document.body, "The body.");
@@ -4668,29 +4854,44 @@ mod tests {
     #[test]
     fn the_parser_rejects_what_it_does_not_speak() {
         // No opening fence.
-        assert!(parse_document("name: demo\n").unwrap_err().contains("does not open"));
+        assert!(parse_document("name: demo\n")
+            .unwrap_err()
+            .contains("does not open"));
         // No closing fence.
-        assert!(parse_document("---\nname: demo\n").unwrap_err().contains("never closes"));
+        assert!(parse_document("---\nname: demo\n")
+            .unwrap_err()
+            .contains("never closes"));
         // A list entry.
-        assert!(parse_document("---\n- item\n---\nbody\n").unwrap_err().contains("key: value"));
+        assert!(parse_document("---\n- item\n---\nbody\n")
+            .unwrap_err()
+            .contains("key: value"));
         // A bare scalar line.
-        assert!(parse_document("---\nbare\n---\nbody\n").unwrap_err().contains("key: value"));
+        assert!(parse_document("---\nbare\n---\nbody\n")
+            .unwrap_err()
+            .contains("key: value"));
         // An indented line with no field to continue.
         assert!(parse_document("---\n  orphan\n---\nbody\n")
             .unwrap_err()
             .contains("no field to continue"));
         // A duplicated key.
-        assert!(parse_document("---\nname: a\nname: b\ndescription: d\n---\nbody\n")
-            .unwrap_err()
-            .contains("twice"));
+        assert!(
+            parse_document("---\nname: a\nname: b\ndescription: d\n---\nbody\n")
+                .unwrap_err()
+                .contains("twice")
+        );
         // An unbalanced quoted key.
-        assert!(parse_document("---\n\"name: demo\ndescription: d\n---\nbody\n")
-            .unwrap_err()
-            .contains("unbalanced quoted key"));
+        assert!(
+            parse_document("---\n\"name: demo\ndescription: d\n---\nbody\n")
+                .unwrap_err()
+                .contains("unbalanced quoted key")
+        );
         // A missing required key is the loader's rule, not the parser's.
         let document = parse_document("---\ntype: project\n---\nbody\n").unwrap();
         assert!(document.required("name").unwrap_err().contains("name"));
-        assert!(document.required("description").unwrap_err().contains("description"));
+        assert!(document
+            .required("description")
+            .unwrap_err()
+            .contains("description"));
     }
 
     #[test]
@@ -4709,17 +4910,37 @@ mod tests {
     #[test]
     fn facts_load_with_a_malformed_one_skipped_by_name() {
         let root = scratch("skip");
-        write_fact(&root, "good-one", &good_fact("good-one", "the first fact", "project", "deploy"));
-        write_fact(&root, "good-two", &good_fact("good-two", "the second fact", "reference", ""));
+        write_fact(
+            &root,
+            "good-one",
+            &good_fact("good-one", "the first fact", "project", "deploy"),
+        );
+        write_fact(
+            &root,
+            "good-two",
+            &good_fact("good-two", "the second fact", "reference", ""),
+        );
         // The bare minimum: no basis, no recall-count, no type — the
         // loader's defaults apply rather than a rejection.
-        write_fact(&root, "minimal", "---\nname: minimal\ndescription: \"the bare minimum\"\n---\n\nbody\n");
+        write_fact(
+            &root,
+            "minimal",
+            "---\nname: minimal\ndescription: \"the bare minimum\"\n---\n\nbody\n",
+        );
         // Five ways to be malformed: no frontmatter, a missing
         // description, a name that is not the file stem, a basis outside
         // the vocabulary, and a recall-count that is not an integer.
         write_fact(&root, "broken-fence", "# no fence here\n");
-        write_fact(&root, "broken-fields", "---\nname: broken-fields\n---\nbody\n");
-        write_fact(&root, "broken-name", &good_fact("some-other-name", "d", "project", ""));
+        write_fact(
+            &root,
+            "broken-fields",
+            "---\nname: broken-fields\n---\nbody\n",
+        );
+        write_fact(
+            &root,
+            "broken-name",
+            &good_fact("some-other-name", "d", "project", ""),
+        );
         write_fact(
             &root,
             "broken-basis",
@@ -4753,9 +4974,21 @@ mod tests {
     #[test]
     fn protected_types_are_the_identity_and_preference_taxonomy() {
         let root = scratch("protected");
-        write_fact(&root, "identity", &good_fact("identity", "who the owner is", "user", ""));
-        write_fact(&root, "rule", &good_fact("rule", "a standing rule", "feedback", ""));
-        write_fact(&root, "task", &good_fact("task", "project state", "project", ""));
+        write_fact(
+            &root,
+            "identity",
+            &good_fact("identity", "who the owner is", "user", ""),
+        );
+        write_fact(
+            &root,
+            "rule",
+            &good_fact("rule", "a standing rule", "feedback", ""),
+        );
+        write_fact(
+            &root,
+            "task",
+            &good_fact("task", "project state", "project", ""),
+        );
         let facts = load_facts(&root);
         let protected: Vec<&str> = facts
             .iter()
@@ -4814,10 +5047,26 @@ mod tests {
     /// `eta` overlaps it partially but covers more query tokens; `junk`
     /// shares one query token and no vector term.
     fn order_corpus(root: &Path) {
-        write_fact(root, "alpha", &good_fact("alpha", "railway deploy per branch", "project", ""));
-        write_fact(root, "zeta", &good_fact("zeta", "deploy railway", "project", ""));
-        write_fact(root, "eta", &good_fact("eta", "railway is failing", "project", ""));
-        write_fact(root, "junk", &good_fact("junk", "the walnut table texture", "project", ""));
+        write_fact(
+            root,
+            "alpha",
+            &good_fact("alpha", "railway deploy per branch", "project", ""),
+        );
+        write_fact(
+            root,
+            "zeta",
+            &good_fact("zeta", "deploy railway", "project", ""),
+        );
+        write_fact(
+            root,
+            "eta",
+            &good_fact("eta", "railway is failing", "project", ""),
+        );
+        write_fact(
+            root,
+            "junk",
+            &good_fact("junk", "the walnut table texture", "project", ""),
+        );
     }
 
     #[test]
@@ -4834,7 +5083,10 @@ mod tests {
             .into_iter()
             .map(|hit| hit.fact.name)
             .collect();
-        assert_eq!(off, vec!["eta".to_string(), "alpha".to_string(), "zeta".to_string()]);
+        assert_eq!(
+            off,
+            vec!["eta".to_string(), "alpha".to_string(), "zeta".to_string()]
+        );
         // The same corpus ranks the same way twice: deterministic.
         let again: Vec<String> = keyword_only
             .recall("the railway deploy is failing")
@@ -4861,14 +5113,28 @@ mod tests {
             .into_iter()
             .map(|hit| hit.fact.name)
             .collect();
-        assert_eq!(on, vec!["alpha".to_string(), "zeta".to_string(), "eta".to_string()]);
+        assert_eq!(
+            on,
+            vec!["alpha".to_string(), "zeta".to_string(), "eta".to_string()]
+        );
         // The vector sub-channel is what moved the order, and the two
         // topical sub-channels are the only thing that separates these
         // three — no trajectory, no history, one basis.
         let hits = vector_on.recall("the railway deploy is failing");
-        assert!((hits[0].score.vector - 1.0).abs() < 1e-9, "{:?}", hits[0].score);
-        let eta = hits.iter().find(|hit| hit.fact.name == "eta").expect("eta ranks");
-        assert!((eta.score.vector - 1.0 / 2.0_f64.sqrt()).abs() < 1e-9, "{:?}", eta.score);
+        assert!(
+            (hits[0].score.vector - 1.0).abs() < 1e-9,
+            "{:?}",
+            hits[0].score
+        );
+        let eta = hits
+            .iter()
+            .find(|hit| hit.fact.name == "eta")
+            .expect("eta ranks");
+        assert!(
+            (eta.score.vector - 1.0 / 2.0_f64.sqrt()).abs() < 1e-9,
+            "{:?}",
+            eta.score
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -4919,15 +5185,7 @@ mod tests {
         let topical = W_VECTOR + W_KEYWORD;
         assert!(topical < 1.0 - topical, "the topical pair is {topical}");
         // History saturates: eight recalls and eighty score the same.
-        let saturated = Score::compute(
-            0.0,
-            0.0,
-            0.0,
-            80,
-            Basis::Inferred,
-            &calib::today(),
-            today,
-        );
+        let saturated = Score::compute(0.0, 0.0, 0.0, 80, Basis::Inferred, &calib::today(), today);
         let at_ceiling = Score::compute(
             0.0,
             0.0,
@@ -4940,24 +5198,9 @@ mod tests {
         assert_eq!(saturated.history, at_ceiling.history);
         // A confirmed-by vector outweighs an inferred one, and neither
         // is erased: provenance is magnitude, not a gate.
-        let confirmed = Score::compute(
-            0.0,
-            0.0,
-            0.0,
-            0,
-            Basis::ConfirmedBy,
-            &calib::today(),
-            today,
-        );
-        let inferred = Score::compute(
-            0.0,
-            0.0,
-            0.0,
-            0,
-            Basis::Inferred,
-            &calib::today(),
-            today,
-        );
+        let confirmed =
+            Score::compute(0.0, 0.0, 0.0, 0, Basis::ConfirmedBy, &calib::today(), today);
+        let inferred = Score::compute(0.0, 0.0, 0.0, 0, Basis::Inferred, &calib::today(), today);
         assert!(confirmed.provenance > inferred.provenance);
         assert!(inferred.provenance > 0.0);
         // A fact with no readable date contributes no freshness term.
@@ -4966,15 +5209,7 @@ mod tests {
             0.0
         );
         // Freshness halves at the half-life.
-        let decayed = Score::compute(
-            0.0,
-            0.0,
-            0.0,
-            0,
-            Basis::Inferred,
-            &days_ago(90),
-            today,
-        );
+        let decayed = Score::compute(0.0, 0.0, 0.0, 0, Basis::Inferred, &days_ago(90), today);
         assert!((decayed.freshness - 0.5).abs() < 1e-9, "{decayed:?}");
         // The floor's arithmetic, exact. Standing alone — freshness
         // plus provenance, no match at all — does not clear it.
@@ -5008,16 +5243,22 @@ mod tests {
         // THE OWNER'S RULING, in arithmetic. The most a fact with NO
         // direction evidence can score is full topical coverage plus
         // standing — maximum proximity, zero direction.
-        let proximity_max = W_VECTOR * 1.0 + W_KEYWORD * 1.0 + W_FRESHNESS * 1.0
+        let proximity_max = W_VECTOR * 1.0
+            + W_KEYWORD * 1.0
+            + W_FRESHNESS * 1.0
             + W_PROVENANCE * PROVENANCE_CONFIRMED;
         assert!((proximity_max - 0.45).abs() < 1e-12, "{proximity_max}");
         // The direction-strong fact: a 0.8 trajectory match, four
         // recalls' history, confirmed-by, and a weak 0.2 cosine.
-        let direction_strong = W_VECTOR * 0.2 + W_TRAJECTORY * 0.8
+        let direction_strong = W_VECTOR * 0.2
+            + W_TRAJECTORY * 0.8
             + W_HISTORY * (4.0 / RECALL_CEILING as f64)
             + W_FRESHNESS * 1.0
             + W_PROVENANCE * PROVENANCE_CONFIRMED;
-        assert!((direction_strong - 0.545).abs() < 1e-12, "{direction_strong}");
+        assert!(
+            (direction_strong - 0.545).abs() < 1e-12,
+            "{direction_strong}"
+        );
         // Direction outranks proximity WITH MARGIN, not by a hair.
         assert!(
             direction_strong > proximity_max,
@@ -5043,22 +5284,22 @@ mod tests {
         // — the maximum a directionless fact can reach is 0.45, and the
         // floor is 0.50, so a directionless fact can no longer stand
         // alone as the shape's own answer.
-        let topical_only = W_KEYWORD * 1.0 + W_FRESHNESS * 1.0 + W_PROVENANCE * PROVENANCE_CONFIRMED;
+        let topical_only =
+            W_KEYWORD * 1.0 + W_FRESHNESS * 1.0 + W_PROVENANCE * PROVENANCE_CONFIRMED;
         assert!(topical_only < SPILLOVER_FLOOR, "{topical_only}");
         assert!(proximity_max < SPILLOVER_FLOOR, "{proximity_max}");
         assert!((SPILLOVER_FLOOR - 0.50).abs() < 1e-12, "{SPILLOVER_FLOOR}");
         // A same-shape fact clears the floor with a 0.2 trajectory
         // match on top of full topical coverage, or two recalls.
-        let corroborated =
-            proximity_max + W_TRAJECTORY * 0.2;
+        let corroborated = proximity_max + W_TRAJECTORY * 0.2;
         assert!(corroborated > SPILLOVER_FLOOR, "{corroborated}");
-        assert!(
-            (corroborated - 0.51).abs() < 1e-12,
-            "{corroborated}"
-        );
+        assert!((corroborated - 0.51).abs() < 1e-12, "{corroborated}");
         assert!(proximity_max + W_HISTORY * (2.0 / RECALL_CEILING as f64) > SPILLOVER_FLOOR);
         // The direction-strong fact clears it with room to spare.
-        assert!(direction_strong - SPILLOVER_FLOOR > 0.0, "{direction_strong}");
+        assert!(
+            direction_strong - SPILLOVER_FLOOR > 0.0,
+            "{direction_strong}"
+        );
     }
 
     // --- shape routing ---
@@ -5067,7 +5308,10 @@ mod tests {
     fn shape_routing_classifies_each_shape_and_falls_back() {
         // One instruction per shape, each naming its shape's keywords.
         let cases = [
-            ("push the staging branch and watch the railway deploy", "deploy"),
+            (
+                "push the staging branch and watch the railway deploy",
+                "deploy",
+            ),
             ("the webpack bundle fails to compile", "build"),
             ("bump the lockfile after the pnpm upgrade", "deps"),
             ("the readme drifted from the documentation", "docs"),
@@ -5093,8 +5337,14 @@ mod tests {
             ("the lane failed open when sys1 was down", "fail-open"),
             ("the reader silently dropped the row", "drops-the-row"),
             ("the tower scan read was unbounded", "bound-exceeded"),
-            ("the feature doc claims more than the code proved", "claim-outran-evidence"),
-            ("the card line clipped the summary mid-token", "fixed-width-clip"),
+            (
+                "the feature doc claims more than the code proved",
+                "claim-outran-evidence",
+            ),
+            (
+                "the card line clipped the summary mid-token",
+                "fixed-width-clip",
+            ),
             ("the run adopted a foreign root", "foreign-root"),
         ];
         for (instruction, expected) in failures {
@@ -5103,19 +5353,34 @@ mod tests {
         // The structure table is consulted first: an instruction naming
         // both axes' terms routes under the structure shape, the fork's
         // order rule undisturbed.
-        assert_eq!(classify_shape("the unbounded webpack bundle"), Some("build"));
+        assert_eq!(
+            classify_shape("the unbounded webpack bundle"),
+            Some("build")
+        );
         // An instruction with no shape's terms at all is still the
         // fallback, not an error.
-        assert_eq!(classify_shape("the railway deploy is failing"), Some("deploy"));
+        assert_eq!(
+            classify_shape("the railway deploy is failing"),
+            Some("deploy")
+        );
         assert_eq!(classify_shape("the walnut table"), None);
         // The outcome axis classifies last, and only when nothing else
         // did: "the torch stack was missing" is the third sign's own
         // question, and a question that names a failure shape's terms
         // still routes to that shape — "what resolved the row drop"
         // asks about the drops-the-row class, not about outcomes.
-        assert_eq!(classify_shape("the torch stack was missing"), Some("incomplete"));
-        assert_eq!(classify_shape("the trajectory stalled partway"), Some("incomplete"));
-        assert_eq!(classify_shape("what resolved the row drop"), Some("drops-the-row"));
+        assert_eq!(
+            classify_shape("the torch stack was missing"),
+            Some("incomplete")
+        );
+        assert_eq!(
+            classify_shape("the trajectory stalled partway"),
+            Some("incomplete")
+        );
+        assert_eq!(
+            classify_shape("what resolved the row drop"),
+            Some("drops-the-row")
+        );
         // And a question with no problem-shape term routes to the
         // outcome, which is the only way the third sign is reachable.
         assert_eq!(classify_shape("the trajectory was fixed"), Some("resolved"));
@@ -5141,7 +5406,9 @@ mod tests {
             // Every failure shape has its own keyword entry, so it
             // classifies rather than sitting in the vocabulary unrouted.
             assert!(
-                FAILURE_SHAPE_KEYWORDS.iter().any(|(name, _)| *name == shape),
+                FAILURE_SHAPE_KEYWORDS
+                    .iter()
+                    .any(|(name, _)| *name == shape),
                 "{shape} has no keywords"
             );
         }
@@ -5163,7 +5430,12 @@ mod tests {
             .iter()
             .find(|(name, _)| *name == "fixed-width-clip")
             .expect("the clipping class has keywords");
-        for term in ["fixed width", "mid-token", "clipped the", "overflows the pane"] {
+        for term in [
+            "fixed width",
+            "mid-token",
+            "clipped the",
+            "overflows the pane",
+        ] {
             assert!(clip.1.contains(&term), "{term} is not routable");
         }
         let root = FAILURE_SHAPE_KEYWORDS
@@ -5222,8 +5494,16 @@ mod tests {
     fn an_unclassified_instruction_answers_from_the_surface_alone() {
         let root = scratch("fallback");
         let twin = "the railway deploy is a lesson";
-        write_fact(&root, "tagged", &good_fact("tagged", twin, "project", "deploy"));
-        write_fact(&root, "untagged", &good_fact("untagged", twin, "project", ""));
+        write_fact(
+            &root,
+            "tagged",
+            &good_fact("tagged", twin, "project", "deploy"),
+        );
+        write_fact(
+            &root,
+            "untagged",
+            &good_fact("untagged", twin, "project", ""),
+        );
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
         // Unclassified: no partition — the word-ranked pool IS the
         // primary pool — so the tagged and untagged twins rank equally
@@ -5267,7 +5547,12 @@ mod tests {
         write_fact(
             &root,
             "same-shape",
-            &good_fact("same-shape", "the branch pipeline is green", "project", "deploy"),
+            &good_fact(
+                "same-shape",
+                "the branch pipeline is green",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             &root,
@@ -5295,7 +5580,10 @@ mod tests {
         assert!((wrong.keyword - 1.0).abs() < 1e-12, "{wrong:?}");
         assert!((wrong.history - 1.0).abs() < 1e-12, "{wrong:?}");
         assert!((wrong.total - 0.55).abs() < 1e-12, "{wrong:?}");
-        assert!(wrong.total > same.total, "the words still prefer the wrong shape");
+        assert!(
+            wrong.total > same.total,
+            "the words still prefer the wrong shape"
+        );
         // THIS TEST FAILS UNDER THE OLD WEIGHTING. The old score was
         // vector 0.55 + keyword 0.25 + importance 0.10 + decay 0.10 plus
         // SHAPE_BOOST 0.15, and by hand:
@@ -5495,8 +5783,16 @@ mod tests {
         assert_eq!(hit_names(&hits), vec!["what-worked", "what-diverged"]);
         assert_eq!(hits[0].fact.sign(), Sign::Resolution);
         assert_eq!(hits[1].fact.sign(), Sign::Divergence);
-        assert!((hits[0].score.total - 0.525).abs() < 1e-3, "{:?}", hits[0].score);
-        assert!((hits[1].score.total - 0.45).abs() < 1e-3, "{:?}", hits[1].score);
+        assert!(
+            (hits[0].score.total - 0.525).abs() < 1e-3,
+            "{:?}",
+            hits[0].score
+        );
+        assert!(
+            (hits[1].score.total - 0.45).abs() < 1e-3,
+            "{:?}",
+            hits[1].score
+        );
         // The failure whose phrases do NOT match does not surface merely
         // for sharing the shape: its whole score is freshness plus
         // provenance (0.15), under the floor — it is in neither pool.
@@ -5519,7 +5815,10 @@ mod tests {
         );
         // The sign is derived from the tags, not stored: a failure-shape
         // tag is what makes a fact an anti-vector.
-        assert_eq!(hits[1].fact.shape, vec!["build".to_string(), "bound-exceeded".to_string()]);
+        assert_eq!(
+            hits[1].fact.shape,
+            vec!["build".to_string(), "bound-exceeded".to_string()]
+        );
         // The assembly names which is which, and the model can never
         // read the anti-vector as a candidate.
         let assembly = memory.assemble("the webpack bundle fails to compile", &[]);
@@ -5589,7 +5888,11 @@ mod tests {
         assert_eq!(hits[0].score.keyword, hits[1].score.keyword);
         assert_eq!(hits[0].score.trajectory, hits[1].score.trajectory);
         assert_eq!(hits[0].score.history, hits[1].score.history);
-        assert!((hits[0].score.total - 0.475).abs() < 1e-12, "{:?}", hits[0].score);
+        assert!(
+            (hits[0].score.total - 0.475).abs() < 1e-12,
+            "{:?}",
+            hits[0].score
+        );
         // The missing companions are NOT the fact's direction: they ride
         // no indexed text, so they cannot score.
         assert!(
@@ -5607,7 +5910,10 @@ mod tests {
         );
         assert!(block.contains("- resolved: [build"), "{block}");
         assert!(block.contains(SIGN_LEGEND.trim_end()), "{block}");
-        assert!(block.contains("incomplete: drove partway and stalled"), "{block}");
+        assert!(
+            block.contains("incomplete: drove partway and stalled"),
+            "{block}"
+        );
         // The recall surface cards the companions where the fact ranks.
         let rendered = render_recall(&memory, "the webpack bundle fails to compile");
         assert!(rendered.contains("incomplete:"), "{rendered}");
@@ -5672,7 +5978,11 @@ mod tests {
             hit_names(&partition.primary),
             vec!["what-broke", "what-fixed-it", "what-stalled"]
         );
-        let signs: Vec<Sign> = partition.primary.iter().map(|hit| hit.fact.sign()).collect();
+        let signs: Vec<Sign> = partition
+            .primary
+            .iter()
+            .map(|hit| hit.fact.sign())
+            .collect();
         assert_eq!(
             signs,
             vec![Sign::Divergence, Sign::Resolution, Sign::Incomplete]
@@ -5684,7 +5994,10 @@ mod tests {
         assert!(block.contains("- diverged: [drops-the-row"), "{block}");
         assert!(block.contains("- resolved: [drops-the-row"), "{block}");
         assert!(block.contains("- incomplete: [drops-the-row"), "{block}");
-        assert!(block.contains("missing: the timezone-aware parser"), "{block}");
+        assert!(
+            block.contains("missing: the timezone-aware parser"),
+            "{block}"
+        );
         assert!(
             block.contains("what broke before, what resolved it, and what stalled"),
             "{block}"
@@ -5710,7 +6023,10 @@ mod tests {
         .unwrap();
         let written = memory.remember(&request).unwrap();
         assert_eq!(written.sign(), Sign::Incomplete);
-        assert_eq!(written.missing, vec!["the torch stack".to_string(), "the CUDA driver".to_string()]);
+        assert_eq!(
+            written.missing,
+            vec!["the torch stack".to_string(), "the CUDA driver".to_string()]
+        );
         // The document renders the companions beside the phrases, and
         // the loader reads them back exactly.
         let text = fs::read_to_string(&written.path).unwrap();
@@ -5727,7 +6043,8 @@ mod tests {
         let hits = reloaded.recall("the webpack bundle build is incomplete");
         assert_eq!(hit_names(&hits), vec!["bootstrap-without-the-torch-stack"]);
         assert_eq!(hits[0].fact.sign(), Sign::Incomplete);
-        let block = render_assembly(&reloaded.assemble("the webpack bundle build is incomplete", &[]));
+        let block =
+            render_assembly(&reloaded.assemble("the webpack bundle build is incomplete", &[]));
         assert!(block.contains("- incomplete: [build"), "{block}");
         assert!(block.contains("the torch stack"), "{block}");
         assert!(block.contains("the CUDA driver"), "{block}");
@@ -5753,7 +6070,10 @@ mod tests {
                 "what-broke",
                 "the calibration reader cannot read a null",
                 "drops-the-row",
-                &["parse_row drops the whole line", "the row vanished from read_day"],
+                &[
+                    "parse_row drops the whole line",
+                    "the row vanished from read_day",
+                ],
                 0,
             ),
         );
@@ -5783,21 +6103,33 @@ mod tests {
 
         let partition = memory.partition("the row vanished from the stream");
         assert_eq!(partition.shape, Some("drops-the-row"));
-        assert_eq!(hit_names(&partition.primary), vec!["what-broke", "what-it-cost"]);
+        assert_eq!(
+            hit_names(&partition.primary),
+            vec!["what-broke", "what-it-cost"]
+        );
         assert!(partition.spillover.is_empty());
         // Every fact in a failure-shape pool is an anti-vector: the
         // avoidance half is not a candidate, and its own phrases may
         // still carry what resolved it.
-        assert!(partition.primary.iter().all(|hit| hit.fact.sign() == Sign::Divergence));
+        assert!(partition
+            .primary
+            .iter()
+            .all(|hit| hit.fact.sign() == Sign::Divergence));
 
         // Either axis matches: the both-axes fact is primary under the
         // structure shape AND under the failure shape.
         let rendering = memory.partition("the shader layout repaints every frame");
         assert_eq!(rendering.shape, Some("rendering"));
-        assert!(rendering.primary.iter().any(|hit| hit.fact.name == "both-axes"));
+        assert!(rendering
+            .primary
+            .iter()
+            .any(|hit| hit.fact.name == "both-axes"));
         let failure = memory.partition("the tower scan read was unbounded");
         assert_eq!(failure.shape, Some("bound-exceeded"));
-        assert!(failure.primary.iter().any(|hit| hit.fact.name == "both-axes"));
+        assert!(failure
+            .primary
+            .iter()
+            .any(|hit| hit.fact.name == "both-axes"));
         assert_eq!(shape_axis("bound-exceeded"), "failure");
         assert_eq!(shape_axis("rendering"), "structure");
         let _ = fs::remove_dir_all(&root);
@@ -5812,7 +6144,12 @@ mod tests {
         write_fact(
             &root_a,
             "off-one",
-            &good_fact("off-one", "the railway deploy is failing per branch", "project", "rendering"),
+            &good_fact(
+                "off-one",
+                "the railway deploy is failing per branch",
+                "project",
+                "rendering",
+            ),
         );
         let memory = Memory::load_with(&root_a, Box::new(KeywordOnly));
         let assembly = memory.assemble_within("the railway deploy is failing", &[], 1);
@@ -5837,7 +6174,12 @@ mod tests {
         write_fact(
             &root_b,
             "same-shape",
-            &good_fact("same-shape", "the branch pipeline is green", "project", "deploy"),
+            &good_fact(
+                "same-shape",
+                "the branch pipeline is green",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             &root_b,
@@ -5851,9 +6193,15 @@ mod tests {
         );
         let memory = Memory::load_with(&root_b, Box::new(KeywordOnly));
         let assembly = memory.assemble_within("the railway deploy is failing", &[], 1);
-        assert_eq!(hit_names(&assembly.recalled), vec!["same-shape", "wrong-shape"]);
+        assert_eq!(
+            hit_names(&assembly.recalled),
+            vec!["same-shape", "wrong-shape"]
+        );
         assert!(!assembly.recalled[0].off_shape);
-        assert!(assembly.recalled[1].off_shape, "the weak pool's neighbour is marked");
+        assert!(
+            assembly.recalled[1].off_shape,
+            "the weak pool's neighbour is marked"
+        );
         assert!(
             assembly
                 .spillover_route
@@ -5882,7 +6230,12 @@ mod tests {
         write_fact(
             &root_c,
             "off-shape-fact",
-            &good_fact("off-shape-fact", "the railway deploy is failing", "project", "rendering"),
+            &good_fact(
+                "off-shape-fact",
+                "the railway deploy is failing",
+                "project",
+                "rendering",
+            ),
         );
         let memory = Memory::load_with(&root_c, Box::new(KeywordOnly));
         let partition = memory.partition("the railway deploy is failing");
@@ -5905,7 +6258,11 @@ mod tests {
         let tight = memory.assemble_within("the railway deploy is failing", &[], 1);
         assert_eq!(hit_names(&tight.recalled), vec!["strong"]);
         assert!(tight.spillover.is_empty(), "no route admitted them");
-        assert!(tight.dropped.contains(&"off-shape-fact".to_string()), "{:?}", tight.dropped);
+        assert!(
+            tight.dropped.contains(&"off-shape-fact".to_string()),
+            "{:?}",
+            tight.dropped
+        );
         assert!(!render_assembly(&tight).contains("off-shape"));
         let _ = fs::remove_dir_all(&root_a);
         let _ = fs::remove_dir_all(&root_b);
@@ -5936,7 +6293,10 @@ mod tests {
         // every other byte — the body above all — is preserved.
         let after = fs::read_to_string(&path).unwrap();
         assert!(after.contains("recall-count: 3"), "{after}");
-        assert!(after.contains("The full body, with a second line."), "{after}");
+        assert!(
+            after.contains("The full body, with a second line."),
+            "{after}"
+        );
         assert!(after.contains("shape: [deploy]"), "{after}");
         assert_eq!(
             after
@@ -5959,7 +6319,9 @@ mod tests {
         );
         // A second hit counts again.
         memory.recall_hits("the railway deploy is failing", None);
-        assert!(fs::read_to_string(&path).unwrap().contains("recall-count: 4"));
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("recall-count: 4"));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -5986,7 +6348,12 @@ mod tests {
         write_fact(
             &root,
             "hit-me",
-            &good_fact("hit-me", "a deploy lesson about railway", "project", "deploy"),
+            &good_fact(
+                "hit-me",
+                "a deploy lesson about railway",
+                "project",
+                "deploy",
+            ),
         );
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
         let stream_root = scratch("calib-stream");
@@ -6031,8 +6398,14 @@ mod tests {
             "http://127.0.0.1:9002/v1/embeddings"
         );
         assert_eq!(endpoint_from(|_| None), DEFAULT_EMBEDDING_ENDPOINT);
-        assert_eq!(endpoint_from(|_| Some(String::new())), DEFAULT_EMBEDDING_ENDPOINT);
-        assert_eq!(endpoint_from(|_| Some("   ".to_string())), DEFAULT_EMBEDDING_ENDPOINT);
+        assert_eq!(
+            endpoint_from(|_| Some(String::new())),
+            DEFAULT_EMBEDDING_ENDPOINT
+        );
+        assert_eq!(
+            endpoint_from(|_| Some("   ".to_string())),
+            DEFAULT_EMBEDDING_ENDPOINT
+        );
         // The name the environment carries is the one documented.
         assert_eq!(EMBEDDING_ENDPOINT_VAR, "FLEET_EMBEDDING_ENDPOINT");
     }
@@ -6060,7 +6433,11 @@ mod tests {
         // One changed fact: only it is re-embedded.
         let path = root.join("alpha.md");
         let text = fs::read_to_string(&path).unwrap();
-        fs::write(&path, format!("{text}\nAn appended line changes the size.\n")).unwrap();
+        fs::write(
+            &path,
+            format!("{text}\nAn appended line changes the size.\n"),
+        )
+        .unwrap();
         let (calls, embedder) = ScriptedEmbedder::new();
         let _ = Memory::load_with(&root, embedder);
         assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -6115,12 +6492,19 @@ mod tests {
     #[test]
     fn a_legacy_index_without_the_key_is_rebuilt_not_served() {
         let root = scratch("legacy-index");
-        write_fact(&root, "alpha", &good_fact("alpha", "railway deploy per branch", "project", "deploy"));
+        write_fact(
+            &root,
+            "alpha",
+            &good_fact("alpha", "railway deploy per branch", "project", "deploy"),
+        );
         // The pre-key format: a stamp-matching entry with no embedder
         // and no dims — an index written before the key existed. Its
         // stamp says fresh; its absent key says it is not this
         // embedder's cache, and the key wins.
-        let stamp = load_facts(&root)[0].stamp.clone().expect("the fact carries a stamp");
+        let stamp = load_facts(&root)[0]
+            .stamp
+            .clone()
+            .expect("the fact carries a stamp");
         fs::write(
             index_path(&root),
             format!(
@@ -6144,29 +6528,58 @@ mod tests {
         write_fact(
             &root,
             "identity",
-            &good_fact("identity", "who the owner is and how he works, in a standing fact", "user", ""),
+            &good_fact(
+                "identity",
+                "who the owner is and how he works, in a standing fact",
+                "user",
+                "",
+            ),
         );
         write_fact(
             &root,
             "rule",
-            &good_fact("rule", "a standing rule the owner stated about documentation", "feedback", "docs"),
+            &good_fact(
+                "rule",
+                "a standing rule the owner stated about documentation",
+                "feedback",
+                "docs",
+            ),
         );
         write_fact(
             &root,
             "top",
-            &good_fact("top", "the railway deploy is failing per branch", "project", "deploy"),
+            &good_fact(
+                "top",
+                "the railway deploy is failing per branch",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             &root,
             "middle",
-            &good_fact("middle", "the railway deploy waits for the webhook", "project", "deploy"),
+            &good_fact(
+                "middle",
+                "the railway deploy waits for the webhook",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             &root,
             "bottom",
-            &good_fact("bottom", "the railway deploy logs its outcome", "project", "deploy"),
+            &good_fact(
+                "bottom",
+                "the railway deploy logs its outcome",
+                "project",
+                "deploy",
+            ),
         );
-        write_fact(&root, "junk", &good_fact("junk", "the walnut table texture", "project", ""));
+        write_fact(
+            &root,
+            "junk",
+            &good_fact("junk", "the walnut table texture", "project", ""),
+        );
     }
 
     #[test]
@@ -6189,8 +6602,15 @@ mod tests {
         // The strongest recall always enters; the rest are bounded by
         // the budget and the ones that did not fit are named.
         assert_eq!(assembly.recalled[0].fact.name, "top");
-        assert!(assembly.dropped.contains(&"bottom".to_string()), "{:?}", assembly.dropped);
-        assert!(block.contains("the railway deploy is failing per branch"), "{block}");
+        assert!(
+            assembly.dropped.contains(&"bottom".to_string()),
+            "{:?}",
+            assembly.dropped
+        );
+        assert!(
+            block.contains("the railway deploy is failing per branch"),
+            "{block}"
+        );
         assert!(!block.contains("waits for the webhook"), "{block}");
         assert!(!block.contains("logs its outcome"), "{block}");
 
@@ -6228,22 +6648,42 @@ mod tests {
         write_fact(
             root,
             "top",
-            &good_fact("top", "the railway deploy is failing per branch", "project", "deploy"),
+            &good_fact(
+                "top",
+                "the railway deploy is failing per branch",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             root,
             "bottom",
-            &good_fact("bottom", "the railway deploy logs its outcome", "project", "deploy"),
+            &good_fact(
+                "bottom",
+                "the railway deploy logs its outcome",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             root,
             "lower",
-            &good_fact("lower", "the railway deploy ships quietly", "project", "deploy"),
+            &good_fact(
+                "lower",
+                "the railway deploy ships quietly",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             root,
             "middle",
-            &good_fact("middle", "the railway deploy waits for the webhook", "project", "deploy"),
+            &good_fact(
+                "middle",
+                "the railway deploy waits for the webhook",
+                "project",
+                "deploy",
+            ),
         );
     }
 
@@ -6304,12 +6744,22 @@ mod tests {
         write_fact(
             &root,
             "top",
-            &good_fact("top", "the railway deploy is failing per branch", "project", "deploy"),
+            &good_fact(
+                "top",
+                "the railway deploy is failing per branch",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             &root,
             "bottom",
-            &good_fact("bottom", "the railway deploy logs its outcome", "project", "deploy"),
+            &good_fact(
+                "bottom",
+                "the railway deploy logs its outcome",
+                "project",
+                "deploy",
+            ),
         );
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
 
@@ -6325,17 +6775,25 @@ mod tests {
         // section carries the remainder — the documented behavior,
         // pinned.
         let assembly = memory.assemble("the railway deploy is failing", &[]);
-        let protected: Vec<&str> =
-            assembly.protected.iter().map(|hit| hit.fact.name.as_str()).collect();
+        let protected: Vec<&str> = assembly
+            .protected
+            .iter()
+            .map(|hit| hit.fact.name.as_str())
+            .collect();
         assert_eq!(protected, vec!["identity"]);
-        let recalled: Vec<&str> =
-            assembly.recalled.iter().map(|hit| hit.fact.name.as_str()).collect();
+        let recalled: Vec<&str> = assembly
+            .recalled
+            .iter()
+            .map(|hit| hit.fact.name.as_str())
+            .collect();
         assert_eq!(recalled, vec!["top", "bottom"]);
         let block = render_assembly(&assembly);
-        let protected_at =
-            block.find("the owner's standing rule").expect("the protected fact renders in its tier");
-        let ranked_at =
-            block.find("the railway deploy is failing per branch").expect("the ranked section renders");
+        let protected_at = block
+            .find("the owner's standing rule")
+            .expect("the protected fact renders in its tier");
+        let ranked_at = block
+            .find("the railway deploy is failing per branch")
+            .expect("the ranked section renders");
         assert!(protected_at < ranked_at, "{block}");
         let _ = fs::remove_dir_all(&root);
     }
@@ -6350,14 +6808,21 @@ mod tests {
         let working: Vec<Fact> = load_facts(&root)
             .into_iter()
             .find(|fact| fact.name == "middle")
-            .map(|fact| Fact { name: "working-note".to_string(), ..fact })
+            .map(|fact| Fact {
+                name: "working-note".to_string(),
+                ..fact
+            })
             .into_iter()
             .collect();
         let assembly = memory.assemble_within("the railway deploy is failing", &working, 512);
         let block = render_assembly(&assembly);
-        let protected_at = block.find("[user confirmed-by]").expect("the protected tier renders");
+        let protected_at = block
+            .find("[user confirmed-by]")
+            .expect("the protected tier renders");
         let recalled_at = block.find("[deploy").expect("the recall tier renders");
-        let working_at = block.find("[working confirmed-by]").expect("the working tier renders");
+        let working_at = block
+            .find("[working confirmed-by]")
+            .expect("the working tier renders");
         assert!(protected_at < recalled_at, "{block}");
         assert!(recalled_at < working_at, "{block}");
         // A forgotten working fact is dropped before the budget sees it.
@@ -6382,11 +6847,17 @@ mod tests {
         assert!(rendered.contains("fleet memories"), "{rendered}");
         // One card per live fact, the retired footer, and the root path.
         assert_eq!(rendered.matches('\u{250c}').count(), 6, "{rendered}");
-        assert!(rendered.contains("6 facts \u{b7} 2 protected \u{b7} 0 retired"), "{rendered}");
+        assert!(
+            rendered.contains("6 facts \u{b7} 2 protected \u{b7} 0 retired"),
+            "{rendered}"
+        );
         assert!(rendered.contains(&root.display().to_string()), "{rendered}");
         // Each card carries name, type, basis, shape, recall-count, and
         // valid-until.
-        assert!(rendered.contains("project \u{b7} confirmed-by"), "{rendered}");
+        assert!(
+            rendered.contains("project \u{b7} confirmed-by"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains("shape: deploy \u{b7} recalls: 0 \u{b7} valid-until: \u{2014}"),
             "{rendered}"
@@ -6408,8 +6879,15 @@ mod tests {
         // unbroken string: every shape in all three taxonomies is
         // named somewhere on the surface.
         let empty = render(&memory, Some("telemetry"));
-        assert!(empty.contains("no facts carry shape `telemetry`"), "{empty}");
-        for shape in SHAPES.iter().chain(FAILURE_SHAPES.iter()).chain(OUTCOME_SHAPES.iter()) {
+        assert!(
+            empty.contains("no facts carry shape `telemetry`"),
+            "{empty}"
+        );
+        for shape in SHAPES
+            .iter()
+            .chain(FAILURE_SHAPES.iter())
+            .chain(OUTCOME_SHAPES.iter())
+        {
             assert!(empty.contains(*shape), "{shape} is not named: {empty}");
         }
         let _ = fs::remove_dir_all(&root);
@@ -6428,7 +6906,10 @@ mod tests {
         // The shape and its axis, the backend, and the counts are
         // named — including how many facts are in the pool and how many
         // are off-shape.
-        assert!(rendered.contains("shape: deploy (structure-shape)"), "{rendered}");
+        assert!(
+            rendered.contains("shape: deploy (structure-shape)"),
+            "{rendered}"
+        );
         assert!(rendered.contains("backend: keyword-only"), "{rendered}");
         assert!(rendered.contains("3 facts ranked"), "{rendered}");
         assert!(rendered.contains("3 in the pool"), "{rendered}");
@@ -6436,16 +6917,28 @@ mod tests {
         // Each ranked fact's card carries its channels — the "why",
         // each dimension named — and its magnitude: the shape, the hit
         // history, the freshness, the basis, and the sign.
-        assert!(rendered.contains("vector 0.00 \u{b7} keyword 0.60 \u{b7} trajectory 0.00"), "{rendered}");
+        assert!(
+            rendered.contains("vector 0.00 \u{b7} keyword 0.60 \u{b7} trajectory 0.00"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains("shape: deploy \u{b7} history 0 \u{b7} freshness 1.00 \u{b7} provenance confirmed-by"),
             "{rendered}"
         );
         assert!(rendered.contains("0.30 resolved:"), "{rendered}");
         // The assembled block renders, and the junk is absent from it.
-        assert!(rendered.contains("Standing context (protected"), "{rendered}");
-        assert!(rendered.contains("shape-routed recall for `deploy`"), "{rendered}");
-        assert!(rendered.contains("- resolved: [deploy 0.30 confirmed-by]"), "{rendered}");
+        assert!(
+            rendered.contains("Standing context (protected"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("shape-routed recall for `deploy`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("- resolved: [deploy 0.30 confirmed-by]"),
+            "{rendered}"
+        );
         assert!(!rendered.contains("walnut"), "{rendered}");
         // The dry run is named, and it is true: no file changed.
         assert!(rendered.contains("a dry run"), "{rendered}");
@@ -6467,19 +6960,35 @@ mod tests {
         write_fact(
             &root,
             "same-shape",
-            &good_fact("same-shape", "the branch pipeline is green", "project", "deploy"),
+            &good_fact(
+                "same-shape",
+                "the branch pipeline is green",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             &root,
             "wrong-shape",
-            &recalled_fact("wrong-shape", "the railway deploy is failing", "rendering", RECALL_CEILING),
+            &recalled_fact(
+                "wrong-shape",
+                "the railway deploy is failing",
+                "rendering",
+                RECALL_CEILING,
+            ),
         );
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
         let rendered = render_recall(&memory, "the railway deploy is failing");
         // The partition is sectioned: the shape's pool, then the
         // off-shape facts with the route that admitted it named.
-        assert!(rendered.contains("\u{b7} the `deploy` pool \u{b7} 1 fact"), "{rendered}");
-        assert!(rendered.contains("\u{b7} off-shape \u{b7} 1 fact outside the pool"), "{rendered}");
+        assert!(
+            rendered.contains("\u{b7} the `deploy` pool \u{b7} 1 fact"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{b7} off-shape \u{b7} 1 fact outside the pool"),
+            "{rendered}"
+        );
         // The route reason is long enough to wrap, and it wraps at a
         // word boundary rather than mid-token: the first line carries
         // the reason's head and the floor's name rides the
@@ -6494,7 +7003,9 @@ mod tests {
         // line carries the marker.
         assert!(rendered.contains("0.55 resolved: off-shape"), "{rendered}");
         assert!(
-            rendered.contains("- resolved: [rendering 0.55 confirmed-by off-shape] the railway deploy is failing"),
+            rendered.contains(
+                "- resolved: [rendering 0.55 confirmed-by off-shape] the railway deploy is failing"
+            ),
             "{rendered}"
         );
         let _ = fs::remove_dir_all(&root);
@@ -6539,7 +7050,10 @@ mod tests {
         // anti-vector's line names the class of thing that broke.
         assert!(rendered.contains(SIGN_LEGEND.trim_end()), "{rendered}");
         assert!(rendered.contains("- resolved: [build"), "{rendered}");
-        assert!(rendered.contains("- diverged: [bound-exceeded"), "{rendered}");
+        assert!(
+            rendered.contains("- diverged: [bound-exceeded"),
+            "{rendered}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -6581,8 +7095,7 @@ mod tests {
             // column count. Everything the surface itself draws is:
             // the title, the status line, the dividers, every card, and
             // the dry-run footer.
-            let (surface, tail) = match rendered.split_once("what would enter a turn's context")
-            {
+            let (surface, tail) = match rendered.split_once("what would enter a turn's context") {
                 Some((head, rest)) => (head.to_string(), rest.to_string()),
                 None => (rendered.clone(), String::new()),
             };
@@ -6607,7 +7120,10 @@ mod tests {
         // The shipped bound is the named constant, and the surface at
         // that bound still carries everything it names.
         let shipped = render_recall(&memory, "the railway deploy is failing");
-        assert!(shipped.contains("shape: deploy (structure-shape)"), "{shipped}");
+        assert!(
+            shipped.contains("shape: deploy (structure-shape)"),
+            "{shipped}"
+        );
         assert!(shipped.contains("backend: keyword-only"), "{shipped}");
         assert!(shipped.contains("2 facts ranked"), "{shipped}");
         assert!(shipped.contains("1 in the pool"), "{shipped}");
@@ -6706,14 +7222,20 @@ mod tests {
             request.shape,
             vec!["build".to_string(), "bound-exceeded".to_string()]
         );
-        assert_eq!(request.phrases, vec!["parse_row drops the whole line".to_string()]);
+        assert_eq!(
+            request.phrases,
+            vec!["parse_row drops the whole line".to_string()]
+        );
         let written = memory.remember(&request).unwrap();
         assert_eq!(written.sign(), Sign::Divergence);
         // The document renders the phrases beside their sibling shape,
         // and the loader reads them back.
         let text = fs::read_to_string(&written.path).unwrap();
         assert!(text.contains("shape: [build, bound-exceeded]\n"), "{text}");
-        assert!(text.contains("phrases: [parse_row drops the whole line]\n"), "{text}");
+        assert!(
+            text.contains("phrases: [parse_row drops the whole line]\n"),
+            "{text}"
+        );
         let loaded = load_facts(&root);
         assert_eq!(loaded[0].phrases, request.phrases);
         // A modify keeps the direction the superseded fact recorded.
@@ -6747,7 +7269,10 @@ mod tests {
             "phrases": ["fine", 7],
         }))
         .unwrap_err();
-        assert!(not_strings.to_string().contains("must be a string"), "{not_strings}");
+        assert!(
+            not_strings.to_string().contains("must be a string"),
+            "{not_strings}"
+        );
         let nasty = Remember::parse(&serde_json::json!({
             "name": "nasty-phrases",
             "description": "a fact with a nasty phrase",
@@ -6755,7 +7280,10 @@ mod tests {
             "phrases": ["tab\there and an escape \u{1b}[31m"],
         }))
         .unwrap();
-        assert_eq!(nasty.phrases, vec!["tabhere and an escape [31m".to_string()]);
+        assert_eq!(
+            nasty.phrases,
+            vec!["tabhere and an escape [31m".to_string()]
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -6802,7 +7330,11 @@ mod tests {
         let hits = reloaded.recall("read CLAUDE.local.md for the railway credentials");
         assert_eq!(hit_names(&hits), vec!["deploy-credentials-rule"]);
         let hit = &hits[0];
-        assert!((hit.score.trajectory - 0.625).abs() < 1e-12, "{:?}", hit.score);
+        assert!(
+            (hit.score.trajectory - 0.625).abs() < 1e-12,
+            "{:?}",
+            hit.score
+        );
         assert!((hit.score.keyword - 0.125).abs() < 1e-12, "{:?}", hit.score);
         assert!(!hit.off_shape, "the fact carries the instruction's shape");
         // The phrases round-trip through the file: the loader reads back
@@ -6857,7 +7389,10 @@ mod tests {
         assert!(text.starts_with(
             "---\nname: the-gate-is-local\ndescription: \"Fleet's gate is local and its exit code is read, never piped\"\ntype: feedback\ndate: "
         ), "{text}");
-        assert!(text.contains("basis: confirmed-by\ntier: durable\n"), "{text}");
+        assert!(
+            text.contains("basis: confirmed-by\ntier: durable\n"),
+            "{text}"
+        );
         assert!(text.contains("shape: [build, change]\n"), "{text}");
         assert!(text.contains("superseded-by:\nvalid-until:\n"), "{text}");
         let _ = fs::remove_dir_all(&root);
@@ -6936,7 +7471,10 @@ mod tests {
             "tier": "episodic",
         }))
         .unwrap_err();
-        assert!(matches!(&error, WriteError::Tier(reason) if reason.contains("consolidation cycle")), "{error}");
+        assert!(
+            matches!(&error, WriteError::Tier(reason) if reason.contains("consolidation cycle")),
+            "{error}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -7036,9 +7574,24 @@ mod tests {
         }))
         .unwrap();
         let written = memory.remember(&request).unwrap();
-        assert!(!written.description.chars().any(|character| character.is_control()), "{:?}", written.description);
-        assert!(written.description.chars().count() <= MAX_DESCRIPTION_CHARS + 1, "{}", written.description.chars().count());
-        assert!(written.description.ends_with('\u{2026}'), "{}", written.description);
+        assert!(
+            !written
+                .description
+                .chars()
+                .any(|character| character.is_control()),
+            "{:?}",
+            written.description
+        );
+        assert!(
+            written.description.chars().count() <= MAX_DESCRIPTION_CHARS + 1,
+            "{}",
+            written.description.chars().count()
+        );
+        assert!(
+            written.description.ends_with('\u{2026}'),
+            "{}",
+            written.description
+        );
         // It still round-trips: the sanitized description is what the
         // loader reads back.
         let loaded = load_facts(&root);
@@ -7082,7 +7635,10 @@ mod tests {
         }))
         .unwrap_err();
         assert!(matches!(error, WriteError::Body(_)), "{error}");
-        assert!(error.to_string().contains(&MAX_BODY_BYTES.to_string()), "{error}");
+        assert!(
+            error.to_string().contains(&MAX_BODY_BYTES.to_string()),
+            "{error}"
+        );
         // Nothing landed: a refused write leaves no file behind.
         assert!(load_facts(&root).is_empty());
         let _ = fs::remove_dir_all(&root);
@@ -7112,7 +7668,10 @@ mod tests {
             "description": "the bootstrap was correct and the torch stack was still missing",
         }))
         .unwrap();
-        assert!(modify.missing.is_none(), "an absent argument is an inheritance");
+        assert!(
+            modify.missing.is_none(),
+            "an absent argument is an inheritance"
+        );
         memory.supersede(&modify, false, None).unwrap();
         let inherited = load_facts(&root)
             .into_iter()
@@ -7174,7 +7733,10 @@ mod tests {
             "missing": ["fine", 7],
         }))
         .unwrap_err();
-        assert!(not_strings.to_string().contains("must be a string"), "{not_strings}");
+        assert!(
+            not_strings.to_string().contains("must be a string"),
+            "{not_strings}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -7195,7 +7757,10 @@ mod tests {
         .unwrap();
         let written = memory.remember(&request).unwrap();
         assert!(
-            !written.fact_type.chars().any(|character| character.is_control()),
+            !written
+                .fact_type
+                .chars()
+                .any(|character| character.is_control()),
             "{:?}",
             written.fact_type
         );
@@ -7204,7 +7769,11 @@ mod tests {
             "{}",
             written.fact_type.chars().count()
         );
-        assert!(written.fact_type.ends_with('\u{2026}'), "{}", written.fact_type);
+        assert!(
+            written.fact_type.ends_with('\u{2026}'),
+            "{}",
+            written.fact_type
+        );
 
         // The justification rides supersede, bounded the same way where
         // the calibration row and the retirement note read it.
@@ -7221,7 +7790,10 @@ mod tests {
             .lines()
             .find(|line| line.contains("Retired"))
             .expect("the retirement note carries the justification");
-        assert!(!note.chars().any(|character| character.is_control()), "{note}");
+        assert!(
+            !note.chars().any(|character| character.is_control()),
+            "{note}"
+        );
         assert!(note.ends_with('\u{2026}'), "{note}");
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&stream_root);
@@ -7233,12 +7805,22 @@ mod tests {
         write_fact(
             &root,
             "expired-note",
-            &working_fact("expired-note", "a working note whose time has passed", &days_ago(3), &days_ago(1)),
+            &working_fact(
+                "expired-note",
+                "a working note whose time has passed",
+                &days_ago(3),
+                &days_ago(1),
+            ),
         );
         write_fact(
             &root,
             "live-note",
-            &working_fact("live-note", "a working note still in its window", &days_ago(0), &days_ago(-1)),
+            &working_fact(
+                "live-note",
+                "a working note still in its window",
+                &days_ago(0),
+                &days_ago(-1),
+            ),
         );
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
         // The loader loads both — a retired fact is still a file — but
@@ -7252,9 +7834,15 @@ mod tests {
             .into_iter()
             .map(|hit| hit.fact.name)
             .collect();
-        assert!(!recalled.contains(&"expired-note".to_string()), "{recalled:?}");
+        assert!(
+            !recalled.contains(&"expired-note".to_string()),
+            "{recalled:?}"
+        );
         let assembly = memory.assemble("a working note whose time has passed", &working);
-        assert!(assembly.working.iter().all(|fact| fact.name != "expired-note"));
+        assert!(assembly
+            .working
+            .iter()
+            .all(|fact| fact.name != "expired-note"));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -7264,12 +7852,22 @@ mod tests {
         write_fact(
             &root,
             "durable-one",
-            &good_fact("durable-one", "the railway deploy is failing per branch", "project", "deploy"),
+            &good_fact(
+                "durable-one",
+                "the railway deploy is failing per branch",
+                "project",
+                "deploy",
+            ),
         );
         write_fact(
             &root,
             "working-note",
-            &working_fact("working-note", "the railway deploy needs a re-check", &days_ago(0), &days_ago(-1)),
+            &working_fact(
+                "working-note",
+                "the railway deploy needs a re-check",
+                &days_ago(0),
+                &days_ago(-1),
+            ),
         );
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
 
@@ -7286,8 +7884,14 @@ mod tests {
 
         let assembly = memory.assemble("the railway deploy is failing", &working);
         let block = render_assembly(&assembly);
-        assert!(block.contains("Working memory (session-scoped):"), "{block}");
-        assert!(block.contains("the railway deploy needs a re-check"), "{block}");
+        assert!(
+            block.contains("Working memory (session-scoped):"),
+            "{block}"
+        );
+        assert!(
+            block.contains("the railway deploy needs a re-check"),
+            "{block}"
+        );
         // The tier renders last, after the protected block and the
         // ranked section.
         let ranked_at = block.find("[deploy ").expect("the ranked section renders");
@@ -7306,12 +7910,22 @@ mod tests {
         write_fact(
             root,
             "expired-note",
-            &working_fact("expired-note", "a working note whose time has passed", &days_ago(10), &days_ago(1)),
+            &working_fact(
+                "expired-note",
+                "a working note whose time has passed",
+                &days_ago(10),
+                &days_ago(1),
+            ),
         );
         write_fact(
             root,
             "old-note",
-            &working_fact("old-note", "a working note nobody renewed", &days_ago(30), &days_ago(-30)),
+            &working_fact(
+                "old-note",
+                "a working note nobody renewed",
+                &days_ago(30),
+                &days_ago(-30),
+            ),
         );
         write_fact(
             root,
@@ -7376,7 +7990,10 @@ mod tests {
 
         // Supersede: the stale inferred fact is folded and stamped.
         let stale = fs::read_to_string(root.join("stale-inferred.md")).unwrap();
-        assert!(stale.contains(&format!("superseded-by: {summary}")), "{stale}");
+        assert!(
+            stale.contains(&format!("superseded-by: {summary}")),
+            "{stale}"
+        );
 
         // Forget: the expired durable fact is archived, not deleted.
         assert!(!root.join("expired-durable.md").exists());
@@ -7387,7 +8004,10 @@ mod tests {
         assert!(root.join("fresh.md").exists());
         assert!(root.join("stale-confirmed.md").exists());
         let confirmed = fs::read_to_string(root.join("stale-confirmed.md")).unwrap();
-        assert!(!confirmed.contains("superseded-by: consolidation"), "{confirmed}");
+        assert!(
+            !confirmed.contains("superseded-by: consolidation"),
+            "{confirmed}"
+        );
         assert_eq!(result.untouched, vec!["stale-confirmed".to_string()]);
 
         // Every action landed as a `consolidate` row with its reason.
@@ -7398,7 +8018,11 @@ mod tests {
             .map(|row| (row.action.as_str(), row.fact.as_str(), row.reason.as_str()))
             .collect();
         assert!(
-            actions.contains(&("compress", "expired-note", &format!("working memory past its valid-until {yesterday}"))),
+            actions.contains(&(
+                "compress",
+                "expired-note",
+                &format!("working memory past its valid-until {yesterday}")
+            )),
             "{actions:?}"
         );
         assert!(
@@ -7406,7 +8030,11 @@ mod tests {
             "{actions:?}"
         );
         assert!(
-            actions.contains(&("supersede", "stale-inferred", "inferred, never recalled, older than 180 days")),
+            actions.contains(&(
+                "supersede",
+                "stale-inferred",
+                "inferred, never recalled, older than 180 days"
+            )),
             "{actions:?}"
         );
         assert!(
@@ -7422,8 +8050,14 @@ mod tests {
             .into_iter()
             .map(|hit| hit.fact.name)
             .collect();
-        assert!(!recalled.contains(&"stale-inferred".to_string()), "{recalled:?}");
-        assert!(!recalled.contains(&"expired-note".to_string()), "{recalled:?}");
+        assert!(
+            !recalled.contains(&"stale-inferred".to_string()),
+            "{recalled:?}"
+        );
+        assert!(
+            !recalled.contains(&"expired-note".to_string()),
+            "{recalled:?}"
+        );
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&stream_root);
     }
@@ -7477,8 +8111,14 @@ mod tests {
         assert_eq!(hits[0].fact.missing, vec!["the torch stack".to_string()]);
         // The surface names what it kept and why.
         let rendered = render_consolidation(&result);
-        assert!(rendered.contains("left alone: stalled-inferred"), "{rendered}");
-        assert!(rendered.contains("incomplete, so the cycle never folds one"), "{rendered}");
+        assert!(
+            rendered.contains("left alone: stalled-inferred"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("incomplete, so the cycle never folds one"),
+            "{rendered}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -7488,10 +8128,18 @@ mod tests {
         write_fact(
             &root,
             "old-note",
-            &working_fact("old-note", "a working note nobody renewed", &days_ago(30), &days_ago(-30)),
+            &working_fact(
+                "old-note",
+                "a working note nobody renewed",
+                &days_ago(30),
+                &days_ago(-30),
+            ),
         );
         let first = consolidate(&root, &calib::today(), None);
-        let first_summary = first.summary.clone().expect("the first pass wrote a summary");
+        let first_summary = first
+            .summary
+            .clone()
+            .expect("the first pass wrote a summary");
         // The pass stamped its fact, so a second pass finds nothing
         // left to fold — and writes no second summary.
         let second = consolidate(&root, &calib::today(), None);
@@ -7516,7 +8164,12 @@ mod tests {
         write_fact(
             &root,
             "expired-note",
-            &working_fact("expired-note", "a working note whose time has passed", &days_ago(10), &days_ago(1)),
+            &working_fact(
+                "expired-note",
+                "a working note whose time has passed",
+                &days_ago(10),
+                &days_ago(1),
+            ),
         );
 
         let result = consolidate(&root, &calib::today(), None);
@@ -7528,7 +8181,10 @@ mod tests {
         // stamp just landed on. The archived copy therefore carries
         // `superseded-by`, and both actions name the fact.
         let archived = fs::read_to_string(root.join(".archive").join("expired-note.md")).unwrap();
-        assert!(archived.contains(&format!("superseded-by: {summary}")), "{archived}");
+        assert!(
+            archived.contains(&format!("superseded-by: {summary}")),
+            "{archived}"
+        );
         assert!(!root.join("expired-note.md").exists());
         let facts: Vec<&str> = result
             .actions
@@ -7551,7 +8207,12 @@ mod tests {
         write_fact(
             &root,
             "reused",
-            &working_fact("reused", "the first fact of this name", &days_ago(10), &days_ago(1)),
+            &working_fact(
+                "reused",
+                "the first fact of this name",
+                &days_ago(10),
+                &days_ago(1),
+            ),
         );
         let first = consolidate(&root, &calib::today(), None);
         assert!(
@@ -7568,7 +8229,12 @@ mod tests {
         write_fact(
             &root,
             "reused",
-            &working_fact("reused", "the second fact of this name", &days_ago(10), &days_ago(1)),
+            &working_fact(
+                "reused",
+                "the second fact of this name",
+                &days_ago(10),
+                &days_ago(1),
+            ),
         );
         let second = consolidate(&root, &calib::today(), None);
         assert!(
@@ -7586,8 +8252,14 @@ mod tests {
         assert!(root.join(".archive").join("reused.2.md").exists());
         let first_copy = fs::read_to_string(root.join(".archive").join("reused.md")).unwrap();
         let second_copy = fs::read_to_string(root.join(".archive").join("reused.2.md")).unwrap();
-        assert!(first_copy.contains("the first fact of this name"), "{first_copy}");
-        assert!(second_copy.contains("the second fact of this name"), "{second_copy}");
+        assert!(
+            first_copy.contains("the first fact of this name"),
+            "{first_copy}"
+        );
+        assert!(
+            second_copy.contains("the second fact of this name"),
+            "{second_copy}"
+        );
 
         // The loader reads `memories/*.md` and never a subdirectory:
         // neither archived copy is a live fact, and the archive surface
@@ -7608,7 +8280,12 @@ mod tests {
         write_fact(
             root,
             "load-bearing",
-            &good_fact("load-bearing", "the owner's standing rule about the gate", "feedback", ""),
+            &good_fact(
+                "load-bearing",
+                "the owner's standing rule about the gate",
+                "feedback",
+                "",
+            ),
         );
         write_fact(
             root,
@@ -7673,15 +8350,23 @@ mod tests {
         let replacement = fs::read_to_string(root.join("load-bearing-v2.md")).unwrap();
         // The justification is recorded in the new fact's body, and the
         // replacement is inferred — a supersession is a proposal.
-        assert!(replacement.contains("Supersedes `load-bearing` \u{2014} the owner restated the rule on 2026-10-13"), "{replacement}");
+        assert!(
+            replacement.contains(
+                "Supersedes `load-bearing` \u{2014} the owner restated the rule on 2026-10-13"
+            ),
+            "{replacement}"
+        );
         assert!(replacement.contains("basis: inferred"), "{replacement}");
         let old = fs::read_to_string(root.join("load-bearing.md")).unwrap();
         assert!(old.contains("superseded-by: load-bearing-v2"), "{old}");
         // The superseded fact left the protected tier and the
         // replacement took its place — no fact enters a turn twice.
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
-        let protected: Vec<String> =
-            memory.protected().into_iter().map(|hit| hit.fact.name).collect();
+        let protected: Vec<String> = memory
+            .protected()
+            .into_iter()
+            .map(|hit| hit.fact.name)
+            .collect();
         assert_eq!(protected, vec!["load-bearing-v2".to_string()]);
 
         // Inferred, with its justification: no approval needed, and the
@@ -7707,8 +8392,10 @@ mod tests {
 
         drop(stream);
         let rows = calib::read_day(&stream_root, &calib::today(), 64);
-        let supersede_rows: Vec<&calib::ReadRow> =
-            rows.iter().filter(|row| row.action == calib::ACTION_SUPERSEDE).collect();
+        let supersede_rows: Vec<&calib::ReadRow> = rows
+            .iter()
+            .filter(|row| row.action == calib::ACTION_SUPERSEDE)
+            .collect();
         assert_eq!(supersede_rows.len(), 2, "{rows:?}");
         assert_eq!(supersede_rows[0].fact, "load-bearing");
         assert_eq!(
@@ -7734,18 +8421,34 @@ mod tests {
         }))
         .unwrap();
         let outcome = memory.supersede(&request, false, Some(&stream)).unwrap();
-        assert_eq!(outcome, Superseded::Forgotten { fact: "a-guess".to_string() });
+        assert_eq!(
+            outcome,
+            Superseded::Forgotten {
+                fact: "a-guess".to_string()
+            }
+        );
         drop(stream);
 
         // The file stays — nothing is deleted — with its validity ended
         // the day before the retirement and the reason in its body.
         let text = fs::read_to_string(root.join("a-guess.md")).unwrap();
         let yesterday = days_ago(1);
-        assert!(text.contains(&format!("valid-until: {yesterday}")), "{text}");
-        assert!(text.contains(&format!("Retired {}: the guess turned out to be wrong", calib::today())), "{text}");
+        assert!(
+            text.contains(&format!("valid-until: {yesterday}")),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "Retired {}: the guess turned out to be wrong",
+                calib::today()
+            )),
+            "{text}"
+        );
         // The loader retires it now.
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
-        assert!(memory.recall("an inferred guess about the deploy").is_empty());
+        assert!(memory
+            .recall("an inferred guess about the deploy")
+            .is_empty());
         // And the row names the forget.
         let rows = calib::read_day(&stream_root, &calib::today(), 64);
         let row = rows.last().expect("the forget row");
@@ -7779,7 +8482,10 @@ mod tests {
         set_immutable(&fact_path, false);
 
         let error = outcome.unwrap_err();
-        assert!(matches!(&error, WriteError::Stamp(reason) if reason.contains("a-better-guess") && reason.contains("a-guess")), "{error}");
+        assert!(
+            matches!(&error, WriteError::Stamp(reason) if reason.contains("a-better-guess") && reason.contains("a-guess")),
+            "{error}"
+        );
         // What landed and what did not, on disk as in the message: the
         // replacement exists, the old fact is not retired.
         assert!(root.join("a-better-guess.md").exists());
@@ -7821,7 +8527,10 @@ mod tests {
         );
         let text = fs::read_to_string(&fact_path).unwrap();
         let yesterday = days_ago(1);
-        assert!(!text.contains(&format!("valid-until: {yesterday}")), "{text}");
+        assert!(
+            !text.contains(&format!("valid-until: {yesterday}")),
+            "{text}"
+        );
         assert!(!text.contains("Retired "), "{text}");
         drop(stream);
         let rows = calib::read_day(&stream_root, &calib::today(), 64);
@@ -7850,7 +8559,10 @@ mod tests {
     #[test]
     fn the_consolidation_surface_is_cards_and_names_an_empty_pass() {
         let rendered = render_consolidation(&Consolidation::default());
-        assert!(rendered.contains("fleet memories --consolidate"), "{rendered}");
+        assert!(
+            rendered.contains("fleet memories --consolidate"),
+            "{rendered}"
+        );
         assert!(rendered.contains("nothing to consolidate"), "{rendered}");
 
         let result = Consolidation {
@@ -7872,13 +8584,31 @@ mod tests {
         };
         let rendered = render_consolidation(&result);
         assert_eq!(rendered.matches('\u{250c}').count(), 2, "{rendered}");
-        assert!(rendered.contains("old-note \u{2014} working memory older than 7 days"), "{rendered}");
-        assert!(rendered.contains("expired-durable \u{2014} expired 2026-10-12"), "{rendered}");
-        assert!(rendered.contains("left alone: stale-confirmed"), "{rendered}");
+        assert!(
+            rendered.contains("old-note \u{2014} working memory older than 7 days"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("expired-durable \u{2014} expired 2026-10-12"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("left alone: stale-confirmed"),
+            "{rendered}"
+        );
         // The third-vector rule names what it kept and why.
-        assert!(rendered.contains("left alone: stalled-inferred"), "{rendered}");
-        assert!(rendered.contains("incomplete, so the cycle never folds one"), "{rendered}");
-        assert!(rendered.contains("folded into: consolidation-2026-10-13"), "{rendered}");
+        assert!(
+            rendered.contains("left alone: stalled-inferred"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("incomplete, so the cycle never folds one"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("folded into: consolidation-2026-10-13"),
+            "{rendered}"
+        );
     }
 
     #[test]

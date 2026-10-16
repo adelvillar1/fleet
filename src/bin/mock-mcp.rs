@@ -110,9 +110,13 @@ fn main() {
         if line.trim().is_empty() {
             continue;
         }
-        let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+        let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
         // A notification carries no id and is never answered.
-        let Some(request_id) = request.get("id").cloned() else { continue };
+        let Some(request_id) = request.get("id").cloned() else {
+            continue;
+        };
         let Some(entry) = pop_entry(&mut entries, &line) else {
             // A dry script ends the server: the client sees a closed
             // child, which is the honest answer to an unscripted request.
@@ -226,9 +230,12 @@ fn pop_entry(entries: &mut Vec<ScriptEntry>, line: &str) -> Option<ScriptEntry> 
     if entries.is_empty() {
         return None;
     }
-    let position = entries
-        .iter()
-        .position(|entry| entry.r#match.as_deref().is_none_or(|needle| line.contains(needle)))?;
+    let position = entries.iter().position(|entry| {
+        entry
+            .r#match
+            .as_deref()
+            .is_none_or(|needle| line.contains(needle))
+    })?;
     Some(entries.remove(position))
 }
 

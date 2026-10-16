@@ -133,7 +133,9 @@ impl Cache {
         // The temp name carries this process's id, so two fleet
         // processes writing the same cache cannot collide on one
         // temp file.
-        let temp = self.path.with_extension(format!("{}.tmp", std::process::id()));
+        let temp = self
+            .path
+            .with_extension(format!("{}.tmp", std::process::id()));
         if fs::write(&temp, text).is_err() {
             return;
         }

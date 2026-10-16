@@ -37,7 +37,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::agent::{Agent, AgentError, AgentOptions, Approver, DEFAULT_MAX_TURNS, RunReport, UiEvent};
+use crate::agent::{
+    Agent, AgentError, AgentOptions, Approver, RunReport, UiEvent, DEFAULT_MAX_TURNS,
+};
 use crate::api::{Client, DEFAULT_MODEL};
 use crate::route;
 use crate::session::{self, Session};
@@ -64,7 +66,10 @@ impl Minute {
     /// The current UTC minute, truncated: a tick anywhere inside a
     /// minute decides for that whole minute.
     pub fn now() -> Minute {
-        let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map(|span| span.as_secs()).unwrap_or(0);
+        let elapsed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|span| span.as_secs())
+            .unwrap_or(0);
         let days = (elapsed / 86_400) as i64;
         let seconds_of_day = elapsed % 86_400;
         let (year, month, day) = session::civil_from_days(days);
@@ -79,7 +84,10 @@ impl Minute {
 
     /// `YYYY-MM-DDTHH:MMZ`, the stored spelling of one minute.
     pub fn stamp(&self) -> String {
-        format!("{:04}-{:02}-{:02}T{:02}:{:02}Z", self.year, self.month, self.day, self.hour, self.minute)
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}Z",
+            self.year, self.month, self.day, self.hour, self.minute
+        )
     }
 
     /// Read one stamped minute back. A stamp that is not exactly this
@@ -89,9 +97,15 @@ impl Minute {
         if text.len() != MINUTE_STAMP_LEN || !text.ends_with('Z') {
             return None;
         }
-        let digits = |range: std::ops::Range<usize>| text.get(range).and_then(|part| part.parse::<u32>().ok());
+        let digits = |range: std::ops::Range<usize>| {
+            text.get(range).and_then(|part| part.parse::<u32>().ok())
+        };
         let separators = text.as_bytes();
-        if separators[4] != b'-' || separators[7] != b'-' || separators[10] != b'T' || separators[13] != b':' {
+        if separators[4] != b'-'
+            || separators[7] != b'-'
+            || separators[10] != b'T'
+            || separators[13] != b':'
+        {
             return None;
         }
         let minute = Minute {
@@ -115,15 +129,29 @@ impl Minute {
 
     /// The next calendar day at 00:00 — the search walk's date carrier.
     fn next_day(&self) -> Minute {
-        let (year, month, day) = session::civil_from_days(days_from_civil(self.year, self.month, self.day) + 1);
-        Minute { year, month, day, hour: 0, minute: 0 }
+        let (year, month, day) =
+            session::civil_from_days(days_from_civil(self.year, self.month, self.day) + 1);
+        Minute {
+            year,
+            month,
+            day,
+            hour: 0,
+            minute: 0,
+        }
     }
 
     /// The previous calendar day at 00:00 — the search walk's date
     /// carrier.
     fn previous_day(&self) -> Minute {
-        let (year, month, day) = session::civil_from_days(days_from_civil(self.year, self.month, self.day) - 1);
-        Minute { year, month, day, hour: 0, minute: 0 }
+        let (year, month, day) =
+            session::civil_from_days(days_from_civil(self.year, self.month, self.day) - 1);
+        Minute {
+            year,
+            month,
+            day,
+            hour: 0,
+            minute: 0,
+        }
     }
 
     /// One minute earlier, carrying the borrow back across the hour,
@@ -132,14 +160,27 @@ impl Minute {
     /// be named when it passed unserved.
     fn previous_minute(&self) -> Minute {
         if self.minute > 0 {
-            return Minute { minute: self.minute - 1, ..*self };
+            return Minute {
+                minute: self.minute - 1,
+                ..*self
+            };
         }
         if self.hour > 0 {
-            return Minute { hour: self.hour - 1, minute: 59, ..*self };
+            return Minute {
+                hour: self.hour - 1,
+                minute: 59,
+                ..*self
+            };
         }
         let (year, month, day) =
             session::civil_from_days(days_from_civil(self.year, self.month, self.day) - 1);
-        Minute { year, month, day, hour: 23, minute: 59 }
+        Minute {
+            year,
+            month,
+            day,
+            hour: 23,
+            minute: 59,
+        }
     }
 }
 
@@ -149,7 +190,8 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let shifted = if month <= 2 { year - 1 } else { year };
     let era = if shifted >= 0 { shifted } else { shifted - 399 } / 400;
     let year_of_era = shifted - era * 400;
-    let day_of_year = ((153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1) as i64;
+    let day_of_year =
+        ((153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1) as i64;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
 }
@@ -168,13 +210,38 @@ struct FieldSpec {
 /// The five fields, in evaluation order: minute hour day-of-month month
 /// day-of-week.
 const FIELDS: [FieldSpec; 5] = [
-    FieldSpec { name: "minute", min: 0, max: 59, canonical_max: 59 },
-    FieldSpec { name: "hour", min: 0, max: 23, canonical_max: 23 },
-    FieldSpec { name: "day-of-month", min: 1, max: 31, canonical_max: 31 },
-    FieldSpec { name: "month", min: 1, max: 12, canonical_max: 12 },
+    FieldSpec {
+        name: "minute",
+        min: 0,
+        max: 59,
+        canonical_max: 59,
+    },
+    FieldSpec {
+        name: "hour",
+        min: 0,
+        max: 23,
+        canonical_max: 23,
+    },
+    FieldSpec {
+        name: "day-of-month",
+        min: 1,
+        max: 31,
+        canonical_max: 31,
+    },
+    FieldSpec {
+        name: "month",
+        min: 1,
+        max: 12,
+        canonical_max: 12,
+    },
     // Sunday is both 0 and 7; 7 folds onto 0 so the matched set stays
     // 0-6 and a reader never has to remember which spelling was typed.
-    FieldSpec { name: "day-of-week", min: 0, max: 7, canonical_max: 6 },
+    FieldSpec {
+        name: "day-of-week",
+        min: 0,
+        max: 7,
+        canonical_max: 6,
+    },
 ];
 
 /// How far a next-fire or previous-fire search walks before declaring
@@ -193,15 +260,27 @@ pub enum ScheduleError {
     /// The expression did not split into exactly five fields.
     FieldCount { found: usize },
     /// A field element is not in the dialect at all.
-    Element { field: &'static str, element: String },
+    Element {
+        field: &'static str,
+        element: String,
+    },
     /// A field value is not a number.
     Value { field: &'static str, text: String },
     /// A field value is outside its range.
-    Range { field: &'static str, value: u32, min: u32, max: u32 },
+    Range {
+        field: &'static str,
+        value: u32,
+        min: u32,
+        max: u32,
+    },
     /// A step is not a positive integer — `*/0` lands here.
     Step { field: &'static str, text: String },
     /// A range's start is past its end.
-    Inverted { field: &'static str, start: u32, end: u32 },
+    Inverted {
+        field: &'static str,
+        start: u32,
+        end: u32,
+    },
 }
 
 impl std::fmt::Display for ScheduleError {
@@ -260,7 +339,9 @@ impl Schedule {
         }
         let fields: Vec<&str> = trimmed.split_whitespace().collect();
         if fields.len() != FIELDS.len() {
-            return Err(ScheduleError::FieldCount { found: fields.len() });
+            return Err(ScheduleError::FieldCount {
+                found: fields.len(),
+            });
         }
         let parsed: Vec<Field> = fields
             .iter()
@@ -273,7 +354,9 @@ impl Schedule {
         // than as a panic the day a sixth field is added to `FIELDS`.
         let [minute, hour, day_of_month, month, day_of_week]: [Field; 5] = parsed
             .try_into()
-            .map_err(|parsed: Vec<Field>| ScheduleError::FieldCount { found: parsed.len() })?;
+            .map_err(|parsed: Vec<Field>| ScheduleError::FieldCount {
+                found: parsed.len(),
+            })?;
         Ok(Schedule {
             expression: trimmed.to_string(),
             minutes: minute.values.clone(),
@@ -326,8 +409,13 @@ impl Schedule {
             if self.matches_date(day) {
                 for hour in &self.hours {
                     for minute in &self.minutes {
-                        let candidate =
-                            Minute { year: day.year, month: day.month, day: day.day, hour: *hour, minute: *minute };
+                        let candidate = Minute {
+                            year: day.year,
+                            month: day.month,
+                            day: day.day,
+                            hour: *hour,
+                            minute: *minute,
+                        };
                         if candidate > from {
                             return Some(candidate);
                         }
@@ -350,8 +438,13 @@ impl Schedule {
             if self.matches_date(day) {
                 for hour in self.hours.iter().rev() {
                     for minute in self.minutes.iter().rev() {
-                        let candidate =
-                            Minute { year: day.year, month: day.month, day: day.day, hour: *hour, minute: *minute };
+                        let candidate = Minute {
+                            year: day.year,
+                            month: day.month,
+                            day: day.day,
+                            hour: *hour,
+                            minute: *minute,
+                        };
                         if candidate <= from {
                             return Some(candidate);
                         }
@@ -379,7 +472,10 @@ fn parse_field(text: &str, spec: &FieldSpec) -> Result<Field, ScheduleError> {
         parse_element(element, spec, &mut seen)?;
     }
     let values = (0..60u32).filter(|value| seen[*value as usize]).collect();
-    Ok(Field { values, star: text.starts_with('*') })
+    Ok(Field {
+        values,
+        star: text.starts_with('*'),
+    })
 }
 
 /// Parse one comma-separated element into the field's matched set.
@@ -389,7 +485,10 @@ fn parse_element(
     seen: &mut [bool; 60],
 ) -> Result<(), ScheduleError> {
     if element.is_empty() {
-        return Err(ScheduleError::Element { field: spec.name, element: element.to_string() });
+        return Err(ScheduleError::Element {
+            field: spec.name,
+            element: element.to_string(),
+        });
     }
     if element == "*" {
         for value in spec.min..=spec.max {
@@ -418,11 +517,18 @@ fn parse_element(
         None => (parse_value(range_text, spec)?, None),
     };
     if end.is_none() && step_text.is_some() {
-        return Err(ScheduleError::Element { field: spec.name, element: element.to_string() });
+        return Err(ScheduleError::Element {
+            field: spec.name,
+            element: element.to_string(),
+        });
     }
     let last = end.unwrap_or(start);
     if start > last {
-        return Err(ScheduleError::Inverted { field: spec.name, start, end: last });
+        return Err(ScheduleError::Inverted {
+            field: spec.name,
+            start,
+            end: last,
+        });
     }
     let step = match step_text {
         Some(text) => parse_step(text, spec)?,
@@ -439,7 +545,11 @@ fn parse_element(
 /// Mark one value in a field's matched set, folding Sunday's 7 onto 0
 /// for the day-of-week field.
 fn mark(seen: &mut [bool; 60], value: u32, spec: &FieldSpec) {
-    let folded = if spec.canonical_max != spec.max && value == spec.max { spec.min } else { value };
+    let folded = if spec.canonical_max != spec.max && value == spec.max {
+        spec.min
+    } else {
+        value
+    };
     seen[folded_index(folded)] = true;
 }
 
@@ -452,14 +562,22 @@ fn folded_index(value: u32) -> usize {
 /// Read one field value: all digits, inside the field's range.
 fn parse_value(text: &str, spec: &FieldSpec) -> Result<u32, ScheduleError> {
     if text.is_empty() || !text.chars().all(|character| character.is_ascii_digit()) {
-        return Err(ScheduleError::Value { field: spec.name, text: text.to_string() });
+        return Err(ScheduleError::Value {
+            field: spec.name,
+            text: text.to_string(),
+        });
     }
     let value: u32 = text.parse().map_err(|_| ScheduleError::Value {
         field: spec.name,
         text: text.to_string(),
     })?;
     if value < spec.min || value > spec.max {
-        return Err(ScheduleError::Range { field: spec.name, value, min: spec.min, max: spec.max });
+        return Err(ScheduleError::Range {
+            field: spec.name,
+            value,
+            min: spec.min,
+            max: spec.max,
+        });
     }
     Ok(value)
 }
@@ -468,13 +586,20 @@ fn parse_value(text: &str, spec: &FieldSpec) -> Result<u32, ScheduleError> {
 /// here with the step named.
 fn parse_step(text: &str, spec: &FieldSpec) -> Result<u32, ScheduleError> {
     if text.is_empty() || !text.chars().all(|character| character.is_ascii_digit()) {
-        return Err(ScheduleError::Step { field: spec.name, text: text.to_string() });
+        return Err(ScheduleError::Step {
+            field: spec.name,
+            text: text.to_string(),
+        });
     }
-    let step: u32 = text
-        .parse()
-        .map_err(|_| ScheduleError::Step { field: spec.name, text: text.to_string() })?;
+    let step: u32 = text.parse().map_err(|_| ScheduleError::Step {
+        field: spec.name,
+        text: text.to_string(),
+    })?;
     if step < 1 {
-        return Err(ScheduleError::Step { field: spec.name, text: text.to_string() });
+        return Err(ScheduleError::Step {
+            field: spec.name,
+            text: text.to_string(),
+        });
     }
     Ok(step)
 }
@@ -593,9 +718,9 @@ impl std::error::Error for CronError {}
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.chars().count() <= MAX_NAME_CHARS
-        && name
-            .chars()
-            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-')
+        && name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
         && !name.starts_with('-')
         && !name.ends_with('-')
 }
@@ -638,13 +763,22 @@ impl Store {
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(Store { home: home.to_path_buf(), jobs: Vec::new() });
+                return Ok(Store {
+                    home: home.to_path_buf(),
+                    jobs: Vec::new(),
+                });
             }
             Err(error) => {
-                return Err(CronError::Io(format!("could not read {}: {error}", path.display())));
+                return Err(CronError::Io(format!(
+                    "could not read {}: {error}",
+                    path.display()
+                )));
             }
         };
-        Self::parse(home, &text).map(|jobs| Store { home: home.to_path_buf(), jobs })
+        Self::parse(home, &text).map(|jobs| Store {
+            home: home.to_path_buf(),
+            jobs,
+        })
     }
 
     /// Parse the store's text, validating every record the way a
@@ -653,7 +787,9 @@ impl Store {
     /// is a malformed store, not a record to skip.
     fn parse(home: &Path, text: &str) -> Result<Vec<Job>, CronError> {
         let path = jobs_path(home);
-        let malformed = |reason: String| CronError::Malformed(format!("{} is not a job store: {reason}", path.display()));
+        let malformed = |reason: String| {
+            CronError::Malformed(format!("{} is not a job store: {reason}", path.display()))
+        };
         let document: Document =
             serde_json::from_str(text).map_err(|error| malformed(error.to_string()))?;
         let mut names: Vec<&str> = Vec::new();
@@ -710,7 +846,9 @@ impl Store {
         }
         let task = task.trim();
         if task.is_empty() {
-            return Err(CronError::Task("a job needs a task: --task \"<goal>\"".to_string()));
+            return Err(CronError::Task(
+                "a job needs a task: --task \"<goal>\"".to_string(),
+            ));
         }
         Schedule::parse(schedule).map_err(CronError::Schedule)?;
         let job = Job {
@@ -729,7 +867,11 @@ impl Store {
 
     /// Enable or disable one job by name.
     pub fn set_enabled(&mut self, name: &str, enabled: bool) -> Result<Job, CronError> {
-        let job = self.jobs.iter_mut().find(|job| job.name == name).ok_or_else(|| CronError::Missing(name.to_string()))?;
+        let job = self
+            .jobs
+            .iter_mut()
+            .find(|job| job.name == name)
+            .ok_or_else(|| CronError::Missing(name.to_string()))?;
         job.enabled = enabled;
         let stored = job.clone();
         self.save()?;
@@ -751,8 +893,17 @@ impl Store {
     /// Record one fire: the minute it ran for and how it ended. This is
     /// the only writer of `last_run`/`last_outcome`, and it is what
     /// keeps a restart from catching up on a window already served.
-    pub fn record_run(&mut self, name: &str, minute: Minute, outcome: Outcome) -> Result<(), CronError> {
-        let job = self.jobs.iter_mut().find(|job| job.name == name).ok_or_else(|| CronError::Missing(name.to_string()))?;
+    pub fn record_run(
+        &mut self,
+        name: &str,
+        minute: Minute,
+        outcome: Outcome,
+    ) -> Result<(), CronError> {
+        let job = self
+            .jobs
+            .iter_mut()
+            .find(|job| job.name == name)
+            .ok_or_else(|| CronError::Missing(name.to_string()))?;
         job.last_run = Some(minute.stamp());
         job.last_outcome = Some(outcome);
         self.save()
@@ -763,18 +914,22 @@ impl Store {
     /// document or the whole new one, never a half-written store.
     fn save(&self) -> Result<(), CronError> {
         let dir = self.home.join("cron");
-        fs::create_dir_all(&dir)
-            .map_err(|error| CronError::Io(format!("could not create {}: {error}", dir.display())))?;
+        fs::create_dir_all(&dir).map_err(|error| {
+            CronError::Io(format!("could not create {}: {error}", dir.display()))
+        })?;
         let path = jobs_path(&self.home);
-        let mut text = serde_json::to_string_pretty(&Document { jobs: self.jobs.clone() })
-            .map_err(|error| CronError::Io(format!("could not encode the job store: {error}")))?;
+        let mut text = serde_json::to_string_pretty(&Document {
+            jobs: self.jobs.clone(),
+        })
+        .map_err(|error| CronError::Io(format!("could not encode the job store: {error}")))?;
         text.push('\n');
         let serial = STORE_WRITE_SERIAL.fetch_add(1, Ordering::Relaxed);
         let mut temp = path.clone().into_os_string();
         temp.push(format!(".{}.{}.tmp", std::process::id(), serial));
         let temp = PathBuf::from(temp);
-        fs::write(&temp, text)
-            .map_err(|error| CronError::Io(format!("could not write {}: {error}", temp.display())))?;
+        fs::write(&temp, text).map_err(|error| {
+            CronError::Io(format!("could not write {}: {error}", temp.display()))
+        })?;
         fs::rename(&temp, &path).map_err(|error| {
             let _ = fs::remove_file(&temp);
             CronError::Io(format!("could not replace {}: {error}", path.display()))
@@ -798,7 +953,11 @@ pub fn frame_task(job: &Job, minute: Minute, catch_up: bool) -> String {
             minute.stamp()
         )
     } else {
-        format!("[scheduled run \u{2014} job `{}` at {}]", job.name, minute.stamp())
+        format!(
+            "[scheduled run \u{2014} job `{}` at {}]",
+            job.name,
+            minute.stamp()
+        )
     };
     format!("{head}\n{}", job.task)
 }
@@ -821,7 +980,10 @@ struct Gate {
 impl Gate {
     /// The gate for one job.
     fn for_job(job: &Job) -> Gate {
-        Gate { unattended: !job.auto_approve, denied: std::sync::Arc::default() }
+        Gate {
+            unattended: !job.auto_approve,
+            denied: std::sync::Arc::default(),
+        }
     }
 
     /// The first tool this gate denied, when it denied one.
@@ -927,7 +1089,7 @@ pub async fn execute(
         // owner is present; an unattended scheduled run does not carry
         // it, so no proposal is filed by a run nobody is watching.
         improve_home: None,
-            compact_now: false,
+        compact_now: false,
     };
     let gate = Gate::for_job(job);
     // The log's identity is read before the agent borrows the session
@@ -938,7 +1100,13 @@ pub async fn execute(
     // foreground is watching — so it goes to the log, and the scheduler
     // names the outcome on the surface that is watching.
     let mut progress = std::io::sink();
-    let mut agent = Agent::new(client, options, &mut session, Box::new(gate.clone()), &mut progress)?;
+    let mut agent = Agent::new(
+        client,
+        options,
+        &mut session,
+        Box::new(gate.clone()),
+        &mut progress,
+    )?;
     let report = agent.run(&task).await?;
     let skipped_tool = gate.denied_tool();
     let (outcome, detail) = describe(&report, skipped_tool.as_deref());
@@ -964,7 +1132,11 @@ fn describe(report: &RunReport, skipped_tool: Option<&str>) -> (Outcome, String)
     match report.stop_reason {
         crate::agent::StopReason::Completed => (
             Outcome::Completed,
-            format!("completed in {} turn{}", report.turns, if report.turns == 1 { "" } else { "s" }),
+            format!(
+                "completed in {} turn{}",
+                report.turns,
+                if report.turns == 1 { "" } else { "s" }
+            ),
         ),
         crate::agent::StopReason::MaxTurns => (
             Outcome::Failed,
@@ -976,7 +1148,12 @@ fn describe(report: &RunReport, skipped_tool: Option<&str>) -> (Outcome, String)
 /// The production run for one fire: resolve the route for the job's own
 /// task — one judgment per scheduled run, exactly like `fleet run` —
 /// then run the job's ordinary agent loop.
-pub async fn run_job(home: &Path, job: &Job, minute: Minute, catch_up: bool) -> Result<RunOutcome, String> {
+pub async fn run_job(
+    home: &Path,
+    job: &Job,
+    minute: Minute,
+    catch_up: bool,
+) -> Result<RunOutcome, String> {
     let dotenv = crate::home::read_dotenv(home);
     let prepared = route::prepare(home, &dotenv, &job.task, &HashMap::new())
         .await
@@ -987,9 +1164,17 @@ pub async fn run_job(home: &Path, job: &Job, minute: Minute, catch_up: bool) -> 
     // scheduler runs in the caller's process, so this is the same walk
     // the foreground takes.
     let memory_root = crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
-    let outcome = execute(home, &client, Some(prepared.calib.clone()), job, minute, catch_up, &memory_root)
-        .await
-        .map_err(|error| error.to_string())?;
+    let outcome = execute(
+        home,
+        &client,
+        Some(prepared.calib.clone()),
+        job,
+        minute,
+        catch_up,
+        &memory_root,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     prepared.record_route(&job.task);
     Ok(outcome)
 }
@@ -1041,9 +1226,8 @@ const PANICKED: &str = "panicked";
 /// and runs the job's ordinary agent loop; a test supplies its own, so a
 /// whole scheduler pass can be driven against a scripted client with no
 /// route preflight and no clock.
-pub type Runner = Box<
-    dyn FnMut(Job, Minute, bool) -> Pin<Box<dyn Future<Output = Result<RunOutcome, String>>>>,
->;
+pub type Runner =
+    Box<dyn FnMut(Job, Minute, bool) -> Pin<Box<dyn Future<Output = Result<RunOutcome, String>>>>>;
 
 /// One decision: this job, at this minute, catch-up or on time.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1071,7 +1255,9 @@ struct CatchUnwind<F> {
 
 impl<F> CatchUnwind<F> {
     fn new(inner: F) -> CatchUnwind<F> {
-        CatchUnwind { inner: Box::pin(inner) }
+        CatchUnwind {
+            inner: Box::pin(inner),
+        }
     }
 }
 
@@ -1086,8 +1272,9 @@ impl<F: Future> Future for CatchUnwind<F> {
         // `CatchUnwind` is `Unpin` by construction — its only field is
         // a `Pin<Box<_>>` — so the field is reachable without unsafe.
         let this = self.get_mut();
-        let polled =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.inner.as_mut().poll(cx)));
+        let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            this.inner.as_mut().poll(cx)
+        }));
         match polled {
             Ok(std::task::Poll::Ready(output)) => std::task::Poll::Ready(Ok(output)),
             Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
@@ -1265,12 +1452,12 @@ impl Scheduler {
     /// stderr line scratched over the alternate screen (KI-090). The
     /// headless `chat` path passes `None`, and its named lines ride
     /// stderr.
-    pub fn spawn(
-        home: PathBuf,
-        ui_tx: Option<UnboundedSender<UiEvent>>,
-    ) -> thread::JoinHandle<()> {
+    pub fn spawn(home: PathBuf, ui_tx: Option<UnboundedSender<UiEvent>>) -> thread::JoinHandle<()> {
         thread::spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
                 Ok(runtime) => runtime,
                 Err(error) => {
                     eprintln!("fleet: cron: the scheduler runtime failed to start: {error}");
@@ -1310,8 +1497,7 @@ impl Scheduler {
                         }
                     })
                 });
-                let mut scheduler =
-                    Scheduler::new(home, runner).with_ui(ui_tx).with_eval(eval);
+                let mut scheduler = Scheduler::new(home, runner).with_ui(ui_tx).with_eval(eval);
                 for line in scheduler.start(Minute::now()).await {
                     eprintln!("{line}");
                 }
@@ -1347,12 +1533,18 @@ impl Scheduler {
             if !job.enabled {
                 continue;
             }
-            let Ok(schedule) = Schedule::parse(&job.schedule) else { continue };
-            let Some(missed) = schedule.previous_at_or_before(now) else { continue };
+            let Ok(schedule) = Schedule::parse(&job.schedule) else {
+                continue;
+            };
+            let Some(missed) = schedule.previous_at_or_before(now) else {
+                continue;
+            };
             // A never-run job does not catch up; a run it recorded but
             // cannot read back is treated the same way rather than
             // guessed at.
-            let Some(last) = job.last_run.as_deref().and_then(Minute::parse) else { continue };
+            let Some(last) = job.last_run.as_deref().and_then(Minute::parse) else {
+                continue;
+            };
             // The latch, the same one the tick claims: a startup pass
             // that runs twice — or a tick inside the missed minute —
             // does not serve the window again.
@@ -1361,7 +1553,11 @@ impl Scheduler {
             }
             if missed > last {
                 self.latch.insert(job.name.clone(), missed);
-                due.push(Due { job: job.clone(), minute: missed, catch_up: true });
+                due.push(Due {
+                    job: job.clone(),
+                    minute: missed,
+                    catch_up: true,
+                });
             }
         }
         due
@@ -1375,7 +1571,9 @@ impl Scheduler {
             if !job.enabled {
                 continue;
             }
-            let Ok(schedule) = Schedule::parse(&job.schedule) else { continue };
+            let Ok(schedule) = Schedule::parse(&job.schedule) else {
+                continue;
+            };
             if !schedule.matches(now) {
                 continue;
             }
@@ -1383,7 +1581,11 @@ impl Scheduler {
                 continue;
             }
             self.latch.insert(job.name.clone(), now);
-            due.push(Due { job: job.clone(), minute: now, catch_up: false });
+            due.push(Due {
+                job: job.clone(),
+                minute: now,
+                catch_up: false,
+            });
         }
         due
     }
@@ -1433,7 +1635,9 @@ impl Scheduler {
                     return Err(Vec::new());
                 }
                 self.store_complaint = Some(complaint);
-                Err(vec![format!("fleet: cron: the job store is unreadable: {error}")])
+                Err(vec![format!(
+                    "fleet: cron: the job store is unreadable: {error}"
+                )])
             }
         }
     }
@@ -1468,7 +1672,9 @@ impl Scheduler {
             if !job.enabled {
                 continue;
             }
-            let Ok(schedule) = Schedule::parse(&job.schedule) else { continue };
+            let Ok(schedule) = Schedule::parse(&job.schedule) else {
+                continue;
+            };
             // The floor: the newest minute already accounted for — the
             // latch's (decided or named), the store's (served), and for
             // a job that has never run the minute before the scheduler
@@ -1476,7 +1682,9 @@ impl Scheduler {
             let floor = [
                 self.latch.get(&job.name).copied(),
                 job.last_run.as_deref().and_then(Minute::parse),
-                self.enabled_since.get(&job.name).map(|since| since.previous_minute()),
+                self.enabled_since
+                    .get(&job.name)
+                    .map(|since| since.previous_minute()),
             ]
             .into_iter()
             .flatten()
@@ -1486,7 +1694,11 @@ impl Scheduler {
                 if next >= now {
                     break;
                 }
-                passed.push(Due { job: job.clone(), minute: next, catch_up: false });
+                passed.push(Due {
+                    job: job.clone(),
+                    minute: next,
+                    catch_up: false,
+                });
                 cursor = next;
             }
         }
@@ -1559,7 +1771,9 @@ impl Scheduler {
                     let job = one.job.name.clone();
                     handles.push((
                         job,
-                        tokio::task::spawn_local(async move { fire_one(home, ui_tx, one, run).await }),
+                        tokio::task::spawn_local(
+                            async move { fire_one(home, ui_tx, one, run).await },
+                        ),
                     ));
                 }
                 let mut lines = Vec::new();
@@ -1635,7 +1849,10 @@ async fn fire_one(
                 "fleet: cron: job `{name}` {when} \u{2014} {} (session {session}){tail}",
                 settled.detail
             ),
-            None => format!("fleet: cron: job `{name}` {when} \u{2014} {}{tail}", settled.detail),
+            None => format!(
+                "fleet: cron: job `{name}` {when} \u{2014} {}{tail}",
+                settled.detail
+            ),
         }
     };
     match ui_tx {
@@ -1721,7 +1938,10 @@ pub fn last_session_id(home: &Path, job: &str) -> Option<String> {
     paths.sort();
     for path in paths.iter().rev() {
         if is_scheduled_run_of(path, job) {
-            return path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string);
+            return path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(str::to_string);
         }
     }
     None
@@ -1731,14 +1951,18 @@ pub fn last_session_id(home: &Path, job: &str) -> Option<String> {
 /// marked `kind: scheduled` and its first message is the framed task
 /// that names the job.
 fn is_scheduled_run_of(path: &Path, job: &str) -> bool {
-    let Ok(file) = fs::File::open(path) else { return false };
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
     let mut saw_scheduled_start = false;
     for line in io::BufReader::new(file).lines() {
         let Ok(line) = line else { return false };
         if line.is_empty() {
             continue;
         }
-        let Ok(record) = serde_json::from_str::<session::Record>(&line) else { return false };
+        let Ok(record) = serde_json::from_str::<session::Record>(&line) else {
+            return false;
+        };
         match record {
             session::Record::Start { kind, .. } => {
                 if kind.as_deref() != Some(session::SCHEDULED_KIND) {
@@ -1772,7 +1996,10 @@ fn card(home: &Path, job: &Job, now: Minute) -> String {
     let next = if job.enabled {
         // A disabled job keeps its schedule but will never fire on it,
         // so the card says so rather than promising a fire.
-        match Schedule::parse(&job.schedule).ok().and_then(|schedule| schedule.next_after(now)) {
+        match Schedule::parse(&job.schedule)
+            .ok()
+            .and_then(|schedule| schedule.next_after(now))
+        {
             Some(minute) => format!("next fire {}", minute.stamp()),
             None => "next fire never".to_string(),
         }
@@ -1794,9 +2021,14 @@ fn card(home: &Path, job: &Job, now: Minute) -> String {
     // lists the job. Read from the sessions directory, not the store —
     // the id is a fact about a log, and the store's shape is frozen.
     if let Some(session) = last_session_id(home, &job.name) {
-        lines.push(format!("{DIM}\u{2502}{RESET} {DIM}session {session}{RESET}"));
+        lines.push(format!(
+            "{DIM}\u{2502}{RESET} {DIM}session {session}{RESET}"
+        ));
     }
-    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut out = format!("{header}\n");
     for line in lines {
         out.push_str(&line);
@@ -1840,7 +2072,13 @@ mod tests {
 
     /// A minute built from its parts, for a deterministic clock.
     fn minute(year: i64, month: u32, day: u32, hour: u32, minute: u32) -> Minute {
-        Minute { year, month, day, hour, minute }
+        Minute {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+        }
     }
 
     fn job(name: &str, schedule: &str, last_run: Option<&str>) -> Job {
@@ -1888,33 +2126,108 @@ mod tests {
     #[test]
     fn the_wrong_field_count_is_a_named_error() {
         let error = Schedule::parse("* * * *").unwrap_err();
-        assert!(matches!(error, ScheduleError::FieldCount { found: 4 }), "{error}");
+        assert!(
+            matches!(error, ScheduleError::FieldCount { found: 4 }),
+            "{error}"
+        );
         assert!(error.to_string().contains("five"), "{error}");
         let error = Schedule::parse("* * * * * *").unwrap_err();
-        assert!(matches!(error, ScheduleError::FieldCount { found: 6 }), "{error}");
+        assert!(
+            matches!(error, ScheduleError::FieldCount { found: 6 }),
+            "{error}"
+        );
     }
 
     #[test]
     fn out_of_range_values_and_a_zero_step_are_named_errors() {
         let error = Schedule::parse("60 * * * *").unwrap_err();
-        assert!(matches!(error, ScheduleError::Range { field: "minute", value: 60, .. }), "{error}");
+        assert!(
+            matches!(
+                error,
+                ScheduleError::Range {
+                    field: "minute",
+                    value: 60,
+                    ..
+                }
+            ),
+            "{error}"
+        );
         let error = Schedule::parse("* 24 * * *").unwrap_err();
-        assert!(matches!(error, ScheduleError::Range { field: "hour", value: 24, .. }), "{error}");
+        assert!(
+            matches!(
+                error,
+                ScheduleError::Range {
+                    field: "hour",
+                    value: 24,
+                    ..
+                }
+            ),
+            "{error}"
+        );
         let error = Schedule::parse("* * 0 * *").unwrap_err();
-        assert!(matches!(error, ScheduleError::Range { field: "day-of-month", value: 0, .. }), "{error}");
+        assert!(
+            matches!(
+                error,
+                ScheduleError::Range {
+                    field: "day-of-month",
+                    value: 0,
+                    ..
+                }
+            ),
+            "{error}"
+        );
         let error = Schedule::parse("* * * 13 *").unwrap_err();
-        assert!(matches!(error, ScheduleError::Range { field: "month", value: 13, .. }), "{error}");
+        assert!(
+            matches!(
+                error,
+                ScheduleError::Range {
+                    field: "month",
+                    value: 13,
+                    ..
+                }
+            ),
+            "{error}"
+        );
         let error = Schedule::parse("* * * * 8").unwrap_err();
-        assert!(matches!(error, ScheduleError::Range { field: "day-of-week", value: 8, .. }), "{error}");
+        assert!(
+            matches!(
+                error,
+                ScheduleError::Range {
+                    field: "day-of-week",
+                    value: 8,
+                    ..
+                }
+            ),
+            "{error}"
+        );
         let error = Schedule::parse("*/0 * * * *").unwrap_err();
-        assert!(matches!(error, ScheduleError::Step { field: "minute", .. }), "{error}");
+        assert!(
+            matches!(
+                error,
+                ScheduleError::Step {
+                    field: "minute",
+                    ..
+                }
+            ),
+            "{error}"
+        );
         assert!(error.to_string().contains("positive integer"), "{error}");
     }
 
     #[test]
     fn an_inverted_range_and_a_junk_element_are_named_errors() {
         let error = Schedule::parse("30-10 * * * *").unwrap_err();
-        assert!(matches!(error, ScheduleError::Inverted { field: "minute", start: 30, end: 10 }), "{error}");
+        assert!(
+            matches!(
+                error,
+                ScheduleError::Inverted {
+                    field: "minute",
+                    start: 30,
+                    end: 10
+                }
+            ),
+            "{error}"
+        );
         let error = Schedule::parse("a * * * *").unwrap_err();
         assert!(matches!(error, ScheduleError::Value { .. }), "{error}");
         let error = Schedule::parse("1,,2 * * * *").unwrap_err();
@@ -1939,7 +2252,7 @@ mod tests {
         assert!(either.matches(minute(2026, 11, 13, 0, 0))); // a Friday the 13th
         assert!(either.matches(minute(2026, 10, 16, 0, 0))); // a Friday, not the 13th
         assert!(!either.matches(minute(2026, 10, 14, 0, 0))); // neither
-        // One star: both must match, which degrades to the other field.
+                                                              // One star: both must match, which degrades to the other field.
         let fridays = Schedule::parse("0 0 * * 5").unwrap();
         assert!(fridays.matches(minute(2026, 10, 16, 0, 0)));
         assert!(!fridays.matches(minute(2026, 10, 14, 0, 0)));
@@ -1998,7 +2311,10 @@ mod tests {
         // April has thirty days.
         let never = Schedule::parse("0 0 31 4 *").unwrap();
         assert_eq!(never.next_after(minute(2026, 10, 14, 0, 0)), None);
-        assert_eq!(never.previous_at_or_before(minute(2026, 10, 14, 0, 0)), None);
+        assert_eq!(
+            never.previous_at_or_before(minute(2026, 10, 14, 0, 0)),
+            None
+        );
     }
 
     // --- the minute ---------------------------------------------------------
@@ -2028,13 +2344,31 @@ mod tests {
 
     #[test]
     fn previous_minute_carries_the_borrow_back_across_every_boundary() {
-        assert_eq!(minute(2026, 10, 14, 12, 30).previous_minute(), minute(2026, 10, 14, 12, 29));
-        assert_eq!(minute(2026, 10, 14, 12, 0).previous_minute(), minute(2026, 10, 14, 11, 59));
-        assert_eq!(minute(2026, 10, 14, 0, 0).previous_minute(), minute(2026, 10, 13, 23, 59));
-        assert_eq!(minute(2026, 1, 1, 0, 0).previous_minute(), minute(2025, 12, 31, 23, 59));
+        assert_eq!(
+            minute(2026, 10, 14, 12, 30).previous_minute(),
+            minute(2026, 10, 14, 12, 29)
+        );
+        assert_eq!(
+            minute(2026, 10, 14, 12, 0).previous_minute(),
+            minute(2026, 10, 14, 11, 59)
+        );
+        assert_eq!(
+            minute(2026, 10, 14, 0, 0).previous_minute(),
+            minute(2026, 10, 13, 23, 59)
+        );
+        assert_eq!(
+            minute(2026, 1, 1, 0, 0).previous_minute(),
+            minute(2025, 12, 31, 23, 59)
+        );
         // Across a leap day: 2028 is a leap year.
-        assert_eq!(minute(2028, 3, 1, 0, 0).previous_minute(), minute(2028, 2, 29, 23, 59));
-        assert_eq!(minute(2026, 3, 1, 0, 0).previous_minute(), minute(2026, 2, 28, 23, 59));
+        assert_eq!(
+            minute(2028, 3, 1, 0, 0).previous_minute(),
+            minute(2028, 2, 29, 23, 59)
+        );
+        assert_eq!(
+            minute(2026, 3, 1, 0, 0).previous_minute(),
+            minute(2026, 2, 28, 23, 59)
+        );
     }
 
     // --- the store ----------------------------------------------------------
@@ -2044,7 +2378,9 @@ mod tests {
         let home = temp_home("store-round-trip");
         let mut store = Store::open(&home).unwrap();
         assert!(store.jobs().is_empty());
-        let stored = store.add("daily-digest", "0 7 * * *", "  Summarize the day.  ", false).unwrap();
+        let stored = store
+            .add("daily-digest", "0 7 * * *", "  Summarize the day.  ", false)
+            .unwrap();
         assert!(stored.enabled);
         assert_eq!(stored.task, "Summarize the day.");
         assert_eq!(stored.last_run, None);
@@ -2066,7 +2402,9 @@ mod tests {
         store.add("a-job", "* * * * *", "one", true).unwrap();
         store.add("b-job", "0 * * * *", "two", false).unwrap();
         store.set_enabled("a-job", false).unwrap();
-        store.record_run("a-job", minute(2026, 10, 14, 7, 0), Outcome::Completed).unwrap();
+        store
+            .record_run("a-job", minute(2026, 10, 14, 7, 0), Outcome::Completed)
+            .unwrap();
         let removed = store.remove("b-job").unwrap();
         assert_eq!(removed.name, "b-job");
 
@@ -2084,7 +2422,9 @@ mod tests {
     fn a_bad_name_a_taken_name_and_a_bad_schedule_are_refused() {
         let home = temp_home("store-refusals");
         let mut store = Store::open(&home).unwrap();
-        let error = store.add("Daily Digest", "* * * * *", "x", false).unwrap_err();
+        let error = store
+            .add("Daily Digest", "* * * * *", "x", false)
+            .unwrap_err();
         assert!(matches!(error, CronError::Name(_)), "{error}");
         let error = store.add("../escape", "* * * * *", "x", false).unwrap_err();
         assert!(matches!(error, CronError::Name(_)), "{error}");
@@ -2101,7 +2441,9 @@ mod tests {
         assert!(matches!(error, CronError::Missing(_)), "{error}");
         let error = store.remove("nope").unwrap_err();
         assert!(matches!(error, CronError::Missing(_)), "{error}");
-        let error = store.record_run("nope", minute(2026, 10, 14, 7, 0), Outcome::Failed).unwrap_err();
+        let error = store
+            .record_run("nope", minute(2026, 10, 14, 7, 0), Outcome::Failed)
+            .unwrap_err();
         assert!(matches!(error, CronError::Missing(_)), "{error}");
         // Nothing was written by a refused mutation.
         assert_eq!(Store::open(&home).unwrap().jobs().len(), 1);
@@ -2151,9 +2493,12 @@ mod tests {
     fn test_scheduler(home: PathBuf) -> Scheduler {
         // A runner that records nothing and runs nothing: the decision
         // half of a pass is what these tests drive.
-        Scheduler::new(home, Box::new(|_job, _minute, _catch_up| {
-            Box::pin(async { Err("the test runner ran".to_string()) })
-        }))
+        Scheduler::new(
+            home,
+            Box::new(|_job, _minute, _catch_up| {
+                Box::pin(async { Err("the test runner ran".to_string()) })
+            }),
+        )
     }
 
     #[test]
@@ -2177,8 +2522,15 @@ mod tests {
         // A job whose minute does not match never fires.
         let hourly = vec![job("hourly", "0 * * * *", None)];
         let mut scheduler = test_scheduler(home.clone());
-        assert!(scheduler.tick_due(&hourly, minute(2026, 10, 14, 12, 30)).is_empty());
-        assert_eq!(scheduler.tick_due(&hourly, minute(2026, 10, 14, 13, 0)).len(), 1);
+        assert!(scheduler
+            .tick_due(&hourly, minute(2026, 10, 14, 12, 30))
+            .is_empty());
+        assert_eq!(
+            scheduler
+                .tick_due(&hourly, minute(2026, 10, 14, 13, 0))
+                .len(),
+            1
+        );
         // A disabled job never fires.
         let mut disabled = job("off", "* * * * *", None);
         disabled.enabled = false;
@@ -2198,14 +2550,20 @@ mod tests {
         assert_eq!(due[0].minute, minute(2026, 10, 14, 12, 0));
         assert!(due[0].catch_up, "the catch-up is named as one");
         // The same startup pass does not decide it twice.
-        assert!(scheduler.catch_up_due(&jobs, minute(2026, 10, 14, 12, 30)).is_empty());
+        assert!(scheduler
+            .catch_up_due(&jobs, minute(2026, 10, 14, 12, 30))
+            .is_empty());
         // And the tick in the missed minute does not fire it again.
-        assert!(scheduler.tick_due(&jobs, minute(2026, 10, 14, 12, 0)).is_empty());
+        assert!(scheduler
+            .tick_due(&jobs, minute(2026, 10, 14, 12, 0))
+            .is_empty());
 
         // A window already served is not a missed window.
         let served = vec![job("hourly", "0 * * * *", Some("2026-10-14T12:00Z"))];
         let mut scheduler = test_scheduler(home.clone());
-        assert!(scheduler.catch_up_due(&served, minute(2026, 10, 14, 12, 30)).is_empty());
+        assert!(scheduler
+            .catch_up_due(&served, minute(2026, 10, 14, 12, 30))
+            .is_empty());
         fs::remove_dir_all(&home).ok();
     }
 
@@ -2216,9 +2574,16 @@ mod tests {
         // minute going forward, whatever the clock says at startup.
         let jobs = vec![job("every-minute", "* * * * *", None)];
         let mut scheduler = test_scheduler(home.clone());
-        assert!(scheduler.catch_up_due(&jobs, minute(2026, 10, 14, 12, 30)).is_empty());
+        assert!(scheduler
+            .catch_up_due(&jobs, minute(2026, 10, 14, 12, 30))
+            .is_empty());
         // The tick is the path that starts it.
-        assert_eq!(scheduler.tick_due(&jobs, minute(2026, 10, 14, 12, 30)).len(), 1);
+        assert_eq!(
+            scheduler
+                .tick_due(&jobs, minute(2026, 10, 14, 12, 30))
+                .len(),
+            1
+        );
         fs::remove_dir_all(&home).ok();
     }
 
@@ -2227,7 +2592,10 @@ mod tests {
     /// Write one job into the store the way `fleet cron add` leaves it,
     /// so a whole pass can be driven through the real store.
     fn seed_job(home: &Path, name: &str, schedule: &str) {
-        Store::open(home).unwrap().add(name, schedule, "the goal", true).unwrap();
+        Store::open(home)
+            .unwrap()
+            .add(name, schedule, "the goal", true)
+            .unwrap();
     }
 
     /// One finished fire's outcome, the shape a runner reports when the
@@ -2262,8 +2630,14 @@ mod tests {
         let due = minute(2026, 10, 14, 4, 0);
         assert!(eval_due(None, due));
         assert!(!eval_due(Some(due), due), "the latch holds the minute");
-        assert!(!eval_due(None, minute(2026, 10, 14, 5, 0)), "only 04:00 matches");
-        assert!(eval_due(Some(due), minute(2026, 10, 15, 4, 0)), "a new day is a new fire");
+        assert!(
+            !eval_due(None, minute(2026, 10, 14, 5, 0)),
+            "only 04:00 matches"
+        );
+        assert!(
+            eval_due(Some(due), minute(2026, 10, 15, 4, 0)),
+            "a new day is a new fire"
+        );
     }
 
     #[tokio::test]
@@ -2278,18 +2652,24 @@ mod tests {
                 Ok("ran \u{2014} 6 passed, 0 failed, score 1.00".to_string())
             })
         });
-        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("nothing")).with_eval(eval);
+        let mut scheduler =
+            Scheduler::new(home.clone(), scripted_runner("nothing")).with_eval(eval);
         let due = minute(2026, 10, 14, 4, 0);
         // The matching minute fires it once, and the line names the run.
         let lines = scheduler.run_eval_if_due(due).await;
         assert_eq!(fired.load(Ordering::SeqCst), 1);
         assert!(
-            lines.iter().any(|line| line.contains("eval corpus") && line.contains("score 1.00")),
+            lines
+                .iter()
+                .any(|line| line.contains("eval corpus") && line.contains("score 1.00")),
             "{lines:?}"
         );
         // The same minute does not fire again; a non-matching minute does not.
         assert!(scheduler.run_eval_if_due(due).await.is_empty());
-        assert!(scheduler.run_eval_if_due(minute(2026, 10, 14, 9, 0)).await.is_empty());
+        assert!(scheduler
+            .run_eval_if_due(minute(2026, 10, 14, 9, 0))
+            .await
+            .is_empty());
         assert_eq!(fired.load(Ordering::SeqCst), 1);
         fs::remove_dir_all(&home).ok();
     }
@@ -2304,18 +2684,26 @@ mod tests {
     #[tokio::test]
     async fn a_panicking_eval_cadence_is_named_and_the_loop_carries_on() {
         let home = temp_home("eval-cadence-panics");
-        let eval: EvalRunner = Box::new(|| {
-            Box::pin(async move { panic!("the eval runner exploded") })
-        });
-        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("nothing")).with_eval(eval);
+        let eval: EvalRunner =
+            Box::new(|| Box::pin(async move { panic!("the eval runner exploded") }));
+        let mut scheduler =
+            Scheduler::new(home.clone(), scripted_runner("nothing")).with_eval(eval);
         let due = minute(2026, 10, 14, 4, 0);
 
         let lines = scheduler.run_eval_if_due(due).await;
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains("eval corpus"), "{}", lines[0]);
         assert!(lines[0].contains("panicked"), "{}", lines[0]);
-        assert!(lines[0].contains("the eval runner exploded"), "{}", lines[0]);
-        assert!(lines[0].contains("the minute stays claimed"), "{}", lines[0]);
+        assert!(
+            lines[0].contains("the eval runner exploded"),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            lines[0].contains("the minute stays claimed"),
+            "{}",
+            lines[0]
+        );
         // The minute is spent either way: no retry inside it.
         assert!(scheduler.run_eval_if_due(due).await.is_empty());
         // The scheduler is still alive: a later tick decides and runs
@@ -2336,7 +2724,10 @@ mod tests {
         // unchanged by the cadence's presence.
         let home = temp_home("eval-cadence-none");
         let mut scheduler = Scheduler::new(home.clone(), scripted_runner("nothing"));
-        assert!(scheduler.run_eval_if_due(minute(2026, 10, 14, 4, 0)).await.is_empty());
+        assert!(scheduler
+            .run_eval_if_due(minute(2026, 10, 14, 4, 0))
+            .await
+            .is_empty());
         fs::remove_dir_all(&home).ok();
     }
 
@@ -2382,9 +2773,15 @@ mod tests {
 
         let lines = scheduler.tick(now).await;
         assert_eq!(lines.len(), 2, "{lines:?}");
-        let panicked = lines.iter().find(|line| line.contains("job `boom`")).expect("the panicking fire's line");
+        let panicked = lines
+            .iter()
+            .find(|line| line.contains("job `boom`"))
+            .expect("the panicking fire's line");
         assert!(panicked.contains("the runner exploded"), "{panicked}");
-        let steady = lines.iter().find(|line| line.contains("job `steady`")).expect("the steady fire's line");
+        let steady = lines
+            .iter()
+            .find(|line| line.contains("job `steady`"))
+            .expect("the steady fire's line");
         assert!(steady.contains("completed"), "{steady}");
         // Both minutes are spent: neither fires again this minute.
         assert!(scheduler.tick(now).await.is_empty());
@@ -2403,10 +2800,20 @@ mod tests {
             Scheduler::new(home.clone(), scripted_runner("nothing")).with_ui(Some(tx));
 
         let lines = scheduler.tick(minute(2026, 10, 14, 12, 0)).await;
-        assert!(lines.is_empty(), "the card rides the channel, not stderr: {lines:?}");
+        assert!(
+            lines.is_empty(),
+            "the card rides the channel, not stderr: {lines:?}"
+        );
         let event = rx.try_recv().expect("the fire's card");
         match event {
-            UiEvent::CronFire { job, minute, catch_up, outcome, detail, session } => {
+            UiEvent::CronFire {
+                job,
+                minute,
+                catch_up,
+                outcome,
+                detail,
+                session,
+            } => {
                 assert_eq!(job, "every-minute");
                 assert_eq!(minute, "2026-10-14T12:00Z");
                 assert!(!catch_up);
@@ -2465,15 +2872,20 @@ mod tests {
         assert_eq!(scheduler.tick(minute(2026, 10, 14, 12, 0)).await.len(), 1);
 
         let lines = scheduler.tick(minute(2026, 10, 14, 12, 3)).await;
-        let passed: Vec<&String> =
-            lines.iter().filter(|line| line.contains("window passed")).collect();
+        let passed: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.contains("window passed"))
+            .collect();
         assert_eq!(passed.len(), 2, "{lines:?}");
         assert!(passed[0].contains("2026-10-14T12:01Z"), "{}", passed[0]);
         assert!(passed[1].contains("2026-10-14T12:02Z"), "{}", passed[1]);
         // The naming does not repeat: every passed minute is claimed in
         // the latch as it is named.
         let again = scheduler.tick(minute(2026, 10, 14, 12, 4)).await;
-        assert!(!again.iter().any(|line| line.contains("window passed")), "{again:?}");
+        assert!(
+            !again.iter().any(|line| line.contains("window passed")),
+            "{again:?}"
+        );
         fs::remove_dir_all(&home).ok();
     }
 
@@ -2493,10 +2905,18 @@ mod tests {
             .filter(|line| line.contains("'s 2026-10-14T"))
             .collect();
         assert_eq!(named.len(), MAX_NAMED_MISSED_WINDOWS, "{lines:?}");
-        assert!(lines.iter().any(|line| line.contains("and 1 more window passed")), "{lines:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("and 1 more window passed")),
+            "{lines:?}"
+        );
         // The nine minutes between are spent, named or not.
         let again = scheduler.tick(minute(2026, 10, 14, 12, 11)).await;
-        assert!(!again.iter().any(|line| line.contains("window passed")), "{again:?}");
+        assert!(
+            !again.iter().any(|line| line.contains("window passed")),
+            "{again:?}"
+        );
         fs::remove_dir_all(&home).ok();
     }
 
@@ -2511,19 +2931,31 @@ mod tests {
         // The first tick that sees the job is 12:01, so the 12:00
         // window is not a window the scheduler dropped.
         let lines = scheduler.tick(minute(2026, 10, 14, 12, 1)).await;
-        assert!(!lines.iter().any(|line| line.contains("window passed")), "{lines:?}");
+        assert!(
+            !lines.iter().any(|line| line.contains("window passed")),
+            "{lines:?}"
+        );
         assert_eq!(lines.len(), 1, "{lines:?}");
 
         // A job that was disabled when its windows passed starts its
         // floor at the minute it comes back.
         let home = temp_home("passed-window-disabled");
         seed_job(&home, "off", "* * * * *");
-        Store::open(&home).unwrap().set_enabled("off", false).unwrap();
+        Store::open(&home)
+            .unwrap()
+            .set_enabled("off", false)
+            .unwrap();
         let mut scheduler = test_scheduler(home.clone());
         assert!(scheduler.tick(minute(2026, 10, 14, 12, 3)).await.is_empty());
-        Store::open(&home).unwrap().set_enabled("off", true).unwrap();
+        Store::open(&home)
+            .unwrap()
+            .set_enabled("off", true)
+            .unwrap();
         let lines = scheduler.tick(minute(2026, 10, 14, 12, 3)).await;
-        assert!(!lines.iter().any(|line| line.contains("window passed")), "{lines:?}");
+        assert!(
+            !lines.iter().any(|line| line.contains("window passed")),
+            "{lines:?}"
+        );
         assert_eq!(lines.len(), 1, "{lines:?}");
         fs::remove_dir_all(&home).ok();
     }
@@ -2543,7 +2975,11 @@ mod tests {
 
         let first = scheduler.tick(minute(2026, 10, 14, 12, 0)).await;
         assert_eq!(first.len(), 1, "{first:?}");
-        assert!(first[0].contains("the job store is unreadable"), "{}", first[0]);
+        assert!(
+            first[0].contains("the job store is unreadable"),
+            "{}",
+            first[0]
+        );
         // The same complaint again is silence.
         assert!(scheduler.tick(minute(2026, 10, 14, 12, 1)).await.is_empty());
         assert!(scheduler.tick(minute(2026, 10, 14, 12, 2)).await.is_empty());
@@ -2568,7 +3004,9 @@ mod tests {
     fn the_unattended_gate_names_the_jobs_policy_not_an_absent_user() {
         let gate = Gate::for_job(&job("careful", "* * * * *", None));
         assert!(gate.unattended);
-        let denial = gate.denial_reason().expect("the unattended gate names its own reason");
+        let denial = gate
+            .denial_reason()
+            .expect("the unattended gate names its own reason");
         assert!(denial.contains("not declared unattended"), "{denial}");
         assert!(denial.contains("auto_approve"), "{denial}");
         assert!(!denial.contains("the user did not approve"), "{denial}");
@@ -2584,12 +3022,18 @@ mod tests {
     fn the_catch_up_framing_names_the_missed_window() {
         let stored = job("hourly", "0 * * * *", None);
         let on_time = frame_task(&stored, minute(2026, 10, 14, 12, 0), false);
-        assert!(on_time.starts_with("[scheduled run \u{2014} job `hourly` at 2026-10-14T12:00Z]"), "{on_time}");
+        assert!(
+            on_time.starts_with("[scheduled run \u{2014} job `hourly` at 2026-10-14T12:00Z]"),
+            "{on_time}"
+        );
         assert!(on_time.ends_with("the goal"), "{on_time}");
         let catch_up = frame_task(&stored, minute(2026, 10, 14, 12, 0), true);
         assert!(catch_up.contains("catch-up"), "{catch_up}");
         assert!(catch_up.contains("2026-10-14T12:00Z"), "{catch_up}");
-        assert!(catch_up.contains("missed while fleet was down"), "{catch_up}");
+        assert!(
+            catch_up.contains("missed while fleet was down"),
+            "{catch_up}"
+        );
         assert!(catch_up.ends_with("the goal"), "{catch_up}");
     }
 
@@ -2686,7 +3130,10 @@ mod tests {
             "{listing}"
         );
         // The other job's own newest run rides its own card.
-        assert!(listing.contains("session 20261014T120100Z-ccc333"), "{listing}");
+        assert!(
+            listing.contains("session 20261014T120100Z-ccc333"),
+            "{listing}"
+        );
         // And the ordinary session is nobody's.
         assert!(!listing.contains("ddd444"), "{listing}");
         fs::remove_dir_all(&home).ok();
@@ -2708,7 +3155,11 @@ mod tests {
         // marked scheduled, both read as not this job's.
         assert_eq!(last_session_id(&home, "hourly"), None);
         let sessions = crate::home::sessions_dir(&home);
-        let framed = frame_task(&job_fixture("daily-digest"), minute(2026, 10, 14, 13, 0), false);
+        let framed = frame_task(
+            &job_fixture("daily-digest"),
+            minute(2026, 10, 14, 13, 0),
+            false,
+        );
         let start = serde_json::json!({
             "type": "start",
             "v": 1,

@@ -3,8 +3,8 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::agent::Approval;
 use super::app::{Action, App, Mode};
+use crate::agent::Approval;
 
 /// Translate one key press for the app's current mode.
 pub fn action_for(app: &App, key: &KeyEvent) -> Option<Action> {
@@ -151,13 +151,22 @@ mod tests {
     #[test]
     fn typing_goes_to_the_input_and_q_quits_only_when_empty() {
         let mut with_text = app();
-        assert_eq!(action_for(&with_text, &key(KeyCode::Char('a'))), Some(Action::Input('a')));
+        assert_eq!(
+            action_for(&with_text, &key(KeyCode::Char('a'))),
+            Some(Action::Input('a'))
+        );
         with_text.apply(Action::Input('a'));
         // With text in the box, `q` is just a letter.
-        assert_eq!(action_for(&with_text, &key(KeyCode::Char('q'))), Some(Action::Input('q')));
+        assert_eq!(
+            action_for(&with_text, &key(KeyCode::Char('q'))),
+            Some(Action::Input('q'))
+        );
         // From an empty prompt, `q` quits.
         let empty = app();
-        assert_eq!(action_for(&empty, &key(KeyCode::Char('q'))), Some(Action::Quit));
+        assert_eq!(
+            action_for(&empty, &key(KeyCode::Char('q'))),
+            Some(Action::Quit)
+        );
     }
 
     #[test]
@@ -171,8 +180,14 @@ mod tests {
     #[test]
     fn ctrl_c_always_quits_and_ctrl_o_opens_the_picker() {
         let app = app();
-        assert_eq!(action_for(&app, &control(KeyCode::Char('c'))), Some(Action::Quit));
-        assert_eq!(action_for(&app, &control(KeyCode::Char('o'))), Some(Action::OpenSessions));
+        assert_eq!(
+            action_for(&app, &control(KeyCode::Char('c'))),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            action_for(&app, &control(KeyCode::Char('o'))),
+            Some(Action::OpenSessions)
+        );
         // Other control combinations are not text.
         assert_eq!(action_for(&app, &control(KeyCode::Char('z'))), None);
     }
@@ -181,22 +196,49 @@ mod tests {
     fn scrolling_keys_move_the_conversation() {
         let app = app();
         assert_eq!(action_for(&app, &key(KeyCode::Up)), Some(Action::Scroll(1)));
-        assert_eq!(action_for(&app, &key(KeyCode::PageUp)), Some(Action::Scroll(10)));
-        assert_eq!(action_for(&app, &key(KeyCode::PageDown)), Some(Action::Scroll(-10)));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::PageUp)),
+            Some(Action::Scroll(10))
+        );
+        assert_eq!(
+            action_for(&app, &key(KeyCode::PageDown)),
+            Some(Action::Scroll(-10))
+        );
     }
 
     #[test]
     fn the_editing_keys_move_and_delete_at_the_cursor() {
         let typing = app();
-        assert_eq!(action_for(&typing, &key(KeyCode::Left)), Some(Action::CursorLeft));
-        assert_eq!(action_for(&typing, &key(KeyCode::Right)), Some(Action::CursorRight));
-        assert_eq!(action_for(&typing, &key(KeyCode::Home)), Some(Action::CursorHome));
-        assert_eq!(action_for(&typing, &key(KeyCode::End)), Some(Action::CursorEnd));
-        assert_eq!(action_for(&typing, &key(KeyCode::Delete)), Some(Action::Delete));
-        assert_eq!(action_for(&typing, &key(KeyCode::Backspace)), Some(Action::Backspace));
+        assert_eq!(
+            action_for(&typing, &key(KeyCode::Left)),
+            Some(Action::CursorLeft)
+        );
+        assert_eq!(
+            action_for(&typing, &key(KeyCode::Right)),
+            Some(Action::CursorRight)
+        );
+        assert_eq!(
+            action_for(&typing, &key(KeyCode::Home)),
+            Some(Action::CursorHome)
+        );
+        assert_eq!(
+            action_for(&typing, &key(KeyCode::End)),
+            Some(Action::CursorEnd)
+        );
+        assert_eq!(
+            action_for(&typing, &key(KeyCode::Delete)),
+            Some(Action::Delete)
+        );
+        assert_eq!(
+            action_for(&typing, &key(KeyCode::Backspace)),
+            Some(Action::Backspace)
+        );
         // Word delete answers to alt+backspace and to ctrl+w.
         let alt_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::ALT);
-        assert_eq!(action_for(&typing, &alt_backspace), Some(Action::DeleteWord));
+        assert_eq!(
+            action_for(&typing, &alt_backspace),
+            Some(Action::DeleteWord)
+        );
         assert_eq!(
             action_for(&typing, &control(KeyCode::Char('w'))),
             Some(Action::DeleteWord)
@@ -213,10 +255,19 @@ mod tests {
         let mut app = app();
         app.open_sessions(Vec::new());
         assert_eq!(action_for(&app, &key(KeyCode::Down)), Some(Action::Move(1)));
-        assert_eq!(action_for(&app, &key(KeyCode::Char('j'))), Some(Action::Move(1)));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('j'))),
+            Some(Action::Move(1))
+        );
         assert_eq!(action_for(&app, &key(KeyCode::Enter)), Some(Action::Pick));
-        assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::CloseOverlay));
-        assert_eq!(action_for(&app, &key(KeyCode::Char('q'))), Some(Action::Quit));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Esc)),
+            Some(Action::CloseOverlay)
+        );
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('q'))),
+            Some(Action::Quit)
+        );
     }
 
     #[test]
@@ -236,7 +287,10 @@ mod tests {
             Some(Action::OpenExplain)
         );
         // A bare `x` is still a letter.
-        assert_eq!(action_for(&app, &key(KeyCode::Char('x'))), Some(Action::Input('x')));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('x'))),
+            Some(Action::Input('x'))
+        );
     }
 
     #[test]
@@ -244,10 +298,19 @@ mod tests {
         let mut app = app();
         app.open_explain(vec!["a card line".to_string()]);
         assert_eq!(action_for(&app, &key(KeyCode::Down)), Some(Action::Move(1)));
-        assert_eq!(action_for(&app, &key(KeyCode::Char('j'))), Some(Action::Move(1)));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('j'))),
+            Some(Action::Move(1))
+        );
         assert_eq!(action_for(&app, &key(KeyCode::Up)), Some(Action::Move(-1)));
-        assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::CloseOverlay));
-        assert_eq!(action_for(&app, &key(KeyCode::Char('q'))), Some(Action::Quit));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Esc)),
+            Some(Action::CloseOverlay)
+        );
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('q'))),
+            Some(Action::Quit)
+        );
         // Enter picks nothing here, and letters are not text.
         assert_eq!(action_for(&app, &key(KeyCode::Enter)), None);
         assert_eq!(action_for(&app, &key(KeyCode::Char('e'))), None);
@@ -264,7 +327,10 @@ mod tests {
             Some(Action::CycleBoard)
         );
         // A bare `b` is still a letter, and other control keys are nothing.
-        assert_eq!(action_for(&app, &key(KeyCode::Char('b'))), Some(Action::Input('b')));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('b'))),
+            Some(Action::Input('b'))
+        );
         assert_eq!(action_for(&app, &control(KeyCode::Char('v'))), None);
     }
 
@@ -273,10 +339,19 @@ mod tests {
         let mut app = app();
         app.apply(Action::OpenLanes);
         assert_eq!(action_for(&app, &key(KeyCode::Down)), Some(Action::Move(1)));
-        assert_eq!(action_for(&app, &key(KeyCode::Char('j'))), Some(Action::Move(1)));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('j'))),
+            Some(Action::Move(1))
+        );
         assert_eq!(action_for(&app, &key(KeyCode::Up)), Some(Action::Move(-1)));
-        assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::CloseOverlay));
-        assert_eq!(action_for(&app, &key(KeyCode::Char('q'))), Some(Action::Quit));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Esc)),
+            Some(Action::CloseOverlay)
+        );
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('q'))),
+            Some(Action::Quit)
+        );
         // Enter picks nothing here, and letters are not text.
         assert_eq!(action_for(&app, &key(KeyCode::Enter)), None);
         assert_eq!(action_for(&app, &key(KeyCode::Char('x'))), None);
@@ -296,22 +371,49 @@ mod tests {
         app.open_settings(home.clone());
         assert_eq!(action_for(&app, &key(KeyCode::Down)), Some(Action::Move(1)));
         assert_eq!(action_for(&app, &key(KeyCode::Enter)), Some(Action::Pick));
-        assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::CloseOverlay));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Esc)),
+            Some(Action::CloseOverlay)
+        );
         // `r` arms the destructive confirmation; ctrl+r is not it.
-        assert_eq!(action_for(&app, &key(KeyCode::Char('r'))), Some(Action::SettingsRemove));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('r'))),
+            Some(Action::SettingsRemove)
+        );
         assert_eq!(action_for(&app, &control(KeyCode::Char('r'))), None);
         // And `r` is a letter everywhere else.
-        assert_eq!(action_for(&typing, &key(KeyCode::Char('r'))), Some(Action::Input('r')));
+        assert_eq!(
+            action_for(&typing, &key(KeyCode::Char('r'))),
+            Some(Action::Input('r'))
+        );
 
         // The armed question answers `y` and abandons on every other
         // key, while ctrl+c still quits out of it.
         app.mode = Mode::SettingsConfirm;
-        assert_eq!(action_for(&app, &key(KeyCode::Char('y'))), Some(Action::SettingsConfirm));
-        assert_eq!(action_for(&app, &key(KeyCode::Char('Y'))), Some(Action::SettingsConfirm));
-        assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::SettingsAbandon));
-        assert_eq!(action_for(&app, &key(KeyCode::Enter)), Some(Action::SettingsAbandon));
-        assert_eq!(action_for(&app, &key(KeyCode::Char('n'))), Some(Action::SettingsAbandon));
-        assert_eq!(action_for(&app, &control(KeyCode::Char('c'))), Some(Action::Quit));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('y'))),
+            Some(Action::SettingsConfirm)
+        );
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('Y'))),
+            Some(Action::SettingsConfirm)
+        );
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Esc)),
+            Some(Action::SettingsAbandon)
+        );
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Enter)),
+            Some(Action::SettingsAbandon)
+        );
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('n'))),
+            Some(Action::SettingsAbandon)
+        );
+        assert_eq!(
+            action_for(&app, &control(KeyCode::Char('c'))),
+            Some(Action::Quit)
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 

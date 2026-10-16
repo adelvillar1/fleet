@@ -318,14 +318,20 @@ mod tests {
         ToolCall {
             id: "c1".to_string(),
             kind: "function".to_string(),
-            function: FunctionCall { name: name.to_string(), arguments: arguments.to_string() },
+            function: FunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
         }
     }
 
     /// A `bash` call running `command`, encoded through serde so the
     /// quoting in the test is never the thing under test.
     fn bash(command: &str) -> ToolCall {
-        let arguments = format!("{{\"command\":{}}}", serde_json::to_string(command).unwrap());
+        let arguments = format!(
+            "{{\"command\":{}}}",
+            serde_json::to_string(command).unwrap()
+        );
         call("bash", &arguments)
     }
 
@@ -403,7 +409,10 @@ mod tests {
     fn a_config_word_survives_surrounding_whitespace() {
         // A trailing newline is a formatting accident in the file, not
         // a word the owner typed.
-        assert_eq!(resolve(Some(false), Some(" yes-guarded\n")), Mode::YesGuarded);
+        assert_eq!(
+            resolve(Some(false), Some(" yes-guarded\n")),
+            Mode::YesGuarded
+        );
         assert_eq!(resolve(Some(false), Some("  yes  ")), Mode::Yes);
     }
 
@@ -445,8 +454,14 @@ mod tests {
             r#"{"path":"/etc/passwd","content":"x"}"#
         )));
         // Even a tool whose own arguments name a credential file.
-        assert!(!Gate::is_destructive(&call("read_file", r#"{"path":"~/.ssh/id_rsa"}"#)));
-        assert!(!Gate::is_destructive(&call("list_dir", r#"{"path":"/srv/.env"}"#)));
+        assert!(!Gate::is_destructive(&call(
+            "read_file",
+            r#"{"path":"~/.ssh/id_rsa"}"#
+        )));
+        assert!(!Gate::is_destructive(&call(
+            "list_dir",
+            r#"{"path":"/srv/.env"}"#
+        )));
         // And unreadable arguments on a non-bash tool are not
         // destructive either: there is no command to misread, which is
         // the distinction the two branches of `is_destructive` turn on.
@@ -466,7 +481,10 @@ mod tests {
             ("git push -f", "git push -f origin main"),
             ("git reset --hard", "git reset --hard HEAD~3"),
             ("git clean -", "git clean -fd"),
-            ("git filter-branch", "git filter-branch --tree-filter 'rm -f secret' -- --all"),
+            (
+                "git filter-branch",
+                "git filter-branch --tree-filter 'rm -f secret' -- --all",
+            ),
             ("dd if=", "dd if=/dev/zero of=/dev/sda bs=4M"),
             ("mkfs", "mkfs.ext4 /dev/sda1"),
             ("> /dev/sd", "echo wipe > /dev/sda"),
@@ -476,10 +494,20 @@ mod tests {
             (".pem", "cat /etc/ssl/private/server.pem"),
             ("credentials", "cat ~/.aws/credentials"),
         ];
-        assert_eq!(CASES.len(), DESTRUCTIVE.len(), "every marker has a case here");
+        assert_eq!(
+            CASES.len(),
+            DESTRUCTIVE.len(),
+            "every marker has a case here"
+        );
         for &(marker, command) in CASES {
-            assert!(DESTRUCTIVE.contains(&marker), "`{marker}` is not in DESTRUCTIVE");
-            assert!(command.contains(marker), "the case for `{marker}` does not contain it");
+            assert!(
+                DESTRUCTIVE.contains(&marker),
+                "`{marker}` is not in DESTRUCTIVE"
+            );
+            assert!(
+                command.contains(marker),
+                "the case for `{marker}` does not contain it"
+            );
             assert!(
                 Gate::is_destructive(&bash(command)),
                 "`{command}` should be in the class via `{marker}`"

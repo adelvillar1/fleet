@@ -33,8 +33,8 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::oneshot;
-use tokio::time::timeout;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 
 /// The MCP protocol version this client speaks.
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -183,7 +183,11 @@ pub struct Timeouts {
 
 impl Default for Timeouts {
     fn default() -> Timeouts {
-        Timeouts { initialize: INITIALIZE_TIMEOUT, list: LIST_TIMEOUT, call: CALL_TIMEOUT }
+        Timeouts {
+            initialize: INITIALIZE_TIMEOUT,
+            list: LIST_TIMEOUT,
+            call: CALL_TIMEOUT,
+        }
     }
 }
 
@@ -277,7 +281,9 @@ impl std::fmt::Display for McpError {
                 write!(f, "`{method}` timed out after {}s", budget.as_secs())
             }
             McpError::Closed(reason) => write!(f, "the MCP server closed: {reason}"),
-            McpError::Rpc { code, message } => write!(f, "the MCP server errored ({code}): {message}"),
+            McpError::Rpc { code, message } => {
+                write!(f, "the MCP server errored ({code}): {message}")
+            }
             McpError::Protocol(detail) => write!(f, "malformed MCP reply: {detail}"),
         }
     }
@@ -353,15 +359,18 @@ impl McpServer {
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
         let mut child = command.spawn().map_err(McpError::Spawn)?;
-        let stdin = child.stdin.take().ok_or_else(|| {
-            McpError::Protocol("the child's stdin was not piped".to_string())
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            McpError::Protocol("the child's stdout was not piped".to_string())
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
-            McpError::Protocol("the child's stderr was not piped".to_string())
-        })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| McpError::Protocol("the child's stdin was not piped".to_string()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| McpError::Protocol("the child's stdout was not piped".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| McpError::Protocol("the child's stderr was not piped".to_string()))?;
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let reader = tokio::spawn(read_frames(stdout, Arc::clone(&pending)));
@@ -414,7 +423,10 @@ impl McpServer {
     /// The server's tool roster. Part of the startup handshake, so a
     /// failure here carries the child's stderr tail too (KI-043).
     pub async fn list_tools(&self) -> Result<Vec<ToolInfo>, McpError> {
-        match self.request("tools/list", json!({}), self.timeouts.list).await {
+        match self
+            .request("tools/list", json!({}), self.timeouts.list)
+            .await
+        {
             Ok(result) => parse_tools(result),
             Err(error) => Err(annotated(error, &self.stderr_tail())),
         }
@@ -428,11 +440,7 @@ impl McpServer {
     /// Call one tool. A JSON-RPC error (bad arguments, unknown tool) comes
     /// back as [`McpError::Rpc`]; a tool-level refusal comes back as
     /// [`CallResult::is_error`].
-    pub async fn call_tool(
-        &self,
-        name: &str,
-        arguments: Value,
-    ) -> Result<CallResult, McpError> {
+    pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<CallResult, McpError> {
         let result = self
             .request(
                 "tools/call",
@@ -452,7 +460,9 @@ impl McpServer {
         let child = lock(&self.child).take();
         self.reader.abort();
         self.stderr_drain.abort();
-        let Some(mut child) = child else { return Ok(()) };
+        let Some(mut child) = child else {
+            return Ok(());
+        };
         match timeout(TEARDOWN_GRACE, child.wait()).await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(error)) => Err(McpError::Io(error)),
@@ -492,14 +502,18 @@ impl McpServer {
             Err(_elapsed) => {
                 // A late reply now finds no waiter and is ignored.
                 lock(&self.pending).remove(&id);
-                Err(McpError::Timeout { method: method.to_string(), budget })
+                Err(McpError::Timeout {
+                    method: method.to_string(),
+                    budget,
+                })
             }
         }
     }
 
     /// Write one notification: a frame with no id, never answered.
     async fn notify(&self, method: &str) -> Result<(), McpError> {
-        self.write_frame(&json!({ "jsonrpc": "2.0", "method": method })).await
+        self.write_frame(&json!({ "jsonrpc": "2.0", "method": method }))
+            .await
     }
 
     /// Write one frame as a single newline-terminated line and flush.
@@ -514,7 +528,10 @@ impl McpServer {
         let Some(stdin) = guard.as_mut() else {
             return Err(McpError::Closed("the server's stdin is closed".to_string()));
         };
-        stdin.write_all(line.as_bytes()).await.map_err(McpError::Io)?;
+        stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(McpError::Io)?;
         stdin.flush().await.map_err(McpError::Io)
     }
 }
@@ -561,7 +578,11 @@ fn parse_initialize(result: Value) -> Result<InitializeResult, McpError> {
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_string();
-    Ok(InitializeResult { protocol_version, server_name, server_version })
+    Ok(InitializeResult {
+        protocol_version,
+        server_name,
+        server_version,
+    })
 }
 
 /// Parse a `tools/list` result into the roster.
@@ -569,7 +590,9 @@ fn parse_tools(result: Value) -> Result<Vec<ToolInfo>, McpError> {
     let tools = result
         .get("tools")
         .and_then(Value::as_array)
-        .ok_or_else(|| McpError::Protocol("tools/list answered without a tools array".to_string()))?;
+        .ok_or_else(|| {
+            McpError::Protocol("tools/list answered without a tools array".to_string())
+        })?;
     let mut roster = Vec::with_capacity(tools.len());
     for tool in tools {
         roster.push(ToolInfo {
@@ -632,7 +655,10 @@ fn parse_call(result: Value) -> Result<CallResult, McpError> {
         .unwrap_or_default();
     Ok(CallResult {
         content,
-        is_error: result.get("isError").and_then(Value::as_bool).unwrap_or(false),
+        is_error: result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -680,9 +706,10 @@ fn annotated(error: McpError, tail: &str) -> McpError {
         McpError::Io(error) => McpError::Io(annotated_io(&error, &suffix)),
         McpError::Timeout { .. } => error,
         McpError::Closed(reason) => McpError::Closed(format!("{reason}{suffix}")),
-        McpError::Rpc { code, message } => {
-            McpError::Rpc { code, message: format!("{message}{suffix}") }
-        }
+        McpError::Rpc { code, message } => McpError::Rpc {
+            code,
+            message: format!("{message}{suffix}"),
+        },
         McpError::Protocol(detail) => McpError::Protocol(format!("{detail}{suffix}")),
     }
 }
@@ -806,16 +833,28 @@ async fn read_frames(
 /// notification, an id-`null` stray (KI-002), an unknown id, or a line
 /// that is not JSON at all is ignored. Pure — the seam the unit tests
 /// drive.
-fn route_frame(line: &str, pending: &Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>) {
-    let Ok(frame) = serde_json::from_str::<Value>(line) else { return };
+fn route_frame(
+    line: &str,
+    pending: &Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>,
+) {
+    let Ok(frame) = serde_json::from_str::<Value>(line) else {
+        return;
+    };
     // A frame with no numeric id is not a reply to anything this client
     // sent: a server-initiated notification, or sys1/gen1's id-null
     // answer to `notifications/initialized`.
-    let Some(id) = frame.get("id").and_then(Value::as_u64) else { return };
-    let Some(waiter) = lock(pending).remove(&id) else { return };
+    let Some(id) = frame.get("id").and_then(Value::as_u64) else {
+        return;
+    };
+    let Some(waiter) = lock(pending).remove(&id) else {
+        return;
+    };
     let outcome = match frame.get("error") {
         Some(error) => Err(McpError::Rpc {
-            code: error.get("code").and_then(Value::as_i64).unwrap_or_default(),
+            code: error
+                .get("code")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
             message: error
                 .get("message")
                 .and_then(Value::as_str)
@@ -842,7 +881,11 @@ mod tests {
         // alphabetically, so the assertion is on the parsed frame.)
         let frame = json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {} });
         let mut line = serde_json::to_string(&frame).unwrap();
-        assert_eq!(line.matches('\n').count(), 0, "the frame is one line: {line}");
+        assert_eq!(
+            line.matches('\n').count(),
+            0,
+            "the frame is one line: {line}"
+        );
         assert!(!line.contains("Content-Length"));
         assert_eq!(
             serde_json::from_str::<Value>(&line).unwrap(),
@@ -864,8 +907,14 @@ mod tests {
         let pending = pending();
         let (tx, mut rx) = oneshot::channel();
         lock(&pending).insert(1, tx);
-        route_frame(r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}"#, &pending);
-        let outcome = rx.try_recv().expect("the waiter woke").expect("an ok outcome");
+        route_frame(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}"#,
+            &pending,
+        );
+        let outcome = rx
+            .try_recv()
+            .expect("the waiter woke")
+            .expect("an ok outcome");
         assert_eq!(outcome, json!({ "tools": [] }));
         // The waiter is consumed, not left pending.
         assert!(lock(&pending).is_empty());
@@ -879,18 +928,27 @@ mod tests {
         let pending = pending();
         let (tx, mut rx) = oneshot::channel();
         lock(&pending).insert(4, tx);
-        route_frame(r#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#, &pending);
+        route_frame(
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#,
+            &pending,
+        );
         route_frame(
             r#"{"jsonrpc":"2.0","id":null,"result":{"error":{"code":-32601,"message":"Method not found: notifications/initialized"}}}"#,
             &pending,
         );
-        route_frame(r#"{"jsonrpc":"2.0","id":99,"result":{"tools":[]}}"#, &pending);
+        route_frame(
+            r#"{"jsonrpc":"2.0","id":99,"result":{"tools":[]}}"#,
+            &pending,
+        );
         route_frame("not json at all", &pending);
         assert!(rx.try_recv().is_err(), "the waiter must not have woken");
         assert_eq!(lock(&pending).len(), 1, "the pending waiter stays pending");
         // The real reply still lands afterwards.
         route_frame(r#"{"jsonrpc":"2.0","id":4,"result":{"ok":true}}"#, &pending);
-        let outcome = rx.try_recv().expect("the waiter woke").expect("an ok outcome");
+        let outcome = rx
+            .try_recv()
+            .expect("the waiter woke")
+            .expect("an ok outcome");
         assert_eq!(outcome, json!({ "ok": true }));
     }
 
@@ -903,7 +961,10 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"`items` must be a string"}}"#,
             &pending,
         );
-        let error = rx.try_recv().expect("the waiter woke").expect_err("an error outcome");
+        let error = rx
+            .try_recv()
+            .expect("the waiter woke")
+            .expect_err("an error outcome");
         match error {
             McpError::Rpc { code, message } => {
                 assert_eq!(code, -32602);
@@ -919,7 +980,10 @@ mod tests {
         let (tx, mut rx) = oneshot::channel();
         lock(&pending).insert(3, tx);
         route_frame(r#"{"jsonrpc":"2.0","id":3}"#, &pending);
-        let outcome = rx.try_recv().expect("the waiter woke").expect("an ok outcome");
+        let outcome = rx
+            .try_recv()
+            .expect("the waiter woke")
+            .expect("an ok outcome");
         assert_eq!(outcome, Value::Null);
     }
 
@@ -1014,7 +1078,10 @@ mod tests {
         assert_eq!(empty.text(), "(the tool returned no content)");
         // An isError result keeps its text: a refusal is the model's to
         // read, and the agent records it as the failure it is.
-        let refused = call_result(json!([{ "type": "text", "text": "`items` must be a string" }]), true);
+        let refused = call_result(
+            json!([{ "type": "text", "text": "`items` must be a string" }]),
+            true,
+        );
         assert!(refused.is_error);
         assert_eq!(refused.text(), "`items` must be a string");
     }
@@ -1079,12 +1146,27 @@ mod tests {
         let env = child_env(&spec, &parent);
 
         // The credential-shaped ambient names are gone.
-        assert!(!names(&env).contains(&"DEEPSEEK_API_KEY".to_string()), "{:?}", names(&env));
-        assert!(!names(&env).contains(&"TABPFN_API_KEY".to_string()), "{:?}", names(&env));
+        assert!(
+            !names(&env).contains(&"DEEPSEEK_API_KEY".to_string()),
+            "{:?}",
+            names(&env)
+        );
+        assert!(
+            !names(&env).contains(&"TABPFN_API_KEY".to_string()),
+            "{:?}",
+            names(&env)
+        );
         // The base is there, PATH first, and the caller's value survived.
         assert_eq!(env[0].0.as_os_str(), OsStr::new("PATH"));
-        assert_eq!(lookup(&env, "PATH"), Some(OsStr::new("/opt/homebrew/bin:/usr/bin")));
-        assert!(names(&env).contains(&"HOME".to_string()), "{:?}", names(&env));
+        assert_eq!(
+            lookup(&env, "PATH"),
+            Some(OsStr::new("/opt/homebrew/bin:/usr/bin"))
+        );
+        assert!(
+            names(&env).contains(&"HOME".to_string()),
+            "{:?}",
+            names(&env)
+        );
         // The lane's allowlist entry crossed; its own declaration did too.
         assert_eq!(
             lookup(&env, "SEM1_ST_VENV"),
@@ -1092,7 +1174,10 @@ mod tests {
             "{:?}",
             names(&env)
         );
-        assert_eq!(lookup(&env, "SEM1_PYTHONPATH"), Some(OsStr::new("/lane/src")));
+        assert_eq!(
+            lookup(&env, "SEM1_PYTHONPATH"),
+            Some(OsStr::new("/lane/src"))
+        );
     }
 
     #[test]
@@ -1109,7 +1194,11 @@ mod tests {
         };
         let parent = parent_env(&[]);
         let env = child_env(&spec, &parent);
-        assert!(!names(&env).contains(&"SEM1_ST_VENV".to_string()), "{:?}", names(&env));
+        assert!(
+            !names(&env).contains(&"SEM1_ST_VENV".to_string()),
+            "{:?}",
+            names(&env)
+        );
         // Every name that did cross is one the caller actually has, so the
         // child's environment is a subset of the base plus the allowlist.
         for (name, _) in &env {
@@ -1202,7 +1291,10 @@ mod tests {
         };
         let parent = parent_env(&[("SEM1_ST_VENV", "/ambient")]);
         let env = child_env(&spec, &parent);
-        assert_eq!(lookup(&env, "SEM1_ST_VENV"), Some(OsStr::new("/lane/declared")));
+        assert_eq!(
+            lookup(&env, "SEM1_ST_VENV"),
+            Some(OsStr::new("/lane/declared"))
+        );
     }
 
     #[test]
@@ -1219,11 +1311,21 @@ mod tests {
         tail.push(reason);
 
         let text = tail.text();
-        assert_eq!(text.len(), STDERR_TAIL_BYTES, "the tail is a bound, not a budget");
+        assert_eq!(
+            text.len(),
+            STDERR_TAIL_BYTES,
+            "the tail is a bound, not a budget"
+        );
         // The reason survived whole, at the end.
-        assert!(text.ends_with("ModuleNotFoundError: no module named 'glinter'\n"), "{text}");
+        assert!(
+            text.ends_with("ModuleNotFoundError: no module named 'glinter'\n"),
+            "{text}"
+        );
         // The head is gone: the oldest bytes are what a cap drops.
-        assert!(!text.starts_with('h'), "the head must have been dropped: {text}");
+        assert!(
+            !text.starts_with('h'),
+            "the head must have been dropped: {text}"
+        );
     }
 
     #[test]
@@ -1257,9 +1359,14 @@ mod tests {
         let error = McpError::Closed("the child closed its output before replying".to_string());
         match annotated(error, "ModuleNotFoundError: no module named 'glinter'") {
             McpError::Closed(reason) => {
-                assert!(reason.contains("the child closed its output before replying"), "{reason}");
                 assert!(
-                    reason.ends_with("; its stderr said: ModuleNotFoundError: no module named 'glinter'"),
+                    reason.contains("the child closed its output before replying"),
+                    "{reason}"
+                );
+                assert!(
+                    reason.ends_with(
+                        "; its stderr said: ModuleNotFoundError: no module named 'glinter'"
+                    ),
                     "{reason}"
                 );
             }
@@ -1267,15 +1374,24 @@ mod tests {
         }
         // The other message-carrying shapes take the tail too, keeping
         // the fields a caller matches on.
-        match annotated(McpError::Protocol("malformed MCP reply: bad json".to_string()), "traceback") {
+        match annotated(
+            McpError::Protocol("malformed MCP reply: bad json".to_string()),
+            "traceback",
+        ) {
             McpError::Protocol(detail) => {
-                assert!(detail.starts_with("malformed MCP reply: bad json"), "{detail}");
+                assert!(
+                    detail.starts_with("malformed MCP reply: bad json"),
+                    "{detail}"
+                );
                 assert!(detail.ends_with("; its stderr said: traceback"), "{detail}");
             }
             other => panic!("expected a Protocol error, got {other:?}"),
         }
         match annotated(
-            McpError::Rpc { code: -32602, message: "`items` must be a string".to_string() },
+            McpError::Rpc {
+                code: -32602,
+                message: "`items` must be a string".to_string(),
+            },
             "traceback",
         ) {
             McpError::Rpc { code, message } => {
@@ -1290,7 +1406,10 @@ mod tests {
             method: "initialize".to_string(),
             budget: std::time::Duration::from_secs(10),
         };
-        assert!(matches!(annotated(timeout, "traceback"), McpError::Timeout { .. }));
+        assert!(matches!(
+            annotated(timeout, "traceback"),
+            McpError::Timeout { .. }
+        ));
         // An io::Error keeps its kind, so a caller matching on it still
         // matches after the annotation.
         let broken = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the pipe broke");
@@ -1299,7 +1418,10 @@ mod tests {
             McpError::Io(error) => {
                 assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
                 assert!(error.to_string().contains("the pipe broke"), "{error}");
-                assert!(error.to_string().ends_with("; its stderr said: traceback"), "{error}");
+                assert!(
+                    error.to_string().ends_with("; its stderr said: traceback"),
+                    "{error}"
+                );
             }
             other => panic!("expected an Io error, got {other:?}"),
         }

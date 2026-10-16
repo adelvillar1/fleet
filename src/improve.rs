@@ -319,9 +319,15 @@ impl Change {
                 request.name,
                 request.replacement.clone().unwrap_or_default()
             ),
-            Change::Forget { name, justification } => format!("forget:{name}:{justification}"),
+            Change::Forget {
+                name,
+                justification,
+            } => format!("forget:{name}:{justification}"),
             Change::Config { entry } => {
-                format!("config:{}", serde_json::to_string(entry).unwrap_or_default())
+                format!(
+                    "config:{}",
+                    serde_json::to_string(entry).unwrap_or_default()
+                )
             }
             Change::ConfigRemove { id } => format!("config-remove:{id}"),
             Change::Unsupported { reason } => format!("unsupported:{reason}"),
@@ -370,14 +376,21 @@ pub fn parse_change(value: &serde_json::Value) -> Result<Change, String> {
             .ok_or_else(|| format!("the `{op}` change needs a string `{key}`"))
     };
     match op {
-        "write-skill" => Ok(Change::WriteSkill { content: string("content")? }),
-        "retire-skill" => Ok(Change::RetireSkill { name: string("name")? }),
+        "write-skill" => Ok(Change::WriteSkill {
+            content: string("content")?,
+        }),
+        "retire-skill" => Ok(Change::RetireSkill {
+            name: string("name")?,
+        }),
         "supersede" => {
             let request = memory::Supersede::parse(value)
                 .map_err(|error| format!("the supersede change is not valid: {error}"))?;
             Ok(Change::Supersede(Box::new(request)))
         }
-        "forget" => Ok(Change::Forget { name: string("name")?, justification: string("justification")? }),
+        "forget" => Ok(Change::Forget {
+            name: string("name")?,
+            justification: string("justification")?,
+        }),
         "config" => {
             let entry = object
                 .get("entry")
@@ -386,7 +399,10 @@ pub fn parse_change(value: &serde_json::Value) -> Result<Change, String> {
             Ok(Change::Config { entry })
         }
         "config-remove" => Ok(Change::ConfigRemove { id: string("id")? }),
-        "patch" => Ok(Change::Patch { path: string("path")?, content: string("content")? }),
+        "patch" => Ok(Change::Patch {
+            path: string("path")?,
+            content: string("content")?,
+        }),
         other => Ok(Change::Unsupported {
             reason: format!("`{other}` is not a change op the gate applies"),
         }),
@@ -457,7 +473,10 @@ impl TargetSha {
                 let path = path.trim();
                 let sha = sha.trim();
                 let hex = sha.len() == 16 && sha.chars().all(|c| c.is_ascii_hexdigit());
-                (!path.is_empty() && hex).then(|| TargetSha { path: path.to_string(), sha256: sha.to_string() })
+                (!path.is_empty() && hex).then(|| TargetSha {
+                    path: path.to_string(),
+                    sha256: sha.to_string(),
+                })
             })
             .collect()
     }
@@ -467,8 +486,7 @@ impl TargetSha {
     /// carries no line at all.
     pub fn render_list(shas: &[TargetSha]) -> Option<String> {
         (!shas.is_empty()).then(|| {
-            shas
-                .iter()
+            shas.iter()
                 .map(|sha| format!("{}={}", sha.path, sha.sha256))
                 .collect::<Vec<_>>()
                 .join(",")
@@ -493,7 +511,10 @@ pub fn stamp_target_shas(root: &Path, change: &Change) -> Vec<TargetSha> {
         .target_paths()
         .iter()
         .filter_map(|path| {
-            file_sha(root, path).map(|sha256| TargetSha { path: path.clone(), sha256 })
+            file_sha(root, path).map(|sha256| TargetSha {
+                path: path.clone(),
+                sha256,
+            })
         })
         .collect()
 }
@@ -590,17 +611,23 @@ fn parse_proposal(text: &str, path: &Path, store: Store) -> Result<Proposal, Str
         .unwrap_or_default()
         .to_string();
     if store == Store::General && name != stem {
-        return Err(format!("frontmatter name `{name}` does not match the file `{stem}.md`"));
+        return Err(format!(
+            "frontmatter name `{name}` does not match the file `{stem}.md`"
+        ));
     }
     let target = document
         .get("target")
         .and_then(Target::parse)
-        .ok_or_else(|| "frontmatter `target` is missing or not skill, memory, source, or config".to_string())?;
+        .ok_or_else(|| {
+            "frontmatter `target` is missing or not skill, memory, source, or config".to_string()
+        })?;
     let target_name = document.required("target-name")?;
     let basis = document
         .get("basis")
         .and_then(Basis::parse)
-        .ok_or_else(|| "frontmatter `basis` is missing or not inferred or confirmed-by".to_string())?;
+        .ok_or_else(|| {
+            "frontmatter `basis` is missing or not inferred or confirmed-by".to_string()
+        })?;
     let created = document.get("created").unwrap_or("").to_string();
     let status = document
         .get("status")
@@ -651,15 +678,20 @@ fn draft_proposal(path: &Path) -> Option<Proposal> {
     let name = document.required("name").ok()?;
     let kind = document.get("kind").unwrap_or("");
     let evidence = document.get("evidence").unwrap_or("").to_string();
-    let status = document.get("status").and_then(Status::parse).unwrap_or(Status::Pending);
+    let status = document
+        .get("status")
+        .and_then(Status::parse)
+        .unwrap_or(Status::Pending);
     let change = match kind {
         "create" | "update" => {
             // The draft's body is the proposed SKILL.md's body, and its
             // frontmatter carries the live skill's name and
             // description — the shape `render_proposal` wrote.
             let description = document.required("description").unwrap_or_default();
-            let content =
-                format!("---\nname: {name}\ndescription: {description}\n---\n\n{}\n", document.body.trim_end());
+            let content = format!(
+                "---\nname: {name}\ndescription: {description}\n---\n\n{}\n",
+                document.body.trim_end()
+            );
             Change::WriteSkill { content }
         }
         "retire" => Change::RetireSkill { name: name.clone() },
@@ -690,9 +722,7 @@ fn draft_proposal(path: &Path) -> Option<Proposal> {
     Some(Proposal {
         name,
         target: Target::Skill,
-        target_name: document
-            .required("name")
-            .unwrap_or_default(),
+        target_name: document.required("name").unwrap_or_default(),
         basis: Basis::Inferred,
         created: calib::today(),
         status,
@@ -728,7 +758,11 @@ pub fn load_all(home: &Path) -> Vec<Proposal> {
         .collect();
     files.sort();
     for path in files {
-        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string) else {
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
+        else {
             continue;
         };
         match fs::read_to_string(&path) {
@@ -736,7 +770,9 @@ pub fn load_all(home: &Path) -> Vec<Proposal> {
                 Ok(proposal) => proposals.push(proposal),
                 Err(reason) => eprintln!("fleet: improve: skipping `{stem}` \u{2014} {reason}"),
             },
-            Err(_) => eprintln!("fleet: improve: skipping `{stem}` \u{2014} no readable proposal file"),
+            Err(_) => {
+                eprintln!("fleet: improve: skipping `{stem}` \u{2014} no readable proposal file")
+            }
         }
     }
     let Ok(entries) = fs::read_dir(skills::proposals_dir(home)) else {
@@ -749,7 +785,11 @@ pub fn load_all(home: &Path) -> Vec<Proposal> {
         .collect();
     drafts.sort();
     for path in drafts {
-        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string) else {
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
+        else {
             continue;
         };
         match draft_proposal(&path) {
@@ -810,9 +850,7 @@ pub fn file_from_tool(home: &Path, repo: &Path, arguments: &serde_json::Value) -
     let basis = match field("basis") {
         Ok(basis) => match Basis::parse(&basis) {
             Some(basis) => basis,
-            None => {
-                return format!("error: `{basis}` is not a basis: inferred or confirmed-by")
-            }
+            None => return format!("error: `{basis}` is not a basis: inferred or confirmed-by"),
         },
         Err(reason) => return format!("error: {reason}"),
     };
@@ -829,9 +867,10 @@ pub fn file_from_tool(home: &Path, repo: &Path, arguments: &serde_json::Value) -
         (Ok(justification), Ok(acceptance), Ok(effect), Ok(change)) => {
             (justification, acceptance, effect, change)
         }
-        (Err(reason), _, _, _) | (_, Err(reason), _, _) | (_, _, Err(reason), _) | (_, _, _, Err(reason)) => {
-            return format!("error: {reason}")
-        }
+        (Err(reason), _, _, _)
+        | (_, Err(reason), _, _)
+        | (_, _, Err(reason), _)
+        | (_, _, _, Err(reason)) => return format!("error: {reason}"),
     };
     // The change is validated here, at file time, so a proposal the
     // gate could never apply is refused by the tool that filed it
@@ -855,8 +894,11 @@ pub fn file_from_tool(home: &Path, repo: &Path, arguments: &serde_json::Value) -
     // stamps its targets' content shas as they stand right now, which
     // is what lets the apply refuse a target that drifted while the
     // proposal waited (slice 17, PS-C).
-    let parsed = parse_change(&serde_json::from_str::<serde_json::Value>(&change).unwrap_or_default())
-        .unwrap_or_else(|_| Change::Unsupported { reason: String::new() });
+    let parsed =
+        parse_change(&serde_json::from_str::<serde_json::Value>(&change).unwrap_or_default())
+            .unwrap_or_else(|_| Change::Unsupported {
+                reason: String::new(),
+            });
     let shas = stamp_target_shas(repo, &parsed);
     let text = render_proposal(
         &name,
@@ -869,7 +911,9 @@ pub fn file_from_tool(home: &Path, repo: &Path, arguments: &serde_json::Value) -
         &change,
         &shas,
     );
-    if let Err(error) = fs::create_dir_all(proposals_dir(home)).and_then(|()| fs::write(&path, &text)) {
+    if let Err(error) =
+        fs::create_dir_all(proposals_dir(home)).and_then(|()| fs::write(&path, &text))
+    {
         return format!("error: could not file the proposal: {error}");
     }
     format!(
@@ -952,13 +996,22 @@ impl Gate {
             cargo: "cargo".to_string(),
             path: None,
             steps: vec![
-                Step { label: "fmt".to_string(), args: args(&["fmt", "--all", "--check"]) },
+                Step {
+                    label: "fmt".to_string(),
+                    args: args(&["fmt", "--all", "--check"]),
+                },
                 Step {
                     label: "clippy".to_string(),
                     args: args(&["clippy", "--all-targets", "--", "-D", "warnings"]),
                 },
-                Step { label: "build".to_string(), args: args(&["build", "--release"]) },
-                Step { label: "test".to_string(), args: args(&["test"]) },
+                Step {
+                    label: "build".to_string(),
+                    args: args(&["build", "--release"]),
+                },
+                Step {
+                    label: "test".to_string(),
+                    args: args(&["test"]),
+                },
             ],
         }
     }
@@ -1031,7 +1084,11 @@ impl GateStep {
 fn bounded_failure(output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let source = if stderr.trim().is_empty() { stdout.to_string() } else { stderr.to_string() };
+    let source = if stderr.trim().is_empty() {
+        stdout.to_string()
+    } else {
+        stderr.to_string()
+    };
     let last = source
         .lines()
         .rev()
@@ -1064,8 +1121,15 @@ fn gate_summary(steps: &[GateStep]) -> String {
 /// detail, so the refusal says both what failed and why.
 fn named_failure(steps: &[GateStep]) -> String {
     let failed: Vec<&GateStep> = steps.iter().filter(|step| !step.ok).collect();
-    let names = failed.iter().map(|step| step.label.as_str()).collect::<Vec<_>>().join(", ");
-    let detail = failed.first().map(|step| step.detail.as_str()).unwrap_or("");
+    let names = failed
+        .iter()
+        .map(|step| step.label.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let detail = failed
+        .first()
+        .map(|step| step.detail.as_str())
+        .unwrap_or("");
     if detail.is_empty() {
         format!("the gate refused the change: {names} failed")
     } else {
@@ -1080,13 +1144,21 @@ fn named_failure(steps: &[GateStep]) -> String {
 /// `fleet eval`'s, not the ledger's.
 fn eval_gate_step(probe: &eval::EvalProbe) -> GateStep {
     match probe() {
-        Ok(()) => GateStep { label: "eval_corpus".to_string(), ok: true, detail: "ok".to_string() },
+        Ok(()) => GateStep {
+            label: "eval_corpus".to_string(),
+            ok: true,
+            detail: "ok".to_string(),
+        },
         Err(reason) => {
             let mut bounded: String = reason.chars().take(MAX_DETAIL_CHARS).collect();
             if reason.chars().count() > MAX_DETAIL_CHARS {
                 bounded.push('\u{2026}');
             }
-            GateStep { label: "eval_corpus".to_string(), ok: false, detail: bounded }
+            GateStep {
+                label: "eval_corpus".to_string(),
+                ok: false,
+                detail: bounded,
+            }
         }
     }
 }
@@ -1097,7 +1169,10 @@ fn eval_gate_step(probe: &eval::EvalProbe) -> GateStep {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     /// The gate was green and the change landed.
-    Applied { summary: String, commit: Option<String> },
+    Applied {
+        summary: String,
+        commit: Option<String>,
+    },
     /// The gate, or a validation before it, refused the change; the
     /// reason names the failure.
     Refused { reason: String },
@@ -1247,7 +1322,17 @@ impl Landed {
         }
         let paths: Vec<&str> = self.repo_paths.iter().map(String::as_str).collect();
         git_paths(repo, &["add", "--"], &paths, &[])?;
-        git_paths(repo, &["commit", "-m", &format!("fleet improve: {}", self.summary), "--"], &paths, &[])?;
+        git_paths(
+            repo,
+            &[
+                "commit",
+                "-m",
+                &format!("fleet improve: {}", self.summary),
+                "--",
+            ],
+            &paths,
+            &[],
+        )?;
         git(repo, &["rev-parse", "HEAD"]).map(Some)
     }
 
@@ -1320,42 +1405,51 @@ pub fn apply(name: &str, ctx: &Apply<'_>) -> Verdict {
     // source — so it holds whatever the frontmatter's `target` word says.
     let is_source_edit = matches!(proposal.change, Change::Patch { .. });
     let eval_regressed = if is_source_edit {
-        ctx.eval.as_ref().map(|probe| {
-            if gate_green {
-                let step = eval_gate_step(probe);
-                let regressed = !step.ok;
-                steps.push(step);
-                regressed
-            } else {
-                // The cargo gate refused first, so the corpus never
-                // ran. The step is recorded not-run — `ok: false`, the
-                // detail naming why — so the row says the corpus was
-                // not reached rather than leaving the step absent and
-                // an operator unable to tell "not reached" from
-                // "passed". The refusal itself names the cargo steps.
-                steps.push(GateStep {
-                    label: "eval_corpus".to_string(),
-                    ok: false,
-                    detail: "not run \u{2014} the cargo gate refused first".to_string(),
-                });
-                false
-            }
-        })
-        .unwrap_or(false)
+        ctx.eval
+            .as_ref()
+            .map(|probe| {
+                if gate_green {
+                    let step = eval_gate_step(probe);
+                    let regressed = !step.ok;
+                    steps.push(step);
+                    regressed
+                } else {
+                    // The cargo gate refused first, so the corpus never
+                    // ran. The step is recorded not-run — `ok: false`, the
+                    // detail naming why — so the row says the corpus was
+                    // not reached rather than leaving the step absent and
+                    // an operator unable to tell "not reached" from
+                    // "passed". The refusal itself names the cargo steps.
+                    steps.push(GateStep {
+                        label: "eval_corpus".to_string(),
+                        ok: false,
+                        detail: "not run \u{2014} the cargo gate refused first".to_string(),
+                    });
+                    false
+                }
+            })
+            .unwrap_or(false)
     } else {
         false
     };
     let verdict = if gate_green && !eval_regressed {
         match landed.commit(ctx.repo) {
-            Ok(commit) => Verdict::Applied { summary: landed.summary.clone(), commit },
+            Ok(commit) => Verdict::Applied {
+                summary: landed.summary.clone(),
+                commit,
+            },
             Err(reason) => {
                 landed.revert(ctx.repo);
-                Verdict::Refused { reason: format!("the change landed but its commit did not: {reason}") }
+                Verdict::Refused {
+                    reason: format!("the change landed but its commit did not: {reason}"),
+                }
             }
         }
     } else {
         landed.revert(ctx.repo);
-        Verdict::Refused { reason: named_failure(&steps) }
+        Verdict::Refused {
+            reason: named_failure(&steps),
+        }
     };
     finish(&proposal, verdict, &steps, ctx)
 }
@@ -1383,7 +1477,12 @@ fn finish(proposal: &Proposal, verdict: Verdict, steps: &[GateStep], ctx: &Apply
         Verdict::Applied { commit, .. } => commit.as_deref(),
         _ => None,
     };
-    let _ = stamp(&proposal.path, verdict.status(), commit, &gate_summary(steps));
+    let _ = stamp(
+        &proposal.path,
+        verdict.status(),
+        commit,
+        &gate_summary(steps),
+    );
     verdict
 }
 
@@ -1413,9 +1512,12 @@ fn stage(proposal: &Proposal, ctx: &Apply<'_>) -> Result<Landed, Hold> {
         let named = drifted
             .iter()
             .map(|stamped| {
-                let now = file_sha(&ctx.repo, &stamped.path)
-                    .unwrap_or_else(|| "absent".to_string());
-                format!("`{}` (drafted at {}, now {now})", stamped.path, stamped.sha256)
+                let now =
+                    file_sha(&ctx.repo, &stamped.path).unwrap_or_else(|| "absent".to_string());
+                format!(
+                    "`{}` (drafted at {}, now {now})",
+                    stamped.path, stamped.sha256
+                )
             })
             .collect::<Vec<_>>()
             .join("; ");
@@ -1424,13 +1526,16 @@ fn stage(proposal: &Proposal, ctx: &Apply<'_>) -> Result<Landed, Hold> {
         )));
     }
     match &proposal.change {
-        Change::Unsupported { reason } => {
-            Err(Hold::Refused(format!("the change cannot be applied: {reason}")))
-        }
+        Change::Unsupported { reason } => Err(Hold::Refused(format!(
+            "the change cannot be applied: {reason}"
+        ))),
         Change::WriteSkill { content } => stage_write_skill(proposal, content, ctx),
         Change::RetireSkill { name } => stage_retire_skill(proposal, name, ctx),
         Change::Supersede(request) => stage_memory(proposal, request, ctx),
-        Change::Forget { name, justification } => stage_memory(
+        Change::Forget {
+            name,
+            justification,
+        } => stage_memory(
             proposal,
             &memory::Supersede {
                 name: name.clone(),
@@ -1456,11 +1561,12 @@ fn stage(proposal: &Proposal, ctx: &Apply<'_>) -> Result<Landed, Hold> {
 fn stage_write_skill(proposal: &Proposal, content: &str, ctx: &Apply<'_>) -> Result<Landed, Hold> {
     let name = &proposal.target_name;
     bare_name(name).map_err(Hold::Refused)?;
-    let document = skills::parse_document(content)
-        .map_err(|reason| Hold::Refused(format!("the proposed SKILL.md does not parse: {reason}")))?;
-    let front = document
-        .required("name")
-        .map_err(|reason| Hold::Refused(format!("the proposed SKILL.md does not parse: {reason}")))?;
+    let document = skills::parse_document(content).map_err(|reason| {
+        Hold::Refused(format!("the proposed SKILL.md does not parse: {reason}"))
+    })?;
+    let front = document.required("name").map_err(|reason| {
+        Hold::Refused(format!("the proposed SKILL.md does not parse: {reason}"))
+    })?;
     if front != *name {
         return Err(Hold::Refused(format!(
             "the proposed SKILL.md names `{front}`, but the proposal targets `{name}`"
@@ -1471,15 +1577,18 @@ fn stage_write_skill(proposal: &Proposal, content: &str, ctx: &Apply<'_>) -> Res
             "the proposed SKILL.md carries `proposed: true` \u{2014} that is a draft, not a live skill".to_string(),
         ));
     }
-    let target = skills::skills_dir(ctx.home).join(name).join(skills::SKILL_FILE);
+    let target = skills::skills_dir(ctx.home)
+        .join(name)
+        .join(skills::SKILL_FILE);
     let pre = fs::read_to_string(&target).ok();
     let stash = preimages_dir(ctx.home).join(format!("{}.md", proposal.name));
     if let Some(text) = &pre {
         stash_bytes(&stash, text.as_bytes())?;
     }
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| Hold::Refused(format!("could not create {}: {error}", parent.display())))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            Hold::Refused(format!("could not create {}: {error}", parent.display()))
+        })?;
     }
     fs::write(&target, content)
         .map_err(|error| Hold::Refused(format!("could not write {}: {error}", target.display())))?;
@@ -1488,12 +1597,11 @@ fn stage_write_skill(proposal: &Proposal, content: &str, ctx: &Apply<'_>) -> Res
         restore: Some(Restore {
             stash,
             target,
-            kind: RestoreKind::File { create: pre.is_none() },
+            kind: RestoreKind::File {
+                create: pre.is_none(),
+            },
         }),
-        summary: format!(
-            "wrote the skill `{name}` (proposal `{}`)",
-            proposal.name
-        ),
+        summary: format!("wrote the skill `{name}` (proposal `{}`)", proposal.name),
     })
 }
 
@@ -1513,12 +1621,12 @@ fn stage_retire_skill(proposal: &Proposal, name: &str, ctx: &Apply<'_>) -> Resul
     fs::create_dir_all(preimages_dir(ctx.home))
         .map_err(|error| Hold::Refused(format!("could not create the pre-image store: {error}")))?;
     if stash.exists() {
-        fs::remove_dir_all(&stash)
-            .map_err(|error| Hold::Refused(format!("could not replace the old pre-image: {error}")))?;
+        fs::remove_dir_all(&stash).map_err(|error| {
+            Hold::Refused(format!("could not replace the old pre-image: {error}"))
+        })?;
     }
-    fs::rename(&directory, &stash).map_err(|error| {
-        Hold::Refused(format!("could not move the skill aside: {error}"))
-    })?;
+    fs::rename(&directory, &stash)
+        .map_err(|error| Hold::Refused(format!("could not move the skill aside: {error}")))?;
     Ok(Landed {
         repo_paths: Vec::new(),
         restore: Some(Restore { stash, target: directory, kind: RestoreKind::Moved }),
@@ -1571,7 +1679,9 @@ fn stage_memory(
     let memory = Memory::load_with(&root, Box::new(memory::KeywordOnly));
     match memory.supersede(request, ctx.approved, None) {
         Err(memory::WriteError::NeedsApproval(reason)) => Err(Hold::Waiting(reason)),
-        Err(error) => Err(Hold::Refused(format!("the memory change did not land: {error}"))),
+        Err(error) => Err(Hold::Refused(format!(
+            "the memory change did not land: {error}"
+        ))),
         Ok(superseded) => {
             let (paths, summary) = match &superseded {
                 memory::Superseded::By { from, into } => (
@@ -1586,7 +1696,11 @@ fn stage_memory(
                     ),
                 ),
             };
-            Ok(Landed { repo_paths: paths, restore: None, summary })
+            Ok(Landed {
+                repo_paths: paths,
+                restore: None,
+                summary,
+            })
         }
     }
 }
@@ -1595,40 +1709,70 @@ fn stage_memory(
 /// `deny_unknown_fields` schema, then merges into `config.json` by id.
 /// The file lives in the home, not the repo, so its pre-image is a
 /// sidecar and its undo is a restore.
-fn stage_config(proposal: &Proposal, entry: &serde_json::Value, ctx: &Apply<'_>) -> Result<Landed, Hold> {
+fn stage_config(
+    proposal: &Proposal,
+    entry: &serde_json::Value,
+    ctx: &Apply<'_>,
+) -> Result<Landed, Hold> {
     crate::route::validate_provider_entry(entry).map_err(|reason| {
-        Hold::Refused(format!("the config change is not a valid provider entry: {reason}"))
+        Hold::Refused(format!(
+            "the config change is not a valid provider entry: {reason}"
+        ))
     })?;
     let path = ctx.home.join(CONFIG_FILE);
     let pre = fs::read_to_string(&path).ok();
     let mut document: serde_json::Value = match &pre {
-        Some(text) => serde_json::from_str(text)
-            .map_err(|error| Hold::Refused(format!("the existing {CONFIG_FILE} does not parse: {error}")))?,
+        Some(text) => serde_json::from_str(text).map_err(|error| {
+            Hold::Refused(format!(
+                "the existing {CONFIG_FILE} does not parse: {error}"
+            ))
+        })?,
         None => serde_json::json!({}),
     };
-    let id = entry.get("id").and_then(|id| id.as_str()).unwrap_or_default().to_string();
+    let id = entry
+        .get("id")
+        .and_then(|id| id.as_str())
+        .unwrap_or_default()
+        .to_string();
     let providers = document
         .as_object_mut()
         .ok_or_else(|| Hold::Refused(format!("the existing {CONFIG_FILE} is not an object")))?
         .entry("providers")
         .or_insert_with(|| serde_json::json!([]));
-    let array = providers
-        .as_array_mut()
-        .ok_or_else(|| Hold::Refused(format!("the existing {CONFIG_FILE} has a `providers` that is not a list")))?;
-    match array.iter_mut().find(|existing| existing.get("id").and_then(|id| id.as_str()) == Some(id.as_str())) {
+    let array = providers.as_array_mut().ok_or_else(|| {
+        Hold::Refused(format!(
+            "the existing {CONFIG_FILE} has a `providers` that is not a list"
+        ))
+    })?;
+    match array
+        .iter_mut()
+        .find(|existing| existing.get("id").and_then(|id| id.as_str()) == Some(id.as_str()))
+    {
         Some(existing) => *existing = entry.clone(),
         None => array.push(entry.clone()),
     }
-    write_atomic(&path, &serde_json::to_string_pretty(&document).unwrap_or_default())
-        .map_err(|reason| Hold::Refused(reason))?;
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).unwrap_or_default(),
+    )
+    .map_err(|reason| Hold::Refused(reason))?;
     let stash = preimages_dir(ctx.home).join(format!("{}.config.json", proposal.name));
     if let Some(text) = &pre {
         stash_bytes(&stash, text.as_bytes())?;
     }
     Ok(Landed {
         repo_paths: Vec::new(),
-        restore: Some(Restore { stash, target: path, kind: RestoreKind::File { create: pre.is_none() } }),
-        summary: format!("merged the config entry `{id}` (proposal `{}`)", proposal.name),
+        restore: Some(Restore {
+            stash,
+            target: path,
+            kind: RestoreKind::File {
+                create: pre.is_none(),
+            },
+        }),
+        summary: format!(
+            "merged the config entry `{id}` (proposal `{}`)",
+            proposal.name
+        ),
     })
 }
 
@@ -1637,21 +1781,37 @@ fn stage_config(proposal: &Proposal, entry: &serde_json::Value, ctx: &Apply<'_>)
 fn stage_config_remove(proposal: &Proposal, id: &str, ctx: &Apply<'_>) -> Result<Landed, Hold> {
     let path = ctx.home.join(CONFIG_FILE);
     let Some(pre) = fs::read_to_string(&path).ok() else {
-        return Err(Hold::Refused(format!("no {CONFIG_FILE} under {}", ctx.home.display())));
+        return Err(Hold::Refused(format!(
+            "no {CONFIG_FILE} under {}",
+            ctx.home.display()
+        )));
     };
-    let mut document: serde_json::Value = serde_json::from_str(&pre)
-        .map_err(|error| Hold::Refused(format!("the existing {CONFIG_FILE} does not parse: {error}")))?;
+    let mut document: serde_json::Value = serde_json::from_str(&pre).map_err(|error| {
+        Hold::Refused(format!(
+            "the existing {CONFIG_FILE} does not parse: {error}"
+        ))
+    })?;
     let array = document
         .get_mut("providers")
         .and_then(|providers| providers.as_array_mut())
-        .ok_or_else(|| Hold::Refused(format!("the existing {CONFIG_FILE} has no `providers` list")))?;
+        .ok_or_else(|| {
+            Hold::Refused(format!(
+                "the existing {CONFIG_FILE} has no `providers` list"
+            ))
+        })?;
     let before = array.len();
     array.retain(|existing| existing.get("id").and_then(|id| id.as_str()) != Some(id));
     if array.len() == before {
-        return Err(Hold::Refused(format!("no config entry named `{id}` in {}", path.display())));
+        return Err(Hold::Refused(format!(
+            "no config entry named `{id}` in {}",
+            path.display()
+        )));
     }
-    write_atomic(&path, &serde_json::to_string_pretty(&document).unwrap_or_default())
-        .map_err(|reason| Hold::Refused(reason))?;
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).unwrap_or_default(),
+    )
+    .map_err(|reason| Hold::Refused(reason))?;
     let stash = preimages_dir(ctx.home).join(format!("{}.config.json", proposal.name));
     stash_bytes(&stash, pre.as_bytes())?;
     Ok(Landed {
@@ -1661,20 +1821,31 @@ fn stage_config_remove(proposal: &Proposal, id: &str, ctx: &Apply<'_>) -> Result
             target: path.clone(),
             kind: RestoreKind::File { create: false },
         }),
-        summary: format!("removed the config entry `{id}` (proposal `{}`)", proposal.name),
+        summary: format!(
+            "removed the config entry `{id}` (proposal `{}`)",
+            proposal.name
+        ),
     })
 }
 
 /// Stage a source patch: the path must be repo-relative and inside the
 /// repository, the content is the file's whole new text, and the
 /// pre-image is committed state — the revert is `git checkout HEAD`.
-fn stage_patch(proposal: &Proposal, path: &str, content: &str, ctx: &Apply<'_>) -> Result<Landed, Hold> {
+fn stage_patch(
+    proposal: &Proposal,
+    path: &str,
+    content: &str,
+    ctx: &Apply<'_>,
+) -> Result<Landed, Hold> {
     let relative = Path::new(path);
     let unsafe_path = path.is_empty()
         || relative.is_absolute()
         || path.starts_with('/')
         || relative.components().any(|component| {
-            matches!(component, std::path::Component::ParentDir | std::path::Component::Prefix(_))
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::Prefix(_)
+            )
         });
     if unsafe_path {
         return Err(Hold::Refused(format!(
@@ -1687,7 +1858,10 @@ fn stage_patch(proposal: &Proposal, path: &str, content: &str, ctx: &Apply<'_>) 
     // A patch aimed at `memories/` is that bypass in one line of JSON,
     // so it is refused here — the proposal's `supersede` op is the only
     // door, and it asks the fact's basis before it writes.
-    if relative.components().next().and_then(|component| component.as_os_str().to_str())
+    if relative
+        .components()
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
         == Some(MEMORIES_DIR)
     {
         return Err(Hold::Refused(format!(
@@ -1703,15 +1877,20 @@ fn stage_patch(proposal: &Proposal, path: &str, content: &str, ctx: &Apply<'_>) 
     }
     let target = ctx.repo.join(relative);
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| Hold::Refused(format!("could not create {}: {error}", parent.display())))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            Hold::Refused(format!("could not create {}: {error}", parent.display()))
+        })?;
     }
     fs::write(&target, content)
         .map_err(|error| Hold::Refused(format!("could not write {}: {error}", target.display())))?;
     Ok(Landed {
         repo_paths: vec![path.to_string()],
         restore: None,
-        summary: format!("patched {} (proposal `{}`)", target.display(), proposal.name),
+        summary: format!(
+            "patched {} (proposal `{}`)",
+            target.display(),
+            proposal.name
+        ),
     })
 }
 
@@ -1744,8 +1923,9 @@ fn dirty_paths(repo: &Path, paths: &[&str]) -> Vec<String> {
 /// Write `bytes` to the pre-image store, creating it when missing.
 fn stash_bytes(stash: &Path, bytes: &[u8]) -> Result<(), Hold> {
     if let Some(parent) = stash.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| Hold::Refused(format!("could not create the pre-image store: {error}")))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            Hold::Refused(format!("could not create the pre-image store: {error}"))
+        })?;
     }
     fs::write(stash, bytes)
         .map_err(|error| Hold::Refused(format!("could not keep the pre-image: {error}")))
@@ -1760,7 +1940,8 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
     let mut temp = path.as_os_str().to_os_string();
     temp.push(format!(".{}.tmp", std::process::id()));
     let temp = PathBuf::from(temp);
-    fs::write(&temp, text).map_err(|error| format!("could not write {}: {error}", temp.display()))?;
+    fs::write(&temp, text)
+        .map_err(|error| format!("could not write {}: {error}", temp.display()))?;
     fs::rename(&temp, path).map_err(|error| {
         let _ = fs::remove_file(&temp);
         format!("could not replace {}: {error}", path.display())
@@ -1818,12 +1999,20 @@ fn undo_restore(home: &Path, proposal: &Proposal) -> Option<Restore> {
             let skill = skills::skills_dir(home).join(&proposal.target_name);
             let moved = store.join(format!("{}.retired", proposal.name));
             if moved.exists() {
-                return Some(Restore { stash: moved, target: skill, kind: RestoreKind::Moved });
+                return Some(Restore {
+                    stash: moved,
+                    target: skill,
+                    kind: RestoreKind::Moved,
+                });
             }
             let file = store.join(format!("{}.md", proposal.name));
             let target = skill.join(skills::SKILL_FILE);
             if file.exists() {
-                Some(Restore { stash: file, target, kind: RestoreKind::File { create: false } })
+                Some(Restore {
+                    stash: file,
+                    target,
+                    kind: RestoreKind::File { create: false },
+                })
             } else {
                 // A create kept no pre-image: the undo deletes what
                 // the apply added.
@@ -1838,7 +2027,11 @@ fn undo_restore(home: &Path, proposal: &Proposal) -> Option<Restore> {
             let file = store.join(format!("{}.config.json", proposal.name));
             let target = home.join(CONFIG_FILE);
             if file.exists() {
-                Some(Restore { stash: file, target, kind: RestoreKind::File { create: false } })
+                Some(Restore {
+                    stash: file,
+                    target,
+                    kind: RestoreKind::File { create: false },
+                })
             } else {
                 Some(Restore {
                     stash: PathBuf::new(),
@@ -1866,8 +2059,15 @@ fn stamp(path: &Path, status: Status, commit: Option<&str>, gate: &str) -> Resul
     let Some(open) = lines.iter().position(|line| line.trim_end() == "---") else {
         return Err(format!("{} has no frontmatter fence", path.display()));
     };
-    let Some(close) = lines.iter().skip(open + 1).position(|line| line.trim_end() == "---") else {
-        return Err(format!("{} has no closing frontmatter fence", path.display()));
+    let Some(close) = lines
+        .iter()
+        .skip(open + 1)
+        .position(|line| line.trim_end() == "---")
+    else {
+        return Err(format!(
+            "{} has no closing frontmatter fence",
+            path.display()
+        ));
     };
     let close = open + 1 + close;
     let kept: Vec<String> = lines[open + 1..close]
@@ -1902,7 +2102,12 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 /// One git command with a pathspec in the middle.
-fn git_paths(repo: &Path, before: &[&str], paths: &[&str], after: &[&str]) -> Result<String, String> {
+fn git_paths(
+    repo: &Path,
+    before: &[&str],
+    paths: &[&str],
+    after: &[&str],
+) -> Result<String, String> {
     let mut args: Vec<&str> = before.to_vec();
     args.extend(paths.iter().copied());
     args.extend_from_slice(after);
@@ -1966,10 +2171,14 @@ pub fn render(proposals: &[Proposal]) -> String {
         proposals.len(),
         if proposals.len() == 1 { "" } else { "s" },
     ));
-    let general: Vec<&Proposal> =
-        proposals.iter().filter(|proposal| proposal.store == Store::General).collect();
-    let drafts: Vec<&Proposal> =
-        proposals.iter().filter(|proposal| proposal.store == Store::SkillsDraft).collect();
+    let general: Vec<&Proposal> = proposals
+        .iter()
+        .filter(|proposal| proposal.store == Store::General)
+        .collect();
+    let drafts: Vec<&Proposal> = proposals
+        .iter()
+        .filter(|proposal| proposal.store == Store::SkillsDraft)
+        .collect();
     if general.is_empty() && drafts.is_empty() {
         out.push_str(&format!(
             "{DIM}no proposals yet \u{b7} the `improve` tool files one, and slice 7's drafter files skill drafts after a session{RESET}\n"
@@ -2009,8 +2218,7 @@ fn render_card(proposal: &Proposal) -> String {
         Status::Pending => TEXT,
     };
     // The status is the one colored fact on the card.
-    let header_right =
-        format!("{BOLD}{status_color}{}{RESET}", proposal.status.label());
+    let header_right = format!("{BOLD}{status_color}{}{RESET}", proposal.status.label());
     let header = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{name}{RESET} {DIM}{dashes} {right}{RESET} {DIM}\u{2510}{RESET}",
         name = proposal.name,
@@ -2026,7 +2234,11 @@ fn render_card(proposal: &Proposal) -> String {
     lines.push(format!(
         "{DIM}\u{2502}{RESET} {DIM}basis {} \u{b7} filed {}{RESET}",
         proposal.basis.label(),
-        if proposal.created.is_empty() { "unknown" } else { &proposal.created }
+        if proposal.created.is_empty() {
+            "unknown"
+        } else {
+            &proposal.created
+        }
     ));
     let gate = if proposal.gate.is_empty() {
         "gate: not yet run".to_string()
@@ -2034,8 +2246,14 @@ fn render_card(proposal: &Proposal) -> String {
         format!("gate: {}", proposal.gate)
     };
     lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{gate}{RESET}"));
-    lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{}{RESET}", proposal.path.display()));
-    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    lines.push(format!(
+        "{DIM}\u{2502}{RESET} {DIM}{}{RESET}",
+        proposal.path.display()
+    ));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -2157,8 +2375,14 @@ mod tests {
         assert_eq!(proposal.target_name, "demo");
         assert_eq!(proposal.basis, Basis::Inferred);
         assert_eq!(proposal.status, Status::Pending);
-        assert_eq!(proposal.justification, "the session corrected a bash failure");
-        assert_eq!(proposal.acceptance, "the skill loads and its body carries the correction");
+        assert_eq!(
+            proposal.justification,
+            "the session corrected a bash failure"
+        );
+        assert_eq!(
+            proposal.acceptance,
+            "the skill loads and its body carries the correction"
+        );
         assert_eq!(proposal.effect, "the correction is in context next time");
         assert_eq!(proposal.store, Store::General);
         assert_eq!(
@@ -2183,7 +2407,12 @@ mod tests {
     fn the_change_ops_parse_and_unknown_ones_are_named() {
         let value: serde_json::Value =
             serde_json::from_str(r#"{"op": "write-skill", "content": "x"}"#).unwrap();
-        assert_eq!(parse_change(&value).unwrap(), Change::WriteSkill { content: "x".to_string() });
+        assert_eq!(
+            parse_change(&value).unwrap(),
+            Change::WriteSkill {
+                content: "x".to_string()
+            }
+        );
         let value: serde_json::Value = serde_json::from_str(
             r#"{"op": "supersede", "name": "a", "justification": "because", "replacement": "b", "description": "the new fact"}"#,
         )
@@ -2191,11 +2420,15 @@ mod tests {
         let change = parse_change(&value).unwrap();
         assert_eq!(change.op(), "supersede");
         assert!(!change.destructive());
-        let value: serde_json::Value = serde_json::from_str(r#"{"op": "retire-skill", "name": "a"}"#).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(r#"{"op": "retire-skill", "name": "a"}"#).unwrap();
         assert!(parse_change(&value).unwrap().destructive());
-        let value: serde_json::Value = serde_json::from_str(r#"{"op": "forget", "name": "a", "justification": "because"}"#).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(r#"{"op": "forget", "name": "a", "justification": "because"}"#)
+                .unwrap();
         assert!(parse_change(&value).unwrap().destructive());
-        let value: serde_json::Value = serde_json::from_str(r#"{"op": "config-remove", "id": "zai"}"#).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(r#"{"op": "config-remove", "id": "zai"}"#).unwrap();
         assert!(parse_change(&value).unwrap().destructive());
         let value: serde_json::Value =
             serde_json::from_str(r#"{"op": "patch", "path": "src/a.rs", "content": "x"}"#).unwrap();
@@ -2209,10 +2442,14 @@ mod tests {
 
     #[test]
     fn a_destructive_change_names_exactly_what_it_destroys() {
-        let change = Change::RetireSkill { name: "bash-recovery".to_string() };
+        let change = Change::RetireSkill {
+            name: "bash-recovery".to_string(),
+        };
         let destroys = change.destroys();
         assert!(destroys.contains("bash-recovery"), "{destroys}");
-        let change = Change::ConfigRemove { id: "zai-coding-plan".to_string() };
+        let change = Change::ConfigRemove {
+            id: "zai-coding-plan".to_string(),
+        };
         assert!(change.destroys().contains("zai-coding-plan"));
     }
 
@@ -2224,7 +2461,10 @@ mod tests {
         let labels: Vec<&str> = gate.steps.iter().map(|step| step.label.as_str()).collect();
         assert_eq!(labels, vec!["fmt", "clippy", "build", "test"]);
         assert_eq!(gate.steps[0].args, args(&["fmt", "--all", "--check"]));
-        assert_eq!(gate.steps[1].args, args(&["clippy", "--all-targets", "--", "-D", "warnings"]));
+        assert_eq!(
+            gate.steps[1].args,
+            args(&["clippy", "--all-targets", "--", "-D", "warnings"])
+        );
         assert_eq!(gate.steps[2].args, args(&["build", "--release"]));
         assert_eq!(gate.steps[3].args, args(&["test"]));
     }
@@ -2249,7 +2489,12 @@ mod tests {
     fn a_failing_gate_names_the_failure() {
         let scratch = scratch("gate-red");
         let log = scratch.join("gate.log");
-        let bin = stand_in(&scratch, 1, "error: test failed: the_ranker_orders_a_corpus", &log);
+        let bin = stand_in(
+            &scratch,
+            1,
+            "error: test failed: the_ranker_orders_a_corpus",
+            &log,
+        );
         let gate = fake_gate(&scratch, &bin);
         let steps = gate.run();
         assert!(steps.iter().all(|step| !step.ok), "{steps:?}");
@@ -2301,9 +2546,18 @@ mod tests {
         let change = r#"{"op": "write-skill", "content": "---\nname: demo\ndescription: the old body\n---\n\nnew body\n"}"#;
         skill_proposal(&home, "demo-update", "demo", change);
         let stream = calib::Stream::open(scratch("apply-skill-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("demo-update", &ctx);
-        let Verdict::Applied { .. } = &verdict else { panic!("expected applied, got {verdict:?}") };
+        let Verdict::Applied { .. } = &verdict else {
+            panic!("expected applied, got {verdict:?}")
+        };
         // The skill changed on disk.
         let written = fs::read_to_string(skill_dir.join(skills::SKILL_FILE)).unwrap();
         assert!(written.contains("new body"), "{written}");
@@ -2314,7 +2568,10 @@ mod tests {
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
-        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
         assert_eq!(row.proposal, "demo-update");
         assert_eq!(row.target, "skill");
         assert_eq!(row.target_name, "demo");
@@ -2327,7 +2584,12 @@ mod tests {
         assert_eq!(stamped.status, Status::Applied);
         assert!(stamped.gate.contains("fmt ok"), "{}", stamped.gate);
         // Exactly one row for the one verdict.
-        assert_eq!(rows.iter().filter(|row| row.op == calib::OP_PROPOSE).count(), 1);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.op == calib::OP_PROPOSE)
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -2344,22 +2606,39 @@ mod tests {
         let log = tools.join("gate.log");
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
-        let change = r#"{"op": "patch", "path": "memories/load-bearing.md", "content": "rewritten\n"}"#;
+        let change =
+            r#"{"op": "patch", "path": "memories/load-bearing.md", "content": "rewritten\n"}"#;
         skill_proposal(&home, "bypass-the-fact", "memories/load-bearing.md", change);
         let stream = calib::Stream::open(scratch("apply-memories-bypass-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("bypass-the-fact", &ctx);
-        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        let Verdict::Refused { reason } = &verdict else {
+            panic!("expected refused, got {verdict:?}")
+        };
         assert!(reason.contains("memories/"), "{reason}");
         assert!(reason.contains("supersede"), "{reason}");
         assert!(reason.contains("provenance"), "{reason}");
         // Nothing was written, and the gate never ran.
         assert!(!repo.join("memories/load-bearing.md").exists());
-        assert!(!log.exists(), "the gate ran: {}", fs::read_to_string(&log).unwrap_or_default());
+        assert!(
+            !log.exists(),
+            "the gate ran: {}",
+            fs::read_to_string(&log).unwrap_or_default()
+        );
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
-        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
         assert_eq!(row.verdict, calib::VERDICT_REFUSED);
         assert!(row.gate.is_empty(), "the gate never ran: {:?}", row.gate);
     }
@@ -2377,17 +2656,34 @@ mod tests {
         let log = tools.join("gate.log");
         let bin = stand_in(&tools, 1, "error: test failed", &log);
         let gate = fake_gate(&repo, &bin);
-        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let change =
+            r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "overwrite-the-work", "src/lib.rs", change);
         let stream = calib::Stream::open(scratch("apply-dirty-target-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("overwrite-the-work", &ctx);
-        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        let Verdict::Refused { reason } = &verdict else {
+            panic!("expected refused, got {verdict:?}")
+        };
         assert!(reason.contains("uncommitted work"), "{reason}");
         // The operator's work is exactly as they left it.
-        assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), "pub fn one() -> u32 { 99 }\n");
+        assert_eq!(
+            fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+            "pub fn one() -> u32 { 99 }\n"
+        );
         // The gate never ran.
-        assert!(!log.exists(), "the gate ran: {}", fs::read_to_string(&log).unwrap_or_default());
+        assert!(
+            !log.exists(),
+            "the gate ran: {}",
+            fs::read_to_string(&log).unwrap_or_default()
+        );
     }
 
     #[test]
@@ -2400,7 +2696,8 @@ mod tests {
         // left exactly as it now stands.
         let home = scratch("apply-drift");
         let repo = scratch_repo("apply-drift-repo");
-        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let change =
+            r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         let stamped = file_sha(&repo, "src/lib.rs").expect("the target exists at draft time");
         let text = render_proposal(
             "drifted-target",
@@ -2411,7 +2708,10 @@ mod tests {
             "the gate is green",
             "the function returns 2",
             change,
-            &[TargetSha { path: "src/lib.rs".to_string(), sha256: stamped.clone() }],
+            &[TargetSha {
+                path: "src/lib.rs".to_string(),
+                sha256: stamped.clone(),
+            }],
         );
         fs::create_dir_all(proposals_dir(&home)).unwrap();
         fs::write(proposals_dir(&home).join("drifted-target.md"), text).unwrap();
@@ -2419,7 +2719,19 @@ mod tests {
         // clean, so only the sha can see it.
         fs::write(repo.join("src/lib.rs"), "pub fn one() -> u32 { 42 }\n").unwrap();
         git(&repo, &["add", "-A"]).unwrap();
-        git(&repo, &["-c", "user.email=a@b.c", "-c", "user.name=t", "commit", "-m", "drift"]).unwrap();
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=a@b.c",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-m",
+                "drift",
+            ],
+        )
+        .unwrap();
         let status = git(&repo, &["status", "--porcelain"]).unwrap();
         assert!(status.trim().is_empty(), "the tree is not clean: {status}");
         let tools = scratch("apply-tools");
@@ -2427,14 +2739,30 @@ mod tests {
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
         let stream = calib::Stream::open(scratch("apply-drift-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("drifted-target", &ctx);
-        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        let Verdict::Refused { reason } = &verdict else {
+            panic!("expected refused, got {verdict:?}")
+        };
         assert!(reason.contains("drifted since the draft"), "{reason}");
         assert!(reason.contains(&stamped), "{reason}");
         // The target is exactly as it now stands, and the gate never ran.
-        assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), "pub fn one() -> u32 { 42 }\n");
-        assert!(!log.exists(), "the gate ran: {}", fs::read_to_string(&log).unwrap_or_default());
+        assert_eq!(
+            fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+            "pub fn one() -> u32 { 42 }\n"
+        );
+        assert!(
+            !log.exists(),
+            "the gate ran: {}",
+            fs::read_to_string(&log).unwrap_or_default()
+        );
     }
 
     #[test]
@@ -2443,7 +2771,8 @@ mod tests {
         // whose stamped shas still match walks straight past it.
         let home = scratch("apply-no-drift");
         let repo = scratch_repo("apply-no-drift-repo");
-        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let change =
+            r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         let stamped = file_sha(&repo, "src/lib.rs").expect("the target exists at draft time");
         let text = render_proposal(
             "undrifted-target",
@@ -2454,7 +2783,10 @@ mod tests {
             "the gate is green",
             "the function returns 2",
             change,
-            &[TargetSha { path: "src/lib.rs".to_string(), sha256: stamped.clone() }],
+            &[TargetSha {
+                path: "src/lib.rs".to_string(),
+                sha256: stamped.clone(),
+            }],
         );
         fs::create_dir_all(proposals_dir(&home)).unwrap();
         fs::write(proposals_dir(&home).join("undrifted-target.md"), text).unwrap();
@@ -2463,7 +2795,14 @@ mod tests {
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
         let stream = calib::Stream::open(scratch("apply-no-drift-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("undrifted-target", &ctx);
         assert!(matches!(verdict, Verdict::Applied { .. }), "{verdict:?}");
         // The gate ran, and the row carries the judged artifact's sha.
@@ -2471,7 +2810,10 @@ mod tests {
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
-        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
         assert_eq!(row.verdict, calib::VERDICT_APPLIED);
         let expected = parse_change(&serde_json::from_str::<serde_json::Value>(change).unwrap())
             .expect("the change parses")
@@ -2486,26 +2828,50 @@ mod tests {
         let pre_image = fs::read_to_string(repo.join("src/lib.rs")).unwrap();
         let tools = scratch("apply-tools");
         let log = tools.join("gate.log");
-        let bin = stand_in(&tools, 1, "error: test failed: the_ranker_orders_a_corpus", &log);
+        let bin = stand_in(
+            &tools,
+            1,
+            "error: test failed: the_ranker_orders_a_corpus",
+            &log,
+        );
         let gate = fake_gate(&repo, &bin);
-        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let change =
+            r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "break-the-ranker", "src/lib.rs", change);
         let stream = calib::Stream::open(scratch("apply-source-red-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("break-the-ranker", &ctx);
-        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        let Verdict::Refused { reason } = &verdict else {
+            panic!("expected refused, got {verdict:?}")
+        };
         assert!(reason.contains("the_ranker_orders_a_corpus"), "{reason}");
         // The tree is back to its pre-image.
-        assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), pre_image);
+        assert_eq!(
+            fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+            pre_image
+        );
         let status = git(&repo, &["status", "--porcelain"]).unwrap();
         assert!(status.trim().is_empty(), "{status}");
         // The row landed, refused, naming the test.
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
-        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
         assert_eq!(row.verdict, calib::VERDICT_REFUSED);
-        assert!(row.gate.iter().any(|step| !step.ok && step.detail.contains("the_ranker")));
+        assert!(row
+            .gate
+            .iter()
+            .any(|step| !step.ok && step.detail.contains("the_ranker")));
         let stamped = load_one(&home, "break-the-ranker").unwrap();
         assert_eq!(stamped.status, Status::Refused);
         assert!(stamped.commit.is_none());
@@ -2519,15 +2885,27 @@ mod tests {
         let log = tools.join("gate.log");
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
-        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let change =
+            r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "fix-the-ranker", "src/lib.rs", change);
         let stream = calib::Stream::open(scratch("apply-source-green-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("fix-the-ranker", &ctx);
-        let Verdict::Applied { commit, .. } = &verdict else { panic!("expected applied, got {verdict:?}") };
+        let Verdict::Applied { commit, .. } = &verdict else {
+            panic!("expected applied, got {verdict:?}")
+        };
         let commit = commit.clone().expect("a repo-side apply commits");
         // The change is on disk and committed.
-        assert!(fs::read_to_string(repo.join("src/lib.rs")).unwrap().contains("{ 2 }"));
+        assert!(fs::read_to_string(repo.join("src/lib.rs"))
+            .unwrap()
+            .contains("{ 2 }"));
         let status = git(&repo, &["status", "--porcelain"]).unwrap();
         assert!(status.trim().is_empty(), "{status}");
         let subject = git(&repo, &["log", "-1", "--format=%s"]).unwrap();
@@ -2538,10 +2916,15 @@ mod tests {
         // The undo reverts the commit structurally.
         let reverted = undo("fix-the-ranker", &home, &repo).expect("the undo");
         assert!(reverted.contains("reverted commit"), "{reverted}");
-        assert!(fs::read_to_string(repo.join("src/lib.rs")).unwrap().contains("{ 1 }"));
+        assert!(fs::read_to_string(repo.join("src/lib.rs"))
+            .unwrap()
+            .contains("{ 1 }"));
         let status = git(&repo, &["status", "--porcelain"]).unwrap();
         assert!(status.trim().is_empty(), "{status}");
-        assert_eq!(load_one(&home, "fix-the-ranker").unwrap().status, Status::Pending);
+        assert_eq!(
+            load_one(&home, "fix-the-ranker").unwrap().status,
+            Status::Pending
+        );
     }
 
     #[test]
@@ -2558,10 +2941,10 @@ mod tests {
         let log = tools.join("gate.log");
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
-        let probe: eval::EvalProbe = std::sync::Arc::new(|| {
-            Err("the eval corpus regressed: conversation-fold".to_string())
-        });
-        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let probe: eval::EvalProbe =
+            std::sync::Arc::new(|| Err("the eval corpus regressed: conversation-fold".to_string()));
+        let change =
+            r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "break-the-fold", "src/lib.rs", change);
         let stream = calib::Stream::open(scratch("apply-eval-regress-calib"));
         let ctx = Apply {
@@ -2573,23 +2956,38 @@ mod tests {
             eval: Some(probe),
         };
         let verdict = apply("break-the-fold", &ctx);
-        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        let Verdict::Refused { reason } = &verdict else {
+            panic!("expected refused, got {verdict:?}")
+        };
         assert!(reason.contains("conversation-fold"), "{reason}");
         assert!(reason.contains("eval_corpus"), "{reason}");
         // The tree is back to its pre-image and nothing committed.
-        assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), pre_image);
+        assert_eq!(
+            fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+            pre_image
+        );
         let status = git(&repo, &["status", "--porcelain"]).unwrap();
         assert!(status.trim().is_empty(), "{status}");
         // The row landed, refused, carrying the eval step's evidence.
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
-        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
         assert_eq!(row.verdict, calib::VERDICT_REFUSED);
-        let eval_step =
-            row.gate.iter().find(|step| step.step == "eval_corpus").expect("the eval step");
+        let eval_step = row
+            .gate
+            .iter()
+            .find(|step| step.step == "eval_corpus")
+            .expect("the eval step");
         assert!(!eval_step.ok);
-        assert!(eval_step.detail.contains("conversation-fold"), "{:?}", eval_step.detail);
+        assert!(
+            eval_step.detail.contains("conversation-fold"),
+            "{:?}",
+            eval_step.detail
+        );
     }
 
     #[test]
@@ -2604,7 +3002,12 @@ mod tests {
         let pre_image = fs::read_to_string(repo.join("src/lib.rs")).unwrap();
         let tools = scratch("apply-tools");
         let log = tools.join("gate.log");
-        let bin = stand_in(&tools, 1, "error: test failed: the_ranker_orders_a_corpus", &log);
+        let bin = stand_in(
+            &tools,
+            1,
+            "error: test failed: the_ranker_orders_a_corpus",
+            &log,
+        );
         let gate = fake_gate(&repo, &bin);
         // A wired probe that records whether it ran: under a red cargo
         // gate it must not run at all.
@@ -2614,7 +3017,8 @@ mod tests {
             seen.store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         });
-        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let change =
+            r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "red-gate", "src/lib.rs", change);
         let stream = calib::Stream::open(scratch("apply-eval-not-run-calib"));
         let ctx = Apply {
@@ -2626,9 +3030,14 @@ mod tests {
             eval: Some(probe),
         };
         let verdict = apply("red-gate", &ctx);
-        let Verdict::Refused { reason } = &verdict else { panic!("expected refused, got {verdict:?}") };
+        let Verdict::Refused { reason } = &verdict else {
+            panic!("expected refused, got {verdict:?}")
+        };
         assert!(reason.contains("the gate refused the change"), "{reason}");
-        assert_eq!(fs::read_to_string(repo.join("src/lib.rs")).unwrap(), pre_image);
+        assert_eq!(
+            fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+            pre_image
+        );
         assert!(
             !ran.load(std::sync::atomic::Ordering::SeqCst),
             "the corpus probe ran under a red cargo gate"
@@ -2636,15 +3045,24 @@ mod tests {
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
-        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
         // Five steps: the four cargo steps plus the eval step recorded
         // not-run, with the reason named.
         assert_eq!(row.gate.len(), 5, "{:?}", row.gate);
-        let eval_step =
-            row.gate.iter().find(|step| step.step == "eval_corpus").expect("the eval step");
+        let eval_step = row
+            .gate
+            .iter()
+            .find(|step| step.step == "eval_corpus")
+            .expect("the eval step");
         assert!(!eval_step.ok, "{eval_step:?}");
         assert!(eval_step.detail.contains("not run"), "{eval_step:?}");
-        assert!(eval_step.detail.contains("the cargo gate refused first"), "{eval_step:?}");
+        assert!(
+            eval_step.detail.contains("the cargo gate refused first"),
+            "{eval_step:?}"
+        );
     }
 
     #[test]
@@ -2658,7 +3076,8 @@ mod tests {
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
         let probe: eval::EvalProbe = std::sync::Arc::new(|| Ok(()));
-        let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+        let change =
+            r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "keep-the-fold", "src/lib.rs", change);
         let stream = calib::Stream::open(scratch("apply-eval-green-calib"));
         let ctx = Apply {
@@ -2671,13 +3090,21 @@ mod tests {
         };
         let verdict = apply("keep-the-fold", &ctx);
         assert!(matches!(verdict, Verdict::Applied { .. }), "{verdict:?}");
-        assert!(fs::read_to_string(repo.join("src/lib.rs")).unwrap().contains("{ 2 }"));
+        assert!(fs::read_to_string(repo.join("src/lib.rs"))
+            .unwrap()
+            .contains("{ 2 }"));
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
-        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
         assert_eq!(row.verdict, calib::VERDICT_APPLIED);
-        assert!(row.gate.iter().any(|step| step.step == "eval_corpus" && step.ok));
+        assert!(row
+            .gate
+            .iter()
+            .any(|step| step.step == "eval_corpus" && step.ok));
     }
 
     #[test]
@@ -2699,9 +3126,18 @@ mod tests {
         let change = r#"{"op": "retire-skill", "name": "demo"}"#;
         skill_proposal(&home, "retire-demo", "demo", change);
         let stream = calib::Stream::open(scratch("apply-destructive-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("retire-demo", &ctx);
-        let Verdict::Waiting { reason } = &verdict else { panic!("expected waiting, got {verdict:?}") };
+        let Verdict::Waiting { reason } = &verdict else {
+            panic!("expected waiting, got {verdict:?}")
+        };
         assert!(reason.contains("demo"), "{reason}");
         assert!(reason.contains("--approve"), "{reason}");
         // Nothing applied: the skill is still live.
@@ -2712,15 +3148,23 @@ mod tests {
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
-        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
         assert_eq!(row.verdict, calib::VERDICT_WAITING);
         assert!(row.gate.is_empty());
         // The status is waiting, so a second apply does not double-record.
         let second = apply("retire-demo", &ctx);
-        let Verdict::Refused { reason } = &second else { panic!("expected refused, got {second:?}") };
+        let Verdict::Refused { reason } = &second else {
+            panic!("expected refused, got {second:?}")
+        };
         assert!(reason.contains("already waiting"), "{reason}");
         // With approval in the current turn, the retirement lands.
-        let ctx = Apply { approved: true, ..ctx };
+        let ctx = Apply {
+            approved: true,
+            ..ctx
+        };
         let verdict = apply("retire-demo", &ctx);
         assert!(matches!(verdict, Verdict::Applied { .. }), "{verdict:?}");
         assert!(!skill_dir.exists(), "the skill left the live tree");
@@ -2742,8 +3186,18 @@ mod tests {
         let change = r#"{"op": "write-skill", "content": "---\nname: demo\ndescription: the old body\n---\n\nnew body\n"}"#;
         skill_proposal(&home, "demo-update", "demo", change);
         let stream = calib::Stream::open(scratch("undo-skill-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
-        assert!(matches!(apply("demo-update", &ctx), Verdict::Applied { .. }));
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
+        assert!(matches!(
+            apply("demo-update", &ctx),
+            Verdict::Applied { .. }
+        ));
         assert!(fs::read_to_string(&live_path).unwrap().contains("new body"));
         let reverted = undo("demo-update", &home, &repo).expect("the undo");
         assert!(reverted.contains("restored the pre-image"), "{reverted}");
@@ -2761,13 +3215,28 @@ mod tests {
         let change = r#"{"op": "write-skill", "content": "---\nname: fresh\ndescription: a new skill\n---\n\nbody\n"}"#;
         skill_proposal(&home, "create-fresh", "fresh", change);
         let stream = calib::Stream::open(scratch("undo-create-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
-        assert!(matches!(apply("create-fresh", &ctx), Verdict::Applied { .. }));
-        let created = skills::skills_dir(&home).join("fresh").join(skills::SKILL_FILE);
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
+        assert!(matches!(
+            apply("create-fresh", &ctx),
+            Verdict::Applied { .. }
+        ));
+        let created = skills::skills_dir(&home)
+            .join("fresh")
+            .join(skills::SKILL_FILE);
         assert!(created.exists());
         undo("create-fresh", &home, &repo).expect("the undo");
         assert!(!created.exists(), "the created file is gone");
-        assert!(!skills::skills_dir(&home).join("fresh").exists(), "the empty directory is gone too");
+        assert!(
+            !skills::skills_dir(&home).join("fresh").exists(),
+            "the empty directory is gone too"
+        );
     }
 
     #[test]
@@ -2793,10 +3262,16 @@ mod tests {
             stream: Some(&stream),
             eval: None,
         };
-        assert!(matches!(apply("retire-demo", &ctx), Verdict::Applied { .. }));
+        assert!(matches!(
+            apply("retire-demo", &ctx),
+            Verdict::Applied { .. }
+        ));
         assert!(!skill_dir.exists());
         undo("retire-demo", &home, &repo).expect("the undo");
-        assert_eq!(fs::read_to_string(skill_dir.join(skills::SKILL_FILE)).unwrap(), live);
+        assert_eq!(
+            fs::read_to_string(skill_dir.join(skills::SKILL_FILE)).unwrap(),
+            live
+        );
     }
 
     // --- the provenance rule ---
@@ -2813,7 +3288,13 @@ mod tests {
             ),
         )
         .unwrap();
-        git_paths(&repo, &["add", "--"], &[&format!("memories/{name}.md")], &[]).unwrap();
+        git_paths(
+            &repo,
+            &["add", "--"],
+            &[&format!("memories/{name}.md")],
+            &[],
+        )
+        .unwrap();
         git(&repo, &["commit", "-q", "-m", "the corpus"]).unwrap();
         repo
     }
@@ -2850,18 +3331,31 @@ mod tests {
         let change = r#"{"op": "supersede", "name": "old-fact", "justification": "the port moved to 8902", "replacement": "new-fact", "description": "the endpoint is 8902"}"#;
         memory_proposal(&home, "fix-the-fact", "old-fact", change);
         let stream = calib::Stream::open(scratch("provenance-inferred-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("fix-the-fact", &ctx);
         assert!(matches!(verdict, Verdict::Applied { .. }), "{verdict:?}");
         // The supersession landed through slice 8's own path.
         let superseded = fs::read_to_string(repo.join("memories/old-fact.md")).unwrap();
-        assert!(superseded.contains("superseded-by: new-fact"), "{superseded}");
+        assert!(
+            superseded.contains("superseded-by: new-fact"),
+            "{superseded}"
+        );
         assert!(repo.join("memories/new-fact.md").exists());
         // The justification rode the row.
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
-        let row = rows.iter().find(|row| row.op == calib::OP_PROPOSE).expect("the propose row");
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
         assert_eq!(row.target, "memory");
         assert_eq!(row.verdict, calib::VERDICT_APPLIED);
         assert!(row.reason.contains("superseded"), "{}", row.reason);
@@ -2878,9 +3372,18 @@ mod tests {
         let change = r#"{"op": "supersede", "name": "load-bearing", "justification": "it changed", "replacement": "load-bearing-2", "description": "the new rule"}"#;
         memory_proposal(&home, "touch-the-rule", "load-bearing", change);
         let stream = calib::Stream::open(scratch("provenance-confirmed-calib"));
-        let ctx = Apply { home: &home, repo: &repo, gate: &gate, approved: false, stream: Some(&stream), eval: None };
+        let ctx = Apply {
+            home: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
         let verdict = apply("touch-the-rule", &ctx);
-        let Verdict::Waiting { reason } = &verdict else { panic!("expected waiting, got {verdict:?}") };
+        let Verdict::Waiting { reason } = &verdict else {
+            panic!("expected waiting, got {verdict:?}")
+        };
         assert!(reason.contains("confirmed-by"), "{reason}");
         assert!(reason.contains("load-bearing"), "{reason}");
         // Nothing landed: the fact is untouched.
@@ -2906,8 +3409,14 @@ mod tests {
         });
         let repo = scratch("tool-file-repo");
         let result = file_from_tool(&home, &repo, &arguments);
-        assert!(result.contains("filed proposal `session-lesson`"), "{result}");
-        assert!(result.contains("fleet improve apply session-lesson"), "{result}");
+        assert!(
+            result.contains("filed proposal `session-lesson`"),
+            "{result}"
+        );
+        assert!(
+            result.contains("fleet improve apply session-lesson"),
+            "{result}"
+        );
         let proposal = load_one(&home, "session-lesson").expect("the filed proposal loads");
         assert_eq!(proposal.target, Target::Skill);
         assert_eq!(proposal.target_name, "bash-recovery");
@@ -2941,7 +3450,12 @@ mod tests {
     #[test]
     fn the_listing_names_both_stores_with_target_basis_and_status() {
         let home = scratch("listing");
-        skill_proposal(&home, "general-one", "demo", r#"{"op": "write-skill", "content": "x"}"#);
+        skill_proposal(
+            &home,
+            "general-one",
+            "demo",
+            r#"{"op": "write-skill", "content": "x"}"#,
+        );
         // A slice-7 draft in its own store.
         let drafts = skills::proposals_dir(&home);
         fs::create_dir_all(&drafts).unwrap();
@@ -2959,8 +3473,14 @@ mod tests {
         assert!(rendered.contains("basis inferred"), "{rendered}");
         assert!(rendered.contains("gate: not yet run"), "{rendered}");
         // The two stores are named honestly, not merged.
-        assert!(rendered.contains(&format!("{PROPOSALS_DIR}/")), "{rendered}");
-        assert!(rendered.contains(&format!("{}/{PROPOSALS_DIR}/", skills::SKILLS_DIR)), "{rendered}");
+        assert!(
+            rendered.contains(&format!("{PROPOSALS_DIR}/")),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("{}/{PROPOSALS_DIR}/", skills::SKILLS_DIR)),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -3000,7 +3520,12 @@ mod tests {
         )
         .unwrap();
         let proposal = load_one(&home, "survivor").expect("the draft loads");
-        assert_eq!(proposal.change, Change::RetireSkill { name: "absorbed".to_string() });
+        assert_eq!(
+            proposal.change,
+            Change::RetireSkill {
+                name: "absorbed".to_string()
+            }
+        );
         fs::write(
             drafts.join("broken-merge.md"),
             "---\nname: broken-merge\ndescription: a broken draft\nproposed: true\nkind: merge\nevidence: 0.90 similar\n---\n\nno header line\n",
@@ -3015,7 +3540,12 @@ mod tests {
     #[test]
     fn the_stamp_rewrites_the_verdict_fields_and_keeps_the_rest() {
         let home = scratch("stamp");
-        let path = skill_proposal(&home, "stamped", "demo", r#"{"op": "retire-skill", "name": "demo"}"#);
+        let path = skill_proposal(
+            &home,
+            "stamped",
+            "demo",
+            r#"{"op": "retire-skill", "name": "demo"}"#,
+        );
         let before = fs::read_to_string(&path).unwrap();
         assert!(before.contains("status: pending"));
         stamp(&path, Status::Applied, Some("abc123"), "fmt ok · test ok").unwrap();
@@ -3025,7 +3555,10 @@ mod tests {
         assert!(after.contains("gate: fmt ok · test ok"), "{after}");
         // The body survived whole.
         assert!(after.contains("## Justification"), "{after}");
-        assert!(after.contains("the session corrected a bash failure"), "{after}");
+        assert!(
+            after.contains("the session corrected a bash failure"),
+            "{after}"
+        );
         // A second stamp replaces, never duplicates.
         stamp(&path, Status::Pending, None, "").unwrap();
         let again = fs::read_to_string(&path).unwrap();

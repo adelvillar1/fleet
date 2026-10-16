@@ -198,7 +198,8 @@ pub fn default_roster() -> Vec<Candidate> {
         },
         Candidate {
             id: "token-plan".into(),
-            base_url: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1".into(),
+            base_url: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+                .into(),
             key_env: "TOKEN_PLAN_API_KEY".into(),
             models: vec!["qwen3.8-flash".into()],
             billing: Billing::Plan,
@@ -345,7 +346,10 @@ pub struct Gates {
 
 impl Default for Gates {
     fn default() -> Self {
-        Gates { min_confidence: 0.6, default_workload: "standard_code" }
+        Gates {
+            min_confidence: 0.6,
+            default_workload: "standard_code",
+        }
     }
 }
 
@@ -394,7 +398,9 @@ impl std::fmt::Display for ConfigError {
             ConfigError::Parse(detail) => {
                 write!(f, "the routing config is not valid JSON: {detail}")
             }
-            ConfigError::BadEntry(detail) => write!(f, "the routing config has a bad entry: {detail}"),
+            ConfigError::BadEntry(detail) => {
+                write!(f, "the routing config has a bad entry: {detail}")
+            }
         }
     }
 }
@@ -491,7 +497,9 @@ pub struct CalibrationConfig {
 
 impl Default for CalibrationConfig {
     fn default() -> Self {
-        CalibrationConfig { informs_failover: true }
+        CalibrationConfig {
+            informs_failover: true,
+        }
     }
 }
 
@@ -572,7 +580,12 @@ pub fn load_roster(home: &Path) -> Result<Roster, ConfigError> {
         .map_err(|error| ConfigError::Parse(format!("{}: {error}", path.display())))?;
     let (candidates, pin) = merge(default_roster(), &file)?;
     let (preferences, gates) = load_routing(home)?;
-    Ok(Roster { candidates, pin, preferences, gates })
+    Ok(Roster {
+        candidates,
+        pin,
+        preferences,
+        gates,
+    })
 }
 
 /// The `<FLEET_HOME>/routing.json` plugin file: the preference of
@@ -637,7 +650,10 @@ fn load_routing(home: &Path) -> Result<(Vec<Preference>, Gates), ConfigError> {
             })?;
             candidates.push((leak_str(provider), leak_str(model)));
         }
-        if let Some(slot) = preferences.iter_mut().find(|slot| slot.workload == entry.workload) {
+        if let Some(slot) = preferences
+            .iter_mut()
+            .find(|slot| slot.workload == entry.workload)
+        {
             slot.candidates = candidates;
         } else {
             preferences.push(Preference {
@@ -692,9 +708,15 @@ pub fn calib_log_root(home: &Path) -> Option<PathBuf> {
 /// the curation honest instead of silently disabling it.
 pub fn skills_config(home: &Path) -> SkillsConfig {
     let mut config = SkillsConfig::default();
-    let Ok(text) = std::fs::read_to_string(home.join("config.json")) else { return config };
-    let Ok(file) = serde_json::from_str::<ConfigFile>(&text) else { return config };
-    let Some(skills) = file.skills else { return config };
+    let Ok(text) = std::fs::read_to_string(home.join("config.json")) else {
+        return config;
+    };
+    let Ok(file) = serde_json::from_str::<ConfigFile>(&text) else {
+        return config;
+    };
+    let Some(skills) = file.skills else {
+        return config;
+    };
     if let Some(sessions) = skills.retire_after_sessions {
         config.retire_after_sessions = sessions;
     }
@@ -712,7 +734,10 @@ fn merge(
     file: &ConfigFile,
 ) -> Result<(Vec<Candidate>, Option<String>), ConfigError> {
     for entry in &file.providers {
-        if let Some(existing) = candidates.iter_mut().find(|candidate| candidate.id == entry.id) {
+        if let Some(existing) = candidates
+            .iter_mut()
+            .find(|candidate| candidate.id == entry.id)
+        {
             if let Some(value) = &entry.base_url {
                 existing.base_url = value.clone();
             }
@@ -826,7 +851,10 @@ pub fn resolve(candidates: &[Candidate], dotenv: &HashMap<String, String>) -> Ve
 /// The declared HEAD's index: the first enabled candidate. Normally the
 /// router kit at index 0; the next enabled one if the kit is disabled.
 fn head_index(resolved: &[Resolved]) -> usize {
-    resolved.iter().position(|entry| entry.candidate.enabled).unwrap_or(0)
+    resolved
+        .iter()
+        .position(|entry| entry.candidate.enabled)
+        .unwrap_or(0)
 }
 
 // --- selection --------------------------------------------------------------
@@ -961,7 +989,9 @@ pub async fn select(
         resolved.iter().any(|entry| entry.id() == *pin_id) || pin_id.contains('/')
     });
     let unknown_pin = pin
-        .filter(|pin_id| !pin_id.contains('/') && !resolved.iter().any(|entry| entry.id() == *pin_id))
+        .filter(|pin_id| {
+            !pin_id.contains('/') && !resolved.iter().any(|entry| entry.id() == *pin_id)
+        })
         .map(|pin_id| format!("pin `{pin_id}` names no roster provider; "));
 
     let (judged, judged_from) = judge(task, specs, cache).await;
@@ -1140,13 +1170,23 @@ fn fallback(
                 .collect()
         })
         .unwrap_or_default();
-    let mut decision =
-        decision_from(order, How::Fallback, None, None, reason.to_string(), judged_from);
+    let mut decision = decision_from(
+        order,
+        How::Fallback,
+        None,
+        None,
+        reason.to_string(),
+        judged_from,
+    );
     // An empty table (a config that named no workloads) still has to
     // walk something: the declared chain's head, as the pre-slice
     // behavior did.
     if decision.order.is_empty() {
-        let provider = resolved.get(head).map(Resolved::id).unwrap_or(HEAD_ID).to_string();
+        let provider = resolved
+            .get(head)
+            .map(Resolved::id)
+            .unwrap_or(HEAD_ID)
+            .to_string();
         decision.provider = provider.clone();
         decision.start_index = head;
         decision.order = resolved
@@ -1246,16 +1286,26 @@ async fn judge_live(server: &McpServer, task: &str) -> Option<(String, f64, Stri
 /// routes to the default workload.
 fn parse_workload(text: &str) -> Option<(String, f64, String)> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
-    let verdict = value.get("verdict").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let verdict = value
+        .get("verdict")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
     let answers = value.get("answers")?.as_object()?;
     for heads in answers.values() {
-        if let Some(workload) = heads.get("workload").and_then(|workload| workload.as_object()) {
+        if let Some(workload) = heads
+            .get("workload")
+            .and_then(|workload| workload.as_object())
+        {
             if let Some(label) = workload
                 .get("label")
                 .and_then(|label| label.as_str())
                 .filter(|label| !label.is_empty())
             {
-                let confidence = workload.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0);
+                let confidence = workload
+                    .get("confidence")
+                    .and_then(|c| c.as_f64())
+                    .unwrap_or(0.0);
                 return Some((label.to_string(), confidence, verdict));
             }
         }
@@ -1364,11 +1414,19 @@ fn simulate_walk(start: usize, outcomes: &[WalkOutcome]) -> (Option<usize>, Vec<
                 class: Some("no-key"),
             }),
             WalkOutcome::Served => {
-                attempts.push(Attempt { provider, outcome: "served", class: None });
+                attempts.push(Attempt {
+                    provider,
+                    outcome: "served",
+                    class: None,
+                });
                 return (Some(index), attempts);
             }
             WalkOutcome::Failed { class, streamed } => {
-                attempts.push(Attempt { provider, outcome: "failed", class: Some(class) });
+                attempts.push(Attempt {
+                    provider,
+                    outcome: "failed",
+                    class: Some(class),
+                });
                 if *streamed || !failover_eligible_class(class) {
                     return (None, attempts);
                 }
@@ -1468,17 +1526,16 @@ impl Router {
         let endpoints = resolved
             .iter()
             .map(|entry| match entry.candidate.kind {
-                CandidateKind::Http => {
-                    Endpoint::Http(Client::new(entry.candidate.base_url.as_str(), entry.key.clone().unwrap_or_default()))
-                }
+                CandidateKind::Http => Endpoint::Http(Client::new(
+                    entry.candidate.base_url.as_str(),
+                    entry.key.clone().unwrap_or_default(),
+                )),
                 CandidateKind::Lane => Endpoint::Lane(
                     lane_specs
                         .get(entry.id())
                         .cloned()
                         .or_else(|| lanes::spec_for(entry.id()).ok())
-                        .ok_or_else(|| {
-                            format!("the lane `{}` has no launch spec", entry.id())
-                        }),
+                        .ok_or_else(|| format!("the lane `{}` has no launch spec", entry.id())),
                 ),
             })
             .collect();
@@ -1590,7 +1647,10 @@ impl Router {
         let served = state.served.and_then(|position| {
             let index = *self.order.get(position)?;
             let entry = self.resolved.get(index)?;
-            Some((entry.id().to_string(), self.models.get(position).cloned().unwrap_or_default()))
+            Some((
+                entry.id().to_string(),
+                self.models.get(position).cloned().unwrap_or_default(),
+            ))
         });
         let (provider, model) = served
             .clone()
@@ -1760,8 +1820,9 @@ impl Router {
                 }
             }
         }
-        Err(last_error
-            .unwrap_or_else(|| ClientError::Network("no usable roster candidate remained".to_string())))
+        Err(last_error.unwrap_or_else(|| {
+            ClientError::Network("no usable roster candidate remained".to_string())
+        }))
     }
 
     /// One candidate's attempt: build the request with the position's
@@ -1830,7 +1891,6 @@ impl Router {
     }
 }
 
-
 /// A route prepared for a session: the router, its decision, the
 /// judgment's latency, and the calibration stream this session writes to.
 pub struct Prepared {
@@ -1846,7 +1906,8 @@ impl Prepared {
     /// Record this session's routing decision to the calibration stream,
     /// best-effort — a full queue drops the row, never the run.
     pub fn record_route(&self, task: &str) {
-        self.calib.record(calib::Row::Route(self.router.row(task, self.latency_ms)));
+        self.calib
+            .record(calib::Row::Route(self.router.row(task, self.latency_ms)));
     }
 }
 
@@ -1946,7 +2007,12 @@ pub async fn prepare(
         .position(|(provider, _)| provider == &decision.provider)
         .unwrap_or(0);
     let router = Arc::new(Router::build(resolved, decision.clone(), skips, specs));
-    Ok(Prepared { router, decision, latency_ms, calib })
+    Ok(Prepared {
+        router,
+        decision,
+        latency_ms,
+        calib,
+    })
 }
 
 /// The cells the calibration skips in this walk's preference: every
@@ -2135,7 +2201,10 @@ pub fn render(resolved: &[Resolved]) -> String {
     for (index, entry) in resolved.iter().enumerate() {
         out.push_str(&render_card(entry, index == 0));
     }
-    let ready = resolved.iter().filter(|entry| provider_state(entry) == ProviderState::Ready).count();
+    let ready = resolved
+        .iter()
+        .filter(|entry| provider_state(entry) == ProviderState::Ready)
+        .count();
     out.push_str(&format!(
         "\n{DIM}{} providers \u{b7} {ready} configured \u{b7} {} not ready \u{b7} head {HEAD_ID}{RESET}\n",
         resolved.len(),
@@ -2156,7 +2225,11 @@ fn render_card(entry: &Resolved, is_head: bool) -> String {
     };
     let mut header_right = format!("{} {}", state.dot(), state.label());
     if is_head {
-        header_right.push_str(&format!(" {}\u{2605} head{}", palette::ACCENT, palette::RESET));
+        header_right.push_str(&format!(
+            " {}\u{2605} head{}",
+            palette::ACCENT,
+            palette::RESET
+        ));
     }
     let header = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{id}{RESET} {DIM}{dashes} {dot_color}{right}{RESET} {DIM}\u{2510}{RESET}",
@@ -2175,7 +2248,13 @@ fn render_card(entry: &Resolved, is_head: bool) -> String {
         (None, true) => "absent".to_string(),
     };
     let mut lines = vec![
-        format!("{DIM}\u{2502}{RESET} {TEXT}{url}{RESET}", DIM = palette::DIM, RESET = palette::RESET, TEXT = palette::TEXT, url = entry.candidate.base_url),
+        format!(
+            "{DIM}\u{2502}{RESET} {TEXT}{url}{RESET}",
+            DIM = palette::DIM,
+            RESET = palette::RESET,
+            TEXT = palette::TEXT,
+            url = entry.candidate.base_url
+        ),
         format!(
             "{DIM}\u{2502}{RESET} {TEXT}key {name} \u{b7} {state} \u{b7} model {model}{RESET}",
             DIM = palette::DIM,
@@ -2187,9 +2266,19 @@ fn render_card(entry: &Resolved, is_head: bool) -> String {
         ),
     ];
     if let Some(reason) = &entry.candidate.disabled_reason {
-        lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{reason}{RESET}", DIM = palette::DIM, RESET = palette::RESET, reason = reason));
+        lines.push(format!(
+            "{DIM}\u{2502}{RESET} {DIM}{reason}{RESET}",
+            DIM = palette::DIM,
+            RESET = palette::RESET,
+            reason = reason
+        ));
     }
-    let bottom = format!("{DIM}\u{2514}{bottom}\u{2518}{RESET}", DIM = palette::DIM, RESET = palette::RESET, bottom = "\u{2500}".repeat(CARD_WIDTH - 2));
+    let bottom = format!(
+        "{DIM}\u{2514}{bottom}\u{2518}{RESET}",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+        bottom = "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -2231,7 +2320,10 @@ mod tests {
     use super::*;
 
     fn api(status: u16) -> ClientError {
-        ClientError::Api(crate::api::ApiError { status, message: "x".to_string() })
+        ClientError::Api(crate::api::ApiError {
+            status,
+            message: "x".to_string(),
+        })
     }
 
     // --- the failure-class table ---
@@ -2245,9 +2337,18 @@ mod tests {
         assert_eq!(failure_class(&api(500)), "server");
         assert_eq!(failure_class(&api(503)), "server");
         assert_eq!(failure_class(&api(504)), "timeout");
-        assert_eq!(failure_class(&ClientError::Network("connect refused".to_string())), "network");
-        assert_eq!(failure_class(&ClientError::Network("the timeout expired".to_string())), "timeout");
-        assert_eq!(failure_class(&ClientError::Decode("bad sse".to_string())), "decode");
+        assert_eq!(
+            failure_class(&ClientError::Network("connect refused".to_string())),
+            "network"
+        );
+        assert_eq!(
+            failure_class(&ClientError::Network("the timeout expired".to_string())),
+            "timeout"
+        );
+        assert_eq!(
+            failure_class(&ClientError::Decode("bad sse".to_string())),
+            "decode"
+        );
     }
 
     #[test]
@@ -2256,10 +2357,17 @@ mod tests {
             assert!(failover_eligible(&api(status)), "{status} must fail over");
         }
         for status in [400u16, 404] {
-            assert!(!failover_eligible(&api(status)), "{status} must not fail over");
+            assert!(
+                !failover_eligible(&api(status)),
+                "{status} must not fail over"
+            );
         }
-        assert!(failover_eligible(&ClientError::Network("refused".to_string())));
-        assert!(failover_eligible(&ClientError::Decode("garbage".to_string())));
+        assert!(failover_eligible(&ClientError::Network(
+            "refused".to_string()
+        )));
+        assert!(failover_eligible(&ClientError::Decode(
+            "garbage".to_string()
+        )));
     }
 
     // --- the chain walk ---
@@ -2270,9 +2378,18 @@ mod tests {
         let (served, attempts) = simulate_walk(
             0,
             &[
-                WalkOutcome::Failed { class: "quota", streamed: false },
-                WalkOutcome::Failed { class: "rate-limit", streamed: false },
-                WalkOutcome::Failed { class: "server", streamed: false },
+                WalkOutcome::Failed {
+                    class: "quota",
+                    streamed: false,
+                },
+                WalkOutcome::Failed {
+                    class: "rate-limit",
+                    streamed: false,
+                },
+                WalkOutcome::Failed {
+                    class: "server",
+                    streamed: false,
+                },
                 WalkOutcome::Served,
             ],
         );
@@ -2290,7 +2407,10 @@ mod tests {
             1,
             &[
                 WalkOutcome::Unusable,
-                WalkOutcome::Failed { class: "auth", streamed: false },
+                WalkOutcome::Failed {
+                    class: "auth",
+                    streamed: false,
+                },
                 WalkOutcome::Served,
             ],
         );
@@ -2305,7 +2425,10 @@ mod tests {
         let (served, attempts) = simulate_walk(
             0,
             &[
-                WalkOutcome::Failed { class: "network", streamed: true },
+                WalkOutcome::Failed {
+                    class: "network",
+                    streamed: true,
+                },
                 WalkOutcome::Served,
             ],
         );
@@ -2319,7 +2442,13 @@ mod tests {
     fn a_client_error_stops_the_walk_without_failing_over() {
         let (served, attempts) = simulate_walk(
             0,
-            &[WalkOutcome::Failed { class: "client-error", streamed: false }, WalkOutcome::Served],
+            &[
+                WalkOutcome::Failed {
+                    class: "client-error",
+                    streamed: false,
+                },
+                WalkOutcome::Served,
+            ],
         );
         assert_eq!(served, None);
         assert_eq!(attempts.len(), 1);
@@ -2327,8 +2456,14 @@ mod tests {
 
     #[test]
     fn an_exhausted_walk_serves_no_one() {
-        let (served, attempts) =
-            simulate_walk(0, &[WalkOutcome::Failed { class: "quota", streamed: false }; 3].as_slice());
+        let (served, attempts) = simulate_walk(
+            0,
+            &[WalkOutcome::Failed {
+                class: "quota",
+                streamed: false,
+            }; 3]
+                .as_slice(),
+        );
         assert_eq!(served, None);
         assert_eq!(attempts.len(), 3);
     }
@@ -2359,7 +2494,10 @@ mod tests {
         // allowPayg:false policy, so deepseek cannot serve unpinned.
         for preference in &table {
             assert!(
-                !preference.candidates.iter().any(|(provider, _)| *provider == "deepseek"),
+                !preference
+                    .candidates
+                    .iter()
+                    .any(|(provider, _)| *provider == "deepseek"),
                 "`{}` targets the reserve",
                 preference.workload
             );
@@ -2390,13 +2528,19 @@ mod tests {
         let workload = parse_workload(
             r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"hard","confidence":0.9}}}}"#,
         );
-        assert_eq!(workload, Some(("hard".to_string(), 0.9, "pass".to_string())));
+        assert_eq!(
+            workload,
+            Some(("hard".to_string(), 0.9, "pass".to_string()))
+        );
         // A missing confidence reads as 0.0 — the gate then routes to
         // the default workload rather than trusting a guess.
         let no_confidence = parse_workload(
             r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"hard"}}}}"#,
         );
-        assert_eq!(no_confidence, Some(("hard".to_string(), 0.0, "pass".to_string())));
+        assert_eq!(
+            no_confidence,
+            Some(("hard".to_string(), 0.0, "pass".to_string()))
+        );
     }
 
     #[test]
@@ -2405,7 +2549,9 @@ mod tests {
         assert_eq!(parse_workload(r#"{"verdict":"error","answers":{}}"#), None);
         // A declined workload head carries no label.
         assert_eq!(
-            parse_workload(r#"{"verdict":"pass","answers":{"glide":{"workload":{"_declined":"no-answer"}}}}"#),
+            parse_workload(
+                r#"{"verdict":"pass","answers":{"glide":{"workload":{"_declined":"no-answer"}}}}"#
+            ),
             None
         );
         // Not JSON at all.
@@ -2487,7 +2633,11 @@ mod tests {
                 ("xiaomi-mimo".to_string(), "mimo-v2.6-flash".to_string()),
             ]
         );
-        assert!(decision.reason.contains("sys1 gave no usable verdict"), "{}", decision.reason);
+        assert!(
+            decision.reason.contains("sys1 gave no usable verdict"),
+            "{}",
+            decision.reason
+        );
     }
 
     #[tokio::test]
@@ -2522,7 +2672,11 @@ mod tests {
         assert_eq!(decision.how, How::Pinned);
         assert_eq!(decision.provider, "stepfun");
         assert_eq!(decision.model, "step-3.7-flash");
-        assert!(decision.reason.contains("pinned to stepfun"), "{}", decision.reason);
+        assert!(
+            decision.reason.contains("pinned to stepfun"),
+            "{}",
+            decision.reason
+        );
     }
 
     #[tokio::test]
@@ -2577,7 +2731,9 @@ mod tests {
         // pin — never a silent substitution.
         assert_eq!(decision.how, How::Fallback);
         assert!(
-            decision.reason.contains("pin `no-such-provider` names no roster provider"),
+            decision
+                .reason
+                .contains("pin `no-such-provider` names no roster provider"),
             "{}",
             decision.reason
         );
@@ -2605,7 +2761,10 @@ mod tests {
         assert!(!kit.enabled);
         assert_eq!(kit.base_url, "http://127.0.0.1:8300/v1");
         // The zai model list changed; its endpoint and key env did not.
-        let zai = candidates.iter().find(|c| c.id == "zai-coding-plan").unwrap();
+        let zai = candidates
+            .iter()
+            .find(|c| c.id == "zai-coding-plan")
+            .unwrap();
         assert_eq!(zai.models, vec!["GLM-5.3-Pro".to_string()]);
         assert_eq!(zai.key_env, "ZAI_CODING_API_KEY");
         // The deepseek endpoint changed; its key env did not.
@@ -2633,7 +2792,10 @@ mod tests {
         )
         .unwrap();
         let (candidates, _) = merge(default_roster(), &file).unwrap();
-        let added = candidates.iter().find(|c| c.id == "my-gateway").expect("the new entry");
+        let added = candidates
+            .iter()
+            .find(|c| c.id == "my-gateway")
+            .expect("the new entry");
         assert_eq!(added.base_url, "https://g.example/v1");
         assert!(added.enabled);
         assert!(added.key_required);
@@ -2641,10 +2803,9 @@ mod tests {
 
     #[test]
     fn a_partial_new_entry_is_a_named_error() {
-        let file: ConfigFile = serde_json::from_str(
-            r#"{ "providers": [ { "id": "my-gateway", "model": "m1" } ] }"#,
-        )
-        .unwrap();
+        let file: ConfigFile =
+            serde_json::from_str(r#"{ "providers": [ { "id": "my-gateway", "model": "m1" } ] }"#)
+                .unwrap();
         let error = merge(default_roster(), &file).unwrap_err();
         match error {
             ConfigError::BadEntry(detail) => {
@@ -2697,7 +2858,10 @@ mod tests {
         let hard = preference_for(&roster.preferences, "hard").expect("hard");
         assert_eq!(
             hard.candidates,
-            vec![("zai-coding-plan", "GLM-5.3-Pro"), ("stepfun", "step-5-preview")]
+            vec![
+                ("zai-coding-plan", "GLM-5.3-Pro"),
+                ("stepfun", "step-5-preview")
+            ]
         );
         // The untouched workload keeps its default.
         let quick = preference_for(&roster.preferences, "quick").expect("quick");
@@ -2759,8 +2923,16 @@ mod tests {
         };
         let router = Router::new(resolved, decision);
         lock(&router.state).attempts.extend([
-            Attempt { provider: "router-kit".to_string(), outcome: "failed", class: Some("auth") },
-            Attempt { provider: "zai-coding-plan".to_string(), outcome: "served", class: None },
+            Attempt {
+                provider: "router-kit".to_string(),
+                outcome: "failed",
+                class: Some("auth"),
+            },
+            Attempt {
+                provider: "zai-coding-plan".to_string(),
+                outcome: "served",
+                class: None,
+            },
         ]);
         // Position 0 of the walk order is zai — the order the decision
         // carries, not the roster's declared order.
@@ -2801,13 +2973,19 @@ mod tests {
         // A demoted candidate moves to the end; the selected one keeps
         // the head of the walk.
         let ordered = reorder_for_demotion(&order, "zai-coding-plan", &["router-kit".to_string()]);
-        let ids: Vec<&str> = ordered.iter().map(|(provider, _)| provider.as_str()).collect();
+        let ids: Vec<&str> = ordered
+            .iter()
+            .map(|(provider, _)| provider.as_str())
+            .collect();
         assert_eq!(ids, vec!["zai-coding-plan", "xiaomi-mimo", "router-kit"]);
 
         // A candidate that is both selected and demoted stays the head:
         // demotion reorders the walk, it never overrides the judgment.
         let ordered = reorder_for_demotion(&order, "router-kit", &["router-kit".to_string()]);
-        let ids: Vec<&str> = ordered.iter().map(|(provider, _)| provider.as_str()).collect();
+        let ids: Vec<&str> = ordered
+            .iter()
+            .map(|(provider, _)| provider.as_str())
+            .collect();
         assert_eq!(ids, vec!["router-kit", "zai-coding-plan", "xiaomi-mimo"]);
     }
 
@@ -2846,7 +3024,11 @@ mod tests {
             Some(PathBuf::from("/tmp/somewhere-else/logs"))
         );
         // A misspelled section is rejected, the way a provider's is.
-        std::fs::write(home.join("config.json"), r#"{ "calib": { "logroot": "/x" } }"#).unwrap();
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "calib": { "logroot": "/x" } }"#,
+        )
+        .unwrap();
         assert_eq!(calib_log_root(&home), None);
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -2891,7 +3073,8 @@ mod tests {
 
     /// A scratch FLEET_HOME with one config file's text.
     fn config_home(tag: &str, text: &str) -> std::path::PathBuf {
-        let home = std::env::temp_dir().join(format!("fleet-calib-gate-{tag}-{}", std::process::id()));
+        let home =
+            std::env::temp_dir().join(format!("fleet-calib-gate-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(home.join("config.json"), text).unwrap();
@@ -2900,7 +3083,8 @@ mod tests {
 
     #[test]
     fn the_calibration_gate_defaults_on_and_the_config_can_turn_it_off() {
-        let home = std::env::temp_dir().join(format!("fleet-calib-gate-none-{}", std::process::id()));
+        let home =
+            std::env::temp_dir().join(format!("fleet-calib-gate-none-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         // Absent is on: the ride-back is the slice's point, and turning
@@ -2921,7 +3105,11 @@ mod tests {
         )
         .unwrap();
         assert!(!calibration_config(&home).informs_failover);
-        std::fs::write(home.join("config.json"), r#"{ "calib": { "inform_failover": false } }"#).unwrap();
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "calib": { "inform_failover": false } }"#,
+        )
+        .unwrap();
         assert!(calibration_config(&home).informs_failover);
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -3006,11 +3194,21 @@ mod tests {
         // shape — eight rows, all right. It must never move a `hard`
         // walk, and the `hard` cell must never move a `prose` one.
         lines.extend((0..calib::FIT_MIN_ROWS).map(|index| {
-            judged_row("zai-coding-plan", "prose", calib::VERDICT_RIGHT, 0.95 - index as f64 * 0.05)
+            judged_row(
+                "zai-coding-plan",
+                "prose",
+                calib::VERDICT_RIGHT,
+                0.95 - index as f64 * 0.05,
+            )
         }));
         // mimo's `hard` cell: one wrong row at full confidence — wrong,
         // but unfit.
-        lines.push(judged_row("xiaomi-mimo", "hard", calib::VERDICT_WRONG, 0.95));
+        lines.push(judged_row(
+            "xiaomi-mimo",
+            "hard",
+            calib::VERDICT_WRONG,
+            0.95,
+        ));
         write_day(&root, day, &lines);
 
         let resolved = resolve(&default_roster(), &HashMap::new());
@@ -3080,7 +3278,10 @@ mod tests {
         assert_eq!(notes[0].workload, "hard");
         assert!(notes[0].weighted_insufficient_rate >= calib::INSUFFICIENT_RATE_FLOOR);
         let clause = calibration_note_clause(&notes[0]);
-        assert!(clause.contains("calibration notes zai-coding-plan"), "{clause}");
+        assert!(
+            clause.contains("calibration notes zai-coding-plan"),
+            "{clause}"
+        );
         assert!(clause.contains("for shape `hard`"), "{clause}");
         assert!(clause.contains("1.00 insufficient"), "{clause}");
         assert!(clause.contains("is not skipped"), "{clause}");
@@ -3093,13 +3294,19 @@ mod tests {
         // The fit requirement outranks the rate in this direction too: a
         // single insufficient row at full confidence notes nothing,
         // however stark the number looks.
-        let unfit = std::env::temp_dir().join(format!("fleet-calib-notes-unfit-{}", std::process::id()));
+        let unfit =
+            std::env::temp_dir().join(format!("fleet-calib-notes-unfit-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&unfit);
         std::fs::create_dir_all(&unfit).unwrap();
         write_day(
             &unfit,
             day,
-            &[judged_row("zai-coding-plan", "hard", calib::VERDICT_INSUFFICIENT, 0.95)],
+            &[judged_row(
+                "zai-coding-plan",
+                "hard",
+                calib::VERDICT_INSUFFICIENT,
+                0.95,
+            )],
         );
         assert!(calibration_notes(&unfit, day, &resolved, HEAD_ID, "hard").is_empty());
         let _ = std::fs::remove_dir_all(&root);
@@ -3125,7 +3332,10 @@ mod tests {
             start_index: 0,
             order: vec![
                 ("router-kit".to_string(), "auto".to_string()),
-                ("zai-coding-plan".to_string(), "zai-coding-plan-model".to_string()),
+                (
+                    "zai-coding-plan".to_string(),
+                    "zai-coding-plan-model".to_string(),
+                ),
                 ("xiaomi-mimo".to_string(), "xiaomi-mimo-model".to_string()),
                 ("stepfun".to_string(), "stepfun-model".to_string()),
             ],
@@ -3154,7 +3364,10 @@ mod tests {
         // skipped, and the clause names the cell that did it.
         assert_eq!(router.calibration_skip(0, 0), None);
         let clause = router.calibration_skip(1, 0).expect("zai is skipped");
-        assert!(clause.contains("calibration skipped zai-coding-plan"), "{clause}");
+        assert!(
+            clause.contains("calibration skipped zai-coding-plan"),
+            "{clause}"
+        );
         assert!(clause.contains("for shape `hard`"), "{clause}");
         assert!(clause.contains("0.94"), "{clause}");
         assert!(clause.contains("8 rows"), "{clause}");
@@ -3180,14 +3393,20 @@ mod tests {
         // Liquid rides as a declared card: available to the owner's
         // config, its endpoint and model named.
         assert!(rendered.contains("LIQUID_API_KEY"), "{rendered}");
-        assert!(rendered.contains("https://api.liquid.ai/openai/v1"), "{rendered}");
+        assert!(
+            rendered.contains("https://api.liquid.ai/openai/v1"),
+            "{rendered}"
+        );
         assert!(rendered.contains("model lfm2.5-24b-a2b"), "{rendered}");
         // blend1 rides as the grounding provider, a lane-kind candidate.
         assert!(rendered.contains("blend1"), "{rendered}");
         assert!(rendered.contains("http://127.0.0.1:8420"), "{rendered}");
         assert!(rendered.contains("BLEND1_BEARER_TOKEN"), "{rendered}");
         // The endpoints and the default models ride along.
-        assert!(rendered.contains("https://api.z.ai/api/coding/paas/v4"), "{rendered}");
+        assert!(
+            rendered.contains("https://api.z.ai/api/coding/paas/v4"),
+            "{rendered}"
+        );
         assert!(rendered.contains("model step-3.7-flash"), "{rendered}");
         assert!(rendered.contains("model deepseek-chat"), "{rendered}");
         // No plain-text table.
@@ -3197,7 +3416,10 @@ mod tests {
     #[test]
     fn the_declared_chain_is_the_owners_order() {
         let roster = default_roster();
-        let ids: Vec<&str> = roster.iter().map(|candidate| candidate.id.as_str()).collect();
+        let ids: Vec<&str> = roster
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect();
         // blend1 is appended after liquid and asserted here because it
         // changes the compiled-in list — but it enters no declared chain
         // position of its own: the workload table is what targets it.

@@ -140,8 +140,15 @@ const PROVIDER_CAP: usize = 24;
 /// candidate that failed on one of these and was covered by a later one
 /// was the *right* choice that could not serve — the judgment grades the
 /// selection, not the provider's uptime.
-const AVAILABILITY_CLASSES: [&str; 7] =
-    ["auth", "quota", "forbidden", "rate-limit", "server", "timeout", "network"];
+const AVAILABILITY_CLASSES: [&str; 7] = [
+    "auth",
+    "quota",
+    "forbidden",
+    "rate-limit",
+    "server",
+    "timeout",
+    "network",
+];
 
 /// Where the ask's lane comes from: the vendored registry on the real
 /// path, or an injected spec a test or the eval corpus scripts. The seam
@@ -236,7 +243,10 @@ impl JudgeOutcome {
         self.refusal.is_none()
             && (self.judged_any()
                 || !self.dry_run_prompts.is_empty()
-                || self.refusals.iter().all(|(_, reason)| reason.contains("already judged")))
+                || self
+                    .refusals
+                    .iter()
+                    .all(|(_, reason)| reason.contains("already judged")))
     }
 }
 
@@ -313,23 +323,52 @@ pub fn joined_turn_outcome<'a>(rows: &'a [ReadRow], route: &ReadRow) -> Option<&
 /// task's text is absent by design and the prompt says so. Pure: the
 /// caller passes everything in.
 pub fn compose_prompt(route: &ReadRow, turn: Option<&ReadRow>) -> String {
-    let shape = if route.workload.is_empty() { "unshaped" } else { &route.workload };
+    let shape = if route.workload.is_empty() {
+        "unshaped"
+    } else {
+        &route.workload
+    };
     let mut record = vec![
         format!("the workload shape the router judged: {shape}"),
         format!(
             "how: {}",
-            if route.how.is_empty() { "unrecorded" } else { &route.how }
+            if route.how.is_empty() {
+                "unrecorded"
+            } else {
+                &route.how
+            }
         ),
         format!(
             "sys1 verdict: {}",
-            if route.verdict.is_empty() { "none" } else { &route.verdict }
+            if route.verdict.is_empty() {
+                "none"
+            } else {
+                &route.verdict
+            }
         ),
-        format!("reason: {}", if route.reason.is_empty() { "unrecorded" } else { &route.reason }),
-        format!("model: {}", if route.model.is_empty() { "unrecorded" } else { &route.model }),
+        format!(
+            "reason: {}",
+            if route.reason.is_empty() {
+                "unrecorded"
+            } else {
+                &route.reason
+            }
+        ),
+        format!(
+            "model: {}",
+            if route.model.is_empty() {
+                "unrecorded"
+            } else {
+                &route.model
+            }
+        ),
         format!("provider that served: {}", route.provider),
     ];
     if !route.providers_used.is_empty() {
-        record.push(format!("providers used, in order: {}", route.providers_used.join(", ")));
+        record.push(format!(
+            "providers used, in order: {}",
+            route.providers_used.join(", ")
+        ));
     }
     if route.attempts.is_empty() {
         record.push("attempts: none recorded".to_string());
@@ -337,7 +376,14 @@ pub fn compose_prompt(route: &ReadRow, turn: Option<&ReadRow>) -> String {
         let attempts = route
             .attempts
             .iter()
-            .map(|attempt| format!("- {} {} {}", attempt.provider, attempt.outcome, class_word(attempt)))
+            .map(|attempt| {
+                format!(
+                    "- {} {} {}",
+                    attempt.provider,
+                    attempt.outcome,
+                    class_word(attempt)
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         record.push(format!("attempts, in order:\n{attempts}"));
@@ -348,8 +394,16 @@ pub fn compose_prompt(route: &ReadRow, turn: Option<&ReadRow>) -> String {
         Some(turn) => {
             record.push(format!(
                 "the run's outcome: {} ({})",
-                if turn.outcome.is_empty() { "unrecorded" } else { &turn.outcome },
-                if turn.stop_reason.is_empty() { "unrecorded" } else { &turn.stop_reason }
+                if turn.outcome.is_empty() {
+                    "unrecorded"
+                } else {
+                    &turn.outcome
+                },
+                if turn.stop_reason.is_empty() {
+                    "unrecorded"
+                } else {
+                    &turn.stop_reason
+                }
             ));
         }
         None => record.push("the run's outcome: not joinable to this route".to_string()),
@@ -466,7 +520,8 @@ impl JudgeReply {
             return error.clone();
         }
         if self.verdict == "error" {
-            "the lane reported verdict `error` and no provider answered the routing head".to_string()
+            "the lane reported verdict `error` and no provider answered the routing head"
+                .to_string()
         } else {
             "the lane answered but no provider returned a workload label".to_string()
         }
@@ -486,7 +541,9 @@ impl JudgeReply {
         let mut lane_provider = String::new();
         if let Some(answers) = answers {
             'outer: for (provider, heads) in answers {
-                let Some(heads) = heads.as_object() else { continue };
+                let Some(heads) = heads.as_object() else {
+                    continue;
+                };
                 let Some(entry) = heads.get("workload").and_then(Value::as_object) else {
                     continue;
                 };
@@ -502,14 +559,18 @@ impl JudgeReply {
                 }
             }
         }
-        let telemetry_error = object
-            .get("telemetry")
-            .and_then(Value::as_object)
-            .and_then(|telemetry| {
-                telemetry.values().find_map(|entry| {
-                    entry.get("error").and_then(Value::as_str).map(str::to_string)
-                })
-            });
+        let telemetry_error =
+            object
+                .get("telemetry")
+                .and_then(Value::as_object)
+                .and_then(|telemetry| {
+                    telemetry.values().find_map(|entry| {
+                        entry
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                });
         JudgeReply {
             verdict: string_field(&object, "verdict").unwrap_or_default(),
             workload,
@@ -524,7 +585,11 @@ impl JudgeReply {
 }
 
 fn string_field(object: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
-    object.get(key).and_then(Value::as_str).map(str::to_string).filter(|s| !s.is_empty())
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
 }
 
 /// The lane's spec for this request: the vendored registry's, or the
@@ -546,7 +611,8 @@ fn lane_spec(source: &LaneSource) -> Result<ServerSpec, String> {
 /// not the structured content it promises, and a lane that failed open.
 async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<JudgeReply, String> {
     let spec = lane_spec(source)?;
-    let server = McpServer::spawn(&spec).map_err(|error| format!("the lane could not start: {error}"))?;
+    let server =
+        McpServer::spawn(&spec).map_err(|error| format!("the lane could not start: {error}"))?;
     server
         .initialize()
         .await
@@ -581,7 +647,9 @@ async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<JudgeReply, Strin
     // the lane's error rather than writing the fallback's shape into a
     // row and calling it a judgment.
     if let Some(reason) = reply.fail_open() {
-        return Err(format!("the lane failed open and its fallback is not a judgment: {reason}"));
+        return Err(format!(
+            "the lane failed open and its fallback is not a judgment: {reason}"
+        ));
     }
     // The weight the whole cell math rests on. A judgment that reports a
     // workload but no confidence cannot be weighted, and the two guesses
@@ -792,11 +860,21 @@ fn covered_by_availability(route: &ReadRow, expected: &str) -> Option<String> {
 /// How `expected` failed to serve, in a word, for the wrong-verdict's
 /// reason: skipped, unattempted, or failed on its own class.
 fn coverage_word(route: &ReadRow, expected: &str) -> String {
-    match route.attempts.iter().find(|attempt| attempt.provider == expected) {
+    match route
+        .attempts
+        .iter()
+        .find(|attempt| attempt.provider == expected)
+    {
         Some(attempt) if attempt.outcome == "skipped" => {
-            format!("skipped ({})", attempt.class.as_deref().unwrap_or("no reason recorded"))
+            format!(
+                "skipped ({})",
+                attempt.class.as_deref().unwrap_or("no reason recorded")
+            )
         }
-        Some(attempt) => format!("failed on `{}`", attempt.class.as_deref().unwrap_or("an unclassified class")),
+        Some(attempt) => format!(
+            "failed on `{}`",
+            attempt.class.as_deref().unwrap_or("an unclassified class")
+        ),
         None => "never attempted".to_string(),
     }
 }
@@ -819,7 +897,13 @@ fn record_failed_spend(home: &Path, cost: Option<f64>) {
 /// outcome the card carries, and the recorded decision stands on every
 /// path.
 pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
-    let JudgeRequest { root, home, day, dry_run, lane } = request;
+    let JudgeRequest {
+        root,
+        home,
+        day,
+        dry_run,
+        lane,
+    } = request;
     let rows = read_day(root, &day);
     let routes = route_rows(&rows);
     let already = judged_keys(&rows);
@@ -945,9 +1029,21 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
         judged.push(row);
     }
 
-    let spent = if dry_run { spent } else { day_spend(root, home, &day) };
+    let spent = if dry_run {
+        spent
+    } else {
+        day_spend(root, home, &day)
+    };
     JudgeOutcome {
-        card: batch_card(&day, &judged, &refusals, budget_refusal.as_deref(), &dry_run_prompts, spent, cap),
+        card: batch_card(
+            &day,
+            &judged,
+            &refusals,
+            budget_refusal.as_deref(),
+            &dry_run_prompts,
+            spent,
+            cap,
+        ),
         judged,
         refusals,
         refusal: budget_refusal,
@@ -964,7 +1060,12 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
 /// signal and the owner the ground truth.
 ///
 /// A key that names no judged row in the day is a named refusal.
-pub fn disposition(root: &Path, day: &str, key: &str, disposition: &str) -> Result<RouteJudgedRow, String> {
+pub fn disposition(
+    root: &Path,
+    day: &str,
+    key: &str,
+    disposition: &str,
+) -> Result<RouteJudgedRow, String> {
     let rows = read_day(root, day);
     let Some(freshest) = calib::judged_rows(&rows)
         .into_iter()
@@ -1039,7 +1140,10 @@ fn plain(text: &str) -> String {
 /// the same width `calib` and `eval` draw at — so the beat reads as one
 /// more Fleet surface rather than a debug dump.
 fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String {
-    let right = bound(subtitle, CARD_WIDTH.saturating_sub(title.chars().count() + 8));
+    let right = bound(
+        subtitle,
+        CARD_WIDTH.saturating_sub(title.chars().count() + 8),
+    );
     let dashes = dashes_for(title, &plain(&right));
     let mut out = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{title}{RESET} {DIM}{dashes} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}\n"
@@ -1047,7 +1151,10 @@ fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String
     for line in body {
         out.push_str(&format!("{DIM}\u{2502}{RESET} {line}\n"));
     }
-    out.push_str(&format!("{DIM}\u{2514}{}\u{2518}{RESET}\n", "\u{2500}".repeat(CARD_WIDTH - 2)));
+    out.push_str(&format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}\n",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    ));
     for line in wrap_detail(footer, CARD_WIDTH) {
         out.push_str(&format!("{DIM}{line}{RESET}\n"));
     }
@@ -1065,7 +1172,10 @@ fn dashes_for(left: &str, right: &str) -> String {
 
 /// The inner rule a card's section divider draws.
 fn inner_rule() -> String {
-    format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH.saturating_sub(4)))
+    format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH.saturating_sub(4))
+    )
 }
 
 /// The least room one id gets on a verdict line: the truncation
@@ -1106,12 +1216,18 @@ fn judged_lines(row: &RouteJudgedRow) -> Vec<String> {
     // left, so an id the operator never bounded costs its tail rather
     // than the card's width.
     let room = id_room(word, 30);
-    let provider_cap = PROVIDER_CAP.min(room.saturating_sub(ID_FLOOR)).max(ID_FLOOR);
+    let provider_cap = PROVIDER_CAP
+        .min(room.saturating_sub(ID_FLOOR))
+        .max(ID_FLOOR);
     let provider = bound(&row.provider, provider_cap);
     // An empty workload says so rather than printing a blank shape —
     // the same fallback the disposition card carries.
     let shape = bound(
-        if row.workload.is_empty() { "unshaped" } else { &row.workload },
+        if row.workload.is_empty() {
+            "unshaped"
+        } else {
+            &row.workload
+        },
         room.saturating_sub(provider.chars().count()).max(ID_FLOOR),
     );
     let mut lines = vec![format!(
@@ -1169,7 +1285,12 @@ fn batch_card(
     }
     if judged.is_empty() && refusals.is_empty() {
         body.push(format!("{DIM}no route rows to judge for {day}{RESET}"));
-        return frame("judge", &subtitle, body, "the recorded decisions stand exactly as they were recorded");
+        return frame(
+            "judge",
+            &subtitle,
+            body,
+            "the recorded decisions stand exactly as they were recorded",
+        );
     }
     if !judged.is_empty() {
         body.push(format!(
@@ -1196,9 +1317,18 @@ fn batch_card(
         }
     }
     body.push(inner_rule());
-    let right = judged.iter().filter(|row| row.verdict == VERDICT_RIGHT).count();
-    let wrong = judged.iter().filter(|row| row.verdict == VERDICT_WRONG).count();
-    let insufficient = judged.iter().filter(|row| row.verdict == VERDICT_INSUFFICIENT).count();
+    let right = judged
+        .iter()
+        .filter(|row| row.verdict == VERDICT_RIGHT)
+        .count();
+    let wrong = judged
+        .iter()
+        .filter(|row| row.verdict == VERDICT_WRONG)
+        .count();
+    let insufficient = judged
+        .iter()
+        .filter(|row| row.verdict == VERDICT_INSUFFICIENT)
+        .count();
     // Two lines, not one: the three states and the spend each say
     // something, and a single line would run past the house width the
     // moment the third state is named.
@@ -1270,10 +1400,16 @@ pub fn disposition_card(row: &RouteJudgedRow, day: &str) -> String {
     // fixed words are counted exactly as `judged_lines` counts them, and
     // the longest verdict word beside two unbounded ids still fits.
     let room = id_room(verdict_word, 32);
-    let provider_cap = PROVIDER_CAP.min(room.saturating_sub(ID_FLOOR)).max(ID_FLOOR);
+    let provider_cap = PROVIDER_CAP
+        .min(room.saturating_sub(ID_FLOOR))
+        .max(ID_FLOOR);
     let provider = bound(&row.provider, provider_cap);
     let shape = bound(
-        if row.workload.is_empty() { "unshaped" } else { &row.workload },
+        if row.workload.is_empty() {
+            "unshaped"
+        } else {
+            &row.workload
+        },
         room.saturating_sub(provider.chars().count()).max(ID_FLOOR),
     );
     let body = vec![
@@ -1302,7 +1438,9 @@ pub fn disposition_card(row: &RouteJudgedRow, day: &str) -> String {
 /// The card for a disposition that named no judged row: the named
 /// refusal, and the surface that lists the keys.
 pub fn disposition_refusal_card(day: &str, reason: &str) -> String {
-    let body = vec![format!("{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ERROR}refused{RESET}")];
+    let body = vec![format!(
+        "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ERROR}refused{RESET}"
+    )];
     let mut lines = body;
     for line in wrap_detail(reason, CARD_WIDTH - 4) {
         lines.push(format!("{ERROR}{line}{RESET}"));

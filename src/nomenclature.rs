@@ -94,18 +94,20 @@ const IDENT_WEIGHT: u64 = 1_000;
 /// The recency multipliers, in days since the carrying file's mtime:
 /// full weight inside a month, three quarters inside six months, half
 /// inside a year, a quarter beyond.
-const RECENCY_STEPS: [(u64, f64); 4] = [
-    (30, 1.0),
-    (180, 0.75),
-    (365, 0.5),
-    (u64::MAX, 0.25),
-];
+const RECENCY_STEPS: [(u64, f64); 4] = [(30, 1.0), (180, 0.75), (365, 0.5), (u64::MAX, 0.25)];
 
 /// The directories the walk descends into, and the single files it
 /// reads at the root. `docs/**` is walked whole — features, plans,
 /// architecture, and recaps are all vocabulary sources, because the
 /// docs are where the project's decisions are written down.
-const WALK_DIRS: [&str; 6] = ["src", "src/bin", "src/tui", "src/explain", "src/judge", "services"];
+const WALK_DIRS: [&str; 6] = [
+    "src",
+    "src/bin",
+    "src/tui",
+    "src/explain",
+    "src/judge",
+    "services",
+];
 const WALK_FILES: [&str; 2] = ["CLAUDE.md", "AGENTS.md"];
 
 /// The file extensions read as code. Anything else is skipped.
@@ -125,10 +127,10 @@ const STOPWORDS: [&str; 109] = [
     "either", "neither", "because", "before", "after", "between", "through", "during", "about",
     "above", "below", "once", "here", "there", "where", "have", "has", "had", "been", "being",
     "does", "done", "did", "not", "but", "all", "any", "out", "off", "its", "their", "them",
-    "they", "our", "your", "his", "her", "was", "were", "are", "can", "may", "must", "let",
-    "impl", "trait", "enum", "struct", "const", "static", "mut", "ref", "dyn", "pub", "use",
-    "mod", "fn", "self", "super", "crate", "async", "await", "loop", "move", "else", "break",
-    "string", "option", "result", "vec", "box", "println", "eprintln", "format", "assert",
+    "they", "our", "your", "his", "her", "was", "were", "are", "can", "may", "must", "let", "impl",
+    "trait", "enum", "struct", "const", "static", "mut", "ref", "dyn", "pub", "use", "mod", "fn",
+    "self", "super", "crate", "async", "await", "loop", "move", "else", "break", "string",
+    "option", "result", "vec", "box", "println", "eprintln", "format", "assert",
 ];
 
 // --- the shapes ------------------------------------------------------------
@@ -203,7 +205,10 @@ impl Entry {
     pub fn label(&self) -> String {
         format!(
             "{} ({} files: {} identifier, {} doc)",
-            self.term, self.ident_files + self.doc_files, self.ident_files, self.doc_files
+            self.term,
+            self.ident_files + self.doc_files,
+            self.ident_files,
+            self.doc_files
         )
     }
 }
@@ -296,7 +301,9 @@ impl Vocabulary {
     fn entries_for_token(&self, token: &str) -> Vec<&Entry> {
         let mut out: Vec<&Entry> = Vec::new();
         for variant in variants(token) {
-            let Some(indices) = self.index.get(&variant) else { continue };
+            let Some(indices) = self.index.get(&variant) else {
+                continue;
+            };
             for index in indices {
                 if let Some(entry) = self.entries.get(*index) {
                     if !out.iter().any(|seen| seen.term == entry.term) {
@@ -334,10 +341,7 @@ impl Vocabulary {
         seen.sort_by(|left, right| {
             coverage(right, tokens)
                 .cmp(&coverage(left, tokens))
-                .then_with(|| {
-                    establishment_key(right)
-                        .cmp(&establishment_key(left))
-                })
+                .then_with(|| establishment_key(right).cmp(&establishment_key(left)))
                 .then_with(|| left.term.cmp(&right.term))
         });
         seen
@@ -347,7 +351,11 @@ impl Vocabulary {
 /// The establishment tuple a term ranks by: the weighted spread, then
 /// the identifier channel, then the term's length as a last resort.
 fn establishment_key(entry: &Entry) -> (u64, u64, usize) {
-    (entry.establishment(), entry.ident_files as u64, usize::MAX - entry.term.len())
+    (
+        entry.establishment(),
+        entry.ident_files as u64,
+        usize::MAX - entry.term.len(),
+    )
 }
 
 /// How many of the concept's distinct tokens an entry's parts cover,
@@ -406,7 +414,11 @@ impl Convention {
                     "matched on: {} (establishment {}, {})\n",
                     self.token,
                     self.establishment,
-                    if self.from_identifiers { "identifiers" } else { "docs" }
+                    if self.from_identifiers {
+                        "identifiers"
+                    } else {
+                        "docs"
+                    }
                 ));
                 out.push_str("sites:\n");
                 for site in &self.sites {
@@ -443,7 +455,9 @@ struct TermState {
 
 impl Sink {
     fn new() -> Self {
-        Sink { per_term: HashMap::new() }
+        Sink {
+            per_term: HashMap::new(),
+        }
     }
 
     /// Record one term occurrence. The compound the identifier forms is
@@ -475,7 +489,11 @@ impl Sink {
     /// compound first (identifier channel only), then the parts.
     fn push_word(&mut self, word: &str, site: Site, days: Option<u64>) {
         let parts = split_identifier(word);
-        let kept: Vec<String> = parts.iter().filter(|part| is_token(part)).cloned().collect();
+        let kept: Vec<String> = parts
+            .iter()
+            .filter(|part| is_token(part))
+            .cloned()
+            .collect();
         if site.kind == Kind::Identifier && (2..=3).contains(&kept.len()) {
             self.push(&kept.join("_"), site.clone(), days);
         }
@@ -503,7 +521,9 @@ impl Sink {
                         .then_with(|| left.file.cmp(&right.file))
                         .then_with(|| left.line.cmp(&right.line))
                 });
-                state.sites.dedup_by(|left, right| left.file == right.file && left.line == right.line);
+                state
+                    .sites
+                    .dedup_by(|left, right| left.file == right.file && left.line == right.line);
                 state.sites.truncate(MAX_SITES_PER_TERM);
                 Entry {
                     term,
@@ -547,7 +567,9 @@ pub fn derive(root: &Path) -> Vocabulary {
 
     let mut paths = walk(root);
     for path in paths.by_ref() {
-        if sources >= MAX_SOURCES || sink.per_term.len() >= MAX_TERMS || started.elapsed() > DERIVE_BUDGET
+        if sources >= MAX_SOURCES
+            || sink.per_term.len() >= MAX_TERMS
+            || started.elapsed() > DERIVE_BUDGET
         {
             truncated = true;
             break;
@@ -637,7 +659,9 @@ fn is_test_scaffolding(root: &Path, path: &Path) -> bool {
 /// One directory, recursively, in sorted order, skipping the build and
 /// VCS directories by name.
 fn collect(dir: PathBuf, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(&dir) else { return };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
     let mut children: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
     children.sort();
     for child in children {
@@ -661,7 +685,9 @@ fn collect(dir: PathBuf, out: &mut Vec<PathBuf>) {
 /// site's file is the path relative to the root, so two `tests.rs` in
 /// different directories are two files and not one.
 fn extract(root: &Path, path: &Path, days: Option<u64>, sink: &mut Sink) {
-    let Ok(text) = fs::read_to_string(path) else { return };
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
     let relative = path
         .strip_prefix(root)
         .unwrap_or(path)
@@ -689,7 +715,11 @@ fn extract(root: &Path, path: &Path, days: Option<u64>, sink: &mut Sink) {
     if !stem.is_empty() && stem != "mod" {
         sink.push_word(
             &stem,
-            Site { file: relative.clone(), line: 1, kind: Kind::Identifier },
+            Site {
+                file: relative.clone(),
+                line: 1,
+                kind: Kind::Identifier,
+            },
             days,
         );
     }
@@ -714,7 +744,11 @@ fn extract_code(file: &str, text: &str, days: Option<u64>, sink: &mut Sink) {
         for word in words(line) {
             sink.push_word(
                 &word,
-                Site { file: file.to_string(), line: number + 1, kind: Kind::Identifier },
+                Site {
+                    file: file.to_string(),
+                    line: number + 1,
+                    kind: Kind::Identifier,
+                },
                 days,
             );
         }
@@ -740,7 +774,11 @@ fn extract_doc(file: &str, text: &str, days: Option<u64>, sink: &mut Sink) {
             for word in words(line) {
                 sink.push_word(
                     &word,
-                    Site { file: file.to_string(), line: number + 1, kind: Kind::Doc },
+                    Site {
+                        file: file.to_string(),
+                        line: number + 1,
+                        kind: Kind::Doc,
+                    },
                     days,
                 );
             }
@@ -750,7 +788,11 @@ fn extract_doc(file: &str, text: &str, days: Option<u64>, sink: &mut Sink) {
             for word in words(&span) {
                 sink.push_word(
                     &word,
-                    Site { file: file.to_string(), line: number + 1, kind: Kind::Doc },
+                    Site {
+                        file: file.to_string(),
+                        line: number + 1,
+                        kind: Kind::Doc,
+                    },
                     days,
                 );
             }
@@ -762,7 +804,11 @@ fn extract_doc(file: &str, text: &str, days: Option<u64>, sink: &mut Sink) {
         for word in path_words(&strip_link_targets(line)) {
             sink.push_word(
                 &word,
-                Site { file: file.to_string(), line: number + 1, kind: Kind::Doc },
+                Site {
+                    file: file.to_string(),
+                    line: number + 1,
+                    kind: Kind::Doc,
+                },
                 days,
             );
         }
@@ -853,7 +899,11 @@ fn path_words(line: &str) -> Vec<String> {
         }
         for run in raw.split_whitespace() {
             let trimmed = run.trim_matches(|c: char| {
-                c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | ',' | ';' | ':' | '.' | '"' | '\'')
+                c.is_whitespace()
+                    || matches!(
+                        c,
+                        '(' | ')' | '[' | ']' | ',' | ';' | ':' | '.' | '"' | '\''
+                    )
             });
             if trimmed.contains('/') && trimmed.len() > 1 {
                 out.push(trimmed.to_string());
@@ -890,13 +940,18 @@ fn split_identifier(identifier: &str) -> Vec<String> {
         let chars: Vec<char> = segment.chars().collect();
         let mut current = String::new();
         for (index, character) in chars.iter().enumerate() {
-            let previous = if index == 0 { None } else { Some(chars[index - 1]) };
+            let previous = if index == 0 {
+                None
+            } else {
+                Some(chars[index - 1])
+            };
             let next = chars.get(index + 1).copied();
             let boundary = match (previous, character.is_uppercase()) {
                 (Some(previous), true) => {
                     previous.is_lowercase()
                         || previous.is_ascii_digit()
-                        || (next.map(|n| n.is_lowercase()).unwrap_or(false) && previous.is_uppercase())
+                        || (next.map(|n| n.is_lowercase()).unwrap_or(false)
+                            && previous.is_uppercase())
                 }
                 _ => false,
             };
@@ -984,9 +1039,9 @@ pub fn lookup_in(vocabulary: &Vocabulary, concept: &str) -> Convention {
     let token = tokens
         .iter()
         .find(|token| {
-            variants(token)
-                .iter()
-                .any(|variant| best.term.split('_').any(|part| part == variant) || *variant == best.term)
+            variants(token).iter().any(|variant| {
+                best.term.split('_').any(|part| part == variant) || *variant == best.term
+            })
         })
         .cloned()
         .unwrap_or_else(|| tokens[0].clone());
@@ -1070,10 +1125,7 @@ pub fn check(root: &Path, candidate: &str) -> Option<Convention> {
 /// one refactor away from reimplementing the establishment ordering.
 /// The first match in establishment order wins, so the answer names the
 /// term the project leans on hardest.
-pub fn near_exact_term<'a>(
-    vocabulary: &'a Vocabulary,
-    candidate: &str,
-) -> Option<&'a Entry> {
+pub fn near_exact_term<'a>(vocabulary: &'a Vocabulary, candidate: &str) -> Option<&'a Entry> {
     let mut found: Vec<&Entry> = vocabulary
         .entries
         .iter()
@@ -1154,7 +1206,13 @@ pub fn check_in(vocabulary: &Vocabulary, candidate: &str) -> Option<Convention> 
 fn is_near_neighbour(candidate: &[String], entry: &Entry) -> bool {
     let established = entry.term.split('_').collect::<Vec<_>>();
     if std::env::var("NOMEN_DEBUG").is_ok() {
-        eprintln!("  NEAR? cand={:?}({}) est={:?}({})", candidate, candidate.len(), established, established.len());
+        eprintln!(
+            "  NEAR? cand={:?}({}) est={:?}({})",
+            candidate,
+            candidate.len(),
+            established,
+            established.len()
+        );
     }
     if established.len() != candidate.len() || candidate.is_empty() {
         return false;
@@ -1171,7 +1229,10 @@ fn is_near_neighbour(candidate: &[String], entry: &Entry) -> bool {
     }
     // An anagram: the same multiset of tokens in a different order.
     let mut sorted = candidate.to_vec();
-    let mut established_sorted = established.iter().map(|part| part.to_string()).collect::<Vec<_>>();
+    let mut established_sorted = established
+        .iter()
+        .map(|part| part.to_string())
+        .collect::<Vec<_>>();
     sorted.sort();
     established_sorted.sort();
     if sorted == established_sorted {
@@ -1211,7 +1272,11 @@ fn shared_prefix(left: &str, right: &str) -> usize {
 fn edit_distance(left: &str, right: &str) -> usize {
     let left: Vec<char> = left.chars().collect();
     let right: Vec<char> = right.chars().collect();
-    let (left, right) = if left.len() <= right.len() { (left, right) } else { (right, left) };
+    let (left, right) = if left.len() <= right.len() {
+        (left, right)
+    } else {
+        (right, left)
+    };
     if right.len() - left.len() > 2 {
         return 3;
     }
@@ -1220,7 +1285,11 @@ fn edit_distance(left: &str, right: &str) -> usize {
     for row in 1..=right.len() {
         current[0] = row;
         for column in 1..=left.len() {
-            let cost = if left[column - 1] == right[row - 1] { 0 } else { 1 };
+            let cost = if left[column - 1] == right[row - 1] {
+                0
+            } else {
+                1
+            };
             current[column] = (previous[column] + 1)
                 .min(current[column - 1] + 1)
                 .min(previous[column - 1] + cost);
@@ -1250,10 +1319,14 @@ struct Cached {
 pub fn vocabulary(root: &Path) -> Vocabulary {
     let key = root.to_path_buf();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     guard
         .entry(key)
-        .or_insert_with(|| Cached { vocabulary: derive(root) })
+        .or_insert_with(|| Cached {
+            vocabulary: derive(root),
+        })
         .vocabulary
         .clone()
 }
@@ -1267,7 +1340,9 @@ pub fn vocabulary(root: &Path) -> Vocabulary {
 pub fn fresh(root: &Path) -> bool {
     let key = root.to_path_buf();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let Some(cached) = guard.get(&key) else {
         return false;
     };

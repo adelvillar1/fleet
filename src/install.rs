@@ -470,10 +470,14 @@ fn run_tool(program: &str, args: &[&str], run: &mut LaneRun<'_>) -> Result<(), T
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(ToolError::NotFound { program: program.to_string() });
+            return Err(ToolError::NotFound {
+                program: program.to_string(),
+            });
         }
         Err(error) => {
-            return Err(ToolError::Failed { detail: format!("{program}: {error}") });
+            return Err(ToolError::Failed {
+                detail: format!("{program}: {error}"),
+            });
         }
     };
     let stdout = child.stdout.take();
@@ -510,9 +514,7 @@ fn run_tool(program: &str, args: &[&str], run: &mut LaneRun<'_>) -> Result<(), T
                 let _ = writeln!(run.progress, "  {} | {text}", run.lane);
             }
             // Both pipes closed: the child's output is complete.
-            Err(RecvTimeoutError::Disconnected) => {
-                break Some(wait_for_exit(&mut child, program))
-            }
+            Err(RecvTimeoutError::Disconnected) => break Some(wait_for_exit(&mut child, program)),
             Err(RecvTimeoutError::Timeout) => {
                 // The bound expired. Kill the child, which closes the
                 // pipes it owns and ends the readers it does not share
@@ -526,7 +528,12 @@ fn run_tool(program: &str, args: &[&str], run: &mut LaneRun<'_>) -> Result<(), T
     let status = match status {
         Some(Ok(status)) => status,
         Some(Err(failure)) => return Err(failure),
-        None => return Err(ToolError::TimedOut { program: program.to_string(), bound: run.bound }),
+        None => {
+            return Err(ToolError::TimedOut {
+                program: program.to_string(),
+                bound: run.bound,
+            })
+        }
     };
     if status.success() {
         return Ok(());
@@ -535,17 +542,16 @@ fn run_tool(program: &str, args: &[&str], run: &mut LaneRun<'_>) -> Result<(), T
     let detail = last_line(&err)
         .or_else(|| last_line(&out))
         .unwrap_or_else(|| format!("{program} produced no output"));
-    Err(ToolError::Failed { detail: format!("{program} exited {code}: {detail}") })
+    Err(ToolError::Failed {
+        detail: format!("{program} exited {code}: {detail}"),
+    })
 }
 
 /// Wait for the child to exit once its output pipes have closed, with
 /// a short grace: the tools close their pipes as they finish, so a
 /// child that will not end past the grace is killed and named rather
 /// than hanging the install.
-fn wait_for_exit(
-    child: &mut std::process::Child,
-    program: &str,
-) -> Result<ExitStatus, ToolError> {
+fn wait_for_exit(child: &mut std::process::Child, program: &str) -> Result<ExitStatus, ToolError> {
     let deadline = Instant::now() + TOOL_EXIT_GRACE;
     loop {
         match child.try_wait() {
@@ -674,14 +680,21 @@ fn bootstrap_lane_bounded(
     // junk — is retried over or skipped, never removed. Without the
     // receipt it can never read as Present either way.
     let created_here = !venv.exists();
-    let mut run = LaneRun { path, lane: lane.name, progress, bound };
+    let mut run = LaneRun {
+        path,
+        lane: lane.name,
+        progress,
+        bound,
+    };
     let tool = match create_venv(&venv, &mut run) {
         Ok(tool) => tool,
         Err(failure) => {
             if created_here {
                 let _ = fs::remove_dir_all(&venv);
             }
-            return LaneOutcome::Skipped { reason: failure.describe() };
+            return LaneOutcome::Skipped {
+                reason: failure.describe(),
+            };
         }
     };
     if let Err(failure) = install_packages(tool, &venv, lane.packages, &mut run) {
@@ -855,7 +868,11 @@ fn render_lane_summary(results: &[LaneResult]) -> String {
         .filter(|(_, outcome)| matches!(outcome, LaneOutcome::Present))
         .count();
     let skipped = total - installed - present;
-    let (glyph, color) = if skipped == 0 { ("=", DIM) } else { ("!", TEXT) };
+    let (glyph, color) = if skipped == 0 {
+        ("=", DIM)
+    } else {
+        ("!", TEXT)
+    };
     format!(
         "  {color}{glyph}{RESET} {TEXT}{:<12}{RESET} {color}{installed} of {total} lanes installed, {present} present, {skipped} skipped{RESET}\n",
         "lanes"
@@ -879,9 +896,12 @@ fn render_lane_line(lane: &Lane, outcome: &LaneOutcome, venv: &Path) -> String {
             "installed",
             format!("{} — {}", venv.display(), lane_wiring(lane, venv)),
         ),
-        LaneOutcome::Skipped { reason } => {
-            ("!", TEXT, "skipped", format!("{} — {}", venv.display(), reason))
-        }
+        LaneOutcome::Skipped { reason } => (
+            "!",
+            TEXT,
+            "skipped",
+            format!("{} — {}", venv.display(), reason),
+        ),
     };
     format!(
         "  {color}{glyph}{RESET} {TEXT}{:<12}{RESET} {color}{verb}{RESET} {DIM}{detail}{RESET}\n",
@@ -988,7 +1008,10 @@ mod tests {
     #[test]
     fn the_scaffold_is_the_minimal_override_document() {
         // The exact bytes a fresh home carries.
-        assert_eq!(CONFIG_SCAFFOLD, "{\n  \"pin\": null,\n  \"providers\": []\n}\n");
+        assert_eq!(
+            CONFIG_SCAFFOLD,
+            "{\n  \"pin\": null,\n  \"providers\": []\n}\n"
+        );
         // And they parse as the roster's override seam: no pin, no
         // overrides — the compiled-in defaults stand.
         let file: serde_json::Value = serde_json::from_str(CONFIG_SCAFFOLD).unwrap();
@@ -1068,7 +1091,11 @@ mod tests {
         assert_eq!(blend1.role, "grounded");
         assert_eq!(
             blend1.packages,
-            &["gliner2[local]", "structured-data-models", "sentence-transformers"]
+            &[
+                "gliner2[local]",
+                "structured-data-models",
+                "sentence-transformers"
+            ]
         );
         // No export: BLEND1_PYTHONPATH locates the CORE
         // (services/blend1/src), not a venv root, and the launch spec
@@ -1076,8 +1103,16 @@ mod tests {
         // be a wrong value for a hand-run adapter, not a convenience.
         assert_eq!(blend1.env_var, None);
         assert!(blend1.note.contains("BLEND1_PYTHONPATH"), "{}", blend1.note);
-        assert!(blend1.note.contains("BLEND1_SYS1_PYTHONPATH"), "{}", blend1.note);
-        assert!(blend1.note.contains("services/<svc>/src"), "{}", blend1.note);
+        assert!(
+            blend1.note.contains("BLEND1_SYS1_PYTHONPATH"),
+            "{}",
+            blend1.note
+        );
+        assert!(
+            blend1.note.contains("services/<svc>/src"),
+            "{}",
+            blend1.note
+        );
     }
 
     #[test]
@@ -1125,9 +1160,18 @@ mod tests {
             !blend1_wiring.starts_with("export "),
             "blend1 exports nothing: {blend1_wiring}"
         );
-        assert!(!blend1_wiring.contains("BLEND1_PYTHONPATH=/home"), "{blend1_wiring}");
-        assert!(blend1_wiring.contains("BLEND1_SEM1_PYTHONPATH"), "{blend1_wiring}");
-        assert!(blend1_wiring.contains("services/<svc>/src"), "{blend1_wiring}");
+        assert!(
+            !blend1_wiring.contains("BLEND1_PYTHONPATH=/home"),
+            "{blend1_wiring}"
+        );
+        assert!(
+            blend1_wiring.contains("BLEND1_SEM1_PYTHONPATH"),
+            "{blend1_wiring}"
+        );
+        assert!(
+            blend1_wiring.contains("services/<svc>/src"),
+            "{blend1_wiring}"
+        );
         assert!(
             blend1_wiring.starts_with("the path wiring is automatic at spawn"),
             "{blend1_wiring}"
@@ -1145,7 +1189,10 @@ mod tests {
         fs::create_dir_all(venv.join("bin")).unwrap();
         fs::write(venv.join("bin").join("python"), "#!/bin/sh\n").unwrap();
         write_receipt(&venv, sem1, "2026-10-14T18:04").unwrap();
-        assert_eq!(bootstrap_lane(&home, sem1, None, &mut Vec::new()), LaneOutcome::Present);
+        assert_eq!(
+            bootstrap_lane(&home, sem1, None, &mut Vec::new()),
+            LaneOutcome::Present
+        );
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -1280,7 +1327,10 @@ mod tests {
         assert_eq!(step, ConfigStep::Symlink);
         assert_eq!(path, home.join(CONFIG_FILE));
         assert!(!target.exists(), "nothing was written through the link");
-        assert!(home.join(CONFIG_FILE).read_link().is_ok(), "the link stands");
+        assert!(
+            home.join(CONFIG_FILE).read_link().is_ok(),
+            "the link stands"
+        );
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -1297,7 +1347,12 @@ mod tests {
         let results = vec![
             (sys1, LaneOutcome::Installed),
             (sem1, LaneOutcome::Present),
-            (gen1, LaneOutcome::Skipped { reason: "no network".to_string() }),
+            (
+                gen1,
+                LaneOutcome::Skipped {
+                    reason: "no network".to_string(),
+                },
+            ),
         ];
         let report = strip_ansi(&render(
             &home,

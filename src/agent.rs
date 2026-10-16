@@ -75,7 +75,10 @@ const FLEET_CONCURRENCY: &str = "FLEET_CONCURRENCY";
 /// and a long-lived surface that wants the bound to move mid-run gets
 /// it without a restart.
 fn concurrency_bound() -> usize {
-    clamp_concurrency(DELEGATION_CONCURRENCY, std::env::var(FLEET_CONCURRENCY).ok().as_deref())
+    clamp_concurrency(
+        DELEGATION_CONCURRENCY,
+        std::env::var(FLEET_CONCURRENCY).ok().as_deref(),
+    )
 }
 
 /// The clamp, pure so it is testable without touching the environment:
@@ -201,7 +204,11 @@ pub enum UiEvent {
     /// The model requested a tool call, before the approval gate.
     ToolCall { name: String, summary: String },
     /// A call finished: executed or denied.
-    ToolResult { name: String, preview: String, approved: bool },
+    ToolResult {
+        name: String,
+        preview: String,
+        approved: bool,
+    },
     /// A lane joined the run: its tools are in the model's tool set for
     /// the rest of the run, and its `lane_tools` record is in the log.
     LaneJoined { lane: String, tool_count: usize },
@@ -215,7 +222,11 @@ pub enum UiEvent {
     /// `tokens_before` to `tokens_after`. Emitted once per crossing,
     /// beside the `compaction` record the log carries; a run that never
     /// crosses the budget emits nothing, so the ordinary run is unchanged.
-    Compacted { turns: usize, tokens_before: u64, tokens_after: u64 },
+    Compacted {
+        turns: usize,
+        tokens_before: u64,
+        tokens_after: u64,
+    },
     /// What this run's assembled memory carried: the shape the
     /// instruction routed under (empty when unclassified — the
     /// documented fallback) and how many facts entered the turn's
@@ -233,7 +244,11 @@ pub enum UiEvent {
     /// surface needs — a child exists, it is working, it stopped — so
     /// the `subagent` call reads as one tool card that goes from
     /// pending to done with the outcome on it.
-    Subagent { goal: String, session: String, stage: SubagentStage },
+    Subagent {
+        goal: String,
+        session: String,
+        stage: SubagentStage,
+    },
     /// A scheduled job fired. The scheduler thread — which the TUI
     /// spawns beside the agent's own, because a fire is an ordinary
     /// headless run in its own session log rather than a turn in the
@@ -401,7 +416,10 @@ pub struct ConsoleApprover {
 impl ConsoleApprover {
     /// A fresh prompter that never allows until asked.
     pub fn new() -> ConsoleApprover {
-        ConsoleApprover { input: std::io::stdin(), always: false }
+        ConsoleApprover {
+            input: std::io::stdin(),
+            always: false,
+        }
     }
 }
 
@@ -416,7 +434,11 @@ impl Approver for ConsoleApprover {
         if self.always {
             return true;
         }
-        eprint!("fleet: allow {} `{}`? [y/N/a] ", call.function.name, call_summary(call));
+        eprint!(
+            "fleet: allow {} `{}`? [y/N/a] ",
+            call.function.name,
+            call_summary(call)
+        );
         let _ = std::io::stderr().flush();
         let mut line = String::new();
         if self.input.read_line(&mut line).unwrap_or(0) == 0 {
@@ -478,7 +500,10 @@ pub struct TuiApprover {
 impl TuiApprover {
     /// An approver that sends its prompts to `requests`.
     pub fn new(requests: UnboundedSender<ApprovalRequest>) -> TuiApprover {
-        TuiApprover { requests, always: false }
+        TuiApprover {
+            requests,
+            always: false,
+        }
     }
 
     /// The approver and the receiving end the UI loop drains.
@@ -494,8 +519,11 @@ impl Approver for TuiApprover {
             return true;
         }
         let (responder, decision) = std::sync::mpsc::channel();
-        let request =
-            ApprovalRequest { call: call.clone(), summary: call_summary(call), responder };
+        let request = ApprovalRequest {
+            call: call.clone(),
+            summary: call_summary(call),
+            responder,
+        };
         // A UI that went away denies rather than hanging the run.
         if self.requests.send(request).is_err() {
             return false;
@@ -618,8 +646,11 @@ impl<'a> Agent<'a> {
         // own turn numbering with it: the compacted shape is materialized
         // here, so a compacted session resumes as the compacted
         // conversation it is rather than as the raw records.
-        let Conversation { messages, turns, next_turn } =
-            crate::session::conversation(&records);
+        let Conversation {
+            messages,
+            turns,
+            next_turn,
+        } = crate::session::conversation(&records);
         Ok(Agent {
             client,
             options,
@@ -669,10 +700,7 @@ impl<'a> Agent<'a> {
         // memory block, no role overlay. A run carrying a role's
         // overlay is not plain, so it falls through and the frame is
         // appended below.
-        if self.skills.is_empty()
-            && memory_block.is_none()
-            && self.options.role_overlay.is_none()
-        {
+        if self.skills.is_empty() && memory_block.is_none() && self.options.role_overlay.is_none() {
             return SYSTEM_PROMPT.to_string();
         }
         if let Some(line) = skills_prompt_growth_line(self.skills.len()) {
@@ -733,9 +761,7 @@ impl<'a> Agent<'a> {
         };
         // A scope that admits nothing admits the beside-the-four tools
         // either; the check is one place, not one per tool.
-        let admitted = |name: &str| {
-            self.scope.as_ref().is_none_or(|scope| scope.admits(name))
-        };
+        let admitted = |name: &str| self.scope.as_ref().is_none_or(|scope| scope.admits(name));
         if !self.skills.is_empty() && admitted(tools::USE_SKILL_TOOL) {
             specs.push(tools::use_skill_spec());
         }
@@ -830,7 +856,9 @@ impl<'a> Agent<'a> {
     /// byte-for-byte the run it has always been — the same prompt, no
     /// record, no rows.
     fn prepare_memory(&mut self, task: &str) -> Result<Option<String>, AgentError> {
-        let Some(memory) = self.memory.clone() else { return Ok(None) };
+        let Some(memory) = self.memory.clone() else {
+            return Ok(None);
+        };
         let assembly = memory.assemble(task, &memory.working());
         let block = memory::render_assembly(&assembly);
         if block.is_empty() {
@@ -854,7 +882,10 @@ impl<'a> Agent<'a> {
             recalled: assembly.recalled,
             shape: assembly.shape,
         });
-        self.record(&Record::Memory { shape: shape.clone(), facts: facts.clone() })?;
+        self.record(&Record::Memory {
+            shape: shape.clone(),
+            facts: facts.clone(),
+        })?;
         let named = if shape.is_empty() {
             "no shape (surface recall)".to_string()
         } else {
@@ -867,7 +898,10 @@ impl<'a> Agent<'a> {
             if facts.len() == 1 { "" } else { "s" },
         );
         let _ = self.progress.flush();
-        self.emit(UiEvent::Memory { shape, facts: facts.len() });
+        self.emit(UiEvent::Memory {
+            shape,
+            facts: facts.len(),
+        });
         Ok(Some(block))
     }
 
@@ -881,7 +915,9 @@ impl<'a> Agent<'a> {
     /// still pending and the corpus untouched. The take makes it
     /// exactly once per assembly: later turns find nothing held.
     fn record_recall_hits(&mut self) {
-        let Some(pending) = self.pending_hits.take() else { return };
+        let Some(pending) = self.pending_hits.take() else {
+            return;
+        };
         pending
             .memory
             .record_hits(&pending.recalled, pending.shape, self.calib.as_ref());
@@ -941,9 +977,7 @@ impl<'a> Agent<'a> {
                 crate::calib::TurnStop::Failed,
                 Some(crate::route::failure_class(error).to_string()),
             ),
-            Err(AgentError::Io(_)) => {
-                (crate::calib::TurnStop::Interrupted, Some("io".to_string()))
-            }
+            Err(AgentError::Io(_)) => (crate::calib::TurnStop::Interrupted, Some("io".to_string())),
             // An owner's stop is `interrupted` in the calibration's own
             // vocabulary — the class that means "stopped from outside",
             // which is absent outcome evidence rather than a named
@@ -1010,8 +1044,11 @@ impl<'a> Agent<'a> {
         // records nothing and its prompt is the compiled-in constant, so
         // the skill-less run is byte-for-byte the run it has always been.
         if !self.skills.is_empty() {
-            let declared: Vec<crate::skills::SkillRef> =
-                self.skills.iter().map(crate::skills::SkillRef::from).collect();
+            let declared: Vec<crate::skills::SkillRef> = self
+                .skills
+                .iter()
+                .map(crate::skills::SkillRef::from)
+                .collect();
             self.record(&Record::Skills { skills: declared })?;
         }
         // The assembled memory block, recorded the same way: the block
@@ -1113,7 +1150,9 @@ impl<'a> Agent<'a> {
                     stop_reason: "completed".to_string(),
                     turns,
                 })?;
-                self.emit(UiEvent::Finished { stop_reason: "completed".to_string() });
+                self.emit(UiEvent::Finished {
+                    stop_reason: "completed".to_string(),
+                });
                 return Ok(RunReport {
                     stop_reason: StopReason::Completed,
                     turns,
@@ -1141,8 +1180,13 @@ impl<'a> Agent<'a> {
         }
 
         let turns = self.turns;
-        self.record(&Record::End { stop_reason: "max-turns".to_string(), turns })?;
-        self.emit(UiEvent::Finished { stop_reason: "max-turns".to_string() });
+        self.record(&Record::End {
+            stop_reason: "max-turns".to_string(),
+            turns,
+        })?;
+        self.emit(UiEvent::Finished {
+            stop_reason: "max-turns".to_string(),
+        });
         Ok(RunReport {
             stop_reason: StopReason::MaxTurns,
             turns,
@@ -1232,7 +1276,10 @@ impl<'a> Agent<'a> {
         let mut request_messages = Vec::with_capacity(tail_start + 2);
         request_messages.push(Message::text(Role::System, system_prompt));
         request_messages.extend(self.messages[..tail_start].iter().cloned());
-        request_messages.push(Message::text(Role::User, compaction::COMPACTION_INSTRUCTION));
+        request_messages.push(Message::text(
+            Role::User,
+            compaction::COMPACTION_INSTRUCTION,
+        ));
         // No tools: a compaction request has nothing to execute, and a
         // declaration on it would invite a call with no context to run in.
         let request = ChatRequest {
@@ -1296,9 +1343,9 @@ impl<'a> Agent<'a> {
         compacted.extend_from_slice(&self.messages[tail_start..]);
         let tokens_after = compaction::estimate_tokens(&compacted);
         self.messages = compacted;
-        self.message_turns =
-            std::iter::once(first_turn).chain(self.message_turns[tail_start..].iter().copied())
-                .collect();
+        self.message_turns = std::iter::once(first_turn)
+            .chain(self.message_turns[tail_start..].iter().copied())
+            .collect();
 
         self.record(&Record::Compaction {
             summary: summary.clone(),
@@ -1313,7 +1360,11 @@ impl<'a> Agent<'a> {
             if turns == 1 { "" } else { "s" },
         );
         let _ = self.progress.flush();
-        self.emit(UiEvent::Compacted { turns, tokens_before, tokens_after });
+        self.emit(UiEvent::Compacted {
+            turns,
+            tokens_before,
+            tokens_after,
+        });
         // The latch holds until a measurement comes back under the
         // budget, which is what keeps one compaction per crossing.
         self.compaction_latch = true;
@@ -1391,9 +1442,15 @@ impl<'a> Agent<'a> {
     /// what the delegation path replays, so a stop is never silence.
     fn stop_by_owner(&mut self) -> Result<RunReport, AgentError> {
         let turns = self.turns;
-        let _ = writeln!(self.progress, "\u{2014} stopped by the owner (control file)");
+        let _ = writeln!(
+            self.progress,
+            "\u{2014} stopped by the owner (control file)"
+        );
         let _ = self.progress.flush();
-        self.record(&Record::End { stop_reason: "stopped by the owner".to_string(), turns })?;
+        self.record(&Record::End {
+            stop_reason: "stopped by the owner".to_string(),
+            turns,
+        })?;
         Err(AgentError::Stopped)
     }
 
@@ -1478,7 +1535,10 @@ impl<'a> Agent<'a> {
             let wave_work = std::mem::take(&mut concurrent[wave]);
             let indices: Vec<usize> = wave_work.iter().map(|(index, _)| *index).collect();
             let outputs = run_bounded(
-                wave_work.into_iter().map(|(_, work)| run_work(work)).collect(),
+                wave_work
+                    .into_iter()
+                    .map(|(_, work)| run_work(work))
+                    .collect(),
                 bound,
             )
             .await;
@@ -1489,9 +1549,11 @@ impl<'a> Agent<'a> {
         // Phase 3: every result, in the batch's own order.
         for (index, call) in calls.iter().enumerate() {
             let (approved, output, truncated) = match &prepared[index] {
-                Some(Prepared::Settled { approved, output, truncated }) => {
-                    (*approved, output.clone(), *truncated)
-                }
+                Some(Prepared::Settled {
+                    approved,
+                    output,
+                    truncated,
+                }) => (*approved, output.clone(), *truncated),
                 // Every call the plan scheduled landed in its wave; a
                 // hole here would leave the model without a result for
                 // a call it made, which is the one thing the log cannot
@@ -1506,7 +1568,11 @@ impl<'a> Agent<'a> {
             let _ = writeln!(
                 self.progress,
                 "\u{2190} {}",
-                if approved { preview(&output, 80) } else { "denied".to_string() },
+                if approved {
+                    preview(&output, 80)
+                } else {
+                    "denied".to_string()
+                },
             );
             let _ = self.progress.flush();
             self.emit(UiEvent::ToolResult {
@@ -1525,7 +1591,8 @@ impl<'a> Agent<'a> {
             // belongs to the turn whose request carried it, and it does
             // not advance the turn.
             self.message_turns.push(self.next_turn);
-            self.messages.push(Message::tool_result(call.id.clone(), output));
+            self.messages
+                .push(Message::tool_result(call.id.clone(), output));
         }
         Ok(())
     }
@@ -1566,7 +1633,11 @@ impl<'a> Agent<'a> {
                 .approver
                 .denial_reason()
                 .unwrap_or_else(|| "denied: the user did not approve this call.".to_string());
-            return Ok(Prepared::Settled { approved: false, output, truncated: false });
+            return Ok(Prepared::Settled {
+                approved: false,
+                output,
+                truncated: false,
+            });
         }
         if let Some(refusal) = self.scope_refusal(&call.function.name) {
             // A subagent reaching outside its admitted scope. The
@@ -1574,7 +1645,11 @@ impl<'a> Agent<'a> {
             // refusal that meets a call that arrived anyway, and it
             // names the tool and the scope so the model can correct
             // itself rather than retry.
-            return Ok(Prepared::Settled { approved: true, output: refusal, truncated: false });
+            return Ok(Prepared::Settled {
+                approved: true,
+                output: refusal,
+                truncated: false,
+            });
         }
         let name = call.function.name.as_str();
         if name == tools::USE_SKILL_TOOL {
@@ -1708,7 +1783,9 @@ impl<'a> Agent<'a> {
         match Tool::from_name(name) {
             None => Ok(settled(format!("error: unknown tool `{name}`"))),
             Some(tool) => match serde_json::from_str(&call.function.arguments) {
-                Err(error) => Ok(settled(format!("error: arguments were not valid JSON: {error}"))),
+                Err(error) => Ok(settled(format!(
+                    "error: arguments were not valid JSON: {error}"
+                ))),
                 Ok(arguments) => Ok(Prepared::Ready(Work::Builtin {
                     tool,
                     arguments,
@@ -1730,11 +1807,15 @@ impl<'a> Agent<'a> {
     /// then executed without borrowing the loop.
     fn prepare_supersede(&mut self, call: &ToolCall) -> Result<Prepared, AgentError> {
         let Some(memory) = self.memory.clone() else {
-            return Ok(settled("error: memory is not wired in this run".to_string()));
+            return Ok(settled(
+                "error: memory is not wired in this run".to_string(),
+            ));
         };
         let arguments = match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
             Err(error) => {
-                return Ok(settled(format!("error: arguments were not valid JSON: {error}")))
+                return Ok(settled(format!(
+                    "error: arguments were not valid JSON: {error}"
+                )))
             }
             Ok(arguments) => arguments,
         };
@@ -1743,8 +1824,9 @@ impl<'a> Agent<'a> {
             Ok(request) => request,
         };
         let mut approved = true;
-        if let Some(fact) =
-            memory::load_facts(memory.root()).into_iter().find(|fact| fact.name == request.name)
+        if let Some(fact) = memory::load_facts(memory.root())
+            .into_iter()
+            .find(|fact| fact.name == request.name)
         {
             if fact.basis == memory::Basis::ConfirmedBy {
                 let _ = writeln!(
@@ -1832,7 +1914,11 @@ impl<'a> Agent<'a> {
         let calib = self.options.calib.clone();
         let skills = self.skills.clone();
         let ui_tx = self.ui_tx.clone();
-        let Some(sessions_dir) = self.session.path().parent().map(std::path::Path::to_path_buf)
+        let Some(sessions_dir) = self
+            .session
+            .path()
+            .parent()
+            .map(std::path::Path::to_path_buf)
         else {
             return Ok((
                 "error: the session log has no directory to create a child session in".to_string(),
@@ -1896,8 +1982,14 @@ impl<'a> Agent<'a> {
                 if count == 1 { "" } else { "s" },
             );
             let _ = self.progress.flush();
-            self.emit(UiEvent::LaneJoined { lane: lane.to_string(), tool_count: count });
-            self.record(&Record::LaneTools { lane: lane.to_string(), tools })?;
+            self.emit(UiEvent::LaneJoined {
+                lane: lane.to_string(),
+                tool_count: count,
+            });
+            self.record(&Record::LaneTools {
+                lane: lane.to_string(),
+                tools,
+            })?;
         }
         // The `truncated` flag is the lane's, not a guess: it rode out of
         // the same `bound` the built-ins go through (KI-041), so the log
@@ -1957,7 +2049,11 @@ enum Prepared {
     /// scope refusal, a refused provenance gate, an argument error, or
     /// an unknown tool. `approved` is the gate's own answer, which is
     /// what the log records.
-    Settled { approved: bool, output: String, truncated: bool },
+    Settled {
+        approved: bool,
+        output: String,
+        truncated: bool,
+    },
     /// The call runs on the concurrent lane: its work is owned, so it
     /// borrows nothing from the loop and can overlap its siblings.
     Ready(Work),
@@ -1970,7 +2066,11 @@ enum Prepared {
 /// the call crossed the gate and was refused for a reason of its own,
 /// which is what distinguishes it from a denial.
 fn settled(output: String) -> Prepared {
-    Prepared::Settled { approved: true, output, truncated: false }
+    Prepared::Settled {
+        approved: true,
+        output,
+        truncated: false,
+    }
 }
 
 /// One concurrent call's work: everything the call needs, owned.
@@ -1983,9 +2083,16 @@ fn settled(output: String) -> Prepared {
 enum Work {
     /// A built-in tool's execution, against `root` for the write-time
     /// guard.
-    Builtin { tool: Tool, arguments: serde_json::Value, root: std::path::PathBuf },
+    Builtin {
+        tool: Tool,
+        arguments: serde_json::Value,
+        root: std::path::PathBuf,
+    },
     /// A skill's body, fetched from this run's declared list.
-    UseSkill { skills: Vec<crate::skills::Skill>, arguments: serde_json::Value },
+    UseSkill {
+        skills: Vec<crate::skills::Skill>,
+        arguments: serde_json::Value,
+    },
     /// One fact written into this run's corpus. The `derived`
     /// direction rides the work because it is computed where the
     /// conversation is visible — in `prepare_call` — and lands in the
@@ -1998,7 +2105,10 @@ enum Work {
     /// One live-source ask: blend1's web leg, spawned for the call and
     /// torn down after it. The spec rides the work because it is
     /// resolved where the launch is known, the way the judge's is.
-    Web { spec: crate::mcp::ServerSpec, arguments: serde_json::Value },
+    Web {
+        spec: crate::mcp::ServerSpec,
+        arguments: serde_json::Value,
+    },
     /// One desktop action through the cua driver. `out_dir` is where a
     /// screenshot's PNG lands: the driver can write the file instead of
     /// base64, and a screenshot's bytes must never ride the session log
@@ -2016,7 +2126,10 @@ enum Work {
         arguments: serde_json::Value,
     },
     /// One nomenclature lookup against the tree's vocabulary.
-    Convention { root: std::path::PathBuf, arguments: serde_json::Value },
+    Convention {
+        root: std::path::PathBuf,
+        arguments: serde_json::Value,
+    },
     /// One supersession, already past its provenance gate.
     Supersede {
         memory: Arc<Memory>,
@@ -2030,7 +2143,11 @@ enum Work {
 /// every tool's result takes.
 async fn run_work(work: Work) -> (String, bool) {
     match work {
-        Work::Builtin { tool, arguments, root } => {
+        Work::Builtin {
+            tool,
+            arguments,
+            root,
+        } => {
             if tool == Tool::WriteFile {
                 // The write-time guard runs before the write, and it
                 // runs on the blocking pool: reading the vocabulary and
@@ -2083,14 +2200,22 @@ async fn run_work(work: Work) -> (String, bool) {
             });
             (outcome.output, outcome.truncated)
         }
-        Work::Improve { home, repo, arguments } => {
+        Work::Improve {
+            home,
+            repo,
+            arguments,
+        } => {
             let outcome = tools::bound(ToolOutcome {
                 output: crate::improve::file_from_tool(&home, &repo, &arguments),
                 truncated: false,
             });
             (outcome.output, outcome.truncated)
         }
-        Work::ComputerUse { spec, arguments, out_dir } => {
+        Work::ComputerUse {
+            spec,
+            arguments,
+            out_dir,
+        } => {
             // The driver is spawned for the call and torn down after it.
             // The action the model asked for maps to one of the driver's
             // own tools, and a screenshot is redirected to a file beside
@@ -2100,7 +2225,10 @@ async fn run_work(work: Work) -> (String, bool) {
                 Ok(text) => text,
                 Err(error) => format!("error: {error}"),
             };
-            let outcome = tools::bound(ToolOutcome { output: answer, truncated: false });
+            let outcome = tools::bound(ToolOutcome {
+                output: answer,
+                truncated: false,
+            });
             (outcome.output, outcome.truncated)
         }
         Work::Web { spec, arguments } => {
@@ -2123,7 +2251,10 @@ async fn run_work(work: Work) -> (String, bool) {
                     text
                 }
             };
-            let outcome = tools::bound(ToolOutcome { output: answer, truncated: false });
+            let outcome = tools::bound(ToolOutcome {
+                output: answer,
+                truncated: false,
+            });
             (outcome.output, outcome.truncated)
         }
         Work::Convention { root, arguments } => {
@@ -2131,17 +2262,24 @@ async fn run_work(work: Work) -> (String, bool) {
             // work like the write-time guard's check — off the async
             // context, on the blocking pool (KI-017). The answer rides
             // the same cap every tool's output rides (KI-041).
-            let answer = tokio::task::spawn_blocking(move || {
-                tools::convention_result(&root, &arguments)
-            })
-            .await
-            .unwrap_or_else(|error| format!("error: the convention lookup failed: {error}"));
-            let outcome = tools::bound(ToolOutcome { output: answer, truncated: false });
+            let answer =
+                tokio::task::spawn_blocking(move || tools::convention_result(&root, &arguments))
+                    .await
+                    .unwrap_or_else(|error| {
+                        format!("error: the convention lookup failed: {error}")
+                    });
+            let outcome = tools::bound(ToolOutcome {
+                output: answer,
+                truncated: false,
+            });
             (outcome.output, outcome.truncated)
         }
-        Work::Supersede { memory, calib, request, approved } => {
-            land_supersede(&memory, &request, approved, calib.as_ref())
-        }
+        Work::Supersede {
+            memory,
+            calib,
+            request,
+            approved,
+        } => land_supersede(&memory, &request, approved, calib.as_ref()),
     }
 }
 
@@ -2235,7 +2373,9 @@ fn trajectory_phrases(messages: &[Message]) -> Vec<String> {
             continue;
         }
         for call in message.tool_calls.iter().rev() {
-            let Some(output) = results.get(call.id.as_str()).copied() else { continue };
+            let Some(output) = results.get(call.id.as_str()).copied() else {
+                continue;
+            };
             if output.starts_with("error:") || output.starts_with("denied") {
                 continue;
             }
@@ -2271,7 +2411,10 @@ fn call_phrase(function: &crate::api::FunctionCall) -> Option<String> {
 /// a long command cannot flood the fact's frontmatter line.
 fn bounded_phrase(text: &str) -> String {
     let trimmed = text.trim();
-    let mut bounded: String = trimmed.chars().take(crate::memory::MAX_PHRASE_CHARS).collect();
+    let mut bounded: String = trimmed
+        .chars()
+        .take(crate::memory::MAX_PHRASE_CHARS)
+        .collect();
     if trimmed.chars().count() > crate::memory::MAX_PHRASE_CHARS {
         bounded.push('\u{2026}');
     }
@@ -2517,7 +2660,9 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
             Work::Web { .. } => None,
             Work::ComputerUse { .. } => None,
             Work::UseSkill { .. } => None,
-            Work::Builtin { tool, arguments, .. } => match tool {
+            Work::Builtin {
+                tool, arguments, ..
+            } => match tool {
                 Tool::Bash => Some("shell".to_string()),
                 Tool::WriteFile => arguments
                     .get("path")
@@ -2665,7 +2810,12 @@ fn plan_batch(prepared: &[Option<Prepared>], bound: usize) -> BatchPlan {
     // Sorted by writer, so the line the plan prints — and any later
     // record that carries it — reads the same on every run.
     conflicts.sort_by(|left, right| left.writer.cmp(&right.writer));
-    BatchPlan { steps, conflicts, waves: sizes.len(), bound }
+    BatchPlan {
+        steps,
+        conflicts,
+        waves: sizes.len(),
+        bound,
+    }
 }
 
 /// Drive `works` to completion with at most `bound` in flight,
@@ -2822,7 +2972,10 @@ enum WriteGuard {
 /// per call, and a name the vocabulary already carries is skipped in one
 /// lookup instead of a scan.
 fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGuard {
-    let Some(content) = arguments.get("content").and_then(|content| content.as_str()) else {
+    let Some(content) = arguments
+        .get("content")
+        .and_then(|content| content.as_str())
+    else {
         // No content to name: nothing to check. A write with no content
         // fails on its own, with its own reason.
         return WriteGuard::Clean;
@@ -2830,7 +2983,10 @@ fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGu
     let vocabulary = crate::nomenclature::vocabulary(root);
     let mut flagged: Vec<(String, String, String)> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    for token in identifier_tokens(content).into_iter().take(GUARD_CANDIDATES) {
+    for token in identifier_tokens(content)
+        .into_iter()
+        .take(GUARD_CANDIDATES)
+    {
         if seen.contains(&token) {
             continue;
         }
@@ -2845,11 +3001,17 @@ fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGu
         let parts = identifier_parts(&token);
         let spellings = [
             parts.join("_"),
-            parts.iter().map(|part| part.to_lowercase()).collect::<Vec<_>>().join("_"),
+            parts
+                .iter()
+                .map(|part| part.to_lowercase())
+                .collect::<Vec<_>>()
+                .join("_"),
         ];
         let mut established = false;
         for spelling in spellings {
-            let Some(entry) = vocabulary.get(&spelling) else { continue };
+            let Some(entry) = vocabulary.get(&spelling) else {
+                continue;
+            };
             established = true;
             // Established. The term itself is nothing to flag; a case or
             // separator variant of it is drift with no other
@@ -2951,7 +3113,11 @@ fn identifier_parts(identifier: &str) -> Vec<String> {
         let chars: Vec<char> = segment.chars().collect();
         let mut current = String::new();
         for (index, character) in chars.iter().enumerate() {
-            let previous = if index == 0 { None } else { Some(chars[index - 1]) };
+            let previous = if index == 0 {
+                None
+            } else {
+                Some(chars[index - 1])
+            };
             let next = chars.get(index + 1).copied();
             let boundary = match (previous, character.is_uppercase()) {
                 (Some(previous), true) => {
@@ -2985,9 +3151,16 @@ fn call_summary(call: &ToolCall) -> String {
     // beside the call's own arguments. The summary names the goal and the
     // inner call, so an approval prompt answers "whose call is this, and
     // what does it do?" in one line.
-    if let Some(inner) = call.function.name.strip_prefix(&tools::subagent_call_prefix()) {
+    if let Some(inner) = call
+        .function
+        .name
+        .strip_prefix(&tools::subagent_call_prefix())
+    {
         let arguments = parse_arguments(&call.function.arguments);
-        let goal = arguments.get("goal").and_then(|goal| goal.as_str()).unwrap_or_default();
+        let goal = arguments
+            .get("goal")
+            .and_then(|goal| goal.as_str())
+            .unwrap_or_default();
         let inner_call = ToolCall {
             id: call.id.clone(),
             kind: call.kind.clone(),
@@ -3092,10 +3265,18 @@ fn describe_call(call: &ToolCall) -> String {
         return format!("{}: {}", tools::CONVENTION_TOOL, call_summary(call));
     }
     if call.function.name == tools::SUBAGENT_TOOL {
-        return format!("{}: {}", tools::SUBAGENT_TOOL, subagent_goal(&call.function.arguments));
+        return format!(
+            "{}: {}",
+            tools::SUBAGENT_TOOL,
+            subagent_goal(&call.function.arguments)
+        );
     }
     if call.function.name == tools::IMPROVE_TOOL {
-        return format!("{}: {}", tools::IMPROVE_TOOL, improve_proposal(&call.function.arguments));
+        return format!(
+            "{}: {}",
+            tools::IMPROVE_TOOL,
+            improve_proposal(&call.function.arguments)
+        );
     }
     if call.function.name.starts_with(tools::REMEMBER_TOOL)
         || call.function.name.starts_with(tools::SUPERSEDE_TOOL)
@@ -3122,13 +3303,19 @@ fn improve_proposal(arguments: &str) -> String {
     let name = parsed
         .as_ref()
         .and_then(|arguments| {
-            arguments.get("name").and_then(|name| name.as_str()).map(str::to_string)
+            arguments
+                .get("name")
+                .and_then(|name| name.as_str())
+                .map(str::to_string)
         })
         .unwrap_or_default();
     let target = parsed
         .as_ref()
         .and_then(|arguments| {
-            arguments.get("target").and_then(|target| target.as_str()).map(str::to_string)
+            arguments
+                .get("target")
+                .and_then(|target| target.as_str())
+                .map(str::to_string)
         })
         .unwrap_or_default();
     let mut bounded: String = name.chars().take(48).collect();
@@ -3149,7 +3336,10 @@ fn subagent_goal(arguments: &str) -> String {
     let goal = serde_json::from_str::<serde_json::Value>(arguments)
         .ok()
         .and_then(|arguments| {
-            arguments.get("goal").and_then(|goal| goal.as_str()).map(str::to_string)
+            arguments
+                .get("goal")
+                .and_then(|goal| goal.as_str())
+                .map(str::to_string)
         })
         .unwrap_or_default();
     let mut bounded: String = goal.chars().take(72).collect();
@@ -3166,7 +3356,10 @@ fn convention_concept(arguments: &str) -> String {
     let concept = serde_json::from_str::<serde_json::Value>(arguments)
         .ok()
         .and_then(|arguments| {
-            arguments.get("concept").and_then(|concept| concept.as_str()).map(str::to_string)
+            arguments
+                .get("concept")
+                .and_then(|concept| concept.as_str())
+                .map(str::to_string)
         })
         .unwrap_or_default();
     let mut bounded: String = concept.chars().take(48).collect();
@@ -3211,10 +3404,16 @@ struct LaneRoster {
 enum LaneChild {
     /// Spawned, initialized, and listed: its tools are in the model's
     /// tool set until the run ends, dead child or not.
-    Live { server: McpServer, tools: Vec<LaneTool> },
+    Live {
+        server: McpServer,
+        tools: Vec<LaneTool>,
+    },
     /// Failed or gone: the tools it brought stay declared — the model saw
     /// them, and the log records them — but every call fails fast.
-    Dead { reason: String, tools: Vec<LaneTool> },
+    Dead {
+        reason: String,
+        tools: Vec<LaneTool>,
+    },
 }
 
 /// What one lane call produced.
@@ -3237,7 +3436,11 @@ struct LaneOutcome {
 impl LaneRoster {
     /// A roster over `specs`; an empty map is the production path.
     fn new(specs: HashMap<String, ServerSpec>) -> LaneRoster {
-        LaneRoster { specs, children: HashMap::new(), order: Vec::new() }
+        LaneRoster {
+            specs,
+            children: HashMap::new(),
+            order: Vec::new(),
+        }
     }
 
     /// Every declaration the run's requests carry: the four built-ins,
@@ -3256,7 +3459,10 @@ impl LaneRoster {
             .iter()
             .filter_map(|lane| match self.children.get(lane) {
                 Some(LaneChild::Live { tools, .. }) | Some(LaneChild::Dead { tools, .. }) => {
-                    Some(LaneTools { lane: lane.clone(), tools: tools.clone() })
+                    Some(LaneTools {
+                        lane: lane.clone(),
+                        tools: tools.clone(),
+                    })
                 }
                 None => None,
             })
@@ -3282,14 +3488,12 @@ impl LaneRoster {
     /// `tools::bound` actually set (KI-041). Before this, a lane's text
     /// rode into the log and the model's context at whatever length the
     /// lane emitted, capped only by the transport's 8 MiB line limit.
-    async fn call(
-        &mut self,
-        lane: &str,
-        tool: &str,
-        arguments: &serde_json::Value,
-    ) -> LaneOutcome {
+    async fn call(&mut self, lane: &str, tool: &str, arguments: &serde_json::Value) -> LaneOutcome {
         let outcome = self.call_unbounded(lane, tool, arguments).await;
-        let bounded = tools::bound(ToolOutcome { output: outcome.text, truncated: false });
+        let bounded = tools::bound(ToolOutcome {
+            output: outcome.text,
+            truncated: false,
+        });
         LaneOutcome {
             text: bounded.output,
             truncated: bounded.truncated,
@@ -3316,7 +3520,8 @@ impl LaneRoster {
                     let tools = tools::namespaced(lane, &listed);
                     joined = Some(tools.clone());
                     self.order.push(lane.to_string());
-                    self.children.insert(lane.to_string(), LaneChild::Live { server, tools });
+                    self.children
+                        .insert(lane.to_string(), LaneChild::Live { server, tools });
                 }
                 // A lane that cannot start is dead for the rest of the
                 // run: the reason is recorded once and reused, so a
@@ -3326,9 +3531,16 @@ impl LaneRoster {
                     let text = format!("error: lane `{lane}` could not start: {reason}");
                     self.children.insert(
                         lane.to_string(),
-                        LaneChild::Dead { reason, tools: Vec::new() },
+                        LaneChild::Dead {
+                            reason,
+                            tools: Vec::new(),
+                        },
                     );
-                    return LaneOutcome { text, truncated: false, joined: None };
+                    return LaneOutcome {
+                        text,
+                        truncated: false,
+                        joined: None,
+                    };
                 }
             }
         }
@@ -3382,7 +3594,11 @@ impl LaneRoster {
                             reason: reason.clone(),
                             tools: std::mem::take(tools),
                         };
-                        LaneOutcome { text: format!("error: {reason}"), truncated: false, joined }
+                        LaneOutcome {
+                            text: format!("error: {reason}"),
+                            truncated: false,
+                            joined,
+                        }
                     }
                 }
             }
@@ -3445,10 +3661,8 @@ mod tests {
     fn scratch(tag: &str) -> std::path::PathBuf {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "fleet-agent-{tag}-{}-{serial}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("fleet-agent-{tag}-{}-{serial}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -3486,12 +3700,20 @@ mod tests {
             compact_now: false,
         };
         let mut progress = Vec::new();
-        let agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-                .unwrap();
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         let prompt = agent.system_prompt(None);
         for index in 0..count {
-            assert!(prompt.contains(&format!("skill-{index:02}")), "skill {index} is missing");
+            assert!(
+                prompt.contains(&format!("skill-{index:02}")),
+                "skill {index} is missing"
+            );
         }
         // At the cap and under it, no warning line is built at all.
         assert_eq!(skills_prompt_growth_line(SKILLS_PROMPT_SOFT_CAP), None);
@@ -3506,14 +3728,20 @@ mod tests {
         ToolCall {
             id: id.to_string(),
             kind: "function".to_string(),
-            function: FunctionCall { name: name.to_string(), arguments: arguments.to_string() },
+            function: FunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
         }
     }
 
     #[test]
     fn preview_keeps_one_line_and_a_bound() {
         assert_eq!(preview("a\nb", 10), "a");
-        assert_eq!(preview("x".repeat(30).as_str(), 10), format!("{}{}", "x".repeat(10), '\u{2026}'));
+        assert_eq!(
+            preview("x".repeat(30).as_str(), 10),
+            format!("{}{}", "x".repeat(10), '\u{2026}')
+        );
     }
 
     #[test]
@@ -3581,14 +3809,24 @@ mod tests {
         // so a lane call owes the user the same facts: which lane, what
         // kind of worker it is, and what the call asks for.
         let probe = call("c1", "mcp__sem1__probe", r#"{"provider":"llama-server"}"#);
-        assert_eq!(call_summary(&probe), "embeddings \u{b7} probe {\"provider\":\"llama-server\"}");
+        assert_eq!(
+            call_summary(&probe),
+            "embeddings \u{b7} probe {\"provider\":\"llama-server\"}"
+        );
         // A long argument set is cut, not wrapped into the prompt.
-        let long = call("c2", "mcp__sem1__embed", &format!(r#"{{"items":"{}"}}"#, "x".repeat(200)));
+        let long = call(
+            "c2",
+            "mcp__sem1__embed",
+            &format!(r#"{{"items":"{}"}}"#, "x".repeat(200)),
+        );
         let summary = call_summary(&long);
         assert!(summary.chars().count() <= 80, "{summary}");
         assert!(summary.ends_with('\u{2026}'), "{summary}");
         // A built-in's summary is untouched.
-        assert_eq!(call_summary(&call("c3", "bash", r#"{"command":"ls -la"}"#)), "ls -la");
+        assert_eq!(
+            call_summary(&call("c3", "bash", r#"{"command":"ls -la"}"#)),
+            "ls -la"
+        );
         // And the progress line names the model-visible tool name.
         assert!(describe_call(&probe).starts_with("mcp__sem1__probe: embeddings"));
     }
@@ -3605,7 +3843,10 @@ mod tests {
             }],
             is_error: true,
         };
-        assert_eq!(lane_call_output(&refused), "error: `items` must be a string");
+        assert_eq!(
+            lane_call_output(&refused),
+            "error: `items` must be a string"
+        );
         // A success carries no marker.
         let answered = crate::mcp::CallResult {
             content: vec![crate::mcp::ContentBlock {
@@ -3638,13 +3879,24 @@ mod tests {
         let mut roster = unspawnable_roster();
         // The first call tries the spawn and names the reason.
         let first = roster.call("sem1", "probe", &serde_json::json!({})).await;
-        assert!(first.joined.is_none(), "a lane that cannot start never joins");
-        assert!(first.text.starts_with("error: lane `sem1` could not start:"), "{}", first.text);
+        assert!(
+            first.joined.is_none(),
+            "a lane that cannot start never joins"
+        );
+        assert!(
+            first
+                .text
+                .starts_with("error: lane `sem1` could not start:"),
+            "{}",
+            first.text
+        );
         // The second call does not try again: the lane is dead for the
         // rest of the run, and it says so.
         let second = roster.call("sem1", "probe", &serde_json::json!({})).await;
         assert!(
-            second.text.starts_with("error: lane `sem1` is unavailable for the rest of this run:"),
+            second
+                .text
+                .starts_with("error: lane `sem1` is unavailable for the rest of this run:"),
             "{}",
             second.text
         );
@@ -3654,8 +3906,14 @@ mod tests {
         assert!(roster.lane_tools().is_empty());
         // And an unknown lane is a named reason, not a panic — and not a
         // spawn: no registry lane carries this name, so nothing launches.
-        let unknown = roster.call("nosuchlane", "classify", &serde_json::json!({})).await;
-        assert!(unknown.text.contains("no lane named `nosuchlane`"), "{}", unknown.text);
+        let unknown = roster
+            .call("nosuchlane", "classify", &serde_json::json!({}))
+            .await;
+        assert!(
+            unknown.text.contains("no lane named `nosuchlane`"),
+            "{}",
+            unknown.text
+        );
         assert!(unknown.joined.is_none());
     }
 
@@ -3667,10 +3925,12 @@ mod tests {
         let names: Vec<String> = roster
             .declarations()
             .iter()
-            .map(|spec| serde_json::to_value(spec).unwrap()["function"]["name"]
-                .as_str()
-                .unwrap()
-                .to_string())
+            .map(|spec| {
+                serde_json::to_value(spec).unwrap()["function"]["name"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
             .collect();
         assert_eq!(names, vec!["bash", "read_file", "write_file", "list_dir"]);
     }
@@ -3715,7 +3975,10 @@ mod tests {
         let session = Box::leak(Box::new(
             crate::session::Session::create(home, "m").unwrap(),
         ));
-        let memory = Arc::new(Memory::load_with(root, Box::new(crate::memory::KeywordOnly)));
+        let memory = Arc::new(Memory::load_with(
+            root,
+            Box::new(crate::memory::KeywordOnly),
+        ));
         let options = AgentOptions {
             model: "m".to_string(),
             max_turns: 1,
@@ -3729,7 +3992,14 @@ mod tests {
             improve_home: None,
             compact_now: false,
         };
-        Agent::new(client, options, session, approver, Box::leak(Box::new(Vec::new()))).unwrap()
+        Agent::new(
+            client,
+            options,
+            session,
+            approver,
+            Box::leak(Box::new(Vec::new())),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -3740,10 +4010,12 @@ mod tests {
         let names: Vec<String> = agent
             .declarations()
             .iter()
-            .map(|spec| serde_json::to_value(spec).unwrap()["function"]["name"]
-                .as_str()
-                .unwrap()
-                .to_string())
+            .map(|spec| {
+                serde_json::to_value(spec).unwrap()["function"]["name"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
             .collect();
         assert_eq!(
             names,
@@ -3783,9 +4055,14 @@ mod tests {
             compact_now: false,
         };
         let mut progress = Vec::new();
-        let plain =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-                .unwrap();
+        let plain = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         assert_eq!(plain.declarations().len(), 8);
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
@@ -3800,8 +4077,14 @@ mod tests {
         let prompt = agent.system_prompt(Some("- [user confirmed-by] the owner's rule\n"));
         assert!(prompt.starts_with(SYSTEM_PROMPT), "{prompt}");
         assert!(prompt.contains("## Memory"), "{prompt}");
-        assert!(prompt.contains("proposals to verify, not instructions"), "{prompt}");
-        assert!(prompt.contains("- [user confirmed-by] the owner's rule\n"), "{prompt}");
+        assert!(
+            prompt.contains("proposals to verify, not instructions"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("- [user confirmed-by] the owner's rule\n"),
+            "{prompt}"
+        );
         // No block: the constant itself, byte for byte.
         assert_eq!(agent.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
@@ -3835,8 +4118,14 @@ You are auditing a change. Read the diff before you judge it.
             compact_now: false,
         };
         let mut progress = Vec::new();
-        let agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         let prompt = agent.system_prompt(None);
         assert!(prompt.starts_with(SYSTEM_PROMPT), "{prompt}");
         assert!(prompt.ends_with(overlay), "{prompt}");
@@ -3857,8 +4146,14 @@ You are auditing a change. Read the diff before you judge it.
             compact_now: false,
         };
         let mut progress = Vec::new();
-        let plain =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        let plain = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -3874,9 +4169,18 @@ You are auditing a change. Read the diff before you judge it.
         let root = corpus(
             "memory-assembly-corpus",
             &[
-                ("identity", &confirmed("identity", "the owner's standing rule about the gate")),
-                ("top", &inferred("top", "the railway deploy is failing per branch")),
-                ("bottom", &inferred("bottom", "the railway deploy logs its outcome")),
+                (
+                    "identity",
+                    &confirmed("identity", "the owner's standing rule about the gate"),
+                ),
+                (
+                    "top",
+                    &inferred("top", "the railway deploy is failing per branch"),
+                ),
+                (
+                    "bottom",
+                    &inferred("bottom", "the railway deploy logs its outcome"),
+                ),
             ],
         );
         let stream_root = scratch("memory-assembly-stream");
@@ -3885,7 +4189,10 @@ You are auditing a change. Read the diff before you judge it.
         let session = Box::leak(Box::new(
             crate::session::Session::create(&home, "m").unwrap(),
         ));
-        let memory = Arc::new(Memory::load_with(&root, Box::new(crate::memory::KeywordOnly)));
+        let memory = Arc::new(Memory::load_with(
+            &root,
+            Box::new(crate::memory::KeywordOnly),
+        ));
         let options = AgentOptions {
             model: "m".to_string(),
             max_turns: 1,
@@ -3900,15 +4207,24 @@ You are auditing a change. Read the diff before you judge it.
             compact_now: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
-        let mut agent =
-            Agent::new(client, options, session, Box::new(ApproveAll), &mut *progress).unwrap();
+        let mut agent = Agent::new(
+            client,
+            options,
+            session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
 
         let block = agent
             .prepare_memory("the railway deploy is failing")
             .unwrap()
             .expect("the corpus assembles");
         assert!(block.contains("Standing context (protected"), "{block}");
-        assert!(block.contains("shape-routed recall for `deploy`"), "{block}");
+        assert!(
+            block.contains("shape-routed recall for `deploy`"),
+            "{block}"
+        );
 
         // Nothing has fired yet: no `recall_hit` row has landed, and
         // neither recalled fact's count has moved — the assembly
@@ -3936,10 +4252,20 @@ You are auditing a change. Read the diff before you judge it.
         // The `memory` record: the shape and every fact name, in block
         // order — protected tier first.
         let records = crate::session::replay(session.path()).unwrap();
-        match records.iter().find(|record| matches!(record, Record::Memory { .. })) {
+        match records
+            .iter()
+            .find(|record| matches!(record, Record::Memory { .. }))
+        {
             Some(Record::Memory { shape, facts }) => {
                 assert_eq!(shape, "deploy");
-                assert_eq!(facts, &vec!["identity".to_string(), "top".to_string(), "bottom".to_string()]);
+                assert_eq!(
+                    facts,
+                    &vec![
+                        "identity".to_string(),
+                        "top".to_string(),
+                        "bottom".to_string()
+                    ]
+                );
             }
             other => panic!("expected a memory record, got {other:?}"),
         }
@@ -3976,8 +4302,14 @@ You are auditing a change. Read the diff before you judge it.
         let root = corpus(
             "memory-failed-call-corpus",
             &[
-                ("identity", &confirmed("identity", "the owner's standing rule about the gate")),
-                ("top", &inferred("top", "the railway deploy is failing per branch")),
+                (
+                    "identity",
+                    &confirmed("identity", "the owner's standing rule about the gate"),
+                ),
+                (
+                    "top",
+                    &inferred("top", "the railway deploy is failing per branch"),
+                ),
             ],
         );
         let stream_root = scratch("memory-failed-call-stream");
@@ -3986,7 +4318,10 @@ You are auditing a change. Read the diff before you judge it.
         let session = Box::leak(Box::new(
             crate::session::Session::create(&home, "m").unwrap(),
         ));
-        let memory = Arc::new(Memory::load_with(&root, Box::new(crate::memory::KeywordOnly)));
+        let memory = Arc::new(Memory::load_with(
+            &root,
+            Box::new(crate::memory::KeywordOnly),
+        ));
         let options = AgentOptions {
             model: "m".to_string(),
             max_turns: 1,
@@ -4001,17 +4336,29 @@ You are auditing a change. Read the diff before you judge it.
             compact_now: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
-        let mut agent =
-            Agent::new(client, options, session, Box::new(ApproveAll), &mut *progress).unwrap();
+        let mut agent = Agent::new(
+            client,
+            options,
+            session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
 
-        let error = agent.run("the railway deploy is failing").await.unwrap_err();
+        let error = agent
+            .run("the railway deploy is failing")
+            .await
+            .unwrap_err();
         assert!(matches!(error, AgentError::Api(_)), "{error:?}");
         drop(agent);
 
         // The assembly ran and surfaced a fact: the run had hits to
         // record, and the `memory` record names what entered.
         let records = crate::session::replay(session.path()).unwrap();
-        match records.iter().find(|record| matches!(record, Record::Memory { .. })) {
+        match records
+            .iter()
+            .find(|record| matches!(record, Record::Memory { .. }))
+        {
             Some(Record::Memory { shape, facts }) => {
                 assert_eq!(shape, "deploy");
                 assert_eq!(facts, &vec!["identity".to_string(), "top".to_string()]);
@@ -4048,7 +4395,9 @@ You are auditing a change. Read the diff before you judge it.
             &[("walnut", &inferred("walnut", "the walnut table texture"))],
         );
         let mut agent = agent_over(&home, &root, Box::new(ApproveAll));
-        let block = agent.prepare_memory("the railway deploy is failing").unwrap();
+        let block = agent
+            .prepare_memory("the railway deploy is failing")
+            .unwrap();
         assert_eq!(block, None);
         // No record, no rows: the run is byte-for-byte unchanged.
         let records = crate::session::replay(
@@ -4063,7 +4412,9 @@ You are auditing a change. Read the diff before you judge it.
         )
         .unwrap();
         assert!(
-            !records.iter().any(|record| matches!(record, Record::Memory { .. })),
+            !records
+                .iter()
+                .any(|record| matches!(record, Record::Memory { .. })),
             "{records:?}"
         );
         let _ = std::fs::remove_dir_all(&home);
@@ -4144,23 +4495,38 @@ You are auditing a change. Read the diff before you judge it.
         let home = scratch("provenance-gate");
         let root = corpus(
             "provenance-gate-corpus",
-            &[("load-bearing", &confirmed("load-bearing", "the owner's standing rule about the gate"))],
+            &[(
+                "load-bearing",
+                &confirmed("load-bearing", "the owner's standing rule about the gate"),
+            )],
         );
         let arguments = r#"{"name":"load-bearing","justification":"the owner restated the rule","replacement":"load-bearing-v2","description":"the owner's new standing rule about the gate"}"#;
 
         // Refused: the tool call is approved, the provenance
         // confirmation is not. Nothing moves.
         let mut agent = agent_over(&home, &root, Box::new(Scripted::new([true, false])));
-        agent.execute_call(&call("c1", "supersede", arguments)).await.unwrap();
-        assert!(!root.join("load-bearing-v2.md").exists(), "no replacement was written");
+        agent
+            .execute_call(&call("c1", "supersede", arguments))
+            .await
+            .unwrap();
+        assert!(
+            !root.join("load-bearing-v2.md").exists(),
+            "no replacement was written"
+        );
         let text = std::fs::read_to_string(root.join("load-bearing.md")).unwrap();
         assert!(!text.contains("superseded-by: load-bearing-v2"), "{text}");
 
         // Allowed: both gates approve. The replacement lands and the
         // old fact is folded into it.
         let mut agent = agent_over(&home, &root, Box::new(Scripted::new([true, true])));
-        agent.execute_call(&call("c2", "supersede", arguments)).await.unwrap();
-        assert!(root.join("load-bearing-v2.md").exists(), "the replacement was written");
+        agent
+            .execute_call(&call("c2", "supersede", arguments))
+            .await
+            .unwrap();
+        assert!(
+            root.join("load-bearing-v2.md").exists(),
+            "the replacement was written"
+        );
         let old = std::fs::read_to_string(root.join("load-bearing.md")).unwrap();
         assert!(old.contains("superseded-by: load-bearing-v2"), "{old}");
         let _ = std::fs::remove_dir_all(&home);
@@ -4172,24 +4538,35 @@ You are auditing a change. Read the diff before you judge it.
         let home = scratch("provenance-inferred");
         let root = corpus(
             "provenance-inferred-corpus",
-            &[("a-guess", &inferred("a-guess", "an inferred guess about the deploy"))],
+            &[(
+                "a-guess",
+                &inferred("a-guess", "an inferred guess about the deploy"),
+            )],
         );
         // One answer is scripted and only one is asked: the inferred
         // tier needs no provenance confirmation.
         let mut agent = agent_over(&home, &root, Box::new(Scripted::new([true, false])));
         let arguments = r#"{"name":"a-guess","justification":"the deploy moved to per-branch builds","replacement":"a-better-guess","description":"an inferred fact about the per-branch deploy"}"#;
-        agent.execute_call(&call("c1", "supersede", arguments)).await.unwrap();
+        agent
+            .execute_call(&call("c1", "supersede", arguments))
+            .await
+            .unwrap();
         assert!(root.join("a-better-guess.md").exists());
         let replacement = std::fs::read_to_string(root.join("a-better-guess.md")).unwrap();
         assert!(
-            replacement.contains("Supersedes `a-guess` \u{2014} the deploy moved to per-branch builds"),
+            replacement
+                .contains("Supersedes `a-guess` \u{2014} the deploy moved to per-branch builds"),
             "{replacement}"
         );
         // A justification-free supersession is a model-visible error,
         // not a write.
         let mut agent = agent_over(&home, &root, Box::new(ApproveAll));
         agent
-            .execute_call(&call("c2", "supersede", r#"{"name":"a-guess","justification":""}"#))
+            .execute_call(&call(
+                "c2",
+                "supersede",
+                r#"{"name":"a-guess","justification":""}"#,
+            ))
             .await
             .unwrap();
         assert!(std::fs::read_to_string(root.join("a-guess.md"))
@@ -4205,7 +4582,10 @@ You are auditing a change. Read the diff before you judge it.
         let root = corpus("remember-tool-corpus", &[]);
         let mut agent = agent_over(&home, &root, Box::new(ApproveAll));
         let arguments = r#"{"name":"a-new-fact","description":"a fact the model just learned","basis":"inferred","tier":"working","valid-until":"2099-01-01","body":"The full content."}"#;
-        agent.execute_call(&call("c1", "remember", arguments)).await.unwrap();
+        agent
+            .execute_call(&call("c1", "remember", arguments))
+            .await
+            .unwrap();
         let loaded = crate::memory::load_facts(&root);
         assert_eq!(loaded.len(), 1);
         let fact = &loaded[0];
@@ -4222,7 +4602,12 @@ You are auditing a change. Read the diff before you judge it.
             .iter()
             .find(|record| matches!(record, Record::ToolResult { name, .. } if name == "remember"))
             .expect("the remember tool_result");
-        let Record::ToolResult { output, approved, .. } = result else { unreachable!() };
+        let Record::ToolResult {
+            output, approved, ..
+        } = result
+        else {
+            unreachable!()
+        };
         assert!(approved);
         assert!(output.contains("remembered `a-new-fact`"), "{output}");
         // A write without its basis is a model-visible error, not a
@@ -4259,14 +4644,25 @@ You are auditing a change. Read the diff before you judge it.
                 role: Role::Assistant,
                 content: None,
                 tool_calls: vec![
-                    call("c1", "bash", r#"{"command":"grep -n the_pin src/route.rs"}"#),
-                    call("c2", "bash", r#"{"command":"grep -n the_flibbertigibbet_sprocket src/route.rs"}"#),
+                    call(
+                        "c1",
+                        "bash",
+                        r#"{"command":"grep -n the_pin src/route.rs"}"#,
+                    ),
+                    call(
+                        "c2",
+                        "bash",
+                        r#"{"command":"grep -n the_flibbertigibbet_sprocket src/route.rs"}"#,
+                    ),
                 ],
                 tool_call_id: None,
             })
             .unwrap();
         agent
-            .push_message(Message::tool_result("c1", "src/route.rs:41: the pin is read"))
+            .push_message(Message::tool_result(
+                "c1",
+                "src/route.rs:41: the pin is read",
+            ))
             .unwrap();
         agent
             .push_message(Message::tool_result("c2", "error: no match"))
@@ -4328,7 +4724,11 @@ You are auditing a change. Read the diff before you judge it.
             .push_message(Message {
                 role: Role::Assistant,
                 content: None,
-                tool_calls: vec![call("c2", "bash", r#"{"command":"grep -n the_pin src/route.rs"}"#)],
+                tool_calls: vec![call(
+                    "c2",
+                    "bash",
+                    r#"{"command":"grep -n the_pin src/route.rs"}"#,
+                )],
                 tool_call_id: None,
             })
             .unwrap();
@@ -4367,7 +4767,11 @@ You are auditing a change. Read the diff before you judge it.
             .push_message(Message {
                 role: Role::Assistant,
                 content: None,
-                tool_calls: vec![call("c1", "bash", r#"{"command":"grep -n the_pin src/route.rs"}"#)],
+                tool_calls: vec![call(
+                    "c1",
+                    "bash",
+                    r#"{"command":"grep -n the_pin src/route.rs"}"#,
+                )],
                 tool_call_id: None,
             })
             .unwrap();
@@ -4437,13 +4841,20 @@ You are auditing a change. Read the diff before you judge it.
             compact_now: true,
         };
         let mut progress = Vec::new();
-        let mut agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-                .unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         // A conversation far under the budget, with nothing before the
         // tail: the fold has nothing to replace, so it declines rather
         // than summarizing the verbatim tail into itself.
-        agent.push_message(Message::text(Role::User, "one short task")).unwrap();
+        agent
+            .push_message(Message::text(Role::User, "one short task"))
+            .unwrap();
         agent.maybe_compact("system").await.unwrap();
         let records = crate::session::replay(&session_path_of(&home)).unwrap();
         assert!(
@@ -4499,15 +4910,14 @@ You are auditing a change. Read the diff before you judge it.
 
     /// The one session log under `home`, for a result assertion.    /// The one session log under `home`, for a result assertion.
     fn session_path_of(home: &std::path::Path) -> std::path::PathBuf {
-        crate::home::sessions_dir(home)
-            .join(
-                std::fs::read_dir(crate::home::sessions_dir(home))
-                    .unwrap()
-                    .flatten()
-                    .next()
-                    .unwrap()
-                    .file_name(),
-            )
+        crate::home::sessions_dir(home).join(
+            std::fs::read_dir(crate::home::sessions_dir(home))
+                .unwrap()
+                .flatten()
+                .next()
+                .unwrap()
+                .file_name(),
+        )
     }
 
     // --- compaction -------------------------------------------------------
@@ -4541,7 +4951,11 @@ You are auditing a change. Read the diff before you judge it.
         // turns continue rather than restart.
         let home = scratch("compaction-turns");
         let mut written = crate::session::Session::create(&home, "m").unwrap();
-        written.record(&Record::User { content: "the task".into() }).unwrap();
+        written
+            .record(&Record::User {
+                content: "the task".into(),
+            })
+            .unwrap();
         written
             .record(&Record::Assistant {
                 content: Some("first".into()),
@@ -4560,7 +4974,9 @@ You are auditing a change. Read the diff before you judge it.
         assert_eq!(agent.next_turn, 3, "two answers have landed");
         assert_eq!(agent.message_turns, vec![1, 1, 2]);
         // The next push takes turn 3, and an assistant answer advances it.
-        agent.push_message(Message::text(Role::User, "keep going")).unwrap();
+        agent
+            .push_message(Message::text(Role::User, "keep going"))
+            .unwrap();
         assert_eq!(agent.message_turns.last().copied(), Some(3));
         assert_eq!(agent.next_turn, 3);
         agent
@@ -4583,7 +4999,11 @@ You are auditing a change. Read the diff before you judge it.
         // last answer — which is what a second compaction's range names.
         let home = scratch("compaction-seed");
         let mut written = crate::session::Session::create(&home, "m").unwrap();
-        written.record(&Record::User { content: "the task".into() }).unwrap();
+        written
+            .record(&Record::User {
+                content: "the task".into(),
+            })
+            .unwrap();
         for index in 0..6 {
             written
                 .record(&Record::Assistant {
@@ -4630,7 +5050,10 @@ You are auditing a change. Read the diff before you judge it.
         // Turn 6 was the last answer, so the next request is turn 7.
         assert_eq!(agent.next_turn, 7);
         assert_eq!(agent.message_turns.len(), agent.messages.len());
-        assert_eq!(agent.message_turns[0], 1, "the summary carries the range's first turn");
+        assert_eq!(
+            agent.message_turns[0], 1,
+            "the summary carries the range's first turn"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -4642,7 +5065,11 @@ You are auditing a change. Read the diff before you judge it.
     fn ready_builtin(call: &ToolCall) -> Prepared {
         let tool = Tool::from_name(&call.function.name).expect("a built-in tool");
         let arguments = serde_json::from_str(&call.function.arguments).unwrap();
-        Prepared::Ready(Work::Builtin { tool, arguments, root: std::path::PathBuf::from("/root") })
+        Prepared::Ready(Work::Builtin {
+            tool,
+            arguments,
+            root: std::path::PathBuf::from("/root"),
+        })
     }
 
     /// The prepared form of a whole batch of built-in calls, in order.
@@ -4664,7 +5091,15 @@ You are auditing a change. Read the diff before you judge it.
         // Absent, malformed, zero, or above the ceiling: the constant
         // stands. A bound that silently becomes one because of a typo is
         // a bound nobody asked for.
-        for requested in [None, Some(""), Some("  "), Some("abc"), Some("0"), Some("7"), Some("3")] {
+        for requested in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("abc"),
+            Some("0"),
+            Some("7"),
+            Some("3"),
+        ] {
             assert_eq!(
                 clamp_concurrency(DELEGATION_CONCURRENCY, requested),
                 DELEGATION_CONCURRENCY,
@@ -4684,13 +5119,19 @@ You are auditing a change. Read the diff before you judge it.
         // larger than the bound, whatever the batch's size.
         let calls: Vec<ToolCall> = (0..7)
             .map(|index| {
-                call(&format!("c{index}"), "read_file", &format!(r#"{{"path":"/f{index}"}}"#))
+                call(
+                    &format!("c{index}"),
+                    "read_file",
+                    &format!(r#"{{"path":"/f{index}"}}"#),
+                )
             })
             .collect();
         let plan = plan_batch(&prepared_of(&calls), DELEGATION_CONCURRENCY);
         assert_eq!(plan.waves, 3, "{:?}", wave_sizes(&plan));
         assert!(
-            wave_sizes(&plan).iter().all(|size| *size <= DELEGATION_CONCURRENCY),
+            wave_sizes(&plan)
+                .iter()
+                .all(|size| *size <= DELEGATION_CONCURRENCY),
             "{:?}",
             wave_sizes(&plan)
         );
@@ -4698,7 +5139,11 @@ You are auditing a change. Read the diff before you judge it.
         let tight = plan_batch(&prepared_of(&calls), clamp_concurrency(3, Some("2")));
         assert_eq!(tight.bound, 2);
         assert_eq!(tight.waves, 4, "{:?}", wave_sizes(&tight));
-        assert!(wave_sizes(&tight).iter().all(|size| *size <= 2), "{:?}", wave_sizes(&tight));
+        assert!(
+            wave_sizes(&tight).iter().all(|size| *size <= 2),
+            "{:?}",
+            wave_sizes(&tight)
+        );
     }
 
     #[test]
@@ -4734,7 +5179,10 @@ You are auditing a change. Read the diff before you judge it.
         // after the first, in the model's own order — never silently
         // reordered, and never together.
         assert_eq!(plan.steps[0].wave, 0);
-        assert_eq!(plan.steps[2].wave, 1, "the second write waits for the first");
+        assert_eq!(
+            plan.steps[2].wave, 1,
+            "the second write waits for the first"
+        );
         // The conflict is refused by name: the writer, and both calls in
         // the batch's order.
         assert_eq!(plan.conflicts.len(), 1);
@@ -4751,7 +5199,10 @@ You are auditing a change. Read the diff before you judge it.
         // `remember` and `supersede` both mutate the corpus: two
         // concurrent writes to one corpus is the lost-update class.
         let root = corpus("plan-memory-corpus", &[]);
-        let memory = Arc::new(Memory::load_with(&root, Box::new(crate::memory::KeywordOnly)));
+        let memory = Arc::new(Memory::load_with(
+            &root,
+            Box::new(crate::memory::KeywordOnly),
+        ));
         let request =
             memory::Supersede::parse(&serde_json::json!({"name":"b","justification":"j"})).unwrap();
         let prepared = vec![
@@ -4809,17 +5260,23 @@ You are auditing a change. Read the diff before you judge it.
             })
             .collect();
         let answers = run_bounded(works, DELEGATION_CONCURRENCY).await;
-        assert_eq!(answers, (0..7).collect::<Vec<_>>(), "the answers keep their order");
+        assert_eq!(
+            answers,
+            (0..7).collect::<Vec<_>>(),
+            "the answers keep their order"
+        );
         assert!(
             peak.load(std::sync::atomic::Ordering::SeqCst) <= DELEGATION_CONCURRENCY,
             "peak in flight was {}",
             peak.load(std::sync::atomic::Ordering::SeqCst)
         );
         // A lowered bound is the runner's too.
-        let works: Vec<_> = (0..5).map(|index| async move {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            index
-        }).collect();
+        let works: Vec<_> = (0..5)
+            .map(|index| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                index
+            })
+            .collect();
         assert_eq!(run_bounded(works, 1).await, (0..5).collect::<Vec<_>>());
     }
 
@@ -4854,7 +5311,9 @@ You are auditing a change. Read the diff before you judge it.
         progress: &'a mut dyn Write,
     ) -> Agent<'a> {
         let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
-        let session = Box::leak(Box::new(crate::session::Session::create(home, "m").unwrap()));
+        let session = Box::leak(Box::new(
+            crate::session::Session::create(home, "m").unwrap(),
+        ));
         let options = AgentOptions {
             model: "m".to_string(),
             max_turns: 1,
@@ -4933,7 +5392,11 @@ You are auditing a change. Read the diff before you judge it.
         let batch_ids: Vec<String> = batch.iter().map(|entry| entry.id.clone()).collect();
         let call_ids: Vec<String> = calls.iter().map(|entry| entry.id.clone()).collect();
         assert_eq!(batch_ids, call_ids);
-        assert_eq!(result_ids(&records), call_ids, "every outcome, in the batch's order");
+        assert_eq!(
+            result_ids(&records),
+            call_ids,
+            "every outcome, in the batch's order"
+        );
         let approved: Vec<bool> = records
             .iter()
             .filter_map(|record| match record {
@@ -4945,7 +5408,10 @@ You are auditing a change. Read the diff before you judge it.
         // The plan named itself on the progress line: the bound, the
         // waves, and — here — no conflict at all.
         let written = progress.text();
-        assert!(written.contains("batch: 5 calls in 2 waves (bound 3)"), "{written}");
+        assert!(
+            written.contains("batch: 5 calls in 2 waves (bound 3)"),
+            "{written}"
+        );
         assert!(!written.contains("one writer"), "{written}");
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&files);
@@ -4976,7 +5442,10 @@ You are auditing a change. Read the diff before you judge it.
         // model's order was kept, not silently reordered.
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "bbb");
         let records = crate::session::replay(&session_path_of(&home)).unwrap();
-        assert_eq!(result_ids(&records), vec!["c1".to_string(), "c2".to_string()]);
+        assert_eq!(
+            result_ids(&records),
+            vec!["c1".to_string(), "c2".to_string()]
+        );
         // And the conflict was named rather than reordered silently.
         let written = progress.text();
         assert!(written.contains("one writer `path:"), "{written}");
@@ -4994,30 +5463,43 @@ You are auditing a change. Read the diff before you judge it.
         let home = scratch("batch-denial");
         let files = scratch("batch-denial-files");
         let mut progress = SharedProgress::default();
-        let mut agent = agent_over_home(&home, Box::new(Scripted::new([true, false])), &mut progress);
+        let mut agent =
+            agent_over_home(&home, Box::new(Scripted::new([true, false])), &mut progress);
         let calls = vec![
             call(
                 "c1",
                 "write_file",
-                &format!(r#"{{"path":"{}","content":"aaa"}}"#, files.join("kept.txt").display()),
+                &format!(
+                    r#"{{"path":"{}","content":"aaa"}}"#,
+                    files.join("kept.txt").display()
+                ),
             ),
             call(
                 "c2",
                 "write_file",
-                &format!(r#"{{"path":"{}","content":"bbb"}}"#, files.join("denied.txt").display()),
+                &format!(
+                    r#"{{"path":"{}","content":"bbb"}}"#,
+                    files.join("denied.txt").display()
+                ),
             ),
         ];
         agent.execute_calls(&calls).await.unwrap();
         drop(agent);
         assert!(files.join("kept.txt").exists(), "the approved call ran");
-        assert!(!files.join("denied.txt").exists(), "the denied call did not run");
+        assert!(
+            !files.join("denied.txt").exists(),
+            "the denied call did not run"
+        );
         let records = crate::session::replay(&session_path_of(&home)).unwrap();
         let denied = records
             .iter()
             .find_map(|record| match record {
-                Record::ToolResult { call_id, approved, output, .. } if call_id == "c2" => {
-                    Some((*approved, output.clone()))
-                }
+                Record::ToolResult {
+                    call_id,
+                    approved,
+                    output,
+                    ..
+                } if call_id == "c2" => Some((*approved, output.clone())),
                 _ => None,
             })
             .expect("the denied call's result landed");
@@ -5072,9 +5554,9 @@ You are auditing a change. Read the diff before you judge it.
         // And it is logged like every other model-visible message, so a
         // steered run's trajectory is reconstructable (hard rule 5).
         let records = crate::session::replay(&session_path_of(&home)).unwrap();
-        let steered = records
-            .iter()
-            .find(|record| matches!(record, Record::User { content } if content.contains("steered")));
+        let steered = records.iter().find(
+            |record| matches!(record, Record::User { content } if content.contains("steered")),
+        );
         match steered {
             Some(Record::User { content }) => {
                 assert!(content.contains("check the gate first"), "{content}");
@@ -5128,7 +5610,11 @@ You are auditing a change. Read the diff before you judge it.
             "{records:?}"
         );
         drop(agent);
-        assert!(progress.text().contains("stopped by the owner"), "{:?}", progress.text());
+        assert!(
+            progress.text().contains("stopped by the owner"),
+            "{:?}",
+            progress.text()
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -5147,12 +5633,18 @@ You are auditing a change. Read the diff before you judge it.
 
     #[test]
     fn the_control_file_shapes_parse_and_nothing_else_does() {
-        assert_eq!(parse_control(&serde_json::json!({"stop": true})), Some(Control::Stop));
+        assert_eq!(
+            parse_control(&serde_json::json!({"stop": true})),
+            Some(Control::Stop)
+        );
         assert_eq!(
             parse_control(&serde_json::json!({"steer": "go left"})),
             Some(Control::Steer("go left".to_string()))
         );
-        assert_eq!(parse_control(&serde_json::json!({"steer": "  go left  "})), Some(Control::Steer("go left".to_string())));
+        assert_eq!(
+            parse_control(&serde_json::json!({"steer": "  go left  "})),
+            Some(Control::Steer("go left".to_string()))
+        );
         for not_a_control in [
             serde_json::json!({}),
             serde_json::json!({"stop": false}),
@@ -5193,9 +5685,18 @@ You are auditing a change. Read the diff before you judge it.
         );
         match guard {
             WriteGuard::Refused { reason } => {
-                assert!(reason.contains("judgeRoute"), "the candidate is named: {reason}");
-                assert!(reason.contains("judge_route"), "the canonical term is named: {reason}");
-                assert!(reason.contains("src/lib.rs"), "the evidence rides: {reason}");
+                assert!(
+                    reason.contains("judgeRoute"),
+                    "the candidate is named: {reason}"
+                );
+                assert!(
+                    reason.contains("judge_route"),
+                    "the canonical term is named: {reason}"
+                );
+                assert!(
+                    reason.contains("src/lib.rs"),
+                    "the evidence rides: {reason}"
+                );
             }
             other => panic!("expected a refusal, got {other:?}"),
         }
@@ -5221,8 +5722,14 @@ You are auditing a change. Read the diff before you judge it.
         );
         match guard {
             WriteGuard::Flagged { note } => {
-                assert!(note.contains("route_judge"), "the candidate is named: {note}");
-                assert!(note.contains("judge_route"), "the canonical term is named: {note}");
+                assert!(
+                    note.contains("route_judge"),
+                    "the candidate is named: {note}"
+                );
+                assert!(
+                    note.contains("judge_route"),
+                    "the canonical term is named: {note}"
+                );
             }
             other => panic!("expected a flag, got {other:?}"),
         }
@@ -5281,10 +5788,19 @@ You are auditing a change. Read the diff before you judge it.
             root: root.clone(),
         })
         .await;
-        assert_eq!(std::fs::read_to_string(&flagged).unwrap(), "let route_judge = 1;");
+        assert_eq!(
+            std::fs::read_to_string(&flagged).unwrap(),
+            "let route_judge = 1;"
+        );
         assert!(output.starts_with("wrote 20 bytes to"), "{output}");
-        assert!(output.contains("route_judge"), "the candidate is named: {output}");
-        assert!(output.contains("judge_route"), "the canonical term is named: {output}");
+        assert!(
+            output.contains("route_judge"),
+            "the candidate is named: {output}"
+        );
+        assert!(
+            output.contains("judge_route"),
+            "the canonical term is named: {output}"
+        );
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&files);
     }
@@ -5305,6 +5821,9 @@ You are auditing a change. Read the diff before you judge it.
             identifier_tokens("let judge_route = routeJudge(); // done"),
             vec!["let", "judge_route", "routeJudge", "done"]
         );
-        assert!(identifier_tokens("ab cd ef").is_empty(), "sub-three-character names are dropped");
+        assert!(
+            identifier_tokens("ab cd ef").is_empty(),
+            "sub-three-character names are dropped"
+        );
     }
 }

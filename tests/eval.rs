@@ -44,13 +44,20 @@ async fn the_corpus_runs_green_and_lands_a_queryable_row() {
     // Every scenario in the fixed corpus passes on the current code, and
     // the run is deterministic: twenty scenarios, score 1.0, no
     // regression.
-    assert!(report.green(), "the corpus regressed: {:?}", report.failed());
+    assert!(
+        report.green(),
+        "the corpus regressed: {:?}",
+        report.failed()
+    );
     assert_eq!(report.scenarios.len(), 20);
     assert_eq!(report.score(), 1.0);
 
     // The three fork families plus the three everyday shapes are all here.
-    let families: Vec<&str> =
-        report.scenarios.iter().map(|scenario| scenario.family.as_str()).collect();
+    let families: Vec<&str> = report
+        .scenarios
+        .iter()
+        .map(|scenario| scenario.family.as_str())
+        .collect();
     for family in [
         "session-corpus",
         "agent-continuation",
@@ -64,7 +71,10 @@ async fn the_corpus_runs_green_and_lands_a_queryable_row() {
         "delegation",
         "nomenclature",
     ] {
-        assert!(families.contains(&family), "the corpus is missing {family}: {families:?}");
+        assert!(
+            families.contains(&family),
+            "the corpus is missing {family}: {families:?}"
+        );
     }
 
     // One `eval_corpus` row landed and reads back with the per-scenario
@@ -104,8 +114,11 @@ async fn a_broken_scenario_injected_through_the_seam_fails_with_its_name() {
 
     assert!(!report.green());
     assert_eq!(report.regressions(), vec!["injected-break".to_string()]);
-    let broken =
-        report.scenarios.iter().find(|scenario| scenario.scenario == "injected-break").unwrap();
+    let broken = report
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.scenario == "injected-break")
+        .unwrap();
     assert!(!broken.passed);
     assert_eq!(broken.failure.as_deref(), Some("the seam broke it"));
     // The real scenarios beside it still passed.

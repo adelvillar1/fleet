@@ -57,8 +57,11 @@ fn plain(card: &str) -> String {
 fn chain() -> Graph {
     let mut graph = Graph::new();
     graph.add(Node::new("fetch", 2)).unwrap();
-    graph.add(Node::new("build", 3).with_prereqs(["fetch"])).unwrap();
-    graph.add(Node::new("deploy", 4).with_prereqs(["build"]))
+    graph
+        .add(Node::new("build", 3).with_prereqs(["fetch"]))
+        .unwrap();
+    graph
+        .add(Node::new("deploy", 4).with_prereqs(["build"]))
         .unwrap();
     graph
 }
@@ -68,9 +71,14 @@ fn chain() -> Graph {
 fn diamond(facts: &Facts) -> Graph {
     let mut graph = gated(facts);
     graph.add(Node::new("base", 2)).unwrap();
-    graph.add(Node::new("left", 3).with_prereqs(["base"])).unwrap();
-    graph.add(Node::new("right", 4).with_prereqs(["base"])).unwrap();
-    graph.add(Node::new("ship", 6).with_prereqs(["left", "right"]))
+    graph
+        .add(Node::new("left", 3).with_prereqs(["base"]))
+        .unwrap();
+    graph
+        .add(Node::new("right", 4).with_prereqs(["base"]))
+        .unwrap();
+    graph
+        .add(Node::new("ship", 6).with_prereqs(["left", "right"]))
         .unwrap();
     graph
 }
@@ -79,10 +87,8 @@ fn diamond(facts: &Facts) -> Graph {
 fn scratch(tag: &str) -> std::path::PathBuf {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "fleet-graph-{tag}-{}-{serial}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("fleet-graph-{tag}-{}-{serial}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir.join("graph.json")
@@ -110,20 +116,32 @@ fn a_graph_round_trips_through_its_file_with_the_state_it_stood_in() {
                 .with_approach("fetch, then judge"),
         )
         .unwrap();
-    graph.add(Node::new("build", 3).with_prereqs(["fetch"])).unwrap();
+    graph
+        .add(Node::new("build", 3).with_prereqs(["fetch"]))
+        .unwrap();
     graph.dispatch("fetch").unwrap();
     graph.save(&path).unwrap();
 
     let loaded = Graph::load(&path).unwrap();
     assert_eq!(loaded.len(), 2);
     let fetch = loaded.node("fetch").unwrap();
-    assert_eq!(fetch.status, Status::Running, "the dispatched state rides the file");
+    assert_eq!(
+        fetch.status,
+        Status::Running,
+        "the dispatched state rides the file"
+    );
     assert_eq!(fetch.paths, vec!["src/api.rs".to_string()]);
     assert_eq!(fetch.capabilities.tools, vec!["bash".to_string()]);
-    assert_eq!(fetch.capabilities.skills, vec!["vendoring-lanes".to_string()]);
+    assert_eq!(
+        fetch.capabilities.skills,
+        vec!["vendoring-lanes".to_string()]
+    );
     assert_eq!(fetch.capabilities.loops, vec!["judge".to_string()]);
     assert_eq!(fetch.approach, "fetch, then judge");
-    assert_eq!(loaded.node("build").unwrap().prereqs, vec!["fetch".to_string()]);
+    assert_eq!(
+        loaded.node("build").unwrap().prereqs,
+        vec!["fetch".to_string()]
+    );
     assert_eq!(loaded.node("build").unwrap().status, Status::Pending);
     // The loaded graph carries no fact-gate: nothing verifies, so
     // nothing unlocks, until the caller attaches its own predicate.
@@ -188,7 +206,10 @@ fn a_followed_brief_produces_a_followed_delta_and_no_replan() {
     graph.record_delta("a", followed()).unwrap();
     assert_eq!(graph.diff_score(), 0, "a followed delta weighs nothing");
     assert!(!graph.should_replan());
-    assert!(graph.replan().is_none(), "nothing fired, so nothing replans");
+    assert!(
+        graph.replan().is_none(),
+        "nothing fired, so nothing replans"
+    );
     assert!(graph.revisions().is_empty());
 }
 
@@ -200,9 +221,14 @@ fn a_chosen_improvement_is_a_gain_and_moves_nothing() {
     // orchestrator that moved a node because its child improved would
     // teach its children to stop reporting.
     let mut graph = Graph::new();
-    graph.add(Node::new("a", 1).with_approach("do a the slow way")).unwrap();
     graph
-        .record_delta("a", deviated(DeltaReason::BetterRoute, false, "did a the fast way"))
+        .add(Node::new("a", 1).with_approach("do a the slow way"))
+        .unwrap();
+    graph
+        .record_delta(
+            "a",
+            deviated(DeltaReason::BetterRoute, false, "did a the fast way"),
+        )
         .unwrap();
     assert_eq!(graph.diff_score(), 0);
     assert!(!graph.should_replan());
@@ -220,9 +246,15 @@ fn a_forced_deviation_revises_the_remaining_approaches_and_names_the_revision() 
     // says what it did instead, and the tree acts on the current plan
     // rather than only learning for the next one.
     let mut graph = Graph::new();
-    graph.add(Node::new("a", 1).with_approach("write src/gone.rs")).unwrap();
     graph
-        .add(Node::new("b", 2).with_prereqs(["a"]).with_approach("read what a wrote"))
+        .add(Node::new("a", 1).with_approach("write src/gone.rs"))
+        .unwrap();
+    graph
+        .add(
+            Node::new("b", 2)
+                .with_prereqs(["a"])
+                .with_approach("read what a wrote"),
+        )
         .unwrap();
     graph
         .record_delta(
@@ -236,8 +268,16 @@ fn a_forced_deviation_revises_the_remaining_approaches_and_names_the_revision() 
 
     let revision = graph.replan().expect("the trigger fired");
     assert_eq!(revision.seq, 1, "the first replan is revision 1");
-    assert!(revision.cause.contains("diff score 6"), "{}", revision.cause);
-    assert!(revision.cause.contains('a'), "the worst node is named: {}", revision.cause);
+    assert!(
+        revision.cause.contains("diff score 6"),
+        "{}",
+        revision.cause
+    );
+    assert!(
+        revision.cause.contains('a'),
+        "the worst node is named: {}",
+        revision.cause
+    );
     assert_eq!(
         graph.node("a").unwrap().approach,
         "wrote src/here.rs instead",
@@ -261,15 +301,24 @@ fn a_large_aggregate_triggers_the_replan_across_several_nodes() {
     // aggregate's.
     let mut graph = Graph::new();
     for id in ["a", "b", "c"] {
-        graph.add(Node::new(id, 1).with_approach("the infeasible way")).unwrap();
         graph
-            .record_delta(id, deviated(DeltaReason::Infeasible, false, "the feasible way"))
+            .add(Node::new(id, 1).with_approach("the infeasible way"))
+            .unwrap();
+        graph
+            .record_delta(
+                id,
+                deviated(DeltaReason::Infeasible, false, "the feasible way"),
+            )
             .unwrap();
     }
     assert_eq!(graph.diff_score(), 9, "three chosen infeasibles at 3 each");
     assert_eq!(graph.worst_delta_weight(), 3, "no single node is past 5");
     let revision = graph.replan().expect("the aggregate fired");
-    assert_eq!(revision.changes.len(), 3, "every falsified approach is revised");
+    assert_eq!(
+        revision.changes.len(),
+        3,
+        "every falsified approach is revised"
+    );
 }
 
 #[test]
@@ -292,7 +341,10 @@ fn a_contradicted_report_is_priced_above_every_category() {
         )
         .unwrap();
     assert_eq!(graph.diff_score(), 5);
-    assert!(graph.should_replan(), "one false report is past the per-node trigger");
+    assert!(
+        graph.should_replan(),
+        "one false report is past the per-node trigger"
+    );
     // And the render says so, in the colour a serious thing reads in.
     let cards = crate::graph::render(&graph);
     assert!(cards.contains("CONTRADICTED"), "{cards}");
@@ -305,13 +357,21 @@ fn the_replan_is_bounded_or_it_thrashes() {
     // much the tree has to say. An orchestrator that replanned on
     // every deviation would never finish anything.
     let mut graph = Graph::new();
-    graph.add(Node::new("a", 1).with_approach("the infeasible way")).unwrap();
     graph
-        .record_delta("a", deviated(DeltaReason::Infeasible, true, "the feasible way"))
+        .add(Node::new("a", 1).with_approach("the infeasible way"))
+        .unwrap();
+    graph
+        .record_delta(
+            "a",
+            deviated(DeltaReason::Infeasible, true, "the feasible way"),
+        )
         .unwrap();
     assert!(graph.replan().is_some(), "the first replan lands");
     assert!(graph.replan().is_some(), "and the second");
-    assert!(graph.replan().is_none(), "and the third is refused by the cap");
+    assert!(
+        graph.replan().is_none(),
+        "and the third is refused by the cap"
+    );
     assert_eq!(graph.revisions().len(), 2);
     assert_eq!(graph.revisions()[1].seq, 2, "the sequence is the run's own");
 }
@@ -324,9 +384,14 @@ fn the_deltas_and_the_revisions_ride_the_file() {
     // a plan that was never corrected.
     let path = scratch("replan-file");
     let mut graph = Graph::new();
-    graph.add(Node::new("a", 1).with_approach("the infeasible way")).unwrap();
     graph
-        .record_delta("a", deviated(DeltaReason::Infeasible, true, "the feasible way"))
+        .add(Node::new("a", 1).with_approach("the infeasible way"))
+        .unwrap();
+    graph
+        .record_delta(
+            "a",
+            deviated(DeltaReason::Infeasible, true, "the feasible way"),
+        )
         .unwrap();
     graph.replan().unwrap();
     graph.save(&path).unwrap();
@@ -430,13 +495,13 @@ fn a_dependency_completing_out_of_order_subtracts_its_own_cost_and_unlocks_on_th
     let facts = facts();
     let mut graph = gated(&facts);
     graph.add(Node::new("deepbase", 2)).unwrap();
-    graph.add(Node::new("deep", 5).with_prereqs(["deepbase"]))
+    graph
+        .add(Node::new("deep", 5).with_prereqs(["deepbase"]))
         .unwrap();
     graph.add(Node::new("shallow", 1)).unwrap();
-    graph.add(
-        Node::new("head", 9).with_prereqs(["deep", "shallow"]),
-    )
-    .unwrap();
+    graph
+        .add(Node::new("head", 9).with_prereqs(["deep", "shallow"]))
+        .unwrap();
 
     assert_eq!(graph.score("head"), Some(8));
     assert!(!graph.is_unlocked("head"));
@@ -494,7 +559,8 @@ fn the_score_is_monotone_it_only_falls_as_completions_land() {
     // `a_revised_cost_reshapes_the_ordering_and_never_the_gate`.)
     let facts = facts();
     let mut graph = diamond(&facts);
-    graph.add(Node::new("tail", 1).with_prereqs(["ship"]))
+    graph
+        .add(Node::new("tail", 1).with_prereqs(["ship"]))
         .unwrap();
     let mut before = graph.scores();
     for id in ["base", "right", "left", "ship", "tail"] {
@@ -552,7 +618,8 @@ fn a_zero_estimate_never_unlocks_a_node_whose_dependency_never_landed() {
     let facts = facts();
     let mut graph = gated(&facts);
     graph.add(Node::new("never", 0)).unwrap();
-    graph.add(Node::new("ghost", 7).with_prereqs(["never"]))
+    graph
+        .add(Node::new("ghost", 7).with_prereqs(["never"]))
         .unwrap();
 
     assert_eq!(graph.score("ghost"), Some(0));
@@ -647,8 +714,11 @@ fn a_node_waiting_on_work_and_a_node_waiting_on_a_lock_report_different_states()
     let facts = facts();
     let mut graph = gated(&facts);
     graph.add(Node::new("base", 2)).unwrap();
-    graph.add(Node::new("waiter", 3).with_prereqs(["base"])).unwrap();
-    graph.add(Node::new("holder", 4).with_paths(["src/graph.rs"]))
+    graph
+        .add(Node::new("waiter", 3).with_prereqs(["base"]))
+        .unwrap();
+    graph
+        .add(Node::new("holder", 4).with_paths(["src/graph.rs"]))
         .unwrap();
     graph
         .add(Node::new("held", 5).with_paths(["src/graph.rs"]))
@@ -662,17 +732,11 @@ fn a_node_waiting_on_work_and_a_node_waiting_on_a_lock_report_different_states()
     assert!(held.score_zero, "the dependencies are all verified");
     assert!(!held.resource_free, "and a sibling holds the path");
     assert_eq!(waiting.reason(), Some("waiting on base".to_string()));
-    assert_eq!(
-        held.reason(),
-        Some("holder holds src/graph.rs".to_string())
-    );
+    assert_eq!(held.reason(), Some("holder holds src/graph.rs".to_string()));
 
     let text = plain(&render(&graph));
     assert!(text.contains("waiting"), "{text}");
-    assert!(
-        text.contains("held by holder on src/graph.rs"),
-        "{text}"
-    );
+    assert!(text.contains("held by holder on src/graph.rs"), "{text}");
 }
 
 #[test]
@@ -695,16 +759,10 @@ fn two_nodes_on_one_path_are_never_dispatched_together_and_the_conflict_is_named
 
     // The bound has room for all three; the resource edge takes one of
     // the two same-path nodes.
-    assert_eq!(
-        graph.dispatchable(3, &[]),
-        ids(&["editor", "reader"])
-    );
+    assert_eq!(graph.dispatchable(3, &[]), ids(&["editor", "reader"]));
     // The caller's own record is consulted too: a node the caller says
     // is in flight holds its path even if the graph was never told.
-    assert_eq!(
-        graph.dispatchable(3, &ids(&["writer"])),
-        ids(&["reader"])
-    );
+    assert_eq!(graph.dispatchable(3, &ids(&["writer"])), ids(&["reader"]));
 
     graph.dispatch("editor").unwrap();
     assert_eq!(
@@ -714,14 +772,13 @@ fn two_nodes_on_one_path_are_never_dispatched_together_and_the_conflict_is_named
             holder: "editor".to_string(),
         })
     );
-    assert!(!graph.dispatchable(3, &ids(&["editor"])).contains(&"writer".to_string()));
+    assert!(!graph
+        .dispatchable(3, &ids(&["editor"]))
+        .contains(&"writer".to_string()));
 
     land(&facts, "editor");
     assert_eq!(graph.settle(), ids(&["editor"]));
-    assert_eq!(
-        graph.dispatchable(3, &[]),
-        ids(&["writer", "reader"])
-    );
+    assert_eq!(graph.dispatchable(3, &[]), ids(&["writer", "reader"]));
 }
 
 #[test]
@@ -731,8 +788,12 @@ fn dispatch_returns_the_nodes_the_bound_has_room_for_in_blocks_most_work_order()
     let facts = facts();
     let mut graph = gated(&facts);
     graph.add(Node::new("shared", 4)).unwrap();
-    graph.add(Node::new("p", 1).with_prereqs(["shared"])).unwrap();
-    graph.add(Node::new("q", 1).with_prereqs(["shared"])).unwrap();
+    graph
+        .add(Node::new("p", 1).with_prereqs(["shared"]))
+        .unwrap();
+    graph
+        .add(Node::new("q", 1).with_prereqs(["shared"]))
+        .unwrap();
     graph.add(Node::new("lonely", 9)).unwrap();
 
     // shared appears in two scores, lonely in none, p and q are still
@@ -741,7 +802,9 @@ fn dispatch_returns_the_nodes_the_bound_has_room_for_in_blocks_most_work_order()
     assert_eq!(graph.dispatchable(1, &[]), ids(&["shared"]));
     assert_eq!(graph.dispatchable(2, &ids(&["shared"])), ids(&["lonely"]));
     // A bound already full dispatches nothing.
-    assert!(graph.dispatchable(2, &ids(&["shared", "lonely"])).is_empty());
+    assert!(graph
+        .dispatchable(2, &ids(&["shared", "lonely"]))
+        .is_empty());
 }
 
 #[test]
@@ -752,16 +815,16 @@ fn a_node_that_unlocks_mid_flight_is_dispatchable_without_waiting_for_the_wave()
     let facts = facts();
     let mut graph = gated(&facts);
     graph.add(Node::new("early", 2)).unwrap();
-    graph.add(Node::new("late", 3).with_prereqs(["early"])).unwrap();
+    graph
+        .add(Node::new("late", 3).with_prereqs(["early"]))
+        .unwrap();
     graph.add(Node::new("filler", 9)).unwrap();
     graph.dispatch("filler").unwrap();
 
     assert_eq!(graph.dispatchable(2, &ids(&["filler"])), ids(&["early"]));
-    assert!(
-        !graph
-            .dispatchable(2, &ids(&["filler"]))
-            .contains(&"late".to_string())
-    );
+    assert!(!graph
+        .dispatchable(2, &ids(&["filler"]))
+        .contains(&"late".to_string()));
 
     land(&facts, "early");
     graph.settle();
@@ -773,7 +836,9 @@ fn a_failed_prerequisite_does_not_unlock_its_dependent_and_the_reason_names_it()
     let facts = facts();
     let mut graph = gated(&facts);
     graph.add(Node::new("base", 2)).unwrap();
-    graph.add(Node::new("ship", 6).with_prereqs(["base"])).unwrap();
+    graph
+        .add(Node::new("ship", 6).with_prereqs(["base"]))
+        .unwrap();
     graph.fail("base").unwrap();
 
     // The failed work never lands, so it still counts.
@@ -877,7 +942,9 @@ fn a_declared_cycle_is_refused_by_name() {
         })
     );
     // The same refusal through the resequencing edge.
-    graph.add(Node::new("one", 1).with_prereqs(["two"])).unwrap();
+    graph
+        .add(Node::new("one", 1).with_prereqs(["two"]))
+        .unwrap();
     graph.add(Node::new("two", 1)).unwrap();
     assert_eq!(
         graph.add_prerequisite("two", "one"),
@@ -956,7 +1023,9 @@ fn a_revised_cost_reshapes_the_ordering_and_never_the_gate() {
     let facts = facts();
     let mut graph = gated(&facts);
     graph.add(Node::new("base", 2)).unwrap();
-    graph.add(Node::new("ship", 6).with_prereqs(["base"])).unwrap();
+    graph
+        .add(Node::new("ship", 6).with_prereqs(["base"]))
+        .unwrap();
     assert_eq!(graph.score("ship"), Some(2));
     assert_eq!(graph.node("ship").unwrap().peak(), 2);
 
@@ -974,8 +1043,14 @@ fn a_revised_cost_reshapes_the_ordering_and_never_the_gate() {
         graph.revise_cost("ghost", 1),
         Err(GraphError::UnknownNode("ghost".to_string()))
     );
-    assert_eq!(graph.dispatch("ghost"), Err(GraphError::UnknownNode("ghost".to_string())));
-    assert_eq!(graph.fail("ghost"), Err(GraphError::UnknownNode("ghost".to_string())));
+    assert_eq!(
+        graph.dispatch("ghost"),
+        Err(GraphError::UnknownNode("ghost".to_string()))
+    );
+    assert_eq!(
+        graph.fail("ghost"),
+        Err(GraphError::UnknownNode("ghost".to_string()))
+    );
     assert!(graph.node("ghost").is_none());
     assert!(graph.score("ghost").is_none());
 }
@@ -991,8 +1066,12 @@ fn a_verified_dependency_drops_its_whole_subtree_from_the_score() {
     let facts = facts();
     let mut graph = gated(&facts);
     graph.add(Node::new("fetch", 2)).unwrap();
-    graph.add(Node::new("build", 3).with_prereqs(["fetch"])).unwrap();
-    graph.add(Node::new("deploy", 4).with_prereqs(["build"])).unwrap();
+    graph
+        .add(Node::new("build", 3).with_prereqs(["fetch"]))
+        .unwrap();
+    graph
+        .add(Node::new("deploy", 4).with_prereqs(["build"]))
+        .unwrap();
 
     land(&facts, "build");
     assert_eq!(graph.settle(), ids(&["build"]));
@@ -1006,14 +1085,12 @@ fn the_render_is_cards_with_dots_bars_and_named_edges() {
     let facts = facts();
     let mut graph = gated(&facts);
     graph
-        .add(
-            Node::new("base", 2).with_capabilities(Capabilities {
-                tools: ids(&["bash", "read_file"]),
-                skills: ids(&["vendoring-lanes"]),
-                workflows: Vec::new(),
-                loops: Vec::new(),
-            }),
-        )
+        .add(Node::new("base", 2).with_capabilities(Capabilities {
+            tools: ids(&["bash", "read_file"]),
+            skills: ids(&["vendoring-lanes"]),
+            workflows: Vec::new(),
+            loops: Vec::new(),
+        }))
         .unwrap();
     graph
         .add(
@@ -1031,7 +1108,10 @@ fn the_render_is_cards_with_dots_bars_and_named_edges() {
     assert!(text.contains("blocks the most"), "{text}");
     assert!(text.contains("base \u{b7} appears in 1 score"), "{text}");
     // Each node's card carries its dot, its bar, and its raw number.
-    assert!(text.contains("\u{2713}") || text.contains("\u{25cb}") || text.contains("\u{25cf}"), "{text}");
+    assert!(
+        text.contains("\u{2713}") || text.contains("\u{25cb}") || text.contains("\u{25cf}"),
+        "{text}"
+    );
     assert!(text.contains("\u{2588}"), "a full bar is drawn: {text}");
     assert!(text.contains("\u{2591}"), "an empty track is drawn: {text}");
     assert!(text.contains("2 left"), "{text}");
@@ -1049,7 +1129,10 @@ fn the_render_is_cards_with_dots_bars_and_named_edges() {
     );
     assert!(text.contains("paths: src/graph.rs"), "{text}");
     // And it is a card, not a table.
-    assert!(text.contains('\u{250c}') && text.contains('\u{2514}'), "{text}");
+    assert!(
+        text.contains('\u{250c}') && text.contains('\u{2514}'),
+        "{text}"
+    );
 }
 
 #[test]
@@ -1105,8 +1188,12 @@ fn the_render_names_what_is_blocking_what() {
     let facts = facts();
     let mut graph = gated(&facts);
     graph.add(Node::new("base", 2)).unwrap();
-    graph.add(Node::new("ship", 6).with_prereqs(["base"])).unwrap();
-    graph.add(Node::new("blocked", 1).with_prereqs(["base"])).unwrap();
+    graph
+        .add(Node::new("ship", 6).with_prereqs(["base"]))
+        .unwrap();
+    graph
+        .add(Node::new("blocked", 1).with_prereqs(["base"]))
+        .unwrap();
     graph.fail("base").unwrap();
 
     let text = plain(&render(&graph));

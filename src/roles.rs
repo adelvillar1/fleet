@@ -115,7 +115,9 @@ impl Role {
              not a role"
                 .to_string()
         })?;
-        let modified = std::fs::metadata(&path).and_then(|meta| meta.modified()).ok();
+        let modified = std::fs::metadata(&path)
+            .and_then(|meta| meta.modified())
+            .ok();
         Ok(Role {
             name: name.to_string(),
             description,
@@ -324,7 +326,10 @@ fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String
     for line in body {
         out.push_str(&format!("{DIM}\u{2502}{RESET} {line}\n"));
     }
-    out.push_str(&format!("{DIM}\u{2514}{}\u{2518}{RESET}\n", "\u{2500}".repeat(WIDTH - 4)));
+    out.push_str(&format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}\n",
+        "\u{2500}".repeat(WIDTH - 4)
+    ));
     out.push_str(&format!("{DIM}{footer}{RESET}\n"));
     out
 }
@@ -385,7 +390,11 @@ mod tests {
         let prompt = overlay_prompt(&role);
         assert!(prompt.contains("ROLE OVERLAY BEGIN"), "{prompt}");
         assert!(prompt.contains("role `auditor`"), "{prompt}");
-        assert!(overlay_prompt(&Role { overlay: String::new(), ..plain.clone() }).is_empty());
+        assert!(overlay_prompt(&Role {
+            overlay: String::new(),
+            ..plain.clone()
+        })
+        .is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -418,7 +427,11 @@ mod tests {
             "auditor",
             "---\ndescription: reads a diff\ntools: bash,read_file\n---\n\nBody.\n",
         );
-        write_role(&home, "scribe", "---\ndescription: writes the log\n---\n\nBody.\n");
+        write_role(
+            &home,
+            "scribe",
+            "---\ndescription: writes the log\n---\n\nBody.\n",
+        );
         let rendered = render(&load_all(&home));
         assert!(rendered.contains("auditor"), "{rendered}");
         assert!(rendered.contains("reads a diff"), "{rendered}");

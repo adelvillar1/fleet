@@ -18,7 +18,7 @@ use fleet::agent::{
     Agent, AgentError, AgentOptions, ApproveAll, Approver, DenyAll, RunReport, StopReason, UiEvent,
 };
 use fleet::api::{
-    Client, ClientError, ChatRequest, DEFAULT_BASE_URL, Message, Role, StreamEvent, ToolCall, Usage,
+    ChatRequest, Client, ClientError, Message, Role, StreamEvent, ToolCall, Usage, DEFAULT_BASE_URL,
 };
 use fleet::cli;
 use fleet::lanes::{self, Lane, LaneHome, LaneState};
@@ -44,7 +44,12 @@ struct ScriptedResponse {
 
 /// A `200 OK` response carrying `body` as one document.
 fn ok(body: String) -> ScriptedResponse {
-    ScriptedResponse { status: "200 OK".to_string(), body, sse: Vec::new(), delay_ms: 0 }
+    ScriptedResponse {
+        status: "200 OK".to_string(),
+        body,
+        sse: Vec::new(),
+        delay_ms: 0,
+    }
 }
 
 /// A `200 OK` streamed response carrying `frames` as an SSE body.
@@ -107,7 +112,11 @@ impl MockApi {
             .spawn()
             .expect("spawn the mock-server child");
         let port = wait_for_port(&port_path, &mut child);
-        MockApi { child, port, scratch }
+        MockApi {
+            child,
+            port,
+            scratch,
+        }
     }
 
     fn url(&self) -> String {
@@ -148,7 +157,10 @@ fn wait_for_port(port_path: &Path, child: &mut std::process::Child) -> u16 {
         if child.try_wait().unwrap().is_some() {
             panic!("the mock-server child exited before writing its port");
         }
-        assert!(std::time::Instant::now() < deadline, "the mock-server port never arrived");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the mock-server port never arrived"
+        );
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
 }
@@ -313,7 +325,11 @@ struct Probe {
 
 impl Probe {
     fn new() -> Probe {
-        Probe { writes: Vec::new(), snapshots: Vec::new(), buffer: String::new() }
+        Probe {
+            writes: Vec::new(),
+            snapshots: Vec::new(),
+            buffer: String::new(),
+        }
     }
 
     /// Everything written, concatenated.
@@ -356,7 +372,7 @@ async fn run_on(
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -382,10 +398,9 @@ async fn run_on_probe(
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
-    let mut agent =
-        Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
+    let mut agent = Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
     agent.run(task).await
 }
 
@@ -412,7 +427,7 @@ async fn run_with_lanes(
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
@@ -449,7 +464,12 @@ fn declared_tools(body: &serde_json::Value) -> Vec<String> {
         .as_array()
         .expect("a tools array")
         .iter()
-        .map(|tool| tool["function"]["name"].as_str().unwrap_or_default().to_string())
+        .map(|tool| {
+            tool["function"]["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
         .collect()
 }
 
@@ -468,7 +488,10 @@ fn message_roles(body: &serde_json::Value) -> Vec<&str> {
 async fn parse_surfaces_the_documented_commands() {
     assert_eq!(
         cli::parse(&args(&["sessions"])),
-        Ok(cli::Command::SessionsView { recall: None, view: None })
+        Ok(cli::Command::SessionsView {
+            recall: None,
+            view: None
+        })
     );
     assert_eq!(
         cli::parse(&args(&["doctor"])),
@@ -500,8 +523,16 @@ async fn client_posts_auth_and_tool_declarations() {
 
     let text = std::fs::read_to_string(mock.scratch.join("requests.jsonl")).unwrap();
     let recorded: RecordedRequest = serde_json::from_str(text.lines().next().unwrap()).unwrap();
-    assert!(recorded.head.starts_with("POST /chat/completions "), "{}", recorded.head);
-    assert!(recorded.head.contains("Authorization: Bearer test-key"), "{}", recorded.head);
+    assert!(
+        recorded.head.starts_with("POST /chat/completions "),
+        "{}",
+        recorded.head
+    );
+    assert!(
+        recorded.head.contains("Authorization: Bearer test-key"),
+        "{}",
+        recorded.head
+    );
     let body: serde_json::Value = serde_json::from_str(&recorded.body).unwrap();
     assert_eq!(body["model"], "test-model");
     assert_eq!(body["tools"].as_array().unwrap().len(), 4);
@@ -535,11 +566,9 @@ async fn client_maps_an_api_error_with_its_hint() {
 async fn client_chat_still_answers_a_whole_document() {
     // The agent streams, but `chat` stays the one-shot path and must keep
     // assembling tool calls from a plain document.
-    let mock = MockApi::start(vec![ok(tool_call_response(serde_json::json!([tool_call(
-        "call-1",
-        "bash",
-        r#"{"command":"echo hi"}"#,
-    )])))]);
+    let mock = MockApi::start(vec![ok(tool_call_response(serde_json::json!([
+        tool_call("call-1", "bash", r#"{"command":"echo hi"}"#,)
+    ])))]);
     let client = Client::new(mock.url(), "test-key");
     let request = ChatRequest {
         model: "test-model",
@@ -555,13 +584,20 @@ async fn client_chat_still_answers_a_whole_document() {
     assert_eq!(response.usage.total_tokens, 15);
 
     let body = mock.bodies().remove(0);
-    assert!(body.get("stream").is_none(), "the one-shot path does not ask for a stream");
+    assert!(
+        body.get("stream").is_none(),
+        "the one-shot path does not ask for a stream"
+    );
     assert!(body.get("stream_options").is_none());
 }
 
 #[tokio::test]
 async fn client_chat_stream_assembles_the_same_response_chat_returns() {
-    let mock = MockApi::start(vec![tool_call_stream("call-1", "bash", r#"{"command":"echo hi"}"#)]);
+    let mock = MockApi::start(vec![tool_call_stream(
+        "call-1",
+        "bash",
+        r#"{"command":"echo hi"}"#,
+    )]);
     let client = Client::new(mock.url(), "test-key");
     let request = ChatRequest {
         model: "test-model",
@@ -595,8 +631,13 @@ async fn client_chat_stream_assembles_the_same_response_chat_returns() {
         })
         .collect();
     assert_eq!(assembled.len(), 1);
-    assert_eq!(assembled[0][0].function.arguments, r#"{"command":"echo hi"}"#);
-    assert!(events.iter().all(|event| !matches!(event, StreamEvent::Content(_))));
+    assert_eq!(
+        assembled[0][0].function.arguments,
+        r#"{"command":"echo hi"}"#
+    );
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event, StreamEvent::Content(_))));
     assert!(events.contains(&StreamEvent::Usage(Usage {
         prompt_tokens: 10,
         completion_tokens: 5,
@@ -614,7 +655,9 @@ async fn run_completes_a_two_turn_tool_loop() {
     ]);
     let home = temp_home("two-turn");
     let mut session = Session::create(&home, "test-model").unwrap();
-    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say hello").await.unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say hello")
+        .await
+        .unwrap();
 
     assert_eq!(report.stop_reason, StopReason::Completed);
     assert_eq!(report.turns, 2);
@@ -633,14 +676,24 @@ async fn run_completes_a_two_turn_tool_loop() {
     // The second request sees the system prompt, the task, the assistant's
     // call, and the recorded tool output.
     assert_eq!(message_roles(&bodies[0]), vec!["system", "user"]);
-    assert_eq!(message_roles(&bodies[1]), vec!["system", "user", "assistant", "tool"]);
+    assert_eq!(
+        message_roles(&bodies[1]),
+        vec!["system", "user", "assistant", "tool"]
+    );
     assert_eq!(bodies[1]["messages"][3]["tool_call_id"], "call-1");
-    assert!(bodies[1]["messages"][3]["content"].as_str().unwrap().contains("hello"));
+    assert!(bodies[1]["messages"][3]["content"]
+        .as_str()
+        .unwrap()
+        .contains("hello"));
     // KI-016: the assistant message the next request carries still names its
     // tool call — an assistant turn with no tool_calls followed by a tool
     // result is not a valid sequence for the API.
     let replayed_calls = &bodies[1]["messages"][2]["tool_calls"];
-    assert_eq!(replayed_calls.as_array().map(Vec::len), Some(1), "{replayed_calls}");
+    assert_eq!(
+        replayed_calls.as_array().map(Vec::len),
+        Some(1),
+        "{replayed_calls}"
+    );
     assert_eq!(replayed_calls[0]["id"], "call-1");
 
     // The log holds exactly what the model saw plus bookkeeping.
@@ -655,7 +708,10 @@ async fn run_completes_a_two_turn_tool_loop() {
         "{:?}",
         records[2]
     );
-    assert!(matches!(&records[3], Record::ToolResult { approved: true, .. }));
+    assert!(matches!(
+        &records[3],
+        Record::ToolResult { approved: true, .. }
+    ));
     assert!(matches!(
         &records[5],
         Record::End { stop_reason, turns: 2 } if stop_reason == "completed"
@@ -685,7 +741,9 @@ async fn streamed_tokens_reach_progress_before_the_run_ends() {
     let home = temp_home("progressive");
     let mut session = Session::create(&home, "test-model").unwrap();
     let mut probe = Probe::new();
-    let report = run_on_probe(&mock, &mut session, &mut probe, "stream it").await.unwrap();
+    let report = run_on_probe(&mock, &mut session, &mut probe, "stream it")
+        .await
+        .unwrap();
 
     assert_eq!(report.stop_reason, StopReason::Completed);
     assert_eq!(report.final_message.as_deref(), Some("Writing tokens."));
@@ -723,7 +781,10 @@ async fn streamed_tokens_reach_progress_before_the_run_ends() {
         .collect();
     assert_eq!(assistants.len(), 1);
     match assistants[0] {
-        Record::Assistant { content, tool_calls } => {
+        Record::Assistant {
+            content,
+            tool_calls,
+        } => {
             assert_eq!(content.as_deref(), Some("Writing tokens."));
             assert!(tool_calls.is_empty());
         }
@@ -741,17 +802,33 @@ async fn resume_seeds_the_next_request_from_the_log() {
     ]);
     let home = temp_home("resume");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_on(&first, &mut session, Box::new(ApproveAll), 5, "first task").await.unwrap();
+    run_on(&first, &mut session, Box::new(ApproveAll), 5, "first task")
+        .await
+        .unwrap();
 
     let second = MockApi::start(vec![assistant_stream("Second answer.")]);
     let mut resumed = Session::open(&session.path()).unwrap();
-    let report = run_on(&second, &mut resumed, Box::new(ApproveAll), 5, "second task").await.unwrap();
+    let report = run_on(
+        &second,
+        &mut resumed,
+        Box::new(ApproveAll),
+        5,
+        "second task",
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     let bodies = second.bodies();
     let messages = bodies[0]["messages"].as_array().unwrap();
-    let roles: Vec<&str> = messages.iter().map(|m| m["role"].as_str().unwrap()).collect();
-    assert_eq!(roles, vec!["system", "user", "assistant", "tool", "assistant", "user"]);
+    let roles: Vec<&str> = messages
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        roles,
+        vec!["system", "user", "assistant", "tool", "assistant", "user"]
+    );
     assert_eq!(messages[1]["content"], "first task");
     assert_eq!(messages[4]["content"], "First answer.");
     assert_eq!(messages[5]["content"], "second task");
@@ -767,19 +844,29 @@ async fn denied_call_is_recorded_and_shown_to_the_model() {
     ]);
     let home = temp_home("denied");
     let mut session = Session::create(&home, "test-model").unwrap();
-    let report = run_on(&mock, &mut session, Box::new(DenyAll), 5, "go wild").await.unwrap();
+    let report = run_on(&mock, &mut session, Box::new(DenyAll), 5, "go wild")
+        .await
+        .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     let records = session::replay(&session.path()).unwrap();
     match &records[3] {
-        Record::ToolResult { output, approved: false, truncated: false, .. } => {
+        Record::ToolResult {
+            output,
+            approved: false,
+            truncated: false,
+            ..
+        } => {
             assert_eq!(output, "denied: the user did not approve this call.");
         }
         other => panic!("expected a denied tool result, got {other:?}"),
     }
 
     let bodies = mock.bodies();
-    assert_eq!(bodies[1]["messages"][3]["content"], "denied: the user did not approve this call.");
+    assert_eq!(
+        bodies[1]["messages"][3]["content"],
+        "denied: the user did not approve this call."
+    );
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -798,7 +885,9 @@ async fn unknown_tool_and_bad_arguments_are_model_visible_errors() {
     ]);
     let home = temp_home("bad-tools");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "try things").await.unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "try things")
+        .await
+        .unwrap();
 
     let records = session::replay(&session.path()).unwrap();
     let outputs: Vec<&str> = records
@@ -810,7 +899,11 @@ async fn unknown_tool_and_bad_arguments_are_model_visible_errors() {
         .collect();
     assert_eq!(outputs.len(), 2);
     assert_eq!(outputs[0], "error: unknown tool `sudo`");
-    assert!(outputs[1].starts_with("error: arguments were not valid JSON"), "{}", outputs[1]);
+    assert!(
+        outputs[1].starts_with("error: arguments were not valid JSON"),
+        "{}",
+        outputs[1]
+    );
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -818,17 +911,36 @@ async fn unknown_tool_and_bad_arguments_are_model_visible_errors() {
 #[tokio::test]
 async fn tool_failure_is_a_model_visible_error_result() {
     let mock = MockApi::start(vec![
-        tool_call_stream("call-1", "read_file", r#"{"path":"/nonexistent/fleet-test-file"}"#),
+        tool_call_stream(
+            "call-1",
+            "read_file",
+            r#"{"path":"/nonexistent/fleet-test-file"}"#,
+        ),
         assistant_stream("Noted."),
     ]);
     let home = temp_home("tool-error");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "read the missing file").await.unwrap();
+    run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "read the missing file",
+    )
+    .await
+    .unwrap();
 
     let records = session::replay(&session.path()).unwrap();
     match &records[3] {
-        Record::ToolResult { output, approved: true, .. } => {
-            assert!(output.starts_with("error: /nonexistent/fleet-test-file"), "{output}");
+        Record::ToolResult {
+            output,
+            approved: true,
+            ..
+        } => {
+            assert!(
+                output.starts_with("error: /nonexistent/fleet-test-file"),
+                "{output}"
+            );
         }
         other => panic!("expected a failed tool result, got {other:?}"),
     }
@@ -842,7 +954,9 @@ async fn max_turns_stops_the_loop_and_marks_the_log() {
     let mock = MockApi::start(vec![scripted.clone(), scripted]);
     let home = temp_home("max-turns");
     let mut session = Session::create(&home, "test-model").unwrap();
-    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 2, "loop forever").await.unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 2, "loop forever")
+        .await
+        .unwrap();
 
     assert_eq!(report.stop_reason, StopReason::MaxTurns);
     assert_eq!(report.turns, 2);
@@ -879,12 +993,27 @@ async fn oversized_tool_output_is_truncated_in_the_log() {
     ]);
     let home = temp_home("truncation-run");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "round-trip a big file").await.unwrap();
+    run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "round-trip a big file",
+    )
+    .await
+    .unwrap();
 
     let records = session::replay(&session.path()).unwrap();
     match &records[5] {
-        Record::ToolResult { output, truncated: true, .. } => {
-            assert!(output.contains("[truncated"), "expected the truncation marker");
+        Record::ToolResult {
+            output,
+            truncated: true,
+            ..
+        } => {
+            assert!(
+                output.contains("[truncated"),
+                "expected the truncation marker"
+            );
             assert!(output.len() < MAX_TOOL_OUTPUT + 100);
         }
         other => panic!("expected a truncated tool result, got {other:?}"),
@@ -899,7 +1028,9 @@ async fn tools_execute_against_the_real_filesystem() {
     let home = temp_home("tools");
     let target = home.join("note.txt");
     Tool::WriteFile
-        .execute(&serde_json::json!({ "path": target.display().to_string(), "content": "from fleet" }))
+        .execute(
+            &serde_json::json!({ "path": target.display().to_string(), "content": "from fleet" }),
+        )
         .unwrap();
     let read = Tool::ReadFile
         .execute(&serde_json::json!({ "path": target.display().to_string() }))
@@ -948,14 +1079,19 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
     let report = {
-        let mut agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-                .unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("say hello").await.unwrap()
     };
     drop(ui_tx);
@@ -969,7 +1105,10 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         events,
         vec![
             UiEvent::Turn(1),
-            UiEvent::ToolCall { name: "bash".to_string(), summary: "echo hi".to_string() },
+            UiEvent::ToolCall {
+                name: "bash".to_string(),
+                summary: "echo hi".to_string()
+            },
             UiEvent::ToolResult {
                 name: "bash".to_string(),
                 preview: "exit 0".to_string(),
@@ -978,7 +1117,9 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
             UiEvent::Turn(2),
             UiEvent::Token("All ".to_string()),
             UiEvent::Token("done.".to_string()),
-            UiEvent::Finished { stop_reason: "completed".to_string() },
+            UiEvent::Finished {
+                stop_reason: "completed".to_string()
+            },
         ]
     );
 
@@ -1012,12 +1153,18 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
-    let mut agent =
-        Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+    let mut agent = Agent::new(
+        &client,
+        options,
+        &mut session,
+        Box::new(ApproveAll),
+        &mut progress,
+    )
+    .unwrap();
     // The channel is closed before the run, so nothing can be delivered.
     drop(ui_rx);
     let report = agent.run("hello").await.unwrap();
@@ -1049,13 +1196,19 @@ async fn a_denied_call_reports_its_result_event() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
     {
-        let mut agent =
-            Agent::new(&client, options, &mut session, Box::new(DenyAll), &mut progress).unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(DenyAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("go wild").await.unwrap();
     }
     // The agent's own sender clone is gone with it, so the channel closes.
@@ -1070,7 +1223,11 @@ async fn a_denied_call_reports_its_result_event() {
         .find(|event| matches!(event, UiEvent::ToolResult { .. }))
         .expect("a tool result event");
     match result {
-        UiEvent::ToolResult { name, preview, approved } => {
+        UiEvent::ToolResult {
+            name,
+            preview,
+            approved,
+        } => {
             assert_eq!(name, "bash");
             assert!(!approved);
             assert!(preview.contains("denied"), "{preview}");
@@ -1106,14 +1263,19 @@ async fn a_failed_run_reports_a_failure_event() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
     let failed = {
-        let mut agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-                .unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("break things").await.is_err()
     };
     assert!(failed);
@@ -1128,7 +1290,9 @@ async fn a_failed_run_reports_a_failure_event() {
         other => panic!("expected a failure event, got {other:?}"),
     }
     let records = session::replay(&log_path).unwrap();
-    assert!(records.iter().all(|record| !matches!(record, Record::End { .. })));
+    assert!(records
+        .iter()
+        .all(|record| !matches!(record, Record::End { .. })));
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -1147,8 +1311,10 @@ impl FakeMcp {
     fn start(entries: Vec<serde_json::Value>) -> FakeMcp {
         let scratch = temp_home("mock-mcp");
         let script_path = scratch.join("script.jsonl");
-        let script =
-            entries.iter().map(|entry| format!("{entry}\n")).collect::<String>();
+        let script = entries
+            .iter()
+            .map(|entry| format!("{entry}\n"))
+            .collect::<String>();
         std::fs::write(&script_path, script).unwrap();
         let child = std::process::Command::new(env!("CARGO_BIN_EXE_mock-mcp"))
             .arg(&script_path)
@@ -1164,7 +1330,11 @@ impl FakeMcp {
     fn spec(&self) -> ServerSpec {
         ServerSpec {
             program: env!("CARGO_BIN_EXE_mock-mcp").to_string(),
-            args: vec![self.scratch.join("script.jsonl").to_string_lossy().into_owned()],
+            args: vec![self
+                .scratch
+                .join("script.jsonl")
+                .to_string_lossy()
+                .into_owned()],
             env: Vec::new(),
             passthrough: Vec::new(),
             cwd: None,
@@ -1228,7 +1398,10 @@ fn python3_available() -> bool {
 
 /// One registry lane by name.
 fn lane(name: &str) -> Lane {
-    *lanes::LANES.iter().find(|lane| lane.name == name).expect("a registry lane")
+    *lanes::LANES
+        .iter()
+        .find(|lane| lane.name == name)
+        .expect("a registry lane")
 }
 
 /// sem1's resolved home; the vendored copy must always answer.
@@ -1260,8 +1433,14 @@ async fn the_real_sem1_lane_round_trips_through_the_client() {
 
     let tools = server.list_tools().await.expect("tools/list");
     let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
-    assert_eq!(names, vec!["sem1_embed", "sem1_probe", "sem1_index", "sem1_search"]);
-    assert_eq!(tools[0].input_schema["required"], serde_json::json!(["items"]));
+    assert_eq!(
+        names,
+        vec!["sem1_embed", "sem1_probe", "sem1_index", "sem1_search"]
+    );
+    assert_eq!(
+        tools[0].input_schema["required"],
+        serde_json::json!(["items"])
+    );
 
     // A tools/call the server refuses comes back as a typed JSON-RPC
     // error, not a hang and not a panic.
@@ -1342,7 +1521,10 @@ async fn the_client_round_trips_a_fake_server_and_ignores_strays() {
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name, "fake_tool");
 
-    let call = server.call_tool("fake_tool", serde_json::json!({ "x": 1 })).await.expect("tools/call");
+    let call = server
+        .call_tool("fake_tool", serde_json::json!({ "x": 1 }))
+        .await
+        .expect("tools/call");
     assert_eq!(call.content.len(), 1);
     assert_eq!(call.content[0].data, serde_json::json!("called"));
     assert!(!call.is_error);
@@ -1361,7 +1543,10 @@ async fn a_dead_child_is_an_error_not_a_hang() {
     let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
     server.initialize().await.expect("initialize");
 
-    let error = server.list_tools().await.expect_err("a dead child must fail the wait");
+    let error = server
+        .list_tools()
+        .await
+        .expect_err("a dead child must fail the wait");
     assert!(matches!(error, McpError::Closed(_)), "got {error:?}");
     // The teardown of an already-dead child is still graceful.
     server.close().await.expect("teardown after death");
@@ -1386,9 +1571,18 @@ async fn a_chatty_stderr_child_does_not_wedge_the_call() {
     let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
 
     let started = std::time::Instant::now();
-    server.initialize().await.expect("initialize despite the chatter");
-    server.list_tools().await.expect("tools/list despite the chatter");
-    let call = server.call_tool("embed", serde_json::json!({})).await.expect("tools/call");
+    server
+        .initialize()
+        .await
+        .expect("initialize despite the chatter");
+    server
+        .list_tools()
+        .await
+        .expect("tools/list despite the chatter");
+    let call = server
+        .call_tool("embed", serde_json::json!({}))
+        .await
+        .expect("tools/call");
     assert_eq!(call.text(), "embedded");
     // The budget is 5s and the drain is the only reason this is not the
     // time it takes to hit it.
@@ -1419,7 +1613,10 @@ async fn a_child_that_dies_during_startup_reports_its_stderr() {
     let server = McpServer::spawn_with(&fake.spec(), budgets(5)).expect("spawn the fake");
     server.initialize().await.expect("initialize");
 
-    let error = server.list_tools().await.expect_err("the child died during startup");
+    let error = server
+        .list_tools()
+        .await
+        .expect_err("the child died during startup");
     assert!(matches!(error, McpError::Closed(_)), "got {error:?}");
     assert!(
         error.to_string().contains("no module named 'glinter'"),
@@ -1448,9 +1645,15 @@ async fn a_silent_child_times_out_on_the_budget() {
     server.initialize().await.expect("initialize");
 
     let started = std::time::Instant::now();
-    let error = server.list_tools().await.expect_err("a silent child must time out");
+    let error = server
+        .list_tools()
+        .await
+        .expect_err("a silent child must time out");
     let elapsed = started.elapsed();
-    assert!(elapsed < std::time::Duration::from_secs(5), "the budget must fire: {elapsed:?}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "the budget must fire: {elapsed:?}"
+    );
     match error {
         McpError::Timeout { method, budget } => {
             assert_eq!(method, "tools/list");
@@ -1623,7 +1826,10 @@ async fn a_spawned_child_does_not_inherit_the_ambient_environment() {
             .expect("the echoed environment is a JSON object");
 
     assert!(!reported.contains_key("DEEPSEEK_API_KEY"), "{reported:?}");
-    assert!(!reported.contains_key("FLEET_UNRELATED_AMBIENT"), "{reported:?}");
+    assert!(
+        !reported.contains_key("FLEET_UNRELATED_AMBIENT"),
+        "{reported:?}"
+    );
     // The base crossed: the lanes launch as `python3`, resolved through the
     // child's PATH, so PATH must be there.
     assert!(reported.contains_key("PATH"), "{reported:?}");
@@ -1646,7 +1852,10 @@ impl AmbientKey {
     fn set(name: &str, value: &str) -> AmbientKey {
         let previous = std::env::var_os(name);
         std::env::set_var(name, value);
-        AmbientKey { name: name.to_string(), previous }
+        AmbientKey {
+            name: name.to_string(),
+            previous,
+        }
     }
 }
 
@@ -1720,7 +1929,10 @@ async fn a_late_reply_after_the_timeout_is_dropped_cleanly() {
     .expect("spawn the fake");
     server.initialize().await.expect("initialize");
 
-    let error = server.list_tools().await.expect_err("the budget must fire first");
+    let error = server
+        .list_tools()
+        .await
+        .expect_err("the budget must fire first");
     assert!(matches!(error, McpError::Timeout { .. }), "got {error:?}");
 
     // The late reply arrives with no waiter left for its id: it is
@@ -1785,9 +1997,24 @@ async fn two_spawned_calls_share_one_server() {
         let server = std::sync::Arc::clone(&server);
         tokio::spawn(async move { server.call_tool("fake_tool", serde_json::json!({})).await })
     };
-    let first = first.await.unwrap().expect("the first spawned call").content[0].data.clone();
-    let second = second.await.unwrap().expect("the second spawned call").content[0].data.clone();
-    let mut answered = vec![first.as_str().unwrap_or_default(), second.as_str().unwrap_or_default()];
+    let first = first
+        .await
+        .unwrap()
+        .expect("the first spawned call")
+        .content[0]
+        .data
+        .clone();
+    let second = second
+        .await
+        .unwrap()
+        .expect("the second spawned call")
+        .content[0]
+        .data
+        .clone();
+    let mut answered = vec![
+        first.as_str().unwrap_or_default(),
+        second.as_str().unwrap_or_default(),
+    ];
     answered.sort();
     assert_eq!(answered, vec!["first", "second"]);
 }
@@ -1839,14 +2066,31 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     assert_eq!(bodies.len(), 2);
     assert_eq!(
         declared_tools(&bodies[0]),
-        vec!["bash", "read_file", "write_file", "list_dir", "subagent", "convention", "web", "computer_use"]
+        vec![
+            "bash",
+            "read_file",
+            "write_file",
+            "list_dir",
+            "subagent",
+            "convention",
+            "web",
+            "computer_use"
+        ]
     );
     let second = declared_tools(&bodies[1]);
     assert_eq!(second.len(), 12, "{second:?}");
-    assert_eq!(&second[..4], &["bash", "read_file", "write_file", "list_dir"]);
+    assert_eq!(
+        &second[..4],
+        &["bash", "read_file", "write_file", "list_dir"]
+    );
     assert_eq!(
         &second[4..8],
-        &["mcp__sem1__embed", "mcp__sem1__probe", "mcp__sem1__index", "mcp__sem1__search"]
+        &[
+            "mcp__sem1__embed",
+            "mcp__sem1__probe",
+            "mcp__sem1__index",
+            "mcp__sem1__search"
+        ]
     );
     // The delegation tool rides beside the four built-ins and every
     // joined lane's tools, with the convention lookup after it.
@@ -1856,7 +2100,9 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         "{second:?}"
     );
     // The tool result the model read rode back in the same request.
-    let answer = bodies[1]["messages"][3]["content"].as_str().expect("the tool result");
+    let answer = bodies[1]["messages"][3]["content"]
+        .as_str()
+        .expect("the tool result");
     assert!(answer.contains("llama-server"), "{answer}");
     assert!(answer.contains("reachable"), "{answer}");
 
@@ -1864,7 +2110,9 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // lane that joined for it, the result, and the answer.
     let records = session::replay(&session.path()).unwrap();
     assert_eq!(records.len(), 7, "{records:?}");
-    assert!(matches!(&records[1], Record::User { content } if content == "probe the embeddings worker"));
+    assert!(
+        matches!(&records[1], Record::User { content } if content == "probe the embeddings worker")
+    );
     assert!(
         matches!(&records[2], Record::Assistant { tool_calls, .. }
             if tool_calls.len() == 1 && tool_calls[0].function.name == "mcp__sem1__probe"),
@@ -1879,21 +2127,38 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
             assert_eq!(
                 names,
-                vec!["mcp__sem1__embed", "mcp__sem1__probe", "mcp__sem1__index", "mcp__sem1__search"]
+                vec![
+                    "mcp__sem1__embed",
+                    "mcp__sem1__probe",
+                    "mcp__sem1__index",
+                    "mcp__sem1__search"
+                ]
             );
             // The lane's own names ride along, so the log names both ends
             // of the mapping the model's call went through.
             let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
-            assert_eq!(own, vec!["sem1_embed", "sem1_probe", "sem1_index", "sem1_search"]);
+            assert_eq!(
+                own,
+                vec!["sem1_embed", "sem1_probe", "sem1_index", "sem1_search"]
+            );
             for tool in tools {
-                assert!(!tool.description.is_empty(), "{} has no description", tool.name);
+                assert!(
+                    !tool.description.is_empty(),
+                    "{} has no description",
+                    tool.name
+                );
                 assert_eq!(tool.input_schema["type"], "object", "{}", tool.name);
             }
         }
         other => panic!("expected a lane_tools record, got {other:?}"),
     }
     match &records[4] {
-        Record::ToolResult { name, output, approved: true, .. } => {
+        Record::ToolResult {
+            name,
+            output,
+            approved: true,
+            ..
+        } => {
             assert_eq!(name, "mcp__sem1__probe");
             assert!(output.contains("llama-server"), "{output}");
         }
@@ -1906,7 +2171,10 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
 
     // And the headless surface said the lane joined.
     let progress = String::from_utf8(progress).unwrap();
-    assert!(progress.contains("lane sem1 joined \u{2014} 4 tools"), "{progress}");
+    assert!(
+        progress.contains("lane sem1 joined \u{2014} 4 tools"),
+        "{progress}"
+    );
     assert!(progress.contains("mcp__sem1__probe"), "{progress}");
 
     std::fs::remove_dir_all(&home).ok();
@@ -2026,12 +2294,17 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             memory: None,
             scope: None,
             improve_home: None,
-        compact_now: false,
+            compact_now: false,
         };
         let report = {
-            let mut agent =
-                Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-                    .unwrap();
+            let mut agent = Agent::new(
+                &client,
+                options,
+                &mut session,
+                Box::new(ApproveAll),
+                &mut progress,
+            )
+            .unwrap();
             agent.run("probe it").await.unwrap()
         };
         assert_eq!(report.stop_reason, StopReason::Completed);
@@ -2054,7 +2327,10 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
                 name: "mcp__sem1__probe".to_string(),
                 summary: "embeddings \u{b7} probe {}".to_string(),
             },
-            UiEvent::LaneJoined { lane: "sem1".to_string(), tool_count: 2 },
+            UiEvent::LaneJoined {
+                lane: "sem1".to_string(),
+                tool_count: 2
+            },
             UiEvent::ToolResult {
                 name: "mcp__sem1__probe".to_string(),
                 // The preview keeps one line up to 80 characters: this
@@ -2064,13 +2340,21 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             },
             UiEvent::Turn(2),
             UiEvent::Token("Probed.".to_string()),
-            UiEvent::Finished { stop_reason: "completed".to_string() },
+            UiEvent::Finished {
+                stop_reason: "completed".to_string()
+            },
         ]
     );
     // The headless surface said the same thing.
-    assert!(progress_text.contains("lane sem1 joined \u{2014} 2 tools"), "{progress_text}");
+    assert!(
+        progress_text.contains("lane sem1 joined \u{2014} 2 tools"),
+        "{progress_text}"
+    );
     // And the run closed the child it spawned rather than killing it.
-    assert!(marker.exists(), "the run must close the lane child it spawned");
+    assert!(
+        marker.exists(),
+        "the run must close the lane child it spawned"
+    );
 
     std::fs::remove_dir_all(&home).ok();
     std::fs::remove_dir_all(&marker_dir).ok();
@@ -2115,7 +2399,13 @@ async fn a_lane_answer_past_the_cap_is_bounded_and_marked() {
 
     let records = session::replay(&session.path()).unwrap();
     let output = match &records[4] {
-        Record::ToolResult { name, output, truncated: true, approved: true, .. } => {
+        Record::ToolResult {
+            name,
+            output,
+            truncated: true,
+            approved: true,
+            ..
+        } => {
             assert_eq!(name, "mcp__sem1__embed");
             // The same bound and the same marker a built-in's cut carries.
             assert!(
@@ -2123,7 +2413,10 @@ async fn a_lane_answer_past_the_cap_is_bounded_and_marked() {
                 "the lane's answer must be capped at MAX_TOOL_OUTPUT: {}",
                 output.len()
             );
-            assert!(output.contains("\u{2026}[truncated"), "the cut must be marked: {output}");
+            assert!(
+                output.contains("\u{2026}[truncated"),
+                "the cut must be marked: {output}"
+            );
             // The head of the lane's answer survived; the tail did not.
             assert!(output.starts_with('x'), "{output}");
             assert!(!output.ends_with('x'), "the tail must be gone: {output}");
@@ -2184,7 +2477,12 @@ async fn a_lane_tool_refusal_is_recorded_as_a_failure_with_its_text() {
 
     let records = session::replay(&session.path()).unwrap();
     match &records[4] {
-        Record::ToolResult { name, output, approved: true, .. } => {
+        Record::ToolResult {
+            name,
+            output,
+            approved: true,
+            ..
+        } => {
             assert_eq!(name, "mcp__sem1__embed");
             assert_eq!(output, "error: `items` must be a string");
         }
@@ -2226,11 +2524,18 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
 
     let records = session::replay(&session.path()).unwrap();
     assert!(
-        records.iter().all(|record| !matches!(record, Record::LaneTools { .. })),
+        records
+            .iter()
+            .all(|record| !matches!(record, Record::LaneTools { .. })),
         "a denied call must not join a lane: {records:?}"
     );
     match &records[3] {
-        Record::ToolResult { name, output, approved: false, .. } => {
+        Record::ToolResult {
+            name,
+            output,
+            approved: false,
+            ..
+        } => {
             assert_eq!(name, "mcp__sem1__probe");
             assert_eq!(output, "denied: the user did not approve this call.");
         }
@@ -2303,7 +2608,9 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     );
     // A lane that never started never joined, so nothing was declared
     // beyond the built-ins and the delegation tool.
-    assert!(records.iter().all(|record| !matches!(record, Record::LaneTools { .. })));
+    assert!(records
+        .iter()
+        .all(|record| !matches!(record, Record::LaneTools { .. })));
     assert_eq!(declared_tools(&mock.bodies()[1]).len(), 8);
 
     std::fs::remove_dir_all(&home).ok();
@@ -2378,18 +2685,27 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let mut progress = Vec::new();
     let report = {
-        let mut agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("do the thing").await.unwrap()
     };
 
     // The answer came from the second candidate.
     assert_eq!(report.stop_reason, StopReason::Completed);
-    assert_eq!(report.final_message.as_deref(), Some("Answered by candidate two."));
+    assert_eq!(
+        report.final_message.as_deref(),
+        Some("Answered by candidate two.")
+    );
 
     // The head was tried exactly once and failed; the second served. The
     // walk never retried the head.
@@ -2407,16 +2723,22 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         .collect();
     assert_eq!(
         attempts,
-        vec![("cand-head", "failed", Some("quota")), ("cand-two", "served", None)]
+        vec![
+            ("cand-head", "failed", Some("quota")),
+            ("cand-two", "served", None)
+        ]
     );
-    assert_eq!(row.providers_used, vec!["cand-head".to_string(), "cand-two".to_string()]);
+    assert_eq!(
+        row.providers_used,
+        vec!["cand-head".to_string(), "cand-two".to_string()]
+    );
 
     // The session log is unchanged in vocabulary: no routing record, just
     // the ordinary turn and its orderly end.
     let records = session::replay(&session.path()).unwrap();
-    assert!(records
-        .iter()
-        .any(|record| matches!(record, Record::End { stop_reason, .. } if stop_reason == "completed")));
+    assert!(records.iter().any(
+        |record| matches!(record, Record::End { stop_reason, .. } if stop_reason == "completed")
+    ));
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -2446,8 +2768,18 @@ async fn sys1_judges_the_route_through_the_injected_spec() {
         candidates: vec![("zai-coding-plan", "GLM-5.3-Flash"), ("router-kit", "auto")],
     }];
     let resolved = vec![
-        resolved("router-kit", "http://127.0.0.1:8300/v1".to_string(), false, None),
-        resolved("zai-coding-plan", "https://api.z.ai".to_string(), true, Some("sk-fake-test")),
+        resolved(
+            "router-kit",
+            "http://127.0.0.1:8300/v1".to_string(),
+            false,
+            None,
+        ),
+        resolved(
+            "zai-coding-plan",
+            "https://api.z.ai".to_string(),
+            true,
+            Some("sk-fake-test"),
+        ),
     ];
     let (decision, _latency) = fleet::route::select(
         &resolved,
@@ -2507,8 +2839,12 @@ async fn a_recorded_judgment_serves_without_spawning_the_lane() {
         workload: "hard",
         candidates: vec![("zai-coding-plan", "GLM-5.3-Flash")],
     }];
-    let resolved =
-        vec![resolved("zai-coding-plan", "https://api.z.ai".to_string(), true, Some("sk-fake-test"))];
+    let resolved = vec![resolved(
+        "zai-coding-plan",
+        "https://api.z.ai".to_string(),
+        true,
+        Some("sk-fake-test"),
+    )];
 
     // The first run: a miss — judged live, written through to the file.
     let mut cache = fleet::route_cache::Cache::load(&home);
@@ -2593,10 +2929,14 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
     // The default roster already declares blend1 as the composed
     // workload's lane-kind candidate; no config is needed.
     let home = temp_home("composed-lane");
-    let prepared =
-        fleet::route::prepare(&home, &std::collections::HashMap::new(), "compose the answer", &specs)
-            .await
-            .unwrap();
+    let prepared = fleet::route::prepare(
+        &home,
+        &std::collections::HashMap::new(),
+        "compose the answer",
+        &specs,
+    )
+    .await
+    .unwrap();
     assert_eq!(prepared.decision.how, How::Judged);
     assert_eq!(prepared.decision.provider, "blend1");
     assert_eq!(prepared.decision.workload.as_deref(), Some("composed"));
@@ -2618,12 +2958,18 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
-        let mut agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("compose the answer").await.unwrap()
     };
     assert_eq!(report.stop_reason, StopReason::Completed);
@@ -2635,7 +2981,8 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
     assert_eq!(row.provider, "blend1");
     assert_eq!(row.model, "blend1");
     assert!(
-        row.reason.contains("blend1 answered through path `synthesized`"),
+        row.reason
+            .contains("blend1 answered through path `synthesized`"),
         "{}",
         row.reason
     );
@@ -2706,10 +3053,14 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
     specs.insert("sys1".to_string(), judge.spec());
     specs.insert("blend1".to_string(), refusing.spec());
 
-    let prepared =
-        fleet::route::prepare(&home, &std::collections::HashMap::new(), "compose the answer", &specs)
-            .await
-            .unwrap();
+    let prepared = fleet::route::prepare(
+        &home,
+        &std::collections::HashMap::new(),
+        "compose the answer",
+        &specs,
+    )
+    .await
+    .unwrap();
     assert_eq!(prepared.decision.provider, "blend1");
 
     let mut session = Session::create(&home, "test-model").unwrap();
@@ -2725,16 +3076,25 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
-        let mut agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("compose the answer").await.unwrap()
     };
     // The kit served: the lane's refusal advanced the walk.
-    assert_eq!(report.final_message.as_deref(), Some("Answered by the kit."));
+    assert_eq!(
+        report.final_message.as_deref(),
+        Some("Answered by the kit.")
+    );
     let row = prepared.router.row("compose the answer", 0);
     assert_eq!(row.provider, "router-kit");
     let attempts: Vec<(&str, &str, Option<&str>)> = row
@@ -2744,12 +3104,16 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         .collect();
     assert_eq!(
         attempts,
-        vec![("blend1", "failed", Some("lane")), ("router-kit", "served", None)]
+        vec![
+            ("blend1", "failed", Some("lane")),
+            ("router-kit", "served", None)
+        ]
     );
     // The lane's own words ride the row: the refusal is named, not a
     // bare class the reader must interpret.
     assert!(
-        row.reason.contains("the corpus for this project is not indexed"),
+        row.reason
+            .contains("the corpus for this project is not indexed"),
         "{}",
         row.reason
     );
@@ -2773,8 +3137,9 @@ async fn an_owners_control_lands_beside_the_log_it_steers() {
     )
     .unwrap();
 
-    let steer_path = fleet::delegate::write_control(&home, "sess-live", Some("focus on the parser"))
-        .expect("the steer lands");
+    let steer_path =
+        fleet::delegate::write_control(&home, "sess-live", Some("focus on the parser"))
+            .expect("the steer lands");
     assert_eq!(steer_path, sessions.join("sess-live.control"));
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&steer_path).unwrap()).unwrap();
@@ -2800,7 +3165,10 @@ async fn an_owners_control_lands_beside_the_log_it_steers() {
     // width discipline is pinned in delegate's own tests beside the
     // disposition card's.)
     let card = fleet::delegate::control_card("sess-live", Some("focus on the parser"), &steer_path);
-    assert!(card.contains('\u{250c}') && card.contains('\u{2518}'), "{card}");
+    assert!(
+        card.contains('\u{250c}') && card.contains('\u{2518}'),
+        "{card}"
+    );
     assert!(card.contains("steer"), "{card}");
     assert!(card.contains("session sess-live"), "{card}");
     assert!(card.contains("focus on the parser"), "{card}");
@@ -2853,12 +3221,18 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
         memory: None,
         scope: None,
         improve_home: Some(home.clone()),
-    compact_now: false,
+        compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
-        let mut agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("delegate the audit").await.unwrap()
     };
     assert_eq!(report.stop_reason, StopReason::Completed);
@@ -2869,7 +3243,10 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3, "{bodies:?}");
     let child_system = bodies[1]["messages"][0]["content"].as_str().unwrap();
-    assert!(child_system.contains("ROLE OVERLAY BEGIN"), "{child_system}");
+    assert!(
+        child_system.contains("ROLE OVERLAY BEGIN"),
+        "{child_system}"
+    );
     assert!(child_system.contains("role `auditor`"), "{child_system}");
     assert!(
         child_system.contains("Read the diff before you judge it."),
@@ -2918,12 +3295,18 @@ async fn an_unknown_role_is_refused_by_name_and_the_child_never_runs() {
         memory: None,
         scope: None,
         improve_home: Some(home.clone()),
-    compact_now: false,
+        compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
-        let mut agent =
-            Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("delegate the audit").await.unwrap()
     };
     assert_eq!(report.stop_reason, StopReason::Completed);
@@ -2948,7 +3331,9 @@ async fn the_real_sys1_lane_exposes_the_classify_schema() {
         return;
     }
     let Ok(spec) = lanes::spec_for("sys1") else {
-        eprintln!("the sys1 lane did not resolve from the vendored copy; skipping the schema probe");
+        eprintln!(
+            "the sys1 lane did not resolve from the vendored copy; skipping the schema probe"
+        );
         return;
     };
     let server = match McpServer::spawn(&spec) {
@@ -3025,12 +3410,18 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
-        let mut agent = Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-            .unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("list the directory").await.unwrap()
     };
     assert_eq!(report.stop_reason, StopReason::Completed);
@@ -3085,12 +3476,18 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let outcome = {
         let mut progress = Vec::new();
-        let mut agent = Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-            .unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("do the thing").await
     };
     assert!(outcome.is_err());
@@ -3113,7 +3510,11 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
 /// is named `max-turns` exactly as the session log names it.
 #[tokio::test]
 async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
-    let mock = MockApi::start(vec![tool_call_stream("call-1", "list_dir", "{\"path\":\".\"}")]);
+    let mock = MockApi::start(vec![tool_call_stream(
+        "call-1",
+        "list_dir",
+        "{\"path\":\".\"}",
+    )]);
     let home = temp_home("calib-cap");
     let calib_root = home.join("calib");
     let stream = fleet::calib::Stream::open(&calib_root);
@@ -3130,12 +3531,18 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
-        let mut agent = Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-            .unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("keep going").await.unwrap()
     };
     assert_eq!(report.stop_reason, StopReason::MaxTurns);
@@ -3295,7 +3702,9 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
     specs.insert("sys1".to_string(), fake.spec());
 
     let dotenv = std::collections::HashMap::new();
-    let prepared = fleet::route::prepare(&home, &dotenv, "refactor the crate", &specs).await.unwrap();
+    let prepared = fleet::route::prepare(&home, &dotenv, "refactor the crate", &specs)
+        .await
+        .unwrap();
     assert_eq!(prepared.decision.provider, "zai-coding-plan");
     assert_eq!(prepared.decision.how, How::Judged);
     // The demotion is auditable: it rides in the decision row's reason.
@@ -3320,17 +3729,30 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let report = {
         let mut progress = Vec::new();
-        let mut agent = Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress)
-            .unwrap();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
         agent.run("refactor the crate").await.unwrap()
     };
     assert_eq!(report.stop_reason, StopReason::Completed);
-    assert_eq!(report.final_message.as_deref(), Some("Answered by stepfun."));
-    assert_eq!(kit.bodies().len(), 0, "the demoted candidate was never tried");
+    assert_eq!(
+        report.final_message.as_deref(),
+        Some("Answered by stepfun.")
+    );
+    assert_eq!(
+        kit.bodies().len(),
+        0,
+        "the demoted candidate was never tried"
+    );
     assert_eq!(zai.bodies().len(), 1);
     assert_eq!(mimo.bodies().len(), 1);
     assert_eq!(stepfun.bodies().len(), 1);
@@ -3343,7 +3765,11 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         .collect();
     assert_eq!(
         attempts,
-        vec![("zai-coding-plan", "failed"), ("xiaomi-mimo", "failed"), ("stepfun", "served")]
+        vec![
+            ("zai-coding-plan", "failed"),
+            ("xiaomi-mimo", "failed"),
+            ("stepfun", "served")
+        ]
     );
 
     // The session's own route row lands in the stream beside the graded
@@ -3351,7 +3777,11 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
     prepared.record_route("refactor the crate");
     drop(prepared);
     let rows = calib_rows(&calib_root, &day);
-    assert_eq!(rows_of(&rows, "route").len(), 4, "three graded rows plus this session's");
+    assert_eq!(
+        rows_of(&rows, "route").len(),
+        4,
+        "three graded rows plus this session's"
+    );
     std::fs::remove_dir_all(&home).ok();
 }
 
@@ -3400,11 +3830,17 @@ async fn run_with_skills(
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let mut progress = Vec::new();
-    let mut agent =
-        Agent::new(&client, options, session, Box::new(ApproveAll), &mut progress).unwrap();
+    let mut agent = Agent::new(
+        &client,
+        options,
+        session,
+        Box::new(ApproveAll),
+        &mut progress,
+    )
+    .unwrap();
     agent.run(task).await
 }
 
@@ -3438,10 +3874,14 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
         assistant_stream("The skill is loaded; I will read the error first."),
     ]);
     let mut session = Session::create(&home, "test-model").unwrap();
-    let report =
-        run_with_skills(&mock, &mut session, fleet::skills::load(&home), "recover from it")
-            .await
-            .unwrap();
+    let report = run_with_skills(
+        &mock,
+        &mut session,
+        fleet::skills::load(&home),
+        "recover from it",
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     let bodies = mock.bodies();
@@ -3449,10 +3889,15 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The first request's system prompt carries the name and the
     // description and nothing of the body: description first, body on
     // demand.
-    let system = bodies[0]["messages"][0]["content"].as_str().expect("the system prompt");
+    let system = bodies[0]["messages"][0]["content"]
+        .as_str()
+        .expect("the system prompt");
     assert!(system.contains("demo-skill"), "{system}");
     assert!(system.contains("Recover a failed bash call"), "{system}");
-    assert!(!system.contains("read the error, fix one thing"), "{system}");
+    assert!(
+        !system.contains("read the error, fix one thing"),
+        "{system}"
+    );
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
@@ -3462,7 +3907,9 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
     // The body entered context as the call's ordinary tool result — the
     // same seam, the same message the model reads.
-    let seen = bodies[1]["messages"][3]["content"].as_str().expect("the tool result");
+    let seen = bodies[1]["messages"][3]["content"]
+        .as_str()
+        .expect("the tool result");
     assert_eq!(seen, "# demo\n\nread the error, fix one thing, rerun");
 
     // One `skills` record, written once at run start, and it replays to
@@ -3485,7 +3932,12 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // messages the log rebuilds are the four the model saw.
     assert_eq!(session::messages(&records).len(), 4, "{records:?}");
     match &records[4] {
-        Record::ToolResult { name, output, approved: true, .. } => {
+        Record::ToolResult {
+            name,
+            output,
+            approved: true,
+            ..
+        } => {
             assert_eq!(name, "use_skill");
             assert_eq!(output, "# demo\n\nread the error, fix one thing, rerun");
         }
@@ -3504,8 +3956,9 @@ async fn an_unknown_skill_is_a_typed_error_result() {
         assistant_stream("That skill does not exist; carrying on."),
     ]);
     let mut session = Session::create(&home, "test-model").unwrap();
-    let report =
-        run_with_skills(&mock, &mut session, fleet::skills::load(&home), "try it").await.unwrap();
+    let report = run_with_skills(&mock, &mut session, fleet::skills::load(&home), "try it")
+        .await
+        .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     let records = session::replay(&session.path()).unwrap();
@@ -3518,7 +3971,9 @@ async fn an_unknown_skill_is_a_typed_error_result() {
     }
     // The model read the typed error in the next request.
     let bodies = mock.bodies();
-    let seen = bodies[1]["messages"][3]["content"].as_str().expect("the tool result");
+    let seen = bodies[1]["messages"][3]["content"]
+        .as_str()
+        .expect("the tool result");
     assert_eq!(seen, "error: no skill named `no-such-skill`");
     std::fs::remove_dir_all(&home).ok();
 }
@@ -3528,11 +3983,24 @@ async fn an_unknown_skill_is_a_typed_error_result() {
 /// and the live tree is never the drafter's target.
 #[tokio::test]
 async fn a_sessions_failure_then_correction_drafts_a_proposal() {
-    let home = skills_home("draft", "unrelated", "a skill that is not the drafted one", "body");
+    let home = skills_home(
+        "draft",
+        "unrelated",
+        "a skill that is not the drafted one",
+        "body",
+    );
     let mut session = Session::create(&home, "test-model").unwrap();
-    session.record(&Record::User { content: "run it".to_string() }).unwrap();
     session
-        .record(&assistant_calls(vec![("call-1", "bash", r#"{"command":"ls"}"#)]))
+        .record(&Record::User {
+            content: "run it".to_string(),
+        })
+        .unwrap();
+    session
+        .record(&assistant_calls(vec![(
+            "call-1",
+            "bash",
+            r#"{"command":"ls"}"#,
+        )]))
         .unwrap();
     session
         .record(&Record::ToolResult {
@@ -3544,7 +4012,11 @@ async fn a_sessions_failure_then_correction_drafts_a_proposal() {
         })
         .unwrap();
     session
-        .record(&assistant_calls(vec![("call-2", "bash", r#"{"command":"ls -la"}"#)]))
+        .record(&assistant_calls(vec![(
+            "call-2",
+            "bash",
+            r#"{"command":"ls -la"}"#,
+        )]))
         .unwrap();
     session
         .record(&Record::ToolResult {
@@ -3556,7 +4028,10 @@ async fn a_sessions_failure_then_correction_drafts_a_proposal() {
         })
         .unwrap();
     session
-        .record(&Record::Assistant { content: Some("done".to_string()), tool_calls: vec![] })
+        .record(&Record::Assistant {
+            content: Some("done".to_string()),
+            tool_calls: vec![],
+        })
         .unwrap();
 
     let filed = fleet::skills::draft_session(&home, session.path(), None);
@@ -3568,16 +4043,24 @@ async fn a_sessions_failure_then_correction_drafts_a_proposal() {
     assert!(draft.contains("name: bash-recovery"), "{draft}");
     assert!(draft.contains("proposed: true"), "{draft}");
     assert!(draft.contains("kind: create"), "{draft}");
-    assert!(draft.contains(&format!("session {}", session.id())), "{draft}");
+    assert!(
+        draft.contains(&format!("session {}", session.id())),
+        "{draft}"
+    );
     assert!(draft.contains("record 4"), "{draft}");
     assert!(draft.contains("record 6"), "{draft}");
     // The draft lives under proposals/ and the live tree is untouched:
     // the one skill it held, and no `bash-recovery` directory beside it.
-    assert!(filed[0].starts_with(fleet::skills::proposals_dir(&home)), "{filed:?}");
+    assert!(
+        filed[0].starts_with(fleet::skills::proposals_dir(&home)),
+        "{filed:?}"
+    );
     let live = fleet::skills::load(&home);
     assert_eq!(live.len(), 1, "{live:?}");
     assert_eq!(live[0].name, "unrelated");
-    assert!(!fleet::skills::skills_dir(&home).join("bash-recovery").exists());
+    assert!(!fleet::skills::skills_dir(&home)
+        .join("bash-recovery")
+        .exists());
     // The proposal loads back through the loader, ready for the gate.
     let proposals = fleet::skills::load_proposals(&home);
     assert_eq!(proposals.len(), 1);
@@ -3592,8 +4075,16 @@ async fn a_sessions_failure_then_correction_drafts_a_proposal() {
 #[tokio::test]
 async fn the_usage_scan_curation_proposes_retirement_and_merge() {
     let home = temp_home("curate");
-    write_skill(&home, "alpha", "probe the embeddings worker for reachability");
-    write_skill(&home, "beta", "probe the embeddings worker for reachability now");
+    write_skill(
+        &home,
+        "alpha",
+        "probe the embeddings worker for reachability",
+    );
+    write_skill(
+        &home,
+        "beta",
+        "probe the embeddings worker for reachability now",
+    );
     write_skill(&home, "gamma", "write the weekly release notes");
     write_skill(&home, "delta", "run the release checklist");
     // The window is two sessions and the merge threshold is the default.
@@ -3608,7 +4099,10 @@ async fn the_usage_scan_curation_proposes_retirement_and_merge() {
     // Two sessions of history — the whole window. One selects alpha and
     // delta; gamma is never selected and beta only exists as alpha's twin.
     let mut used = Session::create(&home, "test-model").unwrap();
-    used.record(&Record::User { content: "t".to_string() }).unwrap();
+    used.record(&Record::User {
+        content: "t".to_string(),
+    })
+    .unwrap();
     used.record(&assistant_calls(vec![
         ("call-1", "use_skill", r#"{"name":"alpha"}"#),
         ("call-2", "use_skill", r#"{"name":"delta"}"#),
@@ -3631,10 +4125,12 @@ async fn the_usage_scan_curation_proposes_retirement_and_merge() {
     })
     .unwrap();
     let mut idle = Session::create(&home, "test-model").unwrap();
-    idle.record(&Record::User { content: "t2".to_string() }).unwrap();
+    idle.record(&Record::User {
+        content: "t2".to_string(),
+    })
+    .unwrap();
 
-    let filed =
-        fleet::skills::curate(&home, config.retire_after_sessions, config.merge_similarity);
+    let filed = fleet::skills::curate(&home, config.retire_after_sessions, config.merge_similarity);
     let names: Vec<String> = filed
         .iter()
         .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
@@ -3647,10 +4143,20 @@ async fn the_usage_scan_curation_proposes_retirement_and_merge() {
     assert!(!names.contains(&"delta".to_string()), "{names:?}");
 
     let proposals = fleet::skills::load_proposals(&home);
-    let retire = proposals.iter().find(|proposal| proposal.name == "gamma").expect("the retire");
+    let retire = proposals
+        .iter()
+        .find(|proposal| proposal.name == "gamma")
+        .expect("the retire");
     assert_eq!(retire.kind, fleet::skills::ProposalKind::Retire);
-    assert!(retire.evidence.contains("last 2 sessions"), "{}", retire.evidence);
-    let merge = proposals.iter().find(|proposal| proposal.name == "alpha").expect("the merge");
+    assert!(
+        retire.evidence.contains("last 2 sessions"),
+        "{}",
+        retire.evidence
+    );
+    let merge = proposals
+        .iter()
+        .find(|proposal| proposal.name == "alpha")
+        .expect("the merge");
     assert_eq!(merge.kind, fleet::skills::ProposalKind::Merge);
     assert!(merge.evidence.contains("0.86"), "{}", merge.evidence);
     assert!(merge.evidence.contains("`beta`"), "{}", merge.evidence);
@@ -3666,7 +4172,12 @@ async fn the_usage_scan_curation_proposes_retirement_and_merge() {
 /// cards, the drafts awaiting the gate, and one draft printed verbatim.
 #[test]
 fn the_skills_command_lists_cards_proposals_and_a_draft() {
-    let home = skills_home("skills-cmd", "demo-skill", "Recover a failed bash call", "# demo");
+    let home = skills_home(
+        "skills-cmd",
+        "demo-skill",
+        "Recover a failed bash call",
+        "# demo",
+    );
     let fleet = env!("CARGO_BIN_EXE_fleet");
     let run = |args: &[&str]| {
         std::process::Command::new(fleet)
@@ -3698,9 +4209,17 @@ fn the_skills_command_lists_cards_proposals_and_a_draft() {
     // File one draft through the crate's own drafter, then read it back
     // through both surfaces.
     let mut session = Session::create(&home, "test-model").unwrap();
-    session.record(&Record::User { content: "run it".to_string() }).unwrap();
     session
-        .record(&assistant_calls(vec![("call-1", "bash", r#"{"command":"ls"}"#)]))
+        .record(&Record::User {
+            content: "run it".to_string(),
+        })
+        .unwrap();
+    session
+        .record(&assistant_calls(vec![(
+            "call-1",
+            "bash",
+            r#"{"command":"ls"}"#,
+        )]))
         .unwrap();
     session
         .record(&Record::ToolResult {
@@ -3712,7 +4231,11 @@ fn the_skills_command_lists_cards_proposals_and_a_draft() {
         })
         .unwrap();
     session
-        .record(&assistant_calls(vec![("call-2", "bash", r#"{"command":"ls -la"}"#)]))
+        .record(&assistant_calls(vec![(
+            "call-2",
+            "bash",
+            r#"{"command":"ls -la"}"#,
+        )]))
         .unwrap();
     session
         .record(&Record::ToolResult {
@@ -3737,7 +4260,10 @@ fn the_skills_command_lists_cards_proposals_and_a_draft() {
     let proposed_out = String::from_utf8_lossy(&proposed.stdout);
     assert!(proposed_out.contains("bash-recovery"), "{proposed_out}");
     assert!(proposed_out.contains("create"), "{proposed_out}");
-    assert!(proposed_out.contains("awaiting the slice-12 gate"), "{proposed_out}");
+    assert!(
+        proposed_out.contains("awaiting the slice-12 gate"),
+        "{proposed_out}"
+    );
     // The gate boundary is named on the surface: nothing here applies.
     assert!(proposed_out.contains("slice 12"), "{proposed_out}");
 
@@ -3775,11 +4301,36 @@ fn memories_corpus(tag: &str) -> PathBuf {
         )
         .unwrap();
     };
-    fact("identity", "who the owner is and how he works, in a standing fact", "user", "");
-    fact("rule", "a standing rule the owner stated about documentation", "feedback", "docs");
-    fact("top", "the railway deploy is failing per branch", "project", "deploy");
-    fact("middle", "the railway deploy waits for the webhook", "project", "deploy");
-    fact("bottom", "the railway deploy logs its outcome", "project", "deploy");
+    fact(
+        "identity",
+        "who the owner is and how he works, in a standing fact",
+        "user",
+        "",
+    );
+    fact(
+        "rule",
+        "a standing rule the owner stated about documentation",
+        "feedback",
+        "docs",
+    );
+    fact(
+        "top",
+        "the railway deploy is failing per branch",
+        "project",
+        "deploy",
+    );
+    fact(
+        "middle",
+        "the railway deploy waits for the webhook",
+        "project",
+        "deploy",
+    );
+    fact(
+        "bottom",
+        "the railway deploy logs its outcome",
+        "project",
+        "deploy",
+    );
     fact("junk", "the walnut table texture", "project", "");
     std::fs::write(memories.join("broken.md"), "# no fence here\n").unwrap();
     root
@@ -3801,11 +4352,17 @@ fn the_memories_command_cards_the_facts_and_names_the_backend() {
     // Cards, never a table: one per live fact, the malformed one skipped.
     assert!(stdout.contains("fleet memories"), "{stdout}");
     assert_eq!(stdout.matches('\u{250c}').count(), 6, "{stdout}");
-    assert!(stdout.contains("6 facts \u{b7} 2 protected \u{b7} 0 retired"), "{stdout}");
+    assert!(
+        stdout.contains("6 facts \u{b7} 2 protected \u{b7} 0 retired"),
+        "{stdout}"
+    );
     // Every card field the surface promises: type, basis, shape,
     // recall-count, valid-until.
     assert!(stdout.contains("project \u{b7} confirmed-by"), "{stdout}");
-    assert!(stdout.contains("shape: deploy \u{b7} recalls: 0 \u{b7} valid-until: \u{2014}"), "{stdout}");
+    assert!(
+        stdout.contains("shape: deploy \u{b7} recalls: 0 \u{b7} valid-until: \u{2014}"),
+        "{stdout}"
+    );
     // The backend is named where an operator looks — which of the two
     // paths serves is the machine's, the naming is the contract.
     assert!(
@@ -3854,7 +4411,10 @@ fn the_memories_recall_flag_prints_the_ranked_assembly() {
     assert!(stdout.contains("[user confirmed-by]"), "{stdout}");
     assert!(stdout.contains("[feedback confirmed-by]"), "{stdout}");
     // The recall section names its shape, and the dry run is honest.
-    assert!(stdout.contains("shape-routed recall for `deploy`"), "{stdout}");
+    assert!(
+        stdout.contains("shape-routed recall for `deploy`"),
+        "{stdout}"
+    );
     assert!(stdout.contains("a dry run"), "{stdout}");
     // Nothing on disk changed: printing is not a recall hit.
     let after: Vec<u8> = {
@@ -3914,16 +4474,34 @@ fn the_memories_shape_flag_filters_the_cards() {
         .output()
         .expect("run the fleet binary");
     let empty_out = String::from_utf8_lossy(&empty.stdout);
-    assert!(empty_out.contains("no facts carry shape `telemetry`"), "{empty_out}");
+    assert!(
+        empty_out.contains("no facts carry shape `telemetry`"),
+        "{empty_out}"
+    );
     // The line is long enough to wrap, so the assertion is on the axes'
     // own vocabulary rather than on one unbroken string: every shape in
     // all three taxonomies is named somewhere on the surface.
     for shape in [
-        "rendering", "state-sync", "deploy", "build", "change", "deps", "docs", "fail-open",
-        "drops-the-row", "bound-exceeded", "claim-outran-evidence", "fixed-width-clip",
-        "foreign-root", "incomplete", "resolved",
+        "rendering",
+        "state-sync",
+        "deploy",
+        "build",
+        "change",
+        "deps",
+        "docs",
+        "fail-open",
+        "drops-the-row",
+        "bound-exceeded",
+        "claim-outran-evidence",
+        "fixed-width-clip",
+        "foreign-root",
+        "incomplete",
+        "resolved",
     ] {
-        assert!(empty_out.contains(shape), "{shape} is not named: {empty_out}");
+        assert!(
+            empty_out.contains(shape),
+            "{shape} is not named: {empty_out}"
+        );
     }
     std::fs::remove_dir_all(&root).ok();
 }
@@ -3973,16 +4551,25 @@ async fn live_api_completes_a_tool_task() {
     let mut session = Session::create(&home, "deepseek-chat").unwrap();
     let client = Client::new(DEFAULT_BASE_URL, key);
     let mut progress = std::io::stderr().lock();
-    let mut agent =
-        Agent::new(&client, AgentOptions::default(), &mut session, Box::new(ApproveAll), &mut progress)
-            .unwrap();
+    let mut agent = Agent::new(
+        &client,
+        AgentOptions::default(),
+        &mut session,
+        Box::new(ApproveAll),
+        &mut progress,
+    )
+    .unwrap();
     let report = agent
         .run("Run `echo fleet-live-ok` with bash, then reply with exactly its output.")
         .await
         .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
     assert!(
-        report.final_message.as_deref().unwrap_or_default().contains("fleet-live-ok"),
+        report
+            .final_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("fleet-live-ok"),
         "{report:?}"
     );
     std::fs::remove_dir_all(&home).ok();
@@ -4028,7 +4615,7 @@ async fn run_with_memory(
         memory,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -4044,18 +4631,32 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
         &[
             (
                 "identity",
-                fact_file("identity", "the owner's standing rule about the gate", "confirmed-by", "feedback", ""),
+                fact_file(
+                    "identity",
+                    "the owner's standing rule about the gate",
+                    "confirmed-by",
+                    "feedback",
+                    "",
+                ),
             ),
             (
                 "top",
-                fact_file("top", "the railway deploy is failing per branch", "inferred", "project", "deploy"),
+                fact_file(
+                    "top",
+                    "the railway deploy is failing per branch",
+                    "inferred",
+                    "project",
+                    "deploy",
+                ),
             ),
         ],
     );
     let calib_root = temp_home("memory-turn-calib");
     let stream = fleet::calib::Stream::open(&calib_root);
-    let memory =
-        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let memory = std::sync::Arc::new(fleet::memory::Memory::load_with(
+        &root,
+        Box::new(fleet::memory::KeywordOnly),
+    ));
     let mut session = Session::create(&home, "test-model").unwrap();
     run_with_memory(
         &mock,
@@ -4076,19 +4677,39 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
     assert!(system.starts_with(fleet::agent::SYSTEM_PROMPT), "{system}");
     assert!(system.contains("## Memory"), "{system}");
     assert!(system.contains("Standing context (protected"), "{system}");
-    assert!(system.contains("shape-routed recall for `deploy`"), "{system}");
-    assert!(system.contains("the railway deploy is failing per branch"), "{system}");
+    assert!(
+        system.contains("shape-routed recall for `deploy`"),
+        "{system}"
+    );
+    assert!(
+        system.contains("the railway deploy is failing per branch"),
+        "{system}"
+    );
     // The write path rides beside the closed four, and the delegation
     // tool beside that.
     assert_eq!(
         declared_tools(&bodies[0]),
-        vec!["bash", "read_file", "write_file", "list_dir", "remember", "supersede", "subagent", "convention", "web", "computer_use"]
+        vec![
+            "bash",
+            "read_file",
+            "write_file",
+            "list_dir",
+            "remember",
+            "supersede",
+            "subagent",
+            "convention",
+            "web",
+            "computer_use"
+        ]
     );
 
     // The `memory` record keeps the prompt reconstructable (hard rule
     // 5): the shape and every fact name, in block order.
     let records = session::replay(&session.path()).unwrap();
-    match records.iter().find(|record| matches!(record, Record::Memory { .. })) {
+    match records
+        .iter()
+        .find(|record| matches!(record, Record::Memory { .. }))
+    {
         Some(Record::Memory { shape, facts }) => {
             assert_eq!(shape, "deploy");
             assert_eq!(facts, &vec!["identity".to_string(), "top".to_string()]);
@@ -4113,22 +4734,43 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
     let mock = MockApi::start(vec![assistant_stream("Done.")]);
     let home = temp_home("memory-less");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_with_memory(&mock, &mut session, Box::new(ApproveAll), None, None, "say done")
-        .await
-        .unwrap();
+    run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        None,
+        None,
+        "say done",
+    )
+    .await
+    .unwrap();
 
     // No memory wired: the system prompt is the compiled-in constant,
     // byte for byte, and the declarations are the closed four plus the
     // delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(bodies[0]["messages"][0]["content"], fleet::agent::SYSTEM_PROMPT);
+    assert_eq!(
+        bodies[0]["messages"][0]["content"],
+        fleet::agent::SYSTEM_PROMPT
+    );
     assert_eq!(
         declared_tools(&bodies[0]),
-        vec!["bash", "read_file", "write_file", "list_dir", "subagent", "convention", "web", "computer_use"]
+        vec![
+            "bash",
+            "read_file",
+            "write_file",
+            "list_dir",
+            "subagent",
+            "convention",
+            "web",
+            "computer_use"
+        ]
     );
     let records = session::replay(&session.path()).unwrap();
     assert!(
-        !records.iter().any(|record| matches!(record, Record::Memory { .. })),
+        !records
+            .iter()
+            .any(|record| matches!(record, Record::Memory { .. })),
         "{records:?}"
     );
 
@@ -4137,21 +4779,46 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
     // delegation tool declared.
     let mock = MockApi::start(vec![assistant_stream("Done.")]);
     let root = memory_corpus("empty-turn", &[]);
-    let memory =
-        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let memory = std::sync::Arc::new(fleet::memory::Memory::load_with(
+        &root,
+        Box::new(fleet::memory::KeywordOnly),
+    ));
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_with_memory(&mock, &mut session, Box::new(ApproveAll), Some(memory), None, "say done")
-        .await
-        .unwrap();
+    run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(memory),
+        None,
+        "say done",
+    )
+    .await
+    .unwrap();
     let bodies = mock.bodies();
-    assert_eq!(bodies[0]["messages"][0]["content"], fleet::agent::SYSTEM_PROMPT);
+    assert_eq!(
+        bodies[0]["messages"][0]["content"],
+        fleet::agent::SYSTEM_PROMPT
+    );
     assert_eq!(
         declared_tools(&bodies[0]),
-        vec!["bash", "read_file", "write_file", "list_dir", "remember", "supersede", "subagent", "convention", "web", "computer_use"]
+        vec![
+            "bash",
+            "read_file",
+            "write_file",
+            "list_dir",
+            "remember",
+            "supersede",
+            "subagent",
+            "convention",
+            "web",
+            "computer_use"
+        ]
     );
     let records = session::replay(&session.path()).unwrap();
     assert!(
-        !records.iter().any(|record| matches!(record, Record::Memory { .. })),
+        !records
+            .iter()
+            .any(|record| matches!(record, Record::Memory { .. })),
         "{records:?}"
     );
 }
@@ -4175,12 +4842,21 @@ async fn the_remember_tool_writes_a_fact_inside_a_run() {
     ]);
     let home = temp_home("remember-run");
     let root = memory_corpus("remember-run", &[]);
-    let memory =
-        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let memory = std::sync::Arc::new(fleet::memory::Memory::load_with(
+        &root,
+        Box::new(fleet::memory::KeywordOnly),
+    ));
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_with_memory(&mock, &mut session, Box::new(ApproveAll), Some(memory), None, "remember this")
-        .await
-        .unwrap();
+    run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(memory),
+        None,
+        "remember this",
+    )
+    .await
+    .unwrap();
 
     // The fact is on disk, in the shape the loader reads back.
     let loaded = fleet::memory::load_facts(&root);
@@ -4204,7 +4880,10 @@ async fn the_remember_tool_writes_a_fact_inside_a_run() {
         })
         .collect();
     assert_eq!(results.len(), 2, "{results:?}");
-    assert!(results[0].1.contains("remembered `a-new-fact`"), "{results:?}");
+    assert!(
+        results[0].1.contains("remembered `a-new-fact`"),
+        "{results:?}"
+    );
     assert!(results[1].1.starts_with("error:"), "{results:?}");
     assert!(results[1].1.contains("basis"), "{results:?}");
 }
@@ -4224,13 +4903,21 @@ async fn a_confirmed_by_supersede_lands_with_approval_and_is_refused_without_it(
         "supersede-approved",
         &[(
             "load-bearing",
-            fact_file("load-bearing", "the owner's standing rule about the gate", "confirmed-by", "feedback", ""),
+            fact_file(
+                "load-bearing",
+                "the owner's standing rule about the gate",
+                "confirmed-by",
+                "feedback",
+                "",
+            ),
         )],
     );
     let calib_root = temp_home("supersede-calib");
     let stream = fleet::calib::Stream::open(&calib_root);
-    let memory =
-        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let memory = std::sync::Arc::new(fleet::memory::Memory::load_with(
+        &root,
+        Box::new(fleet::memory::KeywordOnly),
+    ));
     let mut session = Session::create(&home, "test-model").unwrap();
     run_with_memory(
         &mock,
@@ -4271,15 +4958,30 @@ async fn a_confirmed_by_supersede_lands_with_approval_and_is_refused_without_it(
         "supersede-denied",
         &[(
             "load-bearing",
-            fact_file("load-bearing", "the owner's standing rule about the gate", "confirmed-by", "feedback", ""),
+            fact_file(
+                "load-bearing",
+                "the owner's standing rule about the gate",
+                "confirmed-by",
+                "feedback",
+                "",
+            ),
         )],
     );
-    let memory =
-        std::sync::Arc::new(fleet::memory::Memory::load_with(&root, Box::new(fleet::memory::KeywordOnly)));
+    let memory = std::sync::Arc::new(fleet::memory::Memory::load_with(
+        &root,
+        Box::new(fleet::memory::KeywordOnly),
+    ));
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_with_memory(&mock, &mut session, Box::new(DenyAll), Some(memory), None, "restate the rule")
-        .await
-        .unwrap();
+    run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(DenyAll),
+        Some(memory),
+        None,
+        "restate the rule",
+    )
+    .await
+    .unwrap();
 
     assert!(!root.join("load-bearing-v2.md").exists());
     let old = std::fs::read_to_string(root.join("load-bearing.md")).unwrap();
@@ -4290,9 +4992,12 @@ async fn a_confirmed_by_supersede_lands_with_approval_and_is_refused_without_it(
     let denial = records
         .iter()
         .find_map(|record| match record {
-            Record::ToolResult { name, output, approved, .. } if name == "supersede" => {
-                Some((output.clone(), *approved))
-            }
+            Record::ToolResult {
+                name,
+                output,
+                approved,
+                ..
+            } if name == "supersede" => Some((output.clone(), *approved)),
             _ => None,
         })
         .expect("the supersede tool_result");
@@ -4322,7 +5027,7 @@ async fn run_with_improve(
         memory: None,
         scope: None,
         improve_home: Some(home.to_path_buf()),
-    compact_now: false,
+        compact_now: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -4357,25 +5062,39 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
     ]);
     let home = temp_home("improve-run");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_with_improve(&mock, &mut session, Box::new(ApproveAll), &home, "draft the session's lesson")
-        .await
-        .unwrap();
+    run_with_improve(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        &home,
+        "draft the session's lesson",
+    )
+    .await
+    .unwrap();
 
     // The declaration rides the request beside the delegation tool,
     // and only when the run carries a home.
     let bodies = mock.bodies();
     assert_eq!(
         declared_tools(&bodies[0]),
-        vec!["bash", "read_file", "write_file", "list_dir", "subagent", "improve", "convention", "web", "computer_use"]
+        vec![
+            "bash",
+            "read_file",
+            "write_file",
+            "list_dir",
+            "subagent",
+            "improve",
+            "convention",
+            "web",
+            "computer_use"
+        ]
     );
 
     // The proposal is on disk, in the shape the gate reads: frontmatter
     // with the target and the basis, the four body sections, and the
     // change as a fenced JSON block.
-    let filed = std::fs::read_to_string(
-        home.join("proposals").join("bash-recovery-lesson.md"),
-    )
-    .unwrap();
+    let filed =
+        std::fs::read_to_string(home.join("proposals").join("bash-recovery-lesson.md")).unwrap();
     assert!(filed.contains("name: bash-recovery-lesson"), "{filed}");
     assert!(filed.contains("target: skill"), "{filed}");
     assert!(filed.contains("target-name: bash-recovery"), "{filed}");
@@ -4392,8 +5111,14 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
     let records = session::replay(&session.path()).unwrap();
     let (output, approved) = tool_result(&records, "improve");
     assert!(approved);
-    assert!(output.contains("filed proposal `bash-recovery-lesson`"), "{output}");
-    assert!(output.contains("fleet improve apply bash-recovery-lesson"), "{output}");
+    assert!(
+        output.contains("filed proposal `bash-recovery-lesson`"),
+        "{output}"
+    );
+    assert!(
+        output.contains("fleet improve apply bash-recovery-lesson"),
+        "{output}"
+    );
     assert!(!home.join("skills").join("bash-recovery").exists());
 }
 
@@ -4405,11 +5130,22 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
     let mock = MockApi::start(vec![assistant_stream("Done.")]);
     let home = temp_home("improve-less");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say done").await.unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say done")
+        .await
+        .unwrap();
     let bodies = mock.bodies();
     assert_eq!(
         declared_tools(&bodies[0]),
-        vec!["bash", "read_file", "write_file", "list_dir", "subagent", "convention", "web", "computer_use"]
+        vec![
+            "bash",
+            "read_file",
+            "write_file",
+            "list_dir",
+            "subagent",
+            "convention",
+            "web",
+            "computer_use"
+        ]
     );
 }
 
@@ -4456,9 +5192,12 @@ fn tool_result(records: &[Record], name: &str) -> (String, bool) {
     records
         .iter()
         .find_map(|record| match record {
-            Record::ToolResult { name: recorded, output, approved, .. } if recorded == name => {
-                Some((output.clone(), *approved))
-            }
+            Record::ToolResult {
+                name: recorded,
+                output,
+                approved,
+                ..
+            } if recorded == name => Some((output.clone(), *approved)),
             _ => None,
         })
         .unwrap_or_else(|| panic!("no {name} tool_result in {records:?}"))
@@ -4486,16 +5225,26 @@ impl Approver for GateSpy {
 #[tokio::test]
 async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
     let mock = MockApi::start(vec![
-        tool_call_stream("call-1", "subagent", &delegation_arguments("count the files in /tmp")),
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("count the files in /tmp"),
+        ),
         tool_call_stream("child-1", "use_skill", r#"{"name":"demo-skill"}"#),
         assistant_stream("there are three files"),
         assistant_stream("the child counted three files"),
     ]);
     let home = temp_home("subagent-own-session");
     let mut session = Session::create(&home, "test-model").unwrap();
-    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the count")
-        .await
-        .unwrap();
+    let report = run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "delegate the count",
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     // Two logs exist afterward: the parent's and the child's.
@@ -4509,7 +5258,12 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
     // marker that survives a replay and the picker listing alike.
     let child_records = session::replay(&child.path).unwrap();
     match &child_records[0] {
-        Record::Start { kind, parent, model, .. } => {
+        Record::Start {
+            kind,
+            parent,
+            model,
+            ..
+        } => {
             assert_eq!(kind.as_deref(), Some("subagent"));
             assert_eq!(parent.as_deref(), Some(session.id()));
             assert_eq!(model, "test-model");
@@ -4521,12 +5275,21 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
     let messages = session::messages(&child_records);
     assert_eq!(messages.len(), 4, "{messages:?}");
     assert_eq!(messages[0].role, Role::User);
-    assert_eq!(messages[0].content.as_deref(), Some("count the files in /tmp"));
+    assert_eq!(
+        messages[0].content.as_deref(),
+        Some("count the files in /tmp")
+    );
     assert_eq!(messages[1].role, Role::Assistant);
     assert_eq!(messages[1].tool_calls[0].function.name, "use_skill");
     assert_eq!(messages[2].role, Role::Tool);
-    assert_eq!(messages[2].content.as_deref(), Some("error: no skill named `demo-skill`"));
-    assert_eq!(messages[3].content.as_deref(), Some("there are three files"));
+    assert_eq!(
+        messages[2].content.as_deref(),
+        Some("error: no skill named `demo-skill`")
+    );
+    assert_eq!(
+        messages[3].content.as_deref(),
+        Some("there are three files")
+    );
     assert!(matches!(
         child_records.last(),
         Some(Record::End { stop_reason, .. }) if stop_reason == "completed"
@@ -4540,9 +5303,15 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
     for body in &bodies {
         assert_eq!(body["model"], "test-model", "{body}");
     }
-    assert_eq!(bodies[1]["messages"][0]["content"], fleet::agent::SYSTEM_PROMPT);
+    assert_eq!(
+        bodies[1]["messages"][0]["content"],
+        fleet::agent::SYSTEM_PROMPT
+    );
     // The child's first user message is the goal, whole.
-    assert_eq!(bodies[1]["messages"][1]["content"], "count the files in /tmp");
+    assert_eq!(
+        bodies[1]["messages"][1]["content"],
+        "count the files in /tmp"
+    );
     // The child's tool set is its admitted scope. `use_skill` is admitted
     // and undeclared here, exactly as on a skill-less parent's run: the
     // scope decides what is callable, the run's skills decide what is
@@ -4565,7 +5334,10 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
     assert!(approved, "the delegation was approved");
     assert!(output.starts_with("subagent completed"), "{output}");
     assert!(output.contains(child.id.as_str()), "{output}");
-    assert!(output.contains(&child.path.display().to_string()), "{output}");
+    assert!(
+        output.contains(&child.path.display().to_string()),
+        "{output}"
+    );
     assert!(output.contains("there are three files"), "{output}");
     // The assistant turn that requested the call is logged with its call
     // intact, so the replay stays a valid sequence.
@@ -4583,7 +5355,11 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
 #[tokio::test]
 async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
     let mock = MockApi::start(vec![
-        tool_call_stream("call-1", "subagent", &delegation_arguments("answer briefly")),
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("answer briefly"),
+        ),
         assistant_stream("answered on the routed model"),
         assistant_stream("the child answered"),
     ]);
@@ -4615,11 +5391,17 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let mut progress = Vec::new();
-    let mut agent =
-        Agent::new(&client, options, &mut session, Box::new(ApproveAll), &mut progress).unwrap();
+    let mut agent = Agent::new(
+        &client,
+        options,
+        &mut session,
+        Box::new(ApproveAll),
+        &mut progress,
+    )
+    .unwrap();
     agent.run("delegate it").await.unwrap();
 
     // Every request — the parent's two and the child's one — carries the
@@ -4658,23 +5440,46 @@ async fn a_tool_outside_the_childs_scope_is_refused_by_name() {
             })
             .to_string(),
         ),
-        tool_call_stream("child-1", "write_file", r#"{"path":"/tmp/nope.txt","content":"x"}"#),
+        tool_call_stream(
+            "child-1",
+            "write_file",
+            r#"{"path":"/tmp/nope.txt","content":"x"}"#,
+        ),
         assistant_stream("I could not write the file"),
         assistant_stream("the child could not write it"),
     ]);
     let home = temp_home("subagent-scope");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the write").await.unwrap();
+    run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "delegate the write",
+    )
+    .await
+    .unwrap();
 
     let bodies = mock.bodies();
     // The child's second request declared only what its scope admits.
-    assert_eq!(declared_tools(&bodies[2]), vec!["bash"], "{:?}", declared_tools(&bodies[2]));
+    assert_eq!(
+        declared_tools(&bodies[2]),
+        vec!["bash"],
+        "{:?}",
+        declared_tools(&bodies[2])
+    );
     // The refusal is a typed, model-visible result that names the tool and
     // the scope it fell outside.
     let child = child_summary(&home);
     let (output, approved) = tool_result(&session::replay(&child.path).unwrap(), "write_file");
-    assert!(approved, "the call crossed the gate before the harness refused it");
-    assert!(output.contains("outside this subagent's admitted scope"), "{output}");
+    assert!(
+        approved,
+        "the call crossed the gate before the harness refused it"
+    );
+    assert!(
+        output.contains("outside this subagent's admitted scope"),
+        "{output}"
+    );
     assert!(output.contains("`write_file`"), "{output}");
     assert!(output.contains("bash"), "{output}");
 
@@ -4686,14 +5491,30 @@ async fn a_tool_outside_the_childs_scope_is_refused_by_name() {
 #[tokio::test]
 async fn a_subagent_cannot_spawn_a_subagent() {
     let mock = MockApi::start(vec![
-        tool_call_stream("call-1", "subagent", &delegation_arguments("delegate onward")),
-        tool_call_stream("child-1", "subagent", &delegation_arguments("delegate again")),
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("delegate onward"),
+        ),
+        tool_call_stream(
+            "child-1",
+            "subagent",
+            &delegation_arguments("delegate again"),
+        ),
         assistant_stream("I cannot delegate further"),
         assistant_stream("the child could not delegate"),
     ]);
     let home = temp_home("subagent-depth");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the delegation").await.unwrap();
+    run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "delegate the delegation",
+    )
+    .await
+    .unwrap();
 
     // The delegation tool was never in the child's declarations: the one
     // request the child made is the second one recorded.
@@ -4706,7 +5527,10 @@ async fn a_subagent_cannot_spawn_a_subagent() {
     );
     let child = child_summary(&home);
     let (output, _) = tool_result(&session::replay(&child.path).unwrap(), "subagent");
-    assert!(output.contains("a subagent cannot spawn subagents"), "{output}");
+    assert!(
+        output.contains("a subagent cannot spawn subagents"),
+        "{output}"
+    );
     assert!(output.contains("depth cap 2"), "{output}");
 
     std::fs::remove_dir_all(&home).ok();
@@ -4743,19 +5567,38 @@ async fn a_child_stops_at_its_turn_cap_with_its_partial_log_intact() {
     ]);
     let home = temp_home("subagent-cap");
     let mut session = Session::create(&home, "test-model").unwrap();
-    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the check")
-        .await
-        .unwrap();
-    assert_eq!(report.stop_reason, StopReason::Completed, "the parent carries on");
+    let report = run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "delegate the check",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        report.stop_reason,
+        StopReason::Completed,
+        "the parent carries on"
+    );
 
     let child = child_summary(&home);
     let child_records = session::replay(&child.path).unwrap();
     // The child's own log ends at its cap, with both of its turns in it.
-    assert!(matches!(
-        child_records.last(),
-        Some(Record::End { stop_reason, turns }) if stop_reason == "max-turns" && *turns == 2
-    ), "{child_records:?}");
-    assert_eq!(child_records.iter().filter(|record| matches!(record, Record::ToolResult { .. })).count(), 2);
+    assert!(
+        matches!(
+            child_records.last(),
+            Some(Record::End { stop_reason, turns }) if stop_reason == "max-turns" && *turns == 2
+        ),
+        "{child_records:?}"
+    );
+    assert_eq!(
+        child_records
+            .iter()
+            .filter(|record| matches!(record, Record::ToolResult { .. }))
+            .count(),
+        2
+    );
 
     // The parent's result names the outcome and carries the child's last
     // words — the partial result, not silence.
@@ -4774,7 +5617,11 @@ async fn a_child_stops_at_its_turn_cap_with_its_partial_log_intact() {
 #[tokio::test]
 async fn a_failed_child_returns_its_partial_result_and_its_reason() {
     let mock = MockApi::start(vec![
-        tool_call_stream("call-1", "subagent", &delegation_arguments("check every file")),
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("check every file"),
+        ),
         narrated_tool_call_stream(
             "child-1",
             "bash",
@@ -4791,16 +5638,29 @@ async fn a_failed_child_returns_its_partial_result_and_its_reason() {
     ]);
     let home = temp_home("subagent-failure");
     let mut session = Session::create(&home, "test-model").unwrap();
-    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate the check")
-        .await
-        .unwrap();
-    assert_eq!(report.stop_reason, StopReason::Completed, "the parent survives its child's failure");
+    let report = run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "delegate the check",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        report.stop_reason,
+        StopReason::Completed,
+        "the parent survives its child's failure"
+    );
 
     let child = child_summary(&home);
     let child_records = session::replay(&child.path).unwrap();
     // The interrupted-log shape: the child's turns are there, its `end` is
     // not — and its partial narration survived.
-    assert!(!matches!(child_records.last(), Some(Record::End { .. })), "{child_records:?}");
+    assert!(
+        !matches!(child_records.last(), Some(Record::End { .. })),
+        "{child_records:?}"
+    );
     assert!(child_records.iter().any(|record| matches!(
         record,
         Record::Assistant { content: Some(text), .. } if text.contains("checked one of five")
@@ -4810,11 +5670,17 @@ async fn a_failed_child_returns_its_partial_result_and_its_reason() {
     // and the child's last words.
     let (output, approved) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
     assert!(approved, "{output}");
-    assert!(output.starts_with("subagent failed (API error 500: the child's model went away)"), "{output}");
+    assert!(
+        output.starts_with("subagent failed (API error 500: the child's model went away)"),
+        "{output}"
+    );
     // One turn completed: the log's count, not the loop's counter, which
     // would name the turn the child died on.
     assert!(output.contains("1 turn"), "{output}");
-    assert!(output.contains(&child.path.display().to_string()), "{output}");
+    assert!(
+        output.contains(&child.path.display().to_string()),
+        "{output}"
+    );
     assert!(output.contains("checked one of five"), "{output}");
 
     std::fs::remove_dir_all(&home).ok();
@@ -4838,8 +5704,12 @@ async fn a_childs_call_crosses_the_parents_approver_labelled() {
     let home = temp_home("subagent-approver");
     let mut session = Session::create(&home, "test-model").unwrap();
     let spy = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let approver = Box::new(GateSpy { seen: Arc::clone(&spy) });
-    run_on(&mock, &mut session, approver, 5, "delegate the echo").await.unwrap();
+    let approver = Box::new(GateSpy {
+        seen: Arc::clone(&spy),
+    });
+    run_on(&mock, &mut session, approver, 5, "delegate the echo")
+        .await
+        .unwrap();
 
     let seen = spy.lock().unwrap();
     // Two calls crossed the one gate: the parent's own delegation, then
@@ -4849,8 +5719,7 @@ async fn a_childs_call_crosses_the_parents_approver_labelled() {
     assert_eq!(seen[1].function.name, "subagent \u{2192} bash");
     // The forwarded call carries the goal beside the child's own
     // arguments, so the prompt can name both.
-    let forwarded: serde_json::Value =
-        serde_json::from_str(&seen[1].function.arguments).unwrap();
+    let forwarded: serde_json::Value = serde_json::from_str(&seen[1].function.arguments).unwrap();
     assert_eq!(forwarded["goal"], "run echo from-the-child");
     assert_eq!(forwarded["tool"], "bash");
     assert_eq!(forwarded["arguments"]["command"], "echo from-the-child");
@@ -4875,13 +5744,24 @@ async fn a_malformed_delegation_is_a_typed_refusal() {
     ]);
     let home = temp_home("subagent-refusal");
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "delegate nothing").await.unwrap();
+    run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "delegate nothing",
+    )
+    .await
+    .unwrap();
 
     let (output, _) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
     assert!(output.starts_with("error:"), "{output}");
     assert!(output.contains("goal"), "{output}");
     // No child was created: the refusal happened before any session.
-    assert!(session::list(&home).unwrap().iter().all(|summary| summary.kind.is_none()));
+    assert!(session::list(&home)
+        .unwrap()
+        .iter()
+        .all(|summary| summary.kind.is_none()));
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -4899,24 +5779,39 @@ async fn a_child_inherits_the_parents_declared_skills() {
         "# demo\n\nread the error, fix one thing, rerun",
     );
     let mock = MockApi::start(vec![
-        tool_call_stream("call-1", "subagent", &delegation_arguments("recover from it")),
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("recover from it"),
+        ),
         tool_call_stream("child-1", "use_skill", r#"{"name":"demo-skill"}"#),
         assistant_stream("The skill is loaded; I will read the error first."),
         assistant_stream("the child loaded the skill"),
     ]);
     let mut session = Session::create(&home, "test-model").unwrap();
-    run_with_skills(&mock, &mut session, fleet::skills::load(&home), "delegate the recovery")
-        .await
-        .unwrap();
+    run_with_skills(
+        &mock,
+        &mut session,
+        fleet::skills::load(&home),
+        "delegate the recovery",
+    )
+    .await
+    .unwrap();
 
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 4, "{bodies:?}");
     // The child's system prompt carries the same name+description list the
     // parent's does, and still nothing of the body.
     let child_prompt = bodies[1]["messages"][0]["content"].as_str().unwrap();
-    assert!(child_prompt.starts_with(fleet::agent::SYSTEM_PROMPT), "{child_prompt}");
+    assert!(
+        child_prompt.starts_with(fleet::agent::SYSTEM_PROMPT),
+        "{child_prompt}"
+    );
     assert!(child_prompt.contains("demo-skill"), "{child_prompt}");
-    assert!(child_prompt.contains("Recover a failed bash call"), "{child_prompt}");
+    assert!(
+        child_prompt.contains("Recover a failed bash call"),
+        "{child_prompt}"
+    );
     assert!(!child_prompt.contains("fix one thing"), "{child_prompt}");
     // `use_skill` is declared to the child, and the body it fetches rides
     // the child's own tool_result path.
@@ -4975,7 +5870,7 @@ async fn run_capturing(
         memory: None,
         scope: None,
         improve_home: None,
-    compact_now: false,
+        compact_now: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
@@ -5059,14 +5954,24 @@ async fn a_conversation_past_the_budget_compacts_and_the_next_request_carries_th
     let mut session = Session::create(&home, "test-model").unwrap();
     let mock = MockApi::start(crossing_script("- the summary of the early turns"));
     let mut progress: Vec<u8> = Vec::new();
-    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
-        .await
-        .unwrap();
+    let report = run_capturing(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        20,
+        "the task",
+        &mut progress,
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
     let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
 
     // The headless progress line.
-    assert!(written.contains("compacted: 2 turns → 1 summary"), "{written}");
+    assert!(
+        written.contains("compacted: 2 turns → 1 summary"),
+        "{written}"
+    );
     assert!(written.contains("~120000 → ~"), "{written}");
 
     // Eight requests: six turns, the compaction, and the final answer.
@@ -5077,15 +5982,24 @@ async fn a_conversation_past_the_budget_compacts_and_the_next_request_carries_th
     // replaced, and the compaction instruction — and no tools, because a
     // compaction request has nothing to execute.
     let compaction_request = request_messages(&mock, 6);
-    assert_eq!(compaction_request.len(), 1 + 5 + 1, "{compaction_request:?}");
+    assert_eq!(
+        compaction_request.len(),
+        1 + 5 + 1,
+        "{compaction_request:?}"
+    );
     assert_eq!(compaction_request[0].role, Role::System);
     assert_eq!(compaction_request[1].role, Role::User);
     assert_eq!(compaction_request[1].content.as_deref(), Some("the task"));
     assert_eq!(
-        compaction_request[compaction_request.len() - 1].content.as_deref(),
+        compaction_request[compaction_request.len() - 1]
+            .content
+            .as_deref(),
         Some(fleet::compaction::COMPACTION_INSTRUCTION)
     );
-    assert!(bodies[6].get("tools").is_none(), "a compaction request carries no tools");
+    assert!(
+        bodies[6].get("tools").is_none(),
+        "a compaction request carries no tools"
+    );
 
     // The next request carries the summary and the verbatim tail.
     let after = request_messages(&mock, 7);
@@ -5104,7 +6018,10 @@ async fn a_conversation_past_the_budget_compacts_and_the_next_request_carries_th
     assert_eq!(after[2].tool_calls[0].id, "call-3");
     assert_eq!(after[3].role, Role::Tool);
     assert_eq!(after[3].tool_call_id.as_deref(), Some("call-3"));
-    assert_eq!(after[after.len() - 1].content.as_deref(), Some("exit 0\n--- stdout ---\n6\n"));
+    assert_eq!(
+        after[after.len() - 1].content.as_deref(),
+        Some("exit 0\n--- stdout ---\n6\n")
+    );
 
     // The log reconstructs that request byte for byte: replay's message
     // list is exactly what was sent after the system prompt.
@@ -5113,7 +6030,10 @@ async fn a_conversation_past_the_budget_compacts_and_the_next_request_carries_th
     assert_eq!(replayed, after[1..].to_vec(), "replay equals what was sent");
 
     // The compaction record, with its range and its counts.
-    match records.iter().find(|record| matches!(record, Record::Compaction { .. })) {
+    match records
+        .iter()
+        .find(|record| matches!(record, Record::Compaction { .. }))
+    {
         Some(Record::Compaction {
             summary,
             first_turn,
@@ -5129,7 +6049,9 @@ async fn a_conversation_past_the_budget_compacts_and_the_next_request_carries_th
         }
         other => panic!("expected a compaction record, got {other:?}"),
     }
-    assert!(records.iter().any(|record| matches!(record, Record::End { .. })));
+    assert!(records
+        .iter()
+        .any(|record| matches!(record, Record::End { .. })));
     // And the session lists as compacted.
     assert!(session::list(&home).unwrap()[0].compacted);
     std::fs::remove_dir_all(&home).ok();
@@ -5148,20 +6070,25 @@ async fn the_measure_is_the_apis_own_count_when_it_reports_one() {
         assistant_stream("done"),
     ]);
     let mut progress: Vec<u8> = Vec::new();
-    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 5, "the task", &mut progress)
-        .await
-        .unwrap();
+    let report = run_capturing(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "the task",
+        &mut progress,
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
     // Two requests only: no compaction request was made.
     assert_eq!(mock.bodies().len(), 2);
     let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
     assert!(!written.contains("compacted"), "{written}");
-    assert!(
-        !session::replay(&session.path())
-            .unwrap()
-            .iter()
-            .any(|record| matches!(record, Record::Compaction { .. }))
-    );
+    assert!(!session::replay(&session.path())
+        .unwrap()
+        .iter()
+        .any(|record| matches!(record, Record::Compaction { .. })));
     std::fs::remove_dir_all(&home).ok();
 }
 
@@ -5193,12 +6120,22 @@ async fn the_measure_falls_back_to_the_estimate_when_usage_is_absent() {
     script.push(assistant_stream("done"));
     let mock = MockApi::start(script);
     let mut progress: Vec<u8> = Vec::new();
-    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
-        .await
-        .unwrap();
+    let report = run_capturing(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        20,
+        "the task",
+        &mut progress,
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
     let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
-    assert!(written.contains("compacted: 1 turn → 1 summary"), "{written}");
+    assert!(
+        written.contains("compacted: 1 turn → 1 summary"),
+        "{written}"
+    );
     // Seven requests: five turns, the compaction, and the final answer.
     assert_eq!(mock.bodies().len(), 7);
     // The record's `tokens_before` is the estimate, which is what the
@@ -5244,15 +6181,25 @@ async fn a_failed_compaction_request_lets_the_run_continue_un_compacted() {
     };
     let mock = MockApi::start(script);
     let mut progress: Vec<u8> = Vec::new();
-    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
-        .await
-        .unwrap();
+    let report = run_capturing(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        20,
+        "the task",
+        &mut progress,
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     // No compaction happened, and the log records none that did not.
     let records = session::replay(&session.path()).unwrap();
     assert_eq!(
-        records.iter().filter(|record| matches!(record, Record::Compaction { .. })).count(),
+        records
+            .iter()
+            .filter(|record| matches!(record, Record::Compaction { .. }))
+            .count(),
         0,
         "{records:?}"
     );
@@ -5289,14 +6236,24 @@ async fn one_compaction_per_crossing_and_the_tool_loop_survives_it() {
     script.push(assistant_stream("done"));
     let mock = MockApi::start(script);
     let mut progress: Vec<u8> = Vec::new();
-    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
-        .await
-        .unwrap();
+    let report = run_capturing(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        20,
+        "the task",
+        &mut progress,
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     let records = session::replay(&session.path()).unwrap();
     assert_eq!(
-        records.iter().filter(|record| matches!(record, Record::Compaction { .. })).count(),
+        records
+            .iter()
+            .filter(|record| matches!(record, Record::Compaction { .. }))
+            .count(),
         1,
         "{records:?}"
     );
@@ -5305,7 +6262,10 @@ async fn one_compaction_per_crossing_and_the_tool_loop_survives_it() {
     // The tool loop's integrity across the fold: every call the model made
     // executed and logged, before and after.
     assert_eq!(
-        records.iter().filter(|record| matches!(record, Record::ToolResult { .. })).count(),
+        records
+            .iter()
+            .filter(|record| matches!(record, Record::ToolResult { .. }))
+            .count(),
         8
     );
     // The final request carries the summary, the tail's four turns, and
@@ -5335,11 +6295,20 @@ async fn a_compacted_session_resumes_from_disk_and_continues_coherently() {
     let id = session.id().to_string();
     let mock = MockApi::start(crossing_script("- the summary of the early turns"));
     let mut progress: Vec<u8> = Vec::new();
-    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
-        .await
-        .unwrap();
+    let report = run_capturing(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        20,
+        "the task",
+        &mut progress,
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
-    assert!(String::from_utf8(std::mem::take(&mut progress)).unwrap().contains("compacted:"));
+    assert!(String::from_utf8(std::mem::take(&mut progress))
+        .unwrap()
+        .contains("compacted:"));
     drop(mock);
 
     // Resume from disk and ask for more.
@@ -5347,11 +6316,21 @@ async fn a_compacted_session_resumes_from_disk_and_continues_coherently() {
     let mut resumed = Session::open(&path).unwrap();
     let mock = MockApi::start(vec![assistant_stream("carried on coherently")]);
     let mut progress: Vec<u8> = Vec::new();
-    let report = run_capturing(&mock, &mut resumed, Box::new(ApproveAll), 20, "keep going", &mut progress)
-        .await
-        .unwrap();
+    let report = run_capturing(
+        &mock,
+        &mut resumed,
+        Box::new(ApproveAll),
+        20,
+        "keep going",
+        &mut progress,
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
-    assert_eq!(report.final_message.as_deref(), Some("carried on coherently"));
+    assert_eq!(
+        report.final_message.as_deref(),
+        Some("carried on coherently")
+    );
     // The resumed run is well under the budget already, so it folds
     // nothing: one compaction in the log's life, not one per resume.
     let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
@@ -5370,14 +6349,20 @@ async fn a_compacted_session_resumes_from_disk_and_continues_coherently() {
         )
     );
     assert_eq!(first[first.len() - 2].content.as_deref(), Some("All done."));
-    assert_eq!(first[first.len() - 1].content.as_deref(), Some("keep going"));
+    assert_eq!(
+        first[first.len() - 1].content.as_deref(),
+        Some("keep going")
+    );
 
     // The log still holds exactly one compaction, and its turn numbering
     // continues from the log's own last answer: the fold's turn, the
     // answer after it, and the resumed run's own turn.
     let records = session::replay(&path).unwrap();
     assert_eq!(
-        records.iter().filter(|record| matches!(record, Record::Compaction { .. })).count(),
+        records
+            .iter()
+            .filter(|record| matches!(record, Record::Compaction { .. }))
+            .count(),
         1,
         "{records:?}"
     );
@@ -5399,16 +6384,25 @@ async fn an_empty_summary_skips_the_fold_rather_than_dropping_the_conversation()
     script.push(assistant_stream("done"));
     let mock = MockApi::start(script);
     let mut progress: Vec<u8> = Vec::new();
-    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
-        .await
-        .unwrap();
+    let report = run_capturing(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        20,
+        "the task",
+        &mut progress,
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
     let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
     assert!(written.contains("compaction skipped"), "{written}");
     assert!(!written.contains("compacted:"), "{written}");
     let records = session::replay(&session.path()).unwrap();
     assert!(
-        !records.iter().any(|record| matches!(record, Record::Compaction { .. })),
+        !records
+            .iter()
+            .any(|record| matches!(record, Record::Compaction { .. })),
         "{records:?}"
     );
     // The final request still carries the whole conversation.
@@ -5428,7 +6422,9 @@ async fn a_run_under_the_budget_logs_no_compaction_record() {
         assistant_stream("All done."),
     ]);
     let mut progress = Vec::new();
-    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say hello").await.unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say hello")
+        .await
+        .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
     let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
     assert!(!written.contains("compacted"), "{written}");
@@ -5456,17 +6452,33 @@ async fn the_compaction_request_is_reconstructable_from_the_log() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let mock = MockApi::start(crossing_script("- the summary"));
     let mut progress: Vec<u8> = Vec::new();
-    let report = run_capturing(&mock, &mut session, Box::new(ApproveAll), 20, "the task", &mut progress)
-        .await
-        .unwrap();
+    let report = run_capturing(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        20,
+        "the task",
+        &mut progress,
+    )
+    .await
+    .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
-    assert!(String::from_utf8(std::mem::take(&mut progress)).unwrap().contains("compacted:"));
+    assert!(String::from_utf8(std::mem::take(&mut progress))
+        .unwrap()
+        .contains("compacted:"));
     let records = session::replay(&session.path()).unwrap();
     let fold = records
         .iter()
         .position(|record| matches!(record, Record::Compaction { .. }))
         .expect("the compaction record");
-    let Record::Compaction { first_turn, last_turn, .. } = &records[fold] else { unreachable!() };
+    let Record::Compaction {
+        first_turn,
+        last_turn,
+        ..
+    } = &records[fold]
+    else {
+        unreachable!()
+    };
     // The records before the fold, split by the same tail function the
     // agent applied, are exactly the messages the request replaced.
     let replaced = replaced_by(&records, *last_turn);
@@ -5477,7 +6489,10 @@ async fn the_compaction_request_is_reconstructable_from_the_log() {
         wanted[1..wanted.len() - 1].to_vec(),
         "the log's preceding records are the compaction request's messages"
     );
-    assert_eq!(wanted[0].content.as_deref(), Some(fleet::agent::SYSTEM_PROMPT));
+    assert_eq!(
+        wanted[0].content.as_deref(),
+        Some(fleet::agent::SYSTEM_PROMPT)
+    );
     assert_eq!(
         wanted[wanted.len() - 1].content.as_deref(),
         Some(fleet::compaction::COMPACTION_INSTRUCTION)
@@ -5522,7 +6537,11 @@ impl CronHarness {
             start_index: 0,
             order: vec![("cand-mock".to_string(), "test-model".to_string())],
         };
-        CronHarness { home, router: Arc::new(Router::new(resolved, decision)), mock }
+        CronHarness {
+            home,
+            router: Arc::new(Router::new(resolved, decision)),
+            mock,
+        }
     }
 
     /// A runner that executes a fire the way production does, minus the
@@ -5555,10 +6574,14 @@ impl CronHarness {
     /// leaves it.
     fn seed_job(&self, name: &str, schedule: &str, last_run: Option<&str>, auto_approve: bool) {
         let mut store = fleet::cron::Store::open(&self.home).unwrap();
-        store.add(name, schedule, "summarize the day", auto_approve).unwrap();
+        store
+            .add(name, schedule, "summarize the day", auto_approve)
+            .unwrap();
         if let Some(stamp) = last_run {
             let minute = fleet::cron::Minute::parse(stamp).unwrap();
-            store.record_run(name, minute, fleet::cron::Outcome::Completed).unwrap();
+            store
+                .record_run(name, minute, fleet::cron::Outcome::Completed)
+                .unwrap();
         }
     }
 
@@ -5626,14 +6649,20 @@ async fn a_scheduled_task_fires_when_its_minute_matches_and_only_once() {
         })
         .expect("the framed task");
     assert!(task.starts_with("[scheduled run"), "{task}");
-    assert!(task.contains("job `every-minute` at 2026-10-14T12:00Z"), "{task}");
+    assert!(
+        task.contains("job `every-minute` at 2026-10-14T12:00Z"),
+        "{task}"
+    );
     assert!(task.ends_with("summarize the day"), "{task}");
     // The log is an ordinary session: `fleet sessions` lists it, marked
     // as a scheduled run — the retained output is reachable from the
     // surface that lists sessions, not only from the job's card.
     let listed = session::list(&harness.home).unwrap();
     assert_eq!(listed.len(), 1, "{listed:?}");
-    assert_eq!(listed[0].kind.as_deref(), Some(fleet::session::SCHEDULED_KIND));
+    assert_eq!(
+        listed[0].kind.as_deref(),
+        Some(fleet::session::SCHEDULED_KIND)
+    );
     let job = harness.store().job("every-minute").unwrap().clone();
     assert_eq!(job.last_run.as_deref(), Some("2026-10-14T12:00Z"));
     assert_eq!(job.last_outcome, Some(fleet::cron::Outcome::Completed));
@@ -5662,9 +6691,15 @@ async fn a_missed_window_catches_up_once_at_startup_and_the_catch_up_is_named() 
     harness.seed_job("hourly", "0 * * * *", Some("2026-10-14T11:00Z"), true);
     let mut scheduler = fleet::cron::Scheduler::new(harness.home.clone(), harness.runner());
 
-    let lines = scheduler.start(fleet::cron::Minute::parse("2026-10-14T12:30Z").unwrap()).await;
+    let lines = scheduler
+        .start(fleet::cron::Minute::parse("2026-10-14T12:30Z").unwrap())
+        .await;
     assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(lines[0].contains("catch-up for 2026-10-14T12:00Z"), "{}", lines[0]);
+    assert!(
+        lines[0].contains("catch-up for 2026-10-14T12:00Z"),
+        "{}",
+        lines[0]
+    );
 
     // Exactly one run, and its own log names the window it served.
     let logs = harness.scheduled_sessions();
@@ -5678,7 +6713,10 @@ async fn a_missed_window_catches_up_once_at_startup_and_the_catch_up_is_named() 
         })
         .expect("the framed task");
     assert!(task.contains("catch-up for job `hourly`"), "{task}");
-    assert!(task.contains("the 2026-10-14T12:00Z window was missed while fleet was down"), "{task}");
+    assert!(
+        task.contains("the 2026-10-14T12:00Z window was missed while fleet was down"),
+        "{task}"
+    );
     let job = harness.store().job("hourly").unwrap().clone();
     assert_eq!(job.last_run.as_deref(), Some("2026-10-14T12:00Z"));
 
@@ -5737,7 +6775,11 @@ async fn a_job_that_is_not_declared_unattended_skips_its_tool_call_and_names_it(
         .await;
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].contains("skipped `bash`"), "{}", lines[0]);
-    assert!(lines[0].contains("no one is here to approve it"), "{}", lines[0]);
+    assert!(
+        lines[0].contains("no one is here to approve it"),
+        "{}",
+        lines[0]
+    );
 
     // The call never ran: the log carries the denial, and the outcome
     // records the skip.
@@ -5767,7 +6809,10 @@ async fn a_job_that_is_not_declared_unattended_skips_its_tool_call_and_names_it(
     assert!(denial.contains("auto_approve"), "{denial}");
     assert!(!denial.contains("the user did not approve"), "{denial}");
     let job = harness.store().job("careful").unwrap().clone();
-    assert_eq!(job.last_outcome, Some(fleet::cron::Outcome::SkippedNeedsApproval));
+    assert_eq!(
+        job.last_outcome,
+        Some(fleet::cron::Outcome::SkippedNeedsApproval)
+    );
     assert_eq!(job.last_run.as_deref(), Some("2026-10-14T12:00Z"));
     std::fs::remove_dir_all(&harness.home).ok();
 }

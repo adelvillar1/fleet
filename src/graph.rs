@@ -380,14 +380,23 @@ impl fmt::Display for GraphError {
                 write!(f, "node `{id}` is already in the graph")
             }
             GraphError::Cycle { node, prereq } => {
-                write!(f, "`{prereq}` already depends on `{node}`: the edge would close a cycle")
+                write!(
+                    f,
+                    "`{prereq}` already depends on `{node}`: the edge would close a cycle"
+                )
             }
             GraphError::UnknownNode(id) => write!(f, "node `{id}` is not in the graph"),
             GraphError::PathHeld { path, holder } => {
-                write!(f, "`{holder}` is running and holds `{path}`: the two cannot run together")
+                write!(
+                    f,
+                    "`{holder}` is running and holds `{path}`: the two cannot run together"
+                )
             }
             GraphError::AlreadyVerified(id) => {
-                write!(f, "`{id}`'s artifact is verified: a report does not demote a fact")
+                write!(
+                    f,
+                    "`{id}`'s artifact is verified: a report does not demote a fact"
+                )
             }
         }
     }
@@ -634,7 +643,12 @@ impl Graph {
         self.nodes
             .iter()
             .enumerate()
-            .map(|(index, node)| (node.id.clone(), self.score_at(index, &mut cache, &mut stack)))
+            .map(|(index, node)| {
+                (
+                    node.id.clone(),
+                    self.score_at(index, &mut cache, &mut stack),
+                )
+            })
             .collect()
     }
 
@@ -679,8 +693,7 @@ impl Graph {
 
     /// Whether one node can start right now.
     pub fn is_unlocked(&self, id: &str) -> bool {
-        self.unlock(id)
-            .is_some_and(|unlock| unlock.is_unlocked())
+        self.unlock(id).is_some_and(|unlock| unlock.is_unlocked())
     }
 
     /// The nodes whose two conditions both hold and that have not
@@ -717,13 +730,7 @@ impl Graph {
             .filter(|node| node.status == Status::Pending)
             .filter(|node| !running.iter().any(|id| id == &node.id))
             .filter(|node| self.is_unlocked(&node.id))
-            .map(|node| {
-                (
-                    self.appears_in_scores(&node.id),
-                    node.cost,
-                    node.id.clone(),
-                )
-            })
+            .map(|node| (self.appears_in_scores(&node.id), node.cost, node.id.clone()))
             .collect();
         // The node that appears in the most scores first: finishing it
         // drops the most scores soonest, which is the scheduling
@@ -1410,7 +1417,9 @@ impl Graph {
         for (id, instead) in &falsified {
             let index = self.index_of(id).expect("a falsified node is in the graph");
             self.nodes[index].approach = instead.clone();
-            changes.push(format!("`{id}`'s approach revised to what its own run did instead"));
+            changes.push(format!(
+                "`{id}`'s approach revised to what its own run did instead"
+            ));
         }
         // The nodes still waiting behind a revised one carry the
         // revision forward: their briefs were written against an
@@ -1456,7 +1465,11 @@ impl Graph {
     fn worst_node(&self) -> Option<(String, u64)> {
         self.nodes
             .iter()
-            .filter_map(|node| node.delta.as_ref().map(|delta| (node.id.clone(), diff_weight(delta))))
+            .filter_map(|node| {
+                node.delta
+                    .as_ref()
+                    .map(|delta| (node.id.clone(), diff_weight(delta)))
+            })
             .max_by_key(|(_, weight)| *weight)
             .filter(|(_, weight)| *weight > 0)
     }
@@ -1568,14 +1581,15 @@ impl Graph {
         for node in file.nodes {
             let id = node.id.clone();
             let delta = node.delta.clone();
-            graph.add(
-                Node::new(node.id, node.cost)
-                    .with_prereqs(node.prereqs)
-                    .with_paths(node.paths)
-                    .with_capabilities(node.capabilities)
-                    .with_approach(node.approach),
-            )
-            .map_err(|error| error.to_string())?;
+            graph
+                .add(
+                    Node::new(node.id, node.cost)
+                        .with_prereqs(node.prereqs)
+                        .with_paths(node.paths)
+                        .with_capabilities(node.capabilities)
+                        .with_approach(node.approach),
+                )
+                .map_err(|error| error.to_string())?;
             // The state rides the file. A load that reset every node to
             // pending would render verified work as blocking work —
             // the one reading the surface would see the graph standing
@@ -1668,7 +1682,12 @@ fn summary_card(graph: &Graph, path: &[String]) -> String {
             .iter()
             .map(|(node, prereq)| format!("{node} needs {prereq}"))
             .collect();
-        body.extend(summary_line("\u{b7}", WARN, "unresolved", &named.join(", ")));
+        body.extend(summary_line(
+            "\u{b7}",
+            WARN,
+            "unresolved",
+            &named.join(", "),
+        ));
     }
     if let Some(blocker) = graph.blocks_most_work() {
         let count = graph.appears_in_scores(&blocker);
@@ -1687,9 +1706,7 @@ fn summary_card(graph: &Graph, path: &[String]) -> String {
     if score > 0 || !graph.revisions.is_empty() {
         let at = score >= DIFF_THRESHOLD;
         let color = if at { WARN } else { DIM };
-        let mut line = format!(
-            "{score} of the {DIFF_THRESHOLD} replan threshold",
-        );
+        let mut line = format!("{score} of the {DIFF_THRESHOLD} replan threshold",);
         if at {
             line.push_str(" \u{b7} the replan has fired");
         }
@@ -1772,7 +1789,12 @@ fn node_card(graph: &Graph, index: usize, path: &[String]) -> String {
         node.id.clone()
     };
     let mut body: Vec<String> = Vec::new();
-    body.push(readiness_line(node, score, color, graph.appears_in_scores(&node.id)));
+    body.push(readiness_line(
+        node,
+        score,
+        color,
+        graph.appears_in_scores(&node.id),
+    ));
     body.extend(edge_lines(graph, node));
     for hold in &unlock.held {
         body.push(format!(
@@ -1795,10 +1817,7 @@ fn node_card(graph: &Graph, index: usize, path: &[String]) -> String {
         ));
     }
     if !node.paths.is_empty() {
-        body.extend(rail_lines(&format!(
-            "paths: {}",
-            node.paths.join(", ")
-        )));
+        body.extend(rail_lines(&format!("paths: {}", node.paths.join(", "))));
     }
     if !node.capabilities.is_empty() {
         body.extend(rail_lines(&format!(
@@ -1819,12 +1838,23 @@ fn node_card(graph: &Graph, index: usize, path: &[String]) -> String {
     if let Some(delta) = &node.delta {
         let mut text = format!("delta: {}", delta.reason.label());
         if delta.state == crate::subagents::DeltaState::Deviated {
-            text.push_str(if delta.forced { " (forced)" } else { " (chosen)" });
+            text.push_str(if delta.forced {
+                " (forced)"
+            } else {
+                " (chosen)"
+            });
         }
         if let Some(contradiction) = &delta.contradiction {
             text.push_str(&format!(" \u{b7} CONTRADICTED: {contradiction}"));
         }
-        body.extend(rail_lines_colored(&text, if delta.contradiction.is_some() { ERROR } else { TEXT }));
+        body.extend(rail_lines_colored(
+            &text,
+            if delta.contradiction.is_some() {
+                ERROR
+            } else {
+                TEXT
+            },
+        ));
     }
     card(&title, &format!("{dot} {word}"), color, body, "")
 }

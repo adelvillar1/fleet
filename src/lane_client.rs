@@ -90,7 +90,10 @@ pub fn answer_from_result(text: &str) -> Result<LaneAnswer, String> {
     if final_answer.trim().is_empty() {
         return Err("the lane's answer carried an empty `final_answer`".to_string());
     }
-    Ok(LaneAnswer { text: final_answer.to_string(), note: note_from_result(&value) })
+    Ok(LaneAnswer {
+        text: final_answer.to_string(),
+        note: note_from_result(&value),
+    })
 }
 
 /// The named clause the route row carries. The lane's path (how it
@@ -99,10 +102,22 @@ pub fn answer_from_result(text: &str) -> Result<LaneAnswer, String> {
 /// JSON, and its own latency — every difference the adapter surfaces
 /// rather than flattens.
 fn note_from_result(value: &Value) -> String {
-    let path = value.get("path").and_then(Value::as_str).unwrap_or("unknown");
-    let escalated = value.get("escalated").and_then(Value::as_bool).unwrap_or(false);
-    let latency = value.get("total_latency_ms").and_then(Value::as_u64).unwrap_or(0);
-    let score = value.get("score").map(|score| score.to_string()).unwrap_or_else(|| "{}".to_string());
+    let path = value
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let escalated = value
+        .get("escalated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let latency = value
+        .get("total_latency_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let score = value
+        .get("score")
+        .map(|score| score.to_string())
+        .unwrap_or_else(|| "{}".to_string());
     format!(
         "; blend1 answered through path `{path}` (escalated: {escalated}, \
          score {score}, lane latency {latency}ms)"
@@ -117,7 +132,10 @@ fn note_from_result(value: &Value) -> String {
 /// walk treats the name as a failover and advances to the workload's
 /// next candidate.
 pub async fn ask(spec: &ServerSpec, prompt: &str) -> Result<LaneAnswer, String> {
-    let timeouts = Timeouts { call: ASK_BUDGET, ..Timeouts::default() };
+    let timeouts = Timeouts {
+        call: ASK_BUDGET,
+        ..Timeouts::default()
+    };
     let server = McpServer::spawn_with(spec, timeouts)
         .map_err(|error| format!("the lane could not start: {error}"))?;
     server
@@ -192,14 +210,21 @@ mod tests {
         assert_eq!(answer.text, "the grounded answer");
         // The adapter surfaces the lane's differences: path, escalation,
         // score, latency — all named in the clause.
-        assert!(answer.note.contains("path `synthesized`"), "{}", answer.note);
+        assert!(
+            answer.note.contains("path `synthesized`"),
+            "{}",
+            answer.note
+        );
         assert!(answer.note.contains("escalated: true"), "{}", answer.note);
         assert!(answer.note.contains("\"correct\":true"), "{}", answer.note);
         assert!(answer.note.contains("latency 1234ms"), "{}", answer.note);
         // The chat shape carries the text and no invented accounting.
         let response = chat_response(&answer);
         assert_eq!(response.choices.len(), 1);
-        assert_eq!(response.choices[0].message.content.as_deref(), Some("the grounded answer"));
+        assert_eq!(
+            response.choices[0].message.content.as_deref(),
+            Some("the grounded answer")
+        );
         assert_eq!(response.usage.total_tokens, 0);
     }
 

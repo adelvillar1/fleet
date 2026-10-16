@@ -10,8 +10,14 @@ use std::path::{Path, PathBuf};
 /// passed in so callers decide their own environment precedence.
 /// @return the absolute home path.
 /// @throws when neither `$FLEET_HOME` nor a user home is known.
-pub fn fleet_home(fleet_home_env: Option<&str>, user_home: Option<&str>) -> Result<PathBuf, String> {
-    match fleet_home_env.map(str::trim).filter(|value| !value.is_empty()) {
+pub fn fleet_home(
+    fleet_home_env: Option<&str>,
+    user_home: Option<&str>,
+) -> Result<PathBuf, String> {
+    match fleet_home_env
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(value) => Ok(PathBuf::from(value)),
         None => user_home
             .map(|home| PathBuf::from(home).join(".fleet"))
@@ -58,19 +64,20 @@ pub fn read_dotenv(home: &Path) -> HashMap<String, String> {
 /// fallback, and an empty value counts as unset.
 pub fn resolve_setting(name: &str, dotenv: &HashMap<String, String>) -> Option<String> {
     let from_env = std::env::var(name).ok().filter(|value| !value.is_empty());
-    from_env.or_else(|| {
-        dotenv
-            .get(name)
-            .filter(|value| !value.is_empty())
-            .cloned()
-    })
+    from_env.or_else(|| dotenv.get(name).filter(|value| !value.is_empty()).cloned())
 }
 
 /// The DeepSeek Harness credentials store: `$DSH_HOME/.credentials.yaml`,
 /// else `<user home>/.dsh/.credentials.yaml`. One stored key serves both
 /// harnesses; Fleet only ever reads it.
-pub fn harness_credentials_path(dsh_home_env: Option<&str>, user_home: Option<&str>) -> Option<PathBuf> {
-    match dsh_home_env.map(str::trim).filter(|value| !value.is_empty()) {
+pub fn harness_credentials_path(
+    dsh_home_env: Option<&str>,
+    user_home: Option<&str>,
+) -> Option<PathBuf> {
+    match dsh_home_env
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(value) => Some(PathBuf::from(value).join(".credentials.yaml")),
         None => user_home.map(|home| PathBuf::from(home).join(".dsh").join(".credentials.yaml")),
     }
@@ -137,7 +144,10 @@ mod tests {
         )
         .unwrap();
         let values = read_dotenv(&dir);
-        assert_eq!(values.get("DEEPSEEK_API_KEY").map(String::as_str), Some("sk-test"));
+        assert_eq!(
+            values.get("DEEPSEEK_API_KEY").map(String::as_str),
+            Some("sk-test")
+        );
         // An empty value is kept in the map; resolution treats it as unset.
         assert_eq!(values.get("EMPTY").map(String::as_str), Some(""));
         fs::remove_dir_all(&dir).ok();
@@ -169,10 +179,22 @@ mod tests {
     #[test]
     fn harness_refs_reads_the_refs_block_and_stops_at_the_next_key() {
         let text = "version: 1\nrefs:\n  DEEPSEEK_API_KEY: 'sk-test'\n  UNQUOTED: plain-value\nrecords:\n  something:\n    DEEPSEEK_API_KEY: 'decoy'\n";
-        assert_eq!(harness_refs(text, "DEEPSEEK_API_KEY").as_deref(), Some("sk-test"));
-        assert_eq!(harness_refs(text, "UNQUOTED").as_deref(), Some("plain-value"));
+        assert_eq!(
+            harness_refs(text, "DEEPSEEK_API_KEY").as_deref(),
+            Some("sk-test")
+        );
+        assert_eq!(
+            harness_refs(text, "UNQUOTED").as_deref(),
+            Some("plain-value")
+        );
         assert_eq!(harness_refs(text, "MISSING"), None);
-        assert_eq!(harness_refs("records:\n  DEEPSEEK_API_KEY: 'decoy'\n", "DEEPSEEK_API_KEY"), None);
+        assert_eq!(
+            harness_refs(
+                "records:\n  DEEPSEEK_API_KEY: 'decoy'\n",
+                "DEEPSEEK_API_KEY"
+            ),
+            None
+        );
         assert_eq!(harness_refs("refs:\n  EMPTY: ''\n", "EMPTY"), None);
     }
 }

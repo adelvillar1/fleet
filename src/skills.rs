@@ -101,7 +101,10 @@ pub struct SkillRef {
 
 impl From<&Skill> for SkillRef {
     fn from(skill: &Skill) -> SkillRef {
-        SkillRef { name: skill.name.clone(), description: skill.description.clone() }
+        SkillRef {
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+        }
     }
 }
 
@@ -168,7 +171,10 @@ impl UsageScan {
 
     /// How many of the scanned skills were never selected.
     pub fn unused(&self, skills: &[Skill]) -> usize {
-        skills.iter().filter(|skill| self.count(&skill.name) == 0).count()
+        skills
+            .iter()
+            .filter(|skill| self.count(&skill.name) == 0)
+            .count()
     }
 }
 
@@ -262,7 +268,10 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
             ));
         }
         let Some((key, value)) = trimmed.split_once(':') else {
-            return Err(format!("frontmatter line {} is not a `key: value` pair", index + 1));
+            return Err(format!(
+                "frontmatter line {} is not a `key: value` pair",
+                index + 1
+            ));
         };
         // Keys unquote the way values do: `"name": x` is `name: x`,
         // which is what a writer that quotes every key emits.
@@ -337,7 +346,9 @@ pub fn proposals_dir(home: &Path) -> PathBuf {
 /// reached the live tree, and the loader refuses to promote it silently.
 pub fn load(home: &Path) -> Vec<Skill> {
     let dir = skills_dir(home);
-    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
     let mut directories: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path())
@@ -347,8 +358,10 @@ pub fn load(home: &Path) -> Vec<Skill> {
     let mut skills: Vec<Skill> = Vec::new();
     for path in directories {
         // Owned, so the path itself stays free to move into the skill.
-        let Some(name) =
-            path.file_name().and_then(|name| name.to_str()).map(str::to_string)
+        let Some(name) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
         else {
             continue;
         };
@@ -391,9 +404,17 @@ fn live_skill(
     }
     let description = document.required("description")?;
     if document.get("proposed") == Some("true") {
-        return Err("carries `proposed: true` \u{2014} that is a proposal, not a live skill".to_string());
+        return Err(
+            "carries `proposed: true` \u{2014} that is a proposal, not a live skill".to_string(),
+        );
     }
-    Ok(Skill { name, description, body: document.body, path, modified })
+    Ok(Skill {
+        name,
+        description,
+        body: document.body,
+        path,
+        modified,
+    })
 }
 
 /// Load every proposal under `<home>/skills/proposals`, sorted by name.
@@ -401,7 +422,9 @@ fn live_skill(
 /// with one logged line, and the others still list.
 pub fn load_proposals(home: &Path) -> Vec<Proposal> {
     let dir = proposals_dir(home);
-    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
     let mut files: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path())
@@ -411,8 +434,10 @@ pub fn load_proposals(home: &Path) -> Vec<Proposal> {
     let mut proposals: Vec<Proposal> = Vec::new();
     for path in files {
         // Owned, so the path itself stays free to move into the proposal.
-        let Some(stem) =
-            path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string)
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
         else {
             continue;
         };
@@ -457,7 +482,14 @@ fn proposal(document: Document, stem: &str, path: PathBuf) -> Result<Proposal, S
         None => return Err("frontmatter is missing a `kind`".to_string()),
     };
     let evidence = document.required("evidence")?;
-    Ok(Proposal { name, description, kind, evidence, body: document.body, path })
+    Ok(Proposal {
+        name,
+        description,
+        kind,
+        evidence,
+        body: document.body,
+        path,
+    })
 }
 
 // --- the use_skill tool ----------------------------------------------------
@@ -477,8 +509,10 @@ pub fn requested_skill(arguments: &str) -> Option<String> {
 /// or a typed error the model can read and react to. Never a panic, and
 /// never an empty answer.
 pub fn use_skill_result(skills: &[Skill], arguments: &serde_json::Value) -> String {
-    let Some(name) =
-        arguments.get("name").and_then(|name| name.as_str()).filter(|name| !name.is_empty())
+    let Some(name) = arguments
+        .get("name")
+        .and_then(|name| name.as_str())
+        .filter(|name| !name.is_empty())
     else {
         return "error: the `name` argument is required and must be a string".to_string();
     };
@@ -499,22 +533,33 @@ pub fn use_skill_result(skills: &[Skill], arguments: &serde_json::Value) -> Stri
 /// This is the pre-slice-8 measure of use — a log scan, not recall.
 pub fn scan_usage(home: &Path, sessions: usize) -> UsageScan {
     let mut scan = UsageScan::default();
-    let Ok(summaries) = crate::session::list(home) else { return scan };
+    let Ok(summaries) = crate::session::list(home) else {
+        return scan;
+    };
     // `list` is oldest first; the window is the most recent `sessions`.
     for summary in summaries.iter().rev().take(sessions) {
         scan.sessions += 1;
-        let Ok(records) = crate::session::replay(&summary.path) else { continue };
+        let Ok(records) = crate::session::replay(&summary.path) else {
+            continue;
+        };
         // Which calls were approved, by id: the join that makes the
         // count "the body entered context" rather than "the model
         // asked".
         let mut approved: HashMap<String, bool> = HashMap::new();
         for record in &records {
-            if let Record::ToolResult { call_id, approved: ok, .. } = record {
+            if let Record::ToolResult {
+                call_id,
+                approved: ok,
+                ..
+            } = record
+            {
                 approved.insert(call_id.clone(), *ok);
             }
         }
         for record in &records {
-            let Record::Assistant { tool_calls, .. } = record else { continue };
+            let Record::Assistant { tool_calls, .. } = record else {
+                continue;
+            };
             for call in tool_calls {
                 if call.function.name != crate::tools::USE_SKILL_TOOL {
                     continue;
@@ -564,7 +609,10 @@ pub fn description_similarity(left: &str, right: &str) -> f64 {
             union.push(token.clone());
         }
     }
-    let shared = left.iter().filter(|token| right.iter().any(|seen| seen == *token)).count();
+    let shared = left
+        .iter()
+        .filter(|token| right.iter().any(|seen| seen == *token))
+        .count();
     shared as f64 / union.len() as f64
 }
 
@@ -662,9 +710,17 @@ fn executed_calls(records: &[Record]) -> Vec<Executed> {
                     );
                 }
             }
-            Record::ToolResult { call_id, name, output, approved, .. } => {
-                let (resolved, arguments) =
-                    requested.get(call_id).cloned().unwrap_or_else(|| (name.clone(), String::new()));
+            Record::ToolResult {
+                call_id,
+                name,
+                output,
+                approved,
+                ..
+            } => {
+                let (resolved, arguments) = requested
+                    .get(call_id)
+                    .cloned()
+                    .unwrap_or_else(|| (name.clone(), String::new()));
                 executed.push(Executed {
                     name: resolved,
                     arguments,
@@ -684,7 +740,12 @@ fn executed_calls(records: &[Record]) -> Vec<Executed> {
 fn approved_calls(records: &[Record]) -> HashMap<String, bool> {
     let mut approved: HashMap<String, bool> = HashMap::new();
     for record in records {
-        if let Record::ToolResult { call_id, approved: ok, .. } = record {
+        if let Record::ToolResult {
+            call_id,
+            approved: ok,
+            ..
+        } = record
+        {
             approved.insert(call_id.clone(), *ok);
         }
     }
@@ -786,7 +847,13 @@ fn failure_correction(records: &[Record], session_id: &str) -> Option<Lesson> {
             tool = failed.name,
             evidence = evidence,
         );
-        return Some(Lesson { kind: ProposalKind::Create, name, description, evidence, body });
+        return Some(Lesson {
+            kind: ProposalKind::Create,
+            name,
+            description,
+            evidence,
+            body,
+        });
     }
     None
 }
@@ -803,15 +870,22 @@ fn repeated_sequence(records: &[Record], session_id: &str) -> Option<Lesson> {
     let approved = approved_calls(records);
     let mut seen: Vec<(Vec<String>, Vec<usize>)> = Vec::new();
     for (index, record) in records.iter().enumerate() {
-        let Record::Assistant { tool_calls, .. } = record else { continue };
+        let Record::Assistant { tool_calls, .. } = record else {
+            continue;
+        };
         if tool_calls.len() < 2 {
             continue;
         }
-        if !tool_calls.iter().all(|call| approved.get(&call.id).copied().unwrap_or(false)) {
+        if !tool_calls
+            .iter()
+            .all(|call| approved.get(&call.id).copied().unwrap_or(false))
+        {
             continue;
         }
-        let names: Vec<String> =
-            tool_calls.iter().map(|call| call.function.name.clone()).collect();
+        let names: Vec<String> = tool_calls
+            .iter()
+            .map(|call| call.function.name.clone())
+            .collect();
         match seen.iter_mut().find(|(sequence, _)| *sequence == names) {
             Some((_, turns)) => turns.push(index),
             None => seen.push((names, vec![index])),
@@ -843,7 +917,13 @@ fn repeated_sequence(records: &[Record], session_id: &str) -> Option<Lesson> {
         arrow = arrow,
         evidence = evidence,
     );
-    Some(Lesson { kind: ProposalKind::Create, name, description, evidence, body })
+    Some(Lesson {
+        kind: ProposalKind::Create,
+        name,
+        description,
+        evidence,
+        body,
+    })
 }
 
 /// The failed-turn lesson: a `turn` row graded `failed` with a named
@@ -884,7 +964,13 @@ fn failed_turn(
         reason = row.reason,
         evidence = evidence,
     );
-    Some(Lesson { kind: ProposalKind::Create, name, description, evidence, body })
+    Some(Lesson {
+        kind: ProposalKind::Create,
+        name,
+        description,
+        evidence,
+        body,
+    })
 }
 
 /// A filesystem-safe name: lowercased alphanumerics, every other run as
@@ -942,7 +1028,9 @@ fn file_proposal(home: &Path, lesson: &Lesson) -> Option<PathBuf> {
 /// filed as an update to that skill rather than a create, so the draft
 /// diffs against the file it would replace.
 pub fn draft_session(home: &Path, session_path: &Path, user_home: Option<&str>) -> Vec<PathBuf> {
-    let Ok(records) = crate::session::replay(session_path) else { return Vec::new() };
+    let Ok(records) = crate::session::replay(session_path) else {
+        return Vec::new();
+    };
     if records.is_empty() {
         return Vec::new();
     }
@@ -1054,8 +1142,11 @@ fn merge_lesson(
     threshold: f64,
     sessions: usize,
 ) -> Lesson {
-    let (survivor, absorbed) =
-        if left.name <= right.name { (left, right) } else { (right, left) };
+    let (survivor, absorbed) = if left.name <= right.name {
+        (left, right)
+    } else {
+        (right, left)
+    };
     let evidence = format!(
         "usage scan over {sessions} sessions: `{}` and `{}` descriptions score {similarity:.2} token Jaccard (threshold {threshold:.2})",
         survivor.name, absorbed.name
@@ -1139,7 +1230,11 @@ pub fn render(skills: &[Skill], usage: &UsageScan) -> String {
 /// One skill's card.
 fn render_card(skill: &Skill, usage: &UsageScan) -> String {
     let uses = usage.count(&skill.name);
-    let uses_color = if uses == 0 { palette::WARN } else { palette::OK };
+    let uses_color = if uses == 0 {
+        palette::WARN
+    } else {
+        palette::OK
+    };
     let header_right = format!("{uses} use{}", if uses == 1 { "" } else { "s" });
     let header = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{name}{RESET} {DIM}{dashes} {uses_color}{right}{RESET} {DIM}\u{2510}{RESET}",
@@ -1169,7 +1264,10 @@ fn render_card(skill: &Skill, usage: &UsageScan) -> String {
         let stamp = crate::session::iso_utc_stamp(modified).unwrap_or_default();
         lines.push(format!("{DIM}\u{2502}{RESET} {DIM}modified {stamp}{RESET}"));
     }
-    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -1224,7 +1322,10 @@ fn render_proposal_card(proposal: &Proposal) -> String {
         "{DIM}\u{2502}{RESET} {DIM}{}{RESET}",
         proposal.path.display()
     ));
-    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -1403,9 +1504,13 @@ mod tests {
     #[test]
     fn the_parser_rejects_what_it_does_not_speak() {
         // No opening fence.
-        assert!(parse_document("name: demo\n").unwrap_err().contains("does not open"));
+        assert!(parse_document("name: demo\n")
+            .unwrap_err()
+            .contains("does not open"));
         // No closing fence.
-        assert!(parse_document("---\nname: demo\n").unwrap_err().contains("never closes"));
+        assert!(parse_document("---\nname: demo\n")
+            .unwrap_err()
+            .contains("never closes"));
         // A nested block's indent — the YAML block-scalar shape, after
         // one valid pair.
         assert!(
@@ -1414,22 +1519,30 @@ mod tests {
                 .contains("nested YAML")
         );
         // A list entry.
-        assert!(parse_document("---\n- item\n---\nbody\n").unwrap_err().contains("key: value"));
+        assert!(parse_document("---\n- item\n---\nbody\n")
+            .unwrap_err()
+            .contains("key: value"));
         // A bare scalar line.
-        assert!(parse_document("---\nbare\n---\nbody\n").unwrap_err().contains("key: value"));
+        assert!(parse_document("---\nbare\n---\nbody\n")
+            .unwrap_err()
+            .contains("key: value"));
         // A missing required key is the loader's rule, not the parser's:
         // the document parses, and `required` names what is absent.
         let document = parse_document("---\ndescription: only\n---\nbody\n").unwrap();
         assert!(document.required("name").unwrap_err().contains("name"));
         assert_eq!(document.required("description").unwrap(), "only");
         // An empty value.
-        assert!(parse_document("---\nname: \"\"\ndescription: d\n---\nbody\n")
-            .unwrap_err()
-            .contains("empty value"));
+        assert!(
+            parse_document("---\nname: \"\"\ndescription: d\n---\nbody\n")
+                .unwrap_err()
+                .contains("empty value")
+        );
         // A duplicated key.
-        assert!(parse_document("---\nname: a\nname: b\ndescription: d\n---\nbody\n")
-            .unwrap_err()
-            .contains("twice"));
+        assert!(
+            parse_document("---\nname: a\nname: b\ndescription: d\n---\nbody\n")
+                .unwrap_err()
+                .contains("twice")
+        );
     }
 
     #[test]
@@ -1441,7 +1554,11 @@ mod tests {
         assert_eq!(document.body, "body");
         // And through the loader, not just the parser.
         let home = scratch("bom");
-        write_skill(&home, "bommed", "\u{feff}---\nname: bommed\ndescription: d\n---\n\nbody\n");
+        write_skill(
+            &home,
+            "bommed",
+            "\u{feff}---\nname: bommed\ndescription: d\n---\n\nbody\n",
+        );
         assert_eq!(skill_names(&load(&home)), vec!["bommed"]);
         // A BOM'd file that still fails names the BOM, so the reason is
         // not misdirected at the fence alone.
@@ -1461,9 +1578,11 @@ mod tests {
         assert_eq!(document.get("description"), Some("d"));
         // The duplicate check runs on the unquoted key, so a quoted key
         // and a bare one still collide.
-        assert!(parse_document("---\n\"name\": a\nname: b\ndescription: d\n---\nbody\n")
-            .unwrap_err()
-            .contains("twice"));
+        assert!(
+            parse_document("---\n\"name\": a\nname: b\ndescription: d\n---\nbody\n")
+                .unwrap_err()
+                .contains("twice")
+        );
         // A quoted-but-empty key is still an empty key.
         assert!(parse_document("---\n\"\": a\ndescription: d\n---\nbody\n")
             .unwrap_err()
@@ -1480,13 +1599,29 @@ mod tests {
     #[test]
     fn a_malformed_skill_is_skipped_by_name_and_the_others_load() {
         let home = scratch("skip");
-        write_skill(&home, "good-one", &good_skill("good-one", "the first", "body one"));
-        write_skill(&home, "good-two", &good_skill("good-two", "the second", "body two"));
+        write_skill(
+            &home,
+            "good-one",
+            &good_skill("good-one", "the first", "body one"),
+        );
+        write_skill(
+            &home,
+            "good-two",
+            &good_skill("good-two", "the second", "body two"),
+        );
         // Three ways to be malformed: no frontmatter, a missing
         // description, and a frontmatter name that is not the directory.
         write_skill(&home, "broken-fence", "# no fence here\n");
-        write_skill(&home, "broken-fields", "---\nname: broken-fields\n---\nbody\n");
-        write_skill(&home, "broken-name", &good_skill("some-other-name", "d", "body"));
+        write_skill(
+            &home,
+            "broken-fields",
+            "---\nname: broken-fields\n---\nbody\n",
+        );
+        write_skill(
+            &home,
+            "broken-name",
+            &good_skill("some-other-name", "d", "body"),
+        );
         // The proposals directory is not a skill.
         std::fs::create_dir_all(proposals_dir(&home)).unwrap();
 
@@ -1556,9 +1691,15 @@ mod tests {
         let missing = use_skill_result(&skills, &serde_json::json!({ "name": "nope" }));
         assert_eq!(missing, "error: no skill named `nope`");
         let unnamed = use_skill_result(&skills, &serde_json::json!({}));
-        assert!(unnamed.starts_with("error: the `name` argument"), "{unnamed}");
+        assert!(
+            unnamed.starts_with("error: the `name` argument"),
+            "{unnamed}"
+        );
         // The name a call asks for is what the approval prompt shows.
-        assert_eq!(requested_skill(r#"{"name":"demo"}"#).as_deref(), Some("demo"));
+        assert_eq!(
+            requested_skill(r#"{"name":"demo"}"#).as_deref(),
+            Some("demo")
+        );
         assert_eq!(requested_skill("{not json"), None);
         assert_eq!(requested_skill(r#"{"name":""}"#), None);
     }
@@ -1575,14 +1716,15 @@ mod tests {
         );
         assert!((similarity - 6.0 / 7.0).abs() < 1e-9, "{similarity}");
         assert!(similarity >= MERGE_SIMILARITY_THRESHOLD, "{similarity}");
-        assert!(
-            description_similarity("write release notes", "probe the embeddings worker") < 0.2
-        );
+        assert!(description_similarity("write release notes", "probe the embeddings worker") < 0.2);
         // Two empty token sets are not similar; they are absent.
         assert_eq!(description_similarity("", "anything"), 0.0);
         assert_eq!(description_similarity("---", "!!!"), 0.0);
         // Identical text is a perfect score.
-        assert_eq!(description_similarity("one two three", "one two three"), 1.0);
+        assert_eq!(
+            description_similarity("one two three", "one two three"),
+            1.0
+        );
     }
 
     // --- the drafter ---
@@ -1599,7 +1741,10 @@ mod tests {
     }
 
     fn assistant(calls: Vec<crate::api::ToolCall>) -> Record {
-        Record::Assistant { content: None, tool_calls: calls }
+        Record::Assistant {
+            content: None,
+            tool_calls: calls,
+        }
     }
 
     fn result(call_id: &str, name: &str, output: &str) -> Record {
@@ -1627,8 +1772,16 @@ mod tests {
     #[test]
     fn a_failure_that_was_corrected_drafts_a_create_with_the_records_cited() {
         let records = vec![
-            Record::Start { v: 1, model: "m".into(), created: "c".into(), kind: None, parent: None },
-            Record::User { content: "run it".into() },
+            Record::Start {
+                v: 1,
+                model: "m".into(),
+                created: "c".into(),
+                kind: None,
+                parent: None,
+            },
+            Record::User {
+                content: "run it".into(),
+            },
             assistant(vec![tool_call("c1", "bash", "{}")]),
             result("c1", "bash", "error: exit 127"),
             assistant(vec![tool_call("c2", "bash", "{}")]),
@@ -1655,7 +1808,9 @@ mod tests {
         // The first failure is never corrected; the second one is. The
         // lesson is the second pair, not nothing.
         let records = vec![
-            Record::User { content: "t".into() },
+            Record::User {
+                content: "t".into(),
+            },
             assistant(vec![tool_call("c1", "bash", "{}")]),
             result("c1", "bash", "error: exit 127"),
             assistant(vec![tool_call("c2", "read_file", "{}")]),
@@ -1666,8 +1821,16 @@ mod tests {
         let found = lessons(&records, &[], "session-4");
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].name, "read-file-recovery");
-        assert!(found[0].evidence.contains("record 5"), "{}", found[0].evidence);
-        assert!(found[0].evidence.contains("record 7"), "{}", found[0].evidence);
+        assert!(
+            found[0].evidence.contains("record 5"),
+            "{}",
+            found[0].evidence
+        );
+        assert!(
+            found[0].evidence.contains("record 7"),
+            "{}",
+            found[0].evidence
+        );
     }
 
     #[test]
@@ -1676,7 +1839,9 @@ mod tests {
         // corrects nothing, and the failure it follows stays
         // uncorrected.
         let records = vec![
-            Record::User { content: "t".into() },
+            Record::User {
+                content: "t".into(),
+            },
             assistant(vec![tool_call("c1", "bash", "{}")]),
             result("c1", "bash", "error: exit 127"),
             assistant(vec![tool_call("c2", "bash", "{}")]),
@@ -1686,7 +1851,9 @@ mod tests {
         // The denial neither corrects nor ends the search: an approved
         // success after it is the correction.
         let records = vec![
-            Record::User { content: "t".into() },
+            Record::User {
+                content: "t".into(),
+            },
             assistant(vec![tool_call("c1", "bash", "{}")]),
             result("c1", "bash", "error: exit 127"),
             assistant(vec![tool_call("c2", "bash", "{}")]),
@@ -1697,7 +1864,11 @@ mod tests {
         let found = lessons(&records, &[], "session-5");
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].name, "bash-recovery");
-        assert!(found[0].evidence.contains("record 7"), "{}", found[0].evidence);
+        assert!(
+            found[0].evidence.contains("record 7"),
+            "{}",
+            found[0].evidence
+        );
     }
 
     #[test]
@@ -1705,11 +1876,19 @@ mod tests {
         // Two identical turns the user denied twice are not a procedure
         // the session kept re-deriving: nothing ran.
         let records = vec![
-            Record::User { content: "t".into() },
-            assistant(vec![tool_call("c1", "list_dir", "{}"), tool_call("c2", "read_file", "{}")]),
+            Record::User {
+                content: "t".into(),
+            },
+            assistant(vec![
+                tool_call("c1", "list_dir", "{}"),
+                tool_call("c2", "read_file", "{}"),
+            ]),
             denied("c1", "list_dir"),
             denied("c2", "read_file"),
-            assistant(vec![tool_call("c3", "list_dir", "{}"), tool_call("c4", "read_file", "{}")]),
+            assistant(vec![
+                tool_call("c3", "list_dir", "{}"),
+                tool_call("c4", "read_file", "{}"),
+            ]),
             denied("c3", "list_dir"),
             denied("c4", "read_file"),
         ];
@@ -1717,11 +1896,19 @@ mod tests {
         // A turn that only half ran does not count either: the sequence
         // that executed is not the sequence that was requested.
         let records = vec![
-            Record::User { content: "t".into() },
-            assistant(vec![tool_call("c1", "list_dir", "{}"), tool_call("c2", "read_file", "{}")]),
+            Record::User {
+                content: "t".into(),
+            },
+            assistant(vec![
+                tool_call("c1", "list_dir", "{}"),
+                tool_call("c2", "read_file", "{}"),
+            ]),
             result("c1", "list_dir", "ok"),
             denied("c2", "read_file"),
-            assistant(vec![tool_call("c3", "list_dir", "{}"), tool_call("c4", "read_file", "{}")]),
+            assistant(vec![
+                tool_call("c3", "list_dir", "{}"),
+                tool_call("c4", "read_file", "{}"),
+            ]),
             result("c3", "list_dir", "ok"),
             result("c4", "read_file", "ok"),
         ];
@@ -1731,7 +1918,9 @@ mod tests {
     #[test]
     fn the_evidence_names_the_tool_and_a_compacted_argument_summary() {
         let records = vec![
-            Record::User { content: "t".into() },
+            Record::User {
+                content: "t".into(),
+            },
             assistant(vec![tool_call("c1", "bash", r#"{"command":"ls"}"#)]),
             result("c1", "bash", "error: exit 127"),
             assistant(vec![tool_call("c2", "bash", r#"{"command":"ls -la"}"#)]),
@@ -1757,8 +1946,14 @@ mod tests {
     fn a_long_argument_summary_stays_one_bounded_line() {
         let long = "x".repeat(200);
         let records = vec![
-            Record::User { content: "t".into() },
-            assistant(vec![tool_call("c1", "bash", &format!(r#"{{"command":"{long}"}}"#))]),
+            Record::User {
+                content: "t".into(),
+            },
+            assistant(vec![tool_call(
+                "c1",
+                "bash",
+                &format!(r#"{{"command":"{long}"}}"#),
+            )]),
             result("c1", "bash", "error: exit 127"),
             assistant(vec![tool_call("c2", "bash", r#"{"command":"ls"}"#)]),
             result("c2", "bash", "exit 0"),
@@ -1772,7 +1967,10 @@ mod tests {
 
     #[test]
     fn compact_arguments_summarizes_an_object_and_falls_back_to_raw() {
-        assert_eq!(compact_arguments(r#"{"command":"ls -la"}"#), "command: ls -la");
+        assert_eq!(
+            compact_arguments(r#"{"command":"ls -la"}"#),
+            "command: ls -la"
+        );
         assert_eq!(compact_arguments(r#"{"a":"1","b":2}"#), "a: 1, b: 2");
         // An empty object, a bare string, and invalid JSON are used raw.
         assert_eq!(compact_arguments("{}"), "");
@@ -1784,11 +1982,19 @@ mod tests {
     #[test]
     fn a_repeated_multi_step_sequence_drafts_a_procedure() {
         let records = vec![
-            Record::User { content: "t".into() },
-            assistant(vec![tool_call("c1", "list_dir", "{}"), tool_call("c2", "read_file", "{}")]),
+            Record::User {
+                content: "t".into(),
+            },
+            assistant(vec![
+                tool_call("c1", "list_dir", "{}"),
+                tool_call("c2", "read_file", "{}"),
+            ]),
             result("c1", "list_dir", "ok"),
             result("c2", "read_file", "ok"),
-            assistant(vec![tool_call("c3", "list_dir", "{}"), tool_call("c4", "read_file", "{}")]),
+            assistant(vec![
+                tool_call("c3", "list_dir", "{}"),
+                tool_call("c4", "read_file", "{}"),
+            ]),
             result("c3", "list_dir", "ok"),
             result("c4", "read_file", "ok"),
         ];
@@ -1796,12 +2002,18 @@ mod tests {
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].name, "procedure-list-dir-read-file");
         assert_eq!(found[0].kind, ProposalKind::Create);
-        assert!(found[0].evidence.contains("ran 2 times"), "{}", found[0].evidence);
+        assert!(
+            found[0].evidence.contains("ran 2 times"),
+            "{}",
+            found[0].evidence
+        );
     }
 
     #[test]
     fn a_failed_turn_row_joined_by_the_task_hash_drafts_a_lesson() {
-        let records = vec![Record::User { content: "refactor the crate".into() }];
+        let records = vec![Record::User {
+            content: "refactor the crate".into(),
+        }];
         let hash = crate::calib::hash16("refactor the crate");
         let rows = vec![crate::calib::ReadRow {
             ts: "2026-10-13T12:00:00Z".to_string(),
@@ -1828,10 +2040,16 @@ mod tests {
     #[test]
     fn an_update_lesson_keeps_the_live_body_and_appends_the_lesson() {
         let home = scratch("update");
-        write_skill(&home, "bash-recovery", &good_skill("bash-recovery", "live description", "# live body"));
+        write_skill(
+            &home,
+            "bash-recovery",
+            &good_skill("bash-recovery", "live description", "# live body"),
+        );
         let live = load(&home);
         let records = vec![
-            Record::User { content: "t".into() },
+            Record::User {
+                content: "t".into(),
+            },
             assistant(vec![tool_call("c1", "bash", "{}")]),
             result("c1", "bash", "error: exit 127"),
             assistant(vec![tool_call("c2", "bash", "{}")]),
@@ -1869,7 +2087,9 @@ mod tests {
         write_skill(&home, "unrelated", &good_skill("unrelated", "d", "body"));
         let before = std::fs::read_to_string(skills_dir(&home).join("unrelated/SKILL.md")).unwrap();
         let records = vec![
-            Record::User { content: "t".into() },
+            Record::User {
+                content: "t".into(),
+            },
             assistant(vec![tool_call("c1", "read_file", "{}")]),
             result("c1", "read_file", "error: not valid UTF-8"),
             assistant(vec![tool_call("c2", "read_file", "{}")]),
@@ -1886,7 +2106,10 @@ mod tests {
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
         entries.sort();
-        assert_eq!(entries, vec!["proposals".to_string(), "unrelated".to_string()]);
+        assert_eq!(
+            entries,
+            vec!["proposals".to_string(), "unrelated".to_string()]
+        );
         assert_eq!(
             before,
             std::fs::read_to_string(skills_dir(&home).join("unrelated/SKILL.md")).unwrap()
@@ -1902,15 +2125,33 @@ mod tests {
     #[test]
     fn curation_proposes_retirement_for_the_unused_and_merge_for_the_twins() {
         let home = scratch("curate");
-        write_skill(&home, "alpha", &good_skill("alpha", "probe the embeddings worker for reachability", "a"));
-        write_skill(&home, "beta", &good_skill("beta", "probe the embeddings worker for reachability now", "b"));
-        write_skill(&home, "gamma", &good_skill("gamma", "write the weekly release notes", "g"));
+        write_skill(
+            &home,
+            "alpha",
+            &good_skill("alpha", "probe the embeddings worker for reachability", "a"),
+        );
+        write_skill(
+            &home,
+            "beta",
+            &good_skill(
+                "beta",
+                "probe the embeddings worker for reachability now",
+                "b",
+            ),
+        );
+        write_skill(
+            &home,
+            "gamma",
+            &good_skill("gamma", "write the weekly release notes", "g"),
+        );
         // Two sessions of history — the whole window — and one `use_skill`
         // call for alpha.
         let used = session_log(
             &home,
             &[
-                Record::User { content: "t".into() },
+                Record::User {
+                    content: "t".into(),
+                },
                 assistant(vec![tool_call(
                     "c1",
                     crate::tools::USE_SKILL_TOOL,
@@ -1919,7 +2160,12 @@ mod tests {
                 result("c1", "use_skill", "a"),
             ],
         );
-        let _unused = session_log(&home, &[Record::User { content: "t2".into() }]);
+        let _unused = session_log(
+            &home,
+            &[Record::User {
+                content: "t2".into(),
+            }],
+        );
         let _ = used;
 
         let filed = curate(&home, 2, MERGE_SIMILARITY_THRESHOLD);
@@ -1930,10 +2176,20 @@ mod tests {
         assert!(names.contains(&"gamma".to_string()), "{names:?}");
         assert!(names.contains(&"alpha".to_string()), "{names:?}");
         let proposals = load_proposals(&home);
-        let retire = proposals.iter().find(|p| p.name == "gamma").expect("the retire draft");
+        let retire = proposals
+            .iter()
+            .find(|p| p.name == "gamma")
+            .expect("the retire draft");
         assert_eq!(retire.kind, ProposalKind::Retire);
-        assert!(retire.evidence.contains("last 2 sessions"), "{}", retire.evidence);
-        let merge = proposals.iter().find(|p| p.name == "alpha").expect("the merge draft");
+        assert!(
+            retire.evidence.contains("last 2 sessions"),
+            "{}",
+            retire.evidence
+        );
+        let merge = proposals
+            .iter()
+            .find(|p| p.name == "alpha")
+            .expect("the merge draft");
         assert_eq!(merge.kind, ProposalKind::Merge);
         assert!(merge.evidence.contains("0.86"), "{}", merge.evidence);
         assert!(merge.evidence.contains("`beta`"), "{}", merge.evidence);
@@ -1949,11 +2205,25 @@ mod tests {
     #[test]
     fn curation_refuses_to_judge_on_a_window_shorter_than_the_rule() {
         let home = scratch("curate-short");
-        write_skill(&home, "lonely", &good_skill("lonely", "never used at all", "b"));
-        let _one = session_log(&home, &[Record::User { content: "t".into() }]);
+        write_skill(
+            &home,
+            "lonely",
+            &good_skill("lonely", "never used at all", "b"),
+        );
+        let _one = session_log(
+            &home,
+            &[Record::User {
+                content: "t".into(),
+            }],
+        );
         // One session of history against a window of twenty: nothing is
         // proposed, because "unused across the last 20" is not knowable.
-        assert!(curate(&home, DEFAULT_RETIRE_AFTER_SESSIONS, MERGE_SIMILARITY_THRESHOLD).is_empty());
+        assert!(curate(
+            &home,
+            DEFAULT_RETIRE_AFTER_SESSIONS,
+            MERGE_SIMILARITY_THRESHOLD
+        )
+        .is_empty());
         assert!(load_proposals(&home).is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -1966,7 +2236,9 @@ mod tests {
             let _ = session_log(
                 &home,
                 &[
-                    Record::User { content: "t".into() },
+                    Record::User {
+                        content: "t".into(),
+                    },
                     assistant(vec![tool_call(
                         "c1",
                         crate::tools::USE_SKILL_TOOL,
@@ -1987,8 +2259,14 @@ mod tests {
         let denied = session_log(
             &home,
             &[
-                Record::User { content: "t".into() },
-                assistant(vec![tool_call("c9", crate::tools::USE_SKILL_TOOL, r#"{"name":"alpha"}"#)]),
+                Record::User {
+                    content: "t".into(),
+                },
+                assistant(vec![tool_call(
+                    "c9",
+                    crate::tools::USE_SKILL_TOOL,
+                    r#"{"name":"alpha"}"#,
+                )]),
                 Record::ToolResult {
                     call_id: "c9".to_string(),
                     name: "use_skill".to_string(),
@@ -2009,7 +2287,11 @@ mod tests {
     #[test]
     fn the_surface_is_cards_and_never_a_table() {
         let home = scratch("render");
-        write_skill(&home, "alpha", &good_skill("alpha", "probe the embeddings worker", "a"));
+        write_skill(
+            &home,
+            "alpha",
+            &good_skill("alpha", "probe the embeddings worker", "a"),
+        );
         let skills = load(&home);
         let usage = scan_usage(&home, 20);
         let rendered = render(&skills, &usage);
@@ -2034,11 +2316,19 @@ mod tests {
         )
         .unwrap();
         let rendered = render_proposals(&load_proposals(&home));
-        assert!(rendered.contains("awaiting the slice-12 gate"), "{rendered}");
+        assert!(
+            rendered.contains("awaiting the slice-12 gate"),
+            "{rendered}"
+        );
         assert!(rendered.contains("retire"), "{rendered}");
-        assert!(rendered.contains("unused across the last 20 sessions"), "{rendered}");
+        assert!(
+            rendered.contains("unused across the last 20 sessions"),
+            "{rendered}"
+        );
         // The draft itself is readable back, for `--show`.
-        assert!(read_proposal(&home, "gamma").unwrap().contains("# retire: gamma"));
+        assert!(read_proposal(&home, "gamma")
+            .unwrap()
+            .contains("# retire: gamma"));
         assert_eq!(
             read_proposal(&home, "nope"),
             Err(ProposalReadError::Missing("nope".to_string()))

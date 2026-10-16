@@ -572,8 +572,16 @@ impl App {
                     preview: String::new(),
                 }));
             }
-            UiEvent::ToolResult { name, preview, approved } => {
-                let status = if approved { ToolStatus::Done } else { ToolStatus::Denied };
+            UiEvent::ToolResult {
+                name,
+                preview,
+                approved,
+            } => {
+                let status = if approved {
+                    ToolStatus::Done
+                } else {
+                    ToolStatus::Denied
+                };
                 // The card this result belongs to is the newest one for the
                 // tool that is still open.
                 let card = self
@@ -606,7 +614,8 @@ impl App {
                 // something the model said: it flushes the streaming tail
                 // and lands as its own block, exactly like a tool card.
                 self.flush_streaming();
-                self.entries.push(Entry::Lane(LaneCard { lane, tool_count }));
+                self.entries
+                    .push(Entry::Lane(LaneCard { lane, tool_count }));
             }
             UiEvent::Routed { provider, how } => {
                 // The route this run takes: the status bar shows the active
@@ -614,7 +623,11 @@ impl App {
                 self.status.provider = Some(provider);
                 self.status.route_how = Some(how);
             }
-            UiEvent::Compacted { turns, tokens_before, tokens_after } => {
+            UiEvent::Compacted {
+                turns,
+                tokens_before,
+                tokens_after,
+            } => {
                 // A compaction is a fact about the run, not something the
                 // model said: it flushes the streaming tail and lands as
                 // its own block, exactly like a lane joining. The summary
@@ -633,7 +646,14 @@ impl App {
                 // `memory` record the log carries.
                 self.status.memory = Some((shape, facts));
             }
-            UiEvent::CronFire { job, minute, catch_up, outcome, detail, session } => {
+            UiEvent::CronFire {
+                job,
+                minute,
+                catch_up,
+                outcome,
+                detail,
+                session,
+            } => {
                 // A scheduled fire is a fact about the machine, not
                 // something the model said: it flushes the streaming
                 // tail and lands as its own block, the same family as a
@@ -650,7 +670,11 @@ impl App {
                     session,
                 }));
             }
-            UiEvent::Subagent { goal, session, stage } => {
+            UiEvent::Subagent {
+                goal,
+                session,
+                stage,
+            } => {
                 // A delegated child run, reported while the parent's turn
                 // waits for it. It lands on the `subagent` call's own tool
                 // card — the same card the ordinary ToolCall event opened
@@ -677,12 +701,12 @@ impl App {
                     });
                 let detail = match stage {
                     SubagentStage::Spawned => None,
-                    SubagentStage::Working { calls, tool } => {
-                        Some(format!("child {session} \u{b7} {calls} call(s) \u{b7} last {tool}"))
-                    }
-                    SubagentStage::Done { outcome, turns } => {
-                        Some(format!("child {session} \u{b7} {outcome} \u{b7} {turns} turn(s)"))
-                    }
+                    SubagentStage::Working { calls, tool } => Some(format!(
+                        "child {session} \u{b7} {calls} call(s) \u{b7} last {tool}"
+                    )),
+                    SubagentStage::Done { outcome, turns } => Some(format!(
+                        "child {session} \u{b7} {outcome} \u{b7} {turns} turn(s)"
+                    )),
                 };
                 match card {
                     Some(card) => {
@@ -793,10 +817,14 @@ impl App {
     /// `workload.set:` — the same buffer the CLI's key would carry, so
     /// committing routes through the writer's own function.
     pub fn edit_selected_row(&mut self) {
-        let Some(row) = self.settings_rows().get(self.selected).copied() else { return };
+        let Some(row) = self.settings_rows().get(self.selected).copied() else {
+            return;
+        };
         let (key, seed) = match row {
             SettingsRow::Scalar(index) => {
-                let Some(state) = self.settings.get(index) else { return };
+                let Some(state) = self.settings.get(index) else {
+                    return;
+                };
                 let seed = if state.from_env {
                     String::new()
                 } else {
@@ -829,12 +857,17 @@ impl App {
     /// title names the entry rather than repeating its JSON back at the
     /// owner.
     pub fn editing_label(&self) -> String {
-        let Some((key, _)) = self.editing.as_ref() else { return String::new() };
+        let Some((key, _)) = self.editing.as_ref() else {
+            return String::new();
+        };
         if let Some(entry) = key.strip_prefix("provider.add:") {
             let id = serde_json::from_str::<serde_json::Value>(entry)
                 .ok()
                 .and_then(|value| {
-                    value.get("id").and_then(|id| id.as_str()).map(str::to_string)
+                    value
+                        .get("id")
+                        .and_then(|id| id.as_str())
+                        .map(str::to_string)
                 });
             return match id {
                 Some(id) => format!("provider {id}"),
@@ -853,7 +886,9 @@ impl App {
     /// what they typed — a clamped similarity or a rejected word shows
     /// its real result.
     pub fn commit_setting(&mut self) {
-        let Some((key, buffer)) = self.editing.take() else { return };
+        let Some((key, buffer)) = self.editing.take() else {
+            return;
+        };
         self.write_setting(&key, &buffer);
         self.mode = Mode::Settings;
     }
@@ -866,12 +901,15 @@ impl App {
     /// success re-reads the scalars and both lists so the cards show the
     /// resolved result.
     fn write_setting(&mut self, key: &str, buffer: &str) {
-        let Some(home) = self.settings_home.clone() else { return };
+        let Some(home) = self.settings_home.clone() else {
+            return;
+        };
         let outcome = if key.starts_with("provider.add:") {
             // The buffer is the entry's own JSON, which is what
             // `set_provider` parses; the key carries the same JSON so the
             // editor's title can name the entry.
-            crate::settings::set_provider(&home, buffer).map(|id| format!("provider `{id}` written"))
+            crate::settings::set_provider(&home, buffer)
+                .map(|id| format!("provider `{id}` written"))
         } else if let Some(id) = key.strip_prefix("provider.remove:") {
             // The pane always formats a non-empty id into the key (the
             // confirm passes an empty buffer), so the fallback is the
@@ -879,7 +917,9 @@ impl App {
             // there — rather than a live path.
             let id = if id.is_empty() { buffer } else { id };
             crate::settings::remove_provider(&home, id, false).map(|()| {
-                format!("provider `{id}`'s override removed — it reverts to the compiled-in default")
+                format!(
+                    "provider `{id}`'s override removed — it reverts to the compiled-in default"
+                )
             })
         } else if let Some(name) = key.strip_prefix("workload.set:") {
             let candidates: Vec<String> = buffer
@@ -894,7 +934,9 @@ impl App {
             // empty case is the CLI's key shape preserved.
             let name = if name.is_empty() { buffer } else { name };
             crate::settings::remove_workload(&home, name, false).map(|()| {
-                format!("workload `{name}`'s preference removed — it reverts to the compiled-in table")
+                format!(
+                    "workload `{name}`'s preference removed — it reverts to the compiled-in table"
+                )
             })
         } else {
             crate::settings::set(&home, key, buffer).map(|()| "written".to_string())
@@ -933,7 +975,9 @@ impl App {
     /// the removal lands. Each class is named in the question, because
     /// an owner confirming a removal deserves to know which kind it is.
     pub fn arm_removal(&mut self) {
-        let Some(row) = self.settings_rows().get(self.selected).copied() else { return };
+        let Some(row) = self.settings_rows().get(self.selected).copied() else {
+            return;
+        };
         let entry = match row {
             SettingsRow::Scalar(_) => {
                 // A knob has no removal: it is cleared by emptying its
@@ -991,7 +1035,9 @@ impl App {
     /// the edit is a revert or a refusal. Either way the note names what
     /// happened.
     fn confirm_removal(&mut self) {
-        let Some(removal) = self.settings_removal.take() else { return };
+        let Some(removal) = self.settings_removal.take() else {
+            return;
+        };
         self.write_setting(&removal.key, "");
         self.mode = Mode::Settings;
     }
@@ -1079,8 +1125,10 @@ impl App {
 
     /// Show an approval prompt; the responder stays with the event loop.
     pub fn show_approval(&mut self, name: &str, summary: &str) {
-        self.approval =
-            Some(ApprovalPrompt { name: name.to_string(), summary: summary.to_string() });
+        self.approval = Some(ApprovalPrompt {
+            name: name.to_string(),
+            summary: summary.to_string(),
+        });
         self.mode = Mode::Approval;
     }
 
@@ -1255,7 +1303,8 @@ impl App {
     /// Move the streaming tail into the conversation as its own block.
     fn flush_streaming(&mut self) {
         if !self.streaming.is_empty() {
-            self.entries.push(Entry::Assistant(std::mem::take(&mut self.streaming)));
+            self.entries
+                .push(Entry::Assistant(std::mem::take(&mut self.streaming)));
         }
     }
 
@@ -1280,7 +1329,10 @@ impl App {
 fn entry_of(record: &Record) -> Option<Entry> {
     match record {
         Record::User { content } => Some(Entry::User(content.clone())),
-        Record::Assistant { content, tool_calls } => {
+        Record::Assistant {
+            content,
+            tool_calls,
+        } => {
             let text = content.clone().unwrap_or_default();
             if text.trim().is_empty() && tool_calls.is_empty() {
                 None
@@ -1288,28 +1340,42 @@ fn entry_of(record: &Record) -> Option<Entry> {
                 Some(Entry::Assistant(text))
             }
         }
-        Record::ToolResult { name, output, approved, .. } => Some(Entry::Tool(ToolCard {
+        Record::ToolResult {
+            name,
+            output,
+            approved,
+            ..
+        } => Some(Entry::Tool(ToolCard {
             name: name.clone(),
             summary: String::new(),
-            status: if *approved { ToolStatus::Done } else { ToolStatus::Denied },
+            status: if *approved {
+                ToolStatus::Done
+            } else {
+                ToolStatus::Denied
+            },
             preview: crate::agent::preview(output, 80),
         })),
         // A resumed conversation shows the lanes its earlier runs joined,
         // so the tool cards that follow read as the lane's own.
-        Record::LaneTools { lane, tools } => {
-            Some(Entry::Lane(LaneCard { lane: lane.clone(), tool_count: tools.len() }))
-        }
+        Record::LaneTools { lane, tools } => Some(Entry::Lane(LaneCard {
+            lane: lane.clone(),
+            tool_count: tools.len(),
+        })),
         // A `compaction` record replays to one card: the turns it folded,
         // rebuilt from the range it names. The summary itself is not the
         // conversation's text — it stands in for turns the log still
         // holds — so the card names the fold rather than repeating it.
-        Record::Compaction { first_turn, last_turn, tokens_before, tokens_after, .. } => {
-            Some(Entry::Compaction(CompactionCard {
-                turns: crate::compaction::turns_in_range(*first_turn, *last_turn),
-                tokens_before: *tokens_before,
-                tokens_after: *tokens_after,
-            }))
-        }
+        Record::Compaction {
+            first_turn,
+            last_turn,
+            tokens_before,
+            tokens_after,
+            ..
+        } => Some(Entry::Compaction(CompactionCard {
+            turns: crate::compaction::turns_in_range(*first_turn, *last_turn),
+            tokens_before: *tokens_before,
+            tokens_after: *tokens_after,
+        })),
         // The skills record is bookkeeping about the system prompt, like
         // `start` and `end`: it replays to no conversation block. A
         // skill's use shows as the ordinary tool card its `tool_result`
@@ -1335,7 +1401,8 @@ mod tests {
 
     /// A scratch home the settings pane can read and write.
     fn settings_home(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("fleet-tui-settings-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("fleet-tui-settings-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -1349,7 +1416,10 @@ mod tests {
         let mut app = app();
         app.open_settings(home.clone());
         assert_eq!(app.mode, Mode::Settings);
-        assert!(!app.settings.is_empty(), "the pane carries the writer's states");
+        assert!(
+            !app.settings.is_empty(),
+            "the pane carries the writer's states"
+        );
         assert_eq!(app.selected, 0);
         app.apply(Action::Move(1));
         assert_eq!(app.selected, 1);
@@ -1521,7 +1591,10 @@ mod tests {
         assert_eq!(providers.len(), 2, "two provider cards");
         assert_eq!(workloads.len(), 2, "two workload cards");
         // The scalars come first, then the providers, then the workloads.
-        assert!(providers[0] >= app.settings.len(), "the scalars render first");
+        assert!(
+            providers[0] >= app.settings.len(),
+            "the scalars render first"
+        );
         assert!(workloads[0] > providers[1], "the workloads render last");
 
         // Picking the compiled-in override seeds its own JSON.
@@ -1538,7 +1611,10 @@ mod tests {
         // Committing it lands through the writer's own set_provider.
         app.apply(Action::Submit);
         assert_eq!(app.mode, Mode::Settings);
-        assert_eq!(app.settings_note.as_deref(), Some("provider `stepfun` written"));
+        assert_eq!(
+            app.settings_note.as_deref(),
+            Some("provider `stepfun` written")
+        );
 
         // Picking a workload card seeds the comma-joined candidates under
         // the writer's own key.
@@ -1585,7 +1661,10 @@ mod tests {
         assert!(!text.contains("stepfun"), "{text}");
         let roster = crate::route::load_roster(&home).expect("the roster still loads");
         assert!(
-            roster.candidates.iter().any(|candidate| candidate.id == "stepfun"),
+            roster
+                .candidates
+                .iter()
+                .any(|candidate| candidate.id == "stepfun"),
             "the compiled-in roster still walks it"
         );
         let _ = std::fs::remove_dir_all(&home);
@@ -1716,7 +1795,10 @@ mod tests {
             app.apply(Action::Input(character));
         }
         app.apply(Action::Submit);
-        assert_eq!(app.settings_note.as_deref(), Some("workload `quick` written"));
+        assert_eq!(
+            app.settings_note.as_deref(),
+            Some("workload `quick` written")
+        );
         let card = app
             .settings_lists
             .iter()
@@ -1921,7 +2003,9 @@ mod tests {
             Some("wait for the run to finish before resuming a session")
         );
         // Once the run ends, the same pick resumes.
-        app.apply_ui_event(UiEvent::Finished { stop_reason: "completed".to_string() });
+        app.apply_ui_event(UiEvent::Finished {
+            stop_reason: "completed".to_string(),
+        });
         app.error = None;
         let effect = app.apply(Action::Pick).unwrap();
         assert_eq!(effect, Effect::Resume("other".to_string()));
@@ -1936,7 +2020,9 @@ mod tests {
             completion_tokens: 12,
             total_tokens: 52,
         }));
-        app.seed(&[Record::User { content: "old task".to_string() }]);
+        app.seed(&[Record::User {
+            content: "old task".to_string(),
+        }]);
         assert_eq!(app.status.prompt_tokens, 0);
         assert_eq!(app.status.completion_tokens, 0);
         // The count then runs for the resumed conversation only.
@@ -1955,7 +2041,10 @@ mod tests {
         app.apply_ui_event(UiEvent::Turn(1));
         app.apply_ui_event(UiEvent::Token("he".to_string()));
         app.apply_ui_event(UiEvent::Token("llo".to_string()));
-        assert_eq!(app.conversation_lines(), vec![Entry::Assistant("hello".to_string())]);
+        assert_eq!(
+            app.conversation_lines(),
+            vec![Entry::Assistant("hello".to_string())]
+        );
         // The next turn's first event flushes the stream into a block.
         app.apply_ui_event(UiEvent::Turn(2));
         assert_eq!(app.entries, vec![Entry::Assistant("hello".to_string())]);
@@ -1975,7 +2064,9 @@ mod tests {
             preview: "total 0".to_string(),
             approved: true,
         });
-        let Entry::Tool(card) = &app.entries[0] else { panic!("expected a tool card") };
+        let Entry::Tool(card) = &app.entries[0] else {
+            panic!("expected a tool card")
+        };
         assert_eq!(card.status, ToolStatus::Done);
         assert_eq!(card.preview, "total 0");
         assert_eq!(card.summary, "ls -la");
@@ -2000,7 +2091,9 @@ mod tests {
             session: "child-1".to_string(),
             stage: SubagentStage::Spawned,
         });
-        let Entry::Tool(card) = &fresh.entries[0] else { panic!("expected a tool card") };
+        let Entry::Tool(card) = &fresh.entries[0] else {
+            panic!("expected a tool card")
+        };
         assert_eq!(card.status, ToolStatus::Pending);
         assert_eq!(card.summary, "count the files");
 
@@ -2009,11 +2102,19 @@ mod tests {
         app.apply_ui_event(UiEvent::Subagent {
             goal: "count the files".to_string(),
             session: "child-1".to_string(),
-            stage: SubagentStage::Working { calls: 2, tool: "bash".to_string() },
+            stage: SubagentStage::Working {
+                calls: 2,
+                tool: "bash".to_string(),
+            },
         });
         assert_eq!(app.entries.len(), 1, "{:?}", app.entries);
-        let Entry::Tool(card) = &app.entries[0] else { panic!("expected a tool card") };
-        assert_eq!(card.preview, "child child-1 \u{b7} 2 call(s) \u{b7} last bash");
+        let Entry::Tool(card) = &app.entries[0] else {
+            panic!("expected a tool card")
+        };
+        assert_eq!(
+            card.preview,
+            "child child-1 \u{b7} 2 call(s) \u{b7} last bash"
+        );
         // The status dot is the ordinary pair's, not the child's: a working
         // child leaves its card pending until the call's own result lands.
         assert_eq!(card.status, ToolStatus::Pending);
@@ -2021,7 +2122,10 @@ mod tests {
         app.apply_ui_event(UiEvent::Subagent {
             goal: "count the files".to_string(),
             session: "child-1".to_string(),
-            stage: SubagentStage::Done { outcome: "completed".to_string(), turns: 3 },
+            stage: SubagentStage::Done {
+                outcome: "completed".to_string(),
+                turns: 3,
+            },
         });
         app.apply_ui_event(UiEvent::ToolResult {
             name: "subagent".to_string(),
@@ -2029,7 +2133,9 @@ mod tests {
             approved: true,
         });
         assert_eq!(app.entries.len(), 1, "{:?}", app.entries);
-        let Entry::Tool(card) = &app.entries[0] else { panic!("expected a tool card") };
+        let Entry::Tool(card) = &app.entries[0] else {
+            panic!("expected a tool card")
+        };
         assert_eq!(card.status, ToolStatus::Done);
         assert_eq!(card.summary, "count the files");
         // The result's own preview is what stays: the card reads like every
@@ -2052,7 +2158,10 @@ mod tests {
             name: "mcp__sem1__probe".to_string(),
             summary: "embeddings \u{b7} probe {}".to_string(),
         });
-        app.apply_ui_event(UiEvent::LaneJoined { lane: "sem1".to_string(), tool_count: 4 });
+        app.apply_ui_event(UiEvent::LaneJoined {
+            lane: "sem1".to_string(),
+            tool_count: 4,
+        });
         app.apply_ui_event(UiEvent::ToolResult {
             name: "mcp__sem1__probe".to_string(),
             preview: "reachable".to_string(),
@@ -2070,7 +2179,10 @@ mod tests {
                     status: ToolStatus::Done,
                     preview: "reachable".to_string(),
                 }),
-                Entry::Lane(LaneCard { lane: "sem1".to_string(), tool_count: 4 }),
+                Entry::Lane(LaneCard {
+                    lane: "sem1".to_string(),
+                    tool_count: 4
+                }),
             ]
         );
     }
@@ -2081,7 +2193,9 @@ mod tests {
     fn seeding_a_log_shows_the_lanes_that_joined_it() {
         let mut app = app();
         app.seed(&[
-            Record::User { content: "probe it".to_string() },
+            Record::User {
+                content: "probe it".to_string(),
+            },
             Record::LaneTools {
                 lane: "sem1".to_string(),
                 tools: vec![
@@ -2111,7 +2225,10 @@ mod tests {
             app.entries,
             vec![
                 Entry::User("probe it".to_string()),
-                Entry::Lane(LaneCard { lane: "sem1".to_string(), tool_count: 2 }),
+                Entry::Lane(LaneCard {
+                    lane: "sem1".to_string(),
+                    tool_count: 2
+                }),
                 // The lane's own tool result, under its namespaced name.
                 Entry::Tool(ToolCard {
                     name: "mcp__sem1__probe".to_string(),
@@ -2131,14 +2248,22 @@ mod tests {
     fn seeding_a_log_skips_the_skills_record() {
         let mut app = app();
         app.seed(&[
-            Record::Start { v: 1, model: "m".to_string(), created: "c".to_string(), kind: None, parent: None },
+            Record::Start {
+                v: 1,
+                model: "m".to_string(),
+                created: "c".to_string(),
+                kind: None,
+                parent: None,
+            },
             Record::Skills {
                 skills: vec![crate::skills::SkillRef {
                     name: "bash-recovery".to_string(),
                     description: "Recover a failed bash call".to_string(),
                 }],
             },
-            Record::User { content: "run it".to_string() },
+            Record::User {
+                content: "run it".to_string(),
+            },
             Record::Assistant {
                 content: None,
                 tool_calls: vec![crate::api::ToolCall {
@@ -2188,7 +2313,9 @@ mod tests {
             preview: "denied: the user did not approve this call.".to_string(),
             approved: false,
         });
-        let Entry::Tool(card) = &app.entries[0] else { panic!("expected a tool card") };
+        let Entry::Tool(card) = &app.entries[0] else {
+            panic!("expected a tool card")
+        };
         assert_eq!(card.status, ToolStatus::Denied);
     }
 
@@ -2196,7 +2323,9 @@ mod tests {
     fn finished_and_failed_end_the_working_state() {
         let mut app = app();
         app.apply_ui_event(UiEvent::Turn(3));
-        app.apply_ui_event(UiEvent::Finished { stop_reason: "completed".to_string() });
+        app.apply_ui_event(UiEvent::Finished {
+            stop_reason: "completed".to_string(),
+        });
         assert!(!app.status.working);
         assert_eq!(app.status.turn, 0);
 
@@ -2211,15 +2340,23 @@ mod tests {
         let mut app = app();
         // Absent until a run assembles something.
         assert_eq!(app.status.memory, None);
-        app.apply_ui_event(UiEvent::Memory { shape: "deploy".to_string(), facts: 3 });
+        app.apply_ui_event(UiEvent::Memory {
+            shape: "deploy".to_string(),
+            facts: 3,
+        });
         assert_eq!(app.status.memory, Some(("deploy".to_string(), 3)));
         // An unclassified assembly says so with an empty shape.
-        app.apply_ui_event(UiEvent::Memory { shape: String::new(), facts: 1 });
+        app.apply_ui_event(UiEvent::Memory {
+            shape: String::new(),
+            facts: 1,
+        });
         assert_eq!(app.status.memory, Some((String::new(), 1)));
         // Seeding a resumed log clears it: the fact describes the
         // conversation on screen, and a resumed log's earlier runs
         // assembled theirs elsewhere.
-        app.seed(&[Record::User { content: "old task".to_string() }]);
+        app.seed(&[Record::User {
+            content: "old task".to_string(),
+        }]);
         assert_eq!(app.status.memory, None);
     }
 
@@ -2243,11 +2380,7 @@ mod tests {
     #[test]
     fn the_picker_moves_clamped_and_picks_a_session() {
         let mut app = app();
-        app.open_sessions(vec![
-            summary("first"),
-            summary("second"),
-            summary("third"),
-        ]);
+        app.open_sessions(vec![summary("first"), summary("second"), summary("third")]);
         assert_eq!(app.mode, Mode::Sessions);
         assert_eq!(app.selected, 0);
         app.apply(Action::Move(1));
@@ -2283,7 +2416,10 @@ mod tests {
         assert!(app.lanes.is_empty());
         assert!(app.lanes_loading);
         // The prober's rows land and the loading state clears.
-        app.set_lanes(app.lanes_probe, vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
+        app.set_lanes(
+            app.lanes_probe,
+            vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)],
+        );
         assert!(!app.lanes_loading);
         assert_eq!(app.lanes.len(), 1);
         // The view scrolls its rows and closes on escape.
@@ -2308,11 +2444,17 @@ mod tests {
         assert_ne!(stale, fresh, "each open stamps a new probe");
         // The stale rows arrive while the fresh modal is open — the mode
         // alone would let them through, which is the whole bug.
-        app.set_lanes(stale, vec![lane_health("sys1", crate::lanes::LaneState::Ok, 1)]);
+        app.set_lanes(
+            stale,
+            vec![lane_health("sys1", crate::lanes::LaneState::Ok, 1)],
+        );
         assert!(app.lanes.is_empty(), "stale rows must not render");
         assert!(app.lanes_loading, "the fresh probe is still in flight");
         // The fresh probe's own rows still land.
-        app.set_lanes(fresh, vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
+        app.set_lanes(
+            fresh,
+            vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)],
+        );
         assert_eq!(app.lanes.len(), 1);
         assert_eq!(app.lanes[0].name, "sem1");
         assert!(!app.lanes_loading);
@@ -2322,7 +2464,10 @@ mod tests {
     fn the_lanes_view_holds_no_menu_semantics() {
         let mut app = app();
         app.apply(Action::OpenLanes);
-        app.set_lanes(app.lanes_probe, vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)]);
+        app.set_lanes(
+            app.lanes_probe,
+            vec![lane_health("sem1", crate::lanes::LaneState::Ok, 4)],
+        );
         // Enter picks nothing; typing is swallowed; only quit and close
         // answer.
         assert_eq!(app.apply(Action::Pick), None);
@@ -2364,7 +2509,9 @@ mod tests {
         assert_eq!(app.mode, Mode::Chat);
         assert!(app.approval.is_none());
         // The approved call now shows as running.
-        let Entry::Tool(card) = &app.entries[0] else { panic!("expected a tool card") };
+        let Entry::Tool(card) = &app.entries[0] else {
+            panic!("expected a tool card")
+        };
         assert_eq!(card.status, ToolStatus::Approved);
         // Its result lands as done.
         app.apply_ui_event(UiEvent::ToolResult {
@@ -2372,7 +2519,9 @@ mod tests {
             preview: "exit 0".to_string(),
             approved: true,
         });
-        let Entry::Tool(card) = &app.entries[0] else { panic!("expected a tool card") };
+        let Entry::Tool(card) = &app.entries[0] else {
+            panic!("expected a tool card")
+        };
         assert_eq!(card.status, ToolStatus::Done);
     }
 
@@ -2400,10 +2549,24 @@ mod tests {
         app.apply_ui_event(UiEvent::Token("half a thought".to_string()));
         app.apply_ui_event(UiEvent::Failed("boom".to_string()));
         let records = vec![
-            Record::Start { v: 1, model: "m".to_string(), created: "c".to_string(), kind: None, parent: None },
-            Record::User { content: "resumed task".to_string() },
-            Record::Assistant { content: Some(String::new()), tool_calls: vec![] },
-            Record::Assistant { content: Some("done".to_string()), tool_calls: vec![] },
+            Record::Start {
+                v: 1,
+                model: "m".to_string(),
+                created: "c".to_string(),
+                kind: None,
+                parent: None,
+            },
+            Record::User {
+                content: "resumed task".to_string(),
+            },
+            Record::Assistant {
+                content: Some(String::new()),
+                tool_calls: vec![],
+            },
+            Record::Assistant {
+                content: Some("done".to_string()),
+                tool_calls: vec![],
+            },
             Record::ToolResult {
                 call_id: "c1".to_string(),
                 name: "bash".to_string(),
@@ -2411,7 +2574,10 @@ mod tests {
                 truncated: false,
                 approved: true,
             },
-            Record::End { stop_reason: "completed".to_string(), turns: 2 },
+            Record::End {
+                stop_reason: "completed".to_string(),
+                turns: 2,
+            },
         ];
         app.seed(&records);
         assert_eq!(
@@ -2534,8 +2700,13 @@ mod tests {
     fn seeding_a_log_shows_the_compactions_it_performed() {
         let mut app = app();
         app.seed(&[
-            Record::User { content: "the task".to_string() },
-            Record::Assistant { content: None, tool_calls: Vec::new() },
+            Record::User {
+                content: "the task".to_string(),
+            },
+            Record::Assistant {
+                content: None,
+                tool_calls: Vec::new(),
+            },
             Record::Compaction {
                 summary: "- did the thing".to_string(),
                 first_turn: 1,
@@ -2543,7 +2714,10 @@ mod tests {
                 tokens_before: 120_000,
                 tokens_after: 900,
             },
-            Record::Assistant { content: Some("carried on".to_string()), tool_calls: Vec::new() },
+            Record::Assistant {
+                content: Some("carried on".to_string()),
+                tool_calls: Vec::new(),
+            },
         ]);
         assert_eq!(
             app.entries,

@@ -101,7 +101,11 @@ fn render_settings(frame: &mut Frame<'_>, app: &App) {
     } else {
         " settings — enter edits, r removes, esc close ".to_string()
     };
-    let area = centered_sized(SETTINGS_MODAL_PERCENT, settings_height(lines.len()), frame.area());
+    let area = centered_sized(
+        SETTINGS_MODAL_PERCENT,
+        settings_height(lines.len()),
+        frame.area(),
+    );
     frame.render_widget(Clear, area);
     let block = Block::bordered()
         .title(title)
@@ -175,7 +179,11 @@ fn settings_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             Span::styled(state.key.to_string(), key_style),
             Span::styled(
                 format!("  {value}"),
-                Style::new().fg(if state.from_env { palette::PENDING } else { palette::TEXT }),
+                Style::new().fg(if state.from_env {
+                    palette::PENDING
+                } else {
+                    palette::TEXT
+                }),
             ),
             Span::styled(format!("  ({source})"), Style::new().fg(palette::DIM)),
         ]));
@@ -183,7 +191,10 @@ fn settings_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             // The selection's own summary, indented under it: what the
             // knob does is what the owner needs before editing it.
             lines.push(line_of(
-                vec![(format!("  {}", state.summary), Style::new().fg(palette::DIM))],
+                vec![(
+                    format!("  {}", state.summary),
+                    Style::new().fg(palette::DIM),
+                )],
                 width,
             ));
         }
@@ -270,7 +281,9 @@ fn list_card(
 ) -> Vec<Line<'static>> {
     let marker = if selected { "▸" } else { " " };
     let key_style = if selected {
-        Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD)
+        Style::new()
+            .fg(palette::ACCENT)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::new().fg(palette::TEXT)
     };
@@ -288,7 +301,12 @@ fn list_card(
         ],
         width,
     )];
-    lines.extend(wrapped("   ", &entry.detail, Style::new().fg(palette::DIM), width));
+    lines.extend(wrapped(
+        "   ",
+        &entry.detail,
+        Style::new().fg(palette::DIM),
+        width,
+    ));
     if selected {
         // The affordance, named where the selection is: an entry is
         // edited with enter and removed with `r`, and a knob has no
@@ -310,7 +328,9 @@ fn list_card(
 /// to put one — the question is what stands in for it, and the writer's
 /// own compiled-in rule still answers when the removal lands.
 fn render_settings_confirm(frame: &mut Frame<'_>, app: &App) {
-    let Some(removal) = &app.settings_removal else { return };
+    let Some(removal) = &app.settings_removal else {
+        return;
+    };
     // The modal's width comes from the frame first, so every line is
     // composed for the columns it will actually be drawn in — the
     // same share `centered_sized` lays out, read off the frame
@@ -325,15 +345,29 @@ fn render_settings_confirm(frame: &mut Frame<'_>, app: &App) {
         .areas(frame.area());
     let width = columns.width.saturating_sub(2).max(1) as usize;
     let mut lines = vec![Line::from("")];
-    lines.extend(wrapped(" ", &removal.detail, Style::new().fg(palette::TEXT), width));
+    lines.extend(wrapped(
+        " ",
+        &removal.detail,
+        Style::new().fg(palette::TEXT),
+        width,
+    ));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled(" [y]", Style::new().fg(palette::DENIED).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [y]",
+            Style::new()
+                .fg(palette::DENIED)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" remove   ", Style::new().fg(palette::TEXT)),
         Span::styled("any other key", Style::new().fg(palette::DIM)),
         Span::styled(" abandons, writing nothing", Style::new().fg(palette::TEXT)),
     ]));
-    let area = centered_sized(SETTINGS_CONFIRM_PERCENT, settings_height(lines.len()), frame.area());
+    let area = centered_sized(
+        SETTINGS_CONFIRM_PERCENT,
+        settings_height(lines.len()),
+        frame.area(),
+    );
     frame.render_widget(Clear, area);
     let block = Block::bordered()
         .title(" remove — y confirms, any other key abandons ")
@@ -376,7 +410,9 @@ fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
         let welcome = Text::from(vec![
             Line::from(Span::styled(
                 "fleet",
-                Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(palette::ACCENT)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
                 "a native agent on this machine.",
@@ -398,8 +434,8 @@ fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     } else {
         furthest.saturating_sub(app.scrolled_back)
     };
-    let paragraph = Paragraph::new(Text::from(lines))
-        .scroll((offset.min(u16::MAX as usize) as u16, 0));
+    let paragraph =
+        Paragraph::new(Text::from(lines)).scroll((offset.min(u16::MAX as usize) as u16, 0));
     frame.render_widget(paragraph, inner);
 }
 
@@ -445,7 +481,10 @@ fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 Some(snapshot) => format!("   last good read {}", snapshot.read_at()),
                 None => "   no snapshot yet".to_string(),
             };
-            lines.push(Line::from(Span::styled(stamp, Style::new().fg(palette::DIM))));
+            lines.push(Line::from(Span::styled(
+                stamp,
+                Style::new().fg(palette::DIM),
+            )));
             (lines, visible.saturating_sub(4))
         }
         None => match &slot.snapshot {
@@ -496,22 +535,35 @@ fn board_lines(kind: BoardKind, slot: &Slot, width: usize) -> Vec<Line<'static>>
         } else {
             (
                 " no snapshot yet".to_string(),
-                Some(slot.error.clone().unwrap_or_else(|| "the read has not landed yet".to_string())),
+                Some(
+                    slot.error
+                        .clone()
+                        .unwrap_or_else(|| "the read has not landed yet".to_string()),
+                ),
             )
         };
         let mut lines = vec![
             Line::from(Span::styled(
                 format!(" {} board", kind.label()),
-                Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(palette::ACCENT)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(Span::styled(
                 state,
-                if reason.is_some() { Style::new().fg(palette::DENIED) } else { Style::new().fg(palette::DIM) },
+                if reason.is_some() {
+                    Style::new().fg(palette::DENIED)
+                } else {
+                    Style::new().fg(palette::DIM)
+                },
             )),
         ];
         if let Some(reason) = reason {
-            lines.push(line_of(vec![(format!(" {reason}"), Style::new().fg(palette::DIM))], width));
+            lines.push(line_of(
+                vec![(format!(" {reason}"), Style::new().fg(palette::DIM))],
+                width,
+            ));
         }
         return lines;
     };
@@ -554,7 +606,11 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
     lines.push(section("tiers"));
     for chain in &snapshot.tiers {
         let extra = chain.candidates.len().saturating_sub(1);
-        let tail = if extra > 0 { format!("+{extra}") } else { String::new() };
+        let tail = if extra > 0 {
+            format!("+{extra}")
+        } else {
+            String::new()
+        };
         // The resolved primary is the fact worth the whole line; the
         // fallback count shows when it fits beside it, and `line_of`
         // drops it when it does not.
@@ -569,7 +625,10 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             vec![
                 (" \u{25cf} ".to_string(), Style::new().fg(palette::DONE)),
                 (chain.tier.clone(), Style::new().fg(palette::TEXT)),
-                (format!(" {}", boards::trim_to(&chain.primary, room)), Style::new().fg(palette::ACCENT)),
+                (
+                    format!(" {}", boards::trim_to(&chain.primary, room)),
+                    Style::new().fg(palette::ACCENT),
+                ),
                 (format!(" {tail}"), Style::new().fg(palette::DIM)),
             ],
             width,
@@ -589,7 +648,13 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             vec![
                 (format!(" {glyph} "), Style::new().fg(color)),
                 (row.status.to_string(), Style::new().fg(color)),
-                (format!("  {}", boards::trim_to(&row.model, width.saturating_sub(22))), Style::new().fg(palette::TEXT)),
+                (
+                    format!(
+                        "  {}",
+                        boards::trim_to(&row.model, width.saturating_sub(22))
+                    ),
+                    Style::new().fg(palette::TEXT),
+                ),
                 (format!("  {workload}"), Style::new().fg(palette::DIM)),
             ],
             width,
@@ -603,11 +668,18 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             .success_rate()
             .map(|rate| format!("{rate}%"))
             .unwrap_or_else(|| "\u{2014}".to_string());
-        let errors = if totals.errors > 0 { palette::DENIED } else { palette::TEXT };
+        let errors = if totals.errors > 0 {
+            palette::DENIED
+        } else {
+            palette::TEXT
+        };
         lines.push(line_of(
             vec![
                 (" calls ".to_string(), Style::new().fg(palette::DIM)),
-                (boards::grouped(totals.calls), Style::new().fg(palette::TEXT)),
+                (
+                    boards::grouped(totals.calls),
+                    Style::new().fg(palette::TEXT),
+                ),
                 ("  ok ".to_string(), Style::new().fg(palette::DIM)),
                 (rate, Style::new().fg(palette::DONE)),
                 ("  err ".to_string(), Style::new().fg(palette::DIM)),
@@ -619,7 +691,11 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             vec![
                 (" tokens ".to_string(), Style::new().fg(palette::DIM)),
                 (
-                    format!("{} in \u{b7} {} out", boards::compact(totals.prompt_tokens), boards::compact(totals.completion_tokens)),
+                    format!(
+                        "{} in \u{b7} {} out",
+                        boards::compact(totals.prompt_tokens),
+                        boards::compact(totals.completion_tokens)
+                    ),
                     Style::new().fg(palette::TEXT),
                 ),
             ],
@@ -631,12 +707,20 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             vec![
                 (" judge ".to_string(), Style::new().fg(palette::DIM)),
                 (
-                    format!("{} fresh \u{b7} {} cached", boards::grouped(judge.fresh), boards::compact(judge.cached)),
+                    format!(
+                        "{} fresh \u{b7} {} cached",
+                        boards::grouped(judge.fresh),
+                        boards::compact(judge.cached)
+                    ),
                     Style::new().fg(palette::TEXT),
                 ),
                 (
                     format!("  {} err", boards::grouped(judge.errors)),
-                    Style::new().fg(if judge.errors > 0 { palette::PENDING } else { palette::DIM }),
+                    Style::new().fg(if judge.errors > 0 {
+                        palette::PENDING
+                    } else {
+                        palette::DIM
+                    }),
                 ),
             ],
             width,
@@ -688,20 +772,36 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             (label, Style::new().fg(color)),
         ];
         if !providers.is_empty() {
-            pieces.push((format!(" \u{b7} {}", providers.join(", ")), Style::new().fg(palette::DIM)));
+            pieces.push((
+                format!(" \u{b7} {}", providers.join(", ")),
+                Style::new().fg(palette::DIM),
+            ));
         }
         lines.push(line_of(pieces, width));
     }
     // The models as bars: a comparison that reads at a glance.
-    let busiest = snapshot.models.first().map(|model| model.calls).unwrap_or(0);
+    let busiest = snapshot
+        .models
+        .first()
+        .map(|model| model.calls)
+        .unwrap_or(0);
     for model in snapshot.models.iter().take(3) {
         lines.push(line_of(
             vec![
                 (" ".to_string(), Style::new()),
-                (boards::cell(&model.model, 14), Style::new().fg(palette::TEXT)),
+                (
+                    boards::cell(&model.model, 14),
+                    Style::new().fg(palette::TEXT),
+                ),
                 (" ".to_string(), Style::new()),
-                (boards::bar(model.calls, busiest, 10), Style::new().fg(palette::ACCENT)),
-                (format!(" {}", boards::grouped(model.calls)), Style::new().fg(palette::DIM)),
+                (
+                    boards::bar(model.calls, busiest, 10),
+                    Style::new().fg(palette::ACCENT),
+                ),
+                (
+                    format!(" {}", boards::grouped(model.calls)),
+                    Style::new().fg(palette::DIM),
+                ),
             ],
             width,
         ));
@@ -730,7 +830,10 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
         line_of(
             vec![
                 (" second-brain ".to_string(), Style::new().fg(palette::DIM)),
-                (snapshot.home.display().to_string(), Style::new().fg(palette::TEXT)),
+                (
+                    snapshot.home.display().to_string(),
+                    Style::new().fg(palette::TEXT),
+                ),
             ],
             width,
         ),
@@ -742,14 +845,24 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
             lines.push(line_of(
                 vec![
                     (" verdicts ".to_string(), Style::new().fg(palette::DIM)),
-                    (boards::grouped(gates.totals.verdicts), Style::new().fg(palette::TEXT)),
+                    (
+                        boards::grouped(gates.totals.verdicts),
+                        Style::new().fg(palette::TEXT),
+                    ),
                     ("  dispositions ".to_string(), Style::new().fg(palette::DIM)),
-                    (boards::grouped(gates.totals.dispositions), Style::new().fg(palette::TEXT)),
+                    (
+                        boards::grouped(gates.totals.dispositions),
+                        Style::new().fg(palette::TEXT),
+                    ),
                 ],
                 width,
             ));
             for gate in gates.board.iter().take(5) {
-                let fit = if gate.fit_ready { " fit".to_string() } else { String::new() };
+                let fit = if gate.fit_ready {
+                    " fit".to_string()
+                } else {
+                    String::new()
+                };
                 let graded = Style::new().fg(if gate.fit_ready {
                     palette::DONE
                 } else {
@@ -759,7 +872,10 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
                     vec![
                         (" \u{25cf} ".to_string(), Style::new().fg(palette::DONE)),
                         (boards::cell(&gate.gate, 12), Style::new().fg(palette::TEXT)),
-                        (format!(" {}v", boards::grouped(gate.verdicts)), Style::new().fg(palette::DIM)),
+                        (
+                            format!(" {}v", boards::grouped(gate.verdicts)),
+                            Style::new().fg(palette::DIM),
+                        ),
                         (format!("  {}", gate.graded_progress), graded),
                         (fit, Style::new().fg(palette::DONE)),
                     ],
@@ -782,7 +898,10 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
                         vec![
                             (" \u{2715} ".to_string(), Style::new().fg(palette::DENIED)),
                             (boards::cell(&row.op, 14), Style::new().fg(palette::TEXT)),
-                            (format!(" {}", row.verdict), Style::new().fg(palette::DENIED)),
+                            (
+                                format!(" {}", row.verdict),
+                                Style::new().fg(palette::DENIED),
+                            ),
                         ],
                         width,
                     ));
@@ -808,13 +927,21 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
                 width,
             ));
             for row in harness.recent.iter().take(2) {
-                let color = if row.outcome == "ok" { palette::DONE } else { palette::DENIED };
+                let color = if row.outcome == "ok" {
+                    palette::DONE
+                } else {
+                    palette::DENIED
+                };
                 lines.push(line_of(
                     vec![
                         (" \u{25cf} ".to_string(), Style::new().fg(color)),
                         (boards::cell(&row.kind, 10), Style::new().fg(palette::TEXT)),
                         (
-                            format!(" {} \u{b7} {}", boards::trim_to(&row.label, width.saturating_sub(18)), row.outcome),
+                            format!(
+                                " {} \u{b7} {}",
+                                boards::trim_to(&row.label, width.saturating_sub(18)),
+                                row.outcome
+                            ),
                             Style::new().fg(palette::DIM),
                         ),
                     ],
@@ -829,22 +956,43 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
     match &snapshot.loops {
         Section::Landed(loops) => {
             lines.push(section("loops"));
-            let converged = loops.loops.iter().filter(|row| row.verdict == "passed").count();
+            let converged = loops
+                .loops
+                .iter()
+                .filter(|row| row.verdict == "passed")
+                .count();
             lines.push(line_of(
                 vec![
                     (" loops ".to_string(), Style::new().fg(palette::DIM)),
-                    (boards::grouped(loops.loops.len() as u64), Style::new().fg(palette::TEXT)),
-                    ("  converged ".to_string(), Style::new().fg(palette::DIM)),
-                    (boards::grouped(converged as u64), Style::new().fg(palette::DONE)),
                     (
-                        format!("  pending {}", loops.loops.iter().map(|row| row.pending_review).sum::<u64>()),
+                        boards::grouped(loops.loops.len() as u64),
+                        Style::new().fg(palette::TEXT),
+                    ),
+                    ("  converged ".to_string(), Style::new().fg(palette::DIM)),
+                    (
+                        boards::grouped(converged as u64),
+                        Style::new().fg(palette::DONE),
+                    ),
+                    (
+                        format!(
+                            "  pending {}",
+                            loops
+                                .loops
+                                .iter()
+                                .map(|row| row.pending_review)
+                                .sum::<u64>()
+                        ),
                         Style::new().fg(palette::PENDING),
                     ),
                 ],
                 width,
             ));
             for row in loops.loops.iter().take(3) {
-                let color = if row.verdict == "passed" { palette::DONE } else { palette::PENDING };
+                let color = if row.verdict == "passed" {
+                    palette::DONE
+                } else {
+                    palette::PENDING
+                };
                 lines.push(line_of(
                     vec![
                         (" \u{25cf} ".to_string(), Style::new().fg(color)),
@@ -863,7 +1011,11 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
                         (" graded ".to_string(), Style::new().fg(palette::DIM)),
                         (boards::cell(name, 14), Style::new().fg(palette::TEXT)),
                         (
-                            format!(" {} ({} confirmed)", boards::grouped(graded.n), boards::grouped(graded.confirmed)),
+                            format!(
+                                " {} ({} confirmed)",
+                                boards::grouped(graded.n),
+                                boards::grouped(graded.confirmed)
+                            ),
                             Style::new().fg(palette::DIM),
                         ),
                     ],
@@ -891,7 +1043,10 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
                         (" ".to_string(), Style::new()),
                         (boards::cell(name, 12), Style::new().fg(palette::TEXT)),
                         (" ".to_string(), Style::new()),
-                        (boards::sparkline(values, 12), Style::new().fg(palette::ACCENT)),
+                        (
+                            boards::sparkline(values, 12),
+                            Style::new().fg(palette::ACCENT),
+                        ),
                         (
                             format!(" {}", values.last().copied().unwrap_or(0)),
                             Style::new().fg(palette::DIM),
@@ -925,9 +1080,15 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
             lines.push(line_of(
                 vec![
                     (" doing ".to_string(), Style::new().fg(palette::DIM)),
-                    (boards::grouped(reports.doing.len() as u64), Style::new().fg(palette::TEXT)),
+                    (
+                        boards::grouped(reports.doing.len() as u64),
+                        Style::new().fg(palette::TEXT),
+                    ),
                     ("  conflicts ".to_string(), Style::new().fg(palette::DIM)),
-                    (boards::grouped(reports.open_conflicts), Style::new().fg(conflicts)),
+                    (
+                        boards::grouped(reports.open_conflicts),
+                        Style::new().fg(conflicts),
+                    ),
                 ],
                 width,
             ));
@@ -935,8 +1096,14 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
                 lines.push(line_of(
                     vec![
                         (" \u{25cf} ".to_string(), Style::new().fg(palette::PENDING)),
-                        (boards::cell(&row.project, 12), Style::new().fg(palette::TEXT)),
-                        (format!(" {}", boards::trim_to(&row.title, width.saturating_sub(18))), Style::new().fg(palette::DIM)),
+                        (
+                            boards::cell(&row.project, 12),
+                            Style::new().fg(palette::TEXT),
+                        ),
+                        (
+                            format!(" {}", boards::trim_to(&row.title, width.saturating_sub(18))),
+                            Style::new().fg(palette::DIM),
+                        ),
                     ],
                     width,
                 ));
@@ -969,17 +1136,36 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
 fn tower_lines(snapshot: &boards::TowerSnapshot, width: usize) -> Vec<Line<'static>> {
     let mut lines = vec![
         line_of(
-            vec![(" root ".to_string(), Style::new().fg(palette::DIM)), (snapshot.root.display().to_string(), Style::new().fg(palette::TEXT))],
+            vec![
+                (" root ".to_string(), Style::new().fg(palette::DIM)),
+                (
+                    snapshot.root.display().to_string(),
+                    Style::new().fg(palette::TEXT),
+                ),
+            ],
             width,
         ),
         line_of(
             vec![
                 (" repos ".to_string(), Style::new().fg(palette::DIM)),
-                (boards::grouped(snapshot.projects.len() as u64), Style::new().fg(palette::TEXT)),
-                ("  skipped ".to_string(), Style::new().fg(palette::DIM)),
-                (boards::grouped(snapshot.skipped.len() as u64), Style::new().fg(palette::DIM)),
                 (
-                    format!("  30d {}", snapshot.projects.iter().map(|project| project.commits_30d).sum::<u64>()),
+                    boards::grouped(snapshot.projects.len() as u64),
+                    Style::new().fg(palette::TEXT),
+                ),
+                ("  skipped ".to_string(), Style::new().fg(palette::DIM)),
+                (
+                    boards::grouped(snapshot.skipped.len() as u64),
+                    Style::new().fg(palette::DIM),
+                ),
+                (
+                    format!(
+                        "  30d {}",
+                        snapshot
+                            .projects
+                            .iter()
+                            .map(|project| project.commits_30d)
+                            .sum::<u64>()
+                    ),
                     Style::new().fg(palette::DIM),
                 ),
             ],
@@ -993,14 +1179,26 @@ fn tower_lines(snapshot: &boards::TowerSnapshot, width: usize) -> Vec<Line<'stat
         } else {
             ("\u{25cb}", palette::DONE)
         };
-        let branch = project.branch.clone().unwrap_or_else(|| "\u{2014}".to_string());
+        let branch = project
+            .branch
+            .clone()
+            .unwrap_or_else(|| "\u{2014}".to_string());
         let mut pieces = vec![
             (format!(" {dot} "), Style::new().fg(color)),
-            (boards::cell(&project.name, 16), Style::new().fg(palette::TEXT)),
-            (format!(" {}", boards::trim_to(&branch, 10)), Style::new().fg(palette::DIM)),
+            (
+                boards::cell(&project.name, 16),
+                Style::new().fg(palette::TEXT),
+            ),
+            (
+                format!(" {}", boards::trim_to(&branch, 10)),
+                Style::new().fg(palette::DIM),
+            ),
         ];
         if project.dirty > 0 {
-            pieces.push((format!(" {}d", project.dirty), Style::new().fg(palette::PENDING)));
+            pieces.push((
+                format!(" {}d", project.dirty),
+                Style::new().fg(palette::PENDING),
+            ));
         }
         if let Some(ahead) = project.ahead {
             pieces.push((format!(" \u{2191}{ahead}"), Style::new().fg(palette::DIM)));
@@ -1061,7 +1259,10 @@ fn truncated_lines(read: usize, unread: usize, width: usize) -> Vec<Line<'static
             width,
         ),
         line_of(
-            vec![("   the scan budget was spent".to_string(), Style::new().fg(palette::DIM))],
+            vec![(
+                "   the scan budget was spent".to_string(),
+                Style::new().fg(palette::DIM),
+            )],
             width,
         ),
     ]
@@ -1071,7 +1272,9 @@ fn truncated_lines(read: usize, unread: usize, width: usize) -> Vec<Line<'static
 fn section(title: &str) -> Line<'static> {
     Line::from(Span::styled(
         format!(" {title}"),
-        Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(palette::ACCENT)
+            .add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -1081,10 +1284,16 @@ fn section(title: &str) -> Line<'static> {
 fn refused_lines(name: &str, reason: &str, width: usize) -> Vec<Line<'static>> {
     vec![
         line_of(
-            vec![(format!(" \u{2715} {name}"), Style::new().fg(palette::DENIED))],
+            vec![(
+                format!(" \u{2715} {name}"),
+                Style::new().fg(palette::DENIED),
+            )],
             width,
         ),
-        line_of(vec![(format!("   {reason}"), Style::new().fg(palette::DIM))], width),
+        line_of(
+            vec![(format!("   {reason}"), Style::new().fg(palette::DIM))],
+            width,
+        ),
     ]
 }
 
@@ -1096,10 +1305,16 @@ fn refused_lines(name: &str, reason: &str, width: usize) -> Vec<Line<'static>> {
 fn drift_lines(route: &str, note: &str, width: usize) -> Vec<Line<'static>> {
     vec![
         line_of(
-            vec![(format!(" \u{25b3} {route} shape changed"), Style::new().fg(palette::PENDING))],
+            vec![(
+                format!(" \u{25b3} {route} shape changed"),
+                Style::new().fg(palette::PENDING),
+            )],
             width,
         ),
-        line_of(vec![(format!("   {note}"), Style::new().fg(palette::DIM))], width),
+        line_of(
+            vec![(format!("   {note}"), Style::new().fg(palette::DIM))],
+            width,
+        ),
     ]
 }
 
@@ -1125,7 +1340,12 @@ fn line_of(pieces: Vec<(String, Style)>, width: usize) -> Line<'static> {
 /// The one-line failure banner.
 fn render_error(frame: &mut Frame<'_>, message: &str, area: Rect) {
     let line = Line::from(vec![
-        Span::styled(" ! ", Style::new().fg(palette::DENIED).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " ! ",
+            Style::new()
+                .fg(palette::DENIED)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(message, Style::new().fg(palette::DENIED)),
     ]);
     frame.render_widget(Paragraph::new(line), area);
@@ -1139,7 +1359,11 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     } else {
         (palette::IDLE, "idle")
     };
-    let turn = if status.turn == 0 { "—".to_string() } else { status.turn.to_string() };
+    let turn = if status.turn == 0 {
+        "—".to_string()
+    } else {
+        status.turn.to_string()
+    };
     let mut spans = vec![
         Span::styled(" ● ", Style::new().fg(dot)),
         Span::styled(state, Style::new().fg(dot)),
@@ -1159,9 +1383,15 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // reported one — the TUI's half of slice 5's route surfacing.
     if let Some(provider) = &status.provider {
         spans.push(Span::styled("  route ", Style::new().fg(palette::DIM)));
-        spans.push(Span::styled(provider.clone(), Style::new().fg(palette::ACCENT)));
+        spans.push(Span::styled(
+            provider.clone(),
+            Style::new().fg(palette::ACCENT),
+        ));
         if let Some(how) = &status.route_how {
-            spans.push(Span::styled(format!(" ({how})"), Style::new().fg(palette::DIM)));
+            spans.push(Span::styled(
+                format!(" ({how})"),
+                Style::new().fg(palette::DIM),
+            ));
         }
     }
     // What the last run's assembled memory carried: the shape the
@@ -1171,10 +1401,17 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // The active board, so the pane's title is never the only place the
     // surface is named.
     spans.push(Span::styled("  board ", Style::new().fg(palette::DIM)));
-    spans.push(Span::styled(app.boards.active.label(), Style::new().fg(palette::ACCENT)));
+    spans.push(Span::styled(
+        app.boards.active.label(),
+        Style::new().fg(palette::ACCENT),
+    ));
     if let Some((shape, facts)) = &status.memory {
         spans.push(Span::styled("  memory ", Style::new().fg(palette::DIM)));
-        let named = if shape.is_empty() { "no shape".to_string() } else { shape.clone() };
+        let named = if shape.is_empty() {
+            "no shape".to_string()
+        } else {
+            shape.clone()
+        };
         let plural = if *facts == 1 { "" } else { "s" };
         spans.push(Span::styled(
             format!("{named} \u{b7} {facts} fact{plural}"),
@@ -1196,8 +1433,12 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
         return;
     }
 
-    let (lines, cursor) =
-        input_lines(&app.input, app.cursor, inner.width as usize, inner.height as usize);
+    let (lines, cursor) = input_lines(
+        &app.input,
+        app.cursor,
+        inner.width as usize,
+        inner.height as usize,
+    );
     let paragraph = Paragraph::new(Text::from(lines));
     frame.render_widget(paragraph, inner);
     if let Some((x, y)) = cursor {
@@ -1210,7 +1451,10 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect) {
     let hints =
         "enter send · ctrl+o sessions · ctrl+l lanes · ctrl+, settings · ctrl+x explain · ctrl+b board · q quit";
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(hints, Style::new().fg(palette::TEXT)))),
+        Paragraph::new(Line::from(Span::styled(
+            hints,
+            Style::new().fg(palette::TEXT),
+        ))),
         area,
     );
 }
@@ -1229,17 +1473,35 @@ fn render_approval(frame: &mut Frame<'_>, app: &App) {
     let body = Text::from(vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled(&prompt.name, Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &prompt.name,
+                Style::new()
+                    .fg(palette::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("  ", Style::new()),
             Span::styled(&prompt.summary, Style::new().fg(palette::TEXT)),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled(" [y]", Style::new().fg(palette::DONE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " [y]",
+                Style::new().fg(palette::DONE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" yes   ", Style::new().fg(palette::TEXT)),
-            Span::styled("[n]", Style::new().fg(palette::DENIED).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[n]",
+                Style::new()
+                    .fg(palette::DENIED)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" no   ", Style::new().fg(palette::TEXT)),
-            Span::styled("[a]", Style::new().fg(palette::PENDING).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[a]",
+                Style::new()
+                    .fg(palette::PENDING)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" always", Style::new().fg(palette::TEXT)),
         ]),
         Line::from(Span::styled(
@@ -1300,11 +1562,17 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
                     Style::new().fg(palette::TEXT)
                 },
             ),
-            Span::styled(format!("  {}  ", summary.model), Style::new().fg(palette::DIM)),
+            Span::styled(
+                format!("  {}  ", summary.model),
+                Style::new().fg(palette::DIM),
+            ),
             Span::styled(state, Style::new().fg(dot)),
         ];
         if current {
-            spans.push(Span::styled("  (current)", Style::new().fg(palette::ACCENT)));
+            spans.push(Span::styled(
+                "  (current)",
+                Style::new().fg(palette::ACCENT),
+            ));
         }
         // A delegated child's log is an ordinary session with a marker:
         // the picker says so, so a resumed child reads as what it is.
@@ -1371,7 +1639,11 @@ fn render_explain(frame: &mut Frame<'_>, app: &App) {
         .iter()
         .map(|line| line_of(vec![(line.clone(), Style::new().fg(palette::TEXT))], width))
         .collect();
-    let area = centered_sized(EXPLAIN_MODAL_PERCENT, explain_height(lines.len()), frame.area());
+    let area = centered_sized(
+        EXPLAIN_MODAL_PERCENT,
+        explain_height(lines.len()),
+        frame.area(),
+    );
     frame.render_widget(Clear, area);
     let block = Block::bordered()
         .title(" explain — esc close ")
@@ -1480,7 +1752,11 @@ fn lane_modal_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 (format!("  {}  ", lane.role), Style::new().fg(palette::DIM)),
                 (format!("v{version}"), Style::new().fg(palette::DIM)),
                 (
-                    format!("  {} tool{}", lane.tools.len(), if lane.tools.len() == 1 { "" } else { "s" }),
+                    format!(
+                        "  {} tool{}",
+                        lane.tools.len(),
+                        if lane.tools.len() == 1 { "" } else { "s" }
+                    ),
                     Style::new().fg(palette::TEXT),
                 ),
                 (format!("  {}", lane.state.label()), Style::new().fg(color)),
@@ -1490,10 +1766,13 @@ fn lane_modal_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         // The latency, exactly as the headless card renders it — the two
         // surfaces are meant to read as one.
         if lane.source.is_some() {
-            lines.last_mut().expect("the row just pushed").push_span(Span::styled(
-                format!("  · {} ms", lane.elapsed_ms),
-                Style::new().fg(palette::DIM),
-            ));
+            lines
+                .last_mut()
+                .expect("the row just pushed")
+                .push_span(Span::styled(
+                    format!("  · {} ms", lane.elapsed_ms),
+                    Style::new().fg(palette::DIM),
+                ));
         }
         // The detail line: the tool names when the lane answered, the
         // reason it could not when it did not.
@@ -1545,7 +1824,12 @@ fn doctor_lines(lane: &crate::lanes::LaneHealth, width: usize) -> Vec<Line<'stat
         } else {
             "the probe's doctor report did not land".to_string()
         };
-        lines.extend(wrapped("   ", &named, Style::new().fg(palette::DENIED), width));
+        lines.extend(wrapped(
+            "   ",
+            &named,
+            Style::new().fg(palette::DENIED),
+            width,
+        ));
         return lines;
     }
     // The web leg is not one of the five blend sub-lanes — it is the
@@ -1554,8 +1838,15 @@ fn doctor_lines(lane: &crate::lanes::LaneHealth, width: usize) -> Vec<Line<'stat
     // CLI's card. It gets its own accented line below rather than a
     // sixth row in the sub-lane column, because the two surfaces
     // disagreeing on what the web leg IS would be the drift.
-    let web = lane.doctor.iter().find(|entry| entry.lane == crate::lanes::WEB_LEG);
-    for availability in lane.doctor.iter().filter(|entry| entry.lane != crate::lanes::WEB_LEG) {
+    let web = lane
+        .doctor
+        .iter()
+        .find(|entry| entry.lane == crate::lanes::WEB_LEG);
+    for availability in lane
+        .doctor
+        .iter()
+        .filter(|entry| entry.lane != crate::lanes::WEB_LEG)
+    {
         let (dot, color) = if availability.available {
             ("●", palette::DONE)
         } else {
@@ -1585,7 +1876,11 @@ fn doctor_lines(lane: &crate::lanes::LaneHealth, width: usize) -> Vec<Line<'stat
         lines.push(Line::from(vec![
             Span::styled(head, Style::new().fg(color)),
             Span::styled(
-                format!("{:<column$}", availability.lane, column = DOCTOR_NAME_COLUMN),
+                format!(
+                    "{:<column$}",
+                    availability.lane,
+                    column = DOCTOR_NAME_COLUMN
+                ),
                 Style::new().fg(palette::TEXT),
             ),
             Span::styled(first, named_style),
@@ -1640,18 +1935,21 @@ fn doctor_lines(lane: &crate::lanes::LaneHealth, width: usize) -> Vec<Line<'stat
 /// One reason as wrapped lines: the first carries `indent` and `style`,
 /// every continuation is indented to the reason's own column and dimmed.
 /// A reason is never clipped — a clipped reason is not a named one.
-fn wrapped(
-    indent: &str,
-    text: &str,
-    style: Style,
-    width: usize,
-) -> Vec<Line<'static>> {
+fn wrapped(indent: &str, text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
     let room = width.saturating_sub(indent.chars().count()).max(8);
     let chunks = wrap(text, room);
     let mut out = Vec::with_capacity(chunks.len());
     for (index, chunk) in chunks.into_iter().enumerate() {
-        let pad = if index == 0 { indent.to_string() } else { " ".repeat(indent.chars().count()) };
-        let style = if index == 0 { style } else { Style::new().fg(palette::DIM) };
+        let pad = if index == 0 {
+            indent.to_string()
+        } else {
+            " ".repeat(indent.chars().count())
+        };
+        let style = if index == 0 {
+            style
+        } else {
+            Style::new().fg(palette::DIM)
+        };
         out.push(Line::from(Span::styled(format!("{pad}{chunk}"), style)));
     }
     out
@@ -1668,12 +1966,18 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             .map(|(index, chunk)| {
                 if index == 0 {
                     Line::from(vec![
-                        Span::styled("you ", Style::new().fg(palette::USER).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            "you ",
+                            Style::new().fg(palette::USER).add_modifier(Modifier::BOLD),
+                        ),
                         Span::styled("▸ ", Style::new().fg(palette::USER)),
                         Span::styled(chunk, Style::new().fg(palette::TEXT)),
                     ])
                 } else {
-                    Line::from(Span::styled(format!("    {chunk}"), Style::new().fg(palette::TEXT)))
+                    Line::from(Span::styled(
+                        format!("    {chunk}"),
+                        Style::new().fg(palette::TEXT),
+                    ))
                 }
             })
             .collect(),
@@ -1689,10 +1993,15 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                 ToolStatus::Done => (palette::DONE, "done"),
             };
             let mut lines = vec![Line::from(vec![
-                Span::styled(format!(" {} ", dot_marker(card.status)), Style::new().fg(dot)),
+                Span::styled(
+                    format!(" {} ", dot_marker(card.status)),
+                    Style::new().fg(dot),
+                ),
                 Span::styled(
                     card.name.clone(),
-                    Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                    Style::new()
+                        .fg(palette::ACCENT)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("  ", Style::new()),
                 Span::styled(card.summary.clone(), Style::new().fg(palette::DIM)),
@@ -1711,13 +2020,23 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
         Entry::Lane(card) => {
             // A lane joining the run is a one-line fact in the same
             // family as a tool card: a dot, the lane, and what it brought.
-            let tools = if card.tool_count == 1 { "1 tool" } else { " tools" };
-            let count = if card.tool_count == 1 { String::new() } else { card.tool_count.to_string() };
+            let tools = if card.tool_count == 1 {
+                "1 tool"
+            } else {
+                " tools"
+            };
+            let count = if card.tool_count == 1 {
+                String::new()
+            } else {
+                card.tool_count.to_string()
+            };
             vec![Line::from(vec![
                 Span::styled(" \u{2713} ", Style::new().fg(palette::DONE)),
                 Span::styled(
                     card.lane.clone(),
-                    Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                    Style::new()
+                        .fg(palette::ACCENT)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     format!(" joined \u{b7} {count}{tools}"),
@@ -1743,11 +2062,17 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                 Span::styled(" \u{2713} ", Style::new().fg(palette::DONE)),
                 Span::styled(
                     "compacted",
-                    Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                    Style::new()
+                        .fg(palette::ACCENT)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("  ", Style::new()),
                 Span::styled(
-                    format!("{} turn{}", card.turns, if card.turns == 1 { "" } else { "s" }),
+                    format!(
+                        "{} turn{}",
+                        card.turns,
+                        if card.turns == 1 { "" } else { "s" }
+                    ),
                     Style::new().fg(palette::DIM),
                 ),
                 Span::styled("  done", Style::new().fg(palette::DONE)),
@@ -1793,16 +2118,23 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                 Span::styled(format!(" {glyph} "), Style::new().fg(color)),
                 Span::styled(
                     "scheduled",
-                    Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                    Style::new()
+                        .fg(palette::ACCENT)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("  ", Style::new()),
                 Span::styled(
                     card.job.clone(),
-                    Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD),
+                    Style::new()
+                        .fg(palette::ACCENT)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(format!("  {state}"), Style::new().fg(color)),
             ])];
-            for chunk in wrap(&format!("{minute} \u{b7} {}", card.detail), width.saturating_sub(4).max(8)) {
+            for chunk in wrap(
+                &format!("{minute} \u{b7} {}", card.detail),
+                width.saturating_sub(4).max(8),
+            ) {
                 lines.push(Line::from(vec![
                     Span::styled("   \u{2514} ", Style::new().fg(palette::DIM)),
                     Span::styled(chunk, Style::new().fg(palette::DIM)),
@@ -1813,7 +2145,10 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             // is not reachable (KI-078's class, at the pane's shipped
             // width beside the boards).
             if let Some(session) = &card.session {
-                for chunk in wrap(&format!("session {session}"), width.saturating_sub(4).max(8)) {
+                for chunk in wrap(
+                    &format!("session {session}"),
+                    width.saturating_sub(4).max(8),
+                ) {
                     lines.push(Line::from(vec![
                         Span::styled("   \u{2514} ", Style::new().fg(palette::DIM)),
                         Span::styled(chunk, Style::new().fg(palette::DIM)),
@@ -1934,23 +2269,28 @@ fn input_lines(
     // view: it starts at the tail unless the cursor sits above it, and
     // never more than a screen above the cursor.
     let tail = all.len().saturating_sub(height);
-    let skip = tail.max(cursor_row.saturating_sub(height - 1)).min(cursor_row);
+    let skip = tail
+        .max(cursor_row.saturating_sub(height - 1))
+        .min(cursor_row);
     let visible: Vec<String> = all.iter().skip(skip).take(height).cloned().collect();
     let lines: Vec<Line<'static>> = visible
         .iter()
         .map(|line| Line::from(Span::styled(line.clone(), Style::new().fg(palette::TEXT))))
         .collect();
     let row = cursor_row.saturating_sub(skip);
-    let cursor = (row < visible.len() && cursor_col < width).then_some((cursor_col as u16, row as u16));
+    let cursor =
+        (row < visible.len() && cursor_col < width).then_some((cursor_col as u16, row as u16));
     (lines, cursor)
 }
 
 /// A centered overlay of the given percentages.
 fn centered(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let [area] =
-        Layout::vertical([Constraint::Percentage(percent_y)]).flex(Flex::Center).areas(area);
-    let [area] =
-        Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center).areas(area);
+    let [area] = Layout::vertical([Constraint::Percentage(percent_y)])
+        .flex(Flex::Center)
+        .areas(area);
+    let [area] = Layout::horizontal([Constraint::Percentage(percent_x)])
+        .flex(Flex::Center)
+        .areas(area);
     area
 }
 
@@ -1960,9 +2300,12 @@ fn centered(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 /// — so a view sized from its own content asks for rows.
 fn centered_sized(percent_x: u16, height: u16, area: Rect) -> Rect {
     let height = height.min(area.height);
-    let [area] = Layout::vertical([Constraint::Length(height)]).flex(Flex::Center).areas(area);
-    let [area] =
-        Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center).areas(area);
+    let [area] = Layout::vertical([Constraint::Length(height)])
+        .flex(Flex::Center)
+        .areas(area);
+    let [area] = Layout::horizontal([Constraint::Percentage(percent_x)])
+        .flex(Flex::Center)
+        .areas(area);
     area
 }
 
@@ -2201,7 +2544,7 @@ mod tests {
 
     use crate::agent::UiEvent;
     use crate::session::SessionSummary;
-    use crate::tui::app::{Action, ApprovalPrompt, App, Entry, Mode, SettingsRow};
+    use crate::tui::app::{Action, App, ApprovalPrompt, Entry, Mode, SettingsRow};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
@@ -2283,7 +2626,10 @@ mod tests {
         }]);
         let child_picker = draw(&children, 80, 24);
         assert!(child_picker.contains("subagent"), "{child_picker}");
-        assert!(child_picker.contains("20261013T111111Z-fedcba"), "{child_picker}");
+        assert!(
+            child_picker.contains("20261013T111111Z-fedcba"),
+            "{child_picker}"
+        );
 
         // A compacted session replays as a compacted shape, so the picker
         // marks it before it is opened.
@@ -2299,7 +2645,10 @@ mod tests {
         }]);
         let folded_picker = draw(&folded, 80, 24);
         assert!(folded_picker.contains("compacted"), "{folded_picker}");
-        assert!(folded_picker.contains("20261013T121212Z-cabbag"), "{folded_picker}");
+        assert!(
+            folded_picker.contains("20261013T121212Z-cabbag"),
+            "{folded_picker}"
+        );
 
         // The approval modal.
         let mut approving = fresh();
@@ -2410,8 +2759,10 @@ mod tests {
         );
         // The loop strips ANSI before the lines enter the state machine —
         // the same transformation `open_explanation` applies.
-        let lines: Vec<String> =
-            crate::eval::strip_ansi(&card).lines().map(str::to_string).collect();
+        let lines: Vec<String> = crate::eval::strip_ansi(&card)
+            .lines()
+            .map(str::to_string)
+            .collect();
         let widest = lines
             .iter()
             .max_by_key(|line| line.chars().count())
@@ -2426,7 +2777,10 @@ mod tests {
         // Every drawn row fits the 80-column frame: the modal is 96% of
         // it, so its inner width is under 80 and no row overflows.
         for row in drawn.lines() {
-            assert!(row.chars().count() <= 80, "a modal row overflows 80 columns: {row:?}");
+            assert!(
+                row.chars().count() <= 80,
+                "a modal row overflows 80 columns: {row:?}"
+            );
         }
         // The card's widest plain line survives intact — proof the width
         // budget was spent on visible columns, not eaten by the escapes
@@ -2503,7 +2857,10 @@ mod tests {
             read_at: "2026-10-14T09:41Z".to_string(),
             base_url: "http://127.0.0.1:8300".to_string(),
             port: Some(8300),
-            judge: Some(("cascade".to_string(), Some("fastino/gliner2.5-multi-v1".to_string()))),
+            judge: Some((
+                "cascade".to_string(),
+                Some("fastino/gliner2.5-multi-v1".to_string()),
+            )),
             payg: Some((false, vec!["deepseek".to_string()])),
             tiers: vec![
                 crate::boards::TierChain {
@@ -2570,7 +2927,11 @@ mod tests {
                     reason: Some("upstream refused".to_string()),
                 },
             ],
-            judge_counters: Some(crate::boards::JudgeCounters { fresh: 581, cached: 15_738, errors: 321 }),
+            judge_counters: Some(crate::boards::JudgeCounters {
+                fresh: 581,
+                cached: 15_738,
+                errors: 321,
+            }),
             cascade: Some(crate::boards::CascadeCounters {
                 escalations: 787,
                 cold: 0,
@@ -2578,7 +2939,10 @@ mod tests {
                 compared: 217,
             }),
             workloads: vec![("standard_code".to_string(), 10_557)],
-            guidance: vec![("quick".to_string(), "the quick tier's head is exhausted".to_string())],
+            guidance: vec![(
+                "quick".to_string(),
+                "the quick tier's head is exhausted".to_string(),
+            )],
             refused: Vec::new(),
             drift: Vec::new(),
         }
@@ -2606,7 +2970,11 @@ mod tests {
                     ts: "2026-10-02T20:09:10Z".to_string(),
                     command: "cd /repo && python3".to_string(),
                 }],
-                totals: crate::boards::GateTotals { events: 107, verdicts: 80, dispositions: 16 },
+                totals: crate::boards::GateTotals {
+                    events: 107,
+                    verdicts: 80,
+                    dispositions: 16,
+                },
                 daily: vec![("2026-09-22".to_string(), 4)],
             }),
             harness: Section::Refused("harness_state.json does not exist".to_string()),
@@ -2621,7 +2989,10 @@ mod tests {
                 }],
                 graded: vec![(
                     "ux_capture".to_string(),
-                    crate::boards::GradedRow { n: 127, confirmed: 45 },
+                    crate::boards::GradedRow {
+                        n: 127,
+                        confirmed: 45,
+                    },
                 )],
                 findings: vec!["one finding".to_string()],
             }),
@@ -2783,7 +3154,10 @@ mod tests {
         assert!(drawn.contains("slice 14"), "{drawn}");
         assert!(drawn.contains("conflicts"), "{drawn}");
         // One read that did not land is named on the board that carries it.
-        assert!(drawn.contains("harness_state.json does not exist"), "{drawn}");
+        assert!(
+            drawn.contains("harness_state.json does not exist"),
+            "{drawn}"
+        );
     }
 
     #[test]
@@ -2824,7 +3198,10 @@ mod tests {
         assert!(drawn.contains("19,873"), "{drawn}");
         // And the refusal is named, with the time of the last good read.
         assert!(drawn.contains("the kit at 8300 did not answer"), "{drawn}");
-        assert!(drawn.contains("last good read 2026-10-14T09:41Z"), "{drawn}");
+        assert!(
+            drawn.contains("last good read 2026-10-14T09:41Z"),
+            "{drawn}"
+        );
     }
 
     #[test]
@@ -2837,7 +3214,10 @@ mod tests {
         app.boards.active = crate::boards::BoardKind::Tower;
         let drawn = draw(&app, 120, 40);
         assert!(drawn.contains("no snapshot"), "{drawn}");
-        assert!(drawn.contains("the tower could not list /nowhere"), "{drawn}");
+        assert!(
+            drawn.contains("the tower could not list /nowhere"),
+            "{drawn}"
+        );
         // A board still on its opening read says it is reading rather
         // than lying about having nothing.
         let mut loading = fresh();
@@ -2882,16 +3262,32 @@ mod tests {
         // a refused one.
         for (width, height) in [(120, 40), (80, 24)] {
             for (kind, snapshot) in [
-                (crate::boards::BoardKind::Router, crate::boards::BoardData::Router(router_snapshot())),
-                (crate::boards::BoardKind::Brain, crate::boards::BoardData::Brain(brain_snapshot())),
-                (crate::boards::BoardKind::Tower, crate::boards::BoardData::Tower(tower_snapshot())),
+                (
+                    crate::boards::BoardKind::Router,
+                    crate::boards::BoardData::Router(router_snapshot()),
+                ),
+                (
+                    crate::boards::BoardKind::Brain,
+                    crate::boards::BoardData::Brain(brain_snapshot()),
+                ),
+                (
+                    crate::boards::BoardKind::Tower,
+                    crate::boards::BoardData::Tower(tower_snapshot()),
+                ),
             ] {
                 let app = board_app(kind, snapshot);
                 let drawn = draw(&app, width, height);
-                assert!(drawn.contains("read 2026-10-14T09:41Z"), "{width}x{height}: {drawn}");
+                assert!(
+                    drawn.contains("read 2026-10-14T09:41Z"),
+                    "{width}x{height}: {drawn}"
+                );
                 // The pane never overflows its frame either.
                 let rows: Vec<&str> = drawn.lines().collect();
-                assert!(rows.len() <= height as usize, "{} rows at {width}", rows.len());
+                assert!(
+                    rows.len() <= height as usize,
+                    "{} rows at {width}",
+                    rows.len()
+                );
             }
         }
     }
@@ -2921,7 +3317,10 @@ mod tests {
         assert!(drawn.contains("plan-gate"), "{drawn}");
         assert!(drawn.contains("9/20"), "{drawn}");
         assert!(drawn.contains("zcode-gate"), "{drawn}");
-        assert!(drawn.contains("harness_state.json does not exist"), "{drawn}");
+        assert!(
+            drawn.contains("harness_state.json does not exist"),
+            "{drawn}"
+        );
         // The second-brain board is the longest of the three: at 24 rows
         // it names what it holds back rather than clipping its tail.
         assert!(drawn.contains("more"), "{drawn}");
@@ -2948,8 +3347,14 @@ mod tests {
         snapshot.judge = None;
         snapshot.drift = vec![
             ("/api/state".to_string(), "judge.mode is absent".to_string()),
-            ("/api/state".to_string(), "resolved.workloads is absent".to_string()),
-            ("/api/usage".to_string(), "0 of 1 model rows could not be read".to_string()),
+            (
+                "/api/state".to_string(),
+                "resolved.workloads is absent".to_string(),
+            ),
+            (
+                "/api/usage".to_string(),
+                "0 of 1 model rows could not be read".to_string(),
+            ),
         ];
         let app = board_app(
             crate::boards::BoardKind::Router,
@@ -2959,11 +3364,23 @@ mod tests {
         // a short pane does not fold it out of sight.
         for (width, height) in [(120, 40), (80, 24)] {
             let drawn = draw(&app, width, height);
-            assert!(drawn.contains("/api/state shape changed"), "{width}: {drawn}");
+            assert!(
+                drawn.contains("/api/state shape changed"),
+                "{width}: {drawn}"
+            );
             assert!(drawn.contains("judge.mode is absent"), "{width}: {drawn}");
-            assert!(drawn.contains("resolved.workloads is absent"), "{width}: {drawn}");
-            assert!(drawn.contains("/api/usage shape changed"), "{width}: {drawn}");
-            assert!(drawn.contains("model rows could not be read"), "{width}: {drawn}");
+            assert!(
+                drawn.contains("resolved.workloads is absent"),
+                "{width}: {drawn}"
+            );
+            assert!(
+                drawn.contains("/api/usage shape changed"),
+                "{width}: {drawn}"
+            );
+            assert!(
+                drawn.contains("model rows could not be read"),
+                "{width}: {drawn}"
+            );
         }
     }
 
@@ -2990,16 +3407,28 @@ mod tests {
         // rendered board, at any width the pane is drawn at.
         const TOKEN: &str = "kit-local-token-4f9c2b7e";
         for (kind, snapshot) in [
-            (crate::boards::BoardKind::Router, crate::boards::BoardData::Router(router_snapshot())),
-            (crate::boards::BoardKind::Brain, crate::boards::BoardData::Brain(brain_snapshot())),
-            (crate::boards::BoardKind::Tower, crate::boards::BoardData::Tower(tower_snapshot())),
+            (
+                crate::boards::BoardKind::Router,
+                crate::boards::BoardData::Router(router_snapshot()),
+            ),
+            (
+                crate::boards::BoardKind::Brain,
+                crate::boards::BoardData::Brain(brain_snapshot()),
+            ),
+            (
+                crate::boards::BoardKind::Tower,
+                crate::boards::BoardData::Tower(tower_snapshot()),
+            ),
         ] {
             let app = board_app(kind, snapshot);
             for (width, height) in [(120, 40), (80, 24)] {
                 let drawn = draw(&app, width, height);
                 assert!(!drawn.contains(TOKEN), "{width}x{height}: {drawn}");
                 assert!(!drawn.contains("Bearer"), "{width}x{height}: {drawn}");
-                assert!(!drawn.contains("authorization"), "{width}x{height}: {drawn}");
+                assert!(
+                    !drawn.contains("authorization"),
+                    "{width}x{height}: {drawn}"
+                );
             }
         }
     }
@@ -3009,12 +3438,19 @@ mod tests {
         // A four-lane modal is eight two-line rows plus headroom; it must
         // not keep a fixed 62% of the screen.
         assert_eq!(lanes_height(1), 5, "one line plus the border and headroom");
-        assert_eq!(lanes_height(8), 12, "four two-line rows: the old shape's height");
+        assert_eq!(
+            lanes_height(8),
+            12,
+            "four two-line rows: the old shape's height"
+        );
         // Clamped at both ends, so a small frame or an unexpected row
         // count cannot push the modal off screen.
         assert_eq!(lanes_height(0), 4);
         assert_eq!(lanes_height(40), 20);
-        assert!(lanes_height(8) < 62, "the modal must not keep the fixed share");
+        assert!(
+            lanes_height(8) < 62,
+            "the modal must not keep the fixed share"
+        );
     }
 
     /// blend1's card is the fifth one, and it renders at the house visual
@@ -3036,12 +3472,18 @@ mod tests {
         assert!(drawn.contains("ok"), "{drawn}");
         // The five sub-lanes, each named, each with its dot.
         for lane in ["route", "semantic", "tabular", "generate", "validate"] {
-            assert!(drawn.contains(lane), "{lane} is missing from the card: {drawn}");
+            assert!(
+                drawn.contains(lane),
+                "{lane} is missing from the card: {drawn}"
+            );
         }
         // The web leg's own line: its accented label — which only the
         // web line carries, so a sub-lane-shaped web row cannot pass
         // for it — and its named reason.
-        assert!(drawn.contains("web leg"), "the web leg's own line is missing: {drawn}");
+        assert!(
+            drawn.contains("web leg"),
+            "the web leg's own line is missing: {drawn}"
+        );
         assert!(drawn.contains("missing TINYFISH_API_KEY"), "{drawn}");
         // An available lane names what backs it; an unavailable one names
         // what is missing — never a bare dot.
@@ -3052,15 +3494,24 @@ mod tests {
             "{drawn}"
         );
         // The lane's own tools, as the headless card names them.
-        assert!(drawn.contains("ask · doctor · search · refresh · seed"), "{drawn}");
+        assert!(
+            drawn.contains("ask · doctor · search · refresh · seed"),
+            "{drawn}"
+        );
         // The card is genuinely visual: status dots, not a plain-text table.
         assert!(!drawn.contains("| name |"), "{drawn}");
         // At 80 columns the doctor rows still carry their facts.
         let narrow = draw(&app, 80, 24);
         for lane in ["route", "semantic", "tabular", "generate", "validate"] {
-            assert!(narrow.contains(lane), "{lane} is missing at 80 columns: {narrow}");
+            assert!(
+                narrow.contains(lane),
+                "{lane} is missing at 80 columns: {narrow}"
+            );
         }
-        assert!(narrow.contains("web leg"), "the web leg survives 80 columns: {narrow}");
+        assert!(
+            narrow.contains("web leg"),
+            "the web leg survives 80 columns: {narrow}"
+        );
         // A tiny frame still renders the modal without a panic.
         let tiny = draw(&app, 20, 6);
         assert!(tiny.contains("lanes"), "{tiny}");
@@ -3072,18 +3523,21 @@ mod tests {
     fn a_refused_blend1_probe_keeps_its_card_and_names_the_error() {
         let mut app = fresh();
         app.apply(crate::tui::app::Action::OpenLanes);
-        app.set_lanes(app.lanes_probe, vec![crate::lanes::LaneHealth {
-            name: "blend1".to_string(),
-            role: "grounded".to_string(),
-            home: Some(std::path::PathBuf::from("/repo/services/blend1")),
-            source: Some(crate::lanes::HomeSource::Bundled),
-            state: LaneState::Error,
-            server_version: None,
-            tools: Vec::new(),
-            doctor: Vec::new(),
-            detail: "`tools/list` timed out after 10s".to_string(),
-            elapsed_ms: 10_000,
-        }]);
+        app.set_lanes(
+            app.lanes_probe,
+            vec![crate::lanes::LaneHealth {
+                name: "blend1".to_string(),
+                role: "grounded".to_string(),
+                home: Some(std::path::PathBuf::from("/repo/services/blend1")),
+                source: Some(crate::lanes::HomeSource::Bundled),
+                state: LaneState::Error,
+                server_version: None,
+                tools: Vec::new(),
+                doctor: Vec::new(),
+                detail: "`tools/list` timed out after 10s".to_string(),
+                elapsed_ms: 10_000,
+            }],
+        );
         let drawn = draw(&app, 120, 40);
         // The card is still there, with its dot and its state.
         assert!(drawn.contains("blend1"), "{drawn}");
@@ -3168,7 +3622,10 @@ mod tests {
             name: "mcp__sem1__probe".to_string(),
             summary: "embeddings \u{b7} probe {}".to_string(),
         });
-        app.apply_ui_event(UiEvent::LaneJoined { lane: "sem1".to_string(), tool_count: 4 });
+        app.apply_ui_event(UiEvent::LaneJoined {
+            lane: "sem1".to_string(),
+            tool_count: 4,
+        });
         let drawn = draw(&app, 80, 24);
         // The lane's block names the lane and what it brought, and the
         // tool card beside it shows the model-visible namespaced name.
@@ -3178,7 +3635,10 @@ mod tests {
         assert!(drawn.contains("mcp__sem1__probe"), "{drawn}");
         // A single tool reads as one, not "1 tools".
         let mut single = fresh();
-        single.apply_ui_event(UiEvent::LaneJoined { lane: "gen1".to_string(), tool_count: 1 });
+        single.apply_ui_event(UiEvent::LaneJoined {
+            lane: "gen1".to_string(),
+            tool_count: 1,
+        });
         let one = draw(&single, 80, 24);
         assert!(one.contains("1 tool"), "{one}");
     }
@@ -3252,7 +3712,10 @@ mod tests {
         // Width is clamped to 8, and a single word wider than the line is
         // split hard rather than dropped.
         assert_eq!(wrap("abcdefghij", 4), vec!["abcdefgh", "ij"]);
-        assert_eq!(wrap("0123456789abcdefghij", 8), vec!["01234567", "89abcdef", "ghij"]);
+        assert_eq!(
+            wrap("0123456789abcdefghij", 8),
+            vec!["01234567", "89abcdef", "ghij"]
+        );
         assert_eq!(wrap("", 10), vec![""]);
     }
 
@@ -3279,7 +3742,12 @@ mod tests {
         // The cursor's row and column always land where the wrapped
         // output can show them: the row exists, and the line on it is at
         // least `col` characters long.
-        for text in ["aaaa bbbb cccc dddd", "ab\ncd", "abcdefghij", "a b c d e f g"] {
+        for text in [
+            "aaaa bbbb cccc dddd",
+            "ab\ncd",
+            "abcdefghij",
+            "a b c d e f g",
+        ] {
             for width in [8, 10, 20] {
                 let lines = wrap(text, width);
                 let chars = text.chars().count();
@@ -3359,7 +3827,10 @@ mod tests {
         let chat = draw(&app, 120, 24);
         assert!(chat.contains("compacted"), "{chat}");
         assert!(chat.contains("6 turns"), "{chat}");
-        assert!(chat.contains("→ 1 summary · ~120000 → ~900 tokens"), "{chat}");
+        assert!(
+            chat.contains("→ 1 summary · ~120000 → ~900 tokens"),
+            "{chat}"
+        );
         // At 80 columns the settled line still carries its state word: a
         // fixed-width surface given a concatenated line cuts its tail
         // (KI-078, KI-085, KI-096), which is why the summary phrase moved
@@ -3420,9 +3891,15 @@ mod tests {
             session: Some("20261014T120000Z-4d5e6f".to_string()),
         });
         let rendered = draw(&catch_up, 120, 24);
-        assert!(rendered.contains("catch-up for 2026-10-14T12:00Z"), "{rendered}");
+        assert!(
+            rendered.contains("catch-up for 2026-10-14T12:00Z"),
+            "{rendered}"
+        );
         assert!(rendered.contains("skipped"), "{rendered}");
-        assert!(rendered.contains("no one is here to approve it"), "{rendered}");
+        assert!(
+            rendered.contains("no one is here to approve it"),
+            "{rendered}"
+        );
 
         // A failed fire names its failure and carries no session.
         let mut failed = fresh();

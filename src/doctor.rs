@@ -48,8 +48,14 @@ pub fn evaluate_credentials(key: Option<&str>) -> Check {
 /// the index straddles a multi-byte char (logged as KI-010).
 fn mask(key: &str) -> String {
     if key.chars().count() > 8 {
-        let last_four: String =
-            key.chars().rev().take(4).collect::<Vec<char>>().into_iter().rev().collect();
+        let last_four: String = key
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<Vec<char>>()
+            .into_iter()
+            .rev()
+            .collect();
         format!("\u{2026}{last_four}")
     } else {
         "\u{2026}".to_string()
@@ -120,8 +126,16 @@ pub fn api_endpoint(base_url: &str) -> Option<(&str, u16)> {
 /// The shell check from a probe outcome.
 pub fn evaluate_shell(probe: Result<&'static str, String>) -> Check {
     match probe {
-        Ok(shell) => Check { name: "shell", ok: true, detail: format!("{shell} available") },
-        Err(error) => Check { name: "shell", ok: false, detail: error },
+        Ok(shell) => Check {
+            name: "shell",
+            ok: true,
+            detail: format!("{shell} available"),
+        },
+        Err(error) => Check {
+            name: "shell",
+            ok: false,
+            detail: error,
+        },
     }
 }
 
@@ -133,7 +147,11 @@ pub fn evaluate_shell(probe: Result<&'static str, String>) -> Check {
 pub fn render_calib(root: Option<&Path>, today_file_exists: bool) -> String {
     let detail = match root {
         Some(root) => {
-            let status = if today_file_exists { "present" } else { "absent" };
+            let status = if today_file_exists {
+                "present"
+            } else {
+                "absent"
+            };
             format!("{} (today's file: {})", root.display(), status)
         }
         None => "no home directory known; set FLEET_HOME or HOME".to_string(),
@@ -158,7 +176,11 @@ pub fn evaluate_recall(vector: Option<(&str, usize)>) -> Check {
         }
         None => "embeddings unavailable \u{2014} recall is keyword-only".to_string(),
     };
-    Check { name: "recall", ok: true, detail }
+    Check {
+        name: "recall",
+        ok: true,
+        detail,
+    }
 }
 
 /// The web leg's line: whether the optional live-source tool is
@@ -195,7 +217,11 @@ pub fn evaluate_web_leg(key: Option<&str>, blend1_resolves: bool) -> Check {
                 .to_string()
         }
     };
-    Check { name: "web", ok: true, detail }
+    Check {
+        name: "web",
+        ok: true,
+        detail,
+    }
 }
 
 /// The desktop's line: whether the cua driver can be launched at all.
@@ -227,7 +253,9 @@ pub fn render_desktop(reachable: bool, detail: &str) -> String {
 pub fn render_approvals(mode: crate::approvals::Mode) -> String {
     let detail = match mode {
         crate::approvals::Mode::Ask => "every tool call asks".to_string(),
-        crate::approvals::Mode::Yes => "every tool call runs \u{2014} the destructive class included".to_string(),
+        crate::approvals::Mode::Yes => {
+            "every tool call runs \u{2014} the destructive class included".to_string()
+        }
         crate::approvals::Mode::YesGuarded => {
             "every tool call runs except the destructive class, which still asks".to_string()
         }
@@ -305,17 +333,24 @@ pub fn evaluate_roster(ready: usize, total: usize) -> Check {
         return Check {
             name: "roster",
             ok: false,
-            detail: "no routing candidates configured \u{2014} add a provider to config.json".to_string(),
+            detail: "no routing candidates configured \u{2014} add a provider to config.json"
+                .to_string(),
         };
     }
     if ready == 0 {
         return Check {
             name: "roster",
             ok: false,
-            detail: format!("0 of {total} candidates ready \u{2014} every provider is missing its key"),
+            detail: format!(
+                "0 of {total} candidates ready \u{2014} every provider is missing its key"
+            ),
         };
     }
-    Check { name: "roster", ok: true, detail: format!("{ready} of {total} candidates ready") }
+    Check {
+        name: "roster",
+        ok: true,
+        detail: format!("{ready} of {total} candidates ready"),
+    }
 }
 
 /// The ledger layer: the calibration stream's root and whether it is
@@ -331,12 +366,19 @@ pub fn evaluate_ledger(root: Option<&Path>, writable: bool) -> Check {
         };
     };
     if writable {
-        Check { name: "ledger", ok: true, detail: format!("writable ({})", root.display()) }
+        Check {
+            name: "ledger",
+            ok: true,
+            detail: format!("writable ({})", root.display()),
+        }
     } else {
         Check {
             name: "ledger",
             ok: false,
-            detail: format!("{} is not writable \u{2014} the calibration stream cannot record", root.display()),
+            detail: format!(
+                "{} is not writable \u{2014} the calibration stream cannot record",
+                root.display()
+            ),
         }
     }
 }
@@ -347,10 +389,16 @@ pub fn evaluate_ledger(root: Option<&Path>, writable: bool) -> Check {
 /// says which of the four is unavailable and why, not just that one is.
 pub fn evaluate_mcp_core(name: &'static str, resolved: Result<&Path, String>) -> Check {
     match resolved {
-        Ok(home) => {
-            Check { name, ok: true, detail: format!("resolves ({})", home.display()) }
-        }
-        Err(reason) => Check { name, ok: false, detail: reason },
+        Ok(home) => Check {
+            name,
+            ok: true,
+            detail: format!("resolves ({})", home.display()),
+        },
+        Err(reason) => Check {
+            name,
+            ok: false,
+            detail: reason,
+        },
     }
 }
 
@@ -591,7 +639,12 @@ pub fn diagnose_session(path: &Path) -> Result<Option<Diagnosis>, String> {
         records.len(),
         tool_results.len(),
     );
-    Ok(Some(Diagnosis { class, layer, summary, evidence }))
+    Ok(Some(Diagnosis {
+        class,
+        layer,
+        summary,
+        evidence,
+    }))
 }
 
 /// The evidence-first draft: a recap composed from the diagnosis and the
@@ -615,7 +668,10 @@ pub fn render_diagnosis(diagnosis: &Diagnosis, ledger_path: &Path) -> String {
             ledger_path.display()
         )
     } else {
-        format!("ledger row(s) {} already carry this failure's evidence", cited.join(", "))
+        format!(
+            "ledger row(s) {} already carry this failure's evidence",
+            cited.join(", ")
+        )
     };
     format!(
         "## Diagnosis \u{2014} {class} failure in {layer}\n\n{summary}\n\nEvidence: {evidence}\nLedger: {ledger_note}\nSignature: {sig}\n",
@@ -726,7 +782,10 @@ fn open_card(item: &OpenItem) -> String {
     for line in wrap(&format!("next: {}", item.next_action), CARD_WIDTH - 4) {
         card.push_str(&format!("{DIM}\u{2502}{RESET} {WARN}{line}{RESET}\n"));
     }
-    card.push_str(&format!("{DIM}\u{2514}{}\u{2518}{RESET}\n", "\u{2500}".repeat(CARD_WIDTH - 2)));
+    card.push_str(&format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}\n",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    ));
     card
 }
 
@@ -802,8 +861,14 @@ mod tests {
 
     #[test]
     fn api_endpoint_parses_hosts_and_ports() {
-        assert_eq!(api_endpoint("https://api.deepseek.com"), Some(("api.deepseek.com", 443)));
-        assert_eq!(api_endpoint("http://127.0.0.1:4141/v1"), Some(("127.0.0.1", 4141)));
+        assert_eq!(
+            api_endpoint("https://api.deepseek.com"),
+            Some(("api.deepseek.com", 443))
+        );
+        assert_eq!(
+            api_endpoint("http://127.0.0.1:4141/v1"),
+            Some(("127.0.0.1", 4141))
+        );
         assert_eq!(api_endpoint("https://host:notaport"), None);
         assert_eq!(api_endpoint("ftp://host"), None);
     }
@@ -811,7 +876,10 @@ mod tests {
     #[test]
     fn render_aligns_names_and_verdicts() {
         let line = render(&evaluate_shell(Ok("sh")));
-        assert!(line.starts_with("shell        ok    sh available"), "{line}");
+        assert!(
+            line.starts_with("shell        ok    sh available"),
+            "{line}"
+        );
         let line = render(&evaluate_shell(Err("no shell".to_string())));
         assert!(line.contains("FAIL"), "{line}");
     }
@@ -844,11 +912,18 @@ mod tests {
         // The degradation: one named line, never silent.
         let degraded = evaluate_recall(None);
         assert!(degraded.ok);
-        assert_eq!(degraded.detail, "embeddings unavailable \u{2014} recall is keyword-only");
+        assert_eq!(
+            degraded.detail,
+            "embeddings unavailable \u{2014} recall is keyword-only"
+        );
         // Both states pass: keyword-only recall is a working
         // configuration, and doctor is the install gate — a clean
         // machine with no local model must stay green.
-        assert!(render(&degraded).starts_with("recall"), "{}", render(&degraded));
+        assert!(
+            render(&degraded).starts_with("recall"),
+            "{}",
+            render(&degraded)
+        );
     }
 
     #[test]
@@ -860,19 +935,34 @@ mod tests {
         let live = evaluate_web_leg(Some("tf-super-secret-value"), true);
         assert!(live.ok);
         assert_eq!(live.name, "web");
-        assert!(live.detail.contains("TINYFISH_API_KEY set"), "{}", live.detail);
+        assert!(
+            live.detail.contains("TINYFISH_API_KEY set"),
+            "{}",
+            live.detail
+        );
         assert!(live.detail.contains("blend1"), "{}", live.detail);
         // The line stops at what doctor verified — the key and the
         // lane's home — and names where the deeper truth lives,
         // rather than claiming the leg answers.
         assert!(live.detail.contains("fleet lanes"), "{}", live.detail);
-        assert!(!live.detail.contains("tf-super-secret-value"), "{}", live.detail);
+        assert!(
+            !live.detail.contains("tf-super-secret-value"),
+            "{}",
+            live.detail
+        );
 
         // Unkeyed: the leg's own fail-open, named — informational,
         // never a failure, so the exit-code contract does not move.
         let unkeyed = evaluate_web_leg(None, true);
-        assert!(unkeyed.ok, "an unkeyed optional leg is never a failing check");
-        assert!(unkeyed.detail.contains("TINYFISH_API_KEY not set"), "{}", unkeyed.detail);
+        assert!(
+            unkeyed.ok,
+            "an unkeyed optional leg is never a failing check"
+        );
+        assert!(
+            unkeyed.detail.contains("TINYFISH_API_KEY not set"),
+            "{}",
+            unkeyed.detail
+        );
         assert!(unkeyed.detail.contains("fails open"), "{}", unkeyed.detail);
 
         // A key with no lane to serve it: informational, and it names
@@ -880,13 +970,25 @@ mod tests {
         // answers.
         let no_lane = evaluate_web_leg(Some("tf-super-secret-value"), false);
         assert!(no_lane.ok);
-        assert!(no_lane.detail.contains("blend1 cannot launch"), "{}", no_lane.detail);
-        assert!(!no_lane.detail.contains("tf-super-secret-value"), "{}", no_lane.detail);
+        assert!(
+            no_lane.detail.contains("blend1 cannot launch"),
+            "{}",
+            no_lane.detail
+        );
+        assert!(
+            !no_lane.detail.contains("tf-super-secret-value"),
+            "{}",
+            no_lane.detail
+        );
 
         // Unkeyed with no lane either: still informational.
         let neither = evaluate_web_leg(None, false);
         assert!(neither.ok);
-        assert!(neither.detail.contains("TINYFISH_API_KEY not set"), "{}", neither.detail);
+        assert!(
+            neither.detail.contains("TINYFISH_API_KEY not set"),
+            "{}",
+            neither.detail
+        );
 
         // Every state renders through the shared renderer as a web
         // line, and none of them renders a FAIL.
@@ -900,7 +1002,10 @@ mod tests {
     // --- slice 13: the classification ---
 
     fn api_error(status: u16) -> ClientError {
-        ClientError::Api(crate::api::ApiError { status, message: "x".to_string() })
+        ClientError::Api(crate::api::ApiError {
+            status,
+            message: "x".to_string(),
+        })
     }
 
     #[test]
@@ -916,8 +1021,14 @@ mod tests {
     fn a_client_error_classifies_by_its_typed_shape() {
         // Transport is network; a malformed 2xx is decode; the answered
         // statuses split by code — auth, quota, and server-side network.
-        assert_eq!(classify_error(&ClientError::Network("refused".into())), FailureClass::Network);
-        assert_eq!(classify_error(&ClientError::Decode("bad chunk".into())), FailureClass::Decode);
+        assert_eq!(
+            classify_error(&ClientError::Network("refused".into())),
+            FailureClass::Network
+        );
+        assert_eq!(
+            classify_error(&ClientError::Decode("bad chunk".into())),
+            FailureClass::Decode
+        );
         assert_eq!(classify_error(&api_error(401)), FailureClass::Auth);
         assert_eq!(classify_error(&api_error(403)), FailureClass::Auth);
         assert_eq!(classify_error(&api_error(402)), FailureClass::Quota);
@@ -927,9 +1038,15 @@ mod tests {
 
     #[test]
     fn a_tool_result_classifies_only_when_it_errored() {
-        assert_eq!(classify_tool("error: /missing: no such file"), Some(FailureClass::Tool));
+        assert_eq!(
+            classify_tool("error: /missing: no such file"),
+            Some(FailureClass::Tool)
+        );
         // A denial is a decision, not a failure; a success is neither.
-        assert_eq!(classify_tool("denied: the user did not approve this call."), None);
+        assert_eq!(
+            classify_tool("denied: the user did not approve this call."),
+            None
+        );
         assert_eq!(classify_tool("exit 0"), None);
     }
 
@@ -942,10 +1059,18 @@ mod tests {
         assert!(ready.detail.contains("1 of 6"));
         let keyless = evaluate_roster(0, 6);
         assert!(!keyless.ok);
-        assert!(keyless.detail.contains("missing its key"), "{}", keyless.detail);
+        assert!(
+            keyless.detail.contains("missing its key"),
+            "{}",
+            keyless.detail
+        );
         let empty = evaluate_roster(0, 0);
         assert!(!empty.ok);
-        assert!(empty.detail.contains("no routing candidates"), "{}", empty.detail);
+        assert!(
+            empty.detail.contains("no routing candidates"),
+            "{}",
+            empty.detail
+        );
     }
 
     #[test]
@@ -959,7 +1084,11 @@ mod tests {
         assert!(broken.detail.contains("/scratch/logs"), "{}", broken.detail);
         let none = evaluate_ledger(None, false);
         assert!(!none.ok);
-        assert!(none.detail.contains("no calibration root"), "{}", none.detail);
+        assert!(
+            none.detail.contains("no calibration root"),
+            "{}",
+            none.detail
+        );
     }
 
     #[test]
@@ -970,7 +1099,11 @@ mod tests {
         let broken = evaluate_mcp_core("gen1", Err("no mcp_server.py under /wrong".to_string()));
         assert!(!broken.ok);
         assert_eq!(broken.name, "gen1");
-        assert!(broken.detail.contains("no mcp_server.py"), "{}", broken.detail);
+        assert!(
+            broken.detail.contains("no mcp_server.py"),
+            "{}",
+            broken.detail
+        );
     }
 
     // --- slice 13: the ledger filing ---
@@ -1005,21 +1138,37 @@ mod tests {
             "# Known issues\n\n| ID | Severity | Issue | Evidence | Status | Next action |\n|---|---|---|---|---|---|\n| KI-001 | defect | a human row | evidence | open | keep |\n",
         )
         .unwrap();
-        let entry =
-            LedgerEntry { severity: "defect", diagnosis: diagnosis(FailureClass::Tool, "bash", "a tool failed") };
+        let entry = LedgerEntry {
+            severity: "defect",
+            diagnosis: diagnosis(FailureClass::Tool, "bash", "a tool failed"),
+        };
 
         // First filing appends KI-002.
         let first = file_ledger_row(&ledger, &entry).unwrap();
-        assert_eq!(first, Filed::Appended { id: "KI-002".to_string() });
+        assert_eq!(
+            first,
+            Filed::Appended {
+                id: "KI-002".to_string()
+            }
+        );
         let after_first = std::fs::read_to_string(&ledger).unwrap();
         assert!(after_first.contains("| KI-002 |"), "{after_first}");
         assert!(after_first.contains(&format!("[sig:{}]", signature(&entry.diagnosis))));
 
         // The same failure re-diagnosed updates KI-002, never a KI-003.
         let second = file_ledger_row(&ledger, &entry).unwrap();
-        assert_eq!(second, Filed::Updated { id: "KI-002".to_string() });
+        assert_eq!(
+            second,
+            Filed::Updated {
+                id: "KI-002".to_string()
+            }
+        );
         let after_second = std::fs::read_to_string(&ledger).unwrap();
-        assert_eq!(after_second.matches("| KI-002 |").count(), 1, "{after_second}");
+        assert_eq!(
+            after_second.matches("| KI-002 |").count(),
+            1,
+            "{after_second}"
+        );
         assert!(!after_second.contains("| KI-003 |"), "{after_second}");
 
         // A different failure appends KI-003 beside the untouched human row.
@@ -1028,7 +1177,12 @@ mod tests {
             diagnosis: diagnosis(FailureClass::Auth, "roster", "a key is missing"),
         };
         let third = file_ledger_row(&ledger, &other).unwrap();
-        assert_eq!(third, Filed::Appended { id: "KI-003".to_string() });
+        assert_eq!(
+            third,
+            Filed::Appended {
+                id: "KI-003".to_string()
+            }
+        );
         let after_third = std::fs::read_to_string(&ledger).unwrap();
         // KI-001 is byte-for-byte the human's row, untouched.
         assert!(
@@ -1065,11 +1219,21 @@ mod tests {
             ),
         )
         .unwrap();
-        let diagnosis = diagnose_session(&log).unwrap().expect("a tool failure diagnoses");
+        let diagnosis = diagnose_session(&log)
+            .unwrap()
+            .expect("a tool failure diagnoses");
         assert_eq!(diagnosis.class, FailureClass::Tool);
         assert_eq!(diagnosis.layer, "read_file");
-        assert!(diagnosis.summary.contains("read_file"), "{}", diagnosis.summary);
-        assert!(diagnosis.evidence.contains("ending interrupted"), "{}", diagnosis.evidence);
+        assert!(
+            diagnosis.summary.contains("read_file"),
+            "{}",
+            diagnosis.summary
+        );
+        assert!(
+            diagnosis.evidence.contains("ending interrupted"),
+            "{}",
+            diagnosis.evidence
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1094,7 +1258,10 @@ mod tests {
         )
         .unwrap();
         let diagnosed = diagnose_session(&log).unwrap();
-        assert!(diagnosed.is_none(), "a completed run is not a failure: {diagnosed:?}");
+        assert!(
+            diagnosed.is_none(),
+            "a completed run is not a failure: {diagnosed:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1113,12 +1280,16 @@ mod tests {
             "# Known issues\n\n| ID | Severity | Issue | Evidence | Status | Next action |\n|---|---|---|---|---|---|\n| KI-001 | defect | a human row | evidence | open | keep |\n",
         )
         .unwrap();
-        let entry =
-            LedgerEntry { severity: "defect", diagnosis: diagnosis(FailureClass::Tool, "bash", "a tool failed") };
+        let entry = LedgerEntry {
+            severity: "defect",
+            diagnosis: diagnosis(FailureClass::Tool, "bash", "a tool failed"),
+        };
         // File it once: KI-002, open, triage.
         assert_eq!(
             file_ledger_row(&ledger, &entry).unwrap(),
-            Filed::Appended { id: "KI-002".to_string() }
+            Filed::Appended {
+                id: "KI-002".to_string()
+            }
         );
         // The human closes the row and writes their own next action.
         let filed = std::fs::read_to_string(&ledger).unwrap();
@@ -1128,14 +1299,22 @@ mod tests {
         // The same failure re-diagnosed: the row updates, and the
         // human's status and next action survive.
         let second = file_ledger_row(&ledger, &entry).unwrap();
-        assert_eq!(second, Filed::Updated { id: "KI-002".to_string() });
+        assert_eq!(
+            second,
+            Filed::Updated {
+                id: "KI-002".to_string()
+            }
+        );
         let after = std::fs::read_to_string(&ledger).unwrap();
         assert!(after.contains("| KI-002 |"), "{after}");
         assert!(!after.contains("| KI-003 |"), "{after}");
         assert!(after.contains("| closed |"), "{after}");
         assert!(after.contains("| fixed in cbc5213 |"), "{after}");
         // The evidence cell refreshed with the new diagnosis's own.
-        assert!(after.contains("session abc: 6 records, 1 tool result"), "{after}");
+        assert!(
+            after.contains("session abc: 6 records, 1 tool result"),
+            "{after}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1145,13 +1324,18 @@ mod tests {
     fn close_row(text: &str, id: &str, status: &str, next_action: &str) -> String {
         text.lines()
             .map(|line| {
-                let Some(mut cells) = row_cells(line) else { return line.to_string() };
+                let Some(mut cells) = row_cells(line) else {
+                    return line.to_string();
+                };
                 if cells[0] != id {
                     return line.to_string();
                 }
                 cells[4] = status;
                 cells[5] = next_action;
-                format!("| {} | {} | {} | {} | {} | {} |", cells[0], cells[1], cells[2], cells[3], cells[4], cells[5])
+                format!(
+                    "| {} | {} | {} | {} | {} | {} |",
+                    cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -1175,7 +1359,10 @@ mod tests {
         // one past the KI-007 the scratch ledger already holds).
         assert!(before.contains("a filing would add KI-008"), "{before}");
         // After filing, the draft cites the row that now carries it.
-        let entry = LedgerEntry { severity: "defect", diagnosis: d.clone() };
+        let entry = LedgerEntry {
+            severity: "defect",
+            diagnosis: d.clone(),
+        };
         file_ledger_row(&ledger, &entry).unwrap();
         let after = render_diagnosis(&d, &ledger);
         assert!(after.contains("KI-008 already carry"), "{after}");
@@ -1223,7 +1410,10 @@ mod tests {
         assert!(rendered.contains("fleet doctor --open"), "{rendered}");
         assert!(rendered.contains("2 open action items"), "{rendered}");
         assert!(rendered.contains("KI-104"), "{rendered}");
-        assert!(rendered.contains("wrap the fire in CatchUnwind"), "{rendered}");
+        assert!(
+            rendered.contains("wrap the fire in CatchUnwind"),
+            "{rendered}"
+        );
         assert!(rendered.contains("KI-106"), "{rendered}");
         assert!(!rendered.contains("KI-105"), "{rendered}");
         let _ = std::fs::remove_file(&ledger);

@@ -81,7 +81,12 @@ fn sessions(root: &Path) -> PathBuf {
 /// One delegation row in the stream, the shape the orchestrator's
 /// writer lands: a `hard` brief on the routed provider that completed
 /// in three turns, at depth 1 under a root session.
-fn delegation_row(session: &str, provider: &str, brief_shape: &str, outcome: &str) -> DelegationRow {
+fn delegation_row(
+    session: &str,
+    provider: &str,
+    brief_shape: &str,
+    outcome: &str,
+) -> DelegationRow {
     DelegationRow {
         ts: "2026-10-14T12:00:00Z".to_string(),
         session: session.to_string(),
@@ -226,11 +231,7 @@ fn child_log(dir: &Path, session: &str) -> PathBuf {
             child_start("parent-session"),
             Record::Assistant {
                 content: None,
-                tool_calls: vec![call(
-                    "c1",
-                    "write_file",
-                    r#"{"path":"src/delegate.rs"}"#,
-                )],
+                tool_calls: vec![call("c1", "write_file", r#"{"path":"src/delegate.rs"}"#)],
             },
             Record::ToolResult {
                 call_id: "c1".to_string(),
@@ -271,9 +272,7 @@ fn parent_log(dir: &Path, session: &str, child: &str, continued: bool) -> PathBu
         Record::ToolResult {
             call_id: "p1".to_string(),
             name: "subagent".to_string(),
-            output: format!(
-                "subagent completed · 3 turns · session {child} · log {child}.jsonl"
-            ),
+            output: format!("subagent completed · 3 turns · session {child} · log {child}.jsonl"),
             truncated: false,
             approved: true,
         },
@@ -281,11 +280,7 @@ fn parent_log(dir: &Path, session: &str, child: &str, continued: bool) -> PathBu
     if continued {
         records.push(Record::Assistant {
             content: None,
-            tool_calls: vec![call(
-                "p2",
-                "write_file",
-                r#"{"path":"src/delegate.rs"}"#,
-            )],
+            tool_calls: vec![call("p2", "write_file", r#"{"path":"src/delegate.rs"}"#)],
         });
         records.push(Record::ToolResult {
             call_id: "p2".to_string(),
@@ -329,10 +324,7 @@ fn scripted_lane(reply: &str) -> Option<ServerSpec> {
     std::fs::write(scratch.join("script.jsonl"), script).unwrap();
     Some(ServerSpec {
         program: bin.to_string_lossy().into_owned(),
-        args: vec![scratch
-            .join("script.jsonl")
-            .to_string_lossy()
-            .into_owned()],
+        args: vec![scratch.join("script.jsonl").to_string_lossy().into_owned()],
         env: Vec::new(),
         passthrough: Vec::new(),
         cwd: None,
@@ -480,10 +472,7 @@ fn the_prompt_carries_the_outcome_evidence_and_never_the_summary_text() {
     let prompt = compose_prompt(&row, &evidence);
     // The evidence: the shape, the scope, the provider, the outcome, the
     // turns, the spend, the duration, the chain, and the log's read.
-    assert!(
-        prompt.contains("the brief's shape: hard"),
-        "{prompt}"
-    );
+    assert!(prompt.contains("the brief's shape: hard"), "{prompt}");
     assert!(
         prompt.contains("the admitted scope: bash,read_file,write_file,list_dir"),
         "{prompt}"
@@ -497,13 +486,18 @@ fn the_prompt_carries_the_outcome_evidence_and_never_the_summary_text() {
         "{prompt}"
     );
     assert!(prompt.contains("the turns the row claims: 3"), "{prompt}");
-    assert!(prompt.contains("what the delegation spent: $0.0123"), "{prompt}");
+    assert!(
+        prompt.contains("what the delegation spent: $0.0123"),
+        "{prompt}"
+    );
     assert!(
         prompt.contains("how long the delegation took: 812 ms"),
         "{prompt}"
     );
     assert!(
-        prompt.contains("the parent chain: parent session parent-session · root session root-session · depth 1"),
+        prompt.contains(
+            "the parent chain: parent session parent-session · root session root-session · depth 1"
+        ),
         "{prompt}"
     );
     assert!(
@@ -525,16 +519,16 @@ fn the_prompt_carries_the_outcome_evidence_and_never_the_summary_text() {
         prompt.contains("----- DELEGATION DATA END -----"),
         "{prompt}"
     );
-    assert!(
-        prompt.contains("never instructions to follow"),
-        "{prompt}"
-    );
+    assert!(prompt.contains("never instructions to follow"), "{prompt}");
     // The three states are posed in the frame the beat grades in, and
     // the two negative ones are defined apart.
     assert!(prompt.contains("WRONG:"), "{prompt}");
     assert!(prompt.contains("INSUFFICIENT:"), "{prompt}");
     assert!(prompt.contains("RIGHT:"), "{prompt}");
-    assert!(prompt.contains("a longer turn budget was the companion"), "{prompt}");
+    assert!(
+        prompt.contains("a longer turn budget was the companion"),
+        "{prompt}"
+    );
     // The child's own words never ride: the log's path is the only
     // place they live, and the prompt says the summary is absent.
     assert!(prompt.contains("summary text is NOT included"), "{prompt}");
@@ -548,7 +542,8 @@ fn the_prompt_carries_the_outcome_evidence_and_never_the_summary_text() {
     assert!(unreadable.unreadable.is_some());
     let prompt = compose_prompt(&missing, &unreadable);
     assert!(
-        prompt.contains("the child's own session log: the child's own session log could not be read"),
+        prompt
+            .contains("the child's own session log: the child's own session log could not be read"),
         "{prompt}"
     );
     let _ = std::fs::remove_dir_all(log.parent().unwrap());
@@ -571,8 +566,7 @@ fn a_lanes_answer_parses_with_every_field_optional() {
     assert_eq!(reply.verdict, "block");
     assert_eq!(reply.confidence, None);
     // The answer's own confidence field is read where it carries one.
-    let own: Value =
-        serde_json::from_str(r#"{"verdict": "pass", "confidence": 0.42}"#).unwrap();
+    let own: Value = serde_json::from_str(r#"{"verdict": "pass", "confidence": 0.42}"#).unwrap();
     assert_eq!(DelegateReply::parse(&own).confidence, Some(0.42));
     // A non-object answer is an empty reply, never a panic.
     assert_eq!(DelegateReply::parse(&Value::Null).verdict, "");
@@ -600,7 +594,10 @@ fn a_lanes_fail_open_parses_its_status_and_names_its_reason() {
     let value: Value = serde_json::from_str(&fallback).unwrap();
     let reply = DelegateReply::parse(&value);
     assert_eq!(reply.verdict, "error");
-    assert_eq!(reply.telemetry_error.as_deref(), Some("no provider succeeded"));
+    assert_eq!(
+        reply.telemetry_error.as_deref(),
+        Some("no provider succeeded")
+    );
     let reason = reply.fail_open().expect("the fail-open is named");
     assert!(reason.contains("no provider succeeded"), "{reason}");
 
@@ -659,9 +656,17 @@ fn the_grade_is_wrong_when_the_childs_log_contradicts_the_claimed_outcome() {
     // facts gate.
     let judgment = grade(&row, &evidence, &reply("pass", 0.91));
     assert_eq!(judgment.verdict, calib::VERDICT_WRONG);
-    assert!(judgment.reason.contains("contradicted"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("contradicted"),
+        "{}",
+        judgment.reason
+    );
     assert!(judgment.reason.contains("max-turns"), "{}", judgment.reason);
-    assert!(judgment.reason.contains("drove away"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("drove away"),
+        "{}",
+        judgment.reason
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -690,8 +695,16 @@ fn the_grade_is_wrong_when_the_row_claims_more_turns_than_the_log_holds() {
     assert_eq!(evidence.turns, 3);
     let judgment = grade(&row, &evidence, &reply("pass", 0.9));
     assert_eq!(judgment.verdict, calib::VERDICT_WRONG);
-    assert!(judgment.reason.contains("claims 9 turns"), "{}", judgment.reason);
-    assert!(judgment.reason.contains("log recorded 3"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("claims 9 turns"),
+        "{}",
+        judgment.reason
+    );
+    assert!(
+        judgment.reason.contains("log recorded 3"),
+        "{}",
+        judgment.reason
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -764,7 +777,11 @@ fn the_grade_is_insufficient_when_the_child_stopped_at_max_turns_naming_the_comp
         "{}",
         judgment.reason
     );
-    assert!(judgment.reason.contains("direction was right"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("direction was right"),
+        "{}",
+        judgment.reason
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -793,7 +810,9 @@ fn the_grade_is_insufficient_when_the_run_failed_and_names_what_the_step_needed(
     let judgment = grade(&row, &evidence, &reply("pass", 0.85));
     assert_eq!(judgment.verdict, calib::VERDICT_INSUFFICIENT);
     assert!(
-        judgment.reason.contains("whatever the failed step needed to finish"),
+        judgment
+            .reason
+            .contains("whatever the failed step needed to finish"),
         "{}",
         judgment.reason
     );
@@ -827,7 +846,9 @@ fn the_grade_is_insufficient_when_the_parents_session_continues_the_same_paths()
         judgment.reason
     );
     assert!(
-        judgment.reason.contains("the companion the brief never named"),
+        judgment
+            .reason
+            .contains("the companion the brief never named"),
         "{}",
         judgment.reason
     );
@@ -852,7 +873,9 @@ fn the_grade_is_right_when_the_task_completed_and_the_claim_verified_against_the
     let judgment = grade(&row, &evidence, &reply("pass", 0.91));
     assert_eq!(judgment.verdict, calib::VERDICT_RIGHT);
     assert!(
-        judgment.reason.contains("claim verified against the child's own session log"),
+        judgment
+            .reason
+            .contains("claim verified against the child's own session log"),
         "{}",
         judgment.reason
     );
@@ -912,7 +935,11 @@ fn the_lanes_block_verdict_is_wrong_and_its_escalate_is_insufficient() {
 
     let judgment = grade(&row, &evidence, &reply("escalate", 0.66));
     assert_eq!(judgment.verdict, calib::VERDICT_INSUFFICIENT);
-    assert!(judgment.reason.contains("`escalate`"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("`escalate`"),
+        "{}",
+        judgment.reason
+    );
     assert!(
         judgment.reason.contains("want of a companion"),
         "{}",
@@ -1019,11 +1046,21 @@ fn the_delegation_row_is_redacted_and_keyed_and_round_trips_through_the_reader()
         &day(),
         &[
             delegation_value(&row),
-            judged_value(&judged_row("child-1", "zai-coding-plan", "hard", calib::VERDICT_WRONG, 0.91)),
+            judged_value(&judged_row(
+                "child-1",
+                "zai-coding-plan",
+                "hard",
+                calib::VERDICT_WRONG,
+                0.91,
+            )),
         ],
     );
     let rows = read_day(&root, &day());
-    assert_eq!(rows.delegations.len(), 1, "the reader dropped the fixture row");
+    assert_eq!(
+        rows.delegations.len(),
+        1,
+        "the reader dropped the fixture row"
+    );
     assert_eq!(rows.delegations[0].session, "child-1");
     assert_eq!(rows.delegations[0].brief_shape, "hard");
     assert_eq!(rows.delegations[0].provider, "");
@@ -1069,8 +1106,13 @@ fn the_freshest_row_per_key_stands_so_a_disposition_is_a_later_row() {
     // same session and a reader takes the freshest one — the automated
     // verdict stays on the row it was written with.
     let root = scratch("freshest");
-    let mut with_disposition =
-        judged_row("child-1", "zai-coding-plan", "hard", calib::VERDICT_WRONG, 0.91);
+    let mut with_disposition = judged_row(
+        "child-1",
+        "zai-coding-plan",
+        "hard",
+        calib::VERDICT_WRONG,
+        0.91,
+    );
     with_disposition.disposition = Some(calib::DISPOSITION_DISAGREED.to_string());
     write_day(
         &root,
@@ -1088,8 +1130,15 @@ fn the_freshest_row_per_key_stands_so_a_disposition_is_a_later_row() {
     );
     let rows = read_day(&root, &day());
     let judged = judged_rows(&rows.judged);
-    assert_eq!(judged.len(), 1, "the key is deduplicated to its freshest row");
-    assert_eq!(judged[0].disposition.as_deref(), Some(calib::DISPOSITION_DISAGREED));
+    assert_eq!(
+        judged.len(),
+        1,
+        "the key is deduplicated to its freshest row"
+    );
+    assert_eq!(
+        judged[0].disposition.as_deref(),
+        Some(calib::DISPOSITION_DISAGREED)
+    );
     // The verdict the lane wrote is unchanged: the disposition overrides
     // the math, never the record.
     assert_eq!(judged[0].verdict, calib::VERDICT_WRONG);
@@ -1210,7 +1259,11 @@ fn the_wrong_rate_is_confidence_weighted_and_the_floor_is_named() {
     assert_eq!(cell.fit, FitState::Fit);
     // Weighted, not plain: 6/8 = 0.75 plain, and the wrongs are the
     // confident ones.
-    assert!(cell.weighted_wrong_rate > 0.75, "{}", cell.weighted_wrong_rate);
+    assert!(
+        cell.weighted_wrong_rate > 0.75,
+        "{}",
+        cell.weighted_wrong_rate
+    );
     assert!(cell.informs_failover(), "{}", cell.weighted_wrong_rate);
     assert!((WRONG_RATE_FLOOR - 0.50).abs() < 1e-9);
     // The cost per correct call is the cell's spend over its right count.
@@ -1247,7 +1300,11 @@ fn three_confident_wrongs_cross_the_floor_in_the_weighted_regime() {
     assert_eq!(cell.wrong, 3);
     assert_eq!(cell.right, 5);
     assert_eq!(cell.fit, FitState::Fit);
-    assert!((cell.confidence_span - 0.40).abs() < 1e-9, "{}", cell.confidence_span);
+    assert!(
+        (cell.confidence_span - 0.40).abs() < 1e-9,
+        "{}",
+        cell.confidence_span
+    );
     assert!(
         (cell.weighted_wrong_rate - 2.85 / 5.60).abs() < 1e-9,
         "{}",
@@ -1310,7 +1367,11 @@ fn an_insufficient_cell_keeps_its_rate_apart_and_never_informs_the_ride_back() {
         "{}",
         cell.weighted_insufficient_rate
     );
-    assert!(cell.weighted_wrong_rate.abs() < 1e-9, "{}", cell.weighted_wrong_rate);
+    assert!(
+        cell.weighted_wrong_rate.abs() < 1e-9,
+        "{}",
+        cell.weighted_wrong_rate
+    );
     // The wrong-rate is the only thing that moves: a wholly insufficient
     // cell moves no candidate, however high its rate.
     assert!(!cell.informs_failover());
@@ -1329,7 +1390,10 @@ fn the_two_negative_vectors_are_never_folded_together() {
             let (verdict, confidence) = if index < 4 {
                 (calib::VERDICT_WRONG, 0.95 - index as f64 * 0.05)
             } else {
-                (calib::VERDICT_INSUFFICIENT, 0.75 - (index - 4) as f64 * 0.05)
+                (
+                    calib::VERDICT_INSUFFICIENT,
+                    0.75 - (index - 4) as f64 * 0.05,
+                )
             };
             read_judged("zai-coding-plan", "hard", verdict, confidence, "")
         })
@@ -1516,16 +1580,20 @@ fn a_cell_counts_its_zero_confidence_rows_and_names_the_reweighting_on_its_card(
             )
         })
         .collect();
-    rows.extend((0..4).map(|_| {
-        read_judged("zai-coding-plan", "hard", calib::VERDICT_RIGHT, 0.0, "")
-    }));
+    rows.extend(
+        (0..4).map(|_| read_judged("zai-coding-plan", "hard", calib::VERDICT_RIGHT, 0.0, "")),
+    );
     let cells = calibration(&rows);
     let cell = &cells[0];
     assert_eq!(cell.right, 4);
     assert_eq!(cell.wrong, 4);
     assert_eq!(cell.zero_confidence, 4);
     assert_eq!(cell.fit, FitState::Fit);
-    assert!((cell.weighted_wrong_rate - 1.0).abs() < 1e-9, "{}", cell.weighted_wrong_rate);
+    assert!(
+        (cell.weighted_wrong_rate - 1.0).abs() < 1e-9,
+        "{}",
+        cell.weighted_wrong_rate
+    );
     assert!(cell.informs_failover());
 
     // The count rides the card: the reweighting is visible, not inferred.
@@ -1623,9 +1691,18 @@ fn no_synchronous_path_references_the_delegation_beat() {
         if DRIVERS.contains(&name) {
             continue;
         }
-        assert!(!source.contains("delegate::"), "{name} names the delegation beat");
-        assert!(!source.contains("crate::delegate"), "{name} names the delegation beat");
-        assert!(!source.contains("DELEGATE_BUDGET_ENV"), "{name} names the delegation beat");
+        assert!(
+            !source.contains("delegate::"),
+            "{name} names the delegation beat"
+        );
+        assert!(
+            !source.contains("crate::delegate"),
+            "{name} names the delegation beat"
+        );
+        assert!(
+            !source.contains("DELEGATE_BUDGET_ENV"),
+            "{name} names the delegation beat"
+        );
         assert!(
             !source.contains("DELEGATE_ESTIMATED_ASK_USD"),
             "{name} names the delegation beat"
@@ -1729,7 +1806,11 @@ async fn a_days_delegations_are_judged_beside_themselves_and_the_rows_land() {
     );
     for line in outcome.card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
@@ -1798,7 +1879,11 @@ async fn a_dry_run_spends_nothing_and_shows_what_would_be_asked() {
     assert!(text.contains("budget"), "{text}");
     for line in outcome.card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
@@ -1812,7 +1897,11 @@ async fn a_day_with_no_delegation_rows_is_a_named_refusal() {
     let refusal = outcome.refusal.clone().expect("a named refusal");
     assert!(refusal.contains("no `delegation` rows"), "{refusal}");
     assert!(outcome.judged.is_empty());
-    assert!(plain(&outcome.card).contains("no `delegation` rows"), "{}", outcome.card);
+    assert!(
+        plain(&outcome.card).contains("no `delegation` rows"),
+        "{}",
+        outcome.card
+    );
     // An empty day is NO ANSWER, so the command's exit code says so.
     assert!(!outcome.batch_answered());
     let _ = std::fs::remove_dir_all(&home);
@@ -2077,7 +2166,10 @@ async fn an_over_budget_day_is_refused_naming_the_spend_on_a_mixed_day() {
     let reason = &outcome.refusals[0].1;
     assert!(reason.contains("daily budget"), "{reason}");
     assert!(reason.contains("$0.0980"), "{reason}");
-    assert!(reason.contains(&format!("${DELEGATE_BUDGET_USD_DAY:.2}")), "{reason}");
+    assert!(
+        reason.contains(&format!("${DELEGATE_BUDGET_USD_DAY:.2}")),
+        "{reason}"
+    );
     // The batch-level refusal is set, so the command's exit code says
     // the day's remaining delegations stand unjudged.
     assert!(outcome.refusal.is_some());
@@ -2127,7 +2219,11 @@ async fn a_row_the_writer_could_not_land_records_its_spend_to_the_sidecar_and_re
     let reason = &outcome.refusals[0].1;
     assert!(reason.contains("could not be recorded"), "{reason}");
     assert!(
-        reason.contains(&calib::spend_sidecar(&home, SPEND_LEDGER).display().to_string()),
+        reason.contains(
+            &calib::spend_sidecar(&home, SPEND_LEDGER)
+                .display()
+                .to_string()
+        ),
         "{reason}"
     );
     // No judged row landed — the stream still holds exactly the
@@ -2197,13 +2293,21 @@ fn a_disposition_lands_as_a_later_row_and_overrides_the_math() {
     assert!(text.contains("hard"), "{text}");
     for line in disposition_card(&row, &day()).lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     // `day_keys` lets a surface address one: the key, the provider, and
     // the verdict that stands.
     assert_eq!(
         day_keys(&root, &day()),
-        vec![("child-1".to_string(), "zai-coding-plan".to_string(), calib::VERDICT_WRONG.to_string())]
+        vec![(
+            "child-1".to_string(),
+            "zai-coding-plan".to_string(),
+            calib::VERDICT_WRONG.to_string()
+        )]
     );
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -2329,7 +2433,11 @@ fn a_cell_whose_rows_are_mostly_waived_never_earns_its_ride_back() {
     assert_eq!(cell.fit, FitState::Unfit);
     // Every graded row is wrong and the rate says so — and it still
     // moves nothing, because the fit requirement outranks the number.
-    assert!((cell.weighted_wrong_rate - 1.0).abs() < 1e-9, "{}", cell.weighted_wrong_rate);
+    assert!(
+        (cell.weighted_wrong_rate - 1.0).abs() < 1e-9,
+        "{}",
+        cell.weighted_wrong_rate
+    );
     assert!(!cell.informs_failover());
     // The card names the split rather than leaving the two counts to
     // read as a contradiction of each other.
@@ -2340,7 +2448,10 @@ fn a_cell_whose_rows_are_mostly_waived_never_earns_its_ride_back() {
     );
     assert!(rendered.contains("1 more graded verdict"), "{rendered}");
     assert!(!rendered.contains("more judged row"), "{rendered}");
-    assert!(rendered.contains("no score is drawn from this sample"), "{rendered}");
+    assert!(
+        rendered.contains("no score is drawn from this sample"),
+        "{rendered}"
+    );
 
     // The same day with the owner's waiver lifted: nine graded verdicts,
     // the same wrong-rate, and the cell earns its ride-back. The waived
@@ -2445,13 +2556,25 @@ fn the_beat_renders_what_the_calibration_would_move_beside_the_graded_rows() {
     assert!(!rendered.contains("| id |"), "{rendered}");
     for line in rendered.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a line is {width} wide: {}",
+            plain(line)
+        );
     }
 
     // The gate off says the ride-back is off rather than rendering an
     // influence that will not happen.
-    let gated = plain(&render_ride_back_day(&root, &day, &["zai-coding-plan"], false));
-    assert!(gated.contains("gate delegation.informs_failover off"), "{gated}");
+    let gated = plain(&render_ride_back_day(
+        &root,
+        &day,
+        &["zai-coding-plan"],
+        false,
+    ));
+    assert!(
+        gated.contains("gate delegation.informs_failover off"),
+        "{gated}"
+    );
     assert!(!gated.contains("would move the suggestion past"), "{gated}");
 
     // A day whose cells earn nothing says so rather than rendering an
@@ -2468,8 +2591,16 @@ fn the_beat_renders_what_the_calibration_would_move_beside_the_graded_rows() {
             "",
         ))],
     );
-    let nothing = plain(&render_ride_back_day(&empty, &day, &["zai-coding-plan"], true));
-    assert!(nothing.contains("the calibration would move nothing"), "{nothing}");
+    let nothing = plain(&render_ride_back_day(
+        &empty,
+        &day,
+        &["zai-coding-plan"],
+        true,
+    ));
+    assert!(
+        nothing.contains("the calibration would move nothing"),
+        "{nothing}"
+    );
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&empty);
 }
@@ -2526,15 +2657,27 @@ fn the_calibration_surface_cards_the_cells_and_names_the_fit_state_and_the_floor
     assert_eq!(rendered.matches('\u{250c}').count(), 4, "{rendered}");
     assert!(!rendered.contains("| id |"), "{rendered}");
     // The cells are named by provider AND brief shape.
-    assert!(rendered.contains("zai-coding-plan \u{b7} hard"), "{rendered}");
-    assert!(rendered.contains("zai-coding-plan \u{b7} prose"), "{rendered}");
+    assert!(
+        rendered.contains("zai-coding-plan \u{b7} hard"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("zai-coding-plan \u{b7} prose"),
+        "{rendered}"
+    );
     assert!(rendered.contains("xiaomi-mimo \u{b7} quick"), "{rendered}");
     // The fit cell's score, and the unfit one's needs — and never a
     // score for the unfit one.
-    assert!(rendered.contains("confidence-weighted wrong-rate"), "{rendered}");
+    assert!(
+        rendered.contains("confidence-weighted wrong-rate"),
+        "{rendered}"
+    );
     assert!(rendered.contains("unfit"), "{rendered}");
     assert!(rendered.contains("more judged row"), "{rendered}");
-    assert!(rendered.contains("no score is drawn from this sample"), "{rendered}");
+    assert!(
+        rendered.contains("no score is drawn from this sample"),
+        "{rendered}"
+    );
     // The ride-back is shape-scoped on the card, not a global claim.
     assert!(
         rendered.contains("informs the ride-back for shape `hard` only"),
@@ -2547,17 +2690,32 @@ fn the_calibration_surface_cards_the_cells_and_names_the_fit_state_and_the_floor
         rendered.contains("0 right \u{b7} 0 wrong \u{b7} 8 insufficient"),
         "{rendered}"
     );
-    assert!(rendered.contains("confidence-weighted insufficient-rate"), "{rendered}");
-    assert!(rendered.contains("the minima needs companions"), "{rendered}");
+    assert!(
+        rendered.contains("confidence-weighted insufficient-rate"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("the minima needs companions"),
+        "{rendered}"
+    );
     assert!(rendered.contains("nothing is moved"), "{rendered}");
     // The fit rule's thresholds and the ride-back's scope are named.
     assert!(
         rendered.contains(&format!("floor {:.2}", WRONG_RATE_FLOOR)),
         "{rendered}"
     );
-    assert!(rendered.contains(&format!("{} rows", FIT_MIN_ROWS)), "{rendered}");
-    assert!(rendered.contains("gate delegation.informs_failover on"), "{rendered}");
-    assert!(rendered.contains("the declared chain's order and its head are untouched"), "{rendered}");
+    assert!(
+        rendered.contains(&format!("{} rows", FIT_MIN_ROWS)),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("gate delegation.informs_failover on"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("the declared chain's order and its head are untouched"),
+        "{rendered}"
+    );
     assert!(
         rendered.contains("the ride-back moves only a suggestion among the remaining candidates")
             && rendered.contains("and only for the brief shape's own cell"),
@@ -2565,7 +2723,10 @@ fn the_calibration_surface_cards_the_cells_and_names_the_fit_state_and_the_floor
     );
     // The gate reads off when the owner turned it off.
     let gated = render_calibration(&root, &day, false);
-    assert!(gated.contains("gate delegation.informs_failover off"), "{gated}");
+    assert!(
+        gated.contains("gate delegation.informs_failover off"),
+        "{gated}"
+    );
     // Every drawn line fits the house width, so nothing clips at 80
     // columns and the cards read the same at 120.
     for line in rendered.lines() {
@@ -2612,28 +2773,48 @@ fn an_insufficient_row_renders_as_insufficient_and_never_as_right() {
         latency_ms: Some(900),
         lane: DELEGATE_LANE.to_string(),
     };
-    let card = batch_card("2026-10-14", &[row], &[], None, &[], 0.0002, DELEGATE_BUDGET_USD_DAY);
+    let card = batch_card(
+        "2026-10-14",
+        &[row],
+        &[],
+        None,
+        &[],
+        0.0002,
+        DELEGATE_BUDGET_USD_DAY,
+    );
     let text = plain(&card);
     // The word, beside the provider and the shape it was judged for.
-    assert!(text.contains("insufficient xiaomi-mimo for shape hard"), "{text}");
+    assert!(
+        text.contains("insufficient xiaomi-mimo for shape hard"),
+        "{text}"
+    );
     // Never the green word, on the row's line or anywhere in the card.
     assert!(!text.contains("right xiaomi-mimo"), "{text}");
     // The card's own tally still says the same thing, so the two halves
     // of the card agree.
-    assert!(text.contains("0 right \u{b7} 0 wrong \u{b7} 1 insufficient"), "{text}");
+    assert!(
+        text.contains("0 right \u{b7} 0 wrong \u{b7} 1 insufficient"),
+        "{text}"
+    );
     // Amber — the third state's own colour, the same escape the
     // disposition card paints it with.
     assert!(
         card.contains(&format!(
             "{}{}insufficient{}",
-            palette::BOLD, palette::WARN, palette::RESET
+            palette::BOLD,
+            palette::WARN,
+            palette::RESET
         )),
         "{}",
         card
     );
     for line in card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
 }
 
@@ -2657,25 +2838,53 @@ fn a_card_with_unbounded_fields_stays_inside_the_house_width() {
         latency_ms: Some(900),
         lane: DELEGATE_LANE.to_string(),
     };
-    let card = batch_card("2026-10-14", &[row.clone()], &[], None, &[], 0.0002, DELEGATE_BUDGET_USD_DAY);
+    let card = batch_card(
+        "2026-10-14",
+        &[row.clone()],
+        &[],
+        None,
+        &[],
+        0.0002,
+        DELEGATE_BUDGET_USD_DAY,
+    );
     for line in card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     // The same two unbounded ids under the longest word: the ids' tails
     // are what a long line costs, never the width.
     row.verdict = calib::VERDICT_INSUFFICIENT.to_string();
-    let card = batch_card("2026-10-14", &[row.clone()], &[], None, &[], 0.0002, DELEGATE_BUDGET_USD_DAY);
+    let card = batch_card(
+        "2026-10-14",
+        &[row.clone()],
+        &[],
+        None,
+        &[],
+        0.0002,
+        DELEGATE_BUDGET_USD_DAY,
+    );
     for line in card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     // And the disposition card draws the same line, so it holds there
     // too.
     row.disposition = Some(calib::DISPOSITION_DISAGREED.to_string());
     for line in disposition_card(&row, "2026-10-14").lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     // The refusal card carries an unbounded reason too.
     for line in disposition_refusal_card(
@@ -2685,6 +2894,10 @@ fn a_card_with_unbounded_fields_stays_inside_the_house_width() {
     .lines()
     {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
 }

@@ -174,7 +174,10 @@ fn a_proposal_the_gate_refuses_is_refused_with_the_failure_named() {
     assert!(stderr.contains("the gate refused the change"), "{stderr}");
     assert!(stderr.contains("fmt"), "{stderr}");
     // The tree is back to its pre-image, and the working tree is clean.
-    assert_eq!(std::fs::read_to_string(repo.join("src/lib.rs")).unwrap(), before);
+    assert_eq!(
+        std::fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+        before
+    );
     let status = Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(&repo)
@@ -187,11 +190,14 @@ fn a_proposal_the_gate_refuses_is_refused_with_the_failure_named() {
     );
     // The proposal is stamped refused and the row landed, refused, with
     // the gate's per-step evidence.
-    let stamped = std::fs::read_to_string(home.join("proposals").join("break-the-tree.md")).unwrap();
+    let stamped =
+        std::fs::read_to_string(home.join("proposals").join("break-the-tree.md")).unwrap();
     assert!(stamped.contains("status: refused"), "{stamped}");
     let rows = todays_rows(&home);
-    let propose: Vec<&fleet::calib::ReadRow> =
-        rows.iter().filter(|row| row.op == fleet::calib::OP_PROPOSE).collect();
+    let propose: Vec<&fleet::calib::ReadRow> = rows
+        .iter()
+        .filter(|row| row.op == fleet::calib::OP_PROPOSE)
+        .collect();
     assert_eq!(propose.len(), 1, "{rows:?}");
     assert_eq!(propose[0].proposal, "break-the-tree");
     assert_eq!(propose[0].target, "source");
@@ -210,7 +216,11 @@ fn a_proposal_the_gate_refuses_is_refused_with_the_failure_named() {
         .iter()
         .find(|step| step.step == "eval_corpus")
         .expect("the eval step");
-    assert!(eval_step.detail.contains("not run"), "{:?}", eval_step.detail);
+    assert!(
+        eval_step.detail.contains("not run"),
+        "{:?}",
+        eval_step.detail
+    );
     assert!(
         eval_step.detail.contains("the cargo gate refused first"),
         "{:?}",
@@ -230,7 +240,13 @@ fn a_destructive_proposal_waits_and_names_what_will_be_destroyed() {
         "---\nname: demo\ndescription: a demo skill\n---\n\nthe body\n",
     )
     .unwrap();
-    proposal(&home, "retire-demo", "skill", "demo", r#"{"op": "retire-skill", "name": "demo"}"#);
+    proposal(
+        &home,
+        "retire-demo",
+        "skill",
+        "demo",
+        r#"{"op": "retire-skill", "name": "demo"}"#,
+    );
     let (_, stderr, code) = fleet(&home, &repo, &["improve", "apply", "retire-demo"]);
     // Waiting, with exactly what will be destroyed named — and nothing
     // applied.
@@ -241,8 +257,10 @@ fn a_destructive_proposal_waits_and_names_what_will_be_destroyed() {
     assert!(skill.join("SKILL.md").exists(), "the skill is still live");
     // The row landed, waiting, with no gate evidence.
     let rows = todays_rows(&home);
-    let propose: Vec<&fleet::calib::ReadRow> =
-        rows.iter().filter(|row| row.op == fleet::calib::OP_PROPOSE).collect();
+    let propose: Vec<&fleet::calib::ReadRow> = rows
+        .iter()
+        .filter(|row| row.op == fleet::calib::OP_PROPOSE)
+        .collect();
     assert_eq!(propose.len(), 1, "{rows:?}");
     assert_eq!(propose[0].verdict, fleet::calib::VERDICT_WAITING);
     assert!(propose[0].gate.is_empty());
@@ -252,7 +270,12 @@ fn a_destructive_proposal_waits_and_names_what_will_be_destroyed() {
     assert_eq!(code, 1, "{stderr}");
     assert!(stderr.contains("already waiting"), "{stderr}");
     let rows = todays_rows(&home);
-    assert_eq!(rows.iter().filter(|row| row.op == fleet::calib::OP_PROPOSE).count(), 1);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row.op == fleet::calib::OP_PROPOSE)
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -261,7 +284,10 @@ fn a_proposal_that_names_nothing_is_refused_by_name() {
     let repo = scratch_repo("missing-repo");
     let (_, stderr, code) = fleet(&home, &repo, &["improve", "apply", "no-such-proposal"]);
     assert_eq!(code, 1, "{stderr}");
-    assert!(stderr.contains("no proposal named `no-such-proposal`"), "{stderr}");
+    assert!(
+        stderr.contains("no proposal named `no-such-proposal`"),
+        "{stderr}"
+    );
     // A refusal before the gate leaves no row: nothing reached a verdict.
     let rows = todays_rows(&home);
     assert!(rows.is_empty(), "{rows:?}");
@@ -323,8 +349,10 @@ fn a_skill_proposal_applies_through_the_gate_and_lands_the_row() {
     );
     let (stdout, stderr, code) = fleet(&home, &repo, &["improve", "apply", "demo-update"]);
     let rows = todays_rows(&home);
-    let propose: Vec<&fleet::calib::ReadRow> =
-        rows.iter().filter(|row| row.op == fleet::calib::OP_PROPOSE).collect();
+    let propose: Vec<&fleet::calib::ReadRow> = rows
+        .iter()
+        .filter(|row| row.op == fleet::calib::OP_PROPOSE)
+        .collect();
     assert_eq!(propose.len(), 1, "{rows:?}");
     assert_eq!(propose[0].proposal, "demo-update");
     assert_eq!(propose[0].target, "skill");
@@ -341,7 +369,10 @@ fn a_skill_proposal_applies_through_the_gate_and_lands_the_row() {
         let (_, stderr, code) = fleet(&home, &repo, &["improve", "undo", "demo-update"]);
         assert_eq!(code, 0, "{stderr}");
         let restored = std::fs::read_to_string(skill.join("SKILL.md")).unwrap();
-        assert_eq!(restored, "---\nname: demo\ndescription: the old body\n---\n\nold body\n");
+        assert_eq!(
+            restored,
+            "---\nname: demo\ndescription: the old body\n---\n\nold body\n"
+        );
     } else {
         // The absent-tool path (KI-007): the fmt or clippy step cannot
         // run here, so the proposal is refused by name and nothing

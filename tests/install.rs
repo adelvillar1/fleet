@@ -130,9 +130,15 @@ fn install_creates_the_layout_and_the_scaffold_once() {
     assert_eq!(code, 0, "the doctor gate is green: {stdout}{stderr}");
     for dir in ["sessions", "memories", "skills", "cron", "proposals"] {
         assert!(home.join(dir).is_dir(), "{dir} was created");
-        assert!(stdout.contains(&format!("+ {dir}")), "{dir} is named created: {stdout}");
+        assert!(
+            stdout.contains(&format!("+ {dir}")),
+            "{dir} is named created: {stdout}"
+        );
     }
-    assert_eq!(fs::read_to_string(home.join("config.json")).unwrap(), SCAFFOLD);
+    assert_eq!(
+        fs::read_to_string(home.join("config.json")).unwrap(),
+        SCAFFOLD
+    );
     assert!(stdout.contains("+ config.json"), "{stdout}");
     // The gate's checks rode along with the install's own report.
     assert!(stdout.contains("── doctor ──"), "{stdout}");
@@ -143,10 +149,19 @@ fn install_creates_the_layout_and_the_scaffold_once() {
     let (again, stderr, code) = install(&home, &[], Some(&probe), None);
     assert_eq!(code, 0, "the second run is still green: {again}{stderr}");
     for dir in ["sessions", "memories", "skills", "cron", "proposals"] {
-        assert!(again.contains(&format!("= {dir}")), "{dir} is named present: {again}");
-        assert!(!again.contains(&format!("+ {dir}")), "{dir} is not recreated: {again}");
+        assert!(
+            again.contains(&format!("= {dir}")),
+            "{dir} is named present: {again}"
+        );
+        assert!(
+            !again.contains(&format!("+ {dir}")),
+            "{dir} is not recreated: {again}"
+        );
     }
-    assert_eq!(fs::read_to_string(home.join("config.json")).unwrap(), SCAFFOLD);
+    assert_eq!(
+        fs::read_to_string(home.join("config.json")).unwrap(),
+        SCAFFOLD
+    );
     assert!(again.contains("left untouched"), "{again}");
 }
 
@@ -161,7 +176,10 @@ fn an_existing_config_is_named_and_never_rewritten() {
     let probe = Probe::listen();
 
     let (stdout, stderr, code) = install(&home, &[], Some(&probe), None);
-    assert_eq!(code, 0, "an existing config does not fail the install: {stdout}{stderr}");
+    assert_eq!(
+        code, 0,
+        "an existing config does not fail the install: {stdout}{stderr}"
+    );
     assert_eq!(
         fs::read_to_string(home.join("config.json")).unwrap(),
         "{ hand edited "
@@ -175,13 +193,19 @@ fn the_installs_exit_code_is_the_doctors() {
     // Green: a live loopback endpoint and a placeholder credential.
     let probe = Probe::listen();
     let (stdout, stderr, code) = install(&root.join("home-green"), &[], Some(&probe), None);
-    assert_eq!(code, 0, "a green doctor is a green install: {stdout}{stderr}");
+    assert_eq!(
+        code, 0,
+        "a green doctor is a green install: {stdout}{stderr}"
+    );
 
     // Red: the api check fails against a dead port, and the install
     // fails with it — the gate is the doctor's own check, named.
     let (stdout, _, code) = install(&root.join("home-red"), &[], None, None);
     assert_ne!(code, 0, "a red doctor is a red install: {stdout}");
-    assert!(stdout.contains("FAIL"), "the failing check is named: {stdout}");
+    assert!(
+        stdout.contains("FAIL"),
+        "the failing check is named: {stdout}"
+    );
 }
 
 #[test]
@@ -259,11 +283,20 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
     // The first --lanes run installs all five lanes and the install
     // still ends green on the doctor gate.
     let (stdout, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
-    assert_eq!(code, 0, "a lane that builds does not fail the install: {stdout}{stderr}");
+    assert_eq!(
+        code, 0,
+        "a lane that builds does not fail the install: {stdout}{stderr}"
+    );
     for lane in ["sys1", "sdm1", "sem1", "gen1", "blend1"] {
-        assert!(stdout.contains(&format!("+ {lane}")), "{lane} is named installed: {stdout}");
+        assert!(
+            stdout.contains(&format!("+ {lane}")),
+            "{lane} is named installed: {stdout}"
+        );
         let venv = home.join("venvs").join(lane);
-        assert!(venv.join("bin").join("python").is_file(), "{lane} has its venv");
+        assert!(
+            venv.join("bin").join("python").is_file(),
+            "{lane} has its venv"
+        );
     }
     // The wiring is named: the environment exports and sys1's config key.
     assert!(stdout.contains("export SEM1_ST_VENV="), "{stdout}");
@@ -274,7 +307,10 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
     // spec sets every BLEND1_*_PYTHONPATH at spawn, and BLEND1_PYTHONPATH
     // locates the core's src, not a venv root — and the note naming the
     // cores path-wired rather than pip-installed.
-    assert!(stdout.contains("the path wiring is automatic at spawn"), "{stdout}");
+    assert!(
+        stdout.contains("the path wiring is automatic at spawn"),
+        "{stdout}"
+    );
     assert!(!stdout.contains("export BLEND1_PYTHONPATH="), "{stdout}");
     assert!(stdout.contains("BLEND1_SYS1_PYTHONPATH"), "{stdout}");
     assert!(stdout.contains("BLEND1_SEM1_PYTHONPATH"), "{stdout}");
@@ -283,9 +319,16 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
     // The fork's command shapes: `uv venv <path> --python 3.12`, then
     // `uv pip install --python <venv python> <packages>`.
     let argv = fs::read_to_string(&log).unwrap();
-    assert_eq!(argv.lines().filter(|line| line.starts_with("venv ")).count(), LANES.len());
     assert_eq!(
-        argv.lines().filter(|line| line.starts_with("pip install ")).count(),
+        argv.lines()
+            .filter(|line| line.starts_with("venv "))
+            .count(),
+        LANES.len()
+    );
+    assert_eq!(
+        argv.lines()
+            .filter(|line| line.starts_with("pip install "))
+            .count(),
         LANES.len()
     );
     for package in [
@@ -301,16 +344,26 @@ fn install_lanes_bootstraps_each_lane_idempotently() {
     // serve the cores its lanes compose.
     let blend1_install = argv
         .lines()
-        .find(|line| line.contains("pip install ") && line.contains("sentence-transformers") && line.contains("structured-data-models"))
+        .find(|line| {
+            line.contains("pip install ")
+                && line.contains("sentence-transformers")
+                && line.contains("structured-data-models")
+        })
         .unwrap_or_else(|| panic!("blend1's union install is named: {argv}"));
-    assert!(blend1_install.contains("gliner2[local]"), "{blend1_install}");
+    assert!(
+        blend1_install.contains("gliner2[local]"),
+        "{blend1_install}"
+    );
 
     // A second run detects every venv and names it, rebuilding none:
     // the argv log is unchanged, which is what "not rebuilt" means.
     let (again, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
     assert_eq!(code, 0, "the second --lanes run is green: {again}{stderr}");
     for lane in ["sys1", "sdm1", "sem1", "gen1", "blend1"] {
-        assert!(again.contains(&format!("= {lane}")), "{lane} is named present: {again}");
+        assert!(
+            again.contains(&format!("= {lane}")),
+            "{lane} is named present: {again}"
+        );
     }
     assert_eq!(fs::read_to_string(&log).unwrap(), argv, "no tool ran twice");
     // The summary names the run's shape: nothing skipped, so the
@@ -343,20 +396,29 @@ fn a_lane_installed_this_run_carries_its_receipt_and_a_second_run_reads_present(
     let venv = home.join("venvs").join("sem1");
     let receipt = fs::read_to_string(venv.join(".fleet-lane")).unwrap();
     assert!(receipt.contains("lane sem1"), "{receipt}");
-    assert!(receipt.contains("packages sentence-transformers"), "{receipt}");
+    assert!(
+        receipt.contains("packages sentence-transformers"),
+        "{receipt}"
+    );
     let installed = receipt
         .lines()
         .find(|line| line.starts_with("installed "))
         .expect("the receipt names its minute");
-    assert_eq!(installed.trim_start_matches("installed ").len(), 16, "{installed}");
+    assert_eq!(
+        installed.trim_start_matches("installed ").len(),
+        16,
+        "{installed}"
+    );
     // blend1's receipt carries the union of its three siblings' sets:
     // its own core is stdlib-only, so the package line names the deps
     // its lanes compose.
-    let blend1_receipt = fs::read_to_string(home.join("venvs").join("blend1").join(".fleet-lane")).unwrap();
+    let blend1_receipt =
+        fs::read_to_string(home.join("venvs").join("blend1").join(".fleet-lane")).unwrap();
     assert!(blend1_receipt.contains("lane blend1"), "{blend1_receipt}");
     assert!(blend1_receipt.contains("role grounded"), "{blend1_receipt}");
     assert!(
-        blend1_receipt.contains("packages gliner2[local] structured-data-models sentence-transformers"),
+        blend1_receipt
+            .contains("packages gliner2[local] structured-data-models sentence-transformers"),
         "{blend1_receipt}"
     );
     assert!(
@@ -394,13 +456,22 @@ fn a_partial_venv_without_the_receipt_is_rebuilt_never_read_present() {
     fs::write(venv.join("bin").join("python"), "#!/bin/sh\n").unwrap();
 
     let (stdout, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
-    assert_eq!(code, 0, "the rebuild does not fail the install: {stdout}{stderr}");
-    assert!(stdout.contains("+ sem1"), "{lane} is rebuilt: {stdout}", lane = "sem1");
+    assert_eq!(
+        code, 0,
+        "the rebuild does not fail the install: {stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("+ sem1"),
+        "{lane} is rebuilt: {stdout}",
+        lane = "sem1"
+    );
     assert!(!stdout.contains("= sem1"), "never read present: {stdout}");
     assert!(venv.join(".fleet-lane").is_file(), "the receipt landed");
     let argv = fs::read_to_string(&log).unwrap();
     assert_eq!(
-        argv.lines().filter(|line| line.starts_with("venv ")).count(),
+        argv.lines()
+            .filter(|line| line.starts_with("venv "))
+            .count(),
         LANES.len(),
         "every lane was rebuilt: {argv}"
     );
@@ -408,7 +479,10 @@ fn a_partial_venv_without_the_receipt_is_rebuilt_never_read_present() {
     // With the receipt in place the next run reads Present, and the
     // venv is not rebuilt again.
     let (again, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
-    assert_eq!(code, 0, "the run after the rebuild is green: {again}{stderr}");
+    assert_eq!(
+        code, 0,
+        "the run after the rebuild is green: {again}{stderr}"
+    );
     assert!(again.contains("= sem1"), "{again}");
     assert_eq!(fs::read_to_string(&log).unwrap(), argv, "no tool ran twice");
 }
@@ -425,7 +499,10 @@ fn a_file_where_a_directory_belongs_is_a_named_failure() {
     let probe = Probe::listen();
 
     let (stdout, stderr, code) = install(&home, &[], Some(&probe), None);
-    assert_eq!(code, 1, "a wrong-kind path is a named failure: {stdout}{stderr}");
+    assert_eq!(
+        code, 1,
+        "a wrong-kind path is a named failure: {stdout}{stderr}"
+    );
     assert!(stderr.contains("sessions"), "the path is named: {stderr}");
     assert_eq!(
         fs::read_to_string(home.join("sessions")).unwrap(),
@@ -447,7 +524,10 @@ fn a_dangling_config_symlink_is_named_and_nothing_is_written_through_it() {
     let probe = Probe::listen();
 
     let (stdout, stderr, code) = install(&home, &[], Some(&probe), None);
-    assert_eq!(code, 0, "a named symlink does not fail the install: {stdout}{stderr}");
+    assert_eq!(
+        code, 0,
+        "a named symlink does not fail the install: {stdout}{stderr}"
+    );
     assert!(stdout.contains("symlink"), "the symlink is named: {stdout}");
     assert!(stdout.contains("never written through"), "{stdout}");
     assert!(!target.exists(), "nothing was written through the link");
@@ -472,9 +552,15 @@ fn install_lanes_degrades_without_a_venv_tool() {
     let (stdout, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
     // The install still succeeds: a lane that cannot build is skipped
     // with a named line, never a hard failure.
-    assert_eq!(code, 0, "degrade-without keeps the install green: {stdout}{stderr}");
+    assert_eq!(
+        code, 0,
+        "degrade-without keeps the install green: {stdout}{stderr}"
+    );
     for lane in ["sys1", "sdm1", "sem1", "gen1", "blend1"] {
-        assert!(stdout.contains(&format!("! {lane}")), "{lane} is named skipped: {stdout}");
+        assert!(
+            stdout.contains(&format!("! {lane}")),
+            "{lane} is named skipped: {stdout}"
+        );
     }
     assert!(
         stdout.contains("not on PATH"),
@@ -508,9 +594,15 @@ fn a_lane_whose_packages_fail_is_skipped_and_leaves_nothing_behind() {
     let probe = Probe::listen();
 
     let (stdout, stderr, code) = install(&home, &["--lanes"], Some(&probe), Some(&tools));
-    assert_eq!(code, 0, "a failing lane is skipped, not fatal: {stdout}{stderr}");
+    assert_eq!(
+        code, 0,
+        "a failing lane is skipped, not fatal: {stdout}{stderr}"
+    );
     for lane in ["sys1", "sdm1", "sem1", "gen1", "blend1"] {
-        assert!(stdout.contains(&format!("! {lane}")), "{lane} is named skipped: {stdout}");
+        assert!(
+            stdout.contains(&format!("! {lane}")),
+            "{lane} is named skipped: {stdout}"
+        );
     }
     assert!(
         stdout.contains("did not install"),

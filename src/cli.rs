@@ -12,9 +12,15 @@ pub enum Command {
     Chat(ChatOptions),
     /// The archive: listed as cards, ranked for an instruction with
     /// `--recall`, or one session opened by name.
-    SessionsView { recall: Option<String>, view: Option<String> },
+    SessionsView {
+        recall: Option<String>,
+        view: Option<String>,
+    },
     /// Fold one session's stored context on demand.
-    Compact { session: Option<String>, force: bool },
+    Compact {
+        session: Option<String>,
+        force: bool,
+    },
     /// The settings surface: list every knob, or write one.
     Settings { set: Option<(String, String)> },
     /// Probe the four vendored lanes' health.
@@ -597,7 +603,9 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
             "--model" => model = take_value(args, &mut index, arg)?,
             "--max-turns" => {
                 let value = take_value(args, &mut index, arg)?;
-                max_turns = value.parse().map_err(|_| format!("`{value}` is not a turn count"))?;
+                max_turns = value
+                    .parse()
+                    .map_err(|_| format!("`{value}` is not a turn count"))?;
             }
             "--session" => session = Some(take_value(args, &mut index, arg)?),
             _ if arg.starts_with('-') && arg != "-" => {
@@ -636,7 +644,11 @@ fn parse_chat(args: &[String]) -> Result<Command, String> {
         }
         index += 1;
     }
-    Ok(Command::Chat(ChatOptions { model, yes, session }))
+    Ok(Command::Chat(ChatOptions {
+        model,
+        yes,
+        session,
+    }))
 }
 
 /// `fleet calib`: one optional `--day`, the calibration surface's
@@ -806,7 +818,11 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown calib option `{arg}`"));
             }
-            _ => return Err(format!("`{arg}` takes no value here; calib reads a day with --day")),
+            _ => {
+                return Err(format!(
+                    "`{arg}` takes no value here; calib reads a day with --day"
+                ))
+            }
         }
         index += 1;
     }
@@ -821,13 +837,14 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
         );
     }
     if let Some(day) = &day {
-        let numeric = day.len() == 10 && day.chars().enumerate().all(|(position, character)| {
-            if position == 4 || position == 7 {
-                character == '-'
-            } else {
-                character.is_ascii_digit()
-            }
-        });
+        let numeric = day.len() == 10
+            && day.chars().enumerate().all(|(position, character)| {
+                if position == 4 || position == 7 {
+                    character == '-'
+                } else {
+                    character.is_ascii_digit()
+                }
+            });
         if !numeric {
             return Err(format!("`{day}` is not a day; use --day YYYY-MM-DD"));
         }
@@ -835,7 +852,11 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
             return Err(format!("`{day}` is not a real day; use --day YYYY-MM-DD"));
         }
     }
-    Ok(Command::Calib(CalibOptions { day, calibration, delegation }))
+    Ok(Command::Calib(CalibOptions {
+        day,
+        calibration,
+        delegation,
+    }))
 }
 
 /// `fleet judge [--day <date>] [--dry-run]`: judge the day's route rows
@@ -866,9 +887,13 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
                 let key = args
                     .get(index + 1)
                     .filter(|value| !value.starts_with('-'))
-                    .ok_or_else(|| format!("`{arg}` needs a judged row's key: `fleet judge {arg} <key>`"))?;
+                    .ok_or_else(|| {
+                        format!("`{arg}` needs a judged row's key: `fleet judge {arg} <key>`")
+                    })?;
                 if disposition.is_some() {
-                    return Err("judge takes one disposition: --agree, --disagree, or --waive".to_string());
+                    return Err(
+                        "judge takes one disposition: --agree, --disagree, or --waive".to_string(),
+                    );
                 }
                 disposition = Some((word, key.clone()));
                 index += 1;
@@ -885,13 +910,14 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
         index += 1;
     }
     if let Some(day) = &day {
-        let numeric = day.len() == 10 && day.chars().enumerate().all(|(position, character)| {
-            if position == 4 || position == 7 {
-                character == '-'
-            } else {
-                character.is_ascii_digit()
-            }
-        });
+        let numeric = day.len() == 10
+            && day.chars().enumerate().all(|(position, character)| {
+                if position == 4 || position == 7 {
+                    character == '-'
+                } else {
+                    character.is_ascii_digit()
+                }
+            });
         if !numeric {
             return Err(format!("`{day}` is not a day; use --day YYYY-MM-DD"));
         }
@@ -902,10 +928,15 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
     let disposition = disposition.map(|(word, key)| JudgeDisposition { word, key });
     if disposition.is_some() && dry_run {
         return Err(
-            "--dry-run rehearses the batch; a disposition is a write and takes no rehearsal".to_string(),
+            "--dry-run rehearses the batch; a disposition is a write and takes no rehearsal"
+                .to_string(),
         );
     }
-    Ok(Command::Judge(JudgeOptions { day, dry_run, disposition }))
+    Ok(Command::Judge(JudgeOptions {
+        day,
+        dry_run,
+        disposition,
+    }))
 }
 
 /// `fleet delegate [--day <date>] [--dry-run]`: judge the day's
@@ -989,13 +1020,14 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
         index += 1;
     }
     if let Some(day) = &day {
-        let numeric = day.len() == 10 && day.chars().enumerate().all(|(position, character)| {
-            if position == 4 || position == 7 {
-                character == '-'
-            } else {
-                character.is_ascii_digit()
-            }
-        });
+        let numeric = day.len() == 10
+            && day.chars().enumerate().all(|(position, character)| {
+                if position == 4 || position == 7 {
+                    character == '-'
+                } else {
+                    character.is_ascii_digit()
+                }
+            });
         if !numeric {
             return Err(format!("`{day}` is not a day; use --day YYYY-MM-DD"));
         }
@@ -1029,7 +1061,12 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
                 .to_string(),
         );
     }
-    Ok(Command::Delegate(DelegateOptions { day, dry_run, disposition, control }))
+    Ok(Command::Delegate(DelegateOptions {
+        day,
+        dry_run,
+        disposition,
+        control,
+    }))
 }
 
 /// `fleet skills`: the bare command lists the live skills; `--proposed`
@@ -1056,7 +1093,11 @@ fn parse_skills(args: &[String]) -> Result<Command, String> {
         }
         index += 1;
     }
-    Ok(Command::Skills(SkillsOptions { proposed, curate, show }))
+    Ok(Command::Skills(SkillsOptions {
+        proposed,
+        curate,
+        show,
+    }))
 }
 
 /// `fleet memories`: the bare command cards the live facts;
@@ -1113,7 +1154,12 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
                 .to_string(),
         );
     }
-    Ok(Command::Memories(MemoriesOptions { recall, shape, consolidate, archive }))
+    Ok(Command::Memories(MemoriesOptions {
+        recall,
+        shape,
+        consolidate,
+        archive,
+    }))
 }
 
 /// `fleet cron`: the bare command lists the jobs; `add` creates one from
@@ -1123,7 +1169,9 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
 /// silently wrong mutation.
 fn parse_cron(args: &[String]) -> Result<Command, String> {
     let Some(subcommand) = args.first() else {
-        return Ok(Command::Cron(CronOptions { action: CronAction::List }));
+        return Ok(Command::Cron(CronOptions {
+            action: CronAction::List,
+        }));
     };
     if *subcommand == "--help" || *subcommand == "-h" {
         return Ok(Command::Help);
@@ -1148,9 +1196,7 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
                         return Err(format!("unknown cron option `{arg}`"));
                     }
                     _ => {
-                        return Err(format!(
-                            "`{arg}` takes no value here; see `fleet help`"
-                        ));
+                        return Err(format!("`{arg}` takes no value here; see `fleet help`"));
                     }
                 }
                 index += 1;
@@ -1161,7 +1207,12 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
                 );
             };
             Ok(Command::Cron(CronOptions {
-                action: CronAction::Add { name, schedule, task, auto_approve },
+                action: CronAction::Add {
+                    name,
+                    schedule,
+                    task,
+                    auto_approve,
+                },
             }))
         }
         "enable" | "disable" | "remove" => {
@@ -1184,7 +1235,9 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
                 index += 1;
             }
             let Some(name) = name else {
-                return Err(format!("cron {subcommand} needs --name <name> (see `fleet help`)"));
+                return Err(format!(
+                    "cron {subcommand} needs --name <name> (see `fleet help`)"
+                ));
             };
             let action = match subcommand.as_str() {
                 "enable" => CronAction::Enable { name },
@@ -1193,7 +1246,9 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
             };
             Ok(Command::Cron(CronOptions { action }))
         }
-        other => Err(format!("unknown cron subcommand `{other}` \u{2014} try `fleet help`")),
+        other => Err(format!(
+            "unknown cron subcommand `{other}` \u{2014} try `fleet help`"
+        )),
     }
 }
 
@@ -1204,7 +1259,9 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
 /// for the whole surface — and a missing name is a named usage error.
 fn parse_improve(args: &[String]) -> Result<Command, String> {
     let Some(subcommand) = args.first() else {
-        return Ok(Command::Improve(ImproveOptions { action: ImproveAction::List }));
+        return Ok(Command::Improve(ImproveOptions {
+            action: ImproveAction::List,
+        }));
     };
     if *subcommand == "--help" || *subcommand == "-h" {
         return Ok(Command::Help);
@@ -1232,7 +1289,9 @@ fn parse_improve(args: &[String]) -> Result<Command, String> {
         index += 1;
     }
     let Some(name) = name else {
-        return Err(format!("fleet improve {verb} needs a proposal name (see `fleet help`)"));
+        return Err(format!(
+            "fleet improve {verb} needs a proposal name (see `fleet help`)"
+        ));
     };
     let action = match verb {
         "apply" => ImproveAction::Apply { name, approve },
@@ -1347,7 +1406,11 @@ fn parse_doctor(args: &[String]) -> Result<Command, String> {
                 .to_string(),
         );
     }
-    Ok(Command::Doctor(DoctorOptions { diagnose, ledger, open }))
+    Ok(Command::Doctor(DoctorOptions {
+        diagnose,
+        ledger,
+        open,
+    }))
 }
 
 /// `fleet install`: the bare command lays out the home and ends on the
@@ -1419,7 +1482,11 @@ fn parse_explain(args: &[String]) -> Result<Command, String> {
                     .get(index + 1)
                     .filter(|value| !value.starts_with('-'))
                     .ok_or_else(|| format!("`{arg}` needs a name: `fleet explain {arg} <name>`"))?;
-                let slot = if arg == "--proposal" { &mut proposal } else { &mut eval };
+                let slot = if arg == "--proposal" {
+                    &mut proposal
+                } else {
+                    &mut eval
+                };
                 if slot.is_some() {
                     return Err(format!("`{arg}` was given twice"));
                 }
@@ -1444,7 +1511,11 @@ fn parse_explain(args: &[String]) -> Result<Command, String> {
         (None, None) => {
             Err("explain needs a selector: --proposal <name> or --eval <scenario>".to_string())
         }
-        _ => Ok(Command::Explain(ExplainOptions { proposal, eval, dry_run })),
+        _ => Ok(Command::Explain(ExplainOptions {
+            proposal,
+            eval,
+            dry_run,
+        })),
     }
 }
 
@@ -1476,7 +1547,9 @@ fn parse_graph(args: &[String]) -> Result<Command, String> {
                 let value = args
                     .get(index + 1)
                     .filter(|value| !value.starts_with('-'))
-                    .ok_or_else(|| "`--file` needs a path: `fleet graph --file <path>`".to_string())?;
+                    .ok_or_else(|| {
+                        "`--file` needs a path: `fleet graph --file <path>`".to_string()
+                    })?;
                 if file.is_some() {
                     return Err("`--file` was given twice".to_string());
                 }
@@ -1535,9 +1608,18 @@ fn parse_convention(args: &[String]) -> Result<Command, String> {
 /// not run" rather than "that day does not exist" — the shape is numeric,
 /// but the day is not real.
 pub(crate) fn valid_calendar_day(day: &str) -> bool {
-    let year: i32 = day.get(0..4).and_then(|part| part.parse().ok()).unwrap_or(0);
-    let month: u32 = day.get(5..7).and_then(|part| part.parse().ok()).unwrap_or(0);
-    let day_of_month: u32 = day.get(8..10).and_then(|part| part.parse().ok()).unwrap_or(0);
+    let year: i32 = day
+        .get(0..4)
+        .and_then(|part| part.parse().ok())
+        .unwrap_or(0);
+    let month: u32 = day
+        .get(5..7)
+        .and_then(|part| part.parse().ok())
+        .unwrap_or(0);
+    let day_of_month: u32 = day
+        .get(8..10)
+        .and_then(|part| part.parse().ok())
+        .unwrap_or(0);
     let longest = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -1580,7 +1662,9 @@ mod tests {
     #[test]
     fn convention_takes_one_concept_and_refuses_the_rest() {
         let command = parse(&args(&["convention", "judge_route"])).unwrap();
-        let Command::Convention(options) = command else { panic!("not a convention") };
+        let Command::Convention(options) = command else {
+            panic!("not a convention")
+        };
         assert_eq!(options.concept, "judge_route");
         // No concept: a named usage refusal, never a guess.
         assert!(parse(&args(&["convention"])).is_err());
@@ -1593,10 +1677,14 @@ mod tests {
     #[test]
     fn graph_takes_no_positional_and_one_optional_file() {
         let command = parse(&args(&["graph"])).unwrap();
-        let Command::Graph(options) = command else { panic!("not a graph") };
+        let Command::Graph(options) = command else {
+            panic!("not a graph")
+        };
         assert_eq!(options.file, None);
         let command = parse(&args(&["graph", "--file", "/tmp/g.json"])).unwrap();
-        let Command::Graph(options) = command else { panic!("not a graph") };
+        let Command::Graph(options) = command else {
+            panic!("not a graph")
+        };
         assert_eq!(options.file, Some("/tmp/g.json".to_string()));
         // A positional, a repeated flag, and an unknown flag are each
         // refused rather than silently read.
@@ -1608,7 +1696,9 @@ mod tests {
     #[test]
     fn run_takes_a_task_and_defaults() {
         let command = parse(&args(&["run", "fix", "the", "bug"])).unwrap();
-        let Command::Run(options) = command else { panic!("not a run") };
+        let Command::Run(options) = command else {
+            panic!("not a run")
+        };
         assert_eq!(options.task, "fix the bug");
         assert_eq!(options.model, "deepseek-chat");
         assert_eq!(options.max_turns, DEFAULT_MAX_TURNS);
@@ -1618,10 +1708,21 @@ mod tests {
 
     #[test]
     fn run_parses_all_flags_in_any_position() {
-        let command =
-            parse(&args(&["run", "--yes", "do it", "--model", "m2", "--max-turns", "3", "--session", "abc"]))
-                .unwrap();
-        let Command::Run(options) = command else { panic!("not a run") };
+        let command = parse(&args(&[
+            "run",
+            "--yes",
+            "do it",
+            "--model",
+            "m2",
+            "--max-turns",
+            "3",
+            "--session",
+            "abc",
+        ]))
+        .unwrap();
+        let Command::Run(options) = command else {
+            panic!("not a run")
+        };
         assert_eq!(options.task, "do it");
         assert_eq!(options.model, "m2");
         assert_eq!(options.max_turns, 3);
@@ -1646,11 +1747,14 @@ mod tests {
     #[test]
     fn chat_parses_flags() {
         let command = parse(&args(&["chat", "-y", "--model", "m"])).unwrap();
-        assert_eq!(command, Command::Chat(ChatOptions {
-            model: "m".to_string(),
-            yes: true,
-            session: None,
-        }));
+        assert_eq!(
+            command,
+            Command::Chat(ChatOptions {
+                model: "m".to_string(),
+                yes: true,
+                session: None,
+            })
+        );
     }
 
     #[test]
@@ -1662,12 +1766,19 @@ mod tests {
     fn bare_commands_take_no_options() {
         assert_eq!(
             parse(&args(&["sessions"])).unwrap(),
-            Command::SessionsView { recall: None, view: None }
+            Command::SessionsView {
+                recall: None,
+                view: None
+            }
         );
         assert_eq!(parse(&args(&["lanes"])).unwrap(), Command::Lanes);
         assert_eq!(
             parse(&args(&["doctor"])).unwrap(),
-            Command::Doctor(DoctorOptions { diagnose: None, ledger: None, open: false })
+            Command::Doctor(DoctorOptions {
+                diagnose: None,
+                ledger: None,
+                open: false
+            })
         );
         assert_eq!(parse(&args(&["version"])).unwrap(), Command::Version);
         assert_eq!(parse(&args(&["--help"])).unwrap(), Command::Help);
@@ -1690,7 +1801,11 @@ mod tests {
         // The bare command is the boot check.
         assert_eq!(
             parse(&args(&["doctor"])).unwrap(),
-            Command::Doctor(DoctorOptions { diagnose: None, ledger: None, open: false })
+            Command::Doctor(DoctorOptions {
+                diagnose: None,
+                ledger: None,
+                open: false
+            })
         );
         // --diagnose names a session; --ledger points the filing.
         assert_eq!(
@@ -1702,7 +1817,14 @@ mod tests {
             })
         );
         assert_eq!(
-            parse(&args(&["doctor", "--diagnose", "s1", "--ledger", "/tmp/ki.md"])).unwrap(),
+            parse(&args(&[
+                "doctor",
+                "--diagnose",
+                "s1",
+                "--ledger",
+                "/tmp/ki.md"
+            ]))
+            .unwrap(),
             Command::Doctor(DoctorOptions {
                 diagnose: Some("s1".to_string()),
                 ledger: Some("/tmp/ki.md".to_string()),
@@ -1723,7 +1845,11 @@ mod tests {
         // `--ledger` may point the read at a file.
         assert_eq!(
             parse(&args(&["doctor", "--open"])).unwrap(),
-            Command::Doctor(DoctorOptions { diagnose: None, ledger: None, open: true })
+            Command::Doctor(DoctorOptions {
+                diagnose: None,
+                ledger: None,
+                open: true
+            })
         );
         assert_eq!(
             parse(&args(&["doctor", "--open", "--ledger", "/tmp/ki.md"])).unwrap(),
@@ -1735,13 +1861,22 @@ mod tests {
         );
         // --open is a read, not a diagnosis: the two do not combine.
         assert!(parse(&args(&["doctor", "--open", "--diagnose", "s1"])).is_err());
-        assert_eq!(parse(&args(&["doctor", "--open", "--help"])).unwrap(), Command::Help);
+        assert_eq!(
+            parse(&args(&["doctor", "--open", "--help"])).unwrap(),
+            Command::Help
+        );
     }
 
     #[test]
     fn eval_parses_the_bare_run_and_the_last_query() {
-        assert_eq!(parse(&args(&["eval"])).unwrap(), Command::Eval(EvalOptions { last: false }));
-        assert_eq!(parse(&args(&["eval", "--last"])).unwrap(), Command::Eval(EvalOptions { last: true }));
+        assert_eq!(
+            parse(&args(&["eval"])).unwrap(),
+            Command::Eval(EvalOptions { last: false })
+        );
+        assert_eq!(
+            parse(&args(&["eval", "--last"])).unwrap(),
+            Command::Eval(EvalOptions { last: true })
+        );
         assert!(parse(&args(&["eval", "--json"])).is_err());
         assert!(parse(&args(&["eval", "extra"])).is_err());
         assert_eq!(parse(&args(&["eval", "--help"])).unwrap(), Command::Help);
@@ -1770,21 +1905,37 @@ mod tests {
     fn calib_parses_an_optional_day_and_rejects_junk() {
         assert_eq!(
             parse(&args(&["calib"])).unwrap(),
-            Command::Calib(CalibOptions { day: None, calibration: false, delegation: false })
+            Command::Calib(CalibOptions {
+                day: None,
+                calibration: false,
+                delegation: false
+            })
         );
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-10-01"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()), calibration: false, delegation: false })
+            Command::Calib(CalibOptions {
+                day: Some("2026-10-01".to_string()),
+                calibration: false,
+                delegation: false
+            })
         );
         // The calibration surface is `calib --calibration`, with or
         // without a day.
         assert_eq!(
             parse(&args(&["calib", "--calibration"])).unwrap(),
-            Command::Calib(CalibOptions { day: None, calibration: true, delegation: false })
+            Command::Calib(CalibOptions {
+                day: None,
+                calibration: true,
+                delegation: false
+            })
         );
         assert_eq!(
             parse(&args(&["calib", "--calibration", "--day", "2026-10-01"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2026-10-01".to_string()), calibration: true, delegation: false })
+            Command::Calib(CalibOptions {
+                day: Some("2026-10-01".to_string()),
+                calibration: true,
+                delegation: false
+            })
         );
         assert!(parse(&args(&["calib", "--day", "yesterday"])).is_err());
         assert!(parse(&args(&["calib", "--day", "2026-1-1"])).is_err());
@@ -1796,11 +1947,19 @@ mod tests {
         assert!(parse(&args(&["calib", "--day", "2026-02-29"])).is_err()); // 2026 is not a leap year
         assert_eq!(
             parse(&args(&["calib", "--day", "2024-02-29"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2024-02-29".to_string()), calibration: false, delegation: false })
+            Command::Calib(CalibOptions {
+                day: Some("2024-02-29".to_string()),
+                calibration: false,
+                delegation: false
+            })
         ); // 2024 is a leap year
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-12-31"])).unwrap(),
-            Command::Calib(CalibOptions { day: Some("2026-12-31".to_string()), calibration: false, delegation: false })
+            Command::Calib(CalibOptions {
+                day: Some("2026-12-31".to_string()),
+                calibration: false,
+                delegation: false
+            })
         );
         assert!(parse(&args(&["calib", "--day"])).is_err());
         assert!(parse(&args(&["calib", "--json"])).is_err());
@@ -1810,7 +1969,11 @@ mod tests {
         // asking two questions.
         assert_eq!(
             parse(&args(&["calib", "--delegation"])).unwrap(),
-            Command::Calib(CalibOptions { day: None, calibration: false, delegation: true })
+            Command::Calib(CalibOptions {
+                day: None,
+                calibration: false,
+                delegation: true
+            })
         );
         assert_eq!(
             parse(&args(&["calib", "--delegation", "--day", "2026-10-01"])).unwrap(),
@@ -1866,7 +2029,14 @@ mod tests {
         // The refusals, each naming what was wrong.
         let error = parse(&args(&["delegate", "--agree"])).unwrap_err();
         assert!(error.contains("--agree"), "{error}");
-        let error = parse(&args(&["delegate", "--agree", "key", "--disagree", "other"])).unwrap_err();
+        let error = parse(&args(&[
+            "delegate",
+            "--agree",
+            "key",
+            "--disagree",
+            "other",
+        ]))
+        .unwrap_err();
         assert!(error.contains("one disposition"), "{error}");
         let error = parse(&args(&["delegate", "--dry-run", "--agree", "key"])).unwrap_err();
         assert!(error.contains("no rehearsal"), "{error}");
@@ -1880,7 +2050,13 @@ mod tests {
         // its session. The control is its own write and never combines
         // with the batch, a disposition, or the other control.
         assert_eq!(
-            parse(&args(&["delegate", "--steer", "sess-1", "focus on the parser"])).unwrap(),
+            parse(&args(&[
+                "delegate",
+                "--steer",
+                "sess-1",
+                "focus on the parser"
+            ]))
+            .unwrap(),
             Command::Delegate(DelegateOptions {
                 day: None,
                 dry_run: false,
@@ -1897,7 +2073,9 @@ mod tests {
                 day: None,
                 dry_run: false,
                 disposition: None,
-                control: Some(DelegateControl::Stop { session: "sess-1".to_string() }),
+                control: Some(DelegateControl::Stop {
+                    session: "sess-1".to_string()
+                }),
             })
         );
         // The refusals, each naming what was wrong.
@@ -1905,11 +2083,15 @@ mod tests {
         assert!(error.contains("--steer"), "{error}");
         let error = parse(&args(&["delegate", "--steer"])).unwrap_err();
         assert!(error.contains("--steer"), "{error}");
-        let error = parse(&args(&["delegate", "--steer", "sess-1", "text", "--stop", "sess-2"]))
-            .unwrap_err();
+        let error = parse(&args(&[
+            "delegate", "--steer", "sess-1", "text", "--stop", "sess-2",
+        ]))
+        .unwrap_err();
         assert!(error.contains("one control"), "{error}");
-        let error =
-            parse(&args(&["delegate", "--steer", "sess-1", "text", "--agree", "key"])).unwrap_err();
+        let error = parse(&args(&[
+            "delegate", "--steer", "sess-1", "text", "--agree", "key",
+        ]))
+        .unwrap_err();
         assert!(error.contains("one form"), "{error}");
         let error = parse(&args(&["delegate", "--stop", "sess-1", "--dry-run"])).unwrap_err();
         assert!(error.contains("no rehearsal"), "{error}");
@@ -1933,7 +2115,13 @@ mod tests {
             })
         );
         assert_eq!(
-            parse(&args(&["explain", "--eval", "conversation-fold", "--dry-run"])).unwrap(),
+            parse(&args(&[
+                "explain",
+                "--eval",
+                "conversation-fold",
+                "--dry-run"
+            ]))
+            .unwrap(),
             Command::Explain(ExplainOptions {
                 proposal: None,
                 eval: Some("conversation-fold".to_string()),
@@ -1955,15 +2143,27 @@ mod tests {
     fn skills_parses_its_flags_and_rejects_junk() {
         assert_eq!(
             parse(&args(&["skills"])).unwrap(),
-            Command::Skills(SkillsOptions { proposed: false, curate: false, show: None })
+            Command::Skills(SkillsOptions {
+                proposed: false,
+                curate: false,
+                show: None
+            })
         );
         assert_eq!(
             parse(&args(&["skills", "--proposed"])).unwrap(),
-            Command::Skills(SkillsOptions { proposed: true, curate: false, show: None })
+            Command::Skills(SkillsOptions {
+                proposed: true,
+                curate: false,
+                show: None
+            })
         );
         assert_eq!(
             parse(&args(&["skills", "--curate", "--proposed"])).unwrap(),
-            Command::Skills(SkillsOptions { proposed: true, curate: true, show: None })
+            Command::Skills(SkillsOptions {
+                proposed: true,
+                curate: true,
+                show: None
+            })
         );
         assert_eq!(
             parse(&args(&["skills", "--show", "bash-recovery"])).unwrap(),
@@ -2051,16 +2251,22 @@ mod tests {
         assert!(parse(&args(&["memories", "--archive", "--recall", "x"])).is_err());
         assert!(parse(&args(&["memories", "--archive", "--consolidate"])).is_err());
         assert!(parse(&args(&["memories", "--consolidate", "--recall", "x"])).is_err());
-        assert_eq!(parse(&args(&["memories", "--help"])).unwrap(), Command::Help);
+        assert_eq!(
+            parse(&args(&["memories", "--help"])).unwrap(),
+            Command::Help
+        );
     }
 
     #[test]
     fn remember_parses_its_structured_flags() {
         let command = parse(&args(&[
             "remember",
-            "--name", "the-gate-is-local",
-            "--description", "the gate is local and its exit code is read",
-            "--basis", "confirmed-by",
+            "--name",
+            "the-gate-is-local",
+            "--description",
+            "the gate is local and its exit code is read",
+            "--basis",
+            "confirmed-by",
         ]))
         .unwrap();
         assert_eq!(
@@ -2081,24 +2287,36 @@ mod tests {
         // Every flag parses in any position.
         let command = parse(&args(&[
             "remember",
-            "--tier", "working",
-            "--description", "a session-scoped note",
-            "--name", "a-note",
-            "--valid-until", "2026-10-20",
-            "--basis", "inferred",
-            "--type", "project",
-            "--shape", "deploy, build",
-            "--body", "The full content.",
+            "--tier",
+            "working",
+            "--description",
+            "a session-scoped note",
+            "--name",
+            "a-note",
+            "--valid-until",
+            "2026-10-20",
+            "--basis",
+            "inferred",
+            "--type",
+            "project",
+            "--shape",
+            "deploy, build",
+            "--body",
+            "The full content.",
             // The direction channel's two inputs: the resolution's own
             // vocabulary and the stall's absent companions. The CLI
             // speaks the writer's whole shape, so the largest channel
             // in the ranking is writable from the surface and not only
             // from the model-visible tool.
-            "--phrases", "read the error, fix one thing, rerun the same tool",
-            "--missing", "the torch stack",
+            "--phrases",
+            "read the error, fix one thing, rerun the same tool",
+            "--missing",
+            "the torch stack",
         ]))
         .unwrap();
-        let Command::Remember(options) = command else { panic!("not a remember") };
+        let Command::Remember(options) = command else {
+            panic!("not a remember")
+        };
         assert_eq!(options.name, "a-note");
         assert_eq!(options.basis, "inferred");
         assert_eq!(options.tier, "working");
@@ -2117,10 +2335,29 @@ mod tests {
         let error = parse(&args(&["remember", "--name", "x", "--description", "d"])).unwrap_err();
         assert!(error.contains("--basis"), "{error}");
         assert!(parse(&args(&["remember", "--name"])).is_err());
-        assert!(parse(&args(&["remember", "--name", "x", "--description", "d", "--basis", "b", "--json"])).is_err());
+        assert!(parse(&args(&[
+            "remember",
+            "--name",
+            "x",
+            "--description",
+            "d",
+            "--basis",
+            "b",
+            "--json"
+        ]))
+        .is_err());
         assert_eq!(
-            parse(&args(&["remember", "--name", "x", "--description", "d", "--basis", "b", "--help"]))
-                .unwrap(),
+            parse(&args(&[
+                "remember",
+                "--name",
+                "x",
+                "--description",
+                "d",
+                "--basis",
+                "b",
+                "--help"
+            ]))
+            .unwrap(),
             Command::Help
         );
     }
@@ -2129,12 +2366,21 @@ mod tests {
     fn cron_parses_the_bare_list_and_every_subcommand() {
         assert_eq!(
             parse(&args(&["cron"])).unwrap(),
-            Command::Cron(CronOptions { action: CronAction::List })
+            Command::Cron(CronOptions {
+                action: CronAction::List
+            })
         );
         assert_eq!(
             parse(&args(&[
-                "cron", "add", "--name", "daily-digest", "--schedule", "0 7 * * *",
-                "--task", "Summarize the day.", "--auto-approve",
+                "cron",
+                "add",
+                "--name",
+                "daily-digest",
+                "--schedule",
+                "0 7 * * *",
+                "--task",
+                "Summarize the day.",
+                "--auto-approve",
             ]))
             .unwrap(),
             Command::Cron(CronOptions {
@@ -2148,65 +2394,120 @@ mod tests {
         );
         // `--auto-approve` is optional and defaults off.
         let command = parse(&args(&[
-            "cron", "add", "--name", "n", "--schedule", "* * * * *", "--task", "t",
+            "cron",
+            "add",
+            "--name",
+            "n",
+            "--schedule",
+            "* * * * *",
+            "--task",
+            "t",
         ]))
         .unwrap();
-        let Command::Cron(options) = command else { panic!("not a cron") };
-        let CronAction::Add { auto_approve, .. } = options.action else { panic!("not an add") };
+        let Command::Cron(options) = command else {
+            panic!("not a cron")
+        };
+        let CronAction::Add { auto_approve, .. } = options.action else {
+            panic!("not an add")
+        };
         assert!(!auto_approve);
         // The mutations address the job by name, in any flag order.
         assert_eq!(
             parse(&args(&["cron", "enable", "--name", "daily-digest"])).unwrap(),
-            Command::Cron(CronOptions { action: CronAction::Enable { name: "daily-digest".to_string() } })
+            Command::Cron(CronOptions {
+                action: CronAction::Enable {
+                    name: "daily-digest".to_string()
+                }
+            })
         );
         assert_eq!(
             parse(&args(&["cron", "disable", "--name", "daily-digest"])).unwrap(),
-            Command::Cron(CronOptions { action: CronAction::Disable { name: "daily-digest".to_string() } })
+            Command::Cron(CronOptions {
+                action: CronAction::Disable {
+                    name: "daily-digest".to_string()
+                }
+            })
         );
         assert_eq!(
             parse(&args(&["cron", "remove", "--name", "daily-digest"])).unwrap(),
-            Command::Cron(CronOptions { action: CronAction::Remove { name: "daily-digest".to_string() } })
+            Command::Cron(CronOptions {
+                action: CronAction::Remove {
+                    name: "daily-digest".to_string()
+                }
+            })
         );
         // The three required add flags are named when missing.
         assert!(parse(&args(&["cron", "add"])).is_err());
         assert!(parse(&args(&["cron", "add", "--name", "n"])).is_err());
-        let error = parse(&args(&["cron", "add", "--name", "n", "--schedule", "* * * * *"])).unwrap_err();
+        let error = parse(&args(&[
+            "cron",
+            "add",
+            "--name",
+            "n",
+            "--schedule",
+            "* * * * *",
+        ]))
+        .unwrap_err();
         assert!(error.contains("--task"), "{error}");
         // A mutation with no name is a usage error, not a no-op.
         let error = parse(&args(&["cron", "enable"])).unwrap_err();
         assert!(error.contains("--name"), "{error}");
         // Junk is refused on every subcommand.
         assert!(parse(&args(&["cron", "frobnicate"])).is_err());
-        assert!(parse(&args(&["cron", "add", "--name", "n", "--schedule", "s", "--task", "t", "--json"])).is_err());
+        assert!(parse(&args(&[
+            "cron",
+            "add",
+            "--name",
+            "n",
+            "--schedule",
+            "s",
+            "--task",
+            "t",
+            "--json"
+        ]))
+        .is_err());
         assert!(parse(&args(&["cron", "enable", "daily-digest"])).is_err());
         assert!(parse(&args(&["cron", "--name", "n"])).is_err());
         assert_eq!(parse(&args(&["cron", "--help"])).unwrap(), Command::Help);
-        assert_eq!(parse(&args(&["cron", "add", "--help"])).unwrap(), Command::Help);
+        assert_eq!(
+            parse(&args(&["cron", "add", "--help"])).unwrap(),
+            Command::Help
+        );
     }
 
     #[test]
     fn improve_parses_the_bare_list_apply_and_undo() {
         assert_eq!(
             parse(&args(&["improve"])).unwrap(),
-            Command::Improve(ImproveOptions { action: ImproveAction::List })
+            Command::Improve(ImproveOptions {
+                action: ImproveAction::List
+            })
         );
         assert_eq!(
             parse(&args(&["improve", "apply", "fix-the-ranker"])).unwrap(),
             Command::Improve(ImproveOptions {
-                action: ImproveAction::Apply { name: "fix-the-ranker".to_string(), approve: false }
+                action: ImproveAction::Apply {
+                    name: "fix-the-ranker".to_string(),
+                    approve: false
+                }
             })
         );
         // `--approve` is apply's own flag and defaults off.
         assert_eq!(
             parse(&args(&["improve", "apply", "retire-demo", "--approve"])).unwrap(),
             Command::Improve(ImproveOptions {
-                action: ImproveAction::Apply { name: "retire-demo".to_string(), approve: true }
+                action: ImproveAction::Apply {
+                    name: "retire-demo".to_string(),
+                    approve: true
+                }
             })
         );
         assert_eq!(
             parse(&args(&["improve", "undo", "fix-the-ranker"])).unwrap(),
             Command::Improve(ImproveOptions {
-                action: ImproveAction::Undo { name: "fix-the-ranker".to_string() }
+                action: ImproveAction::Undo {
+                    name: "fix-the-ranker".to_string()
+                }
             })
         );
         // The proposal is named once; a second word or an unknown
@@ -2217,7 +2518,10 @@ mod tests {
         assert!(parse(&args(&["improve", "frobnicate", "a"])).is_err());
         assert!(parse(&args(&["improve", "undo", "a", "--approve"])).is_err());
         assert_eq!(parse(&args(&["improve", "--help"])).unwrap(), Command::Help);
-        assert_eq!(parse(&args(&["improve", "apply", "--help"])).unwrap(), Command::Help);
+        assert_eq!(
+            parse(&args(&["improve", "apply", "--help"])).unwrap(),
+            Command::Help
+        );
     }
 
     #[test]
@@ -2225,7 +2529,11 @@ mod tests {
         // The bare command is the batch: today's route rows, judged.
         assert_eq!(
             parse(&args(&["judge"])).unwrap(),
-            Command::Judge(JudgeOptions { day: None, dry_run: false, disposition: None })
+            Command::Judge(JudgeOptions {
+                day: None,
+                dry_run: false,
+                disposition: None
+            })
         );
         assert_eq!(
             parse(&args(&["judge", "--day", "2026-10-13", "--dry-run"])).unwrap(),
@@ -2237,9 +2545,11 @@ mod tests {
         );
         // The dispositions address one judged row by its key, and each
         // carries its own word.
-        for (flag, word) in
-            [("--agree", "agreed"), ("--disagree", "disagreed"), ("--waive", "waived")]
-        {
+        for (flag, word) in [
+            ("--agree", "agreed"),
+            ("--disagree", "disagreed"),
+            ("--waive", "waived"),
+        ] {
             assert_eq!(
                 parse(&args(&["judge", flag, "a1b2c3d4e5f60718"])).unwrap(),
                 Command::Judge(JudgeOptions {

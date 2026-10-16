@@ -61,7 +61,12 @@ pub struct Message {
 impl Message {
     /// A `system`/`user`/`assistant` text message.
     pub fn text(role: Role, content: impl Into<String>) -> Message {
-        Message { role, content: Some(content.into()), tool_calls: Vec::new(), tool_call_id: None }
+        Message {
+            role,
+            content: Some(content.into()),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
     }
 
     /// A tool result answering `call_id`.
@@ -93,10 +98,18 @@ pub struct FunctionSpec {
 
 impl ToolSpec {
     /// A `"function"`-kind declaration.
-    pub fn function(name: impl Into<String>, description: impl Into<String>, parameters: serde_json::Value) -> ToolSpec {
+    pub fn function(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: serde_json::Value,
+    ) -> ToolSpec {
         ToolSpec {
             r#type: "function".to_string(),
-            function: FunctionSpec { name: name.into(), description: description.into(), parameters },
+            function: FunctionSpec {
+                name: name.into(),
+                description: description.into(),
+                parameters,
+            },
         }
     }
 }
@@ -373,7 +386,9 @@ impl Client {
         let body = serde_json::to_vec(&StreamRequest {
             request,
             stream: true,
-            stream_options: StreamOptions { include_usage: true },
+            stream_options: StreamOptions {
+                include_usage: true,
+            },
         })
         .map_err(|error| ClientError::Decode(error.to_string()))?;
         let agent = self.agent.clone();
@@ -402,9 +417,13 @@ impl Client {
         // A pump that ended without a closing event failed; its error is the
         // run's error. A stream that ended without one is a decode failure,
         // exactly as on the non-streaming path.
-        let closed = reader.await.map_err(|error| ClientError::Network(error.to_string()))??;
+        let closed = reader
+            .await
+            .map_err(|error| ClientError::Network(error.to_string()))??;
         if !closed {
-            return Err(ClientError::Decode("the stream ended without a completion".to_string()));
+            return Err(ClientError::Decode(
+                "the stream ended without a completion".to_string(),
+            ));
         }
         Ok(ChatResponse {
             choices: vec![Choice {
@@ -461,7 +480,9 @@ fn parse_sse(
     let mut closed = false;
     for line in reader.lines() {
         let line = line.map_err(|error| ClientError::Network(error.to_string()))?;
-        let Some(payload) = sse_data(&line) else { continue };
+        let Some(payload) = sse_data(&line) else {
+            continue;
+        };
         if payload == "[DONE]" {
             // A stream can close without a finish_reason; the calls it
             // assembled are still the model's, and dropping them would lose
@@ -504,7 +525,8 @@ fn parse_sse(
                 if call.index > drafts.len() {
                     return Err(ClientError::Decode(format!(
                         "tool-call fragment index {} arrives before index {}",
-                        call.index, drafts.len()
+                        call.index,
+                        drafts.len()
                     )));
                 }
                 let draft = if call.index < drafts.len() {
@@ -628,7 +650,10 @@ mod tests {
 
     #[test]
     fn api_error_falls_back_to_a_bounded_excerpt() {
-        let error = api_error(500, "<html>not json at all, and long enough to matter</html>");
+        let error = api_error(
+            500,
+            "<html>not json at all, and long enough to matter</html>",
+        );
         assert_eq!(error.status, 500);
         assert!(error.message.contains("not json"));
     }
@@ -658,7 +683,9 @@ mod tests {
         let line = serde_json::to_string(&StreamRequest {
             request: &request,
             stream: true,
-            stream_options: StreamOptions { include_usage: true },
+            stream_options: StreamOptions {
+                include_usage: true,
+            },
         })
         .unwrap();
         let body: serde_json::Value = serde_json::from_str(&line).unwrap();

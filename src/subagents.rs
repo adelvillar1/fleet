@@ -164,7 +164,11 @@ pub fn inherit_turn_cap(requested: usize, depth: usize, parent_remaining: Option
 /// An ordinary parent's cap is its own run's business — `--max-turns`
 /// is the owner's, not this module's — so nothing is named and the
 /// ceiling holds instead of a bound invented here.
-fn parent_remaining_turns(sessions_dir: &std::path::Path, parent: &str, depth: usize) -> Option<usize> {
+fn parent_remaining_turns(
+    sessions_dir: &std::path::Path,
+    parent: &str,
+    depth: usize,
+) -> Option<usize> {
     if depth < 2 {
         return None;
     }
@@ -320,7 +324,12 @@ const CONTEXT_SECTION: &str = "--- CONTEXT ---";
 const DONE_SECTION: &str = "--- WHAT DONE LOOKS LIKE ---";
 
 /// Every section marker, in the order a composed brief carries them.
-const SECTIONS: [&str; 4] = [TASK_SECTION, APPROACH_SECTION, CONTEXT_SECTION, DONE_SECTION];
+const SECTIONS: [&str; 4] = [
+    TASK_SECTION,
+    APPROACH_SECTION,
+    CONTEXT_SECTION,
+    DONE_SECTION,
+];
 
 /// The framing the APPROACH section opens with.
 ///
@@ -408,7 +417,10 @@ impl Brief {
         if self.context.is_some() || self.role.is_some() || admitted != Scope::default_admitted() {
             text.push_str(&format!("{CONTEXT_SECTION}\n"));
             if let Some(role) = &self.role {
-                text.push_str(&format!("{ROLE_LINE}{}\n", bounded(role, BRIEF_PART_PREVIEW)));
+                text.push_str(&format!(
+                    "{ROLE_LINE}{}\n",
+                    bounded(role, BRIEF_PART_PREVIEW)
+                ));
             }
             text.push_str(&format!("{CAPABILITIES_LINE}{}\n", admitted.join(", ")));
             if let Some(context) = &self.context {
@@ -416,7 +428,10 @@ impl Brief {
             }
         }
         if let Some(output) = &self.output {
-            text.push_str(&format!("{DONE_SECTION}\n{}\n", bounded(output, BRIEF_PART_CAP)));
+            text.push_str(&format!(
+                "{DONE_SECTION}\n{}\n",
+                bounded(output, BRIEF_PART_CAP)
+            ));
         }
         text
     }
@@ -431,7 +446,10 @@ impl Brief {
     pub fn parse(text: &str) -> Brief {
         let found = sections(text);
         if found.is_empty() {
-            return Brief { task: text.trim().to_string(), ..Brief::default() };
+            return Brief {
+                task: text.trim().to_string(),
+                ..Brief::default()
+            };
         }
         let mut brief = Brief::default();
         for (marker, body) in found {
@@ -440,8 +458,11 @@ impl Brief {
                 APPROACH_SECTION => {
                     // The preamble is the composer's own framing, so it
                     // is the one thing stripped back out.
-                    let approach =
-                        body.strip_prefix(APPROACH_PREAMBLE).unwrap_or(&body).trim().to_string();
+                    let approach = body
+                        .strip_prefix(APPROACH_PREAMBLE)
+                        .unwrap_or(&body)
+                        .trim()
+                        .to_string();
                     brief.approach = Some(approach);
                 }
                 CONTEXT_SECTION => {
@@ -500,7 +521,9 @@ impl Brief {
     /// its report can only be a summary — the thing the discipline
     /// already distrusts — and no delta is asked for.
     pub fn offers_an_approach(&self) -> bool {
-        self.approach.as_ref().is_some_and(|approach| !approach.trim().is_empty())
+        self.approach
+            .as_ref()
+            .is_some_and(|approach| !approach.trim().is_empty())
     }
 
     /// The brief as one bounded line, for a progress line or an
@@ -514,7 +537,10 @@ impl Brief {
         }
         let mut parts = vec![format!("task {}", bounded(&self.task, BRIEF_PART_PREVIEW))];
         if let Some(approach) = &self.approach {
-            parts.push(format!("approach {}", bounded(approach, BRIEF_PART_PREVIEW)));
+            parts.push(format!(
+                "approach {}",
+                bounded(approach, BRIEF_PART_PREVIEW)
+            ));
         }
         if let Some(context) = &self.context {
             parts.push(format!("context {}", bounded(context, BRIEF_PART_PREVIEW)));
@@ -778,7 +804,8 @@ impl Delta {
                      holds no failed step — the claimed blocker is absent from its own log"
                         .to_string(),
                 )
-            } else if self.reason == DeltaReason::CompanionMissing && self.companion.trim().is_empty()
+            } else if self.reason == DeltaReason::CompanionMissing
+                && self.companion.trim().is_empty()
             {
                 Some(
                     "the deviation names no companion, and a companion nobody named is one the \
@@ -858,10 +885,8 @@ fn block(fields: &[(String, String)]) -> Option<(String, Delta)> {
     // A followed delta's reason defaults to the one that says so; a
     // deviation without a reason is not a deviation anybody can grade.
     let reason = match state {
-        DeltaState::Followed => {
-            DeltaReason::parse(field("reason").unwrap_or("right-and-followed"))
-                .unwrap_or(DeltaReason::RightAndFollowed)
-        }
+        DeltaState::Followed => DeltaReason::parse(field("reason").unwrap_or("right-and-followed"))
+            .unwrap_or(DeltaReason::RightAndFollowed),
         DeltaState::Deviated => DeltaReason::parse(field("reason")?)?,
     };
     Some((
@@ -961,14 +986,19 @@ impl Chain {
         let mut lineage: Vec<String> = vec![parent.to_string()];
         let mut cursor = parent.to_string();
         for _ in 0..SUBAGENT_MAX_DEPTH {
-            let Some(next) = parent_of(sessions_dir, &cursor) else { break };
+            let Some(next) = parent_of(sessions_dir, &cursor) else {
+                break;
+            };
             lineage.push(next.clone());
             cursor = next;
         }
         lineage.reverse();
         Chain {
             parent: parent.to_string(),
-            root: lineage.first().cloned().unwrap_or_else(|| parent.to_string()),
+            root: lineage
+                .first()
+                .cloned()
+                .unwrap_or_else(|| parent.to_string()),
             depth,
             lineage,
         }
@@ -988,10 +1018,7 @@ impl Chain {
         let mut goals: Vec<String> = self
             .lineage
             .iter()
-            .map(|session| {
-                session_goal(sessions_dir, session)
-                    .unwrap_or_else(|| session.clone())
-            })
+            .map(|session| session_goal(sessions_dir, session).unwrap_or_else(|| session.clone()))
             .collect();
         goals.push(bounded(&brief.task, GOAL_PREVIEW));
         goals
@@ -1009,7 +1036,10 @@ fn parent_of(sessions_dir: &std::path::Path, session: &str) -> Option<String> {
     let log = sessions_dir.join(format!("{session}.jsonl"));
     let records = crate::session::replay(&log).ok()?;
     records.first().and_then(|record| match record {
-        Record::Start { parent: Some(parent), .. } if !parent.is_empty() => Some(parent.clone()),
+        Record::Start {
+            parent: Some(parent),
+            ..
+        } if !parent.is_empty() => Some(parent.clone()),
         _ => None,
     })
 }
@@ -1021,9 +1051,7 @@ fn session_goal(sessions_dir: &std::path::Path, session: &str) -> Option<String>
     let log = sessions_dir.join(format!("{session}.jsonl"));
     let records = crate::session::replay(&log).ok()?;
     records.iter().find_map(|record| match record {
-        Record::User { content } if !content.trim().is_empty() => {
-            Some(Brief::parse(content).task)
-        }
+        Record::User { content } if !content.trim().is_empty() => Some(Brief::parse(content).task),
         _ => None,
     })
 }
@@ -1096,7 +1124,9 @@ impl SubagentRequest {
                 Some(admitted)
             }
             Some(other) => {
-                return Err(format!("`tools` must be an array of tool names; {other} is not"))
+                return Err(format!(
+                    "`tools` must be an array of tool names; {other} is not"
+                ))
             }
         };
         let max_turns = match arguments.get("max-turns") {
@@ -1135,13 +1165,25 @@ impl SubagentRequest {
                 ));
             }
         }
-        let brief = Brief { task: goal.clone(), approach, context, output, role };
+        let brief = Brief {
+            task: goal.clone(),
+            approach,
+            context,
+            output,
+            role,
+        };
         // The declaration is the scope, so the composed message names the
         // capabilities the child actually has rather than leaving it to
         // discover an unadmitted tool at the call.
         let admitted = tools.clone().unwrap_or_else(Scope::default_admitted);
         let composed = brief.compose(&admitted);
-        let Brief { task, approach, context, output, role } = brief;
+        let Brief {
+            task,
+            approach,
+            context,
+            output,
+            role,
+        } = brief;
         Ok(SubagentRequest {
             goal: composed,
             task,
@@ -1316,8 +1358,12 @@ impl SubagentResult {
             Some(reason) => format!("subagent failed ({reason})"),
             None => format!("subagent {}", self.outcome.label()),
         };
-        let mut text =
-            format!("{head} \u{b7} {} turn{} \u{b7} session {}", self.turns, plural(self.turns), self.session);
+        let mut text = format!(
+            "{head} \u{b7} {} turn{} \u{b7} session {}",
+            self.turns,
+            plural(self.turns),
+            self.session
+        );
         if !self.log.as_os_str().is_empty() {
             text.push_str(&format!(" \u{b7} log {}", self.log.display()));
         }
@@ -1349,8 +1395,10 @@ impl SubagentResult {
             text.push('\n');
             delta.render_into(OWN_PATH, &mut text);
         } else if self.delta.offered {
-            text.push_str("\n(no delta reported \u{2014} the child's answer carried no delta \
-                           block, so nothing is known about whether it followed the approach)\n");
+            text.push_str(
+                "\n(no delta reported \u{2014} the child's answer carried no delta \
+                           block, so nothing is known about whether it followed the approach)\n",
+            );
         }
         for (index, child) in self.delta.children.iter().enumerate() {
             text.push('\n');
@@ -1524,7 +1572,10 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // The overlay rides the child's system prompt beside the compiled-in
     // one, delimited so the child knows what is standing instruction
     // for this delegation's role and what is the harness prompt.
-    let role_overlay = role.as_ref().map(crate::roles::overlay_prompt).filter(|frame| !frame.is_empty());
+    let role_overlay = role
+        .as_ref()
+        .map(crate::roles::overlay_prompt)
+        .filter(|frame| !frame.is_empty());
     // The declaration is the scope, and the depth cap is the one thing
     // the declaration cannot override.
     let scope = Scope::child(tools, depth);
@@ -1548,15 +1599,15 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     let started = Instant::now();
 
     let child_route = child_route(&model, route.as_ref());
-    let mut child = match Session::create_subagent(&sessions_dir, &child_route.model, &parent_session)
-    {
-        Ok(child) => child,
-        Err(error) => {
-            return SubagentResult::refused(format!(
-                "the child session could not be created: {error}"
-            ))
-        }
-    };
+    let mut child =
+        match Session::create_subagent(&sessions_dir, &child_route.model, &parent_session) {
+            Ok(child) => child,
+            Err(error) => {
+                return SubagentResult::refused(format!(
+                    "the child session could not be created: {error}"
+                ))
+            }
+        };
     let session = child.id().to_string();
     let log = child.path().to_path_buf();
 
@@ -1592,7 +1643,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         // home to file proposals into. The scope excludes `improve`
         // either way, so the declaration and the call agree.
         improve_home: None,
-            compact_now: false,
+        compact_now: false,
     };
     let gate = InheritedApprover {
         inner: approver,
@@ -1827,7 +1878,10 @@ impl Approver for InheritedApprover<'_> {
             UiEvent::Subagent {
                 goal: self.label.clone(),
                 session: self.session.clone(),
-                stage: SubagentStage::Working { calls: self.calls, tool: call.function.name.clone() },
+                stage: SubagentStage::Working {
+                    calls: self.calls,
+                    tool: call.function.name.clone(),
+                },
             },
         );
         self.inner.approve(&labelled(call, &self.label))
@@ -1864,9 +1918,10 @@ fn labelled(call: &ToolCall, label: &str) -> ToolCall {
 /// never got a word out.
 fn last_words(records: &[Record]) -> Option<String> {
     records.iter().rev().find_map(|record| match record {
-        Record::Assistant { content: Some(text), .. } if !text.trim().is_empty() => {
-            Some(text.clone())
-        }
+        Record::Assistant {
+            content: Some(text),
+            ..
+        } if !text.trim().is_empty() => Some(text.clone()),
         _ => None,
     })
 }
@@ -1877,7 +1932,10 @@ fn last_words(records: &[Record]) -> Option<String> {
 /// "how far it got" — the loop's own counter would name a turn the model
 /// never answered.
 fn turns_completed(records: &[Record]) -> u64 {
-    records.iter().filter(|record| matches!(record, Record::Assistant { .. })).count() as u64
+    records
+        .iter()
+        .filter(|record| matches!(record, Record::Assistant { .. }))
+        .count() as u64
 }
 
 /// Send one event when a surface is listening. A closed channel is not
@@ -1917,10 +1975,16 @@ fn bounded(text: &str, limit: usize) -> String {
 /// level up has to be able to read. A result with no delta is bounded
 /// exactly as it always was.
 pub fn bound_result(result: &SubagentResult) -> ToolOutcome {
-    let report = tools::bound(ToolOutcome { output: result.render_report(), truncated: false });
+    let report = tools::bound(ToolOutcome {
+        output: result.render_report(),
+        truncated: false,
+    });
     let mut output = report.output;
     output.push_str(&result.delta_section());
-    ToolOutcome { output, truncated: report.truncated }
+    ToolOutcome {
+        output,
+        truncated: report.truncated,
+    }
 }
 
 #[cfg(test)]
@@ -1943,24 +2007,37 @@ mod tests {
             ]
         );
         // Everything the design leaves out is out by construction.
-        for excluded in [tools::REMEMBER_TOOL, tools::SUPERSEDE_TOOL, tools::SUBAGENT_TOOL] {
-            assert!(!scope.admits(excluded), "{excluded} must not be admitted by default");
+        for excluded in [
+            tools::REMEMBER_TOOL,
+            tools::SUPERSEDE_TOOL,
+            tools::SUBAGENT_TOOL,
+        ] {
+            assert!(
+                !scope.admits(excluded),
+                "{excluded} must not be admitted by default"
+            );
         }
-        assert!(!scope.admits("mcp__sem1__probe"), "a lane tool must not be admitted");
+        assert!(
+            !scope.admits("mcp__sem1__probe"),
+            "a lane tool must not be admitted"
+        );
     }
 
     #[test]
     fn a_declared_tool_is_admitted_and_an_undeclared_one_is_refused_by_name() {
         // The declaration IS the scope: what the call named is what the
         // child can reach, and the row records the same list.
-        let scope = Scope::child(
-            Some(vec!["read_file".to_string(), "bash".to_string()]),
-            1,
-        );
+        let scope = Scope::child(Some(vec!["read_file".to_string(), "bash".to_string()]), 1);
         assert!(scope.admits("read_file"));
         assert!(scope.admits("bash"));
-        assert!(!scope.admits("write_file"), "an undeclared tool is not admitted");
-        assert!(!scope.admits("use_skill"), "nor is one the default would have carried");
+        assert!(
+            !scope.admits("write_file"),
+            "an undeclared tool is not admitted"
+        );
+        assert!(
+            !scope.admits("use_skill"),
+            "nor is one the default would have carried"
+        );
         assert_eq!(scope.recorded(), "read_file,bash");
         // A scope that admits nothing says so rather than recording an
         // empty string a reader would have to interpret.
@@ -1974,7 +2051,10 @@ mod tests {
         // cannot be admitted to it however the call asked.
         let declared = Some(vec!["bash".to_string(), tools::SUBAGENT_TOOL.to_string()]);
         let opened = Scope::child(declared.clone(), 1);
-        assert!(opened.admits(tools::SUBAGENT_TOOL), "a depth-1 scope may be admitted to it");
+        assert!(
+            opened.admits(tools::SUBAGENT_TOOL),
+            "a depth-1 scope may be admitted to it"
+        );
         assert_eq!(SUBAGENT_MAX_DEPTH, 2, "the cap reads two");
         let capped = Scope::child(declared, SUBAGENT_MAX_DEPTH);
         assert!(
@@ -2019,11 +2099,11 @@ mod tests {
 
     #[test]
     fn a_requested_scope_narrows_and_keeps_its_order() {
-        let scope = Scope::child(
-            Some(vec!["read_file".to_string(), "bash".to_string()]),
-            1,
+        let scope = Scope::child(Some(vec!["read_file".to_string(), "bash".to_string()]), 1);
+        assert_eq!(
+            scope.names(),
+            &vec!["read_file".to_string(), "bash".to_string()]
         );
-        assert_eq!(scope.names(), &vec!["read_file".to_string(), "bash".to_string()]);
         assert!(!scope.admits("write_file"));
     }
 
@@ -2071,7 +2151,11 @@ mod tests {
         // The durable-write tools are never admissible: a child that
         // could write the memory corpus or retire a fact from it would
         // be a second writer of state the parent owns.
-        for name in [tools::REMEMBER_TOOL, tools::SUPERSEDE_TOOL, tools::IMPROVE_TOOL] {
+        for name in [
+            tools::REMEMBER_TOOL,
+            tools::SUPERSEDE_TOOL,
+            tools::IMPROVE_TOOL,
+        ] {
             let error = SubagentRequest::parse(&serde_json::json!({
                 "goal": "go",
                 "tools": ["bash", name],
@@ -2088,7 +2172,10 @@ mod tests {
             "tools": ["bash", tools::SUBAGENT_TOOL],
         }))
         .unwrap();
-        assert!(declared.tools.unwrap().contains(&tools::SUBAGENT_TOOL.to_string()));
+        assert!(declared
+            .tools
+            .unwrap()
+            .contains(&tools::SUBAGENT_TOOL.to_string()));
         // A lane tool is refused the same way, by its namespaced name.
         let error = SubagentRequest::parse(&serde_json::json!({
             "goal": "go",
@@ -2106,7 +2193,10 @@ mod tests {
         }))
         .unwrap();
         let scope = Scope::child(request.tools.clone(), 1);
-        assert_eq!(scope.names(), &vec!["bash".to_string(), "read_file".to_string()]);
+        assert_eq!(
+            scope.names(),
+            &vec!["bash".to_string(), "read_file".to_string()]
+        );
     }
 
     #[test]
@@ -2146,11 +2236,20 @@ mod tests {
             delta: DeltaReport::default(),
         };
         let text = result.render();
-        assert!(text.starts_with("subagent completed \u{b7} 3 turns \u{b7} session "), "{text}");
-        assert!(text.contains("/tmp/sessions/20261014T000000Z-abcdef.jsonl"), "{text}");
+        assert!(
+            text.starts_with("subagent completed \u{b7} 3 turns \u{b7} session "),
+            "{text}"
+        );
+        assert!(
+            text.contains("/tmp/sessions/20261014T000000Z-abcdef.jsonl"),
+            "{text}"
+        );
         assert!(text.ends_with("found three call sites"), "{text}");
         // One turn is not "1 turns".
-        let one = SubagentResult { turns: 1, ..result.clone() };
+        let one = SubagentResult {
+            turns: 1,
+            ..result.clone()
+        };
         assert!(one.render().contains("1 turn \u{b7}"), "{}", one.render());
     }
 
@@ -2169,7 +2268,10 @@ mod tests {
         assert!(text.contains("subagent failed (API error 402"), "{text}");
         assert!(text.contains("checked two of five files"), "{text}");
         // No words at all still says so, and still names the log.
-        let silent = SubagentResult { summary: String::new(), ..failed.clone() };
+        let silent = SubagentResult {
+            summary: String::new(),
+            ..failed.clone()
+        };
         let text = silent.render();
         assert!(text.contains("no partial answer"), "{text}");
         assert!(text.contains("child-1.jsonl"), "{text}");
@@ -2177,11 +2279,14 @@ mod tests {
 
     #[test]
     fn a_refused_run_names_its_reason_and_has_no_log() {
-        let refused = SubagentResult::refused("the child session could not be created: nope".to_string());
+        let refused =
+            SubagentResult::refused("the child session could not be created: nope".to_string());
         assert_eq!(refused.outcome, Outcome::Failed);
         assert!(refused.session.is_empty());
         assert!(refused.log.as_os_str().is_empty());
-        assert!(refused.render().contains("the child session could not be created"));
+        assert!(refused
+            .render()
+            .contains("the child session could not be created"));
     }
 
     #[test]
@@ -2209,7 +2314,10 @@ mod tests {
     #[test]
     fn a_long_goal_is_bounded_for_a_prompt_and_a_progress_line() {
         let long = "x".repeat(200);
-        assert_eq!(bounded(&long, GOAL_PREVIEW).chars().count(), GOAL_PREVIEW + 1);
+        assert_eq!(
+            bounded(&long, GOAL_PREVIEW).chars().count(),
+            GOAL_PREVIEW + 1
+        );
         assert!(bounded(&long, GOAL_PREVIEW).ends_with('\u{2026}'));
         assert_eq!(bounded("short", GOAL_PREVIEW), "short");
     }
@@ -2224,15 +2332,31 @@ mod tests {
                 kind: Some(crate::session::SUBAGENT_KIND.to_string()),
                 parent: Some("p".to_string()),
             },
-            Record::User { content: "the goal".to_string() },
-            Record::Assistant { content: Some("first try".to_string()), tool_calls: vec![] },
-            Record::Assistant { content: None, tool_calls: vec![] },
-            Record::Assistant { content: Some("last words".to_string()), tool_calls: vec![] },
-            Record::End { stop_reason: "max-turns".to_string(), turns: 3 },
+            Record::User {
+                content: "the goal".to_string(),
+            },
+            Record::Assistant {
+                content: Some("first try".to_string()),
+                tool_calls: vec![],
+            },
+            Record::Assistant {
+                content: None,
+                tool_calls: vec![],
+            },
+            Record::Assistant {
+                content: Some("last words".to_string()),
+                tool_calls: vec![],
+            },
+            Record::End {
+                stop_reason: "max-turns".to_string(),
+                turns: 3,
+            },
         ];
         assert_eq!(last_words(&records).as_deref(), Some("last words"));
         // A log with no assistant text has no last words.
-        let empty = vec![Record::User { content: "the goal".to_string() }];
+        let empty = vec![Record::User {
+            content: "the goal".to_string(),
+        }];
         assert_eq!(last_words(&empty), None);
     }
 
@@ -2254,7 +2378,11 @@ mod tests {
             reason: Some(error.to_string()),
             delta: DeltaReport::default(),
         };
-        assert!(result.reason.as_deref().unwrap().contains("402"), "{:?}", result.reason);
+        assert!(
+            result.reason.as_deref().unwrap().contains("402"),
+            "{:?}",
+            result.reason
+        );
         assert!(result.render().contains("Insufficient Balance"));
     }
 
@@ -2262,10 +2390,16 @@ mod tests {
 
     #[test]
     fn a_brief_with_no_new_parts_composes_exactly_todays_message() {
-        let brief = Brief { task: "count the files in /tmp".to_string(), ..Brief::default() };
+        let brief = Brief {
+            task: "count the files in /tmp".to_string(),
+            ..Brief::default()
+        };
         // Byte-identical to the message this module has always sent: the
         // goal, whole, with no marker anywhere.
-        assert_eq!(brief.compose(&Scope::default_admitted()), "count the files in /tmp");
+        assert_eq!(
+            brief.compose(&Scope::default_admitted()),
+            "count the files in /tmp"
+        );
         // And the parse of a marker-free message reads it as the task.
         assert_eq!(Brief::parse("count the files in /tmp"), brief);
     }
@@ -2280,14 +2414,24 @@ mod tests {
             role: None,
         };
         let text = brief.compose(&Scope::default_admitted());
-        assert!(text.starts_with("--- TASK ---\ncount the files\n"), "{text}");
-        for marker in ["--- APPROACH ---", "--- CONTEXT ---", "--- WHAT DONE LOOKS LIKE ---"] {
+        assert!(
+            text.starts_with("--- TASK ---\ncount the files\n"),
+            "{text}"
+        );
+        for marker in [
+            "--- APPROACH ---",
+            "--- CONTEXT ---",
+            "--- WHAT DONE LOOKS LIKE ---",
+        ] {
             assert!(text.contains(marker), "{marker} is missing from\n{text}");
         }
         // The approach is a proposal rather than an instruction, and the
         // delta block rides beside it: a child that finds a better route
         // is deviating from a suggestion, not disobeying an order.
-        assert!(text.contains("A proposed solution, not an instruction"), "{text}");
+        assert!(
+            text.contains("A proposed solution, not an instruction"),
+            "{text}"
+        );
         assert!(text.contains("--- DELTA ---"), "{text}");
         assert!(text.contains("companion-missing"), "{text}");
         // The round trip is exact: the parts read back as they went in.
@@ -2301,14 +2445,20 @@ mod tests {
 
     #[test]
     fn the_declaration_rides_the_briefs_context_section() {
-        let brief = Brief { task: "count the files".to_string(), ..Brief::default() };
+        let brief = Brief {
+            task: "count the files".to_string(),
+            ..Brief::default()
+        };
         let declared = Scope::child(Some(vec!["bash".to_string(), "read_file".to_string()]), 1);
         let text = brief.compose(declared.names());
         // The child is told what it has and, by omission, what it does
         // not — so it can ask for the delta in its result rather than
         // failing silently at the call.
         assert!(text.contains("CAPABILITIES: bash, read_file"), "{text}");
-        assert!(!text.contains("write_file"), "an undeclared tool is not named as held");
+        assert!(
+            !text.contains("write_file"),
+            "an undeclared tool is not named as held"
+        );
         assert_eq!(Brief::parse(&text).task, "count the files");
         // The default scope is not spelled out: the child's own
         // declarations already name it, and repeating them would change
@@ -2330,7 +2480,10 @@ mod tests {
 
     #[test]
     fn the_briefs_label_is_the_task_alone_until_it_has_parts() {
-        let plain = Brief { task: "count the files".to_string(), ..Brief::default() };
+        let plain = Brief {
+            task: "count the files".to_string(),
+            ..Brief::default()
+        };
         // Exactly the label this module has always drawn.
         assert_eq!(plain.label(), "count the files");
         let composed = Brief {
@@ -2347,7 +2500,8 @@ mod tests {
 
     #[test]
     fn a_call_without_the_new_parts_composes_todays_message() {
-        let asked = SubagentRequest::parse(&serde_json::json!({ "goal": "count the files" })).unwrap();
+        let asked =
+            SubagentRequest::parse(&serde_json::json!({ "goal": "count the files" })).unwrap();
         assert_eq!(asked.goal, "count the files");
         assert_eq!(asked.task, "count the files");
         assert_eq!(asked.approach, None);
@@ -2372,7 +2526,10 @@ mod tests {
         assert_ne!(asked.goal, "count the files");
         assert!(asked.goal.contains("--- TASK ---"));
         assert_eq!(asked.task, "count the files");
-        assert_eq!(asked.context.as_deref(), Some("the sessions live in ~/.fleet/sessions"));
+        assert_eq!(
+            asked.context.as_deref(),
+            Some("the sessions live in ~/.fleet/sessions")
+        );
         assert_eq!(asked.output.as_deref(), Some("a number"));
         assert_eq!(asked.approach.as_deref(), Some("use list_dir once"));
         assert_eq!(asked.role.as_deref(), Some("reviewer"));
@@ -2444,12 +2601,20 @@ mod tests {
         })
         .unwrap();
         text.push('\n');
-        text.push_str(&serde_json::to_string(&Record::User { content: brief.to_string() }).unwrap());
+        text.push_str(
+            &serde_json::to_string(&Record::User {
+                content: brief.to_string(),
+            })
+            .unwrap(),
+        );
         text.push('\n');
         for _ in 0..turns {
             text.push_str(
-                &serde_json::to_string(&Record::Assistant { content: None, tool_calls: vec![] })
-                    .unwrap(),
+                &serde_json::to_string(&Record::Assistant {
+                    content: None,
+                    tool_calls: vec![],
+                })
+                .unwrap(),
             );
             text.push('\n');
         }
@@ -2481,7 +2646,10 @@ mod tests {
             deep.root, "root-1",
             "the root is where the chain started, not the middle node"
         );
-        assert_eq!(deep.lineage, vec!["root-1".to_string(), "child-1".to_string()]);
+        assert_eq!(
+            deep.lineage,
+            vec!["root-1".to_string(), "child-1".to_string()]
+        );
         // A log that cannot be read leaves the chain as long as it could
         // be proved rather than as long as somebody assumed.
         let missing = Chain::resolve(&dir, "no-such-session", 2);
@@ -2502,7 +2670,10 @@ mod tests {
             "land D1 and D6",
             3,
         );
-        let brief = Brief { task: "write the row".to_string(), ..Brief::default() };
+        let brief = Brief {
+            task: "write the row".to_string(),
+            ..Brief::default()
+        };
         let label = Chain::resolve(&dir, "child-1", 2).label(&brief, &dir);
         // Root first, delimited, bounded: an owner approving a call whose
         // originating intent is two briefs away is approving a
@@ -2568,8 +2739,7 @@ mod tests {
         }
         // A followed brief needs no reason: the default is the one that
         // says so, and free text rides beside it ungraded.
-        let followed =
-            Delta::parse("--- DELTA ---\nstatus: followed\n--- END DELTA ---").unwrap();
+        let followed = Delta::parse("--- DELTA ---\nstatus: followed\n--- END DELTA ---").unwrap();
         assert_eq!(followed.state, DeltaState::Followed);
         assert_eq!(followed.reason, DeltaReason::RightAndFollowed);
         assert!(!followed.forced);
@@ -2593,7 +2763,9 @@ mod tests {
     /// One child log for the delta's verification: one assistant turn
     /// carrying a tool call and one tool result per output.
     fn log_with(outputs: &[&str]) -> Vec<Record> {
-        let mut records = vec![Record::User { content: "the goal".to_string() }];
+        let mut records = vec![Record::User {
+            content: "the goal".to_string(),
+        }];
         for (index, output) in outputs.iter().enumerate() {
             records.push(Record::Assistant {
                 content: None,
@@ -2628,14 +2800,22 @@ mod tests {
         // claimed work is absent from the child's own log.
         let verified = claimed.clone().verify(&log_with(&[]));
         assert!(
-            verified.contradiction.as_deref().is_some_and(|why| why.contains("no tool call")),
+            verified
+                .contradiction
+                .as_deref()
+                .is_some_and(|why| why.contains("no tool call")),
             "{verified:?}"
         );
         // An infeasibility claim on a log whose every step succeeded: a
         // blocker nobody hit is a blocker nobody met.
-        let verified = claimed.clone().verify(&log_with(&["exit 0\n--- stdout ---\nok"]));
+        let verified = claimed
+            .clone()
+            .verify(&log_with(&["exit 0\n--- stdout ---\nok"]));
         assert!(
-            verified.contradiction.as_deref().is_some_and(|why| why.contains("no failed step")),
+            verified
+                .contradiction
+                .as_deref()
+                .is_some_and(|why| why.contains("no failed step")),
             "{verified:?}"
         );
         // The same claim on a log that did hit a blocker verifies.
@@ -2652,7 +2832,10 @@ mod tests {
         .unwrap();
         let verified = unnamed.verify(&log_with(&["exit 0"]));
         assert!(
-            verified.contradiction.as_deref().is_some_and(|why| why.contains("names no companion")),
+            verified
+                .contradiction
+                .as_deref()
+                .is_some_and(|why| why.contains("names no companion")),
             "{verified:?}"
         );
         // Named, the same deviation verifies: the companion is what the
@@ -2675,8 +2858,7 @@ mod tests {
         .unwrap();
         // The middle node's own delta, with its child's riding beside it
         // exactly as `run` reads it off the log.
-        let middle =
-            Delta::parse("--- DELTA ---\nstatus: followed\n--- END DELTA ---").unwrap();
+        let middle = Delta::parse("--- DELTA ---\nstatus: followed\n--- END DELTA ---").unwrap();
         let result = SubagentResult {
             summary: "the middle node's answer".to_string(),
             session: "middle-1".to_string(),
@@ -2694,7 +2876,8 @@ mod tests {
         // Reading the rendered result back rebuilds the tree rather than
         // a summary of it: the middle node's own delta, and its child's
         // verbatim under it.
-        let read_back = Delta::parse_render(&rendered).expect("the rendered result carries a delta");
+        let read_back =
+            Delta::parse_render(&rendered).expect("the rendered result carries a delta");
         assert_eq!(read_back.state, DeltaState::Followed);
         assert_eq!(read_back.children.len(), 1);
         assert_eq!(read_back.children[0], grandchild);
@@ -2727,7 +2910,11 @@ mod tests {
             turns: 2,
             outcome: Outcome::Completed,
             reason: None,
-            delta: DeltaReport { own: Some(delta), children: Vec::new(), offered: true },
+            delta: DeltaReport {
+                own: Some(delta),
+                children: Vec::new(),
+                offered: true,
+            },
         };
         let outcome = bound_result(&result);
         assert!(outcome.truncated, "the report half is bounded");
@@ -2735,10 +2922,17 @@ mod tests {
             outcome.output.contains("companion-missing"),
             "the delta rides past the bound rather than being cut by it"
         );
-        assert!(outcome.output.contains("the write path"), "{}", outcome.output.len());
+        assert!(
+            outcome.output.contains("the write path"),
+            "{}",
+            outcome.output.len()
+        );
         assert!(outcome.output.len() > tools::MAX_TOOL_OUTPUT);
         // A result with no delta is bounded exactly as it always was.
-        let plain = SubagentResult { delta: DeltaReport::default(), ..result.clone() };
+        let plain = SubagentResult {
+            delta: DeltaReport::default(),
+            ..result.clone()
+        };
         let bounded = bound_result(&plain);
         let expected = tools::bound(ToolOutcome {
             output: plain.render_report(),
@@ -2764,11 +2958,17 @@ mod tests {
                 offered: true,
             },
         };
-        assert!(offered.render().contains("no delta reported"), "{}", offered.render());
+        assert!(
+            offered.render().contains("no delta reported"),
+            "{}",
+            offered.render()
+        );
         // A brief that offered no approach asks for no delta, and the
         // rendered result is exactly the one this module always sent.
-        let plain =
-            SubagentResult { delta: DeltaReport::default(), ..offered.clone() };
+        let plain = SubagentResult {
+            delta: DeltaReport::default(),
+            ..offered.clone()
+        };
         assert_eq!(plain.render(), "subagent completed \u{b7} 1 turn \u{b7} session child-1 \u{b7} log /tmp/child-1.jsonl\nI did the work");
     }
 
@@ -2806,20 +3006,30 @@ mod tests {
             depth: 1,
             lineage: vec!["root-1".to_string()],
         };
-        let row = delegation_row(&brief, &scope.recorded(), Some("stepfun"), &result, &chain, 1_250);
+        let row = delegation_row(
+            &brief,
+            &scope.recorded(),
+            Some("stepfun"),
+            &result,
+            &chain,
+            1_250,
+        );
         // The row's key is the child's own session id — the identity
         // already, so the join needs no hashing and an owner can type it.
         assert_eq!(row.session, "child-1");
         calib::record_delegation(&stream, row);
         let (written, failed) = stream.finish();
-        assert_eq!((written, failed), (1, 0), "the row landed through the stream's own writer");
+        assert_eq!(
+            (written, failed),
+            (1, 0),
+            "the row landed through the stream's own writer"
+        );
         // The row reads back off the stream's own file, in the shape the
         // beat's reader joins on: the brief's shape, the scope, the
         // chain, and the outcome — and none of the child's own words.
         let path = calib::day_path(&root, &calib::today());
         let line = std::fs::read_to_string(&path).unwrap();
-        let landed: DelegatedRunRow =
-            serde_json::from_str(line.lines().next().unwrap()).unwrap();
+        let landed: DelegatedRunRow = serde_json::from_str(line.lines().next().unwrap()).unwrap();
         assert_eq!(landed.session, "child-1");
         assert_eq!(landed.brief_shape, "task+approach+context+done");
         assert_eq!(landed.scope, "bash");

@@ -216,8 +216,15 @@ impl Boards {
     /// the refresher's opening read is in flight from the moment the
     /// interface starts.
     pub fn new() -> Boards {
-        let loading = Slot { snapshot: None, error: None, loading: true };
-        Boards { active: BoardKind::Router, slots: [loading.clone(), loading.clone(), loading] }
+        let loading = Slot {
+            snapshot: None,
+            error: None,
+            loading: true,
+        };
+        Boards {
+            active: BoardKind::Router,
+            slots: [loading.clone(), loading.clone(), loading],
+        }
     }
 
     /// One board's slot.
@@ -366,7 +373,10 @@ fn router_config_path(setting: &impl Fn(&str) -> Option<String>) -> Option<PathB
         return Some(PathBuf::from(home).join("router").join("config.json"));
     }
     let home = user_home()?;
-    let kit_default = home.join(".agnostic-router-kit").join("router").join("config.json");
+    let kit_default = home
+        .join(".agnostic-router-kit")
+        .join("router")
+        .join("config.json");
     if kit_default.is_file() {
         return Some(kit_default);
     }
@@ -534,10 +544,22 @@ pub struct CascadeCounters {
 /// refusals are named on the snapshot that still lands.
 pub fn read_router(sources: &RouterSources, timeout: Duration) -> Result<RouterSnapshot, String> {
     let base = sources.base_url.trim_end_matches('/').to_string();
-    let state = get_json(&format!("{base}/api/state"), sources.token.as_deref(), timeout)
-        .map_err(|reason| format!("the router board could not read the kit at {base}: {reason}"))?;
-    let usage = get_json(&format!("{base}/api/usage"), sources.token.as_deref(), timeout);
-    let suggest = get_json(&format!("{base}/api/suggest"), sources.token.as_deref(), timeout);
+    let state = get_json(
+        &format!("{base}/api/state"),
+        sources.token.as_deref(),
+        timeout,
+    )
+    .map_err(|reason| format!("the router board could not read the kit at {base}: {reason}"))?;
+    let usage = get_json(
+        &format!("{base}/api/usage"),
+        sources.token.as_deref(),
+        timeout,
+    );
+    let suggest = get_json(
+        &format!("{base}/api/suggest"),
+        sources.token.as_deref(),
+        timeout,
+    );
 
     let mut refused = Vec::new();
     let mut drift = state_drift(&state);
@@ -592,7 +614,11 @@ fn get_json(url: &str, token: Option<&str>, timeout: Duration) -> Result<Value, 
         Err(ureq::Error::Status(code, response)) => {
             let body = response.into_string().unwrap_or_default();
             let named = error_message(&body).unwrap_or_else(|| body.trim().to_string());
-            let named = if named.is_empty() { "no body".to_string() } else { named };
+            let named = if named.is_empty() {
+                "no body".to_string()
+            } else {
+                named
+            };
             Err(format!("answered HTTP {code}: {named}"))
         }
         Err(error) => Err(format!("could not be read: {error}")),
@@ -637,7 +663,9 @@ fn parse_usage(usage: &Value) -> UsageRead {
     // A row the board cannot read is named rather than dropped in
     // silence: a payload whose model rows changed shape is an upgrade
     // announcing itself, not an empty ledger.
-    let offered = rows(usage.get("models")).map(|rows| rows.len()).unwrap_or(0);
+    let offered = rows(usage.get("models"))
+        .map(|rows| rows.len())
+        .unwrap_or(0);
     let mut models: Vec<ModelRow> = rows(usage.get("models"))
         .into_iter()
         .flatten()
@@ -650,7 +678,9 @@ fn parse_usage(usage: &Value) -> UsageRead {
             format!("{} of {offered} model rows could not be read", models.len()),
         ));
     }
-    let offered_recent = rows(usage.get("recent")).map(|rows| rows.len()).unwrap_or(0);
+    let offered_recent = rows(usage.get("recent"))
+        .map(|rows| rows.len())
+        .unwrap_or(0);
     let parsed_recent: Vec<RecentRow> = rows(usage.get("recent"))
         .into_iter()
         .flatten()
@@ -659,7 +689,10 @@ fn parse_usage(usage: &Value) -> UsageRead {
     if parsed_recent.len() < offered_recent {
         drift.push((
             route.clone(),
-            format!("{} of {offered_recent} recent rows could not be read", parsed_recent.len()),
+            format!(
+                "{} of {offered_recent} recent rows could not be read",
+                parsed_recent.len()
+            ),
         ));
     }
     let recent: Vec<RecentRow> = parsed_recent.into_iter().take(12).collect();
@@ -687,26 +720,40 @@ fn state_drift(state: &Value) -> Vec<(String, String)> {
     let route = "/api/state".to_string();
     let named = |field: &str| (route.clone(), format!("{field} is absent"));
     let mut drift = Vec::new();
-    if state.get("judge").and_then(|judge| text(judge, "mode")).is_none() {
+    if state
+        .get("judge")
+        .and_then(|judge| text(judge, "mode"))
+        .is_none()
+    {
         drift.push(named("judge.mode"));
     }
-    if state.get("guard").and_then(|guard| guard.get("allowPayg")).is_none() {
+    if state
+        .get("guard")
+        .and_then(|guard| guard.get("allowPayg"))
+        .is_none()
+    {
         drift.push(named("guard.allowPayg"));
     }
-    let workloads = state.get("resolved").and_then(|resolved| resolved.get("workloads"));
+    let workloads = state
+        .get("resolved")
+        .and_then(|resolved| resolved.get("workloads"));
     match workloads {
         None => drift.push(named("resolved.workloads")),
         // Present but not the kit's own name-to-chain map: the tier
         // chains cannot be read out of it at all.
         Some(workloads) if workloads.as_object().is_none() => {
-            drift.push((route, "resolved.workloads is not the kit's own map".to_string()));
+            drift.push((
+                route,
+                "resolved.workloads is not the kit's own map".to_string(),
+            ));
         }
         Some(_) => {}
     }
     drift
 }
 
-fn parse_totals(value: &Value) -> Option<UsageTotals> {    Some(UsageTotals {
+fn parse_totals(value: &Value) -> Option<UsageTotals> {
+    Some(UsageTotals {
         calls: number(value, "calls")?,
         ok: number(value, "ok")?,
         errors: number(value, "errors")?,
@@ -761,13 +808,20 @@ fn parse_payg(state: &Value) -> Option<(bool, Vec<String>)> {
 /// order. A workload whose resolution is not its candidate list's head
 /// leads the chain, the way the fork's `parseTiers` reads it.
 fn parse_tiers(state: &Value) -> Vec<TierChain> {
-    let Some(workloads) = state.get("resolved").and_then(|resolved| resolved.get("workloads")) else {
+    let Some(workloads) = state
+        .get("resolved")
+        .and_then(|resolved| resolved.get("workloads"))
+    else {
         return Vec::new();
     };
-    let Some(workloads) = workloads.as_object() else { return Vec::new() };
+    let Some(workloads) = workloads.as_object() else {
+        return Vec::new();
+    };
     let mut chains = Vec::new();
     for (tier, chain) in workloads {
-        let Some(chain) = chain.as_object() else { continue };
+        let Some(chain) = chain.as_object() else {
+            continue;
+        };
         let primary = hop(chain);
         let mut candidates: Vec<String> = rows(chain.get("candidates"))
             .into_iter()
@@ -783,8 +837,14 @@ fn parse_tiers(state: &Value) -> Vec<TierChain> {
                 candidates.insert(0, primary.clone());
             }
         }
-        let Some(primary) = candidates.first().cloned() else { continue };
-        chains.push(TierChain { tier: tier.clone(), primary, candidates });
+        let Some(primary) = candidates.first().cloned() else {
+            continue;
+        };
+        chains.push(TierChain {
+            tier: tier.clone(),
+            primary,
+            candidates,
+        });
     }
     chains
 }
@@ -1048,7 +1108,9 @@ fn read_state_file(path: &Path, timeout: Duration) -> Section<Value> {
     });
     match rx.recv_timeout(timeout) {
         Ok(section) => section,
-        Err(_) => Section::Refused(format!("{named} was not read — the read did not finish inside its bound")),
+        Err(_) => Section::Refused(format!(
+            "{named} was not read — the read did not finish inside its bound"
+        )),
     }
 }
 
@@ -1086,11 +1148,15 @@ fn validated<T>(
             // when it parsed as JSON: the board says so rather than
             // rendering an empty card as though the file were empty.
             if !value.is_object() {
-                return Section::Refused(format!("{path} returned a payload the board cannot read"));
+                return Section::Refused(format!(
+                    "{path} returned a payload the board cannot read"
+                ));
             }
             match parse(&value) {
                 Some(read) => Section::Landed(read),
-                None => Section::Refused(format!("{path} returned a payload the board cannot read")),
+                None => {
+                    Section::Refused(format!("{path} returned a payload the board cannot read"))
+                }
             }
         }
         Section::Refused(reason) => Section::Refused(reason),
@@ -1110,14 +1176,20 @@ fn parse_gates(section: Section<Value>) -> Section<GatesRead> {
                     verdicts: number(totals, "verdicts").unwrap_or(0),
                     dispositions: number(totals, "dispositions").unwrap_or(0),
                 })
-                .unwrap_or(GateTotals { events: 0, verdicts: 0, dispositions: 0 }),
+                .unwrap_or(GateTotals {
+                    events: 0,
+                    verdicts: 0,
+                    dispositions: 0,
+                }),
             daily: daily_rows(value.get("daily")),
         })
     })
 }
 
 fn board_rows(value: Option<&Value>) -> Vec<GateRow> {
-    let Some(board) = value.and_then(Value::as_object) else { return Vec::new() };
+    let Some(board) = value.and_then(Value::as_object) else {
+        return Vec::new();
+    };
     let mut rows: Vec<GateRow> = board
         .iter()
         .filter_map(|(gate, row)| {
@@ -1127,12 +1199,23 @@ fn board_rows(value: Option<&Value>) -> Vec<GateRow> {
                 dispositions: number(row, "dispositions").unwrap_or(0),
                 graded_progress: text(row, "graded_progress").unwrap_or_default(),
                 graded_rows: number(row, "graded_rows").unwrap_or(0),
-                fit_ready: row.get("fit_ready").and_then(Value::as_bool).unwrap_or(false),
-                override_rate: row.get("override_rate").and_then(Value::as_f64).unwrap_or(0.0),
+                fit_ready: row
+                    .get("fit_ready")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                override_rate: row
+                    .get("override_rate")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0),
             })
         })
         .collect();
-    rows.sort_by(|left, right| right.verdicts.cmp(&left.verdicts).then(left.gate.cmp(&right.gate)));
+    rows.sort_by(|left, right| {
+        right
+            .verdicts
+            .cmp(&left.verdicts)
+            .then(left.gate.cmp(&right.gate))
+    });
     rows
 }
 
@@ -1281,7 +1364,12 @@ fn parse_maturity(section: Section<Value>) -> Section<MaturityRead> {
                     .collect()
             })
             .unwrap_or_default();
-        Some(MaturityRead { generated: text(value, "generated").unwrap_or_default(), weeks, series, milestones })
+        Some(MaturityRead {
+            generated: text(value, "generated").unwrap_or_default(),
+            weeks,
+            series,
+            milestones,
+        })
     })
 }
 
@@ -1529,7 +1617,8 @@ fn project_facts(path: &Path, name: &str, bounds: &Bounds, deadline: Instant) ->
     let dirty = call(&["status", "--porcelain"])
         .map(|text| text.lines().filter(|line| !line.trim().is_empty()).count() as u64)
         .unwrap_or(0);
-    let (ahead, behind) = match call(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]) {
+    let (ahead, behind) = match call(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+    {
         Some(text) => parse_ahead_behind(&text),
         None => (None, None),
     };
@@ -1569,7 +1658,9 @@ fn parse_head(line: &str) -> Option<(String, String, String)> {
 /// `--left-right --count` output: left is the local head's own commits,
 /// right is the upstream's.
 fn parse_ahead_behind(text: &str) -> (Option<u64>, Option<u64>) {
-    let mut counts = text.split_whitespace().filter_map(|part| part.parse::<u64>().ok());
+    let mut counts = text
+        .split_whitespace()
+        .filter_map(|part| part.parse::<u64>().ok());
     (counts.next(), counts.next())
 }
 
@@ -1638,11 +1729,17 @@ pub struct BoardUpdate {
 /// reads.
 pub fn spawn_refresher(
     sources: Sources,
-) -> (UnboundedSender<BoardCommand>, UnboundedReceiver<BoardUpdate>) {
+) -> (
+    UnboundedSender<BoardCommand>,
+    UnboundedReceiver<BoardUpdate>,
+) {
     let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel::<BoardCommand>();
     let (update_tx, update_rx) = tokio::sync::mpsc::unbounded_channel::<BoardUpdate>();
     thread::spawn(move || {
-        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
             Ok(runtime) => runtime,
             Err(error) => {
                 for kind in BoardKind::ALL {
@@ -1710,17 +1807,24 @@ async fn read_all(sources: &Sources) -> Vec<BoardUpdate> {
     );
     // A read that panicked on the blocking pool is named, never swallowed:
     // the board keeps its last snapshot and the pane says the read died.
-    let landed = |joined: Result<Result<BoardData, String>, tokio::task::JoinError>, board: &str| {
+    let landed = |joined: Result<Result<BoardData, String>, tokio::task::JoinError>,
+                  board: &str| {
         joined.unwrap_or_else(|error| Err(format!("the {board} read could not run: {error}")))
     };
     vec![
         BoardUpdate {
             kind: BoardKind::Router,
-            outcome: landed(router.map(|inner| inner.map(BoardData::Router)), "router board"),
+            outcome: landed(
+                router.map(|inner| inner.map(BoardData::Router)),
+                "router board",
+            ),
         },
         BoardUpdate {
             kind: BoardKind::Brain,
-            outcome: landed(brain.map(|inner| inner.map(BoardData::Brain)), "second-brain board"),
+            outcome: landed(
+                brain.map(|inner| inner.map(BoardData::Brain)),
+                "second-brain board",
+            ),
         },
         BoardUpdate {
             kind: BoardKind::Tower,
@@ -1731,10 +1835,7 @@ async fn read_all(sources: &Sources) -> Vec<BoardUpdate> {
 
 /// The second-brain read as the refresher drives it: a home that does not
 /// resolve is a named refusal, not a panic.
-fn read_brain_source(
-    home: &Option<PathBuf>,
-    bounds: &Bounds,
-) -> Result<BrainSnapshot, String> {
+fn read_brain_source(home: &Option<PathBuf>, bounds: &Bounds) -> Result<BrainSnapshot, String> {
     match home {
         Some(home) => read_brain(home, bounds),
         None => Err(
@@ -1768,7 +1869,9 @@ fn rows(value: Option<&Value>) -> Option<&Vec<Value>> {
 
 /// A name-to-count map, busiest first.
 fn number_map(value: Option<&Value>) -> Vec<(String, u64)> {
-    let Some(map) = value.and_then(Value::as_object) else { return Vec::new() };
+    let Some(map) = value.and_then(Value::as_object) else {
+        return Vec::new();
+    };
     let mut counts: Vec<(String, u64)> = map
         .iter()
         .filter_map(|(name, count)| Some((name.clone(), count.as_u64()?)))
@@ -1831,8 +1934,9 @@ pub fn grouped(value: u64) -> String {
 /// glance instead of being counted. A zero max draws blanks rather than a
 /// full bar.
 pub fn bar(value: u64, max: u64, width: usize) -> String {
-    const PARTIALS: [char; 7] =
-        ['\u{258f}', '\u{258e}', '\u{258d}', '\u{258c}', '\u{258b}', '\u{258a}', '\u{2589}'];
+    const PARTIALS: [char; 7] = [
+        '\u{258f}', '\u{258e}', '\u{258d}', '\u{258c}', '\u{258b}', '\u{258a}', '\u{2589}',
+    ];
     const FULL: char = '\u{2588}';
     if width == 0 {
         return String::new();
@@ -1857,8 +1961,10 @@ pub fn bar(value: u64, max: u64, width: usize) -> String {
 /// them), drawn with the lower block elements. A flat or empty series
 /// draws its floor rather than nothing.
 pub fn sparkline(values: &[u64], width: usize) -> String {
-    const STEPS: [char; 8] =
-        ['\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}'];
+    const STEPS: [char; 8] = [
+        '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
+        '\u{2588}',
+    ];
     if width == 0 {
         return String::new();
     }
@@ -1907,7 +2013,10 @@ mod tests {
     use super::*;
 
     fn sources(base_url: &str) -> RouterSources {
-        RouterSources { base_url: base_url.to_string(), token: Some("test-token".to_string()) }
+        RouterSources {
+            base_url: base_url.to_string(),
+            token: Some("test-token".to_string()),
+        }
     }
 
     /// A scratch directory that is removed when the test ends.
@@ -1915,7 +2024,8 @@ mod tests {
 
     impl Scratch {
         fn new(name: &str) -> Scratch {
-            let path = std::env::temp_dir().join(format!("fleet-boards-{name}-{}", std::process::id()));
+            let path =
+                std::env::temp_dir().join(format!("fleet-boards-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).expect("the scratch directory");
             Scratch(path)
@@ -2004,7 +2114,10 @@ mod tests {
                     let _ = stream.flush();
                 }
             });
-            ScriptedKit { port, handle: Some(handle) }
+            ScriptedKit {
+                port,
+                handle: Some(handle),
+            }
         }
 
         fn url(&self) -> String {
@@ -2050,7 +2163,10 @@ mod tests {
     /// A port with nothing listening on it: the dead source.
     fn dead_url() -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-        let url = format!("http://127.0.0.1:{}", listener.local_addr().expect("the bound port").port());
+        let url = format!(
+            "http://127.0.0.1:{}",
+            listener.local_addr().expect("the bound port").port()
+        );
         drop(listener);
         url
     }
@@ -2124,11 +2240,21 @@ mod tests {
             .expect("the scripted kit answers");
 
         assert_eq!(snapshot.port, Some(8300));
-        assert_eq!(snapshot.judge, Some(("cascade".to_string(), Some("fastino/gliner2.5-multi-v1".to_string()))));
+        assert_eq!(
+            snapshot.judge,
+            Some((
+                "cascade".to_string(),
+                Some("fastino/gliner2.5-multi-v1".to_string())
+            ))
+        );
         assert_eq!(snapshot.payg, Some((false, vec!["deepseek".to_string()])));
         // The tier chains keep the kit's own order and name the resolved
         // primary as the chain's head.
-        let tiers: Vec<&str> = snapshot.tiers.iter().map(|chain| chain.tier.as_str()).collect();
+        let tiers: Vec<&str> = snapshot
+            .tiers
+            .iter()
+            .map(|chain| chain.tier.as_str())
+            .collect();
         assert_eq!(tiers, vec!["quick", "standard_code"]);
         assert_eq!(snapshot.tiers[0].primary, "stepfun/step-3.7-flash");
         assert_eq!(snapshot.tiers[0].candidates.len(), 3);
@@ -2146,7 +2272,13 @@ mod tests {
         assert_eq!(snapshot.cascade.map(|c| c.escalations), Some(787));
         assert_eq!(snapshot.workloads[0], ("standard_code".to_string(), 10_557));
         // The guidance keeps only the kit's per-tier sentences.
-        assert_eq!(snapshot.guidance, vec![("quick".to_string(), "the quick tier's head is exhausted; move it".to_string())]);
+        assert_eq!(
+            snapshot.guidance,
+            vec![(
+                "quick".to_string(),
+                "the quick tier's head is exhausted; move it".to_string()
+            )]
+        );
         assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
     }
 
@@ -2154,7 +2286,10 @@ mod tests {
     fn a_dead_kit_port_is_a_named_refusal_not_a_panic() {
         let error = read_router(&sources(&dead_url()), Duration::from_secs(2))
             .expect_err("nothing is listening");
-        assert!(error.contains("the router board could not read the kit"), "{error}");
+        assert!(
+            error.contains("the router board could not read the kit"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2164,7 +2299,10 @@ mod tests {
             401,
             "{\"error\":{\"message\":\"router: bad local token\"}}",
         )]);
-        let source = RouterSources { base_url: kit.url(), token: Some("wrong".to_string()) };
+        let source = RouterSources {
+            base_url: kit.url(),
+            token: Some("wrong".to_string()),
+        };
         let error = read_router(&source, Duration::from_secs(5)).expect_err("the kit refuses");
         assert!(error.contains("router: bad local token"), "{error}");
     }
@@ -2191,7 +2329,11 @@ mod tests {
             .expect("the state read is the spine");
         assert!(snapshot.totals.is_none());
         assert_eq!(snapshot.refused.len(), 1);
-        assert!(snapshot.refused[0].contains("/api/usage"), "{}", snapshot.refused[0]);
+        assert!(
+            snapshot.refused[0].contains("/api/usage"),
+            "{}",
+            snapshot.refused[0]
+        );
     }
 
     #[test]
@@ -2219,10 +2361,20 @@ mod tests {
         assert!(snapshot.payg.is_none());
         assert!(snapshot.tiers.is_empty());
         assert!(snapshot.totals.is_none());
-        let routes: Vec<&str> = snapshot.drift.iter().map(|(route, _)| route.as_str()).collect();
+        let routes: Vec<&str> = snapshot
+            .drift
+            .iter()
+            .map(|(route, _)| route.as_str())
+            .collect();
         assert_eq!(
             routes,
-            vec!["/api/state", "/api/state", "/api/state", "/api/usage", "/api/usage"]
+            vec![
+                "/api/state",
+                "/api/state",
+                "/api/state",
+                "/api/usage",
+                "/api/usage"
+            ]
         );
         assert_eq!(snapshot.drift[0].1, "judge.mode is absent");
         assert_eq!(snapshot.drift[1].1, "guard.allowPayg is absent");
@@ -2236,16 +2388,25 @@ mod tests {
     fn the_kit_token_never_enters_a_snapshot_or_a_named_error() {
         const TOKEN: &str = "kit-local-token-4f9c2b7e";
         let kit = scripted_kit();
-        let source = RouterSources { base_url: kit.url(), token: Some(TOKEN.to_string()) };
-        let snapshot = read_router(&source, Duration::from_secs(5))
-            .expect("the scripted kit answers");
+        let source = RouterSources {
+            base_url: kit.url(),
+            token: Some(TOKEN.to_string()),
+        };
+        let snapshot =
+            read_router(&source, Duration::from_secs(5)).expect("the scripted kit answers");
         // The snapshot's serialization carries no credential...
-        assert!(!format!("{snapshot:?}").contains(TOKEN), "the snapshot carries the token");
+        assert!(
+            !format!("{snapshot:?}").contains(TOKEN),
+            "the snapshot carries the token"
+        );
         // ...and neither does a read that refused: a hung kit names its
         // URL and never the header it was sent.
         let deaf = DeafKit::start();
         let error = read_router(
-            &RouterSources { base_url: deaf.url(), token: Some(TOKEN.to_string()) },
+            &RouterSources {
+                base_url: deaf.url(),
+                token: Some(TOKEN.to_string()),
+            },
             Duration::from_millis(300),
         )
         .expect_err("the kit never answers");
@@ -2351,7 +2512,14 @@ mod tests {
         let snapshot = read_brain(home, &Bounds::default()).expect("the home is readable");
 
         let gates = snapshot.gates.landed().expect("the gates state landed");
-        assert_eq!(gates.totals, GateTotals { events: 107, verdicts: 80, dispositions: 16 });
+        assert_eq!(
+            gates.totals,
+            GateTotals {
+                events: 107,
+                verdicts: 80,
+                dispositions: 16
+            }
+        );
         // The gate board is ordered by verdicts, busiest first.
         assert_eq!(gates.board[0].gate, "plan-gate");
         assert_eq!(gates.board[0].graded_progress, "9/20");
@@ -2360,7 +2528,10 @@ mod tests {
         assert_eq!(gates.inbox[0].op, "zcode-gate");
         // A command payload's later lines stay off the card.
         assert_eq!(gates.inbox[0].command, "cd /repo && python3 - <<'PYEOF'");
-        assert_eq!(gates.daily, vec![("2026-09-21".to_string(), 0), ("2026-09-22".to_string(), 4)]);
+        assert_eq!(
+            gates.daily,
+            vec![("2026-09-21".to_string(), 0), ("2026-09-22".to_string(), 4)]
+        );
 
         let harness = snapshot.harness.landed().expect("the harness state landed");
         assert_eq!(harness.loops[0].name, "nightly");
@@ -2371,12 +2542,30 @@ mod tests {
         assert_eq!(loops.loops.len(), 2);
         assert_eq!(loops.loops[1].verdict, "failed");
         // The graded rows are ordered by volume.
-        assert_eq!(loops.graded[0], ("ux_capture".to_string(), GradedRow { n: 127, confirmed: 45 }));
+        assert_eq!(
+            loops.graded[0],
+            (
+                "ux_capture".to_string(),
+                GradedRow {
+                    n: 127,
+                    confirmed: 45
+                }
+            )
+        );
 
-        let maturity = snapshot.maturity.landed().expect("the maturity state landed");
+        let maturity = snapshot
+            .maturity
+            .landed()
+            .expect("the maturity state landed");
         assert_eq!(maturity.weeks.len(), 3);
-        assert_eq!(maturity.series[0], ("continuity".to_string(), vec![14, 21, 48]));
-        assert_eq!(maturity.milestones[0], ("first plan".to_string(), "2026-09-21".to_string()));
+        assert_eq!(
+            maturity.series[0],
+            ("continuity".to_string(), vec![14, 21, 48])
+        );
+        assert_eq!(
+            maturity.milestones[0],
+            ("first plan".to_string(), "2026-09-21".to_string())
+        );
 
         let reports = snapshot.reports.landed().expect("the reports state landed");
         assert_eq!(reports.doing[0].title, "slice 14");
@@ -2406,7 +2595,13 @@ mod tests {
         }
 
         let snapshot = read_brain(home, &Bounds::default()).expect("the home is readable");
-        assert_eq!(snapshot.maturity.reason().map(|reason| reason.contains("maturity_state.json does not exist")), Some(true));
+        assert_eq!(
+            snapshot
+                .maturity
+                .reason()
+                .map(|reason| reason.contains("maturity_state.json does not exist")),
+            Some(true)
+        );
         assert!(snapshot.gates.landed().is_some());
     }
 
@@ -2420,7 +2615,10 @@ mod tests {
 
         let snapshot = read_brain(home, &Bounds::default()).expect("the home is readable");
         assert_eq!(
-            snapshot.gates.reason().map(|reason| reason.contains("gates_state")),
+            snapshot
+                .gates
+                .reason()
+                .map(|reason| reason.contains("gates_state")),
             Some(true)
         );
         assert!(snapshot.loops.landed().is_some());
@@ -2428,10 +2626,14 @@ mod tests {
 
     #[test]
     fn an_unreadable_state_home_is_the_reads_refusal() {
-        let missing = std::env::temp_dir().join(format!("fleet-boards-absent-{}", std::process::id()));
+        let missing =
+            std::env::temp_dir().join(format!("fleet-boards-absent-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&missing);
         let error = read_brain(&missing, &Bounds::default()).expect_err("the home does not exist");
-        assert!(error.contains("the second-brain board could not read"), "{error}");
+        assert!(
+            error.contains("the second-brain board could not read"),
+            "{error}"
+        );
         assert!(error.contains("does not exist"), "{error}");
     }
 
@@ -2455,7 +2657,10 @@ mod tests {
         // to claim was bounded.
         let hung = home.join("gates_state.json");
         let _ = std::fs::remove_file(&hung);
-        let made = Command::new("mkfifo").arg(&hung).status().expect("mkfifo runs");
+        let made = Command::new("mkfifo")
+            .arg(&hung)
+            .status()
+            .expect("mkfifo runs");
         assert!(made.success(), "the named pipe was created");
 
         // The per-file bound outlasts the aggregate budget, so the first
@@ -2469,11 +2674,18 @@ mod tests {
         };
         let started = std::time::Instant::now();
         let snapshot = read_brain(home, &bounds).expect("the home is readable");
-        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
 
         // The hung file names its own bound...
         assert!(
-            snapshot.gates.reason().is_some_and(|reason| reason.contains("was not read")),
+            snapshot
+                .gates
+                .reason()
+                .is_some_and(|reason| reason.contains("was not read")),
             "{:?}",
             snapshot.gates.reason()
         );
@@ -2482,11 +2694,36 @@ mod tests {
         let spent = |reason: Option<&str>| {
             reason.map(|reason| reason.contains("the read budget was spent"))
         };
-        assert_eq!(spent(snapshot.harness.reason()), Some(true), "{:?}", snapshot.harness.reason());
-        assert_eq!(spent(snapshot.loops.reason()), Some(true), "{:?}", snapshot.loops.reason());
-        assert_eq!(spent(snapshot.reports.reason()), Some(true), "{:?}", snapshot.reports.reason());
-        assert_eq!(spent(snapshot.maturity.reason()), Some(true), "{:?}", snapshot.maturity.reason());
-        assert_eq!(spent(snapshot.tower.reason()), Some(true), "{:?}", snapshot.tower.reason());
+        assert_eq!(
+            spent(snapshot.harness.reason()),
+            Some(true),
+            "{:?}",
+            snapshot.harness.reason()
+        );
+        assert_eq!(
+            spent(snapshot.loops.reason()),
+            Some(true),
+            "{:?}",
+            snapshot.loops.reason()
+        );
+        assert_eq!(
+            spent(snapshot.reports.reason()),
+            Some(true),
+            "{:?}",
+            snapshot.reports.reason()
+        );
+        assert_eq!(
+            spent(snapshot.maturity.reason()),
+            Some(true),
+            "{:?}",
+            snapshot.maturity.reason()
+        );
+        assert_eq!(
+            spent(snapshot.tower.reason()),
+            Some(true),
+            "{:?}",
+            snapshot.tower.reason()
+        );
         // Release the reader the bounded read left behind: a writer
         // unblocks its `open`, so the thread ends instead of waiting for
         // the process's whole life.
@@ -2547,7 +2784,10 @@ mod tests {
 
         let snapshot = read_tower(root, &Bounds::default()).expect("the root is listable");
         assert_eq!(snapshot.projects.len(), 2);
-        assert_eq!(snapshot.skipped, vec![("not-a-repo".to_string(), "no .git".to_string())]);
+        assert_eq!(
+            snapshot.skipped,
+            vec![("not-a-repo".to_string(), "no .git".to_string())]
+        );
         assert_eq!(snapshot.beyond_bound, 0);
 
         let alpha = &snapshot.projects[0];
@@ -2558,7 +2798,11 @@ mod tests {
         assert_eq!(alpha.commits_30d, 2);
         assert_eq!(alpha.subject.as_deref(), Some("second commit"));
         assert_eq!(alpha.head.as_deref().map(|sha| sha.len()), Some(7));
-        assert!(alpha.when.as_deref().is_some_and(|when| when.len() == 10), "{:?}", alpha.when);
+        assert!(
+            alpha.when.as_deref().is_some_and(|when| when.len() == 10),
+            "{:?}",
+            alpha.when
+        );
         // No upstream: ahead and behind read as unanswered rather than 0.
         assert_eq!(alpha.ahead, None);
         assert_eq!(alpha.behind, None);
@@ -2586,12 +2830,16 @@ mod tests {
         assert_eq!(broken.dirty, 0);
         assert!(!broken.notes.is_empty(), "{:?}", broken.notes);
         // The healthy project is unaffected by its neighbour's failure.
-        assert!(snapshot.projects.iter().any(|project| project.name == "healthy"));
+        assert!(snapshot
+            .projects
+            .iter()
+            .any(|project| project.name == "healthy"));
     }
 
     #[test]
     fn an_unlistable_projects_root_is_the_reads_refusal() {
-        let missing = std::env::temp_dir().join(format!("fleet-boards-no-root-{}", std::process::id()));
+        let missing =
+            std::env::temp_dir().join(format!("fleet-boards-no-root-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&missing);
         let error = read_tower(&missing, &Bounds::default()).expect_err("the root does not exist");
         assert!(error.contains("the tower could not list"), "{error}");
@@ -2605,7 +2853,10 @@ mod tests {
             std::fs::create_dir_all(root.join(format!("repo-{index}")).join(".git"))
                 .expect("the project directory");
         }
-        let bounds = Bounds { max_projects: 2, ..Bounds::default() };
+        let bounds = Bounds {
+            max_projects: 2,
+            ..Bounds::default()
+        };
         let snapshot = read_tower(root, &bounds).expect("the root is listable");
         assert_eq!(snapshot.projects.len(), 2);
         assert_eq!(snapshot.beyond_bound, 2);
@@ -2642,10 +2893,21 @@ mod tests {
         };
         let started = std::time::Instant::now();
         let snapshot = read_tower(root, &bounds).expect("the scan still lands");
-        assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
         let project = &snapshot.projects[0];
         assert_eq!(project.branch, None);
-        assert!(project.notes.iter().any(|note| note.contains("git could not")), "{:?}", project.notes);
+        assert!(
+            project
+                .notes
+                .iter()
+                .any(|note| note.contains("git could not")),
+            "{:?}",
+            project.notes
+        );
     }
 
     #[test]
@@ -2678,7 +2940,10 @@ mod tests {
         // facts are not read as a project with no facts.
         let project = &snapshot.projects[0];
         assert!(
-            project.notes.iter().any(|note| note.contains("the scan budget was spent")),
+            project
+                .notes
+                .iter()
+                .any(|note| note.contains("the scan budget was spent")),
             "{:?}",
             project.notes
         );
@@ -2702,14 +2967,22 @@ mod tests {
         boards.apply(BoardKind::Router, Err(refused));
 
         let slot = boards.slot(BoardKind::Router);
-        let snapshot = slot.snapshot.as_ref().expect("the last snapshot stays visible");
+        let snapshot = slot
+            .snapshot
+            .as_ref()
+            .expect("the last snapshot stays visible");
         assert_eq!(snapshot.read_at(), read_at);
         match snapshot {
-            BoardData::Router(snapshot) => assert_eq!(snapshot.totals.map(|t| t.calls), Some(19_873)),
+            BoardData::Router(snapshot) => {
+                assert_eq!(snapshot.totals.map(|t| t.calls), Some(19_873))
+            }
             other => panic!("unexpected board data: {other:?}"),
         }
         let error = slot.error.as_deref().expect("the error is named");
-        assert!(error.contains("the router board could not read the kit"), "{error}");
+        assert!(
+            error.contains("the router board could not read the kit"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2722,7 +2995,10 @@ mod tests {
         let slot = boards.slot(BoardKind::Tower);
         assert!(slot.snapshot.is_none());
         assert!(!slot.loading);
-        assert!(slot.error.as_deref().is_some_and(|error| error.contains("the tower could not list")));
+        assert!(slot
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("the tower could not list")));
     }
 
     #[test]
@@ -2756,7 +3032,9 @@ mod tests {
 
         let fingerprint = |path: &Path| -> Vec<(String, u64)> {
             fn walk(path: &Path, out: &mut Vec<(String, u64)>) {
-                let Ok(entries) = std::fs::read_dir(path) else { return };
+                let Ok(entries) = std::fs::read_dir(path) else {
+                    return;
+                };
                 for entry in entries.filter_map(Result::ok) {
                     let path = entry.path();
                     if path.is_dir() {
@@ -2784,10 +3062,23 @@ mod tests {
         let _ = read_brain(&brain, &Bounds::default()).expect("the brain read");
         let _ = read_tower(root, &Bounds::default()).expect("the tower read");
 
-        assert_eq!(fingerprint(root), before_projects, "the tower's sources are untouched");
-        assert_eq!(fingerprint(&brain), before_brain, "the state files are untouched");
+        assert_eq!(
+            fingerprint(root),
+            before_projects,
+            "the tower's sources are untouched"
+        );
+        assert_eq!(
+            fingerprint(&brain),
+            before_brain,
+            "the state files are untouched"
+        );
         // The scratch repo is still on its own branch with its own dirty file.
-        let branch = git(&project, "git", &["symbolic-ref", "--short", "HEAD"], Duration::from_secs(5));
+        let branch = git(
+            &project,
+            "git",
+            &["symbolic-ref", "--short", "HEAD"],
+            Duration::from_secs(5),
+        );
         assert_eq!(branch.as_deref().map(str::trim), Some("main"));
     }
 
@@ -2819,7 +3110,9 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         while landed.len() < 3 && std::time::Instant::now() < deadline {
             // `None` is the refresher ending: its sender is gone.
-            let Some(update) = rx.blocking_recv() else { break };
+            let Some(update) = rx.blocking_recv() else {
+                break;
+            };
             update
                 .outcome
                 .unwrap_or_else(|reason| panic!("{}: {reason}", update.kind.label()));
@@ -2832,9 +3125,7 @@ mod tests {
     /// A std channel fed by the refresher's own, so a test can wait for
     /// an update that must not arrive rather than blocking on one that
     /// never comes.
-    fn bridge(
-        mut rx: UnboundedReceiver<BoardUpdate>,
-    ) -> std::sync::mpsc::Receiver<BoardUpdate> {
+    fn bridge(mut rx: UnboundedReceiver<BoardUpdate>) -> std::sync::mpsc::Receiver<BoardUpdate> {
         let (tx, bridged) = std::sync::mpsc::channel::<BoardUpdate>();
         thread::spawn(move || {
             while let Some(update) = rx.blocking_recv() {
@@ -2863,7 +3154,10 @@ mod tests {
             router: sources(&kit.url()),
             brain_home: Some(brain),
             tower_root: scratch.path().to_path_buf(),
-            bounds: Bounds { scan_budget: Duration::MAX, ..Bounds::default() },
+            bounds: Bounds {
+                scan_budget: Duration::MAX,
+                ..Bounds::default()
+            },
         };
         let (tx, rx) = spawn_refresher(sources);
         let bridged = bridge(rx);
@@ -2937,7 +3231,10 @@ mod tests {
         // already running: nothing else arrives, where a queued refresh
         // would have cost another full scan inside this window.
         let queued = bridged.recv_timeout(Duration::from_millis(1500));
-        assert!(queued.is_err(), "a refresh asked for during a read ran anyway: {queued:?}");
+        assert!(
+            queued.is_err(),
+            "a refresh asked for during a read ran anyway: {queued:?}"
+        );
     }
 
     // --- the render vocabulary ------------------------------------------------
@@ -2983,7 +3280,11 @@ mod tests {
                 // carries every member the board reads. An upgrade that
                 // renames one fails here, naming the drift, instead of
                 // quietly emptying a section on the board.
-                assert!(snapshot.drift.is_empty(), "the kit's shape drifted: {:?}", snapshot.drift);
+                assert!(
+                    snapshot.drift.is_empty(),
+                    "the kit's shape drifted: {:?}",
+                    snapshot.drift
+                );
             }
             // A kit that is not answering is the contract's named refusal,
             // not a failing test: the pane keeps its last snapshot.
@@ -2992,7 +3293,8 @@ mod tests {
 
         match sources.brain_home.as_ref() {
             Some(home) => {
-                let brain = read_brain(home, &Bounds::default()).expect("the second-brain home is readable");
+                let brain = read_brain(home, &Bounds::default())
+                    .expect("the second-brain home is readable");
                 let landed = [
                     brain.gates.landed().is_some(),
                     brain.harness.landed().is_some(),
@@ -3001,7 +3303,11 @@ mod tests {
                     brain.maturity.landed().is_some(),
                     brain.tower.landed().is_some(),
                 ];
-                eprintln!("second-brain: {} \u{b7} {} of six state files landed", home.display(), landed.iter().filter(|landed| **landed).count());
+                eprintln!(
+                    "second-brain: {} \u{b7} {} of six state files landed",
+                    home.display(),
+                    landed.iter().filter(|landed| **landed).count()
+                );
                 assert!(landed.iter().any(|landed| *landed), "no state file landed");
             }
             None => eprintln!("second-brain: no home resolved"),
@@ -3010,7 +3316,11 @@ mod tests {
         let tower = read_tower(&sources.tower_root, &sources.bounds);
         match &tower {
             Ok(snapshot) => {
-                let dirty = snapshot.projects.iter().filter(|project| project.dirty > 0).count();
+                let dirty = snapshot
+                    .projects
+                    .iter()
+                    .filter(|project| project.dirty > 0)
+                    .count();
                 eprintln!(
                     "tower: {} \u{b7} {} repos, {} dirty, {} skipped",
                     snapshot.root.display(),
@@ -3018,7 +3328,10 @@ mod tests {
                     dirty,
                     snapshot.skipped.len()
                 );
-                assert!(!snapshot.projects.is_empty(), "no project reported git facts");
+                assert!(
+                    !snapshot.projects.is_empty(),
+                    "no project reported git facts"
+                );
             }
             Err(reason) => eprintln!("tower: refused \u{b7} {reason}"),
         }

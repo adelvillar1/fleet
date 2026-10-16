@@ -52,12 +52,14 @@ fn the_tokenizer_splits_snake_kebab_and_camel() {
     assert_eq!(split_identifier("recallCount"), vec!["recall", "Count"]);
     assert_eq!(split_identifier("HTTPServer"), vec!["HTTP", "Server"]);
     assert_eq!(split_identifier("judge"), vec!["judge"]);
-    assert_eq!(words("fn judge_route(x: usize) -> Route"), vec![
-        "fn", "judge_route", "x", "usize", "Route"
-    ]);
-    assert_eq!(words("write-time, not write_time"), vec![
-        "write", "time", "not", "write_time"
-    ]);
+    assert_eq!(
+        words("fn judge_route(x: usize) -> Route"),
+        vec!["fn", "judge_route", "x", "usize", "Route"]
+    );
+    assert_eq!(
+        words("write-time, not write_time"),
+        vec!["write", "time", "not", "write_time"]
+    );
 }
 
 #[test]
@@ -65,9 +67,16 @@ fn the_keywords_and_function_words_are_not_vocabulary() {
     // The parts a word contributes: a stopword or keyword part is
     // dropped, and with it the compound the identifier would form.
     let root = scratch("stopwords");
-    write(&root, "src/judge.rs", "pub fn the_thing() {}\npub fn judge_verdict() {}\npub fn impl_thing() {}\n");
+    write(
+        &root,
+        "src/judge.rs",
+        "pub fn the_thing() {}\npub fn judge_verdict() {}\npub fn impl_thing() {}\n",
+    );
     let vocabulary = derive(&root);
-    assert!(vocabulary.get("the_thing").is_none(), "a stopword part kills the compound");
+    assert!(
+        vocabulary.get("the_thing").is_none(),
+        "a stopword part kills the compound"
+    );
     assert!(vocabulary.get("thing").is_some());
     assert!(vocabulary.get("impl_thing").is_none());
     assert!(vocabulary.get("judge_verdict").is_some());
@@ -90,7 +99,10 @@ fn the_compound_needs_every_part_to_be_a_token() {
     assert!(!is_token("very"));
     // The parts come back lowercased, whatever case the identifier used.
     assert_eq!(
-        split_identifier("JudgeRoute").iter().map(|part| part.to_lowercase()).collect::<Vec<_>>(),
+        split_identifier("JudgeRoute")
+            .iter()
+            .map(|part| part.to_lowercase())
+            .collect::<Vec<_>>(),
         vec!["judge", "route"]
     );
     // Four parts is beyond the compound's ceiling of three.
@@ -103,7 +115,11 @@ fn the_compound_is_the_identifier_channel_only() {
     // A doc span naming `the_redacted_row` must not establish a
     // compound the code never wrote.
     write(&root, "docs/a.md", "the `the_redacted_row` stream\n");
-    write(&root, "src/calib.rs", "pub fn redacted() {}\npub fn row() {}\n");
+    write(
+        &root,
+        "src/calib.rs",
+        "pub fn redacted() {}\npub fn row() {}\n",
+    );
     let vocabulary = derive(&root);
     assert!(vocabulary.get("the_redacted_row").is_none());
     assert!(vocabulary.get("redacted").is_some());
@@ -153,7 +169,10 @@ fn the_extractor_reads_identifiers_docs_and_stems() {
 
     // `judge`, `verdict`, `row`, `calib` from identifiers; the compound
     // `judge_verdict` beside its parts.
-    assert!(vocabulary.get("judge").is_some(), "judge must be established");
+    assert!(
+        vocabulary.get("judge").is_some(),
+        "judge must be established"
+    );
     assert!(vocabulary.get("judge_verdict").is_some());
     assert!(vocabulary.get("recall").is_some());
     // The stem establishes the module's own name.
@@ -174,14 +193,26 @@ fn the_extractor_reads_identifiers_docs_and_stems() {
 #[test]
 fn the_derivation_is_deterministic() {
     let root = scratch("determinism");
-    write(&root, "src/judge.rs", "pub fn judge_route() {}\npub fn recall() {}\n");
+    write(
+        &root,
+        "src/judge.rs",
+        "pub fn judge_route() {}\npub fn recall() {}\n",
+    );
     write(&root, "src/memory.rs", "pub fn recall_count() {}\n");
     let first = derive(&root);
     let second = derive(&root);
     assert_eq!(first.len(), second.len());
     assert_eq!(
-        first.entries().iter().map(|entry| entry.term.clone()).collect::<Vec<_>>(),
-        second.entries().iter().map(|entry| entry.term.clone()).collect::<Vec<_>>()
+        first
+            .entries()
+            .iter()
+            .map(|entry| entry.term.clone())
+            .collect::<Vec<_>>(),
+        second
+            .entries()
+            .iter()
+            .map(|entry| entry.term.clone())
+            .collect::<Vec<_>>()
     );
     assert_eq!(first.sources, second.sources);
 }
@@ -309,7 +340,10 @@ fn the_lookup_normalizes_the_plural_and_nothing_else() {
     write(&root, "src/judge.rs", "pub fn judge() {}\n");
     let vocabulary = derive(&root);
     // `judges` reaches `judge` through the plural variant.
-    assert_eq!(lookup_in(&vocabulary, "judges").term.as_deref(), Some("judge"));
+    assert_eq!(
+        lookup_in(&vocabulary, "judges").term.as_deref(),
+        Some("judge")
+    );
     // `judgement` does NOT reach `judge`: the stemmer stops at the
     // plural, because a lookup that guesses is the drift in a new hat.
     assert!(lookup_in(&vocabulary, "judgement").miss);
@@ -318,7 +352,11 @@ fn the_lookup_normalizes_the_plural_and_nothing_else() {
 #[test]
 fn the_card_renders_the_answer_and_the_miss() {
     let root = scratch("card");
-    write(&root, "src/judge.rs", "pub fn one() {}\n\npub fn judge() {}\n");
+    write(
+        &root,
+        "src/judge.rs",
+        "pub fn one() {}\n\npub fn judge() {}\n",
+    );
     let vocabulary = derive(&root);
     let hit = lookup_in(&vocabulary, "judge");
     let card = hit.card();
@@ -359,17 +397,29 @@ fn an_anagram_is_flagged_with_the_canonical_named() {
     write(&root, "src/memory.rs", "pub fn recall_count() {}\n");
     let vocabulary = derive(&root);
     // The compound is established; its reordering is the drift.
-    assert!(vocabulary.get("judge_verdict").is_some(), "the fixture establishes the compound");
+    assert!(
+        vocabulary.get("judge_verdict").is_some(),
+        "the fixture establishes the compound"
+    );
     let flag = check_in(&vocabulary, "verdict_judge");
-    assert!(flag.is_some(), "a reordered name for an established term is flagged");
+    assert!(
+        flag.is_some(),
+        "a reordered name for an established term is flagged"
+    );
     let flag = flag.unwrap();
     assert_eq!(flag.term.as_deref(), Some("judge_verdict"));
     assert!(!flag.sites.is_empty());
     let other = check_in(&vocabulary, "count_recall");
-    assert_eq!(other.map(|c| c.term), Some(Some("recall_count".to_string())));
+    assert_eq!(
+        other.map(|c| c.term),
+        Some(Some("recall_count".to_string()))
+    );
     // One token one edit away, the rest exactly in place.
     let edited = check_in(&vocabulary, "judge_verdicts");
-    assert_eq!(edited.map(|c| c.term), Some(Some("judge_verdict".to_string())));
+    assert_eq!(
+        edited.map(|c| c.term),
+        Some(Some("judge_verdict".to_string()))
+    );
     // Two tokens differing is not one relation: no flag.
     assert!(check_in(&vocabulary, "judge_opinion").is_none());
 }
@@ -383,11 +433,20 @@ fn one_edit_inside_a_token_is_flagged() {
     let vocabulary = derive(&root);
     // A singular/plural slip on a single token: one edit, three shared
     // characters.
-    assert_eq!(check_in(&vocabulary, "judges").map(|c| c.term), Some(Some("judge".to_string())));
-    assert_eq!(check_in(&vocabulary, "recalls").map(|c| c.term), Some(Some("recall".to_string())));
+    assert_eq!(
+        check_in(&vocabulary, "judges").map(|c| c.term),
+        Some(Some("judge".to_string()))
+    );
+    assert_eq!(
+        check_in(&vocabulary, "recalls").map(|c| c.term),
+        Some(Some("recall".to_string()))
+    );
     // A one-edit near-synonym needs a four-character shared prefix:
     // `judgement`/`judgment` share five and are flagged.
-    assert_eq!(check_in(&vocabulary, "judgement").map(|c| c.term), Some(Some("judgment".to_string())));
+    assert_eq!(
+        check_in(&vocabulary, "judgement").map(|c| c.term),
+        Some(Some("judgment".to_string()))
+    );
     // Four edits is a different word, not drift: `judgement` beside a
     // bare `judge` shares five characters and sits four edits apart, so
     // it is no relation — the near-exact test calls the same pair "a
@@ -403,8 +462,14 @@ fn one_edit_inside_a_token_is_flagged() {
     assert_eq!(check_in(&vocabulary, "califs").is_some(), false);
     write(&root, "src/calib.rs", "pub fn calib() {}\n");
     let vocabulary = derive(&root);
-    assert_eq!(check_in(&vocabulary, "califs").map(|c| c.term), Some(Some("calib".to_string())));
-    assert!(check_in(&vocabulary, "recol").is_none(), "two edits, three shared characters: not a relation");
+    assert_eq!(
+        check_in(&vocabulary, "califs").map(|c| c.term),
+        Some(Some("calib".to_string()))
+    );
+    assert!(
+        check_in(&vocabulary, "recol").is_none(),
+        "two edits, three shared characters: not a relation"
+    );
 }
 
 #[test]
@@ -415,7 +480,10 @@ fn the_real_tree_judgement_flags_the_established_judgment() {
     // is the exact near-synonym drift this guard catches, and the
     // candidate is named in the flag.
     let flag = check_in(&vocabulary, "judgement");
-    assert!(flag.is_some(), "judgement beside an established judgment is flagged");
+    assert!(
+        flag.is_some(),
+        "judgement beside an established judgment is flagged"
+    );
     let flag = flag.unwrap();
     assert_eq!(flag.term.as_deref(), Some("judgment"));
     assert!(flag.from_identifiers);
@@ -441,7 +509,10 @@ fn an_established_identifier_checks_clean() {
     write(&root, "src/judge.rs", "pub fn judge_verdict() {}\n");
     let vocabulary = derive(&root);
     assert!(check_in(&vocabulary, "judge_verdict").is_none());
-    assert!(check_in(&vocabulary, "judgeVerdict").is_none(), "near-exact is the refusal, not the flag");
+    assert!(
+        check_in(&vocabulary, "judgeVerdict").is_none(),
+        "near-exact is the refusal, not the flag"
+    );
 }
 
 #[test]
@@ -500,29 +571,77 @@ fn freshness_names_the_newest_mtime_the_derivation_saw() {
 #[test]
 fn trace_the_real_vocabulary() {
     let root = scratch("trace");
-    write(&root, "src/judge.rs", "pub fn judge_route() {}\npub fn recall() {}\n");
+    write(
+        &root,
+        "src/judge.rs",
+        "pub fn judge_route() {}\npub fn recall() {}\n",
+    );
     write(&root, "src/route.rs", "pub fn route() {}\n");
     let vocabulary = derive(&root);
     for entry in vocabulary.entries() {
-        println!("  {:24} idf={} df={} sites={:?}", entry.term, entry.ident_files, entry.doc_files, entry.sites);
+        println!(
+            "  {:24} idf={} df={} sites={:?}",
+            entry.term, entry.ident_files, entry.doc_files, entry.sites
+        );
     }
     println!("index judge -> {:?}", vocabulary.index.get("judge"));
     println!("index route -> {:?}", vocabulary.index.get("route"));
-    println!("get judge_route -> {:?}", vocabulary.get("judge_route").map(|e| e.term.clone()));
+    println!(
+        "get judge_route -> {:?}",
+        vocabulary.get("judge_route").map(|e| e.term.clone())
+    );
     let hit = lookup_in(&vocabulary, "the thing that judges a route");
     println!("lookup -> {:?} token={:?}", hit.term, hit.token);
 
     let real = super::vocabulary(&repo_root());
-    println!("REAL sources={} terms={} truncated={} elapsed={:?}", real.sources, real.len(), real.truncated, real.elapsed);
-    for term in ["judge", "route", "recall", "memory", "calib", "redacted", "row", "stream", "judge_route", "frobnicator", "substrate"] {
+    println!(
+        "REAL sources={} terms={} truncated={} elapsed={:?}",
+        real.sources,
+        real.len(),
+        real.truncated,
+        real.elapsed
+    );
+    for term in [
+        "judge",
+        "route",
+        "recall",
+        "memory",
+        "calib",
+        "redacted",
+        "row",
+        "stream",
+        "judge_route",
+        "frobnicator",
+        "substrate",
+    ] {
         match real.get(term) {
-            Some(entry) => println!("  GET {term}: idf={} df={} est={} sites={:?}", entry.ident_files, entry.doc_files, entry.establishment(), entry.sites.iter().take(4).collect::<Vec<_>>()),
+            Some(entry) => println!(
+                "  GET {term}: idf={} df={} est={} sites={:?}",
+                entry.ident_files,
+                entry.doc_files,
+                entry.establishment(),
+                entry.sites.iter().take(4).collect::<Vec<_>>()
+            ),
             None => println!("  GET {term}: ABSENT"),
         }
     }
-    for concept in ["the thing that judges a route", "the recall substrate", "the redacted row stream", "calib", "the frobnicator gizmo", "the umbrella xylophone"] {
+    for concept in [
+        "the thing that judges a route",
+        "the recall substrate",
+        "the redacted row stream",
+        "calib",
+        "the frobnicator gizmo",
+        "the umbrella xylophone",
+    ] {
         let hit = lookup_in(&real, concept);
-        println!("  LOOKUP {concept:?} -> term={:?} token={:?} est={} idf={} sites={:?}", hit.term, hit.token, hit.establishment, hit.from_identifiers, hit.sites.iter().take(4).collect::<Vec<_>>());
+        println!(
+            "  LOOKUP {concept:?} -> term={:?} token={:?} est={} idf={} sites={:?}",
+            hit.term,
+            hit.token,
+            hit.establishment,
+            hit.from_identifiers,
+            hit.sites.iter().take(4).collect::<Vec<_>>()
+        );
     }
 }
 
@@ -545,18 +664,30 @@ fn the_proof_the_thing_that_judges_a_route_finds_judge() {
     // Once the tree writes the compound, the compound is the answer.
     assert_eq!(hit.term.as_deref(), Some("judge_route"));
     assert!(hit.from_identifiers);
-    assert!(!hit.sites.is_empty(), "the answer carries its file:line sites");
+    assert!(
+        !hit.sites.is_empty(),
+        "the answer carries its file:line sites"
+    );
     // `judge` itself is established, one key down, with its own sites.
     let judge = vocabulary.get("judge").unwrap();
-    assert!(judge.ident_files >= 10, "judge is established in identifier files");
+    assert!(
+        judge.ident_files >= 10,
+        "judge is established in identifier files"
+    );
     // And the compound-preference rule is proved on the synthetic tree
     // that carries the compound: see the_lookup_prefers_the_compound.
     let root = scratch("proof-compound");
     write(&root, "src/judge.rs", "pub fn judge_route() {}\n");
-    write(&root, "src/route.rs", "pub fn route() {}\npub fn route_two() {}\n");
+    write(
+        &root,
+        "src/route.rs",
+        "pub fn route() {}\npub fn route_two() {}\n",
+    );
     let synthetic = derive(&root);
     assert_eq!(
-        lookup_in(&synthetic, "the thing that judges a route").term.as_deref(),
+        lookup_in(&synthetic, "the thing that judges a route")
+            .term
+            .as_deref(),
         Some("judge_route"),
         "where the project writes the compound, the compound answers"
     );
@@ -575,7 +706,10 @@ fn the_proof_the_recall_substrate_finds_memory() {
     assert!(hit.from_identifiers);
     assert!(!hit.sites.is_empty());
     let memory = vocabulary.get("memory").unwrap();
-    assert!(memory.ident_files >= 10, "memory is established across the tree");
+    assert!(
+        memory.ident_files >= 10,
+        "memory is established across the tree"
+    );
 }
 
 #[test]
@@ -610,7 +744,10 @@ fn the_proof_the_redacted_row_stream_reaches_the_calibration_stream() {
     // lane cores' own code and by fleet's own.
     let redacted = vocabulary.get("redacted").unwrap();
     assert!(redacted.ident_files >= 5);
-    assert!(redacted.sites.iter().any(|site| site.file == "src/calib.rs"));
+    assert!(redacted
+        .sites
+        .iter()
+        .any(|site| site.file == "src/calib.rs"));
 }
 
 #[test]
@@ -642,12 +779,19 @@ fn the_proof_two_concepts_come_back_as_honest_misses() {
 #[test]
 fn the_proof_the_vocabulary_is_bounded_and_reports_itself() {
     let vocabulary = vocabulary(&repo_root());
-    assert!(vocabulary.sources >= 40, "the walk reads the tree's sources: {}", vocabulary.sources);
-    assert!(vocabulary.len() >= 500, "the vocabulary carries the tree's terms: {}", vocabulary.len());
+    assert!(
+        vocabulary.sources >= 40,
+        "the walk reads the tree's sources: {}",
+        vocabulary.sources
+    );
+    assert!(
+        vocabulary.len() >= 500,
+        "the vocabulary carries the tree's terms: {}",
+        vocabulary.len()
+    );
     assert!(!vocabulary.truncated, "this tree fits inside every bound");
     // The bound is named, not discovered.
     assert!(vocabulary.len() <= MAX_TERMS);
     assert!(vocabulary.sources <= MAX_SOURCES);
     assert!(vocabulary.elapsed < DERIVE_BUDGET);
 }
-

@@ -45,7 +45,7 @@ use std::time::Instant;
 
 use serde_json::{json, Value};
 
-use crate::calib::{self, ExplainRow, ExplainRouteRow, ExplainValidationRow, ReadRow, Row};
+use crate::calib::{self, ExplainRouteRow, ExplainRow, ExplainValidationRow, ReadRow, Row};
 use crate::mcp::{CallResult, McpServer, ServerSpec};
 use crate::skills::wrap_detail;
 
@@ -238,7 +238,9 @@ impl ExplainOutcome {
 pub fn budget_usd_day() -> f64 {
     match std::env::var(EXPLAIN_BUDGET_ENV) {
         Ok(value) => match value.trim().parse::<f64>() {
-            Ok(lower) if lower.is_finite() && lower >= 0.0 && lower < EXPLAIN_BUDGET_USD_DAY => lower,
+            Ok(lower) if lower.is_finite() && lower >= 0.0 && lower < EXPLAIN_BUDGET_USD_DAY => {
+                lower
+            }
             _ => EXPLAIN_BUDGET_USD_DAY,
         },
         Err(_) => EXPLAIN_BUDGET_USD_DAY,
@@ -308,7 +310,9 @@ fn read_day(root: &Path, day: &str) -> Vec<ReadRow> {
 /// must prove the verdict did not move while an explanation landed
 /// beside it. `None` when no row matches the selector.
 pub fn recorded_verdict(root: &Path, selector: &Selector) -> Option<VerdictView> {
-    resolve_verdict(root, selector).ok().map(|row| verdict_view(&row, selector))
+    resolve_verdict(root, selector)
+        .ok()
+        .map(|row| verdict_view(&row, selector))
 }
 
 /// Today's `explain` rows, oldest first: the beat's own audit trail,
@@ -449,12 +453,13 @@ impl BlendReply {
         if self.path.is_empty() && self.generated_status.is_empty() {
             return None;
         }
-        let reason = self.generated_error.clone().unwrap_or_else(|| {
-            format!(
+        let reason =
+            self.generated_error.clone().unwrap_or_else(|| {
+                format!(
                 "the generative lane reported status `{}` and shipped the fallback as the answer",
                 if self.generated_status.is_empty() { "absent" } else { &self.generated_status }
             )
-        });
+            });
         Some(reason)
     }
 
@@ -493,11 +498,19 @@ impl BlendReply {
 /// A dict-valued sub-report, or an empty map when the answer carries
 /// none.
 fn sub(object: &serde_json::Map<String, Value>, key: &str) -> serde_json::Map<String, Value> {
-    object.get(key).and_then(Value::as_object).cloned().unwrap_or_default()
+    object
+        .get(key)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn string_field(object: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
-    object.get(key).and_then(Value::as_str).map(str::to_string).filter(|s| !s.is_empty())
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
 }
 
 fn number_field(object: &serde_json::Map<String, Value>, key: &str) -> Option<f64> {
@@ -527,7 +540,8 @@ fn lane_spec(source: &LaneSource) -> Result<ServerSpec, String> {
 /// with no text.
 async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<BlendReply, String> {
     let spec = lane_spec(source)?;
-    let server = McpServer::spawn(&spec).map_err(|error| format!("the lane could not start: {error}"))?;
+    let server =
+        McpServer::spawn(&spec).map_err(|error| format!("the lane could not start: {error}"))?;
     server
         .initialize()
         .await
@@ -552,8 +566,9 @@ async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<BlendReply, Strin
         return Err(format!("the lane refused the ask: {}", result.text()));
     }
     let text = result.text();
-    let value: Value = serde_json::from_str(&text)
-        .map_err(|error| format!("the lane's answer was not the structured content it promises: {error}"))?;
+    let value: Value = serde_json::from_str(&text).map_err(|error| {
+        format!("the lane's answer was not the structured content it promises: {error}")
+    })?;
     let reply = BlendReply::parse(&value);
     // The lane's own fail-open, named: a generative path whose
     // generative lane did not answer ships its fallback prose as the
@@ -641,7 +656,9 @@ fn verdict_view(row: &ReadRow, selector: &Selector) -> VerdictView {
                     row.score
                 ),
                 reason: failed
-                    .and_then(|scenario| (!scenario.failure.is_empty()).then(|| scenario.failure.clone()))
+                    .and_then(|scenario| {
+                        (!scenario.failure.is_empty()).then(|| scenario.failure.clone())
+                    })
                     .unwrap_or_else(|| "the scenario's checks did not hold".to_string()),
                 steps: Vec::new(),
                 input_sha256: (!row.input_sha256.is_empty()).then(|| row.input_sha256.clone()),
@@ -664,7 +681,10 @@ fn proposal_artifact(home: &Path, name: &str) -> Result<(String, String), String
                 crate::improve::proposals_dir(home).display()
             )
         })?;
-    Ok((proposal.change.artifact_text(), proposal.change.artifact_sha()))
+    Ok((
+        proposal.change.artifact_text(),
+        proposal.change.artifact_sha(),
+    ))
 }
 
 /// The judged artifact for a corpus scenario: the corpus's own fixed
@@ -674,7 +694,10 @@ fn proposal_artifact(home: &Path, name: &str) -> Result<(String, String), String
 /// diverge. A corpus that changed since the row was written is a drift
 /// the beat refuses.
 fn corpus_artifact() -> (String, String) {
-    (crate::eval::corpus_definition(), crate::eval::corpus_identity())
+    (
+        crate::eval::corpus_definition(),
+        crate::eval::corpus_identity(),
+    )
 }
 
 // --- the recoverable text -------------------------------------------------
@@ -710,8 +733,12 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
 ///   there.
 fn land_explanation(path: &Path, text: &str, sha: &str) -> Result<(), String> {
     if path.exists() {
-        let existing = std::fs::read(path)
-            .map_err(|error| format!("the existing explanation at {} could not be read: {error}", path.display()))?;
+        let existing = std::fs::read(path).map_err(|error| {
+            format!(
+                "the existing explanation at {} could not be read: {error}",
+                path.display()
+            )
+        })?;
         if calib::hash16(&String::from_utf8_lossy(&existing)) != sha {
             return Err(format!(
                 "an explanation for this artifact already exists at {} and differs from this one — refusing to overwrite the indexed text; delete it to re-explain",
@@ -721,8 +748,12 @@ fn land_explanation(path: &Path, text: &str, sha: &str) -> Result<(), String> {
         return Ok(());
     }
     write_atomic(path, text)?;
-    let written = std::fs::read(path)
-        .map_err(|error| format!("the explanation at {} could not be read back: {error}", path.display()))?;
+    let written = std::fs::read(path).map_err(|error| {
+        format!(
+            "the explanation at {} could not be read back: {error}",
+            path.display()
+        )
+    })?;
     if calib::hash16(&String::from_utf8_lossy(&written)) != sha {
         return Err(format!(
             "the explanation written to {} does not hash to the sha the row carries — refusing to land a row that indexes different bytes",
@@ -740,7 +771,13 @@ fn land_explanation(path: &Path, text: &str, sha: &str) -> Result<(), String> {
 /// refusal is a named outcome the card carries, and the verdict stands
 /// on every path.
 pub async fn explain(request: ExplainRequest<'_>) -> ExplainOutcome {
-    let ExplainRequest { root, home, selector, dry_run, lane } = request;
+    let ExplainRequest {
+        root,
+        home,
+        selector,
+        dry_run,
+        lane,
+    } = request;
     let row = match resolve_verdict(root, &selector) {
         Ok(row) => row,
         Err(reason) => {
@@ -868,7 +905,10 @@ pub async fn explain(request: ExplainRequest<'_>) -> ExplainOutcome {
     // ledger so the day's cap moves, then refuse.
     if let Err(reason) = land_explanation(&path, &reply.final_answer, &explanation_sha256) {
         record_failed_spend(home, reply.cost_usd);
-        let reason = format!("the explanation could not be written to {}: {reason}", path.display());
+        let reason = format!(
+            "the explanation could not be written to {}: {reason}",
+            path.display()
+        );
         return ExplainOutcome {
             card: refusal_card(&verdict, &reason),
             verdict,
@@ -1013,7 +1053,10 @@ fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String
     // width: a selector the operator never bounded costs its tail, not
     // the layout. The bound leaves room for the frame's own corners and
     // the dash run, so the drawn header stays inside 72 columns.
-    let right = bound(subtitle, CARD_WIDTH.saturating_sub(title.chars().count() + 8));
+    let right = bound(
+        subtitle,
+        CARD_WIDTH.saturating_sub(title.chars().count() + 8),
+    );
     let dashes = dashes_for(title, &right);
     let mut out = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{title}{RESET} {DIM}{dashes} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}\n"
@@ -1081,7 +1124,10 @@ fn verdict_lines(verdict: &VerdictView) -> Vec<String> {
     // `│ ` prefix, so its content fits `CARD_WIDTH - 2`; the `+ 3`
     // reserves that prefix and the closing backtick.
     let head = format!("verdict {state} \u{b7} {op} `", op = verdict.op);
-    let selector = bound(&verdict.selector, CARD_WIDTH.saturating_sub(head.chars().count() + 3));
+    let selector = bound(
+        &verdict.selector,
+        CARD_WIDTH.saturating_sub(head.chars().count() + 3),
+    );
     let mut lines = vec![format!(
         "{BOLD}verdict{RESET} {color}{state}{RESET} {DIM}\u{b7}{RESET} {TEXT}{op} `{selector}`{RESET}",
         op = verdict.op,
@@ -1097,8 +1143,8 @@ fn verdict_lines(verdict: &VerdictView) -> Vec<String> {
         // width the line actually has left, so a step's evidence never
         // pushes the card past the house width at 80 columns.
         let step = bound(step, STEP_NAME_CAP);
-        let room = CARD_WIDTH
-            .saturating_sub(4 + step.chars().count() + 1 + mark.chars().count() + 3 + 14);
+        let room =
+            CARD_WIDTH.saturating_sub(4 + step.chars().count() + 1 + mark.chars().count() + 3 + 14);
         let detail = bound(detail, room);
         lines.push(format!(
             "{DIM}\u{b7}{RESET} {TEXT}{step}{RESET} {color}{mark}{RESET} {DIM}\u{2014} {detail}{RESET}"
@@ -1137,10 +1183,20 @@ pub(crate) fn explained_card(
     // The lane-reported route path and answer shape are the lane's own
     // words; the card bounds them so a lane that reports a long one
     // costs its tail, not the layout.
-    let route_path =
-        bound(if reply.path.is_empty() { "unreported" } else { &reply.path }, ROUTE_FIELD_CAP);
+    let route_path = bound(
+        if reply.path.is_empty() {
+            "unreported"
+        } else {
+            &reply.path
+        },
+        ROUTE_FIELD_CAP,
+    );
     let route_shape = bound(
-        if reply.answer_shape.is_empty() { "unreported" } else { &reply.answer_shape },
+        if reply.answer_shape.is_empty() {
+            "unreported"
+        } else {
+            &reply.answer_shape
+        },
         ROUTE_FIELD_CAP,
     );
     body.push(format!(
@@ -1221,7 +1277,9 @@ fn dry_run_card(
 /// answer — renders here rather than as a bare error line.
 fn refusal_card(verdict: &VerdictView, reason: &str) -> String {
     let mut body = verdict_lines(verdict);
-    body.push(format!("{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ERROR}refused{RESET}"));
+    body.push(format!(
+        "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ERROR}refused{RESET}"
+    ));
     for line in wrap_detail(reason, CARD_WIDTH - 4) {
         body.push(format!("{ERROR}{line}{RESET}"));
     }

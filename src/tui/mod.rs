@@ -27,7 +27,7 @@ use ratatui::Terminal;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent::{
-    Agent, AgentOptions, ApprovalRequest, Approver, DEFAULT_MAX_TURNS, TuiApprover, UiEvent,
+    Agent, AgentOptions, ApprovalRequest, Approver, TuiApprover, UiEvent, DEFAULT_MAX_TURNS,
 };
 use crate::api::Client;
 use crate::boards::{self, BoardUpdate};
@@ -97,8 +97,8 @@ type UiTerminal = Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>;
 pub fn run(config: Config) -> Result<(), String> {
     // The guard outlives the terminal it protects, so any exit path —
     // orderly, error, or panic — restores the shell.
-    let mut terminal = ratatui::try_init()
-        .map_err(|error| format!("the terminal could not start: {error}"))?;
+    let mut terminal =
+        ratatui::try_init().map_err(|error| format!("the terminal could not start: {error}"))?;
     let _guard = TerminalGuard;
 
     // `try_init` arms raw mode and the alternate screen but not bracketed
@@ -208,9 +208,15 @@ fn event_loop(
             .map_err(|error| format!("the keyboard could not be read: {error}"))?
         {
             match ratatui::crossterm::event::read() {
-                Ok(Event::Key(key)) => {
-                    dispatch_key(home, app, &key, command_tx, lanes_tx, boards_tx, &mut pending)
-                }
+                Ok(Event::Key(key)) => dispatch_key(
+                    home,
+                    app,
+                    &key,
+                    command_tx,
+                    lanes_tx,
+                    boards_tx,
+                    &mut pending,
+                ),
                 // A paste is typing: the text lands in the input box with
                 // its newlines intact, never submitted line by line.
                 Ok(Event::Paste(text)) => app.paste(&text),
@@ -236,7 +242,9 @@ fn dispatch_key(
     boards_tx: &UnboundedSender<boards::BoardCommand>,
     pending: &mut Option<ApprovalRequest>,
 ) {
-    let Some(action) = action_for(app, key) else { return };
+    let Some(action) = action_for(app, key) else {
+        return;
+    };
     // The cycle asks for a read now: the cadence already covers every
     // board, and the one the user just turned to should not wait for it.
     let cycling = matches!(action, Action::CycleBoard);
@@ -308,7 +316,10 @@ fn open_explanation(app: &mut App, home: &Path) {
         // — a named reason cut in half by its own color codes is not a
         // named one (KI-140's class).
         Some(card) => {
-            let lines = crate::eval::strip_ansi(&card).lines().map(str::to_string).collect();
+            let lines = crate::eval::strip_ansi(&card)
+                .lines()
+                .map(str::to_string)
+                .collect();
             app.open_explain(lines);
         }
         None => app.error = Some(
@@ -329,12 +340,18 @@ fn open_lanes_view(app: &mut App, lanes_tx: &UnboundedSender<(u64, Vec<LaneHealt
     let generation = app.open_lanes();
     let lanes_tx = lanes_tx.clone();
     thread::spawn(move || {
-        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
             Ok(runtime) => runtime,
             Err(error) => {
-                let _ = lanes_tx.send((generation, lanes::unavailable_all(&format!(
-                    "the lane probe runtime failed to start: {error}"
-                ))));
+                let _ = lanes_tx.send((
+                    generation,
+                    lanes::unavailable_all(&format!(
+                        "the lane probe runtime failed to start: {error}"
+                    )),
+                ));
                 return;
             }
         };
@@ -381,8 +398,15 @@ fn apply_effect(
 /// never waits on the network or on a tool.
 fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let AgentConfig { home, model, session_id, ui_tx, status_tx, approval_tx, command_rx } =
-            config;
+        let AgentConfig {
+            home,
+            model,
+            session_id,
+            ui_tx,
+            status_tx,
+            approval_tx,
+            command_rx,
+        } = config;
         // The scheduled consolidation cycle: one pass now, then one
         // every hour for the life of the process — the timer the live
         // system never had. Its own stream, because the cycle must run
@@ -447,9 +471,8 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                                     prepared = Some(fresh);
                                 }
                                 Err(error) => {
-                                    let _ = ui_tx.send(UiEvent::Failed(format!(
-                                        "routing config: {error}"
-                                    )));
+                                    let _ = ui_tx
+                                        .send(UiEvent::Failed(format!("routing config: {error}")));
                                     continue;
                                 }
                             }
@@ -509,19 +532,14 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                         // events, and the log records exactly what headless
                         // records.
                         let mut progress = io::sink();
-                        let mut agent = match Agent::new(
-                            &client,
-                            options,
-                            &mut log,
-                            approver,
-                            &mut progress,
-                        ) {
-                            Ok(agent) => agent,
-                            Err(error) => {
-                                let _ = ui_tx.send(UiEvent::Failed(error.to_string()));
-                                continue;
-                            }
-                        };
+                        let mut agent =
+                            match Agent::new(&client, options, &mut log, approver, &mut progress) {
+                                Ok(agent) => agent,
+                                Err(error) => {
+                                    let _ = ui_tx.send(UiEvent::Failed(error.to_string()));
+                                    continue;
+                                }
+                            };
                         if let Ok(report) = agent.run(&task).await {
                             let _ = status_tx.send(StatusUpdate::Usage(report.usage));
                         }

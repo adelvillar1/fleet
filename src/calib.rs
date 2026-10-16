@@ -641,7 +641,12 @@ pub const ACTION_SUPERSEDE: &str = "supersede";
 /// The consolidation action that archives an expired fact.
 pub const ACTION_FORGET: &str = "forget";
 /// Every consolidation action, in the order the surface tallies them.
-pub const ACTIONS: [&str; 4] = [ACTION_COMPACT, ACTION_COMPRESS, ACTION_SUPERSEDE, ACTION_FORGET];
+pub const ACTIONS: [&str; 4] = [
+    ACTION_COMPACT,
+    ACTION_COMPRESS,
+    ACTION_SUPERSEDE,
+    ACTION_FORGET,
+];
 
 /// The judgment's verdict when the routing decision was right: the lane's
 /// workload label mapped to the candidate that served, the walk reached
@@ -681,8 +686,11 @@ pub const DISPOSITION_DISAGREED: &str = "disagreed";
 /// card.
 pub const DISPOSITION_WAIVED: &str = "waived";
 /// Every disposition, in the order the surface tallies them.
-pub const DISPOSITIONS: [&str; 3] =
-    [DISPOSITION_AGREED, DISPOSITION_DISAGREED, DISPOSITION_WAIVED];
+pub const DISPOSITIONS: [&str; 3] = [
+    DISPOSITION_AGREED,
+    DISPOSITION_DISAGREED,
+    DISPOSITION_WAIVED,
+];
 
 /// One approval decision's verdict, as the row names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -698,8 +706,11 @@ pub enum ScreenVerdict {
 
 impl ScreenVerdict {
     /// Every verdict, in the order the surface tallies them.
-    pub const ALL: [ScreenVerdict; 3] =
-        [ScreenVerdict::Approved, ScreenVerdict::Denied, ScreenVerdict::Always];
+    pub const ALL: [ScreenVerdict; 3] = [
+        ScreenVerdict::Approved,
+        ScreenVerdict::Denied,
+        ScreenVerdict::Always,
+    ];
 
     /// The word the row carries.
     pub fn label(self) -> &'static str {
@@ -768,7 +779,11 @@ impl TurnStop {
 /// rather than inventing a second home for its rows.
 pub fn devdec_log_root(user_home: Option<&str>) -> Option<PathBuf> {
     user_home.map(|home| {
-        PathBuf::from(home).join(".local").join("share").join("dev-decisions").join("logs")
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("dev-decisions")
+            .join("logs")
     })
 }
 
@@ -798,12 +813,14 @@ pub fn resolve_root(home: &Path, user_home: Option<&str>) -> PathBuf {
 /// validated `--day`.
 pub fn day_path(root: &Path, day: &str) -> PathBuf {
     let mut parts = day.split('-');
-    let (Some(year), Some(month), Some(day_of_month)) =
-        (parts.next(), parts.next(), parts.next())
+    let (Some(year), Some(month), Some(day_of_month)) = (parts.next(), parts.next(), parts.next())
     else {
         return root.join("events.jsonl");
     };
-    root.join(year).join(month).join(day_of_month).join("events.jsonl")
+    root.join(year)
+        .join(month)
+        .join(day_of_month)
+        .join("events.jsonl")
 }
 
 /// Today's UTC day key, `YYYY-MM-DD` — the stream's unit of time. An
@@ -871,9 +888,11 @@ mod sha256 {
                 w[index] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
             }
             for index in 16..64 {
-                let s0 = w[index - 15].rotate_right(7) ^ w[index - 15].rotate_right(18)
+                let s0 = w[index - 15].rotate_right(7)
+                    ^ w[index - 15].rotate_right(18)
                     ^ (w[index - 15] >> 3);
-                let s1 = w[index - 2].rotate_right(17) ^ w[index - 2].rotate_right(19)
+                let s1 = w[index - 2].rotate_right(17)
+                    ^ w[index - 2].rotate_right(19)
                     ^ (w[index - 2] >> 10);
                 w[index] = w[index - 16]
                     .wrapping_add(s0)
@@ -886,8 +905,11 @@ mod sha256 {
             for index in 0..64 {
                 let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
                 let ch = (e & f) ^ ((!e) & g);
-                let temp1 =
-                    h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[index]).wrapping_add(w[index]);
+                let temp1 = h
+                    .wrapping_add(s1)
+                    .wrapping_add(ch)
+                    .wrapping_add(K[index])
+                    .wrapping_add(w[index]);
                 let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
                 let maj = (a & b) ^ (a & c) ^ (b & c);
                 let temp2 = s0.wrapping_add(maj);
@@ -1019,7 +1041,11 @@ impl Stream {
         }
         Stream {
             queue: Some(Arc::new(queue)),
-            inner: Arc::new(Inner { root, counters, receiver }),
+            inner: Arc::new(Inner {
+                root,
+                counters,
+                receiver,
+            }),
         }
     }
 
@@ -1139,7 +1165,9 @@ impl Drop for Stream {
 /// crate's rule is that a tool or API failure is a value, never a panic,
 /// and a lock is the last place to introduce one.
 fn lock_queue(queue: &Mutex<Receiver<Row>>) -> std::sync::MutexGuard<'_, Receiver<Row>> {
-    queue.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    queue
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// A shutdown that has spent its drain budget pulls every row still
@@ -1281,7 +1309,9 @@ fn temp_state_path(path: &Path) -> PathBuf {
 /// cannot take one more small file is named once, and nothing else
 /// changes.
 fn write_state(root: &Path, state: &WriterState) {
-    let Ok(text) = serde_json::to_string_pretty(state) else { return };
+    let Ok(text) = serde_json::to_string_pretty(state) else {
+        return;
+    };
     let path = state_path(root);
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -1548,13 +1578,18 @@ pub fn read_day(root: &Path, day: &str, cap: usize) -> Vec<ReadRow> {
     if cap == 0 {
         return Vec::new();
     }
-    let Ok(file) = File::open(day_path(root, day)) else { return Vec::new() };
+    let Ok(file) = File::open(day_path(root, day)) else {
+        return Vec::new();
+    };
     let mut reader = BufReader::new(file);
     let mut tail: VecDeque<ReadRow> = VecDeque::new();
     let mut line: Vec<u8> = Vec::new();
     loop {
         line.clear();
-        let read = reader.by_ref().take(MAX_LINE_BYTES + 1).read_until(b'\n', &mut line);
+        let read = reader
+            .by_ref()
+            .take(MAX_LINE_BYTES + 1)
+            .read_until(b'\n', &mut line);
         match read {
             Ok(0) => break,
             Ok(_) => {}
@@ -1563,10 +1598,15 @@ pub fn read_day(root: &Path, day: &str, cap: usize) -> Vec<ReadRow> {
         if line.len() as u64 > MAX_LINE_BYTES {
             // Drain the rest of the oversized line, then skip it.
             let mut sink = Vec::new();
-            let _ = reader.by_ref().take(MAX_LINE_BYTES + 1).read_until(b'\n', &mut sink);
+            let _ = reader
+                .by_ref()
+                .take(MAX_LINE_BYTES + 1)
+                .read_until(b'\n', &mut sink);
             continue;
         }
-        let Ok(text) = std::str::from_utf8(&line) else { continue };
+        let Ok(text) = std::str::from_utf8(&line) else {
+            continue;
+        };
         if let Some(row) = parse_row(text) {
             if tail.len() == cap {
                 tail.pop_front();
@@ -1684,7 +1724,10 @@ pub fn judged_rows(rows: &[ReadRow]) -> Vec<ReadRow> {
         }
         freshest.insert(key, row.clone());
     }
-    order.into_iter().filter_map(|key| freshest.remove(&key)).collect()
+    order
+        .into_iter()
+        .filter_map(|key| freshest.remove(&key))
+        .collect()
 }
 
 /// How many judged rows a provider's sample must carry before its
@@ -1886,7 +1929,9 @@ pub fn cell<'a>(
     provider: &str,
     workload: &str,
 ) -> Option<&'a CalibrationCell> {
-    cells.iter().find(|cell| cell.provider == provider && cell.workload == workload)
+    cells
+        .iter()
+        .find(|cell| cell.provider == provider && cell.workload == workload)
 }
 
 /// The day's calibration cells, keyed by (provider × workload shape), in
@@ -1973,7 +2018,10 @@ fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCe
     }
     let graded_count = right + wrong + insufficient;
     let (weighted_wrong_rate, weighted_insufficient_rate) = if weight_sum > 0.0 {
-        (weighted_wrong / weight_sum, weighted_insufficient / weight_sum)
+        (
+            weighted_wrong / weight_sum,
+            weighted_insufficient / weight_sum,
+        )
     } else if graded_count > 0 {
         // A sample that reported no confidence at all: the weighting has
         // nothing to weight by, so the honest rates are the plain
@@ -1985,15 +2033,19 @@ fn summarize(provider: &str, workload: &str, rows: &[&ReadRow]) -> CalibrationCe
     } else {
         (0.0, 0.0)
     };
-    let confidence_span = match confidences.iter().copied().fold(None::<(f64, f64)>, |bounds, confidence| {
-        Some(match bounds {
-            None => (confidence, confidence),
-            Some((low, high)) => (low.min(confidence), high.max(confidence)),
-        })
-    }) {
-        Some((low, high)) => high - low,
-        None => 0.0,
-    };
+    let confidence_span =
+        match confidences
+            .iter()
+            .copied()
+            .fold(None::<(f64, f64)>, |bounds, confidence| {
+                Some(match bounds {
+                    None => (confidence, confidence),
+                    Some((low, high)) => (low.min(confidence), high.max(confidence)),
+                })
+            }) {
+            Some((low, high)) => high - low,
+            None => 0.0,
+        };
     let fit = if graded_count >= FIT_MIN_ROWS && confidence_span >= FIT_MIN_SPAN {
         FitState::Fit
     } else {
@@ -2076,7 +2128,8 @@ pub fn sidecar_spend(home: &Path, name: &str, day: &str) -> f64 {
         .filter_map(|line| {
             let value: serde_json::Value = serde_json::from_str(line).ok()?;
             let ts = value.get("ts").and_then(serde_json::Value::as_str)?;
-            ts.starts_with(day).then(|| value.get("cost_usd")?.as_f64())?
+            ts.starts_with(day)
+                .then(|| value.get("cost_usd")?.as_f64())?
         })
         .sum()
 }
@@ -2174,7 +2227,10 @@ fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
         "{DIM}\u{2502}{RESET} {DIM}last {}{RESET}",
         op_rows.last().map(|row| row.ts.as_str()).unwrap_or("")
     ));
-    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -2210,10 +2266,20 @@ fn route_detail(rows: &[&ReadRow]) -> Vec<String> {
         return Vec::new();
     };
     let fresh = rows.iter().filter(|row| row.judged_from == "fresh").count();
-    let cached = rows.iter().filter(|row| row.judged_from == "cached").count();
+    let cached = rows
+        .iter()
+        .filter(|row| row.judged_from == "cached")
+        .count();
     vec![
-        format!("{served} served \u{b7} {failed} failed \u{b7} {} skipped", skipped(rows)),
-        format!("last {} \u{b7} {} attempts in the walk", last.provider, last.attempts.len()),
+        format!(
+            "{served} served \u{b7} {failed} failed \u{b7} {} skipped",
+            skipped(rows)
+        ),
+        format!(
+            "last {} \u{b7} {} attempts in the walk",
+            last.provider,
+            last.attempts.len()
+        ),
         format!("judgment: {fresh} fresh \u{b7} {cached} from the record"),
     ]
 }
@@ -2228,14 +2294,20 @@ fn skipped(rows: &[&ReadRow]) -> usize {
 /// The screening card's facts: the verdict tally and the tools seen.
 fn screen_detail(rows: &[&ReadRow]) -> Vec<String> {
     let tally = ScreenVerdict::ALL.iter().map(|verdict| {
-        let count = rows.iter().filter(|row| row.verdict == verdict.label()).count();
+        let count = rows
+            .iter()
+            .filter(|row| row.verdict == verdict.label())
+            .count();
         (count > 0).then(|| format!("{} {}", count, verdict.label()))
     });
     let mut tools: Vec<&str> = rows.iter().map(|row| row.tool.as_str()).collect();
     tools.sort_unstable();
     tools.dedup();
     vec![
-        format!("calls: {}", tally.flatten().collect::<Vec<_>>().join(" \u{b7} ")),
+        format!(
+            "calls: {}",
+            tally.flatten().collect::<Vec<_>>().join(" \u{b7} ")
+        ),
         format!("tools: {}", tools.join(" \u{b7} ")),
     ]
 }
@@ -2247,7 +2319,10 @@ fn turn_detail(rows: &[&ReadRow]) -> Vec<String> {
     let failed = rows.iter().filter(|row| row.outcome == "failed").count();
     let turns: u64 = rows.iter().map(|row| row.turns).sum();
     vec![
-        format!("{ok} ok \u{b7} {failed} failed \u{b7} {turns} turn{}", plural(turns as usize)),
+        format!(
+            "{ok} ok \u{b7} {failed} failed \u{b7} {turns} turn{}",
+            plural(turns as usize)
+        ),
         format!("endings: {}", ending_tally(rows).join(" \u{b7} ")),
     ]
 }
@@ -2272,7 +2347,11 @@ fn recall_detail(rows: &[&ReadRow]) -> Vec<String> {
         format!(
             "last {} \u{b7} shape {} \u{b7} score {:.2}",
             last.fact,
-            if last.shape.is_empty() { "unclassified" } else { &last.shape },
+            if last.shape.is_empty() {
+                "unclassified"
+            } else {
+                &last.shape
+            },
             last.score
         ),
     ]
@@ -2293,7 +2372,10 @@ fn consolidate_detail(rows: &[&ReadRow]) -> Vec<String> {
         .collect::<Vec<_>>();
     vec![
         format!("actions: {}", tally.join(" \u{b7} ")),
-        format!("last {} `{}` \u{2014} {}", last.action, last.fact, last.reason),
+        format!(
+            "last {} `{}` \u{2014} {}",
+            last.action, last.fact, last.reason
+        ),
     ]
 }
 
@@ -2409,13 +2491,19 @@ fn judged_detail(rows: &[&ReadRow]) -> Vec<String> {
     let dispositions = DISPOSITIONS
         .iter()
         .filter_map(|disposition| {
-            let count = rows.iter().filter(|row| row.disposition == *disposition).count();
+            let count = rows
+                .iter()
+                .filter(|row| row.disposition == *disposition)
+                .count();
             (count > 0).then(|| format!("{count} {disposition}"))
         })
         .collect::<Vec<_>>();
     let judged = calib_rows_from(rows);
     let cells = calibration(&judged);
-    let fit = cells.iter().filter(|cell| cell.fit == FitState::Fit).count();
+    let fit = cells
+        .iter()
+        .filter(|cell| cell.fit == FitState::Fit)
+        .count();
     let mut lines = vec![format!("verdicts: {}", tally.join(" \u{b7} "))];
     lines.push(format!(
         "fit: {fit} of {} cell{} \u{b7} the floor is trusted at {FIT_MIN_ROWS} rows and \
@@ -2450,7 +2538,10 @@ fn ending_tally(rows: &[&ReadRow]) -> Vec<String> {
     TurnStop::ALL
         .iter()
         .filter_map(|stop| {
-            let count = rows.iter().filter(|row| row.stop_reason == stop.label()).count();
+            let count = rows
+                .iter()
+                .filter(|row| row.stop_reason == stop.label())
+                .count();
             (count > 0).then(|| format!("{} \u{d7}{}", stop.label(), count))
         })
         .collect()
@@ -2466,8 +2557,16 @@ fn stream_card(root: &Path, rows: &[ReadRow]) -> String {
         dashes = dashes_for(" stream ", &header_right),
         right = header_right,
     );
-    let dropped_color = if state.dropped == 0 { palette::OK } else { palette::WARN };
-    let failed_color = if state.failed == 0 { palette::OK } else { palette::ERROR };
+    let dropped_color = if state.dropped == 0 {
+        palette::OK
+    } else {
+        palette::WARN
+    };
+    let failed_color = if state.failed == 0 {
+        palette::OK
+    } else {
+        palette::ERROR
+    };
     let lines = vec![
         format!("{DIM}\u{2502}{RESET} {TEXT}{} rows today{RESET}", rows.len()),
         format!(
@@ -2479,7 +2578,10 @@ fn stream_card(root: &Path, rows: &[ReadRow]) -> String {
             failed = state.failed,
         ),
     ];
-    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -2523,7 +2625,11 @@ fn row_summary(row: &ReadRow) -> String {
             "{}  recall_hit  {}  {}  {:.2}",
             row.ts,
             row.fact,
-            if row.shape.is_empty() { "unclassified" } else { &row.shape },
+            if row.shape.is_empty() {
+                "unclassified"
+            } else {
+                &row.shape
+            },
             row.score
         ),
         OP_CONSOLIDATE => format!(
@@ -2635,7 +2741,11 @@ fn calibration_card(cell: &CalibrationCell) -> String {
         },
     )];
     if cell.fit == FitState::Fit {
-        let rate_color = if cell.informs_failover() { palette::WARN } else { palette::OK };
+        let rate_color = if cell.informs_failover() {
+            palette::WARN
+        } else {
+            palette::OK
+        };
         lines.push(format!(
             "{DIM}\u{2502}{RESET} {TEXT}confidence-weighted wrong-rate {rate_color}{rate:.2}{RESET} \
              {DIM}\u{b7} floor {floor:.2} \u{b7} span {span:.2}{RESET}",
@@ -2653,7 +2763,11 @@ fn calibration_card(cell: &CalibrationCell) -> String {
             // and still skip no one: the direction was right. The words
             // about companions ride the wrapped note below rather than
             // this line, which stays inside the house width.
-            let insufficient_color = if cell.notes_companions() { palette::WARN } else { palette::OK };
+            let insufficient_color = if cell.notes_companions() {
+                palette::WARN
+            } else {
+                palette::OK
+            };
             lines.push(format!(
                 "{DIM}\u{2502}{RESET} {TEXT}confidence-weighted insufficient-rate \
                  {insufficient_color}{rate:.2}{RESET} {DIM}\u{b7} not a skip{RESET}",
@@ -2729,9 +2843,10 @@ fn calibration_card(cell: &CalibrationCell) -> String {
         if cell.needs_span() > 0.0 {
             needs.push(format!("{:.2} more confidence span", cell.needs_span()));
         }
-        for line in
-            wrap_detail(&format!("unfit \u{b7} needs {}", needs.join(" \u{b7} ")), CARD_WIDTH - 4)
-        {
+        for line in wrap_detail(
+            &format!("unfit \u{b7} needs {}", needs.join(" \u{b7} ")),
+            CARD_WIDTH - 4,
+        ) {
             lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{line}{RESET}"));
         }
         for line in wrap_detail("no score is drawn from this sample", CARD_WIDTH - 4) {
@@ -2799,7 +2914,10 @@ pub fn render_calibration(root: &Path, day: &str, informs_failover: bool) -> Str
         out.push_str(&calibration_card(cell));
     }
     let judged: usize = cells.iter().map(|cell| cell.judged).sum();
-    let fit = cells.iter().filter(|cell| cell.fit == FitState::Fit).count();
+    let fit = cells
+        .iter()
+        .filter(|cell| cell.fit == FitState::Fit)
+        .count();
     let informing = cells.iter().filter(|cell| cell.informs_failover()).count();
     let companions = cells.iter().filter(|cell| cell.notes_companions()).count();
     let mut providers: Vec<&str> = cells.iter().map(|cell| cell.provider.as_str()).collect();
@@ -2860,10 +2978,8 @@ mod tests {
     fn scratch(tag: &str) -> PathBuf {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "fleet-calib-{tag}-{}-{serial}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("fleet-calib-{tag}-{}-{serial}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -2872,7 +2988,10 @@ mod tests {
     fn route_row(attempts: &[(&'static str, &'static str)]) -> Row {
         Row::Route(RouteRow {
             ts: "2026-10-13T12:00:00Z".to_string(),
-            provider: attempts.first().map(|(id, _)| id.to_string()).unwrap_or_default(),
+            provider: attempts
+                .first()
+                .map(|(id, _)| id.to_string())
+                .unwrap_or_default(),
             how: "fallback".to_string(),
             workload: None,
             verdict: None,
@@ -2910,7 +3029,11 @@ mod tests {
             outcome: stop.outcome().to_string(),
             stop_reason: stop.label().to_string(),
             turns,
-            usage: Usage { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+            usage: Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            },
             input_chars: 4,
             input_hash: hash16("task"),
             reason: None,
@@ -2972,7 +3095,10 @@ mod tests {
             "input_hash",
             "latency_ms",
         ] {
-            assert!(value.get(field).is_some(), "the route row lacks {field}: {route}");
+            assert!(
+                value.get(field).is_some(),
+                "the route row lacks {field}: {route}"
+            );
         }
         assert_eq!(value["attempts"][0]["outcome"], "failed");
         assert_eq!(value["attempts"][0]["class"], "server");
@@ -3074,10 +3200,7 @@ mod tests {
     #[test]
     fn the_devdec_root_is_its_own_literal_convention() {
         let root = devdec_log_root(Some("/Users/x")).unwrap();
-        assert_eq!(
-            root,
-            Path::new("/Users/x/.local/share/dev-decisions/logs")
-        );
+        assert_eq!(root, Path::new("/Users/x/.local/share/dev-decisions/logs"));
         assert!(devdec_log_root(None).is_none());
     }
 
@@ -3135,7 +3258,10 @@ mod tests {
         settle(&stream);
         // The append failed and was counted; the run that asked for the
         // row was never told.
-        assert!(stream.failed() >= 1, "the unwritable root counted no failure");
+        assert!(
+            stream.failed() >= 1,
+            "the unwritable root counted no failure"
+        );
         drop(stream);
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -3209,7 +3335,14 @@ mod tests {
     #[test]
     fn the_reader_keeps_fleet_rows_and_skips_devdecisions_own() {
         let root = scratch("read");
-        write_rows(&root, "2026-10-13", &[route_row(&[("a", "served")]), turn_row(TurnStop::Completed, 1)]);
+        write_rows(
+            &root,
+            "2026-10-13",
+            &[
+                route_row(&[("a", "served")]),
+                turn_row(TurnStop::Completed, 1),
+            ],
+        );
         let rows = read_day(&root, "2026-10-13", 512);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].op, "route");
@@ -3326,7 +3459,10 @@ mod tests {
     fn an_empty_day_says_so_rather_than_rendering_nothing() {
         let root = scratch("empty");
         let rendered = render(&root, "2026-10-13");
-        assert!(rendered.contains("no Fleet rows for 2026-10-13"), "{rendered}");
+        assert!(
+            rendered.contains("no Fleet rows for 2026-10-13"),
+            "{rendered}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -3344,7 +3480,11 @@ mod tests {
         write_rows(
             &root,
             "2026-10-13",
-            &[route_row(&[("a", "served")]), cached, route_row(&[("a", "served")])],
+            &[
+                route_row(&[("a", "served")]),
+                cached,
+                route_row(&[("a", "served")]),
+            ],
         );
         let rendered = render(&root, "2026-10-13");
         assert!(
@@ -3358,7 +3498,8 @@ mod tests {
 
     #[test]
     fn the_recall_hit_row_carries_the_fact_the_shape_and_the_score() {
-        let row = serde_json::to_string(&recall_hit_row("fleet-gate-is-local", "build", 0.42)).unwrap();
+        let row =
+            serde_json::to_string(&recall_hit_row("fleet-gate-is-local", "build", 0.42)).unwrap();
         let value: serde_json::Value = serde_json::from_str(&row).unwrap();
         assert_eq!(value["op"], "recall_hit");
         assert_eq!(value["fact"], "fleet-gate-is-local");
@@ -3377,7 +3518,11 @@ mod tests {
             verdict: VERDICT_REFUSED.to_string(),
             reason: "the gate refused the change: test failed".to_string(),
             gate: vec![
-                GateStepRow { step: "fmt".to_string(), ok: true, detail: "ok".to_string() },
+                GateStepRow {
+                    step: "fmt".to_string(),
+                    ok: true,
+                    detail: "ok".to_string(),
+                },
                 GateStepRow {
                     step: "test".to_string(),
                     ok: false,
@@ -3457,7 +3602,11 @@ mod tests {
     #[test]
     fn the_reader_keeps_recall_hit_rows_with_their_shape() {
         let root = scratch("read-recall");
-        write_rows(&root, "2026-10-13", &[recall_hit_row("a-fact", "deploy", 0.5)]);
+        write_rows(
+            &root,
+            "2026-10-13",
+            &[recall_hit_row("a-fact", "deploy", 0.5)],
+        );
         let rows = read_day(&root, "2026-10-13", 512);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].op, OP_RECALL_HIT);
@@ -3474,7 +3623,11 @@ mod tests {
         // invented. The reader keeps the row with its shape — here the
         // session's outcome word.
         let root = scratch("read-recall-session");
-        write_rows(&root, "2026-10-13", &[recall_hit_row("20261015T000000Z-aaa", "resolved", 0.5)]);
+        write_rows(
+            &root,
+            "2026-10-13",
+            &[recall_hit_row("20261015T000000Z-aaa", "resolved", 0.5)],
+        );
         let rows = read_day(&root, "2026-10-13", 512);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].op, OP_RECALL_HIT);
@@ -3498,13 +3651,19 @@ mod tests {
         );
         let rendered = render(&root, "2026-10-13");
         assert!(rendered.contains("recall_hit"), "{rendered}");
-        assert!(rendered.contains("2 hits \u{b7} 2 facts recalled"), "{rendered}");
+        assert!(
+            rendered.contains("2 hits \u{b7} 2 facts recalled"),
+            "{rendered}"
+        );
         // An unclassified hit names itself unclassified rather than
         // printing an empty shape.
         assert!(rendered.contains("shape unclassified"), "{rendered}");
         assert!(rendered.contains("score 0.31"), "{rendered}");
         // The verbatim tail carries the row's own facts.
-        assert!(rendered.contains("recall_hit  b-fact  unclassified  0.31"), "{rendered}");
+        assert!(
+            rendered.contains("recall_hit  b-fact  unclassified  0.31"),
+            "{rendered}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -3522,7 +3681,10 @@ mod tests {
         assert_eq!(value["op"], "consolidate");
         assert_eq!(value["action"], "supersede");
         assert_eq!(value["fact"], "stale-fact");
-        assert_eq!(value["reason"], "inferred, never recalled, older than 180 days");
+        assert_eq!(
+            value["reason"],
+            "inferred, never recalled, older than 180 days"
+        );
         // The three actions are the vocabulary the writer emits and the
         // reader tallies — one home, beside the op.
         assert_eq!(ACTIONS, ["compact", "compress", "supersede", "forget"]);
@@ -3536,7 +3698,11 @@ mod tests {
             &root,
             "2026-10-13",
             &[
-                consolidate_row(ACTION_COMPRESS, "old-note", "working memory past its valid-until"),
+                consolidate_row(
+                    ACTION_COMPRESS,
+                    "old-note",
+                    "working memory past its valid-until",
+                ),
                 consolidate_row(ACTION_FORGET, "expired-fact", "expired 2026-09-01"),
             ],
         );
@@ -3557,22 +3723,37 @@ mod tests {
             &root,
             "2026-10-13",
             &[
-                consolidate_row(ACTION_COMPRESS, "old-note", "working memory older than 7 days"),
+                consolidate_row(
+                    ACTION_COMPRESS,
+                    "old-note",
+                    "working memory older than 7 days",
+                ),
                 consolidate_row(
                     ACTION_SUPERSEDE,
                     "stale-fact",
                     "the owner's justified proposal",
                 ),
-                consolidate_row(ACTION_COMPRESS, "older-note", "working memory past its valid-until"),
+                consolidate_row(
+                    ACTION_COMPRESS,
+                    "older-note",
+                    "working memory past its valid-until",
+                ),
             ],
         );
         let rendered = render(&root, "2026-10-13");
         assert!(rendered.contains("consolidate"), "{rendered}");
-        assert!(rendered.contains("2 compress \u{b7} 1 supersede"), "{rendered}");
-        // The last action's own facts ride the card and the verbatim tail.
-        assert!(rendered.contains("last compress `older-note`"), "{rendered}");
         assert!(
-            rendered.contains("consolidate  compress  older-note  working memory past its valid-until"),
+            rendered.contains("2 compress \u{b7} 1 supersede"),
+            "{rendered}"
+        );
+        // The last action's own facts ride the card and the verbatim tail.
+        assert!(
+            rendered.contains("last compress `older-note`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered
+                .contains("consolidate  compress  older-note  working memory past its valid-until"),
             "{rendered}"
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -3585,8 +3766,22 @@ mod tests {
         let root = scratch("state-temp");
         // Two writes to one root: each takes a distinct temp name and
         // leaves only the final file behind (the temp is renamed away).
-        write_state(&root, &WriterState { written: 1, dropped: 0, failed: 0 });
-        write_state(&root, &WriterState { written: 2, dropped: 1, failed: 0 });
+        write_state(
+            &root,
+            &WriterState {
+                written: 1,
+                dropped: 0,
+                failed: 0,
+            },
+        );
+        write_state(
+            &root,
+            &WriterState {
+                written: 2,
+                dropped: 1,
+                failed: 0,
+            },
+        );
         // The final name is the contract; no temp survives a clean write.
         assert_eq!(state_path(&root).extension().unwrap(), "json");
         let leftovers: Vec<String> = std::fs::read_dir(&root)
@@ -3595,7 +3790,10 @@ mod tests {
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .filter(|name| name.contains(".tmp"))
             .collect();
-        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
         // The last write wins, read back whole.
         let state = read_state(&root);
         assert_eq!(state.written, 2);
@@ -3605,7 +3803,9 @@ mod tests {
         let first = temp_state_path(&state_path(&root));
         let second = temp_state_path(&state_path(&root));
         assert_ne!(first, second, "each write takes its own temp name");
-        assert!(first.to_string_lossy().contains(&std::process::id().to_string()));
+        assert!(first
+            .to_string_lossy()
+            .contains(&std::process::id().to_string()));
         assert!(first.to_string_lossy().ends_with(".tmp"));
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -3642,7 +3842,10 @@ mod tests {
         let root = scratch("wedge");
         let fifo = day_path(&root, "2026-10-13");
         std::fs::create_dir_all(fifo.parent().unwrap()).unwrap();
-        let made = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
         assert!(made.success(), "mkfifo failed");
         let stream = Stream::open(&root);
         // More rows than the wedged writer can take: it blocks on the
@@ -3655,7 +3858,10 @@ mod tests {
         // final write, so the drop's persist is the only one.
         drop(stream);
         let state = read_state(&root);
-        assert_eq!(state.written, 0, "the wedged writer appended nothing: {state:?}");
+        assert_eq!(
+            state.written, 0,
+            "the wedged writer appended nothing: {state:?}"
+        );
         assert!(state.dropped >= 1, "the backlog was not counted: {state:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -3706,7 +3912,10 @@ mod tests {
         assert_eq!(value["scenarios"][0]["passed"], true);
         // A passed scenario omits its failure; a failed one names it.
         assert!(value["scenarios"][0].get("failure").is_none());
-        assert_eq!(value["scenarios"][1]["failure"], "the post-fold request lost the summary");
+        assert_eq!(
+            value["scenarios"][1]["failure"],
+            "the post-fold request lost the summary"
+        );
     }
 
     #[test]
@@ -3765,7 +3974,10 @@ mod tests {
         );
         let rendered = render(&root, "2026-10-14");
         assert!(rendered.contains("eval_corpus"), "{rendered}");
-        assert!(rendered.contains("1 passed \u{b7} 1 failed \u{b7} score 0.50"), "{rendered}");
+        assert!(
+            rendered.contains("1 passed \u{b7} 1 failed \u{b7} score 0.50"),
+            "{rendered}"
+        );
         // The failing scenario is named on the card, not just counted.
         assert!(rendered.contains("failed: conversation-fold"), "{rendered}");
         let _ = std::fs::remove_dir_all(&root);
@@ -3801,8 +4013,12 @@ mod tests {
 
     #[test]
     fn the_explain_row_is_redacted_and_carries_the_join_key_and_the_telemetry() {
-        let row = serde_json::to_string(&explain_row("propose", "fix-the-ranker", "a1b2c3d4e5f60718"))
-            .unwrap();
+        let row = serde_json::to_string(&explain_row(
+            "propose",
+            "fix-the-ranker",
+            "a1b2c3d4e5f60718",
+        ))
+        .unwrap();
         let value: serde_json::Value = serde_json::from_str(&row).unwrap();
         assert_eq!(value["op"], "explain");
         // The eval-only marker is the row's first claim about itself.
@@ -3819,7 +4035,14 @@ mod tests {
         assert_eq!(value["lane"], "blend1");
         // Redacted by shape: no prompt text and no answer text rides in
         // the row, under any key a reader might look for.
-        for key in ["prompt", "answer", "text", "explanation", "final_answer", "body"] {
+        for key in [
+            "prompt",
+            "answer",
+            "text",
+            "explanation",
+            "final_answer",
+            "body",
+        ] {
             assert!(value.get(key).is_none(), "the row carries `{key}`: {row}");
         }
     }
@@ -3850,7 +4073,10 @@ mod tests {
         let rendered = render(&root, "2026-10-14");
         assert!(rendered.contains("explain"), "{rendered}");
         assert!(rendered.contains("2 explained"), "{rendered}");
-        assert!(rendered.contains("eval-only, no gate reads this op"), "{rendered}");
+        assert!(
+            rendered.contains("eval-only, no gate reads this op"),
+            "{rendered}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

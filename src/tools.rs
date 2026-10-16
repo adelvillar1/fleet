@@ -867,7 +867,10 @@ fn run_bash(command: &str) -> Result<ToolOutcome, String> {
     if stdout.is_empty() && stderr.is_empty() {
         output.push_str("(no output)\n");
     }
-    Ok(ToolOutcome { output, truncated: false })
+    Ok(ToolOutcome {
+        output,
+        truncated: false,
+    })
 }
 
 /// The platform shell invocation for `command`.
@@ -899,7 +902,10 @@ fn run_read_file(path: &str) -> Result<ToolOutcome, String> {
     let bytes = fs::read(path).map_err(|error| format!("{path}: {error}"))?;
     let text = String::from_utf8(bytes)
         .map_err(|_| format!("{path}: not valid UTF-8; use bash to inspect binary files"))?;
-    Ok(ToolOutcome { output: text, truncated: false })
+    Ok(ToolOutcome {
+        output: text,
+        truncated: false,
+    })
 }
 
 fn run_write_file(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
@@ -908,12 +914,17 @@ fn run_write_file(arguments: &serde_json::Value) -> Result<ToolOutcome, String> 
     let target = Path::new(&path);
     if let Some(parent) = target.parent() {
         if !parent.as_os_str().is_empty() && !parent.is_dir() {
-            return Err(format!("{path}: parent directory does not exist; create it with bash first"));
+            return Err(format!(
+                "{path}: parent directory does not exist; create it with bash first"
+            ));
         }
     }
     let length = content.len();
     fs::write(target, content).map_err(|error| format!("{path}: {error}"))?;
-    Ok(ToolOutcome { output: format!("wrote {length} bytes to {path}\n"), truncated: false })
+    Ok(ToolOutcome {
+        output: format!("wrote {length} bytes to {path}\n"),
+        truncated: false,
+    })
 }
 
 fn run_list_dir(path: &str) -> Result<ToolOutcome, String> {
@@ -933,7 +944,10 @@ fn run_list_dir(path: &str) -> Result<ToolOutcome, String> {
     names.truncate(MAX_DIR_ENTRIES);
     let mut output = names.join("\n");
     if total > MAX_DIR_ENTRIES {
-        output.push_str(&format!("\n\u{2026}[{total} entries, showing {}]", MAX_DIR_ENTRIES));
+        output.push_str(&format!(
+            "\n\u{2026}[{total} entries, showing {}]",
+            MAX_DIR_ENTRIES
+        ));
     }
     output.push('\n');
     Ok(ToolOutcome {
@@ -950,10 +964,8 @@ mod tests {
     fn scratch(tag: &str) -> std::path::PathBuf {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "fleet-tools-{tag}-{}-{serial}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("fleet-tools-{tag}-{}-{serial}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("src")).unwrap();
         dir
@@ -994,12 +1006,23 @@ mod tests {
             "src/judge.rs",
             "pub fn judge_route(row: &Row) -> Verdict {\n    Verdict::default()\n}\n",
         );
-        write(&root, "src/route.rs", "pub fn route_of(row: &Row) -> Route {\n    Route::default()\n}\n");
-        write(&root, "docs/notes.md", "The `judge_route` helper grades a row.\n");
+        write(
+            &root,
+            "src/route.rs",
+            "pub fn route_of(row: &Row) -> Route {\n    Route::default()\n}\n",
+        );
+        write(
+            &root,
+            "docs/notes.md",
+            "The `judge_route` helper grades a row.\n",
+        );
 
         // Established as written: the concept is itself the term.
         let exact = convention_result(&root, &serde_json::json!({ "concept": "judge_route" }));
-        assert!(exact.starts_with("established term: judge_route"), "{exact}");
+        assert!(
+            exact.starts_with("established term: judge_route"),
+            "{exact}"
+        );
         assert!(exact.contains("src/judge.rs:1"), "{exact}");
 
         // A canonical near-neighbour: the anagram, named with its sites.
@@ -1014,7 +1037,10 @@ mod tests {
             variant.contains("case or separator variant of the established term `judge_route`"),
             "{variant}"
         );
-        assert!(variant.contains("rename to the established term"), "{variant}");
+        assert!(
+            variant.contains("rename to the established term"),
+            "{variant}"
+        );
 
         // An honest miss: a first-class answer, not a failure. The
         // concept's words are deliberate nonsense — a code file's
@@ -1030,14 +1056,20 @@ mod tests {
 
         // A missing concept is a named refusal, never a guess.
         let refused = convention_result(&root, &serde_json::json!({}));
-        assert!(refused.starts_with("error: `concept` is required"), "{refused}");
+        assert!(
+            refused.starts_with("error: `concept` is required"),
+            "{refused}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn bound_truncates_on_a_char_boundary() {
         let text = "\u{4e2d}".repeat(50_000);
-        let outcome = bound(ToolOutcome { output: text, truncated: false });
+        let outcome = bound(ToolOutcome {
+            output: text,
+            truncated: false,
+        });
         assert!(outcome.truncated);
         assert!(outcome.output.len() <= MAX_TOOL_OUTPUT + 64);
         assert!(outcome.output.contains("[truncated"));
@@ -1045,7 +1077,10 @@ mod tests {
 
     #[test]
     fn bound_leaves_small_output_alone() {
-        let outcome = bound(ToolOutcome { output: "tiny".into(), truncated: false });
+        let outcome = bound(ToolOutcome {
+            output: "tiny".into(),
+            truncated: false,
+        });
         assert!(!outcome.truncated);
         assert_eq!(outcome.output, "tiny");
     }
@@ -1071,7 +1106,9 @@ mod tests {
 
     #[test]
     fn bash_requires_a_string_command() {
-        let error = Tool::Bash.execute(&serde_json::json!({ "command": 7 })).unwrap_err();
+        let error = Tool::Bash
+            .execute(&serde_json::json!({ "command": 7 }))
+            .unwrap_err();
         assert!(error.contains("command"));
     }
 
@@ -1127,8 +1164,7 @@ mod tests {
 
     #[test]
     fn summarize_cuts_long_values() {
-        let summary =
-            Tool::Bash.summarize(&serde_json::json!({ "command": "x".repeat(200) }), 60);
+        let summary = Tool::Bash.summarize(&serde_json::json!({ "command": "x".repeat(200) }), 60);
         assert_eq!(summary.chars().count(), 61);
         assert!(summary.ends_with('\u{2026}'));
     }
@@ -1138,7 +1174,10 @@ mod tests {
         let spec = serde_json::to_value(use_skill_spec()).unwrap();
         assert_eq!(spec["function"]["name"], USE_SKILL_TOOL);
         assert_eq!(spec["function"]["parameters"]["required"][0], "name");
-        assert_eq!(spec["function"]["parameters"]["properties"]["name"]["type"], "string");
+        assert_eq!(
+            spec["function"]["parameters"]["properties"]["name"]["type"],
+            "string"
+        );
         // The closed four stay closed: `use_skill` is declared beside
         // them by the agent when a run carries skills, never inside them.
         assert_eq!(Tool::from_name(USE_SKILL_TOOL), None);
@@ -1152,15 +1191,30 @@ mod tests {
         // The brain_remember shape: structured fields, mechanism over
         // prose.
         for field in [
-            "name", "description", "type", "shape", "phrases", "missing", "basis", "tier",
-            "valid-until", "body",
+            "name",
+            "description",
+            "type",
+            "shape",
+            "phrases",
+            "missing",
+            "basis",
+            "tier",
+            "valid-until",
+            "body",
         ] {
-            assert!(parameters["properties"].get(field).is_some(), "remember lacks {field}");
+            assert!(
+                parameters["properties"].get(field).is_some(),
+                "remember lacks {field}"
+            );
         }
         // `basis` is required on every write; `valid-until` is required
         // by the working tier, which the description names.
-        let required: Vec<&str> =
-            parameters["required"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let required: Vec<&str> = parameters["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert_eq!(required, vec!["name", "description", "basis"]);
         assert_eq!(parameters["properties"]["basis"]["enum"][0], "confirmed-by");
         assert_eq!(parameters["properties"]["basis"]["enum"][1], "inferred");
@@ -1180,14 +1234,23 @@ mod tests {
         assert_eq!(missing["type"], "array");
         assert_eq!(missing["items"]["type"], "string");
         let description = spec["function"]["description"].as_str().unwrap();
-        assert!(description.contains("phrases records the resolution"), "{description}");
+        assert!(
+            description.contains("phrases records the resolution"),
+            "{description}"
+        );
         assert!(description.contains("anti-vector"), "{description}");
         assert!(description.contains("fail-open"), "{description}");
-        assert!(description.contains("basis is required on every write"), "{description}");
+        assert!(
+            description.contains("basis is required on every write"),
+            "{description}"
+        );
         // The third vector's instruction, in the tool's own words: the
         // owner's most-mistaken-for-done case is recordable at all.
         assert!(description.contains("INCOMPLETE"), "{description}");
-        assert!(description.contains("name those companions in missing"), "{description}");
+        assert!(
+            description.contains("name those companions in missing"),
+            "{description}"
+        );
         assert!(description.contains("fixed-width-clip"), "{description}");
         assert!(description.contains("foreign-root"), "{description}");
     }
@@ -1197,22 +1260,35 @@ mod tests {
         let spec = serde_json::to_value(supersede_spec()).unwrap();
         assert_eq!(spec["function"]["name"], SUPERSEDE_TOOL);
         let parameters = &spec["function"]["parameters"];
-        let required: Vec<&str> =
-            parameters["required"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let required: Vec<&str> = parameters["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert_eq!(required, vec!["name", "justification"]);
         // The modify path's replacement and its description are named,
         // and the permission model rides the description — the model
         // is the caller most likely to meet it.
         assert!(parameters["properties"].get("replacement").is_some());
         assert!(parameters["properties"].get("description").is_some());
-        assert!(spec["function"]["description"].as_str().unwrap().contains("confirmed-by"));
+        assert!(spec["function"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("confirmed-by"));
         // The third vector's inherit-or-clear rule is stated where the
         // model reads it: omit `missing` to keep the companions, pass an
         // empty list to clear them.
         assert!(parameters["properties"].get("missing").is_some());
         let description = spec["function"]["description"].as_str().unwrap();
-        assert!(description.contains("omit `missing` to keep the companions"), "{description}");
-        assert!(description.contains("explicit empty list to clear them"), "{description}");
+        assert!(
+            description.contains("omit `missing` to keep the companions"),
+            "{description}"
+        );
+        assert!(
+            description.contains("explicit empty list to clear them"),
+            "{description}"
+        );
     }
 
     #[test]
@@ -1223,8 +1299,12 @@ mod tests {
         // `goal` is the one required parameter: the child sees nothing of
         // the parent's conversation, so a goal that is not self-contained
         // is a task the child cannot do.
-        let required: Vec<&str> =
-            parameters["required"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let required: Vec<&str> = parameters["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert_eq!(required, vec!["goal"]);
         // `tools` narrows the admitted scope, and its enum is the whole
         // admissible set: the durable-write, lane, and delegation tools
@@ -1245,8 +1325,16 @@ mod tests {
         // again at the cap. The durable-write and lane tools are not,
         // and never are.
         assert!(admitted.contains(&SUBAGENT_TOOL), "{admitted:?}");
-        for excluded in [REMEMBER_TOOL, SUPERSEDE_TOOL, IMPROVE_TOOL, "mcp__sem1__probe"] {
-            assert!(!admitted.contains(&excluded), "{excluded} must not be admissible");
+        for excluded in [
+            REMEMBER_TOOL,
+            SUPERSEDE_TOOL,
+            IMPROVE_TOOL,
+            "mcp__sem1__probe",
+        ] {
+            assert!(
+                !admitted.contains(&excluded),
+                "{excluded} must not be admissible"
+            );
         }
         // The turn cap is bounded in the schema as well as at parse.
         let turns = &parameters["properties"]["max-turns"];
@@ -1264,7 +1352,10 @@ mod tests {
         // handed the goal alone.
         for part in ["context", "output", "approach", "role"] {
             let declared = &parameters["properties"][part];
-            assert_eq!(declared["type"], "string", "{part} must be declared a string");
+            assert_eq!(
+                declared["type"], "string",
+                "{part} must be declared a string"
+            );
         }
         assert!(description.contains("`context`"), "{description}");
         assert!(description.contains("`approach`"), "{description}");
@@ -1310,33 +1401,57 @@ mod tests {
         assert_eq!(lane_of("mcp__sem1__probe"), Some(("sem1", "probe")));
         // A tool name with an underscore in it still splits on the lane's
         // separator only.
-        assert_eq!(lane_of("mcp__sys1__sys1_classify"), Some(("sys1", "sys1_classify")));
+        assert_eq!(
+            lane_of("mcp__sys1__sys1_classify"),
+            Some(("sys1", "sys1_classify"))
+        );
         // Everything that is not a lane tool reads as not one.
-        for name in ["bash", "read_file", "mcp__sem1", "mcp__sem1__", "mcp____x", "sem1_probe"] {
+        for name in [
+            "bash",
+            "read_file",
+            "mcp__sem1",
+            "mcp__sem1__",
+            "mcp____x",
+            "sem1_probe",
+        ] {
             assert_eq!(lane_of(name), None, "{name} must not read as a lane tool");
         }
     }
 
     #[test]
     fn declarations_put_the_builtins_first_and_namespace_the_lanes() {
-        let lanes = vec![lane_roster("sem1", &[("probe", "probe the embeddings worker")])];
+        let lanes = vec![lane_roster(
+            "sem1",
+            &[("probe", "probe the embeddings worker")],
+        )];
         let specs = declarations(&lanes);
         // The four built-ins keep their names and their order, always.
         assert_eq!(specs.len(), 5);
         let names: Vec<String> = specs
             .iter()
-            .map(|spec| serde_json::to_value(spec).unwrap()["function"]["name"]
-                .as_str()
-                .unwrap()
-                .to_string())
+            .map(|spec| {
+                serde_json::to_value(spec).unwrap()["function"]["name"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
             .collect();
         assert_eq!(
             names,
-            vec!["bash", "read_file", "write_file", "list_dir", "mcp__sem1__probe"]
+            vec![
+                "bash",
+                "read_file",
+                "write_file",
+                "list_dir",
+                "mcp__sem1__probe"
+            ]
         );
         // The lane's own description and schema rode along verbatim.
         let lane = serde_json::to_value(&specs[4]).unwrap();
-        assert_eq!(lane["function"]["description"], "probe the embeddings worker");
+        assert_eq!(
+            lane["function"]["description"],
+            "probe the embeddings worker"
+        );
         assert_eq!(
             lane["function"]["parameters"]["properties"]["items"]["type"],
             "string"
@@ -1381,7 +1496,10 @@ mod tests {
         let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
         assert_eq!(own, vec!["sem1_embed", "sem1_probe"]);
         assert_eq!(tools[0].description, "embed");
-        assert_eq!(tools[1].input_schema, serde_json::json!({ "type": "object" }));
+        assert_eq!(
+            tools[1].input_schema,
+            serde_json::json!({ "type": "object" })
+        );
     }
 
     #[test]
@@ -1436,8 +1554,10 @@ mod tests {
     /// makes it callable: the agent's lookup is a `find` over these.
     fn each_name_resolves_to_one_tool(tools: &[LaneTool]) {
         for tool in tools {
-            let found: Vec<&LaneTool> =
-                tools.iter().filter(|candidate| candidate.name == tool.name).collect();
+            let found: Vec<&LaneTool> = tools
+                .iter()
+                .filter(|candidate| candidate.name == tool.name)
+                .collect();
             assert_eq!(
                 found.len(),
                 1,
@@ -1463,7 +1583,10 @@ mod tests {
         let tools = namespaced("sem1", &[listed("sem1_x"), listed("x")]);
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
         assert_eq!(names.len(), 2);
-        assert_ne!(names[0], names[1], "two tools must not share one declaration: {names:?}");
+        assert_ne!(
+            names[0], names[1],
+            "two tools must not share one declaration: {names:?}"
+        );
         each_name_resolves_to_one_tool(&tools);
         // Both ends of each mapping survive: the lane's own name is what
         // `tools/call` carries.
@@ -1478,7 +1601,10 @@ mod tests {
         // has to keep going rather than return the duplicate.
         let tools = namespaced("sem1", &[listed("sem1_x"), listed("x"), listed("x_2")]);
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
-        assert_eq!(names, vec!["mcp__sem1__x", "mcp__sem1__x_2", "mcp__sem1__x_2_2"]);
+        assert_eq!(
+            names,
+            vec!["mcp__sem1__x", "mcp__sem1__x_2", "mcp__sem1__x_2_2"]
+        );
         each_name_resolves_to_one_tool(&tools);
         let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
         assert_eq!(own, vec!["sem1_x", "x", "x_2"]);

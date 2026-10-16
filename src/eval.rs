@@ -96,11 +96,19 @@ struct ScriptedResponse {
 }
 
 fn stream(frames: Vec<String>) -> ScriptedResponse {
-    ScriptedResponse { status: "200 OK".to_string(), body: String::new(), sse: frames, delay_ms: 0 }
+    ScriptedResponse {
+        status: "200 OK".to_string(),
+        body: String::new(),
+        sse: frames,
+        delay_ms: 0,
+    }
 }
 
 fn content_delta(text: &str) -> String {
-    format!("data: {}", json!({ "choices": [{ "delta": { "content": text } }] }))
+    format!(
+        "data: {}",
+        json!({ "choices": [{ "delta": { "content": text } }] })
+    )
 }
 
 fn tool_call_delta(index: usize, id: &str, name: &str, arguments: &str) -> String {
@@ -112,7 +120,10 @@ fn tool_call_delta(index: usize, id: &str, name: &str, arguments: &str) -> Strin
 }
 
 fn finish_frame(reason: &str) -> String {
-    format!("data: {}", json!({ "choices": [{ "delta": {}, "finish_reason": reason }] }))
+    format!(
+        "data: {}",
+        json!({ "choices": [{ "delta": {}, "finish_reason": reason }] })
+    )
 }
 
 fn usage_frame(prompt: u64, completion: u64) -> String {
@@ -211,8 +222,7 @@ impl MockApi {
     /// recorded line is `{"head":…,"body":…}` where `body` is the request
     /// document as text, so it is parsed a second time into a value.
     fn bodies(&self) -> Vec<serde_json::Value> {
-        let text =
-            std::fs::read_to_string(self.scratch.join("requests.jsonl")).unwrap_or_default();
+        let text = std::fs::read_to_string(self.scratch.join("requests.jsonl")).unwrap_or_default();
         text.lines()
             .filter(|line| !line.is_empty())
             .filter_map(|line| {
@@ -233,7 +243,10 @@ impl MockApi {
                 messages
                     .iter()
                     .filter_map(|message| {
-                        message.get("role").and_then(|role| role.as_str()).map(str::to_string)
+                        message
+                            .get("role")
+                            .and_then(|role| role.as_str())
+                            .map(str::to_string)
                     })
                     .collect()
             })
@@ -303,7 +316,11 @@ fn start_over(
         .spawn()
         .map_err(|error| format!("the mock-server child could not be spawned: {error}"))?;
     let port = wait_for_port(&port_path, &mut child)?;
-    Ok(MockApi { child, port, scratch: scratch.to_path_buf() })
+    Ok(MockApi {
+        child,
+        port,
+        scratch: scratch.to_path_buf(),
+    })
 }
 
 /// Poll for the child's port file; a child that exits first, or a
@@ -344,7 +361,11 @@ pub fn mock_server_binary() -> Option<PathBuf> {
 /// binary finds the same child a `fleet eval` subprocess does. `None`
 /// when neither holds it, which the caller names rather than guessing at.
 fn sibling_binary(name: &str) -> Option<PathBuf> {
-    let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
+    let file = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
     let exe = std::env::current_exe().ok()?;
     let mut dir = exe.parent().map(Path::to_path_buf);
     // Three ancestors covers `deps/` under either profile and a binary
@@ -390,7 +411,10 @@ impl ScriptedLane {
     fn start(mcp_bin: &Path, entries: Vec<serde_json::Value>) -> Result<ScriptedLane, String> {
         let scratch = scratch_dir("blend1-lane")?;
         let script_path = scratch.join("script.jsonl");
-        let script = entries.iter().map(|entry| format!("{entry}\n")).collect::<String>();
+        let script = entries
+            .iter()
+            .map(|entry| format!("{entry}\n"))
+            .collect::<String>();
         std::fs::write(&script_path, script)
             .map_err(|error| format!("the lane script could not be written: {error}"))?;
         let child = Command::new(mcp_bin)
@@ -412,7 +436,11 @@ impl ScriptedLane {
     fn spec(&self) -> crate::mcp::ServerSpec {
         crate::mcp::ServerSpec {
             program: self.program.clone(),
-            args: vec![self.scratch.join("script.jsonl").to_string_lossy().into_owned()],
+            args: vec![self
+                .scratch
+                .join("script.jsonl")
+                .to_string_lossy()
+                .into_owned()],
             env: Vec::new(),
             passthrough: Vec::new(),
             cwd: None,
@@ -551,7 +579,11 @@ impl Scenario {
         family: ScenarioFamily,
         run: impl Fn(PathBuf) -> ScenarioFuture + 'static,
     ) -> Scenario {
-        Scenario { name, family, run: Box::new(run) }
+        Scenario {
+            name,
+            family,
+            run: Box::new(run),
+        }
     }
 
     /// Grade this scenario against the mock at `mock_bin`.
@@ -581,15 +613,21 @@ pub fn corpus() -> Vec<Scenario> {
         Scenario::new("two-turn-tool-loop", ScenarioFamily::ToolLoop, |bin| {
             Box::pin(two_turn_tool_loop(bin))
         }),
-        Scenario::new("session-corpus-replay", ScenarioFamily::SessionCorpus, |bin| {
-            Box::pin(session_corpus_replay(bin))
-        }),
-        Scenario::new("agent-continuation", ScenarioFamily::AgentContinuation, |bin| {
-            Box::pin(agent_continuation(bin))
-        }),
-        Scenario::new("conversation-fold", ScenarioFamily::ConversationFold, |bin| {
-            Box::pin(conversation_fold(bin))
-        }),
+        Scenario::new(
+            "session-corpus-replay",
+            ScenarioFamily::SessionCorpus,
+            |bin| Box::pin(session_corpus_replay(bin)),
+        ),
+        Scenario::new(
+            "agent-continuation",
+            ScenarioFamily::AgentContinuation,
+            |bin| Box::pin(agent_continuation(bin)),
+        ),
+        Scenario::new(
+            "conversation-fold",
+            ScenarioFamily::ConversationFold,
+            |bin| Box::pin(conversation_fold(bin)),
+        ),
         Scenario::new("subagent-delegation", ScenarioFamily::Subagent, |bin| {
             Box::pin(subagent_delegation(bin))
         }),
@@ -602,33 +640,43 @@ pub fn corpus() -> Vec<Scenario> {
         Scenario::new("memory-spillover-routes", ScenarioFamily::Memory, |bin| {
             Box::pin(memory_spillover_routes(bin))
         }),
-        Scenario::new("memory-failure-shape-recall", ScenarioFamily::Memory, |bin| {
-            Box::pin(memory_failure_shape_recall(bin))
-        }),
+        Scenario::new(
+            "memory-failure-shape-recall",
+            ScenarioFamily::Memory,
+            |bin| Box::pin(memory_failure_shape_recall(bin)),
+        ),
         Scenario::new("memory-phrases-round-trip", ScenarioFamily::Memory, |bin| {
             Box::pin(memory_phrases_round_trip(bin))
         }),
-        Scenario::new("blend1-grounded-fact", ScenarioFamily::GroundedLane, |bin| {
-            Box::pin(blend1_grounded_fact(bin))
-        }),
+        Scenario::new(
+            "blend1-grounded-fact",
+            ScenarioFamily::GroundedLane,
+            |bin| Box::pin(blend1_grounded_fact(bin)),
+        ),
         Scenario::new("blend1-escalation", ScenarioFamily::GroundedLane, |bin| {
             Box::pin(blend1_escalation(bin))
         }),
         Scenario::new("blend1-reprocess", ScenarioFamily::GroundedLane, |bin| {
             Box::pin(blend1_reprocess(bin))
         }),
-        Scenario::new("blend1-corpus-recall", ScenarioFamily::GroundedLane, |bin| {
-            Box::pin(blend1_corpus_recall(bin))
-        }),
+        Scenario::new(
+            "blend1-corpus-recall",
+            ScenarioFamily::GroundedLane,
+            |bin| Box::pin(blend1_corpus_recall(bin)),
+        ),
         Scenario::new("explain-the-verdict", ScenarioFamily::Explain, |bin| {
             Box::pin(explain_the_verdict(bin))
         }),
-        Scenario::new("calibration-loop-closes", ScenarioFamily::Calibration, |bin| {
-            Box::pin(calibration_loop_closes(bin))
-        }),
-        Scenario::new("delegation-loop-closes", ScenarioFamily::Delegation, |bin| {
-            Box::pin(delegation_loop_closes(bin))
-        }),
+        Scenario::new(
+            "calibration-loop-closes",
+            ScenarioFamily::Calibration,
+            |bin| Box::pin(calibration_loop_closes(bin)),
+        ),
+        Scenario::new(
+            "delegation-loop-closes",
+            ScenarioFamily::Delegation,
+            |bin| Box::pin(delegation_loop_closes(bin)),
+        ),
         Scenario::new("nomenclature-guard", ScenarioFamily::Nomenclature, |bin| {
             Box::pin(nomenclature_guard(bin))
         }),
@@ -685,12 +733,18 @@ impl EvalReport {
 
     /// The scenarios that passed.
     pub fn passed(&self) -> usize {
-        self.scenarios.iter().filter(|scenario| scenario.passed).count()
+        self.scenarios
+            .iter()
+            .filter(|scenario| scenario.passed)
+            .count()
     }
 
     /// The scenarios that failed, named, in corpus order.
     pub fn failed(&self) -> Vec<&ScenarioOutcome> {
-        self.scenarios.iter().filter(|scenario| !scenario.passed).collect()
+        self.scenarios
+            .iter()
+            .filter(|scenario| !scenario.passed)
+            .collect()
     }
 
     /// The aggregate score: `passed / total`, or 1.0 for an empty corpus.
@@ -708,7 +762,10 @@ impl EvalReport {
 
     /// The names of the scenarios that regressed, in corpus order.
     pub fn regressions(&self) -> Vec<String> {
-        self.failed().into_iter().map(|scenario| scenario.scenario.clone()).collect()
+        self.failed()
+            .into_iter()
+            .map(|scenario| scenario.scenario.clone())
+            .collect()
     }
 
     /// The one `eval_corpus` row this run lands, stamped `ts`.
@@ -760,7 +817,9 @@ pub async fn run(root: &Path, mock_bin: &Path) -> EvalReport {
 /// the corpus has not run today. The backing read for `fleet eval --last`.
 pub fn last_row(root: &Path) -> Option<calib::ReadRow> {
     let rows = calib::read_day(root, &calib::today(), calib::READ_CAP);
-    rows.into_iter().rev().find(|row| row.op == calib::OP_EVAL_CORPUS)
+    rows.into_iter()
+        .rev()
+        .find(|row| row.op == calib::OP_EVAL_CORPUS)
 }
 
 // --- the improve-gate probe ----------------------------------------------
@@ -811,7 +870,9 @@ pub fn subprocess_probe(gate_root: &Path) -> EvalProbe {
     // The binary the probe will grade: the current executable, but
     // only when it lives under the gate root's target/ directory —
     // the freshly-built binary the four cargo steps produced.
-    let resolved = std::env::current_exe().ok().filter(|exe| under_target(exe, &target_root));
+    let resolved = std::env::current_exe()
+        .ok()
+        .filter(|exe| under_target(exe, &target_root));
     Arc::new(move || {
         let Some(exe) = resolved.clone() else {
             return Err(format!(
@@ -828,7 +889,9 @@ pub fn subprocess_probe(gate_root: &Path) -> EvalProbe {
 /// `/private/tmp`), so a lexical prefix check would refuse the
 /// freshly-built binary on a symlinked path.
 fn under_target(exe: &Path, target_root: &Path) -> bool {
-    let root = target_root.canonicalize().unwrap_or_else(|_| target_root.to_path_buf());
+    let root = target_root
+        .canonicalize()
+        .unwrap_or_else(|_| target_root.to_path_buf());
     let exe = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
     exe.starts_with(&root)
 }
@@ -853,9 +916,7 @@ fn grade_output(output: &std::process::Output) -> Result<(), String> {
         .filter(|names| !names.is_empty());
     match named {
         Some(names) => Err(format!("the eval corpus regressed: {names}")),
-        None => {
-            Err("the eval corpus regressed (run `fleet eval` for the detail)".to_string())
-        }
+        None => Err("the eval corpus regressed (run `fleet eval` for the detail)".to_string()),
     }
 }
 
@@ -917,7 +978,13 @@ fn run_eval_subprocess(
     let deadline = std::time::Instant::now() + PROBE_EXIT_GRACE;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Ok(std::process::Output { status, stdout, stderr }),
+            Ok(Some(status)) => {
+                return Ok(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                })
+            }
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(25));
             }
@@ -1014,11 +1081,17 @@ fn scenario_card(scenario: &ScenarioOutcome) -> String {
         name = scenario.scenario,
         dashes = dashes_for(&format!(" {} ", scenario.scenario), state),
     );
-    let mut lines = vec![format!("{DIM}\u{2502}{RESET} {DIM}{}{RESET}", scenario.family)];
+    let mut lines = vec![format!(
+        "{DIM}\u{2502}{RESET} {DIM}{}{RESET}",
+        scenario.family
+    )];
     if let Some(failure) = &scenario.failure {
         lines.push(format!("{DIM}\u{2502}{RESET} {WARN}{failure}{RESET}"));
     }
-    let bottom = format!("{DIM}\u{2514}{}\u{2518}{RESET}", "\u{2500}".repeat(CARD_WIDTH - 2));
+    let bottom = format!(
+        "{DIM}\u{2514}{}\u{2518}{RESET}",
+        "\u{2500}".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -1093,7 +1166,10 @@ fn scratch_dir(tag: &str) -> Result<PathBuf, String> {
         std::process::id(),
     ));
     std::fs::create_dir_all(&dir).map_err(|error| {
-        format!("the scratch dir {} could not be created: {error}", dir.display())
+        format!(
+            "the scratch dir {} could not be created: {error}",
+            dir.display()
+        )
     })?;
     Ok(dir)
 }
@@ -1133,7 +1209,7 @@ async fn drive_over(
         lane_specs,
         calib: None,
         skills: Vec::new(),
-            compact_now: false,
+        compact_now: false,
         role_overlay: None,
         memory,
         scope: None,
@@ -1217,8 +1293,15 @@ async fn two_turn_tool_loop(mock_bin: PathBuf) -> ScenarioOutcome {
     };
     let result = match create_session(&home, NAME, family) {
         Ok(mut session) => {
-            let outcome =
-                drive(&mock, &mut session, Box::new(ApproveAll), 5, None, "say hello").await;
+            let outcome = drive(
+                &mock,
+                &mut session,
+                Box::new(ApproveAll),
+                5,
+                None,
+                "say hello",
+            )
+            .await;
             let records = session::replay(&session.path()).unwrap_or_default();
             // The third record is the assistant's call, read through a
             // checked access: a short log grades the check failed
@@ -1237,15 +1320,20 @@ async fn two_turn_tool_loop(mock_bin: PathBuf) -> ScenarioOutcome {
                         NAME,
                         family,
                         &[
-                            ("the run completed", report.stop_reason == StopReason::Completed),
+                            (
+                                "the run completed",
+                                report.stop_reason == StopReason::Completed,
+                            ),
                             ("two turns", report.turns == 2),
                             (
                                 "the final answer",
                                 report.final_message.as_deref() == Some("All done."),
                             ),
                             ("both requests streamed with usage", bodies.len() == 2),
-                            ("the second request saw the tool result", mock.roles(1)
-                                == vec!["system", "user", "assistant", "tool"]),
+                            (
+                                "the second request saw the tool result",
+                                mock.roles(1) == vec!["system", "user", "assistant", "tool"],
+                            ),
                             ("the log reconstructs the turn", records.len() == 6),
                             ("the assistant record carries its call", assistant_call),
                         ],
@@ -1293,8 +1381,15 @@ async fn session_corpus_replay(mock_bin: PathBuf) -> ScenarioOutcome {
     };
     let result = match create_session(&home, NAME, family) {
         Ok(mut session) => {
-            let outcome =
-                drive(&mock, &mut session, Box::new(ApproveAll), 5, None, "replay me").await;
+            let outcome = drive(
+                &mock,
+                &mut session,
+                Box::new(ApproveAll),
+                5,
+                None,
+                "replay me",
+            )
+            .await;
             match outcome {
                 Err(error) => {
                     ScenarioOutcome::fail(NAME, family, format!("the run failed: {error}"))
@@ -1327,9 +1422,7 @@ async fn session_corpus_replay(mock_bin: PathBuf) -> ScenarioOutcome {
                             messages
                                 .iter()
                                 .skip(1)
-                                .filter_map(|message| {
-                                    serde_json::from_value(message.clone()).ok()
-                                })
+                                .filter_map(|message| serde_json::from_value(message.clone()).ok())
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -1338,10 +1431,15 @@ async fn session_corpus_replay(mock_bin: PathBuf) -> ScenarioOutcome {
                         family,
                         &[
                             ("the log reconstructs", records.len() == 6),
-                            ("the replayed conversation matches the request", replayed == sent),
+                            (
+                                "the replayed conversation matches the request",
+                                replayed == sent,
+                            ),
                             (
                                 "the reconstructed assistant carries its call",
-                                replayed.iter().any(|message| !message.tool_calls.is_empty()),
+                                replayed
+                                    .iter()
+                                    .any(|message| !message.tool_calls.is_empty()),
                             ),
                         ],
                     )
@@ -1388,15 +1486,20 @@ async fn agent_continuation(mock_bin: PathBuf) -> ScenarioOutcome {
     };
     let result = match create_session(&home, NAME, family) {
         Ok(mut session) => {
-            let first =
-                drive(&mock, &mut session, Box::new(ApproveAll), 5, None, "first task").await;
+            let first = drive(
+                &mock,
+                &mut session,
+                Box::new(ApproveAll),
+                5,
+                None,
+                "first task",
+            )
+            .await;
             let log_path = session.path().to_path_buf();
             match first {
-                Err(error) => ScenarioOutcome::fail(
-                    NAME,
-                    family,
-                    format!("the first run failed: {error}"),
-                ),
+                Err(error) => {
+                    ScenarioOutcome::fail(NAME, family, format!("the first run failed: {error}"))
+                }
                 Ok(_) => match open_session(&log_path, NAME, family) {
                     Ok(mut resumed) => {
                         match drive(
@@ -1426,8 +1529,12 @@ async fn agent_continuation(mock_bin: PathBuf) -> ScenarioOutcome {
                                         "the resumed request carried the prior turns",
                                         mock.roles(2)
                                             == vec![
-                                                "system", "user", "assistant", "tool",
-                                                "assistant", "user",
+                                                "system",
+                                                "user",
+                                                "assistant",
+                                                "tool",
+                                                "assistant",
+                                                "user",
                                             ],
                                     ),
                                     (
@@ -1487,23 +1594,31 @@ async fn conversation_fold(mock_bin: PathBuf) -> ScenarioOutcome {
             )
         }
     };
-    let result = match create_session(&home, NAME, family) {
-        Ok(mut session) => {
-            let outcome =
-                drive(&mock, &mut session, Box::new(ApproveAll), 20, None, "the task").await;
-            let records = session::replay(&session.path()).unwrap_or_default();
-            match outcome {
-                Err(error) => {
-                    ScenarioOutcome::fail(NAME, family, format!("the run failed: {error}"))
-                }
-                Ok(report) => {
-                    let folded = records
-                        .iter()
-                        .any(|record| matches!(record, Record::Compaction { .. }));
-                    // The post-fold request (the eighth) opens on the framed
-                    // summary; the tail rides verbatim after it.
-                    let post_fold = mock.message_text(7, 1).unwrap_or_default();
-                    grade(
+    let result =
+        match create_session(&home, NAME, family) {
+            Ok(mut session) => {
+                let outcome = drive(
+                    &mock,
+                    &mut session,
+                    Box::new(ApproveAll),
+                    20,
+                    None,
+                    "the task",
+                )
+                .await;
+                let records = session::replay(&session.path()).unwrap_or_default();
+                match outcome {
+                    Err(error) => {
+                        ScenarioOutcome::fail(NAME, family, format!("the run failed: {error}"))
+                    }
+                    Ok(report) => {
+                        let folded = records
+                            .iter()
+                            .any(|record| matches!(record, Record::Compaction { .. }));
+                        // The post-fold request (the eighth) opens on the framed
+                        // summary; the tail rides verbatim after it.
+                        let post_fold = mock.message_text(7, 1).unwrap_or_default();
+                        grade(
                         NAME,
                         family,
                         &[
@@ -1521,11 +1636,11 @@ async fn conversation_fold(mock_bin: PathBuf) -> ScenarioOutcome {
                             ),
                         ],
                     )
+                    }
                 }
             }
-        }
-        Err(failure) => failure,
-    };
+            Err(failure) => failure,
+        };
     std::fs::remove_dir_all(&home).ok();
     result
 }
@@ -1569,9 +1684,15 @@ async fn subagent_delegation(mock_bin: PathBuf) -> ScenarioOutcome {
     };
     let result = match create_session(&home, NAME, family) {
         Ok(mut session) => {
-            let outcome =
-                drive(&mock, &mut session, Box::new(ApproveAll), 5, None, "delegate the count")
-                    .await;
+            let outcome = drive(
+                &mock,
+                &mut session,
+                Box::new(ApproveAll),
+                5,
+                None,
+                "delegate the count",
+            )
+            .await;
             match outcome {
                 Err(error) => {
                     ScenarioOutcome::fail(NAME, family, format!("the run failed: {error}"))
@@ -1585,9 +1706,12 @@ async fn subagent_delegation(mock_bin: PathBuf) -> ScenarioOutcome {
                         .collect();
                     // The parent's log carries the delegation call and its result.
                     let subagent_result = parent_records.iter().find_map(|record| match record {
-                        Record::ToolResult { name, output, approved, .. } if name == "subagent" => {
-                            Some((output.clone(), *approved))
-                        }
+                        Record::ToolResult {
+                            name,
+                            output,
+                            approved,
+                            ..
+                        } if name == "subagent" => Some((output.clone(), *approved)),
                         _ => None,
                     });
                     let delegation_ok = match &subagent_result {
@@ -1602,7 +1726,10 @@ async fn subagent_delegation(mock_bin: PathBuf) -> ScenarioOutcome {
                         &[
                             ("two sessions exist", summaries.len() == 2),
                             ("one child log", children.len() == 1),
-                            ("the parent's log carries the delegation result", delegation_ok),
+                            (
+                                "the parent's log carries the delegation result",
+                                delegation_ok,
+                            ),
                         ],
                     )
                 }
@@ -1643,12 +1770,24 @@ async fn memory_recall(mock_bin: PathBuf) -> ScenarioOutcome {
     // that faults grades the scenario rather than panicking.
     let written = std::fs::write(
         corpus.join("identity.md"),
-        fact_file("identity", "the owner's standing rule about the gate", "confirmed-by", "feedback", ""),
+        fact_file(
+            "identity",
+            "the owner's standing rule about the gate",
+            "confirmed-by",
+            "feedback",
+            "",
+        ),
     )
     .and_then(|()| {
         std::fs::write(
             corpus.join("top.md"),
-            fact_file("top", "the railway deploy is failing per branch", "inferred", "project", "deploy"),
+            fact_file(
+                "top",
+                "the railway deploy is failing per branch",
+                "inferred",
+                "project",
+                "deploy",
+            ),
         )
     });
     let result = match written {
@@ -1685,15 +1824,15 @@ async fn memory_recall(mock_bin: PathBuf) -> ScenarioOutcome {
                     .await;
                     let records = session::replay(&session.path()).unwrap_or_default();
                     match outcome {
-                        Err(error) => ScenarioOutcome::fail(
-                            NAME,
-                            family,
-                            format!("the run failed: {error}"),
-                        ),
+                        Err(error) => {
+                            ScenarioOutcome::fail(NAME, family, format!("the run failed: {error}"))
+                        }
                         Ok(_) => {
                             let system = mock.system(0);
                             let memory_record = records.iter().find_map(|record| match record {
-                                Record::Memory { shape, facts } => Some((shape.clone(), facts.clone())),
+                                Record::Memory { shape, facts } => {
+                                    Some((shape.clone(), facts.clone()))
+                                }
                                 _ => None,
                             });
                             let memory_ok = match &memory_record {
@@ -1707,7 +1846,10 @@ async fn memory_recall(mock_bin: PathBuf) -> ScenarioOutcome {
                                 NAME,
                                 family,
                                 &[
-                                    ("the request carried the memory block", system.contains("## Memory")),
+                                    (
+                                        "the request carried the memory block",
+                                        system.contains("## Memory"),
+                                    ),
                                     (
                                         "the recalled fact entered the prompt",
                                         system.contains("the railway deploy is failing per branch"),
@@ -1760,8 +1902,12 @@ fn trajectory_fact_file(
 /// Write one fact file into a scenario's scratch corpus. A fault is a
 /// named error the scenario grades — a driver never panics.
 fn write_fact_file(root: &Path, name: &str, text: &str) -> Result<(), String> {
-    std::fs::create_dir_all(root)
-        .map_err(|error| format!("the scratch dir {} could not be made: {error}", root.display()))?;
+    std::fs::create_dir_all(root).map_err(|error| {
+        format!(
+            "the scratch dir {} could not be made: {error}",
+            root.display()
+        )
+    })?;
     std::fs::write(root.join(format!("{name}.md")), text)
         .map_err(|error| format!("the fact {name} could not be written: {error}"))
 }
@@ -1816,7 +1962,13 @@ async fn memory_shape_inversion(_bin: PathBuf) -> ScenarioOutcome {
         &[
             (
                 "same-shape",
-                fact_file("same-shape", "the branch pipeline is green", "confirmed-by", "project", "deploy"),
+                fact_file(
+                    "same-shape",
+                    "the branch pipeline is green",
+                    "confirmed-by",
+                    "project",
+                    "deploy",
+                ),
             ),
             (
                 "wrong-shape",
@@ -1840,7 +1992,10 @@ async fn memory_shape_inversion(_bin: PathBuf) -> ScenarioOutcome {
     let memory = Memory::load_with(&corpus, Box::new(memory::KeywordOnly));
     let partition = memory.partition("the railway deploy is failing");
     let same = partition.primary.first().expect("the pool has its fact");
-    let wrong = partition.spillover.first().expect("the spillover has its fact");
+    let wrong = partition
+        .spillover
+        .first()
+        .expect("the spillover has its fact");
     let ranked = memory.recall("the railway deploy is failing");
     let order = hit_names(&ranked);
     std::fs::remove_dir_all(&corpus).ok();
@@ -1848,9 +2003,18 @@ async fn memory_shape_inversion(_bin: PathBuf) -> ScenarioOutcome {
         NAME,
         family,
         &[
-            ("the instruction classifies into the shape", partition.shape == Some("deploy")),
-            ("the same-shape fact is the primary pool", hit_names(&partition.primary) == ["same-shape"]),
-            ("the wrong-shape fact is spillover", hit_names(&partition.spillover) == ["wrong-shape"]),
+            (
+                "the instruction classifies into the shape",
+                partition.shape == Some("deploy"),
+            ),
+            (
+                "the same-shape fact is the primary pool",
+                hit_names(&partition.primary) == ["same-shape"],
+            ),
+            (
+                "the wrong-shape fact is spillover",
+                hit_names(&partition.spillover) == ["wrong-shape"],
+            ),
             (
                 "the word evidence is on the wrong-shape side",
                 wrong.score.total > same.score.total,
@@ -1859,7 +2023,10 @@ async fn memory_shape_inversion(_bin: PathBuf) -> ScenarioOutcome {
                 "the shape's own answer leads the ranking",
                 order == ["same-shape", "wrong-shape"],
             ),
-            ("the off-shape fact is marked", !same.off_shape && wrong.off_shape),
+            (
+                "the off-shape fact is marked",
+                !same.off_shape && wrong.off_shape,
+            ),
         ],
     )
 }
@@ -1882,7 +2049,13 @@ async fn memory_spillover_routes(_bin: PathBuf) -> ScenarioOutcome {
         "memory-spill-empty",
         &[(
             "off-one",
-            fact_file("off-one", "the railway deploy is failing per branch", "confirmed-by", "project", "rendering"),
+            fact_file(
+                "off-one",
+                "the railway deploy is failing per branch",
+                "confirmed-by",
+                "project",
+                "rendering",
+            ),
         )],
     ) {
         Ok(corpus) => corpus,
@@ -1890,8 +2063,14 @@ async fn memory_spillover_routes(_bin: PathBuf) -> ScenarioOutcome {
     };
     let empty_pool = Memory::load_with(&route_a, Box::new(memory::KeywordOnly));
     let empty = empty_pool.assemble_within("the railway deploy is failing", &[], 1);
-    checks.push(("route (a): the off-shape fact is the answer", hit_names(&empty.recalled) == ["off-one"]));
-    checks.push(("route (a): it is marked off-shape", empty.recalled.first().is_some_and(|hit| hit.off_shape)));
+    checks.push((
+        "route (a): the off-shape fact is the answer",
+        hit_names(&empty.recalled) == ["off-one"],
+    ));
+    checks.push((
+        "route (a): it is marked off-shape",
+        empty.recalled.first().is_some_and(|hit| hit.off_shape),
+    ));
     checks.push((
         "route (a): the route names the empty pool",
         empty
@@ -1911,7 +2090,13 @@ async fn memory_spillover_routes(_bin: PathBuf) -> ScenarioOutcome {
         &[
             (
                 "same-shape",
-                fact_file("same-shape", "the branch pipeline is green", "confirmed-by", "project", "deploy"),
+                fact_file(
+                    "same-shape",
+                    "the branch pipeline is green",
+                    "confirmed-by",
+                    "project",
+                    "deploy",
+                ),
             ),
             (
                 "wrong-shape",
@@ -1938,8 +2123,7 @@ async fn memory_spillover_routes(_bin: PathBuf) -> ScenarioOutcome {
     ));
     checks.push((
         "route (b): the route names the floor",
-        weak
-            .spillover_route
+        weak.spillover_route
             .as_deref()
             .is_some_and(|route| route.contains("below the SPILLOVER_FLOOR")),
     ));
@@ -1967,7 +2151,13 @@ async fn memory_spillover_routes(_bin: PathBuf) -> ScenarioOutcome {
             ),
             (
                 "off-shape-fact",
-                fact_file("off-shape-fact", "the railway deploy is failing", "confirmed-by", "project", "rendering"),
+                fact_file(
+                    "off-shape-fact",
+                    "the railway deploy is failing",
+                    "confirmed-by",
+                    "project",
+                    "rendering",
+                ),
             ),
         ],
     ) {
@@ -1979,7 +2169,10 @@ async fn memory_spillover_routes(_bin: PathBuf) -> ScenarioOutcome {
     let best = partition.best().unwrap_or(0.0);
     let room = strong_pool.assemble("the railway deploy is failing", &[]);
     let tight = strong_pool.assemble_within("the railway deploy is failing", &[], 1);
-    checks.push(("the floor's other side: the pool clears it", best >= crate::memory::SPILLOVER_FLOOR));
+    checks.push((
+        "the floor's other side: the pool clears it",
+        best >= crate::memory::SPILLOVER_FLOOR,
+    ));
     checks.push((
         "route (c): the budget had room, so the off-shape fact enters",
         hit_names(&room.recalled) == ["strong", "off-shape-fact"],
@@ -2064,7 +2257,8 @@ async fn memory_failure_shape_recall(_bin: PathBuf) -> ScenarioOutcome {
     let failure = memory.partition("the row vanished from the stream");
     let rendering = memory.partition("the shader layout repaints every frame");
     let bound = memory.partition("the tower scan read was unbounded");
-    let block = crate::memory::render_assembly(&memory.assemble("the row vanished from the stream", &[]));
+    let block =
+        crate::memory::render_assembly(&memory.assemble("the row vanished from the stream", &[]));
     let signs: Vec<crate::memory::Sign> =
         failure.primary.iter().map(|hit| hit.fact.sign()).collect();
     std::fs::remove_dir_all(&corpus).ok();
@@ -2072,7 +2266,10 @@ async fn memory_failure_shape_recall(_bin: PathBuf) -> ScenarioOutcome {
         NAME,
         family,
         &[
-            ("the instruction classifies into the failure shape", failure.shape == Some("drops-the-row")),
+            (
+                "the instruction classifies into the failure shape",
+                failure.shape == Some("drops-the-row"),
+            ),
             (
                 "the failure pool is the shape's own facts",
                 hit_names(&failure.primary) == ["what-broke", "what-fixed-it", "what-stalled"],
@@ -2096,12 +2293,17 @@ async fn memory_failure_shape_recall(_bin: PathBuf) -> ScenarioOutcome {
             ),
             (
                 "either axis matches a both-axes fact",
-                rendering.primary.iter().any(|hit| hit.fact.name == "both-axes")
+                rendering
+                    .primary
+                    .iter()
+                    .any(|hit| hit.fact.name == "both-axes")
                     && bound.primary.iter().any(|hit| hit.fact.name == "both-axes"),
             ),
             (
                 "the legend names every sign",
-                block.contains("resolved:") && block.contains("diverged:") && block.contains("incomplete:"),
+                block.contains("resolved:")
+                    && block.contains("diverged:")
+                    && block.contains("incomplete:"),
             ),
         ],
     )
@@ -2126,7 +2328,10 @@ async fn memory_phrases_round_trip(_bin: PathBuf) -> ScenarioOutcome {
                     "the deploy credential rule",
                     "confirmed-by",
                     "deploy",
-                    &["read CLAUDE.local.md directly", "never grep-extract credentials"],
+                    &[
+                        "read CLAUDE.local.md directly",
+                        "never grep-extract credentials",
+                    ],
                     &[],
                     0,
                 ),
@@ -2163,11 +2368,23 @@ async fn memory_phrases_round_trip(_bin: PathBuf) -> ScenarioOutcome {
         NAME,
         family,
         &[
-            ("the phrase-carrying fact is the only hit", ranked == ["deploy-credentials-rule"]),
-            ("the trajectory channel matched it", (trajectory - 0.625).abs() < 1e-9),
-            ("the topical channels barely did", (keyword - 0.125).abs() < 1e-9),
+            (
+                "the phrase-carrying fact is the only hit",
+                ranked == ["deploy-credentials-rule"],
+            ),
+            (
+                "the trajectory channel matched it",
+                (trajectory - 0.625).abs() < 1e-9,
+            ),
+            (
+                "the topical channels barely did",
+                (keyword - 0.125).abs() < 1e-9,
+            ),
             ("it is the shape's own pool", primary),
-            ("the twin with no direction is absent", !ranked.contains(&"deploy-credentials-twin")),
+            (
+                "the twin with no direction is absent",
+                !ranked.contains(&"deploy-credentials-twin"),
+            ),
             (
                 "the surface cards the resolution's vocabulary",
                 cards.contains("drove: read CLAUDE.local.md directly"),
@@ -2305,9 +2522,9 @@ async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
             "the mock-mcp binary was not found beside the fleet executable; the lane seam cannot run",
         );
     };
-    let (home, root) = match scratch_dir("explain-home").and_then(|home| {
-        scratch_dir("explain-calib").map(|root| (home, root))
-    }) {
+    let (home, root) = match scratch_dir("explain-home")
+        .and_then(|home| scratch_dir("explain-calib").map(|root| (home, root)))
+    {
         Ok(pair) => pair,
         Err(error) => return ScenarioOutcome::fail(NAME, family, error),
     };
@@ -2324,7 +2541,8 @@ async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
     }
     // The proposal the gate refused: filed through the tool's own path,
     // so the drift guard's stamping is the real one.
-    let change = r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
+    let change =
+        r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
     let filed = crate::improve::file_from_tool(
         &home,
         &repo,
@@ -2359,7 +2577,11 @@ async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
         verdict: calib::VERDICT_REFUSED.to_string(),
         reason: "test failed: the_ranker_orders_a_corpus".to_string(),
         gate: vec![
-            calib::GateStepRow { step: "fmt".to_string(), ok: true, detail: "ok".to_string() },
+            calib::GateStepRow {
+                step: "fmt".to_string(),
+                ok: true,
+                detail: "ok".to_string(),
+            },
             calib::GateStepRow {
                 step: "test".to_string(),
                 ok: false,
@@ -2419,10 +2641,15 @@ async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
     let row_text = serde_json::to_string(row).unwrap_or_default();
     checks.push((
         "the row is redacted",
-        !row_text.contains(EXPLANATION) && !row_text.contains("GATE OP") && !row_text.contains("ARTIFACT"),
+        !row_text.contains(EXPLANATION)
+            && !row_text.contains("GATE OP")
+            && !row_text.contains("ARTIFACT"),
     ));
     checks.push(("the row carries the eval-only marker", row.eval_only));
-    checks.push(("the row joins on the artifact's sha", row.input_sha256 == artifact_sha));
+    checks.push((
+        "the row joins on the artifact's sha",
+        row.input_sha256 == artifact_sha,
+    ));
     // The text is recoverable by its sha: the file the row indexes
     // hashes to the sha the row recorded.
     let path = crate::explain::explanation_path(&home, &row.input_sha256);
@@ -2458,7 +2685,10 @@ async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
         lane: crate::explain::LaneSource::Scripted(lane.spec()),
     })
     .await;
-    checks.push(("the dry run spends nothing", dry.row.is_none() && dry.refusal.is_none()));
+    checks.push((
+        "the dry run spends nothing",
+        dry.row.is_none() && dry.refusal.is_none(),
+    ));
     checks.push((
         "the dry run's card shows what would be asked",
         dry.card.contains("dry run") && dry.card.contains("no ask, no row, no file"),
@@ -2500,7 +2730,9 @@ async fn explain_the_verdict(_mock_bin: PathBuf) -> ScenarioOutcome {
     ));
     checks.push((
         "the fail-open refusal carries the lane's own error",
-        fail.refusal.as_deref().is_some_and(|reason| reason.contains("LIQUID_API_KEY")),
+        fail.refusal
+            .as_deref()
+            .is_some_and(|reason| reason.contains("LIQUID_API_KEY")),
     ));
     checks.push((
         "the fail-open lands no second row and no fallback file",
@@ -2685,7 +2917,11 @@ fn calibration_day_rows() -> Vec<serde_json::Value> {
 fn write_day_file(root: &Path, day: &str, rows: &[serde_json::Value]) {
     let path = calib::day_path(root, day);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let text = rows.iter().map(|row| row.to_string()).collect::<Vec<_>>().join("\n");
+    let text = rows
+        .iter()
+        .map(|row| row.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
     std::fs::write(&path, format!("{text}\n")).unwrap();
 }
 
@@ -2706,8 +2942,18 @@ fn calibration_roster() -> Vec<route::Resolved> {
         key: None,
     };
     vec![
-        candidate("router-kit", "http://127.0.0.1:8300/v1", "AGNOSTIC_ROUTER_TOKEN", &["auto"]),
-        candidate("zai-coding-plan", "https://api.z.ai", "ZAI_CODING_API_KEY", &["GLM-5.3-Flash"]),
+        candidate(
+            "router-kit",
+            "http://127.0.0.1:8300/v1",
+            "AGNOSTIC_ROUTER_TOKEN",
+            &["auto"],
+        ),
+        candidate(
+            "zai-coding-plan",
+            "https://api.z.ai",
+            "ZAI_CODING_API_KEY",
+            &["GLM-5.3-Flash"],
+        ),
         candidate(
             "xiaomi-mimo",
             "https://token-plan-sgp.xiaomimimo.com/v1",
@@ -2749,8 +2995,10 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     let day_rows = calibration_day_rows();
     write_day_file(&root, &day, &day_rows);
     let rows = calib::read_day(&root, &day, 64);
-    let route_rows: Vec<&calib::ReadRow> =
-        rows.iter().filter(|row| row.op == calib::OP_ROUTE).collect();
+    let route_rows: Vec<&calib::ReadRow> = rows
+        .iter()
+        .filter(|row| row.op == calib::OP_ROUTE)
+        .collect();
     if route_rows.len() != 10 {
         return ScenarioOutcome::fail(
             NAME,
@@ -2768,9 +3016,11 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     // serves the entry keyed on that route row's own `input hash`, which
     // is what makes the walk reach the rows rather than every ask
     // receiving the script's first answer.
-    let answers: Vec<serde_json::Value> =
-        (0..10u32).map(|index| sys1_answer("hard", 0.95 - index as f64 * 0.05)).collect();
-    let lane = match ScriptedLane::start(&mcp_bin, judge_lane_entries(&answers, &judge_hashes(10))) {
+    let answers: Vec<serde_json::Value> = (0..10u32)
+        .map(|index| sys1_answer("hard", 0.95 - index as f64 * 0.05))
+        .collect();
+    let lane = match ScriptedLane::start(&mcp_bin, judge_lane_entries(&answers, &judge_hashes(10)))
+    {
         Ok(lane) => lane,
         Err(error) => return ScenarioOutcome::fail(NAME, family, error),
     };
@@ -2789,7 +3039,10 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     .await;
     checks.push(("the dry run refuses nothing", dry.refusal.is_none()));
     checks.push(("the dry run lands no row", dry.judged.is_empty()));
-    checks.push(("the dry run rehearses every unjudged route row", dry.dry_run_prompts.len() == 10));
+    checks.push((
+        "the dry run rehearses every unjudged route row",
+        dry.dry_run_prompts.len() == 10,
+    ));
     checks.push((
         "the dry run's prompts carry the redacted evidence and never the task text",
         dry.dry_run_prompts.iter().all(|(_, prompt)| {
@@ -2818,10 +3071,17 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     })
     .await;
     checks.push(("the batch refused nothing", outcome.refusal.is_none()));
-    checks.push(("the batch judged every route row", outcome.judged.len() == 10));
+    checks.push((
+        "the batch judged every route row",
+        outcome.judged.len() == 10,
+    ));
     checks.push((
         "the rows are keyed by the route rows' identities",
-        outcome.judged.iter().zip(keys.iter()).all(|(row, key)| &row.route_key == key),
+        outcome
+            .judged
+            .iter()
+            .zip(keys.iter())
+            .all(|(row, key)| &row.route_key == key),
     ));
     // The scripted lane answers every ask with the same shape, so the
     // two `quick` routes it re-judges as `hard` are graded wrong: the
@@ -2845,7 +3105,11 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     checks.push((
         "the judged rows ride beside the routes",
         rows.iter().filter(|row| row.op == calib::OP_ROUTE).count() == 10
-            && rows.iter().filter(|row| row.op == calib::OP_ROUTE_JUDGED).count() == 10,
+            && rows
+                .iter()
+                .filter(|row| row.op == calib::OP_ROUTE_JUDGED)
+                .count()
+                == 10,
     ));
     checks.push((
         "the day's spend is recorded",
@@ -2865,7 +3129,10 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         "a second batch spends nothing on a route it already judged",
         again.judged.is_empty()
             && again.refusals.len() == 10
-            && again.refusals.iter().all(|(_, reason)| reason.contains("already judged")),
+            && again
+                .refusals
+                .iter()
+                .all(|(_, reason)| reason.contains("already judged")),
     ));
     drop(lane);
 
@@ -2875,11 +3142,17 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     let cells = calib::calibration(&rows);
     let hard_cell = calib::cell(&cells, hard_target(), "hard");
     let kit = calib::cell(&cells, route::HEAD_ID, "quick");
-    checks.push(("the calibration names both cells", hard_cell.is_some() && kit.is_some()));
+    checks.push((
+        "the calibration names both cells",
+        hard_cell.is_some() && kit.is_some(),
+    ));
     let (Some(hard_cell), Some(kit)) = (hard_cell, kit) else {
         return grade(NAME, family, &checks);
     };
-    checks.push(("the eight-row cell counts eight rows", hard_cell.judged == 8));
+    checks.push((
+        "the eight-row cell counts eight rows",
+        hard_cell.judged == 8,
+    ));
     checks.push(("the two-row cell counts two rows", kit.judged == 2));
     // The scripted seam answers each ask at its own walked confidence,
     // keyed on the route row's input hash — so the eight `hard` rows
@@ -2889,9 +3162,11 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     // the span would be zero, and the fit leg would grade an accident.
     checks.push((
         "the walked confidence reaches the rows the beat wrote",
-        outcome.judged.iter().enumerate().all(|(index, row)| {
-            (row.confidence - (0.95 - index as f64 * 0.05)).abs() < 1e-9
-        }),
+        outcome
+            .judged
+            .iter()
+            .enumerate()
+            .all(|(index, row)| (row.confidence - (0.95 - index as f64 * 0.05)).abs() < 1e-9),
     ));
     checks.push((
         "the eight-row cell is fit on its span and needs no more of it",
@@ -3063,13 +3338,16 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         })
         .collect();
     write_day_file(&open_root_for_third, &day, &third_rows);
-    let third_answers: Vec<serde_json::Value> =
-        (0..8u32).map(|index| sys1_answer("hard", 0.95 - index as f64 * 0.05)).collect();
-    let third_lane =
-        match ScriptedLane::start(&mcp_bin, judge_lane_entries(&third_answers, &judge_hashes(8))) {
-            Ok(lane) => lane,
-            Err(error) => return ScenarioOutcome::fail(NAME, family, error),
-        };
+    let third_answers: Vec<serde_json::Value> = (0..8u32)
+        .map(|index| sys1_answer("hard", 0.95 - index as f64 * 0.05))
+        .collect();
+    let third_lane = match ScriptedLane::start(
+        &mcp_bin,
+        judge_lane_entries(&third_answers, &judge_hashes(8)),
+    ) {
+        Ok(lane) => lane,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
     let third = crate::judge::judge(crate::judge::JudgeRequest {
         root: &open_root_for_third,
         home: &home,
@@ -3170,11 +3448,16 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         "a lane that fails open is refused by name, not shipped as a judgment",
         fail.judged.is_empty()
             && fail.refusals.len() == 10
-            && fail.refusals.iter().all(|(_, reason)| reason.contains("failed open")),
+            && fail
+                .refusals
+                .iter()
+                .all(|(_, reason)| reason.contains("failed open")),
     ));
     checks.push((
         "the fail-open refusal carries the lane's own error",
-        fail.refusals.iter().all(|(_, reason)| reason.contains("FASTINO_API_KEY")),
+        fail.refusals
+            .iter()
+            .all(|(_, reason)| reason.contains("FASTINO_API_KEY")),
     ));
     checks.push((
         "the fail-open lands no row and spends nothing",
@@ -3368,43 +3651,82 @@ struct DaySpec {
 fn delegation_day_specs() -> Vec<DaySpec> {
     vec![
         DaySpec {
-            session: "sess-r1", shape: "refactor", provider: "stepfun",
-            outcome: "completed", turns: 3, ending: "completed", log_turns: 3,
-            wrote: &["/tmp/a.rs"], commands: 1,
-            verdict: "pass", confidence: 0.91, reason: "",
+            session: "sess-r1",
+            shape: "refactor",
+            provider: "stepfun",
+            outcome: "completed",
+            turns: 3,
+            ending: "completed",
+            log_turns: 3,
+            wrote: &["/tmp/a.rs"],
+            commands: 1,
+            verdict: "pass",
+            confidence: 0.91,
+            reason: "",
         },
         DaySpec {
-            session: "sess-r2", shape: "refactor", provider: "stepfun",
-            outcome: "completed", turns: 2, ending: "completed", log_turns: 2,
-            wrote: &["/tmp/b.rs"], commands: 1,
-            verdict: "pass", confidence: 0.83, reason: "",
+            session: "sess-r2",
+            shape: "refactor",
+            provider: "stepfun",
+            outcome: "completed",
+            turns: 2,
+            ending: "completed",
+            log_turns: 2,
+            wrote: &["/tmp/b.rs"],
+            commands: 1,
+            verdict: "pass",
+            confidence: 0.83,
+            reason: "",
         },
         DaySpec {
             // The row claims `completed`; the child's own log recorded
             // `failed` at fewer turns — the contradiction signal, and
             // the lane's `pass` cannot rescue it.
-            session: "sess-w1", shape: "refactor", provider: "zai-coding-plan",
-            outcome: "completed", turns: 4, ending: "failed", log_turns: 2,
-            wrote: &[], commands: 1,
-            verdict: "pass", confidence: 0.70, reason: "",
+            session: "sess-w1",
+            shape: "refactor",
+            provider: "zai-coding-plan",
+            outcome: "completed",
+            turns: 4,
+            ending: "failed",
+            log_turns: 2,
+            wrote: &[],
+            commands: 1,
+            verdict: "pass",
+            confidence: 0.70,
+            reason: "",
         },
         DaySpec {
             // The child stopped at its cap with the direction right:
             // the companion the minima needed was a longer turn budget,
             // named.
-            session: "sess-i1", shape: "triage", provider: "stepfun",
-            outcome: "max-turns", turns: 5, ending: "max-turns", log_turns: 5,
-            wrote: &[], commands: 1,
-            verdict: "pass", confidence: 0.88, reason: "",
+            session: "sess-i1",
+            shape: "triage",
+            provider: "stepfun",
+            outcome: "max-turns",
+            turns: 5,
+            ending: "max-turns",
+            log_turns: 5,
+            wrote: &[],
+            commands: 1,
+            verdict: "pass",
+            confidence: 0.88,
+            reason: "",
         },
         DaySpec {
             // The log agrees and the lane escalates: the direction was
             // right, the answer needed more than the delegation
             // reached, and the companion is whatever the lane named.
-            session: "sess-i2", shape: "triage", provider: "xiaomi-mimo",
-            outcome: "completed", turns: 2, ending: "completed", log_turns: 2,
-            wrote: &[], commands: 1,
-            verdict: "escalate", confidence: 0.79,
+            session: "sess-i2",
+            shape: "triage",
+            provider: "xiaomi-mimo",
+            outcome: "completed",
+            turns: 2,
+            ending: "completed",
+            log_turns: 2,
+            wrote: &[],
+            commands: 1,
+            verdict: "escalate",
+            confidence: 0.79,
             reason: "the answer needed the escalation leg",
         },
     ]
@@ -3512,7 +3834,10 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     .await;
     checks.push(("the dry run refuses nothing", dry.refusal.is_none()));
     checks.push(("the dry run lands no row", dry.judged.is_empty()));
-    checks.push(("the dry run rehearses every unjudged row", dry.dry_run_prompts.len() == 5));
+    checks.push((
+        "the dry run rehearses every unjudged row",
+        dry.dry_run_prompts.len() == 5,
+    ));
     checks.push((
         "the dry run's prompts carry the redacted evidence and never the task text",
         dry.dry_run_prompts.iter().all(|(_, prompt)| {
@@ -3555,7 +3880,10 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         lane: crate::delegate::LaneSource::Scripted(lane.spec()),
     })
     .await;
-    checks.push(("the batch refuses nothing at the batch level", outcome.refusal.is_none()));
+    checks.push((
+        "the batch refuses nothing at the batch level",
+        outcome.refusal.is_none(),
+    ));
     checks.push(("five rows are judged", outcome.judged.len() == 5));
     checks.push((
         "the already-judged delegation is refused by name",
@@ -3595,7 +3923,9 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     checks.push((
         "the lane's escalation grades insufficient with the lane's companion",
         escalated.verdict == calib::VERDICT_INSUFFICIENT
-            && escalated.reason.contains("the answer needed the escalation leg"),
+            && escalated
+                .reason
+                .contains("the answer needed the escalation leg"),
     ));
     // The rows land in the stream beside the delegations, keyed by the
     // child's session id.
@@ -3640,7 +3970,10 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         "a second batch spends nothing on a delegation it already judged",
         again.judged.is_empty()
             && again.refusals.len() == 6
-            && again.refusals.iter().all(|(_, reason)| reason.contains("already judged"))
+            && again
+                .refusals
+                .iter()
+                .all(|(_, reason)| reason.contains("already judged"))
             && again.batch_answered(),
     ));
     drop(lane);
@@ -3676,8 +4009,13 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
     write_day_file(&wrong_root, &day, &split);
     checks.push((
         "a fit-and-wrong cell is skipped in the preference",
-        crate::delegate::delegation_skips(&wrong_root, &day, &["zai-coding-plan", "stepfun"], "refactor")
-            .len()
+        crate::delegate::delegation_skips(
+            &wrong_root,
+            &day,
+            &["zai-coding-plan", "stepfun"],
+            "refactor",
+        )
+        .len()
             == 1,
     ));
     checks.push((
@@ -3731,7 +4069,9 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
             .collect::<String>()
     };
     let squeeze = |text: &str| -> String {
-        text.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
     };
     let ride_back = prose(&crate::delegate::render_ride_back_day(
         &wrong_root,
@@ -3839,11 +4179,15 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         "a lane that fails open is a named refusal, not a judgment",
         opened.judged.is_empty()
             && opened.refusals.len() == 1
-            && opened.refusals[0].1.contains("no provider answered the judgment head"),
+            && opened.refusals[0]
+                .1
+                .contains("no provider answered the judgment head"),
     ));
     checks.push((
         "the fail-open lands no row",
-        crate::delegate::read_day(&open_root, &day).judged.is_empty(),
+        crate::delegate::read_day(&open_root, &day)
+            .judged
+            .is_empty(),
     ));
     drop(lane);
 
@@ -3959,8 +4303,11 @@ async fn nomenclature_guard(_mock_bin: PathBuf) -> ScenarioOutcome {
         "pub fn route_of(row: &Row) -> Route {\n    Route::default()\n}\n",
     )
     .unwrap();
-    std::fs::write(root.join("docs/notes.md"), "The `judge_route` helper grades a row.\n")
-        .unwrap();
+    std::fs::write(
+        root.join("docs/notes.md"),
+        "The `judge_route` helper grades a row.\n",
+    )
+    .unwrap();
     let lookup = |concept: &str| {
         crate::tools::convention_result(&root, &serde_json::json!({ "concept": concept }))
     };
@@ -3993,14 +4340,15 @@ async fn nomenclature_guard(_mock_bin: PathBuf) -> ScenarioOutcome {
     let near = crate::nomenclature::check(&root, "route_judge");
     checks.push((
         "a novel name for an existing concept is flagged with the candidate",
-        near.as_ref().and_then(|convention| convention.term.as_deref()) == Some("judge_route"),
+        near.as_ref()
+            .and_then(|convention| convention.term.as_deref())
+            == Some("judge_route"),
     ));
     // 5 — clean: a genuinely new concept, unflagged.
     let fresh = crate::nomenclature::check(&root, "the_quibbet_sled_concept");
     checks.push((
         "a genuinely new concept is not flagged",
-        fresh.is_none()
-            && lookup("the_quibbet_sled_concept").contains("genuinely new concept"),
+        fresh.is_none() && lookup("the_quibbet_sled_concept").contains("genuinely new concept"),
     ));
     // 6 — the drift signal: a child's own log carries the guard's
     // flag, the evidence reads it back, and the grading prompt names
@@ -4076,15 +4424,26 @@ async fn dependency_graph(_mock_bin: PathBuf) -> ScenarioOutcome {
     let family = ScenarioFamily::Nomenclature;
     let facts: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let gate = Arc::clone(&facts);
-    let mut graph = Graph::with_verifier(move |node: &Node| {
-        gate.lock().unwrap().contains(&node.id)
-    });
+    let mut graph =
+        Graph::with_verifier(move |node: &Node| gate.lock().unwrap().contains(&node.id));
     // The diamond: ship needs left and right, both need base. Costs:
     // base 2, left 3, right 4, ship 6.
-    graph.add(Node::new("base", 2).with_paths(["src/base.rs"])).unwrap();
-    graph.add(Node::new("left", 3).with_prereqs(["base"]).with_paths(["src/left.rs"]))
+    graph
+        .add(Node::new("base", 2).with_paths(["src/base.rs"]))
         .unwrap();
-    graph.add(Node::new("right", 4).with_prereqs(["base"]).with_paths(["src/right.rs"]))
+    graph
+        .add(
+            Node::new("left", 3)
+                .with_prereqs(["base"])
+                .with_paths(["src/left.rs"]),
+        )
+        .unwrap();
+    graph
+        .add(
+            Node::new("right", 4)
+                .with_prereqs(["base"])
+                .with_paths(["src/right.rs"]),
+        )
         .unwrap();
     graph
         .add(
@@ -4157,7 +4516,9 @@ async fn dependency_graph(_mock_bin: PathBuf) -> ScenarioOutcome {
     // score zero, with the holder named.
     graph.dispatch("left").unwrap();
     graph.dispatch("right").unwrap();
-    graph.add(Node::new("twin", 1).with_paths(["src/left.rs"])).unwrap();
+    graph
+        .add(Node::new("twin", 1).with_paths(["src/left.rs"]))
+        .unwrap();
     let twin_unlock = graph.unlock("twin").expect("twin is declared");
     checks.push((
         "a resource conflict holds a node and names the holder",
@@ -4181,7 +4542,9 @@ async fn dependency_graph(_mock_bin: PathBuf) -> ScenarioOutcome {
     // 6 — a failed prerequisite never unlocks its dependent, and the
     // reason names it.
     graph.add(Node::new("seed", 1)).unwrap();
-    graph.add(Node::new("crop", 2).with_prereqs(["seed"])).unwrap();
+    graph
+        .add(Node::new("crop", 2).with_prereqs(["seed"]))
+        .unwrap();
     graph.dispatch("seed").unwrap();
     graph.fail("seed").unwrap();
     let crop_unlock = graph.unlock("crop").expect("crop is declared");
@@ -4283,12 +4646,21 @@ async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
     // 2 — a forced deviation produces its reason and a replan that
     // revises the remaining approaches, naming the revision.
     let mut graph = Graph::new();
-    graph.add(Node::new("a", 1).with_approach("write src/gone.rs")).unwrap();
     graph
-        .add(Node::new("b", 2).with_prereqs(["a"]).with_approach("read what a wrote"))
+        .add(Node::new("a", 1).with_approach("write src/gone.rs"))
         .unwrap();
     graph
-        .record_delta("a", deviated(DeltaReason::Infeasible, true, "wrote src/here.rs instead"))
+        .add(
+            Node::new("b", 2)
+                .with_prereqs(["a"])
+                .with_approach("read what a wrote"),
+        )
+        .unwrap();
+    graph
+        .record_delta(
+            "a",
+            deviated(DeltaReason::Infeasible, true, "wrote src/here.rs instead"),
+        )
         .unwrap();
     let revision = graph.replan();
     checks.push((
@@ -4304,9 +4676,14 @@ async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
 
     // 3 — a chosen improvement is recorded as a gain and moves nothing.
     let mut graph = Graph::new();
-    graph.add(Node::new("a", 1).with_approach("do a the slow way")).unwrap();
     graph
-        .record_delta("a", deviated(DeltaReason::BetterRoute, false, "did a the fast way"))
+        .add(Node::new("a", 1).with_approach("do a the slow way"))
+        .unwrap();
+    graph
+        .record_delta(
+            "a",
+            deviated(DeltaReason::BetterRoute, false, "did a the fast way"),
+        )
         .unwrap();
     checks.push((
         "a chosen improvement is recorded as a gain and moves nothing",
@@ -4318,16 +4695,22 @@ async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
     // 4 — a large aggregate triggers the replan and names the revision.
     let mut graph = Graph::new();
     for id in ["a", "b", "c"] {
-        graph.add(Node::new(id, 1).with_approach("the infeasible way")).unwrap();
         graph
-            .record_delta(id, deviated(DeltaReason::Infeasible, false, "the feasible way"))
+            .add(Node::new(id, 1).with_approach("the infeasible way"))
+            .unwrap();
+        graph
+            .record_delta(
+                id,
+                deviated(DeltaReason::Infeasible, false, "the feasible way"),
+            )
             .unwrap();
     }
     let revision = graph.replan();
     checks.push((
         "a large aggregate triggers the replan and names the revision",
         revision.is_some()
-            && revision.map(|revision| revision.seq == 1 && revision.changes.len() == 3)
+            && revision
+                .map(|revision| revision.seq == 1 && revision.changes.len() == 3)
                 .unwrap_or(false),
     ));
 
@@ -4364,7 +4747,11 @@ async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
     // parent's tool_result carries — so a middle node that summarized
     // its children's deltas would fail this check rather than pass
     // silently.
-    let child = deviated(DeltaReason::CompanionMissing, true, "wrote the parser first");
+    let child = deviated(
+        DeltaReason::CompanionMissing,
+        true,
+        "wrote the parser first",
+    );
     let mut parent = deviated(DeltaReason::Infeasible, false, "restructured first");
     parent.children = vec![child.clone()];
     let result = crate::subagents::SubagentResult {
@@ -4506,9 +4893,9 @@ async fn run_blend1(
     let records = session::replay(&session.path()).unwrap_or_default();
     let lane_answer = tool_message(&mock, 1);
     let call = records.iter().find_map(|record| match record {
-        Record::Assistant { tool_calls, .. } => tool_calls.first().map(|call| {
-            (call.function.name.clone(), call.function.arguments.clone())
-        }),
+        Record::Assistant { tool_calls, .. } => tool_calls
+            .first()
+            .map(|call| (call.function.name.clone(), call.function.arguments.clone())),
         _ => None,
     });
     let lane_tools = records
@@ -4523,8 +4910,14 @@ async fn run_blend1(
     let run = Blend1Run {
         report,
         lane_answer,
-        call_name: call.as_ref().map(|(name, _)| name.clone()).unwrap_or_default(),
-        call_arguments: call.as_ref().map(|(_, arguments)| arguments.clone()).unwrap_or_default(),
+        call_name: call
+            .as_ref()
+            .map(|(name, _)| name.clone())
+            .unwrap_or_default(),
+        call_arguments: call
+            .as_ref()
+            .map(|(_, arguments)| arguments.clone())
+            .unwrap_or_default(),
         lane_tools,
         records,
     };
@@ -4576,7 +4969,10 @@ async fn blend1_grounded_fact(mock_bin: PathBuf) -> ScenarioOutcome {
         NAME,
         family,
         &[
-            ("the run completed", run.report.stop_reason == StopReason::Completed),
+            (
+                "the run completed",
+                run.report.stop_reason == StopReason::Completed,
+            ),
             ("two turns", run.report.turns == 2),
             (
                 "blend1 joined the run with its five tools",
@@ -4595,8 +4991,14 @@ async fn blend1_grounded_fact(mock_bin: PathBuf) -> ScenarioOutcome {
                     && run.call_arguments.contains("\"table\"")
                     && run.call_arguments.contains("\"target\":\"churned\""),
             ),
-            ("the tabular fact reached the model's context", run.lane_answer.contains(FACT)),
-            ("the final answer carries the fact", final_answer.contains(FACT)),
+            (
+                "the tabular fact reached the model's context",
+                run.lane_answer.contains(FACT),
+            ),
+            (
+                "the final answer carries the fact",
+                final_answer.contains(FACT),
+            ),
             ("the fact was not rounded", !rounded),
             (
                 "the grounded path names itself and did not escalate",
@@ -4659,7 +5061,10 @@ async fn blend1_escalation(mock_bin: PathBuf) -> ScenarioOutcome {
         NAME,
         family,
         &[
-            ("the run completed", run.report.stop_reason == StopReason::Completed),
+            (
+                "the run completed",
+                run.report.stop_reason == StopReason::Completed,
+            ),
             ("two turns", run.report.turns == 2),
             (
                 "the validation outcome is named inconclusive",
@@ -4738,7 +5143,10 @@ async fn blend1_reprocess(mock_bin: PathBuf) -> ScenarioOutcome {
         NAME,
         family,
         &[
-            ("the run completed", run.report.stop_reason == StopReason::Completed),
+            (
+                "the run completed",
+                run.report.stop_reason == StopReason::Completed,
+            ),
             ("two turns", run.report.turns == 2),
             (
                 "the sys1 score names the first answer wrong",
@@ -4800,15 +5208,24 @@ async fn blend1_corpus_recall(mock_bin: PathBuf) -> ScenarioOutcome {
         NAME,
         family,
         &[
-            ("the run completed", run.report.stop_reason == StopReason::Completed),
+            (
+                "the run completed",
+                run.report.stop_reason == StopReason::Completed,
+            ),
             ("two turns", run.report.turns == 2),
             (
                 "the model asked the project's corpus",
                 run.call_name == "mcp__blend1__search"
                     && run.call_arguments.contains("\"project\":\"fleet\""),
             ),
-            ("the seeded fact reached the model's context", run.lane_answer.contains(fact)),
-            ("the final answer quotes the fact unaltered", final_answer.contains(fact)),
+            (
+                "the seeded fact reached the model's context",
+                run.lane_answer.contains(fact),
+            ),
+            (
+                "the final answer quotes the fact unaltered",
+                final_answer.contains(fact),
+            ),
             ("the log reconstructs the turn", run.records.len() == 7),
         ],
     )
@@ -4830,8 +5247,14 @@ mod tests {
     #[test]
     fn the_families_name_the_forks_benchmarks_and_the_everyday_shapes() {
         assert_eq!(ScenarioFamily::SessionCorpus.label(), "session-corpus");
-        assert_eq!(ScenarioFamily::AgentContinuation.label(), "agent-continuation");
-        assert_eq!(ScenarioFamily::ConversationFold.label(), "conversation-fold");
+        assert_eq!(
+            ScenarioFamily::AgentContinuation.label(),
+            "agent-continuation"
+        );
+        assert_eq!(
+            ScenarioFamily::ConversationFold.label(),
+            "conversation-fold"
+        );
         assert_eq!(ScenarioFamily::ToolLoop.label(), "tool-loop");
         assert_eq!(ScenarioFamily::Subagent.label(), "subagent");
         assert_eq!(ScenarioFamily::Memory.label(), "memory");
@@ -4979,7 +5402,10 @@ mod tests {
             assert_eq!(entry["reply"]["id"], "$echo");
         }
         assert!(entries[1]["reply"]["result"]["tools"].is_array());
-        assert_eq!(entries[2]["reply"]["result"]["content"][0]["text"], "{\"ok\":true}");
+        assert_eq!(
+            entries[2]["reply"]["result"]["content"][0]["text"],
+            "{\"ok\":true}"
+        );
     }
 
     #[test]
@@ -5020,8 +5446,11 @@ mod tests {
         // The seam: a scenario that always fails, run without a mock. The
         // corpus grades it failed and names it, which is what the AC asks
         // of a deliberately broken scenario.
-        let broken =
-            Scenario::always_fails("injected-break", ScenarioFamily::ToolLoop, "the seam broke it");
+        let broken = Scenario::always_fails(
+            "injected-break",
+            ScenarioFamily::ToolLoop,
+            "the seam broke it",
+        );
         let result = broken.run(Path::new("/nonexistent/mock-server")).await;
         assert!(!result.passed);
         assert_eq!(result.scenario, "injected-break");
@@ -5059,7 +5488,10 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         let rendered = render_last(&root);
-        assert!(rendered.contains("no eval-corpus run recorded"), "{rendered}");
+        assert!(
+            rendered.contains("no eval-corpus run recorded"),
+            "{rendered}"
+        );
         assert!(last_row(&root).is_none());
     }
 
@@ -5081,7 +5513,9 @@ mod tests {
     fn a_green_corpus_output_grades_ok_and_a_red_one_names_the_scenarios() {
         let green = std::process::Output {
             status: exit_status(0),
-            stdout: "fleet eval \u{2014} 6 scenarios, score 1.00\n".as_bytes().to_vec(),
+            stdout: "fleet eval \u{2014} 6 scenarios, score 1.00\n"
+                .as_bytes()
+                .to_vec(),
             stderr: Vec::new(),
         };
         assert_eq!(grade_output(&green), Ok(()));
@@ -5095,7 +5529,10 @@ mod tests {
         // The names the card carries must reach the gate step without
         // the palette's trailing reset riding along.
         let refused = grade_output(&red).expect_err("a red corpus refuses");
-        assert_eq!(refused, "the eval corpus regressed: conversation-fold, memory-recall");
+        assert_eq!(
+            refused,
+            "the eval corpus regressed: conversation-fold, memory-recall"
+        );
         assert!(!refused.contains('\u{1b}'), "{refused}");
     }
 
@@ -5107,7 +5544,10 @@ mod tests {
             stderr: b"fleet: no home directory known\n".to_vec(),
         };
         let refused = grade_output(&red).expect_err("a red corpus refuses");
-        assert!(refused.contains("run `fleet eval` for the detail"), "{refused}");
+        assert!(
+            refused.contains("run `fleet eval` for the detail"),
+            "{refused}"
+        );
     }
 
     #[test]

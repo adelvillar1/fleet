@@ -353,7 +353,10 @@ pub fn resolve_home(lane: &Lane) -> LaneHome {
             return LaneHome::Unavailable { reason };
         }
         return if looks_like_service_home(&home) {
-            LaneHome::Resolved { home, source: HomeSource::Env(lane.home_env.to_string()) }
+            LaneHome::Resolved {
+                home,
+                source: HomeSource::Env(lane.home_env.to_string()),
+            }
         } else {
             LaneHome::Unavailable {
                 reason: format!(
@@ -367,7 +370,9 @@ pub fn resolve_home(lane: &Lane) -> LaneHome {
     let root = match services_root() {
         Ok(root) => root,
         Err(RootError::Relative(value)) => {
-            return LaneHome::Unavailable { reason: RootError::Relative(value).to_string() }
+            return LaneHome::Unavailable {
+                reason: RootError::Relative(value).to_string(),
+            }
         }
         Err(RootError::NotFound) => {
             return LaneHome::Unavailable {
@@ -380,7 +385,10 @@ pub fn resolve_home(lane: &Lane) -> LaneHome {
     };
     let home = root.join(lane.name);
     if looks_like_service_home(&home) {
-        LaneHome::Resolved { home, source: HomeSource::Bundled }
+        LaneHome::Resolved {
+            home,
+            source: HomeSource::Bundled,
+        }
     } else {
         LaneHome::Unavailable {
             reason: format!("the bundled copy at {} is incomplete", home.display()),
@@ -417,7 +425,10 @@ pub fn services_root() -> Result<PathBuf, RootError> {
         }
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("services");
-    manifest.is_dir().then_some(Ok(manifest)).unwrap_or(Err(RootError::NotFound))
+    manifest
+        .is_dir()
+        .then_some(Ok(manifest))
+        .unwrap_or(Err(RootError::NotFound))
 }
 
 /// The launch spec for one lane, or the reason it cannot launch.
@@ -439,12 +450,19 @@ pub fn launch_spec(lane: &Lane, home: &Path) -> ServerSpec {
         program: "python3".to_string(),
         args: vec![
             "-u".to_string(),
-            home.join("service").join("mcp_server.py").to_string_lossy().into_owned(),
+            home.join("service")
+                .join("mcp_server.py")
+                .to_string_lossy()
+                .into_owned(),
         ],
         env,
         // The lane's declared ambient names, and nothing else: the child
         // starts from `mcp::BASE_ENV` plus this plus the entry above.
-        passthrough: lane.passthrough.iter().map(|name| name.to_string()).collect(),
+        passthrough: lane
+            .passthrough
+            .iter()
+            .map(|name| name.to_string())
+            .collect(),
         cwd: Some(home.to_path_buf()),
     }
 }
@@ -466,7 +484,10 @@ fn sibling_paths(lane: &Lane, home: &Path) -> Vec<(String, String)> {
         .map(|sibling| {
             (
                 format!("BLEND1_{}_PYTHONPATH", sibling.to_uppercase()),
-                root.join(sibling).join("src").to_string_lossy().into_owned(),
+                root.join(sibling)
+                    .join("src")
+                    .to_string_lossy()
+                    .into_owned(),
             )
         })
         .collect()
@@ -671,7 +692,9 @@ fn parse_doctor(text: &str) -> DoctorReport {
         .iter()
         .filter_map(|lane| parse_availability(lane, report.get(*lane)?))
         .collect();
-    let web = report.get(WEB_LEG).and_then(|entry| parse_availability(WEB_LEG, entry));
+    let web = report
+        .get(WEB_LEG)
+        .and_then(|entry| parse_availability(WEB_LEG, entry));
     DoctorReport { lanes, web }
 }
 
@@ -737,7 +760,10 @@ pub fn render(health: &[LaneHealth]) -> String {
     for lane in health {
         out.push_str(&render_card(lane));
     }
-    let ok = health.iter().filter(|lane| lane.state == LaneState::Ok).count();
+    let ok = health
+        .iter()
+        .filter(|lane| lane.state == LaneState::Ok)
+        .count();
     out.push_str(&format!(
         "\n{DIM}{} lanes · {ok} ok · {} not ok{RESET}\n",
         health.len(),
@@ -762,7 +788,13 @@ fn render_card(lane: &LaneHealth) -> String {
     );
     let facts = match (&lane.server_version, lane.tools.len()) {
         (Some(version), count) => {
-            format!("{} · v{} · {} tool{}", lane.role, version, count, plural(count))
+            format!(
+                "{} · v{} · {} tool{}",
+                lane.role,
+                version,
+                count,
+                plural(count)
+            )
         }
         (None, _) => lane.role.to_string(),
     };
@@ -821,7 +853,9 @@ fn render_card(lane: &LaneHealth) -> String {
         let body = format!("{dot} — {named}");
         for (index, chunk) in wrap_detail(&body, CARD_WIDTH - 12).iter().enumerate() {
             let indent = if index == 0 { "" } else { "  " };
-            lines.push(format!("{DIM}│{RESET} {label} {color}{indent}{chunk}{RESET}"));
+            lines.push(format!(
+                "{DIM}│{RESET} {label} {color}{indent}{chunk}{RESET}"
+            ));
         }
     }
     if let Some(source) = &lane.source {
@@ -830,7 +864,10 @@ fn render_card(lane: &LaneHealth) -> String {
             lane.elapsed_ms
         ));
     }
-    let bottom = format!("{DIM}└{bottom}┘{RESET}", bottom = "─".repeat(CARD_WIDTH - 2));
+    let bottom = format!(
+        "{DIM}└{bottom}┘{RESET}",
+        bottom = "─".repeat(CARD_WIDTH - 2)
+    );
     let mut card = format!("{header}\n");
     for line in lines {
         card.push_str(&line);
@@ -869,7 +906,11 @@ fn wrap_detail(text: &str, width: usize) -> Vec<String> {
 }
 
 fn plural(count: usize) -> &'static str {
-    if count == 1 { "" } else { "s" }
+    if count == 1 {
+        ""
+    } else {
+        "s"
+    }
 }
 
 #[cfg(test)]
@@ -892,7 +933,10 @@ mod tests {
         fn set(name: &str, value: &str) -> EnvVar {
             let previous = std::env::var_os(name);
             std::env::set_var(name, value);
-            EnvVar { name: name.to_string(), previous }
+            EnvVar {
+                name: name.to_string(),
+                previous,
+            }
         }
     }
 
@@ -906,7 +950,10 @@ mod tests {
     }
 
     fn lane(name: &'static str) -> Lane {
-        *LANES.iter().find(|lane| lane.name == name).expect("a registry lane")
+        *LANES
+            .iter()
+            .find(|lane| lane.name == name)
+            .expect("a registry lane")
     }
 
     #[test]
@@ -981,7 +1028,9 @@ mod tests {
         for lane in LANES {
             assert!(lane.passthrough.len() > 0, "{} declares nothing", lane.name);
             assert!(
-                lane.passthrough.iter().all(|name| name.starts_with(|c: char| c.is_ascii_uppercase())),
+                lane.passthrough
+                    .iter()
+                    .all(|name| name.starts_with(|c: char| c.is_ascii_uppercase())),
                 "{} declares a non-constant-shaped name",
                 lane.name
             );
@@ -993,16 +1042,29 @@ mod tests {
         let home = PathBuf::from("/opt/services/sem1");
         let spec = launch_spec(&lane("sem1"), &home);
         assert_eq!(spec.program, "python3");
-        assert_eq!(spec.args, vec!["-u".to_string(), "/opt/services/sem1/service/mcp_server.py".to_string()]);
-        assert_eq!(spec.env, vec![(
-            "SEM1_PYTHONPATH".to_string(),
-            "/opt/services/sem1/src".to_string()
-        )]);
+        assert_eq!(
+            spec.args,
+            vec![
+                "-u".to_string(),
+                "/opt/services/sem1/service/mcp_server.py".to_string()
+            ]
+        );
+        assert_eq!(
+            spec.env,
+            vec![(
+                "SEM1_PYTHONPATH".to_string(),
+                "/opt/services/sem1/src".to_string()
+            )]
+        );
         // The child's environment beyond the base is exactly the lane's
         // allowlist — no inherited ambient names.
         assert_eq!(
             spec.passthrough,
-            lane("sem1").passthrough.iter().map(|name| name.to_string()).collect::<Vec<_>>()
+            lane("sem1")
+                .passthrough
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
         );
         assert_eq!(spec.cwd, Some(home.clone()));
         assert_eq!(
@@ -1016,7 +1078,13 @@ mod tests {
         let home = PathBuf::from("/opt/services/blend1");
         let spec = launch_spec(&lane("blend1"), &home);
         assert_eq!(spec.program, "python3");
-        assert_eq!(spec.args, vec!["-u".to_string(), "/opt/services/blend1/service/mcp_server.py".to_string()]);
+        assert_eq!(
+            spec.args,
+            vec![
+                "-u".to_string(),
+                "/opt/services/blend1/service/mcp_server.py".to_string()
+            ]
+        );
         // Its own core first, then the three siblings the ask() composes
         // (plus the voice lane's), each resolved beside the lane under
         // the services root — the house path mechanism, not a pip
@@ -1024,11 +1092,26 @@ mod tests {
         assert_eq!(
             spec.env,
             vec![
-                ("BLEND1_PYTHONPATH".to_string(), "/opt/services/blend1/src".to_string()),
-                ("BLEND1_SYS1_PYTHONPATH".to_string(), "/opt/services/sys1/src".to_string()),
-                ("BLEND1_SEM1_PYTHONPATH".to_string(), "/opt/services/sem1/src".to_string()),
-                ("BLEND1_SDM1_PYTHONPATH".to_string(), "/opt/services/sdm1/src".to_string()),
-                ("BLEND1_GEN1_PYTHONPATH".to_string(), "/opt/services/gen1/src".to_string()),
+                (
+                    "BLEND1_PYTHONPATH".to_string(),
+                    "/opt/services/blend1/src".to_string()
+                ),
+                (
+                    "BLEND1_SYS1_PYTHONPATH".to_string(),
+                    "/opt/services/sys1/src".to_string()
+                ),
+                (
+                    "BLEND1_SEM1_PYTHONPATH".to_string(),
+                    "/opt/services/sem1/src".to_string()
+                ),
+                (
+                    "BLEND1_SDM1_PYTHONPATH".to_string(),
+                    "/opt/services/sdm1/src".to_string()
+                ),
+                (
+                    "BLEND1_GEN1_PYTHONPATH".to_string(),
+                    "/opt/services/gen1/src".to_string()
+                ),
             ]
         );
         // The blended lane's own keys ride through; Fleet's own never
@@ -1036,7 +1119,11 @@ mod tests {
         // included, and this names the eight beside it.
         assert_eq!(
             spec.passthrough,
-            lane("blend1").passthrough.iter().map(|name| name.to_string()).collect::<Vec<_>>()
+            lane("blend1")
+                .passthrough
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
         );
         assert_eq!(spec.cwd, Some(home.clone()));
         // Every other lane's spec stays exactly one path var: the
@@ -1057,7 +1144,10 @@ mod tests {
         assert!(reason.contains("services/sem1"), "{reason}");
         assert!(reason.contains("relative"), "{reason}");
         // An absolute one is fine.
-        assert_eq!(relative_home_reason("FLEET_LANE_SEM1_HOME", Path::new("/opt/sem1")), None);
+        assert_eq!(
+            relative_home_reason("FLEET_LANE_SEM1_HOME", Path::new("/opt/sem1")),
+            None
+        );
     }
 
     #[test]
@@ -1086,7 +1176,9 @@ mod tests {
         let reason = RootError::Relative("services".to_string()).to_string();
         assert!(reason.contains("FLEET_SERVICES_ROOT=services"), "{reason}");
         assert!(reason.contains("relative"), "{reason}");
-        assert!(RootError::NotFound.to_string().contains("FLEET_SERVICES_ROOT"));
+        assert!(RootError::NotFound
+            .to_string()
+            .contains("FLEET_SERVICES_ROOT"));
     }
 
     #[test]
@@ -1106,9 +1198,17 @@ mod tests {
             if lane.name == "sem1" {
                 let spec = outcome.expect("the vendored sem1 resolves");
                 assert_eq!(spec.program, "python3");
-                assert!(spec.args[1].ends_with("service/mcp_server.py"), "{:?}", spec.args);
+                assert!(
+                    spec.args[1].ends_with("service/mcp_server.py"),
+                    "{:?}",
+                    spec.args
+                );
             } else {
-                assert!(outcome.is_ok(), "{} must resolve from the vendored copy", lane.name);
+                assert!(
+                    outcome.is_ok(),
+                    "{} must resolve from the vendored copy",
+                    lane.name
+                );
             }
         }
     }
@@ -1124,7 +1224,9 @@ mod tests {
                 assert!(looks_like_service_home(&home));
             }
             LaneHome::Unavailable { reason } => {
-                assert!(reason.contains("FLEET_LANE_GEN1_HOME") || reason.contains("services root"));
+                assert!(
+                    reason.contains("FLEET_LANE_GEN1_HOME") || reason.contains("services root")
+                );
             }
         }
     }
@@ -1187,10 +1289,19 @@ mod tests {
         assert_eq!(rendered.matches('┌').count(), 2, "{rendered}");
         assert_eq!(rendered.matches('└').count(), 2, "{rendered}");
         // Status dots, colored by state.
-        assert!(rendered.contains(&format!("{}✓ ok{RESET}", palette::OK)), "{rendered}");
-        assert!(rendered.contains(&format!("{}○ unavailable{RESET}", palette::DIM)), "{rendered}");
+        assert!(
+            rendered.contains(&format!("{}✓ ok{RESET}", palette::OK)),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("{}○ unavailable{RESET}", palette::DIM)),
+            "{rendered}"
+        );
         // The facts a health command owes: role, version, tool count, names.
-        assert!(rendered.contains("embeddings · v0.1.0 · 2 tools"), "{rendered}");
+        assert!(
+            rendered.contains("embeddings · v0.1.0 · 2 tools"),
+            "{rendered}"
+        );
         assert!(rendered.contains("sem1_embed · sem1_probe"), "{rendered}");
         assert!(rendered.contains("2 lanes · 1 ok · 1 not ok"), "{rendered}");
         // No plain-text table anywhere.
@@ -1212,7 +1323,10 @@ mod tests {
             elapsed_ms: 10_000,
         }];
         let rendered = render(&health);
-        assert!(rendered.contains(&format!("{}✕ error{RESET}", palette::ERROR)), "{rendered}");
+        assert!(
+            rendered.contains(&format!("{}✕ error{RESET}", palette::ERROR)),
+            "{rendered}"
+        );
         assert!(rendered.contains("timed out"), "{rendered}");
     }
 
@@ -1235,8 +1349,15 @@ mod tests {
             }"#,
         );
         // The five lanes, in the blend's own order — unchanged.
-        let lanes: Vec<&str> = report.lanes.iter().map(|entry| entry.lane.as_str()).collect();
-        assert_eq!(lanes, vec!["route", "semantic", "tabular", "generate", "validate"]);
+        let lanes: Vec<&str> = report
+            .lanes
+            .iter()
+            .map(|entry| entry.lane.as_str())
+            .collect();
+        assert_eq!(
+            lanes,
+            vec!["route", "semantic", "tabular", "generate", "validate"]
+        );
         assert!(report.lanes[0].available);
         // A null reason reads as the empty string, and the card falls
         // back to the provider for an available lane.
@@ -1256,8 +1377,9 @@ mod tests {
         assert_eq!(web.provider, "tinyfish (search + fetch)");
         // A report with no web key parses none, and the five still
         // read as they always did.
-        let without =
-            parse_doctor(r#"{"route": {"available": true, "reason": null, "provider": "liquid (d1) via sys1"}}"#);
+        let without = parse_doctor(
+            r#"{"route": {"available": true, "reason": null, "provider": "liquid (d1) via sys1"}}"#,
+        );
         assert!(without.web.is_none(), "{:?}", without.web);
         assert_eq!(without.lanes.len(), 1);
         // A report that cannot be read is empty, never a panic: the card
@@ -1328,7 +1450,10 @@ mod tests {
         // Status dots, colored by availability: green for the lane that
         // can answer, dim for the ones naming what they are missing.
         assert!(
-            rendered.contains(&format!("{}✓ route — liquid (d1) via sys1{RESET}", palette::OK)),
+            rendered.contains(&format!(
+                "{}✓ route — liquid (d1) via sys1{RESET}",
+                palette::OK
+            )),
             "{rendered}"
         );
         assert!(
@@ -1349,7 +1474,9 @@ mod tests {
         }
         // The five lanes render in the blend's own order.
         let route_at = rendered.find("route").expect("the route lane renders");
-        let validate_at = rendered.find("validate").expect("the validate lane renders");
+        let validate_at = rendered
+            .find("validate")
+            .expect("the validate lane renders");
         assert!(route_at < validate_at, "{rendered}");
         // The web leg: its own line on blend1's card, the accented
         // label marking it as not one of the five sub-lane rows — it
@@ -1357,13 +1484,17 @@ mod tests {
         assert!(
             rendered.contains(&format!(
                 "{}web leg{RESET} {}○ — missing TINYFISH_API_KEY",
-                palette::ACCENT, palette::DIM
+                palette::ACCENT,
+                palette::DIM
             )),
             "{rendered}"
         );
         // It never renders in the five's row shape: no bare web row
         // among the sub-lanes.
-        assert!(!rendered.contains(&format!("{}○ web — ", palette::DIM)), "{rendered}");
+        assert!(
+            !rendered.contains(&format!("{}○ web — ", palette::DIM)),
+            "{rendered}"
+        );
         // A card, never a plain-text table.
         assert_eq!(rendered.matches('┌').count(), 1, "{rendered}");
         assert!(!rendered.contains("| lane |"), "{rendered}");

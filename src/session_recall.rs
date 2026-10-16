@@ -102,7 +102,9 @@ pub fn facts_from_sessions(home: &Path) -> Vec<memory::Fact> {
 /// [`SessionIndex::recall`] uses, because the index is keyed to the
 /// directory it sits beside rather than to the home above it.
 fn facts_from_dir(sessions_dir: &Path) -> Vec<memory::Fact> {
-    let Ok(entries) = fs::read_dir(sessions_dir) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(sessions_dir) else {
+        return Vec::new();
+    };
     let mut paths: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path())
@@ -121,7 +123,11 @@ fn facts_from_dir(sessions_dir: &Path) -> Vec<memory::Fact> {
     let counts = RecallCounts::load(sessions_dir);
     let mut facts: Vec<memory::Fact> = Vec::new();
     for path in paths {
-        let Some(id) = path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string) else {
+        let Some(id) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
+        else {
             continue;
         };
         // `replay` fails loud by design — reading an unreadable format
@@ -274,15 +280,22 @@ fn derived_phrases(records: &[Record]) -> Vec<String> {
     // in flight when the log ends — has not succeeded.
     let mut results: HashMap<&str, &str> = HashMap::new();
     for record in records {
-        if let Record::ToolResult { call_id, output, .. } = record {
+        if let Record::ToolResult {
+            call_id, output, ..
+        } = record
+        {
             results.insert(call_id.as_str(), output.as_str());
         }
     }
     let mut phrases: Vec<String> = Vec::new();
     for record in records.iter().rev() {
-        let Record::Assistant { tool_calls, .. } = record else { continue };
+        let Record::Assistant { tool_calls, .. } = record else {
+            continue;
+        };
         for call in tool_calls.iter().rev() {
-            let Some(output) = results.get(call.id.as_str()).copied() else { continue };
+            let Some(output) = results.get(call.id.as_str()).copied() else {
+                continue;
+            };
             if output.starts_with("error:") || output.starts_with("denied") {
                 continue;
             }
@@ -551,7 +564,10 @@ impl SessionIndex {
                 if let Some(stamp) = &fact.stamp {
                     fresh.insert(
                         fact.name.clone(),
-                        SessionEntry { stamp: stamp.clone(), vector: vector.clone() },
+                        SessionEntry {
+                            stamp: stamp.clone(),
+                            vector: vector.clone(),
+                        },
                     );
                 }
                 vectors.insert(fact.name.clone(), vector);
@@ -652,7 +668,10 @@ impl RecallCounts {
     /// The count one session has earned; zero for a session the store
     /// has never seen.
     pub fn count_of(&self, session_id: &str) -> u64 {
-        self.sessions.get(session_id).map(|entry| entry.count).unwrap_or(0)
+        self.sessions
+            .get(session_id)
+            .map(|entry| entry.count)
+            .unwrap_or(0)
     }
 
     /// Bump one session's count and flush the store. Best-effort by
@@ -817,7 +836,10 @@ mod tests {
         crate::api::ToolCall {
             id: id.to_string(),
             kind: "function".to_string(),
-            function: FunctionCall { name: name.to_string(), arguments: arguments.to_string() },
+            function: FunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
         }
     }
 
@@ -835,7 +857,10 @@ mod tests {
     /// One assistant call and its result, as the agent writes them.
     fn exchange(id: &str, name: &str, arguments: &str, output: &str) -> Vec<Record> {
         vec![
-            Record::Assistant { content: None, tool_calls: vec![call(id, name, arguments)] },
+            Record::Assistant {
+                content: None,
+                tool_calls: vec![call(id, name, arguments)],
+            },
             Record::ToolResult {
                 call_id: id.to_string(),
                 name: name.to_string(),
@@ -885,7 +910,10 @@ mod tests {
         /// box per recall, because `SessionIndex::recall` takes the
         /// embedder by value the way `Memory::load_with` does.
         fn spawn(calls: &Arc<AtomicUsize>, dims: usize) -> Box<ScriptedEmbedder> {
-            Box::new(ScriptedEmbedder { calls: Arc::clone(calls), dims })
+            Box::new(ScriptedEmbedder {
+                calls: Arc::clone(calls),
+                dims,
+            })
         }
     }
 
@@ -923,7 +951,9 @@ mod tests {
         let dir = crate::home::ensure_sessions_dir(&home).unwrap();
         let mut records = vec![
             start(),
-            Record::User { content: "wire the session recall surface".to_string() },
+            Record::User {
+                content: "wire the session recall surface".to_string(),
+            },
         ];
         // The successful call and the failed one: the same tool, the
         // same shape, opposite outcomes.
@@ -933,8 +963,16 @@ mod tests {
             "{\"command\":\"cargo test --lib session_recall\"}",
             "test result: ok. 6 passed; 0 failed",
         ));
-        records.extend(exchange("c2", "bash", "{\"command\":\"rm -rf target\"}", "error: refused"));
-        records.push(Record::End { stop_reason: "completed".to_string(), turns: 2 });
+        records.extend(exchange(
+            "c2",
+            "bash",
+            "{\"command\":\"rm -rf target\"}",
+            "error: refused",
+        ));
+        records.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 2,
+        });
         write_session(&dir, "20261015T000000Z-aaa", &records);
 
         let facts = facts_from_sessions(&home);
@@ -955,25 +993,39 @@ mod tests {
         // The phrases are the direction: the successful call's own
         // command, and the failed one nowhere in sight — it drove
         // somewhere else.
-        assert_eq!(fact.phrases, vec!["cargo test --lib session_recall".to_string()]);
+        assert_eq!(
+            fact.phrases,
+            vec!["cargo test --lib session_recall".to_string()]
+        );
         // The digest is the record: the task, then every call's name
         // and its compacted arguments, the failed one included.
         assert!(
-            fact.body.starts_with("task: wire the session recall surface"),
+            fact.body
+                .starts_with("task: wire the session recall surface"),
             "{}",
             fact.body
         );
         assert!(
-            fact.body.contains("bash {\"command\":\"cargo test --lib session_recall\"}"),
+            fact.body
+                .contains("bash {\"command\":\"cargo test --lib session_recall\"}"),
             "{}",
             fact.body
         );
-        assert!(fact.body.contains("bash {\"command\":\"rm -rf target\"}"), "{}", fact.body);
+        assert!(
+            fact.body.contains("bash {\"command\":\"rm -rf target\"}"),
+            "{}",
+            fact.body
+        );
 
         // The digest is bounded: a long session's log is large, and
         // the cap is a named constant with a marked cut. The task is
         // bounded the same way, to the writer's own description bound.
-        let mut long: Vec<Record> = vec![start(), Record::User { content: "x".repeat(2000) }];
+        let mut long: Vec<Record> = vec![
+            start(),
+            Record::User {
+                content: "x".repeat(2000),
+            },
+        ];
         for index in 0..200 {
             long.extend(exchange(
                 &format!("c{index}"),
@@ -982,10 +1034,16 @@ mod tests {
                 "ok",
             ));
         }
-        long.push(Record::End { stop_reason: "completed".to_string(), turns: 200 });
+        long.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 200,
+        });
         write_session(&dir, "20261015T000001Z-bbb", &long);
         let facts = facts_from_sessions(&home);
-        let capped = facts.iter().find(|fact| fact.name == "20261015T000001Z-bbb").unwrap();
+        let capped = facts
+            .iter()
+            .find(|fact| fact.name == "20261015T000001Z-bbb")
+            .unwrap();
         assert!(
             capped.body.chars().count() <= DIGEST_CAP + 1,
             "{} chars",
@@ -1002,7 +1060,11 @@ mod tests {
         // file is not a session at all — the others still load.
         fs::write(dir.join("bad.jsonl"), "not json\n").unwrap();
         fs::write(dir.join("notes.txt"), "not a log").unwrap();
-        assert_eq!(facts_from_sessions(&home).len(), 2, "the two readable sessions");
+        assert_eq!(
+            facts_from_sessions(&home).len(),
+            2,
+            "the two readable sessions"
+        );
     }
 
     #[test]
@@ -1022,16 +1084,26 @@ mod tests {
             (None, "diverged"),
         ];
         for (index, (stop, _)) in endings.iter().enumerate() {
-            let mut records = vec![start(), Record::User { content: "a task".to_string() }];
+            let mut records = vec![
+                start(),
+                Record::User {
+                    content: "a task".to_string(),
+                },
+            ];
             if let Some(stop) = stop {
-                records.push(Record::End { stop_reason: stop.to_string(), turns: 1 });
+                records.push(Record::End {
+                    stop_reason: stop.to_string(),
+                    turns: 1,
+                });
             }
             write_session(&dir, &format!("s{index}"), &records);
         }
         let facts = facts_from_sessions(&home);
         let shapes: Vec<Vec<String>> = facts.iter().map(|fact| fact.shape.clone()).collect();
-        let expected: Vec<Vec<String>> =
-            endings.iter().map(|(_, word)| vec![word.to_string()]).collect();
+        let expected: Vec<Vec<String>> = endings
+            .iter()
+            .map(|(_, word)| vec![word.to_string()])
+            .collect();
         assert_eq!(shapes, expected);
         // And the words are the ranker's own three: no new sign
         // vocabulary was invented for the archive.
@@ -1042,20 +1114,44 @@ mod tests {
         ];
         for fact in &facts {
             let word = fact.shape.first().map(String::as_str).unwrap_or_default();
-            assert!(vocabulary.contains(&word), "`{word}` is not the sign vocabulary");
+            assert!(
+                vocabulary.contains(&word),
+                "`{word}` is not the sign vocabulary"
+            );
         }
     }
 
     #[test]
     fn the_index_round_trips_and_a_stamp_change_re_embeds_only_that_session() {
         let dir = scratch("index");
-        let mut one = vec![start(), Record::User { content: "first".to_string() }];
+        let mut one = vec![
+            start(),
+            Record::User {
+                content: "first".to_string(),
+            },
+        ];
         one.extend(exchange("c1", "bash", "{\"command\":\"cargo test\"}", "ok"));
-        one.push(Record::End { stop_reason: "completed".to_string(), turns: 1 });
+        one.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 1,
+        });
         write_session(&dir, "s1", &one);
-        let mut two = vec![start(), Record::User { content: "second".to_string() }];
-        two.extend(exchange("c2", "list_dir", "{\"path\":\"/tmp\"}", "notes.txt"));
-        two.push(Record::End { stop_reason: "completed".to_string(), turns: 1 });
+        let mut two = vec![
+            start(),
+            Record::User {
+                content: "second".to_string(),
+            },
+        ];
+        two.extend(exchange(
+            "c2",
+            "list_dir",
+            "{\"path\":\"/tmp\"}",
+            "notes.txt",
+        ));
+        two.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 1,
+        });
         write_session(&dir, "s2", &two);
 
         let calls = ScriptedEmbedder::counter();
@@ -1063,7 +1159,11 @@ mod tests {
         // itself, which the ranker embeds through the same backend.
         let mut index = SessionIndex::load(&dir);
         let _ = index.recall(&dir, ScriptedEmbedder::spawn(&calls, 4), "anything");
-        assert_eq!(calls.load(Ordering::Relaxed), 3, "two sessions and the instruction");
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            3,
+            "two sessions and the instruction"
+        );
         assert!(index_path(&dir).exists(), "the cache landed on disk");
 
         // A second load reads the cache through its file: nothing
@@ -1071,13 +1171,19 @@ mod tests {
         let mut reloaded = SessionIndex::load(&dir);
         assert!(reloaded.keyed_for(&("scripted".to_string(), 4)));
         let _ = reloaded.recall(&dir, ScriptedEmbedder::spawn(&calls, 4), "anything");
-        assert_eq!(calls.load(Ordering::Relaxed), 4, "both sessions came from the cache");
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            4,
+            "both sessions came from the cache"
+        );
 
         // Change one session's log: only it re-embeds. The stamp is the
         // log's own secs:nanos:len, so a rewritten file is a changed
         // session and an untouched one keeps its vector.
         let mut longer = one.clone();
-        longer.push(Record::User { content: "and one more turn".to_string() });
+        longer.push(Record::User {
+            content: "and one more turn".to_string(),
+        });
         write_session(&dir, "s1", &longer);
         let mut third = SessionIndex::load(&dir);
         let _ = third.recall(&dir, ScriptedEmbedder::spawn(&calls, 4), "anything");
@@ -1091,9 +1197,17 @@ mod tests {
     #[test]
     fn an_index_keyed_to_another_embedder_is_discarded_whole() {
         let dir = scratch("keyed");
-        let mut records = vec![start(), Record::User { content: "one".to_string() }];
+        let mut records = vec![
+            start(),
+            Record::User {
+                content: "one".to_string(),
+            },
+        ];
         records.extend(exchange("c1", "bash", "{\"command\":\"cargo test\"}", "ok"));
-        records.push(Record::End { stop_reason: "completed".to_string(), turns: 1 });
+        records.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 1,
+        });
         write_session(&dir, "s1", &records);
 
         let calls = ScriptedEmbedder::counter();
@@ -1121,9 +1235,17 @@ mod tests {
     #[test]
     fn a_malformed_index_reads_as_empty_and_never_panics() {
         let dir = scratch("malformed");
-        let mut records = vec![start(), Record::User { content: "one".to_string() }];
+        let mut records = vec![
+            start(),
+            Record::User {
+                content: "one".to_string(),
+            },
+        ];
         records.extend(exchange("c1", "bash", "{\"command\":\"cargo test\"}", "ok"));
-        records.push(Record::End { stop_reason: "completed".to_string(), turns: 1 });
+        records.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 1,
+        });
         write_session(&dir, "s1", &records);
         // The cache a crashed writer could leave: half a file, not a
         // file. It reads as empty and costs a recompute.
@@ -1134,7 +1256,11 @@ mod tests {
         assert!(index.sessions.is_empty(), "a malformed index read as empty");
         let _ = index.recall(&dir, ScriptedEmbedder::spawn(&calls, 4), "anything");
         // The recompute happened, and the rebuilt cache is on disk.
-        assert_eq!(calls.load(Ordering::Relaxed), 2, "the session embedded from scratch");
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "the session embedded from scratch"
+        );
         assert_eq!(index.sessions.len(), 1);
         assert_eq!(
             SessionIndex::load(&dir).sessions.len(),
@@ -1149,7 +1275,9 @@ mod tests {
         // Session A walked the trajectory the instruction asks about.
         let mut a = vec![
             start(),
-            Record::User { content: "prove the session archive ranks".to_string() },
+            Record::User {
+                content: "prove the session archive ranks".to_string(),
+            },
         ];
         a.extend(exchange(
             "c1",
@@ -1157,25 +1285,50 @@ mod tests {
             "{\"command\":\"cargo test --lib session_recall\"}",
             "test result: ok. 6 passed; 0 failed",
         ));
-        a.push(Record::End { stop_reason: "completed".to_string(), turns: 1 });
+        a.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 1,
+        });
         write_session(&dir, "a-session", &a);
         // Session B walked somewhere else entirely.
-        let mut b = vec![start(), Record::User { content: "water the plants".to_string() }];
-        b.extend(exchange("c9", "list_dir", "{\"path\":\"/tmp\"}", "notes.txt"));
-        b.push(Record::End { stop_reason: "completed".to_string(), turns: 1 });
+        let mut b = vec![
+            start(),
+            Record::User {
+                content: "water the plants".to_string(),
+            },
+        ];
+        b.extend(exchange(
+            "c9",
+            "list_dir",
+            "{\"path\":\"/tmp\"}",
+            "notes.txt",
+        ));
+        b.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 1,
+        });
         write_session(&dir, "b-session", &b);
 
         let mut index = SessionIndex::load(&dir);
         // Keyword-only on purpose: the proof is that the DIRECTION
         // channel reads the session's own record, with no vector path
         // to carry it.
-        let hits = index
-            .recall(&dir, Box::new(memory::KeywordOnly), "cargo test --lib session_recall");
+        let hits = index.recall(
+            &dir,
+            Box::new(memory::KeywordOnly),
+            "cargo test --lib session_recall",
+        );
         assert_eq!(hits.len(), 1, "{hits:?}");
         let hit = &hits[0];
         assert_eq!(hit.id, "a-session");
-        assert!(hit.trajectory > 0.0, "the direction channel read the record: {hit:?}");
-        assert_eq!(hit.phrases, vec!["cargo test --lib session_recall".to_string()]);
+        assert!(
+            hit.trajectory > 0.0,
+            "the direction channel read the record: {hit:?}"
+        );
+        assert_eq!(
+            hit.phrases,
+            vec!["cargo test --lib session_recall".to_string()]
+        );
         assert_eq!(hit.outcome, "resolved");
         assert_eq!(hit.task, "prove the session archive ranks");
         assert!(hit.score > 0.0);
@@ -1189,9 +1342,17 @@ mod tests {
     /// call, and a `completed` ending — the smallest log the
     /// derivation ranks.
     fn one_session(dir: &Path, id: &str, task: &str) -> PathBuf {
-        let mut records = vec![start(), Record::User { content: task.to_string() }];
+        let mut records = vec![
+            start(),
+            Record::User {
+                content: task.to_string(),
+            },
+        ];
         records.extend(exchange("c1", "bash", "{\"command\":\"cargo test\"}", "ok"));
-        records.push(Record::End { stop_reason: "completed".to_string(), turns: 1 });
+        records.push(Record::End {
+            stop_reason: "completed".to_string(),
+            turns: 1,
+        });
         write_session(dir, id, &records)
     }
 
@@ -1202,9 +1363,14 @@ mod tests {
         let other = one_session(&dir, "20261015T000001Z-bbb", "another session");
         // The logs' bytes before: the append-only property is proven
         // by comparing them after, byte for byte.
-        let before: Vec<Vec<u8>> =
-            [&log, &other].iter().map(|path| fs::read(path).unwrap()).collect();
-        assert!(!counts_path(&dir).exists(), "no store before the first recall");
+        let before: Vec<Vec<u8>> = [&log, &other]
+            .iter()
+            .map(|path| fs::read(path).unwrap())
+            .collect();
+        assert!(
+            !counts_path(&dir).exists(),
+            "no store before the first recall"
+        );
 
         let stream_root = scratch("counts-stream");
         let stream = calib::Stream::open(&stream_root);
@@ -1216,20 +1382,32 @@ mod tests {
         // session untouched.
         let counts = RecallCounts::load(&dir);
         assert_eq!(counts.count_of("20261015T000000Z-aaa"), 2);
-        assert_eq!(counts.count_of("20261015T000001Z-bbb"), 0, "the other session was not recalled");
+        assert_eq!(
+            counts.count_of("20261015T000001Z-bbb"),
+            0,
+            "the other session was not recalled"
+        );
         let text = fs::read_to_string(counts_path(&dir)).unwrap();
         assert!(text.contains("\"count\":2"), "{text}");
 
         // The logs: byte-identical. The store is the only writer of a
         // session's count; an append-only log is never rewritten.
         for (path, bytes) in [&log, &other].iter().zip(&before) {
-            assert_eq!(&fs::read(path).unwrap(), bytes, "{} changed", path.display());
+            assert_eq!(
+                &fs::read(path).unwrap(),
+                bytes,
+                "{} changed",
+                path.display()
+            );
         }
 
         // The row: one recall_hit per hit, naming the session id, its
         // shape, and its score — through the stream's own path.
         let rows = calib::read_day(&stream_root, &calib::today(), 64);
-        let hits: Vec<_> = rows.iter().filter(|row| row.op == calib::OP_RECALL_HIT).collect();
+        let hits: Vec<_> = rows
+            .iter()
+            .filter(|row| row.op == calib::OP_RECALL_HIT)
+            .collect();
         assert_eq!(hits.len(), 2, "{hits:?}");
         assert_eq!(hits[0].fact, "20261015T000000Z-aaa");
         assert_eq!(hits[0].shape, "resolved");
@@ -1241,7 +1419,11 @@ mod tests {
     #[test]
     fn the_store_seeds_the_synthetic_facts_count_and_the_history_channel_reads_it() {
         let dir = scratch("seed");
-        one_session(&dir, "20261015T000000Z-aaa", "prove the store seeds the count");
+        one_session(
+            &dir,
+            "20261015T000000Z-aaa",
+            "prove the store seeds the count",
+        );
         RecallCounts::bump(&dir, "20261015T000000Z-aaa");
         RecallCounts::bump(&dir, "20261015T000000Z-aaa");
 
@@ -1260,9 +1442,14 @@ mod tests {
             Box::new(memory::KeywordOnly),
             "prove the store seeds the count",
         );
-        let hit =
-            hits.iter().find(|hit| hit.id == "20261015T000000Z-aaa").expect("the session ranked");
-        assert!(hit.history > 0.0, "the history channel read the earned count: {hit:?}");
+        let hit = hits
+            .iter()
+            .find(|hit| hit.id == "20261015T000000Z-aaa")
+            .expect("the session ranked");
+        assert!(
+            hit.history > 0.0,
+            "the history channel read the earned count: {hit:?}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1275,15 +1462,26 @@ mod tests {
         // count until the next recall — never a panic, never an error.
         fs::write(counts_path(&dir), "{\"sessions\": {\"2026").unwrap();
         let counts = RecallCounts::load(&dir);
-        assert_eq!(counts.count_of("20261015T000000Z-aaa"), 0, "a malformed store read as empty");
-        assert_eq!(facts_from_dir(&dir)[0].recall_count, 0, "the derivation read it as empty too");
+        assert_eq!(
+            counts.count_of("20261015T000000Z-aaa"),
+            0,
+            "a malformed store read as empty"
+        );
+        assert_eq!(
+            facts_from_dir(&dir)[0].recall_count,
+            0,
+            "the derivation read it as empty too"
+        );
 
         // A failed write is one logged line and never an error: a
         // sessions directory that does not exist refuses the temp
         // file, and the recall it books for is unaffected.
         let absent = dir.join("no-such-dir");
         record_hit(&absent, "20261015T000000Z-aaa", "resolved", 0.5, None);
-        assert!(!counts_path(&absent).exists(), "the failed write left no store");
+        assert!(
+            !counts_path(&absent).exists(),
+            "the failed write left no store"
+        );
         // The readable store beside it still works.
         RecallCounts::bump(&dir, "20261015T000000Z-aaa");
         assert_eq!(RecallCounts::load(&dir).count_of("20261015T000000Z-aaa"), 1);
@@ -1309,7 +1507,10 @@ mod tests {
         record_hit(&dir, "20261015T000000Z-aaa", "resolved", 0.4, None);
         assert_eq!(fs::read(&log).unwrap(), bytes, "the log was rewritten");
         let text = String::from_utf8(fs::read(&log).unwrap()).unwrap();
-        assert!(!text.contains("recall-count"), "the log carries a count line: {text}");
+        assert!(
+            !text.contains("recall-count"),
+            "the log carries a count line: {text}"
+        );
         assert_eq!(RecallCounts::load(&dir).count_of("20261015T000000Z-aaa"), 1);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1408,9 +1609,8 @@ pub fn render_hits(hits: &[ScoredHit], instruction: &str) -> String {
 /// an outcome, not a row. Newest first: the reader wants the work they
 /// just did, and `session::list` hands them over oldest first.
 pub fn render_list(summaries: &[crate::session::SessionSummary]) -> String {
-    let mut out = format!(
-        "{BOLD}fleet sessions{RESET} {DIM}\u{2014} the archive, newest first{RESET}\n\n"
-    );
+    let mut out =
+        format!("{BOLD}fleet sessions{RESET} {DIM}\u{2014} the archive, newest first{RESET}\n\n");
     if summaries.is_empty() {
         out.push_str(&format!(
             "{DIM}no sessions yet \u{b7} run `fleet run \"<task>\"` to start one{RESET}\n"
@@ -1483,7 +1683,12 @@ pub fn render_detail(id: &str, created: &str, records: &[crate::session::Record]
     let mut last_outcome = String::new();
     for record in records {
         match record {
-            Record::Start { model, kind, parent, .. } => {
+            Record::Start {
+                model,
+                kind,
+                parent,
+                ..
+            } => {
                 let mut line = format!("model {model}");
                 if let Some(kind) = kind {
                     line.push_str(&format!(" \u{b7} {kind}"));
@@ -1502,7 +1707,10 @@ pub fn render_detail(id: &str, created: &str, records: &[crate::session::Record]
                 ));
                 out.push_str(&format!("{DIM}\u{2502}{RESET} {TEXT}{task}{RESET}\n"));
             }
-            Record::Assistant { content, tool_calls } => {
+            Record::Assistant {
+                content,
+                tool_calls,
+            } => {
                 if let Some(content) = content {
                     let text: String = content.chars().take(CARD_WIDTH - 6).collect();
                     out.push_str(&format!("{DIM}\u{2502}{RESET} {TEXT}{text}{RESET}\n"));
@@ -1516,12 +1724,23 @@ pub fn render_detail(id: &str, created: &str, records: &[crate::session::Record]
                     ));
                 }
             }
-            Record::ToolResult { name, output, approved, .. } => {
+            Record::ToolResult {
+                name,
+                output,
+                approved,
+                ..
+            } => {
                 let failed_call = output.starts_with("error:") || output.starts_with("denied");
                 if failed_call {
                     failed += 1;
                 }
-                let color = if failed_call { ERROR } else if *approved { OK } else { WARN };
+                let color = if failed_call {
+                    ERROR
+                } else if *approved {
+                    OK
+                } else {
+                    WARN
+                };
                 let mark = if failed_call {
                     "failed"
                 } else if *approved {

@@ -136,13 +136,15 @@ pub const SETTINGS: &[Setting] = &[
         key: "FLEET_EMBEDDING_ENDPOINT",
         kind: Kind::Text,
         file: File::Env,
-        summary: "The embedding endpoint recall's vector channel probes. Empty is the loopback default.",
+        summary:
+            "The embedding endpoint recall's vector channel probes. Empty is the loopback default.",
     },
     Setting {
         key: "FLEET_CUA_DRIVER",
         kind: Kind::Text,
         file: File::Env,
-        summary: "The cua driver binary the desktop tool launches. Empty resolves the tools directory.",
+        summary:
+            "The cua driver binary the desktop tool launches. Empty resolves the tools directory.",
     },
 ];
 
@@ -285,11 +287,11 @@ pub fn set(home: &Path, key: &str, value: &str) -> Result<(), String> {
         }
         cursor = entry.as_object_mut().expect("just checked it is an object");
     }
-    cursor.insert(
-        segments[segments.len() - 1].to_string(),
-        stored,
-    );
-    write_atomic(&path, &serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?)
+    cursor.insert(segments[segments.len() - 1].to_string(), stored);
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?,
+    )
 }
 
 /// Write one `NAME=value` line into the env file, preserving every
@@ -331,7 +333,8 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
             .map_err(|error| format!("{} cannot be created: {error}", parent.display()))?;
     }
     let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-    fs::write(&temp, text).map_err(|error| format!("{} cannot be written: {error}", temp.display()))?;
+    fs::write(&temp, text)
+        .map_err(|error| format!("{} cannot be written: {error}", temp.display()))?;
     fs::rename(&temp, path)
         .map_err(|error| format!("{} cannot be replaced: {error}", path.display()))?;
     Ok(())
@@ -361,9 +364,7 @@ impl State {
     /// one, and never a raw secret.
     pub fn rendered(&self) -> String {
         match &self.value {
-            Some(_) if self.file == File::Env && is_secret_name(self.key) => {
-                "set".to_string()
-            }
+            Some(_) if self.file == File::Env && is_secret_name(self.key) => "set".to_string(),
             Some(value) => value.clone(),
             None => "unset".to_string(),
         }
@@ -514,7 +515,11 @@ mod tests {
             ("skills.merge_similarity", "0.8", "0.80"),
             ("skills.retire_after_sessions", "12", "12"),
             ("gates.min_confidence", "0.7", "0.70"),
-            ("FLEET_EMBEDDING_ENDPOINT", "http://127.0.0.1:8901/v1/embeddings", "http://127.0.0.1:8901/v1/embeddings"),
+            (
+                "FLEET_EMBEDDING_ENDPOINT",
+                "http://127.0.0.1:8901/v1/embeddings",
+                "http://127.0.0.1:8901/v1/embeddings",
+            ),
         ] {
             set(&home, key, written).unwrap_or_else(|error| panic!("{key}: {error}"));
             let state = states(&home)
@@ -582,8 +587,12 @@ mod tests {
             "# the GUI's own env file\nSTEPFUN_API_KEY=sk-live-value\nFLEET_HOME=/x\n",
         )
         .unwrap();
-        set(&home, "FLEET_EMBEDDING_ENDPOINT", "http://127.0.0.1:8901/v1/embeddings")
-            .unwrap();
+        set(
+            &home,
+            "FLEET_EMBEDDING_ENDPOINT",
+            "http://127.0.0.1:8901/v1/embeddings",
+        )
+        .unwrap();
         let text = fs::read_to_string(home.join(ENV_FILE)).unwrap();
         assert!(text.contains("STEPFUN_API_KEY=sk-live-value"), "{text}");
         assert!(text.contains("# the GUI's own env file"), "{text}");
@@ -593,9 +602,18 @@ mod tests {
             "{text}"
         );
         // A second write to the same key replaces rather than appends.
-        set(&home, "FLEET_EMBEDDING_ENDPOINT", "http://127.0.0.1:9999/v1/embeddings").unwrap();
+        set(
+            &home,
+            "FLEET_EMBEDDING_ENDPOINT",
+            "http://127.0.0.1:9999/v1/embeddings",
+        )
+        .unwrap();
         let text = fs::read_to_string(home.join(ENV_FILE)).unwrap();
-        assert_eq!(text.matches("FLEET_EMBEDDING_ENDPOINT=").count(), 1, "{text}");
+        assert_eq!(
+            text.matches("FLEET_EMBEDDING_ENDPOINT=").count(),
+            1,
+            "{text}"
+        );
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -756,10 +774,8 @@ mod list_tests {
     use super::*;
 
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "fleet-settings-list-{tag}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("fleet-settings-list-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -773,7 +789,10 @@ mod list_tests {
         let home = scratch("provider-schema");
         let error = set_provider(&home, r#"{"id":"x","keyenv":"STEPFUN_API_KEY"}"#)
             .expect_err("a misspelled field must refuse");
-        assert!(error.contains("unknown field") || error.contains("keyenv"), "{error}");
+        assert!(
+            error.contains("unknown field") || error.contains("keyenv"),
+            "{error}"
+        );
         // And a well-formed one lands.
         let id = set_provider(
             &home,
@@ -791,7 +810,11 @@ mod list_tests {
     fn removing_an_added_provider_needs_force_and_a_compiled_in_one_does_not() {
         let home = scratch("provider-remove");
         set_provider(&home, r#"{"id":"stepfun","enabled":false}"#).unwrap();
-        set_provider(&home, r#"{"id":"my-own-gateway","base_url":"http://127.0.0.1:9/v1"}"#).unwrap();
+        set_provider(
+            &home,
+            r#"{"id":"my-own-gateway","base_url":"http://127.0.0.1:9/v1"}"#,
+        )
+        .unwrap();
         // The compiled-in one reverts without a fight.
         remove_provider(&home, "stepfun", false).unwrap();
         // The added one refuses, and the refusal names why.
@@ -826,7 +849,12 @@ mod list_tests {
         assert!(error.contains("at least one"), "{error}");
         // And a well-formed one lands, replacing in place.
         set_workload(&home, "quick", &["stepfun/step-3.7-flash".to_string()]).unwrap();
-        set_workload(&home, "quick", &["zai-coding-plan/GLM-5.3-Flash".to_string()]).unwrap();
+        set_workload(
+            &home,
+            "quick",
+            &["zai-coding-plan/GLM-5.3-Flash".to_string()],
+        )
+        .unwrap();
         let text = fs::read_to_string(home.join("routing.json")).unwrap();
         assert_eq!(text.matches("\"quick\"").count(), 1, "{text}");
         assert!(text.contains("GLM-5.3-Flash"), "{text}");
@@ -839,7 +867,12 @@ mod list_tests {
     fn removing_an_added_workload_needs_force() {
         let home = scratch("workload-remove");
         set_workload(&home, "quick", &["stepfun/step-3.7-flash".to_string()]).unwrap();
-        set_workload(&home, "my-own-shape", &["stepfun/step-3.7-flash".to_string()]).unwrap();
+        set_workload(
+            &home,
+            "my-own-shape",
+            &["stepfun/step-3.7-flash".to_string()],
+        )
+        .unwrap();
         remove_workload(&home, "quick", false).unwrap();
         let error = remove_workload(&home, "my-own-shape", false)
             .expect_err("removing an added workload must refuse without force");
@@ -870,10 +903,18 @@ mod list_tests {
         // An empty home carries no cards at all.
         assert!(list_states(&home).is_empty(), "no files, no cards");
         set_provider(&home, r#"{"id":"stepfun","enabled":false}"#).unwrap();
-        set_provider(&home, r#"{"id":"my-own-gateway","base_url":"http://127.0.0.1:9/v1"}"#)
-            .unwrap();
+        set_provider(
+            &home,
+            r#"{"id":"my-own-gateway","base_url":"http://127.0.0.1:9/v1"}"#,
+        )
+        .unwrap();
         set_workload(&home, "quick", &["stepfun/step-3.7-flash".to_string()]).unwrap();
-        set_workload(&home, "my-own-shape", &["stepfun/step-3.7-flash".to_string()]).unwrap();
+        set_workload(
+            &home,
+            "my-own-shape",
+            &["stepfun/step-3.7-flash".to_string()],
+        )
+        .unwrap();
         let states = list_states(&home);
         let providers: Vec<&ListState> = states
             .iter()
@@ -897,8 +938,15 @@ mod list_tests {
             .iter()
             .find(|entry| entry.key == "my-own-gateway")
             .expect("the added provider");
-        assert!(!own.reverts, "an added provider's removal is the destructive one");
-        assert!(own.detail.contains("http://127.0.0.1:9/v1"), "{}", own.detail);
+        assert!(
+            !own.reverts,
+            "an added provider's removal is the destructive one"
+        );
+        assert!(
+            own.detail.contains("http://127.0.0.1:9/v1"),
+            "{}",
+            own.detail
+        );
         // The seed is the buffer the writer parses: writing it back is
         // the same entry, in place, not a second one.
         assert_eq!(set_provider(&home, &own.seed).unwrap(), "my-own-gateway");
@@ -911,12 +959,19 @@ mod list_tests {
             .expect("the quick preference");
         assert!(quick.reverts, "a compiled-in workload's preference reverts");
         assert_eq!(quick.seed, "stepfun/step-3.7-flash");
-        assert!(quick.detail.contains("stepfun/step-3.7-flash"), "{}", quick.detail);
+        assert!(
+            quick.detail.contains("stepfun/step-3.7-flash"),
+            "{}",
+            quick.detail
+        );
         let own_shape = workloads
             .iter()
             .find(|entry| entry.key == "my-own-shape")
             .expect("the added workload");
-        assert!(!own_shape.reverts, "an added workload's removal is the destructive one");
+        assert!(
+            !own_shape.reverts,
+            "an added workload's removal is the destructive one"
+        );
         let _ = fs::remove_dir_all(&home);
     }
 }
@@ -1061,7 +1116,9 @@ pub fn list_states(home: &Path) -> Vec<ListState> {
     let config = read_json(&config_path).unwrap_or_else(|_| Value::Object(Map::new()));
     if let Some(providers) = config.get("providers").and_then(|list| list.as_array()) {
         for entry in providers {
-            let Some(id) = entry.get("id").and_then(|id| id.as_str()) else { continue };
+            let Some(id) = entry.get("id").and_then(|id| id.as_str()) else {
+                continue;
+            };
             out.push(ListState {
                 kind: ListKind::Provider,
                 key: id.to_string(),
@@ -1077,7 +1134,9 @@ pub fn list_states(home: &Path) -> Vec<ListState> {
     let routing = read_json(&routing_path).unwrap_or_else(|_| Value::Object(Map::new()));
     if let Some(workloads) = routing.get("workloads").and_then(|list| list.as_array()) {
         for entry in workloads {
-            let Some(name) = entry.get("workload").and_then(|name| name.as_str()) else { continue };
+            let Some(name) = entry.get("workload").and_then(|name| name.as_str()) else {
+                continue;
+            };
             let candidates: Vec<String> = entry
                 .get("candidates")
                 .and_then(|list| list.as_array())
@@ -1119,7 +1178,11 @@ fn provider_detail(entry: &Value) -> String {
         key_env.unwrap_or("the compiled-in key env").to_string(),
     ];
     if let Some(enabled) = entry.get("enabled").and_then(|value| value.as_bool()) {
-        parts.push(if enabled { "enabled".to_string() } else { "disabled".to_string() });
+        parts.push(if enabled {
+            "enabled".to_string()
+        } else {
+            "disabled".to_string()
+        });
     }
     parts.join(" · ")
 }
@@ -1261,16 +1324,20 @@ pub fn remove_workload(home: &Path, workload: &str, force: bool) -> Result<(), S
         .get_mut("workloads")
         .and_then(|workloads| workloads.as_array_mut())
         .ok_or_else(|| "`workloads` is not a list".to_string())?;
-    let position = workloads.iter().position(|existing| {
-        existing.get("workload").and_then(|w| w.as_str()) == Some(workload)
-    });
+    let position = workloads
+        .iter()
+        .position(|existing| existing.get("workload").and_then(|w| w.as_str()) == Some(workload));
     let Some(index) = position else {
         return Err(format!(
             "`{workload}` has no preference in routing.json; the compiled-in table carries {}",
             compiled_in_workloads().join(", ")
         ));
     };
-    if !compiled_in_workloads().iter().any(|known| known == workload) && !force {
+    if !compiled_in_workloads()
+        .iter()
+        .any(|known| known == workload)
+        && !force
+    {
         return Err(format!(
             "`{workload}` is not in the compiled-in table, so removing its preference leaves the workload with no candidates at all; pass --force to do it anyway"
         ));

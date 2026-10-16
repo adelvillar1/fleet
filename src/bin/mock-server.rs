@@ -26,17 +26,21 @@ use std::time::Duration;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let script_path = args.next().expect("usage: mock-server <responses> <requests> <port-file>");
-    let requests_path = args.next().expect("usage: mock-server <responses> <requests> <port-file>");
-    let port_path = args.next().expect("usage: mock-server <responses> <requests> <port-file>");
+    let script_path = args
+        .next()
+        .expect("usage: mock-server <responses> <requests> <port-file>");
+    let requests_path = args
+        .next()
+        .expect("usage: mock-server <responses> <requests> <port-file>");
+    let port_path = args
+        .next()
+        .expect("usage: mock-server <responses> <requests> <port-file>");
 
     let script = std::fs::read_to_string(&script_path).expect("read the response script");
     let mut responses: VecDeque<ScriptedResponse> = script
         .lines()
         .filter(|line| !line.is_empty())
-        .map(|line| {
-            serde_json::from_str(line).expect("a scripted line")
-        })
+        .map(|line| serde_json::from_str(line).expect("a scripted line"))
         .collect();
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind the mock server");
@@ -46,7 +50,9 @@ fn main() {
 
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { break };
-        let Some((head, body)) = read_request_and_body(&mut stream) else { break };
+        let Some((head, body)) = read_request_and_body(&mut stream) else {
+            break;
+        };
         record_request(Path::new(&requests_path), &head, &body);
         match responses.pop_front() {
             Some(scripted) => write_scripted(&mut stream, &scripted),
@@ -141,13 +147,18 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if haystack.len() < needle.len() {
         return None;
     }
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// Append one request as a JSON line so the test can assert on what arrived.
 fn record_request(requests_path: &Path, head: &str, body: &str) {
     let line = serde_json::json!({ "head": head, "body": body });
-    let Ok(mut log) = std::fs::OpenOptions::new().create(true).append(true).open(requests_path)
+    let Ok(mut log) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(requests_path)
     else {
         return;
     };

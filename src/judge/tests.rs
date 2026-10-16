@@ -31,10 +31,8 @@ fn plain(card: &str) -> String {
 fn scratch(tag: &str) -> PathBuf {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "fleet-judge-{tag}-{}-{serial}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("fleet-judge-{tag}-{}-{serial}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -97,7 +95,13 @@ fn turn_row(input_hash: &str, outcome: &str, stop_reason: &str) -> ReadRow {
 }
 
 /// One judged row in the stream, as the beat's writer lands it.
-fn judged_row(route_key: &str, provider: &str, workload: &str, verdict: &str, confidence: f64) -> RouteJudgedRow {
+fn judged_row(
+    route_key: &str,
+    provider: &str,
+    workload: &str,
+    verdict: &str,
+    confidence: f64,
+) -> RouteJudgedRow {
     RouteJudgedRow {
         ts: calib::stamp(),
         route_key: route_key.to_string(),
@@ -137,7 +141,10 @@ fn scripted_lane(reply: &str) -> Option<ServerSpec> {
             "result": { "content": [{ "type": "text", "text": reply }], "isError": false },
         } }),
     ];
-    let script = entries.iter().map(|entry| format!("{entry}\n")).collect::<String>();
+    let script = entries
+        .iter()
+        .map(|entry| format!("{entry}\n"))
+        .collect::<String>();
     std::fs::write(scratch.join("script.jsonl"), script).unwrap();
     Some(ServerSpec {
         program: bin.to_string_lossy().into_owned(),
@@ -168,10 +175,22 @@ fn lane_reply(label: &str, confidence: f64) -> String {
 }
 
 /// One judge call over the scripted lane.
-async fn judge_over(home: &Path, root: &Path, day: &str, dry_run: bool, reply: &str) -> JudgeOutcome {
+async fn judge_over(
+    home: &Path,
+    root: &Path,
+    day: &str,
+    dry_run: bool,
+    reply: &str,
+) -> JudgeOutcome {
     let lane = scripted_lane(reply).expect("the scripted lane");
-    judge(JudgeRequest { root, home, day: day.to_string(), dry_run, lane: LaneSource::Scripted(lane) })
-        .await
+    judge(JudgeRequest {
+        root,
+        home,
+        day: day.to_string(),
+        dry_run,
+        lane: LaneSource::Scripted(lane),
+    })
+    .await
 }
 
 /// A day's rows written straight to the stream's own file, so the reader
@@ -321,14 +340,26 @@ fn the_prompt_carries_the_outcome_evidence_and_never_the_task_text() {
     let prompt = compose_prompt(&route, Some(&turn));
     // The evidence: the workload, the verdict, the reason, the model,
     // the walk, the input's length and hash, and the joined outcome.
-    assert!(prompt.contains("the workload shape the router judged: hard"), "{prompt}");
+    assert!(
+        prompt.contains("the workload shape the router judged: hard"),
+        "{prompt}"
+    );
     assert!(prompt.contains("sys1 verdict: pass"), "{prompt}");
-    assert!(prompt.contains("provider that served: zai-coding-plan"), "{prompt}");
+    assert!(
+        prompt.contains("provider that served: zai-coding-plan"),
+        "{prompt}"
+    );
     assert!(prompt.contains("- router-kit failed (auth)"), "{prompt}");
-    assert!(prompt.contains("- zai-coding-plan served (served)"), "{prompt}");
+    assert!(
+        prompt.contains("- zai-coding-plan served (served)"),
+        "{prompt}"
+    );
     assert!(prompt.contains("input chars: 812"), "{prompt}");
     assert!(prompt.contains("input hash: a1b2c3d4e5f60718"), "{prompt}");
-    assert!(prompt.contains("the run's outcome: ok (completed)"), "{prompt}");
+    assert!(
+        prompt.contains("the run's outcome: ok (completed)"),
+        "{prompt}"
+    );
     // The redaction is named in the prompt itself, and the record rides
     // between markers as data.
     assert!(prompt.contains("redacted by design"), "{prompt}");
@@ -338,7 +369,10 @@ fn the_prompt_carries_the_outcome_evidence_and_never_the_task_text() {
     // A route row with no joining turn row says so rather than
     // pretending to an outcome it does not have.
     let unjoined = compose_prompt(&route, None);
-    assert!(unjoined.contains("the run's outcome: not joinable"), "{unjoined}");
+    assert!(
+        unjoined.contains("the run's outcome: not joinable"),
+        "{unjoined}"
+    );
 }
 
 #[test]
@@ -385,7 +419,10 @@ fn a_lanes_fail_open_parses_its_status_and_names_its_reason() {
     let reply = JudgeReply::parse(&value);
     assert_eq!(reply.verdict, "error");
     assert_eq!(reply.workload, None);
-    assert_eq!(reply.telemetry_error.as_deref(), Some("no provider succeeded"));
+    assert_eq!(
+        reply.telemetry_error.as_deref(),
+        Some("no provider succeeded")
+    );
     let reason = reply.fail_open().expect("the fail-open is named");
     assert!(reason.contains("no provider succeeded"), "{reason}");
 
@@ -404,11 +441,16 @@ fn a_lanes_fail_open_parses_its_status_and_names_its_reason() {
     let reply = JudgeReply::parse(&value);
     assert_eq!(reply.workload, None);
     let reason = reply.fail_open().expect("a declined head is no answer");
-    assert!(reason.contains("no provider returned a workload label"), "{reason}");
+    assert!(
+        reason.contains("no provider returned a workload label"),
+        "{reason}"
+    );
     // An error verdict with no reason of its own is still named, by its
     // status.
     let mute: Value = serde_json::from_str(r#"{"verdict": "error"}"#).unwrap();
-    let reason = JudgeReply::parse(&mute).fail_open().expect("named by its status");
+    let reason = JudgeReply::parse(&mute)
+        .fail_open()
+        .expect("named by its status");
     assert!(reason.contains("error"), "{reason}");
 }
 
@@ -430,15 +472,23 @@ fn the_grade_is_right_when_the_lanes_workload_maps_to_the_candidate_that_served(
         "2026-10-14T12:00:00Z",
         hard_target(),
         "hard",
-        &[("router-kit", "failed", Some("auth")), (hard_target(), "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            (hard_target(), "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
     let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_RIGHT);
     assert!((judgment.confidence - 0.91).abs() < 1e-9);
     assert!(judgment.reason.contains("`hard`"), "{}", judgment.reason);
-    assert!(judgment.reason.contains(hard_target()), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains(hard_target()),
+        "{}",
+        judgment.reason
+    );
 }
 
 #[test]
@@ -461,12 +511,25 @@ fn the_grade_is_insufficient_when_a_failover_followed_the_served_turn() {
         ],
         "a1b2c3d4e5f60718",
     );
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.88)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.88)).unwrap());
     let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT);
-    assert!(judgment.reason.contains("rate-limit"), "{}", judgment.reason);
-    assert!(judgment.reason.contains("want of a companion"), "{}", judgment.reason);
-    assert!(judgment.reason.contains("direction was right"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("rate-limit"),
+        "{}",
+        judgment.reason
+    );
+    assert!(
+        judgment.reason.contains("want of a companion"),
+        "{}",
+        judgment.reason
+    );
+    assert!(
+        judgment.reason.contains("direction was right"),
+        "{}",
+        judgment.reason
+    );
 }
 
 #[test]
@@ -484,11 +547,20 @@ fn the_grade_is_insufficient_when_the_answer_needed_the_escalation_leg() {
         "a1b2c3d4e5f60718",
     );
     route.verdict = "escalate".to_string();
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
     let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT);
-    assert!(judgment.reason.contains("escalation leg"), "{}", judgment.reason);
-    assert!(judgment.reason.contains("want of a companion"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("escalation leg"),
+        "{}",
+        judgment.reason
+    );
+    assert!(
+        judgment.reason.contains("want of a companion"),
+        "{}",
+        judgment.reason
+    );
 }
 
 #[test]
@@ -506,17 +578,26 @@ fn the_grade_is_insufficient_when_the_attempt_succeeded_but_the_task_did_not_com
         "a1b2c3d4e5f60718",
     );
     let turn = turn_row("a1b2c3d4e5f60718", "failed", "failed");
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
     let judgment = grade(&route, Some(&turn), &reply);
     assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT);
-    assert!(judgment.reason.contains("did not complete"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("did not complete"),
+        "{}",
+        judgment.reason
+    );
     assert!(judgment.reason.contains("`failed`"), "{}", judgment.reason);
     assert!(
         judgment.reason.contains("whatever the failed step needed"),
         "{}",
         judgment.reason
     );
-    assert!(judgment.reason.contains("want of a companion"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("want of a companion"),
+        "{}",
+        judgment.reason
+    );
 }
 
 #[test]
@@ -532,7 +613,8 @@ fn the_stalled_reason_names_the_companion_each_stop_reason_was_missing() {
         &[(hard_target(), "served", None)],
         "a1b2c3d4e5f60718",
     );
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
     let capped = turn_row("a1b2c3d4e5f60718", "ok", "max-turns");
     let judgment = grade(&route, Some(&capped), &reply);
     assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT);
@@ -563,7 +645,8 @@ fn an_owner_interrupted_run_grades_on_the_selection_alone() {
         "a1b2c3d4e5f60718",
     );
     let turn = turn_row("a1b2c3d4e5f60718", "failed", "interrupted");
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
     let judgment = grade(&route, Some(&turn), &reply);
     assert_eq!(judgment.verdict, VERDICT_RIGHT, "{}", judgment.reason);
     // An interrupted run whose DIRECTION was wrong is still wrong: the
@@ -572,7 +655,10 @@ fn an_owner_interrupted_run_grades_on_the_selection_alone() {
         "2026-10-14T12:00:00Z",
         "router-kit",
         "hard",
-        &[("router-kit", "served", None), (hard_target(), "skipped", Some("no-key"))],
+        &[
+            ("router-kit", "served", None),
+            (hard_target(), "skipped", Some("no-key")),
+        ],
         "a1b2c3d4e5f60718",
     );
     let judgment = grade(&wrong, Some(&turn), &reply);
@@ -591,7 +677,8 @@ fn a_completed_turn_keeps_a_right_selection_right() {
         "a1b2c3d4e5f60718",
     );
     let turn = turn_row("a1b2c3d4e5f60718", "ok", "completed");
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
     let judgment = grade(&route, Some(&turn), &reply);
     assert_eq!(judgment.verdict, VERDICT_RIGHT);
 }
@@ -606,11 +693,15 @@ fn a_wrong_direction_outranks_an_incomplete_one() {
         "2026-10-14T12:00:00Z",
         "router-kit",
         "hard",
-        &[("router-kit", "served", None), ("zai-coding-plan", "skipped", Some("no-key"))],
+        &[
+            ("router-kit", "served", None),
+            ("zai-coding-plan", "skipped", Some("no-key")),
+        ],
         "a1b2c3d4e5f60718",
     );
     let turn = turn_row("a1b2c3d4e5f60718", "failed", "max-turns");
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
     let judgment = grade(&route, Some(&turn), &reply);
     assert_eq!(judgment.verdict, VERDICT_WRONG);
 }
@@ -629,10 +720,15 @@ fn the_grade_is_wrong_when_a_different_candidate_served_and_the_required_one_was
         ],
         "a1b2c3d4e5f60718",
     );
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
     let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_WRONG);
-    assert!(judgment.reason.contains("skipped (no-key)"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("skipped (no-key)"),
+        "{}",
+        judgment.reason
+    );
 }
 
 #[test]
@@ -652,10 +748,15 @@ fn the_grade_is_wrong_when_the_required_candidate_failed_in_a_way_that_was_its_o
         ],
         "a1b2c3d4e5f60718",
     );
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.91)).unwrap());
     let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_WRONG);
-    assert!(judgment.reason.contains("client-error"), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("client-error"),
+        "{}",
+        judgment.reason
+    );
 }
 
 #[test]
@@ -670,10 +771,16 @@ fn an_unmapped_workload_grade_against_the_declared_head() {
         &[("router-kit", "served", None)],
         "a1b2c3d4e5f60718",
     );
-    let reply = JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("something_else", 0.7)).unwrap());
+    let reply = JudgeReply::parse(
+        &serde_json::from_str::<Value>(&lane_reply("something_else", 0.7)).unwrap(),
+    );
     let judgment = grade(&route, None, &reply);
     assert_eq!(judgment.verdict, VERDICT_RIGHT);
-    assert!(judgment.reason.contains(crate::route::HEAD_ID), "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains(crate::route::HEAD_ID),
+        "{}",
+        judgment.reason
+    );
 }
 
 // --- the row, the reader, and the round trip ---
@@ -689,7 +796,13 @@ fn the_judged_row_is_redacted_and_keyed_and_round_trips_through_the_reader() {
     write_day(
         &root,
         &day(),
-        &[Row::RouteJudged(judged_row(key, "zai-coding-plan", "hard", VERDICT_WRONG, 0.91))],
+        &[Row::RouteJudged(judged_row(
+            key,
+            "zai-coding-plan",
+            "hard",
+            VERDICT_WRONG,
+            0.91,
+        ))],
     );
     let rows = calib::read_day(&root, &day(), 64);
     assert_eq!(rows.len(), 1, "the reader dropped the fixture row");
@@ -709,8 +822,18 @@ fn the_judged_row_is_redacted_and_keyed_and_round_trips_through_the_reader() {
         0.91,
     )))
     .unwrap();
-    for forbidden in ["prompt", "answer", "final_answer", "text", "artifact", "ROUTE DATA"] {
-        assert!(!line.contains(&format!("\"{forbidden}\"")), "the row carries `{forbidden}`: {line}");
+    for forbidden in [
+        "prompt",
+        "answer",
+        "final_answer",
+        "text",
+        "artifact",
+        "ROUTE DATA",
+    ] {
+        assert!(
+            !line.contains(&format!("\"{forbidden}\"")),
+            "the row carries `{forbidden}`: {line}"
+        );
     }
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -722,7 +845,10 @@ fn the_key_is_the_route_rows_identity_and_joins_the_two_ops() {
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            ("zai-coding-plan", "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
     let key = calib::route_key(&route);
@@ -736,7 +862,10 @@ fn the_key_is_the_route_rows_identity_and_joins_the_two_ops() {
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            ("zai-coding-plan", "served", None),
+        ],
         "ffffffffffffffff",
     );
     assert_ne!(calib::route_key(&other), key);
@@ -746,7 +875,13 @@ fn the_key_is_the_route_rows_identity_and_joins_the_two_ops() {
         &day(),
         &[
             route_row_value(route.clone()),
-            Row::RouteJudged(judged_row(&key, "zai-coding-plan", "hard", VERDICT_RIGHT, 0.91)),
+            Row::RouteJudged(judged_row(
+                &key,
+                "zai-coding-plan",
+                "hard",
+                VERDICT_RIGHT,
+                0.91,
+            )),
         ],
     );
     let rows = calib::read_day(&root, &day(), 64);
@@ -770,13 +905,23 @@ fn the_freshest_row_per_key_stands_so_a_disposition_is_a_later_row() {
         &root,
         &day(),
         &[
-            Row::RouteJudged(judged_row(key, "zai-coding-plan", "hard", VERDICT_WRONG, 0.91)),
+            Row::RouteJudged(judged_row(
+                key,
+                "zai-coding-plan",
+                "hard",
+                VERDICT_WRONG,
+                0.91,
+            )),
             Row::RouteJudged(with_disposition),
         ],
     );
     let rows = calib::read_day(&root, &day(), 64);
     let judged = calib::judged_rows(&rows);
-    assert_eq!(judged.len(), 1, "the key is deduplicated to its freshest row");
+    assert_eq!(
+        judged.len(),
+        1,
+        "the key is deduplicated to its freshest row"
+    );
     assert_eq!(judged[0].disposition, calib::DISPOSITION_DISAGREED);
     // The verdict the lane wrote is unchanged: the disposition overrides
     // the math, never the record.
@@ -821,7 +966,15 @@ static KEY_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 fn the_fit_rule_needs_rows_and_span_and_an_unfit_cell_renders_no_score() {
     // Too few rows: unfit, whatever the rate.
     let rows: Vec<ReadRow> = (0..3)
-        .map(|index| read_judged("zai-coding-plan", "hard", VERDICT_WRONG, 0.9 - index as f64 * 0.1, ""))
+        .map(|index| {
+            read_judged(
+                "zai-coding-plan",
+                "hard",
+                VERDICT_WRONG,
+                0.9 - index as f64 * 0.1,
+                "",
+            )
+        })
         .collect();
     let cells = calib::calibration(&rows);
     assert_eq!(cells.len(), 1);
@@ -837,7 +990,15 @@ fn the_fit_rule_needs_rows_and_span_and_an_unfit_cell_renders_no_score() {
     assert!((cells[0].needs_span() - calib::FIT_MIN_SPAN).abs() < 1e-9);
     // Enough rows and enough span: fit.
     let fit: Vec<ReadRow> = (0..calib::FIT_MIN_ROWS)
-        .map(|index| read_judged("zai-coding-plan", "hard", VERDICT_WRONG, 0.95 - index as f64 * 0.05, ""))
+        .map(|index| {
+            read_judged(
+                "zai-coding-plan",
+                "hard",
+                VERDICT_WRONG,
+                0.95 - index as f64 * 0.05,
+                "",
+            )
+        })
         .collect();
     let cells = calib::calibration(&fit);
     assert_eq!(cells[0].fit, calib::FitState::Fit);
@@ -852,11 +1013,23 @@ fn the_calibration_is_keyed_by_provider_and_shape_and_never_averaged() {
     // anywhere in the read.
     let mut rows: Vec<ReadRow> = (0..calib::FIT_MIN_ROWS)
         .map(|index| {
-            read_judged("zai-coding-plan", "hard", VERDICT_WRONG, 0.95 - index as f64 * 0.05, "")
+            read_judged(
+                "zai-coding-plan",
+                "hard",
+                VERDICT_WRONG,
+                0.95 - index as f64 * 0.05,
+                "",
+            )
         })
         .collect();
     rows.extend((0..calib::FIT_MIN_ROWS).map(|index| {
-        read_judged("zai-coding-plan", "prose", VERDICT_RIGHT, 0.95 - index as f64 * 0.05, "")
+        read_judged(
+            "zai-coding-plan",
+            "prose",
+            VERDICT_RIGHT,
+            0.95 - index as f64 * 0.05,
+            "",
+        )
     }));
     let cells = calib::calibration(&rows);
     assert_eq!(cells.len(), 2, "two shapes, two cells");
@@ -900,7 +1073,11 @@ fn the_wrong_rate_is_confidence_weighted_and_the_floor_is_named() {
     assert_eq!(cell.fit, calib::FitState::Fit);
     // Weighted, not plain: 6/8 = 0.75 plain, and the wrongs are the
     // confident ones.
-    assert!(cell.weighted_wrong_rate > 0.75, "{}", cell.weighted_wrong_rate);
+    assert!(
+        cell.weighted_wrong_rate > 0.75,
+        "{}",
+        cell.weighted_wrong_rate
+    );
     assert!(cell.informs_failover(), "{}", cell.weighted_wrong_rate);
     assert_eq!(calib::WRONG_RATE_FLOOR, 0.50);
     // The cost per correct call is the cell's spend over its right count.
@@ -933,7 +1110,11 @@ fn three_confident_wrongs_cross_the_floor_in_the_weighted_regime() {
     assert_eq!(cell.wrong, 3);
     assert_eq!(cell.right, 5);
     assert_eq!(cell.fit, calib::FitState::Fit);
-    assert!((cell.confidence_span - 0.40).abs() < 1e-9, "{}", cell.confidence_span);
+    assert!(
+        (cell.confidence_span - 0.40).abs() < 1e-9,
+        "{}",
+        cell.confidence_span
+    );
     assert!(
         (cell.weighted_wrong_rate - 2.85 / 5.60).abs() < 1e-9,
         "{}",
@@ -995,7 +1176,11 @@ fn an_insufficient_cell_keeps_its_rate_apart_and_never_informs_the_failover() {
         "{}",
         cell.weighted_insufficient_rate
     );
-    assert!(cell.weighted_wrong_rate.abs() < 1e-9, "{}", cell.weighted_wrong_rate);
+    assert!(
+        cell.weighted_wrong_rate.abs() < 1e-9,
+        "{}",
+        cell.weighted_wrong_rate
+    );
     // The wrong-rate is the only thing that skips: a wholly insufficient
     // cell moves no candidate, however high its rate.
     assert!(!cell.informs_failover());
@@ -1078,7 +1263,15 @@ fn the_owners_disposition_overrides_the_automated_verdict_in_the_math() {
     // The owner disagrees with four of them, and the math follows the
     // owner rather than the lane.
     let mut rows: Vec<ReadRow> = (0..calib::FIT_MIN_ROWS)
-        .map(|index| read_judged("zai-coding-plan", "hard", VERDICT_WRONG, 0.95 - index as f64 * 0.05, ""))
+        .map(|index| {
+            read_judged(
+                "zai-coding-plan",
+                "hard",
+                VERDICT_WRONG,
+                0.95 - index as f64 * 0.05,
+                "",
+            )
+        })
         .collect();
     let automated = calib::calibration(&rows);
     assert!(automated[0].informs_failover());
@@ -1101,7 +1294,11 @@ fn the_owners_disposition_overrides_the_automated_verdict_in_the_math() {
     assert_eq!(waived[0].waived, 6);
     assert_eq!(waived[0].wrong, 2);
     assert_eq!(waived[0].right, 0);
-    assert_eq!(waived[0].fit, calib::FitState::Unfit, "six waived rows leave too few to fit");
+    assert_eq!(
+        waived[0].fit,
+        calib::FitState::Unfit,
+        "six waived rows leave too few to fit"
+    );
 }
 
 #[test]
@@ -1163,7 +1360,13 @@ fn a_cell_counts_its_zero_confidence_rows_and_names_the_reweighting_on_its_card(
     // rate is what it is.
     let mut rows: Vec<ReadRow> = (0..4)
         .map(|index| {
-            read_judged("zai-coding-plan", "hard", VERDICT_WRONG, 0.95 - index as f64 * 0.05, "")
+            read_judged(
+                "zai-coding-plan",
+                "hard",
+                VERDICT_WRONG,
+                0.95 - index as f64 * 0.05,
+                "",
+            )
         })
         .collect();
     rows.extend((0..4).map(|_| read_judged("zai-coding-plan", "hard", VERDICT_RIGHT, 0.0, "")));
@@ -1173,7 +1376,11 @@ fn a_cell_counts_its_zero_confidence_rows_and_names_the_reweighting_on_its_card(
     assert_eq!(cell.wrong, 4);
     assert_eq!(cell.zero_confidence, 4);
     assert_eq!(cell.fit, calib::FitState::Fit);
-    assert!((cell.weighted_wrong_rate - 1.0).abs() < 1e-9, "{}", cell.weighted_wrong_rate);
+    assert!(
+        (cell.weighted_wrong_rate - 1.0).abs() < 1e-9,
+        "{}",
+        cell.weighted_wrong_rate
+    );
     assert!(cell.informs_failover());
 
     // The count rides the card: the reweighting is visible, not inferred.
@@ -1246,10 +1453,22 @@ fn no_synchronous_path_references_the_judgment_beat() {
         ("tui/ui.rs", include_str!("../tui/ui.rs")),
         ("tui/events.rs", include_str!("../tui/events.rs")),
     ] {
-        assert!(!source.contains("judge::"), "{name} names the judgment beat");
-        assert!(!source.contains("crate::judge"), "{name} names the judgment beat");
-        assert!(!source.contains("JUDGE_BUDGET_ENV"), "{name} names the judgment beat");
-        assert!(!source.contains("JUDGE_ESTIMATED_ASK_USD"), "{name} names the judgment beat");
+        assert!(
+            !source.contains("judge::"),
+            "{name} names the judgment beat"
+        );
+        assert!(
+            !source.contains("crate::judge"),
+            "{name} names the judgment beat"
+        );
+        assert!(
+            !source.contains("JUDGE_BUDGET_ENV"),
+            "{name} names the judgment beat"
+        );
+        assert!(
+            !source.contains("JUDGE_ESTIMATED_ASK_USD"),
+            "{name} names the judgment beat"
+        );
     }
     // The beat's own row is constructed in exactly two modules — `calib`,
     // which defines the type, and `judge`, which writes it. Scan the
@@ -1286,8 +1505,14 @@ fn no_synchronous_path_references_the_judgment_beat() {
     // The routing path reads the *calibration*, which is a pure read of
     // the stream — it never names the beat that spends.
     let route = include_str!("../route.rs");
-    assert!(route.contains("calib::calibration("), "the walk consults the calibration");
-    assert!(route.contains("calibration_skips"), "the walk's skips are named");
+    assert!(
+        route.contains("calib::calibration("),
+        "the walk consults the calibration"
+    );
+    assert!(
+        route.contains("calibration_skips"),
+        "the walk's skips are named"
+    );
     // The beat's real in-crate callers, named rather than inferred: the
     // CLI dispatch in `main`, and the graded scenario in `eval` — plus
     // this module's own tests. The guard above is a source grep over a
@@ -1315,7 +1540,10 @@ async fn a_days_route_rows_are_judged_beside_themselves_and_the_rows_land() {
         "2026-10-14T12:00:00Z",
         hard_target(),
         "hard",
-        &[("router-kit", "failed", Some("auth")), (hard_target(), "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            (hard_target(), "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
     write_day(&root, &day(), &[route_row_value(route.clone())]);
@@ -1354,10 +1582,18 @@ async fn a_days_route_rows_are_judged_beside_themselves_and_the_rows_land() {
     assert!(text.contains("judged"), "{text}");
     assert!(text.contains(hard_target()), "{text}");
     assert!(text.contains(&calib::route_key(&route)), "{text}");
-    assert!(outcome.card.contains('\u{250c}') && outcome.card.contains('\u{2514}'), "{}", outcome.card);
+    assert!(
+        outcome.card.contains('\u{250c}') && outcome.card.contains('\u{2514}'),
+        "{}",
+        outcome.card
+    );
     for line in outcome.card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
@@ -1371,7 +1607,10 @@ async fn a_second_batch_spends_nothing_on_a_route_it_already_judged() {
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            ("zai-coding-plan", "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
     write_day(&root, &day(), &[route_row_value(route.clone())]);
@@ -1381,7 +1620,11 @@ async fn a_second_batch_spends_nothing_on_a_route_it_already_judged() {
     // No ask, no row: the batch is idempotent, and it says so by name.
     assert!(second.judged.is_empty());
     assert_eq!(second.refusals.len(), 1);
-    assert!(second.refusals[0].1.contains("already judged"), "{}", second.refusals[0].1);
+    assert!(
+        second.refusals[0].1.contains("already judged"),
+        "{}",
+        second.refusals[0].1
+    );
     assert_eq!(calib::read_day(&root, &day(), 64).len(), 2);
     // The day's spend did not move.
     assert!((day_spend(&root, &home, &day()) - 0.0002).abs() < 1e-9);
@@ -1397,7 +1640,10 @@ async fn a_dry_run_spends_nothing_and_shows_what_would_be_asked() {
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            ("zai-coding-plan", "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
     write_day(&root, &day(), &[route_row_value(route.clone())]);
@@ -1407,7 +1653,11 @@ async fn a_dry_run_spends_nothing_and_shows_what_would_be_asked() {
     // No ask, no row, no spend.
     assert!(outcome.judged.is_empty());
     assert!(outcome.dry_run_prompts.len() == 1 || !outcome.dry_run_prompts.is_empty());
-    assert_eq!(calib::read_day(&root, &day(), 64).len(), 1, "only the route row is there");
+    assert_eq!(
+        calib::read_day(&root, &day(), 64).len(),
+        1,
+        "only the route row is there"
+    );
     assert!((day_spend(&root, &home, &day())).abs() < 1e-9);
     // The card shows what would be asked, keyed.
     let (key, prompt) = &outcome.dry_run_prompts[0];
@@ -1419,7 +1669,11 @@ async fn a_dry_run_spends_nothing_and_shows_what_would_be_asked() {
     assert!(text.contains("budget"), "{text}");
     for line in outcome.card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
@@ -1433,7 +1687,11 @@ async fn a_day_with_no_route_rows_is_a_named_refusal() {
     let refusal = outcome.refusal.clone().expect("a named refusal");
     assert!(refusal.contains("no `route` rows"), "{refusal}");
     assert!(outcome.judged.is_empty());
-    assert!(plain(&outcome.card).contains("no `route` rows"), "{}", outcome.card);
+    assert!(
+        plain(&outcome.card).contains("no `route` rows"),
+        "{}",
+        outcome.card
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1449,7 +1707,10 @@ async fn a_lane_that_cannot_answer_fails_open_naming_its_reason() {
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            ("zai-coding-plan", "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
     write_day(&root, &day(), &[route_row_value(route.clone())]);
@@ -1470,11 +1731,19 @@ async fn a_lane_that_cannot_answer_fails_open_naming_its_reason() {
     .await;
     assert!(outcome.judged.is_empty());
     assert_eq!(outcome.refusals.len(), 1);
-    assert!(outcome.refusals[0].1.contains("could not start"), "{}", outcome.refusals[0].1);
+    assert!(
+        outcome.refusals[0].1.contains("could not start"),
+        "{}",
+        outcome.refusals[0].1
+    );
     // No row, and the stream still holds exactly the route row.
     assert_eq!(calib::read_day(&root, &day(), 64).len(), 1);
     assert!((day_spend(&root, &home, &day())).abs() < 1e-9);
-    assert!(plain(&outcome.card).contains("the recorded decisions stand"), "{}", outcome.card);
+    assert!(
+        plain(&outcome.card).contains("the recorded decisions stand"),
+        "{}",
+        outcome.card
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1493,7 +1762,10 @@ async fn a_lane_that_fails_open_is_refused_by_name_not_shipped_as_a_judgment() {
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            ("zai-coding-plan", "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
     write_day(&root, &day(), &[route_row_value(route.clone())]);
@@ -1518,7 +1790,11 @@ async fn a_lane_that_fails_open_is_refused_by_name_not_shipped_as_a_judgment() {
     // No row, and the stream still holds exactly the route row.
     assert_eq!(calib::read_day(&root, &day(), 64).len(), 1);
     assert!((day_spend(&root, &home, &day())).abs() < 1e-9);
-    assert!(plain(&outcome.card).contains("the recorded decisions stand"), "{}", outcome.card);
+    assert!(
+        plain(&outcome.card).contains("the recorded decisions stand"),
+        "{}",
+        outcome.card
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1540,7 +1816,10 @@ async fn a_lanes_answer_with_no_confidence_is_refused_rather_than_graded_on_a_gu
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            ("zai-coding-plan", "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
     write_day(&root, &day(), &[route_row_value(route.clone())]);
@@ -1564,7 +1843,11 @@ async fn a_lanes_answer_with_no_confidence_is_refused_rather_than_graded_on_a_gu
     assert_eq!(calib::read_day(&root, &day(), 64).len(), 1);
     // The batch did not answer, so the command's exit code says so.
     assert!(!outcome.batch_answered());
-    assert!(plain(&outcome.card).contains("the recorded decisions stand"), "{}", outcome.card);
+    assert!(
+        plain(&outcome.card).contains("the recorded decisions stand"),
+        "{}",
+        outcome.card
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1599,7 +1882,10 @@ fn a_batch_that_judged_nothing_did_not_answer_and_the_command_says_so() {
         judged: Vec::new(),
         refusals: Vec::new(),
         refusal: None,
-        dry_run_prompts: vec![("ce89b6a3e8475169".to_string(), "ROUTE DATA BEGIN".to_string())],
+        dry_run_prompts: vec![(
+            "ce89b6a3e8475169".to_string(),
+            "ROUTE DATA BEGIN".to_string(),
+        )],
         spent: 0.0,
     };
     assert!(rehearsed.batch_answered());
@@ -1636,7 +1922,10 @@ fn a_batch_that_judged_nothing_did_not_answer_and_the_command_says_so() {
     let over_budget = JudgeOutcome {
         card: String::new(),
         judged: Vec::new(),
-        refusals: vec![("ce89b6a3e8475169".to_string(), "over the $0.05 daily budget".to_string())],
+        refusals: vec![(
+            "ce89b6a3e8475169".to_string(),
+            "over the $0.05 daily budget".to_string(),
+        )],
         refusal: Some("the day's judge spend is $0.0500".to_string()),
         dry_run_prompts: Vec::new(),
         spent: 0.05,
@@ -1652,21 +1941,44 @@ async fn an_over_budget_day_is_refused_naming_the_spend() {
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            ("zai-coding-plan", "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
     write_day(&root, &day(), &[route_row_value(route.clone())]);
     // The day's spend already at the cap: the next ask is refused by
     // name, and the refusal carries both numbers.
-    let mut spent = judged_row("0000000000000000", "router-kit", "quick", VERDICT_RIGHT, 0.9);
+    let mut spent = judged_row(
+        "0000000000000000",
+        "router-kit",
+        "quick",
+        VERDICT_RIGHT,
+        0.9,
+    );
     spent.cost_usd = Some(JUDGE_BUDGET_USD_DAY);
-    write_day(&root, &day(), &[route_row_value(route.clone()), Row::RouteJudged(spent)]);
+    write_day(
+        &root,
+        &day(),
+        &[route_row_value(route.clone()), Row::RouteJudged(spent)],
+    );
     let outcome = judge_over(&home, &root, &day(), false, &lane_reply("hard", 0.91)).await;
 
     assert!(outcome.judged.is_empty());
     assert_eq!(outcome.refusals.len(), 1);
-    assert!(outcome.refusals[0].1.contains("daily budget"), "{}", outcome.refusals[0].1);
-    assert!(outcome.refusals[0].1.contains(&format!("${JUDGE_BUDGET_USD_DAY:.2}")), "{}", outcome.refusals[0].1);
+    assert!(
+        outcome.refusals[0].1.contains("daily budget"),
+        "{}",
+        outcome.refusals[0].1
+    );
+    assert!(
+        outcome.refusals[0]
+            .1
+            .contains(&format!("${JUDGE_BUDGET_USD_DAY:.2}")),
+        "{}",
+        outcome.refusals[0].1
+    );
     // No new row: the stream still holds the route row and the row that
     // spent the cap.
     assert_eq!(calib::read_day(&root, &day(), 64).len(), 2);
@@ -1694,7 +2006,10 @@ async fn a_row_the_writer_could_not_land_records_its_spend_to_the_sidecar_and_re
         "2026-10-14T12:00:00Z",
         "zai-coding-plan",
         "hard",
-        &[("router-kit", "failed", Some("auth")), ("zai-coding-plan", "served", None)],
+        &[
+            ("router-kit", "failed", Some("auth")),
+            ("zai-coding-plan", "served", None),
+        ],
         "a1b2c3d4e5f60718",
     );
     write_day(&root, &day(), &[route_row_value(route.clone())]);
@@ -1716,7 +2031,11 @@ async fn a_row_the_writer_could_not_land_records_its_spend_to_the_sidecar_and_re
     let reason = &outcome.refusals[0].1;
     assert!(reason.contains("could not be recorded"), "{reason}");
     assert!(
-        reason.contains(&calib::spend_sidecar(&home, SPEND_LEDGER).display().to_string()),
+        reason.contains(
+            &calib::spend_sidecar(&home, SPEND_LEDGER)
+                .display()
+                .to_string()
+        ),
         "{reason}"
     );
     // No judged row landed — the stream still holds exactly the route
@@ -1727,7 +2046,11 @@ async fn a_row_the_writer_could_not_land_records_its_spend_to_the_sidecar_and_re
     assert!((day_spend(&root, &home, &day()) - 0.0002).abs() < 1e-9);
     // The batch did not answer, so the command's exit code says so.
     assert!(!outcome.batch_answered());
-    assert!(plain(&outcome.card).contains("the recorded decisions stand"), "{}", outcome.card);
+    assert!(
+        plain(&outcome.card).contains("the recorded decisions stand"),
+        "{}",
+        outcome.card
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1742,14 +2065,23 @@ fn a_disposition_lands_as_a_later_row_and_overrides_the_math() {
     write_day(
         &root,
         &day(),
-        &[Row::RouteJudged(judged_row(key, "zai-coding-plan", "hard", VERDICT_WRONG, 0.91))],
+        &[Row::RouteJudged(judged_row(
+            key,
+            "zai-coding-plan",
+            "hard",
+            VERDICT_WRONG,
+            0.91,
+        ))],
     );
     let row = disposition(&root, &day(), key, calib::DISPOSITION_DISAGREED)
         .expect("the disposition landed");
     // The verdict the lane wrote rides through unchanged; the
     // disposition is the later row's own claim.
     assert_eq!(row.verdict, VERDICT_WRONG);
-    assert_eq!(row.disposition.as_deref(), Some(calib::DISPOSITION_DISAGREED));
+    assert_eq!(
+        row.disposition.as_deref(),
+        Some(calib::DISPOSITION_DISAGREED)
+    );
     assert_eq!(row.route_key, key);
     assert_eq!(row.provider, "zai-coding-plan");
     assert_eq!(row.workload, "hard");
@@ -1772,7 +2104,11 @@ fn a_disposition_lands_as_a_later_row_and_overrides_the_math() {
     assert!(text.contains("hard"), "{text}");
     for line in disposition_card(&row, &day()).lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&root);
@@ -1819,7 +2155,13 @@ fn the_calibration_surface_cards_the_cells_and_names_the_fit_state_and_the_floor
             "",
         ))
     }));
-    rows.push(Row::RouteJudged(read_judged_value("xiaomi-mimo", "quick", VERDICT_RIGHT, 0.8, "")));
+    rows.push(Row::RouteJudged(read_judged_value(
+        "xiaomi-mimo",
+        "quick",
+        VERDICT_RIGHT,
+        0.8,
+        "",
+    )));
     // The third state's cell: eight insufficient rows spanning 0.35 —
     // fit, so it renders its own rate and the companion note, and it
     // informs nothing.
@@ -1839,30 +2181,69 @@ fn the_calibration_surface_cards_the_cells_and_names_the_fit_state_and_the_floor
     assert_eq!(rendered.matches('\u{250c}').count(), 4, "{rendered}");
     assert!(!rendered.contains("| id |"), "{rendered}");
     // The cells are named by provider AND shape.
-    assert!(rendered.contains("zai-coding-plan \u{b7} hard"), "{rendered}");
-    assert!(rendered.contains("zai-coding-plan \u{b7} prose"), "{rendered}");
+    assert!(
+        rendered.contains("zai-coding-plan \u{b7} hard"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("zai-coding-plan \u{b7} prose"),
+        "{rendered}"
+    );
     assert!(rendered.contains("xiaomi-mimo \u{b7} quick"), "{rendered}");
     // The fit cell's score, and the unfit one's needs — and never a
     // score for the unfit one.
-    assert!(rendered.contains("confidence-weighted wrong-rate"), "{rendered}");
+    assert!(
+        rendered.contains("confidence-weighted wrong-rate"),
+        "{rendered}"
+    );
     assert!(rendered.contains("unfit"), "{rendered}");
     assert!(rendered.contains("more judged row"), "{rendered}");
-    assert!(rendered.contains("no score is drawn from this sample"), "{rendered}");
+    assert!(
+        rendered.contains("no score is drawn from this sample"),
+        "{rendered}"
+    );
     // The ride-back is shape-scoped on the card, not a global claim.
-    assert!(rendered.contains("informs the failover for shape `hard` only"), "{rendered}");
+    assert!(
+        rendered.contains("informs the failover for shape `hard` only"),
+        "{rendered}"
+    );
     // The third state renders as its own named number and its own rate,
     // never folded into the wrong-rate, and the companion note names
     // what the minima needs without moving anyone.
-    assert!(rendered.contains("0 right \u{b7} 0 wrong \u{b7} 8 insufficient"), "{rendered}");
-    assert!(rendered.contains("confidence-weighted insufficient-rate"), "{rendered}");
-    assert!(rendered.contains("the minima needs companions"), "{rendered}");
+    assert!(
+        rendered.contains("0 right \u{b7} 0 wrong \u{b7} 8 insufficient"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("confidence-weighted insufficient-rate"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("the minima needs companions"),
+        "{rendered}"
+    );
     assert!(rendered.contains("is not skipped"), "{rendered}");
-    assert!(rendered.contains("naming the companions the minima needs"), "{rendered}");
+    assert!(
+        rendered.contains("naming the companions the minima needs"),
+        "{rendered}"
+    );
     // The fit rule's thresholds and the ride-back's scope are named.
-    assert!(rendered.contains(&format!("floor {:.2}", calib::WRONG_RATE_FLOOR)), "{rendered}");
-    assert!(rendered.contains(&format!("{} rows", calib::FIT_MIN_ROWS)), "{rendered}");
-    assert!(rendered.contains("gate calibration.informs_failover on"), "{rendered}");
-    assert!(rendered.contains("the declared chain's order and its head are untouched"), "{rendered}");
+    assert!(
+        rendered.contains(&format!("floor {:.2}", calib::WRONG_RATE_FLOOR)),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(&format!("{} rows", calib::FIT_MIN_ROWS)),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("gate calibration.informs_failover on"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("the declared chain's order and its head are untouched"),
+        "{rendered}"
+    );
     assert!(
         rendered.contains("the calibration moves only the failover's preference")
             && rendered.contains("and only for the workload shape's own cell"),
@@ -1870,7 +2251,10 @@ fn the_calibration_surface_cards_the_cells_and_names_the_fit_state_and_the_floor
     );
     // The gate reads off when the owner turned it off.
     let gated = calib::render_calibration(&root, &day, false);
-    assert!(gated.contains("gate calibration.informs_failover off"), "{gated}");
+    assert!(
+        gated.contains("gate calibration.informs_failover off"),
+        "{gated}"
+    );
     // Every drawn line fits the house width, so nothing clips at 80
     // columns and the cards read the same at 120.
     for line in rendered.lines() {
@@ -1885,7 +2269,10 @@ fn a_day_with_no_judged_rows_names_the_command_that_makes_them() {
     let root = scratch("surface-empty");
     let day = day();
     let rendered = calib::render_calibration(&root, &day, true);
-    assert!(rendered.contains(&format!("no judged routes for {day}")), "{rendered}");
+    assert!(
+        rendered.contains(&format!("no judged routes for {day}")),
+        "{rendered}"
+    );
     assert!(rendered.contains("fleet judge"), "{rendered}");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1922,7 +2309,15 @@ fn an_insufficient_row_renders_as_insufficient_and_never_as_right() {
         latency_ms: Some(900),
         lane: JUDGE_LANE.to_string(),
     };
-    let card = batch_card("2026-10-14", &[row], &[], None, &[], 0.0002, JUDGE_BUDGET_USD_DAY);
+    let card = batch_card(
+        "2026-10-14",
+        &[row],
+        &[],
+        None,
+        &[],
+        0.0002,
+        JUDGE_BUDGET_USD_DAY,
+    );
     let text = plain(&card);
     // The word, beside the provider and the shape it was judged for.
     assert!(
@@ -1933,20 +2328,29 @@ fn an_insufficient_row_renders_as_insufficient_and_never_as_right() {
     assert!(!text.contains("right xiaomi-mimo"), "{text}");
     // The card's own tally still says the same thing, so the two halves
     // of the card agree.
-    assert!(text.contains("0 right \u{b7} 0 wrong \u{b7} 1 insufficient"), "{text}");
+    assert!(
+        text.contains("0 right \u{b7} 0 wrong \u{b7} 1 insufficient"),
+        "{text}"
+    );
     // Amber — the third state's own colour, the same escape the
     // disposition card paints it with.
     assert!(
         card.contains(&format!(
             "{}{}insufficient{}",
-            palette::BOLD, palette::WARN, palette::RESET
+            palette::BOLD,
+            palette::WARN,
+            palette::RESET
         )),
         "{}",
         card
     );
     for line in card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
 }
 
@@ -1976,25 +2380,53 @@ fn a_card_with_unbounded_fields_stays_inside_the_house_width() {
         latency_ms: Some(900),
         lane: JUDGE_LANE.to_string(),
     };
-    let card = batch_card("2026-10-14", &[row.clone()], &[], None, &[], 0.0002, JUDGE_BUDGET_USD_DAY);
+    let card = batch_card(
+        "2026-10-14",
+        &[row.clone()],
+        &[],
+        None,
+        &[],
+        0.0002,
+        JUDGE_BUDGET_USD_DAY,
+    );
     for line in card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     // The same two unbounded ids under the longest word: the ids' tails
     // are what a long line costs, never the width.
     row.verdict = VERDICT_INSUFFICIENT.to_string();
-    let card = batch_card("2026-10-14", &[row.clone()], &[], None, &[], 0.0002, JUDGE_BUDGET_USD_DAY);
+    let card = batch_card(
+        "2026-10-14",
+        &[row.clone()],
+        &[],
+        None,
+        &[],
+        0.0002,
+        JUDGE_BUDGET_USD_DAY,
+    );
     for line in card.lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
     // And the disposition card draws the same line, so it holds there
     // too.
     row.disposition = Some(calib::DISPOSITION_DISAGREED.to_string());
     for line in disposition_card(&row, "2026-10-14").lines() {
         let width = plain(line).chars().count();
-        assert!(width <= CARD_WIDTH, "a card line is {width} wide: {}", plain(line));
+        assert!(
+            width <= CARD_WIDTH,
+            "a card line is {width} wide: {}",
+            plain(line)
+        );
     }
 }
 

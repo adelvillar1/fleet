@@ -182,6 +182,7 @@ const READ_CAP: usize = 512;
 /// oversized line is drained and skipped rather than read into memory.
 const MAX_LINE_BYTES: u64 = 1 << 20;
 
+pub use crate::calib::DelegatedRunRow as DelegationRow;
 /// The delegation row, under the name this beat and its readers use,
 /// and the op the stream tags it with.
 ///
@@ -195,7 +196,6 @@ const MAX_LINE_BYTES: u64 = 1 << 20;
 /// interleave into, and a row without the stream's own op tag is a row
 /// this reader could not join (the KI-164 class).
 pub use crate::calib::OP_DELEGATION;
-pub use crate::calib::DelegatedRunRow as DelegationRow;
 
 /// The judgment op: one delegation graded against its outcome evidence
 /// through the sys1 lane, keyed by the judged delegation's session id.
@@ -246,7 +246,6 @@ pub struct JudgeRequest<'a> {
 }
 
 // --- the row shapes --------------------------------------------------------
-
 
 /// One delegation's judgment, as the beat records it. The row the
 /// calibration surface reads and the ride-back consults, keyed by the
@@ -332,7 +331,10 @@ pub fn read_day(root: &Path, day: &str) -> DayRows {
     let mut delegations: VecDeque<DelegationRow> = VecDeque::new();
     let mut judged: VecDeque<DelegationJudgedRow> = VecDeque::new();
     let Ok(file) = std::fs::File::open(calib::day_path(root, day)) else {
-        return DayRows { delegations: Vec::new(), judged: Vec::new() };
+        return DayRows {
+            delegations: Vec::new(),
+            judged: Vec::new(),
+        };
     };
     let mut reader = BufReader::new(file);
     let mut line: Vec<u8> = Vec::new();
@@ -356,9 +358,15 @@ pub fn read_day(root: &Path, day: &str) -> DayRows {
                 .read_until(b'\n', &mut sink);
             continue;
         }
-        let Ok(text) = std::str::from_utf8(&line) else { continue };
-        let Ok(value) = serde_json::from_str::<Value>(text.trim()) else { continue };
-        let Some(op) = value.get("op").and_then(Value::as_str) else { continue };
+        let Ok(text) = std::str::from_utf8(&line) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
+            continue;
+        };
+        let Some(op) = value.get("op").and_then(Value::as_str) else {
+            continue;
+        };
         match op {
             OP_DELEGATION => {
                 if let Ok(row) = serde_json::from_value::<DelegationRow>(value.clone()) {
@@ -605,7 +613,9 @@ fn continued_paths(row: &DelegationRow, wrote: &[String]) -> Vec<String> {
     };
     let mut continued: Vec<String> = Vec::new();
     for record in &records[boundary + 1..] {
-        let Record::Assistant { tool_calls, .. } = record else { continue };
+        let Record::Assistant { tool_calls, .. } = record else {
+            continue;
+        };
         for call in tool_calls {
             if call.function.name != "write_file" {
                 continue;
@@ -860,7 +870,9 @@ impl DelegateReply {
         let mut lane_provider = String::new();
         if let Some(answers) = answers {
             'outer: for (provider, heads) in answers {
-                let Some(heads) = heads.as_object() else { continue };
+                let Some(heads) = heads.as_object() else {
+                    continue;
+                };
                 let Some(entry) = heads.get("workload").and_then(Value::as_object) else {
                     continue;
                 };
@@ -871,14 +883,18 @@ impl DelegateReply {
                 }
             }
         }
-        let telemetry_error = object
-            .get("telemetry")
-            .and_then(Value::as_object)
-            .and_then(|telemetry| {
-                telemetry.values().find_map(|entry| {
-                    entry.get("error").and_then(Value::as_str).map(str::to_string)
-                })
-            });
+        let telemetry_error =
+            object
+                .get("telemetry")
+                .and_then(Value::as_object)
+                .and_then(|telemetry| {
+                    telemetry.values().find_map(|entry| {
+                        entry
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                });
         DelegateReply {
             verdict: string_field(&object, "verdict").unwrap_or_default(),
             confidence: object
@@ -1239,15 +1255,13 @@ fn land_row(root: &Path, row: &DelegationJudgedRow) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut value = serde_json::to_value(row).map_err(|error| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
-    })?;
+    let mut value = serde_json::to_value(row)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
     if let Some(object) = value.as_object_mut() {
         object.insert("op".to_string(), json!(OP_DELEGATION_JUDGED));
     }
-    let mut line = serde_json::to_string(&value).map_err(|error| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
-    })?;
+    let mut line = serde_json::to_string(&value)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
     line.push('\n');
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -1265,7 +1279,13 @@ fn land_row(root: &Path, row: &DelegationJudgedRow) -> std::io::Result<()> {
 /// outcome the card carries, and the recorded delegation stands on
 /// every path.
 pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
-    let JudgeRequest { root, home, day, dry_run, lane } = request;
+    let JudgeRequest {
+        root,
+        home,
+        day,
+        dry_run,
+        lane,
+    } = request;
     let rows = read_day(root, &day);
     let delegations = rows.delegations;
     let already = judged_keys(&rows.judged);
@@ -1389,7 +1409,11 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
         judged.push(row);
     }
 
-    let spent = if dry_run { spent } else { day_spend(root, home, &day) };
+    let spent = if dry_run {
+        spent
+    } else {
+        day_spend(root, home, &day)
+    };
     JudgeOutcome {
         card: batch_card(
             &day,
@@ -1719,11 +1743,7 @@ pub fn calibration(rows: &[DelegationJudgedRow]) -> Vec<DelegationCell> {
 }
 
 /// One cell's summary from its judged rows.
-fn summarize(
-    provider: &str,
-    brief_shape: &str,
-    rows: &[&DelegationJudgedRow],
-) -> DelegationCell {
+fn summarize(provider: &str, brief_shape: &str, rows: &[&DelegationJudgedRow]) -> DelegationCell {
     let mut right = 0usize;
     let mut wrong = 0usize;
     let mut insufficient = 0usize;
@@ -1781,7 +1801,10 @@ fn summarize(
     }
     let graded_verdicts = right + wrong + insufficient;
     let (weighted_wrong_rate, weighted_insufficient_rate) = if weight_sum > 0.0 {
-        (weighted_wrong / weight_sum, weighted_insufficient / weight_sum)
+        (
+            weighted_wrong / weight_sum,
+            weighted_insufficient / weight_sum,
+        )
     } else if graded_verdicts > 0 {
         // A sample that reported no confidence at all: the weighting has
         // nothing to weight by, so the honest rates are the plain
@@ -1793,18 +1816,19 @@ fn summarize(
     } else {
         (0.0, 0.0)
     };
-    let confidence_span = match confidences
-        .iter()
-        .copied()
-        .fold(None::<(f64, f64)>, |bounds, confidence| {
-            Some(match bounds {
-                None => (confidence, confidence),
-                Some((low, high)) => (low.min(confidence), high.max(confidence)),
-            })
-        }) {
-        Some((low, high)) => high - low,
-        None => 0.0,
-    };
+    let confidence_span =
+        match confidences
+            .iter()
+            .copied()
+            .fold(None::<(f64, f64)>, |bounds, confidence| {
+                Some(match bounds {
+                    None => (confidence, confidence),
+                    Some((low, high)) => (low.min(confidence), high.max(confidence)),
+                })
+            }) {
+            Some((low, high)) => high - low,
+            None => 0.0,
+        };
     // The graded count for the fit rule: the rows that carry a verdict
     // after the owner's disposition is applied, and the waived ones
     // excluded outright. A row the owner set aside is not evidence
@@ -1949,7 +1973,10 @@ fn plain(text: &str) -> String {
 /// the same width `calib`, `judge`, and `eval` draw at — so the beat
 /// reads as one more Fleet surface rather than a debug dump.
 fn frame(title: &str, subtitle: &str, body: Vec<String>, footer: &str) -> String {
-    let right = bound(subtitle, CARD_WIDTH.saturating_sub(title.chars().count() + 8));
+    let right = bound(
+        subtitle,
+        CARD_WIDTH.saturating_sub(title.chars().count() + 8),
+    );
     let dashes = dashes_for(title, &plain(&right));
     let mut out = format!(
         "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{title}{RESET} {DIM}{dashes} {TEXT}{right}{RESET} {DIM}\u{2510}{RESET}\n"
@@ -2310,7 +2337,9 @@ pub fn control_refusal_card(reason: &str) -> String {
     frame(
         "delegate",
         "the owner's control",
-        vec![format!("{WARN}refused{RESET} {DIM}\u{b7}{RESET} {TEXT}{reason}{RESET}")],
+        vec![format!(
+            "{WARN}refused{RESET} {DIM}\u{b7}{RESET} {TEXT}{reason}{RESET}"
+        )],
         "a control rides beside a log that exists; `fleet sessions` lists them",
     )
 }
@@ -2602,18 +2631,9 @@ pub fn render_calibration(root: &Path, day: &str, informs_failover: bool) -> Str
         .iter()
         .filter(|cell| cell.fit == FitState::Fit)
         .count();
-    let informing = cells
-        .iter()
-        .filter(|cell| cell.informs_failover())
-        .count();
-    let companions = cells
-        .iter()
-        .filter(|cell| cell.notes_companions())
-        .count();
-    let mut providers: Vec<&str> = cells
-        .iter()
-        .map(|cell| cell.provider.as_str())
-        .collect();
+    let informing = cells.iter().filter(|cell| cell.informs_failover()).count();
+    let companions = cells.iter().filter(|cell| cell.notes_companions()).count();
+    let mut providers: Vec<&str> = cells.iter().map(|cell| cell.provider.as_str()).collect();
     providers.sort_unstable();
     providers.dedup();
     let gate = if informs_failover { "on" } else { "off" };

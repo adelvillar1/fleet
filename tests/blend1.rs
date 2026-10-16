@@ -109,7 +109,10 @@ fn python3_available() -> bool {
 
 /// One registry lane by name.
 fn lane(name: &str) -> Lane {
-    *lanes::LANES.iter().find(|lane| lane.name == name).expect("a registry lane")
+    *lanes::LANES
+        .iter()
+        .find(|lane| lane.name == name)
+        .expect("a registry lane")
 }
 
 /// blend1's resolved home; the vendored copy must always answer — the
@@ -151,11 +154,24 @@ async fn the_blend1_adapter_handshakes_through_fleets_own_client() {
             .map(|(_, value)| value.clone())
             .unwrap_or_else(|| panic!("{name} is wired: {:?}", spec.env))
     };
-    assert_eq!(wired("BLEND1_PYTHONPATH"), home.join("src").to_string_lossy().into_owned());
-    let root = home.parent().expect("the lane sits under a services root").to_path_buf();
+    assert_eq!(
+        wired("BLEND1_PYTHONPATH"),
+        home.join("src").to_string_lossy().into_owned()
+    );
+    let root = home
+        .parent()
+        .expect("the lane sits under a services root")
+        .to_path_buf();
     for sibling in BLEND1_SIBLINGS {
-        let expected = root.join(sibling).join("src").to_string_lossy().into_owned();
-        assert_eq!(wired(&format!("BLEND1_{}_PYTHONPATH", sibling.to_uppercase())), expected);
+        let expected = root
+            .join(sibling)
+            .join("src")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            wired(&format!("BLEND1_{}_PYTHONPATH", sibling.to_uppercase())),
+            expected
+        );
     }
 
     let server = McpServer::spawn(&spec).expect("spawn the blend1 lane");
@@ -188,7 +204,10 @@ async fn the_blend1_adapter_handshakes_through_fleets_own_client() {
     // The corpus tools ride beside them (the vendored adapter's
     // search/refresh/seed surface).
     for corpus_tool in ["search", "refresh", "seed"] {
-        assert!(names.contains(&corpus_tool), "{corpus_tool} is declared: {names:?}");
+        assert!(
+            names.contains(&corpus_tool),
+            "{corpus_tool} is declared: {names:?}"
+        );
     }
 
     // ask's schema: `prompt` required, the tabular and retrieval
@@ -196,9 +215,14 @@ async fn the_blend1_adapter_handshakes_through_fleets_own_client() {
     let ask = tools.iter().find(|tool| tool.name == "ask").expect("ask");
     assert_eq!(ask.input_schema["type"], serde_json::json!("object"));
     assert_eq!(ask.input_schema["required"], serde_json::json!(["prompt"]));
-    let properties = ask.input_schema["properties"].as_object().expect("ask's properties");
+    let properties = ask.input_schema["properties"]
+        .as_object()
+        .expect("ask's properties");
     for argument in ["prompt", "table", "target", "task_type", "retrieve"] {
-        assert!(properties.contains_key(argument), "ask takes `{argument}`: {properties:?}");
+        assert!(
+            properties.contains_key(argument),
+            "ask takes `{argument}`: {properties:?}"
+        );
     }
     assert_eq!(properties["prompt"]["type"], serde_json::json!("string"));
     assert_eq!(properties["table"]["type"], serde_json::json!("array"));
@@ -210,7 +234,10 @@ async fn the_blend1_adapter_handshakes_through_fleets_own_client() {
     );
 
     // doctor's schema: no arguments at all.
-    let doctor = tools.iter().find(|tool| tool.name == "doctor").expect("doctor");
+    let doctor = tools
+        .iter()
+        .find(|tool| tool.name == "doctor")
+        .expect("doctor");
     assert_eq!(doctor.input_schema["type"], serde_json::json!("object"));
     assert_eq!(
         doctor.input_schema["properties"],
@@ -300,7 +327,10 @@ async fn every_malformed_argument_is_a_named_refusal_never_a_traceback() {
             .expect_err("a malformed argument must be refused, not answered");
         match error {
             fleet::mcp::McpError::Rpc { code: got, message } => {
-                assert_eq!(got, *code, "{tool} with {arguments} names its code: {message}");
+                assert_eq!(
+                    got, *code,
+                    "{tool} with {arguments} names its code: {message}"
+                );
                 assert!(message.contains(names), "{tool} names {names}: {message}");
             }
             other => panic!("expected an Rpc error for {tool} with {arguments}, got {other:?}"),
@@ -328,7 +358,11 @@ async fn a_doctor_call_names_every_lanes_availability_never_a_hang() {
         .call_tool("doctor", serde_json::json!({}))
         .await
         .expect("doctor answers — a hang or a panic fails here");
-    assert!(!call.is_error, "the doctor report is not an error: {}", call.text());
+    assert!(
+        !call.is_error,
+        "the doctor report is not an error: {}",
+        call.text()
+    );
     let report: serde_json::Value =
         serde_json::from_str(&call.text()).expect("the doctor report is JSON");
     let report = report.as_object().expect("the report is an object");
@@ -345,7 +379,10 @@ async fn a_doctor_call_names_every_lanes_availability_never_a_hang() {
         // key names its variable, never its value.
         if entry["available"] == serde_json::json!(false) {
             let reason = entry["reason"].as_str().unwrap_or_default();
-            assert!(!reason.trim().is_empty(), "{lane_name} names its reason: {entry}");
+            assert!(
+                !reason.trim().is_empty(),
+                "{lane_name} names its reason: {entry}"
+            );
         }
     }
     // The re-vendored core's two newer rows ride beside the five (the
@@ -356,7 +393,10 @@ async fn a_doctor_call_names_every_lanes_availability_never_a_hang() {
         let entry = report
             .get(row)
             .unwrap_or_else(|| panic!("{row} is in the report: {report:?}"));
-        assert!(entry["available"].is_boolean(), "{row} names its availability: {entry}");
+        assert!(
+            entry["available"].is_boolean(),
+            "{row} names its availability: {entry}"
+        );
         if entry["available"] == serde_json::json!(false) {
             let reason = entry["reason"].as_str().unwrap_or_default();
             assert!(!reason.trim().is_empty(), "{row} names its reason: {entry}");
@@ -380,16 +420,37 @@ async fn the_lane_probe_carries_blend1s_doctor_report() {
     assert_eq!(health.name, "blend1");
     assert_eq!(health.role, "grounded");
     assert_eq!(health.server_version.as_deref(), Some("0.1.0"));
-    assert!(health.tools.contains(&"ask".to_string()), "{:?}", health.tools);
-    assert!(health.tools.contains(&"doctor".to_string()), "{:?}", health.tools);
+    assert!(
+        health.tools.contains(&"ask".to_string()),
+        "{:?}",
+        health.tools
+    );
+    assert!(
+        health.tools.contains(&"doctor".to_string()),
+        "{:?}",
+        health.tools
+    );
     assert!(health.detail.contains("python3 -u"), "{}", health.detail);
     // The doctor report rode back through the typed shape: the five
     // lanes, in the blend's own order, each available or naming why
     // not — and the web leg's own entry beside them, which is not a
     // blend sub-lane but the web leg blend1 serves.
-    let lanes: Vec<&str> = health.doctor.iter().map(|entry| entry.lane.as_str()).collect();
-    assert_eq!(&lanes[..DOCTOR_LANES.len()], DOCTOR_LANES, "{:?}", health.doctor);
-    assert_eq!(lanes.len(), DOCTOR_LANES.len() + 1, "five sub-lanes plus the web leg, nothing else");
+    let lanes: Vec<&str> = health
+        .doctor
+        .iter()
+        .map(|entry| entry.lane.as_str())
+        .collect();
+    assert_eq!(
+        &lanes[..DOCTOR_LANES.len()],
+        DOCTOR_LANES,
+        "{:?}",
+        health.doctor
+    );
+    assert_eq!(
+        lanes.len(),
+        DOCTOR_LANES.len() + 1,
+        "five sub-lanes plus the web leg, nothing else"
+    );
     assert_eq!(lanes.last().copied(), Some("web"), "{:?}", health.doctor);
     for entry in &health.doctor {
         if !entry.available {
@@ -405,9 +466,15 @@ async fn the_lane_probe_carries_blend1s_doctor_report() {
     let rendered = lanes::render(std::slice::from_ref(&health));
     assert!(rendered.contains("grounded"), "{rendered}");
     for lane_name in DOCTOR_LANES {
-        assert!(rendered.contains(lane_name), "{lane_name} renders: {rendered}");
+        assert!(
+            rendered.contains(lane_name),
+            "{lane_name} renders: {rendered}"
+        );
     }
-    assert!(rendered.contains("web leg"), "the web leg renders its own line: {rendered}");
+    assert!(
+        rendered.contains("web leg"),
+        "the web leg renders its own line: {rendered}"
+    );
     assert!(!rendered.contains("| lane |"), "{rendered}");
 }
 
@@ -421,19 +488,32 @@ fn the_blend1_launch_spec_carries_its_keys_and_scrubs_fleets_own() {
     assert_eq!(spec.program, "python3");
     assert_eq!(spec.args.len(), 2);
     assert_eq!(spec.args[0], "-u");
-    assert!(spec.args[1].ends_with("service/mcp_server.py"), "{:?}", spec.args);
+    assert!(
+        spec.args[1].ends_with("service/mcp_server.py"),
+        "{:?}",
+        spec.args
+    );
     assert_eq!(spec.cwd, Some(home.clone()));
     // Its own core first, then the four siblings — five wired paths.
     assert_eq!(spec.env.len(), 1 + BLEND1_SIBLINGS.len(), "{:?}", spec.env);
     // Every declared name rides through; Fleet's own are not.
     for key in BLEND1_KEYS {
-        assert!(spec.passthrough.iter().any(|name| name == key), "{key} rides through");
+        assert!(
+            spec.passthrough.iter().any(|name| name == key),
+            "{key} rides through"
+        );
     }
     assert!(
-        !spec.passthrough.iter().any(|name| name == "DEEPSEEK_API_KEY"),
+        !spec
+            .passthrough
+            .iter()
+            .any(|name| name == "DEEPSEEK_API_KEY"),
         "Fleet's own key is on no lane's list"
     );
-    assert!(!spec.passthrough.iter().any(|name| name == "DEEPSEEK_BASE_URL"));
+    assert!(!spec
+        .passthrough
+        .iter()
+        .any(|name| name == "DEEPSEEK_BASE_URL"));
 
     // The scrubbing itself, on the pure seam: a parent carrying every
     // name yields a child with blend1's keys and without Fleet's own
@@ -442,8 +522,14 @@ fn the_blend1_launch_spec_carries_its_keys_and_scrubs_fleets_own() {
     for key in BLEND1_KEYS {
         parent.insert(OsString::from(key), OsString::from("a-lane-key"));
     }
-    parent.insert(OsString::from("DEEPSEEK_API_KEY"), OsString::from("sk-fleets-own"));
-    parent.insert(OsString::from("DEEPSEEK_BASE_URL"), OsString::from("https://api.deepseek.com"));
+    parent.insert(
+        OsString::from("DEEPSEEK_API_KEY"),
+        OsString::from("sk-fleets-own"),
+    );
+    parent.insert(
+        OsString::from("DEEPSEEK_BASE_URL"),
+        OsString::from("https://api.deepseek.com"),
+    );
     parent.insert(OsString::from("UNRELATED_SECRET"), OsString::from("never"));
     parent.insert(OsString::from("PATH"), OsString::from("/usr/bin"));
     parent.insert(OsString::from("HOME"), OsString::from("/home/operator"));
@@ -455,7 +541,11 @@ fn the_blend1_launch_spec_carries_its_keys_and_scrubs_fleets_own() {
             .map(|(_, value)| value.to_string_lossy().into_owned())
     };
     for key in BLEND1_KEYS {
-        assert_eq!(carried(key).as_deref(), Some("a-lane-key"), "{key} reaches the child");
+        assert_eq!(
+            carried(key).as_deref(),
+            Some("a-lane-key"),
+            "{key} reaches the child"
+        );
     }
     // The escalation leg's wiring passes, named on its own line: the
     // leg is a named skip until its target is configured, and the
@@ -481,7 +571,10 @@ fn the_blend1_launch_spec_carries_its_keys_and_scrubs_fleets_own() {
     }
     // The path wiring rides last, so the lane's own declaration wins.
     let own_src = home.join("src").to_string_lossy().into_owned();
-    assert_eq!(carried("BLEND1_PYTHONPATH").as_deref(), Some(own_src.as_str()));
+    assert_eq!(
+        carried("BLEND1_PYTHONPATH").as_deref(),
+        Some(own_src.as_str())
+    );
     for sibling in BLEND1_SIBLINGS {
         let name = format!("BLEND1_{}_PYTHONPATH", sibling.to_uppercase());
         assert!(carried(&name).is_some(), "{name} reaches the child");
@@ -489,9 +582,17 @@ fn the_blend1_launch_spec_carries_its_keys_and_scrubs_fleets_own() {
     // The base env rides; everything else stays behind.
     assert_eq!(carried("PATH").as_deref(), Some("/usr/bin"));
     assert_eq!(carried("HOME").as_deref(), Some("/home/operator"));
-    assert_eq!(carried("DEEPSEEK_API_KEY"), None, "Fleet's own key never reaches the child");
+    assert_eq!(
+        carried("DEEPSEEK_API_KEY"),
+        None,
+        "Fleet's own key never reaches the child"
+    );
     assert_eq!(carried("DEEPSEEK_BASE_URL"), None);
-    assert_eq!(carried("UNRELATED_SECRET"), None, "an undeclared name stays behind");
+    assert_eq!(
+        carried("UNRELATED_SECRET"),
+        None,
+        "an undeclared name stays behind"
+    );
 }
 
 /// The two lane tables carry blend1 as the fifth entry: the install's
@@ -503,13 +604,20 @@ fn both_lane_tables_carry_blend1_as_the_fifth_entry() {
     // The install's table: the venvs `fleet install --lanes` builds.
     assert_eq!(LANES.len(), 5, "the fifth lane is the last: {LANES:?}");
     assert_eq!(LANES[4].name, "blend1");
-    let blend1 = LANES.iter().find(|lane| lane.name == "blend1").expect("the fifth lane");
+    let blend1 = LANES
+        .iter()
+        .find(|lane| lane.name == "blend1")
+        .expect("the fifth lane");
     assert_eq!(blend1.role, "grounded");
     // The union of the three siblings' sets: blend1's own core is
     // stdlib-only, so its venv serves the cores its lanes compose.
     assert_eq!(
         blend1.packages,
-        &["gliner2[local]", "structured-data-models", "sentence-transformers"]
+        &[
+            "gliner2[local]",
+            "structured-data-models",
+            "sentence-transformers"
+        ]
     );
     // No export: BLEND1_PYTHONPATH locates the core's src
     // (services/blend1/src), not this venv root, and the launch spec
@@ -517,10 +625,18 @@ fn both_lane_tables_carry_blend1_as_the_fifth_entry() {
     assert_eq!(blend1.env_var, None);
     // The note names the sibling path-wiring: the cores resolve through
     // the `<SVC>_PYTHONPATH` names, never a pip install here.
-    for wired in ["BLEND1_SYS1_PYTHONPATH", "BLEND1_SEM1_PYTHONPATH", "BLEND1_SDM1_PYTHONPATH"] {
+    for wired in [
+        "BLEND1_SYS1_PYTHONPATH",
+        "BLEND1_SEM1_PYTHONPATH",
+        "BLEND1_SDM1_PYTHONPATH",
+    ] {
         assert!(blend1.note.contains(wired), "{} names {wired}", blend1.note);
     }
-    assert!(blend1.note.contains("services/<svc>/src"), "{}", blend1.note);
+    assert!(
+        blend1.note.contains("services/<svc>/src"),
+        "{}",
+        blend1.note
+    );
     // The wiring line the install prints is the note itself: no export,
     // because an `export BLEND1_PYTHONPATH=<venv>` would be a wrong
     // value for a hand-run adapter.
