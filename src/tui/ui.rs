@@ -311,7 +311,29 @@ fn list_card(
 /// own compiled-in rule still answers when the removal lands.
 fn render_settings_confirm(frame: &mut Frame<'_>, app: &App) {
     let Some(removal) = &app.settings_removal else { return };
-    let area = centered(SETTINGS_CONFIRM_PERCENT, 30, frame.area());
+    // The modal's width comes from the frame first, so every line is
+    // composed for the columns it will actually be drawn in — the
+    // same share `centered_sized` lays out, read off the frame
+    // independently of the height the lines then decide. The height
+    // comes from the lines, because a card clipped by its own modal
+    // is the failure the boards already learned from — and this
+    // modal's answers line is the one text that must never be the
+    // clipped one: it is the only place that says how to answer a
+    // destructive question.
+    let [columns] = Layout::horizontal([Constraint::Percentage(SETTINGS_CONFIRM_PERCENT)])
+        .flex(Flex::Center)
+        .areas(frame.area());
+    let width = columns.width.saturating_sub(2).max(1) as usize;
+    let mut lines = vec![Line::from("")];
+    lines.extend(wrapped(" ", &removal.detail, Style::new().fg(palette::TEXT), width));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(" [y]", Style::new().fg(palette::DENIED).add_modifier(Modifier::BOLD)),
+        Span::styled(" remove   ", Style::new().fg(palette::TEXT)),
+        Span::styled("any other key", Style::new().fg(palette::DIM)),
+        Span::styled(" abandons, writing nothing", Style::new().fg(palette::TEXT)),
+    ]));
+    let area = centered_sized(SETTINGS_CONFIRM_PERCENT, settings_height(lines.len()), frame.area());
     frame.render_widget(Clear, area);
     let block = Block::bordered()
         .title(" remove — y confirms, any other key abandons ")
@@ -322,16 +344,6 @@ fn render_settings_confirm(frame: &mut Frame<'_>, app: &App) {
     if inner.height == 0 {
         return;
     }
-    let width = inner.width as usize;
-    let mut lines = vec![Line::from("")];
-    lines.extend(wrapped(" ", &removal.detail, Style::new().fg(palette::TEXT), width));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(" [y]", Style::new().fg(palette::DENIED).add_modifier(Modifier::BOLD)),
-        Span::styled(" remove   ", Style::new().fg(palette::TEXT)),
-        Span::styled("any other key", Style::new().fg(palette::DIM)),
-        Span::styled(" abandons, writing nothing", Style::new().fg(palette::TEXT)),
-    ]));
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -1536,7 +1548,14 @@ fn doctor_lines(lane: &crate::lanes::LaneHealth, width: usize) -> Vec<Line<'stat
         lines.extend(wrapped("   ", &named, Style::new().fg(palette::DENIED), width));
         return lines;
     }
-    for availability in &lane.doctor {
+    // The web leg is not one of the five blend sub-lanes — it is the
+    // web leg blend1 serves — and the card marks the difference at a
+    // glance, the same distinction `lanes::render_card` draws on the
+    // CLI's card. It gets its own accented line below rather than a
+    // sixth row in the sub-lane column, because the two surfaces
+    // disagreeing on what the web leg IS would be the drift.
+    let web = lane.doctor.iter().find(|entry| entry.lane == crate::lanes::WEB_LEG);
+    for availability in lane.doctor.iter().filter(|entry| entry.lane != crate::lanes::WEB_LEG) {
         let (dot, color) = if availability.available {
             ("●", palette::DONE)
         } else {
@@ -1574,6 +1593,43 @@ fn doctor_lines(lane: &crate::lanes::LaneHealth, width: usize) -> Vec<Line<'stat
         for chunk in chunks.into_iter().skip(1) {
             lines.push(Line::from(Span::styled(
                 format!("{}{}", " ".repeat(head_width), chunk),
+                Style::new().fg(palette::DIM),
+            )));
+        }
+    }
+    // The web leg's own line: the label leads in the accent color, the
+    // dot and the named reason beside it — available says what backs
+    // it, unavailable says what is missing, and the reason wraps under
+    // the line rather than clipping.
+    if let Some(web) = web {
+        let (dot, color) = if web.available {
+            ("●", palette::DONE)
+        } else {
+            ("○", palette::DIM)
+        };
+        let named = if web.reason.is_empty() {
+            web.provider.clone()
+        } else {
+            web.reason.clone()
+        };
+        let named_style = if web.available {
+            Style::new().fg(palette::DIM)
+        } else {
+            Style::new().fg(palette::DENIED)
+        };
+        let head = format!("   web leg {dot} \u{2014} ");
+        let room = width.saturating_sub(head.chars().count()).max(8);
+        let chunks = wrap(&named, room);
+        let first = chunks.first().cloned().unwrap_or_default();
+        lines.push(Line::from(vec![
+            Span::styled("   ", Style::new().fg(color)),
+            Span::styled("web leg", Style::new().fg(palette::ACCENT)),
+            Span::styled(format!(" {dot} \u{2014} "), Style::new().fg(color)),
+            Span::styled(first, named_style),
+        ]));
+        for chunk in chunks.into_iter().skip(1) {
+            lines.push(Line::from(Span::styled(
+                format!("{}{}", " ".repeat(head.chars().count()), chunk),
                 Style::new().fg(palette::DIM),
             )));
         }
@@ -2965,7 +3021,9 @@ mod tests {
     /// bar: the lane's name and role, its probe status dot, and its
     /// `doctor()` per-lane availability as named rows with status dots —
     /// green with its backing provider when a lane can answer, dim with
-    /// the named reason when it cannot.
+    /// the named reason when it cannot. The web leg rides the same
+    /// report but is not a sub-lane: it renders its own accented line,
+    /// the same distinction the CLI's card draws.
     #[test]
     fn blend1s_card_renders_its_doctor_rows_with_dots_and_named_reasons() {
         let mut app = fresh();
@@ -2980,6 +3038,11 @@ mod tests {
         for lane in ["route", "semantic", "tabular", "generate", "validate"] {
             assert!(drawn.contains(lane), "{lane} is missing from the card: {drawn}");
         }
+        // The web leg's own line: its accented label — which only the
+        // web line carries, so a sub-lane-shaped web row cannot pass
+        // for it — and its named reason.
+        assert!(drawn.contains("web leg"), "the web leg's own line is missing: {drawn}");
+        assert!(drawn.contains("missing TINYFISH_API_KEY"), "{drawn}");
         // An available lane names what backs it; an unavailable one names
         // what is missing — never a bare dot.
         assert!(drawn.contains("liquid (d1) via sys1"), "{drawn}");
@@ -2997,6 +3060,7 @@ mod tests {
         for lane in ["route", "semantic", "tabular", "generate", "validate"] {
             assert!(narrow.contains(lane), "{lane} is missing at 80 columns: {narrow}");
         }
+        assert!(narrow.contains("web leg"), "the web leg survives 80 columns: {narrow}");
         // A tiny frame still renders the modal without a panic.
         let tiny = draw(&app, 20, 6);
         assert!(tiny.contains("lanes"), "{tiny}");
@@ -3080,6 +3144,16 @@ mod tests {
                     available: true,
                     reason: "GLiDE (Fastino) key set; inconclusive verdicts escalate to the critic chain".to_string(),
                     provider: "glide → d1 (oversized states)".to_string(),
+                },
+                // The web leg rides the same Vec the live probe
+                // produces — the render's own-line path is what the
+                // fixture must exercise, so it carries a sixth entry
+                // exactly as the probe does.
+                crate::lanes::LaneAvailability {
+                    lane: crate::lanes::WEB_LEG.to_string(),
+                    available: false,
+                    reason: "missing TINYFISH_API_KEY".to_string(),
+                    provider: "tinyfish search + fetch".to_string(),
                 },
             ],
             detail: "BLEND1_PYTHONPATH=/repo/services/blend1/src python3 -u /repo/services/blend1/service/mcp_server.py".to_string(),

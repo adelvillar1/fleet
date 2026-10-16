@@ -636,8 +636,10 @@ const DOCTOR_LANES: &[&str] = &["route", "semantic", "tabular", "generate", "val
 
 /// The web leg's key in a `doctor` report. It rides the same object
 /// as the five sub-lanes but is not one of them, so the parse keeps
-/// it beside them and the card renders it as its own labeled line.
-const WEB_LEG: &str = "web";
+/// it beside them and every consumer that draws the sub-lane column
+/// — the CLI's card and the TUI's lanes pane alike — filters it out
+/// and renders it as its own labeled line.
+pub const WEB_LEG: &str = "web";
 
 /// What a lane's `doctor` report parses into: the five sub-lanes the
 /// card renders, in the blend's own order, and the web leg's

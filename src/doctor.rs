@@ -162,12 +162,15 @@ pub fn evaluate_recall(vector: Option<(&str, usize)>) -> Check {
 }
 
 /// The web leg's line: whether the optional live-source tool is
-/// live. The key is resolved by name through the run's own
+/// keyed. The key is resolved by name through the run's own
 /// precedence — the environment first, then FLEET_HOME/.env — and
 /// blend1's resolution state rides beside it, because the web leg is
 /// a leg blend1 serves: a key with no lane has nowhere to answer
 /// from. The evaluator takes the gathered facts and spawns nothing
-/// and opens no socket, like every other check here.
+/// and opens no socket, like every other check here — which is also
+/// why the keyed line stops at what doctor verified: the key and the
+/// lane's home. Whether the lane's own venv can serve is the lane's
+/// report, and `fleet lanes` carries it.
 ///
 /// Informational, never a failing check: an unkeyed optional leg is
 /// a machine that chose not to run web, and the leg's own fail-open
@@ -179,7 +182,9 @@ pub fn evaluate_recall(vector: Option<(&str, usize)>) -> Check {
 pub fn evaluate_web_leg(key: Option<&str>, blend1_resolves: bool) -> Check {
     let detail = match (key, blend1_resolves) {
         (Some(_), true) => {
-            "TINYFISH_API_KEY set \u{2014} the web leg answers through blend1's web tool".to_string()
+            "TINYFISH_API_KEY set \u{2014} the web leg is keyed and blend1 resolves; \
+             `fleet lanes` carries the lane's own report on whether it can serve"
+                .to_string()
         }
         (Some(_), false) => {
             "TINYFISH_API_KEY set \u{2014} blend1 cannot launch, so the web leg has no lane to serve it"
@@ -857,6 +862,10 @@ mod tests {
         assert_eq!(live.name, "web");
         assert!(live.detail.contains("TINYFISH_API_KEY set"), "{}", live.detail);
         assert!(live.detail.contains("blend1"), "{}", live.detail);
+        // The line stops at what doctor verified — the key and the
+        // lane's home — and names where the deeper truth lives,
+        // rather than claiming the leg answers.
+        assert!(live.detail.contains("fleet lanes"), "{}", live.detail);
         assert!(!live.detail.contains("tf-super-secret-value"), "{}", live.detail);
 
         // Unkeyed: the leg's own fail-open, named — informational,

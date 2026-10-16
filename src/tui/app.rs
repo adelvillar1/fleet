@@ -873,6 +873,10 @@ impl App {
             // editor's title can name the entry.
             crate::settings::set_provider(&home, buffer).map(|id| format!("provider `{id}` written"))
         } else if let Some(id) = key.strip_prefix("provider.remove:") {
+            // The pane always formats a non-empty id into the key (the
+            // confirm passes an empty buffer), so the fallback is the
+            // CLI's key shape preserved — the value rides the argument
+            // there — rather than a live path.
             let id = if id.is_empty() { buffer } else { id };
             crate::settings::remove_provider(&home, id, false).map(|()| {
                 format!("provider `{id}`'s override removed — it reverts to the compiled-in default")
@@ -886,6 +890,8 @@ impl App {
             crate::settings::set_workload(&home, name, &candidates)
                 .map(|()| format!("workload `{name}` written"))
         } else if let Some(name) = key.strip_prefix("workload.remove:") {
+            // As above: the pane's key always carries the name; the
+            // empty case is the CLI's key shape preserved.
             let name = if name.is_empty() { buffer } else { name };
             crate::settings::remove_workload(&home, name, false).map(|()| {
                 format!("workload `{name}`'s preference removed — it reverts to the compiled-in table")
@@ -898,6 +904,12 @@ impl App {
                 self.settings_note = Some(message);
                 self.settings = crate::settings::states(&home);
                 self.settings_lists = crate::settings::list_states(&home);
+                // A removal shrinks the rows; a selection left past
+                // the end renders no cursor and answers nothing — the
+                // clamp keeps the pane live, the same one
+                // `move_selection` applies.
+                let rows = self.settings_rows().len();
+                self.selected = self.selected.min(rows.saturating_sub(1));
             }
             Err(error) => {
                 // A refusal is a value the owner reads: it names the rule

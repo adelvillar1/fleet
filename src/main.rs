@@ -890,6 +890,16 @@ async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
     })
     .await;
     print!("{}", outcome.card);
+    // The ride-back made visible: what the day's calibration would
+    // move for a brief shape, read pure from the stream — a judgment
+    // spends, a calibration does not — beside the graded rows, because
+    // the cells were built for a consumer and this is it.
+    let gate = fleet::route::calibration_config(&home).informs_failover;
+    let candidate_ids: Vec<String> = fleet::route::load_roster(&home)
+        .map(|roster| roster.candidates.iter().map(|candidate| candidate.id.clone()).collect())
+        .unwrap_or_default();
+    let candidates: Vec<&str> = candidate_ids.iter().map(String::as_str).collect();
+    print!("{}", fleet::delegate::render_ride_back_day(&root, &day, &candidates, gate));
     if outcome.batch_answered() {
         ExitCode::SUCCESS
     } else {
@@ -1201,6 +1211,19 @@ fn sessions_command(recall: Option<&str>, view: Option<&str>) -> ExitCode {
         let sessions_dir = fleet::home::sessions_dir(&home);
         let mut index = fleet::session_recall::SessionIndex::load(&sessions_dir);
         let hits = index.recall(&sessions_dir, embedder, instruction);
+        // The archive's own feedback loop: a recalled session bumps
+        // its count store — never the append-only log — and lands one
+        // `recall_hit` row naming the session id, the same row shape
+        // the facts corpus lands, through the stream's own path. The
+        // stream's drop at the return drains the queue, the pattern
+        // the compact command already runs.
+        let stream = fleet::calib::Stream::open(fleet::calib::resolve_root(
+            &home,
+            std::env::var("HOME").ok().as_deref(),
+        ));
+        for hit in &hits {
+            fleet::session_recall::record_hit(&sessions_dir, &hit.id, &hit.outcome, hit.score, Some(&stream));
+        }
         print!("{}", fleet::session_recall::render_hits(&hits, instruction));
         return ExitCode::SUCCESS;
     }

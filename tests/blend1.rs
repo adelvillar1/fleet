@@ -389,6 +389,7 @@ async fn the_lane_probe_carries_blend1s_doctor_report() {
     // blend sub-lane but the web leg blend1 serves.
     let lanes: Vec<&str> = health.doctor.iter().map(|entry| entry.lane.as_str()).collect();
     assert_eq!(&lanes[..DOCTOR_LANES.len()], DOCTOR_LANES, "{:?}", health.doctor);
+    assert_eq!(lanes.len(), DOCTOR_LANES.len() + 1, "five sub-lanes plus the web leg, nothing else");
     assert_eq!(lanes.last().copied(), Some("web"), "{:?}", health.doctor);
     for entry in &health.doctor {
         if !entry.available {
