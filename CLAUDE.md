@@ -85,6 +85,7 @@ docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
 docs/known-issues.md    the ledger: every error/warning encountered, with evidence
 docs/architecture/      deep-dive-2026-10-15.md (current state), overview.md (slice-1 snapshot), ecosystem.md (the repos Fleet absorbs)
 docs/features/          feature docs as they land
+docs/harness-orientation.md  the harness's own orientation: the session cycle, the knowledge seams, the house rules
 CLAUDE.local.md         gitignored: env var names, machine paths, local quirks (no values)
 ```
 
