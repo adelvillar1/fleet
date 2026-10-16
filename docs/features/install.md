@@ -28,7 +28,7 @@ fleet install — the home layout, the config scaffold, and the doctor gate
   + proposals     created /Users/x/.fleet/proposals
   + config.json   written /Users/x/.fleet/config.json — the roster's override seam: {"pin": null, "providers": []}
   ! lanes         optional heavy lanes — `fleet install --lanes` builds /Users/x/.fleet/venvs/<lane>/; a lane that cannot build is skipped by name
-  ! credentials   DEEPSEEK_API_KEY: process env → /Users/x/.fleet/.env → the harness refs (~/.dsh/.credentials.yaml, read-only)
+  ! credentials   DEEPSEEK_API_KEY: process env → /Users/x/.fleet/.env
 
 ── doctor ── the install's exit code is the doctor's ──
 credentials ok   set (…abcd)
@@ -58,7 +58,7 @@ fleet install — the home layout, the config scaffold, and the doctor gate
   + sys1          installed /Users/x/.fleet/venvs/sys1 — point ~/.config/sys1/config.toml at it: [providers] local_venv = "/Users/x/.fleet/venvs/sys1"
   ! sem1          skipped /Users/x/.fleet/venvs/sem1 — uv did not finish within 900s and was killed
   = lanes         3 of 4 lanes installed, 0 present, 1 skipped
-  ! credentials   DEEPSEEK_API_KEY: process env → /Users/x/.fleet/.env → the harness refs (~/.dsh/.credentials.yaml, read-only)
+  ! credentials   DEEPSEEK_API_KEY: process env → /Users/x/.fleet/.env
 
 ── doctor ── the install's exit code is the doctor's ──
 credentials ok   set (…abcd)
@@ -128,9 +128,9 @@ nonzero exit, never a silent overwrite.
 Credentials are not configured by the install and no key material is
 written anywhere. The resolution chain is named in the install's output
 and here — the environment variable `DEEPSEEK_API_KEY`, then
-`KEY=VALUE` lines in `<home>/.env`, then the DeepSeek Harness
-credential store's `refs` block (`$DSH_HOME/.credentials.yaml`, default
-`~/.dsh/.credentials.yaml`, read-only) — with names only, never values.
+`KEY=VALUE` lines in `<home>/.env`, and nothing else: Fleet reads its
+own home and never another harness's config file (the owner's
+2026-10-16 ruling) — with names only, never values.
 The doctor's credentials check below the install's report is the place
 that says whether one resolved.
 

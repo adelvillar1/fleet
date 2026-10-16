@@ -92,19 +92,11 @@ fn tui_command() -> ExitCode {
     }
 }
 
-/// Resolve a setting: the environment and `~/.fleet/.env` first
-/// (`resolve_setting`), then the DeepSeek Harness credential store's `refs`
-/// block, so one stored key serves both harnesses.
+/// Resolve a setting: the environment, then `~/.fleet/.env`
+/// (`resolve_setting`) — Fleet's own home, and nothing else (the
+/// owner's 2026-10-16 ruling: no other harness's config is ever read).
 fn setting(name: &str, dotenv: &std::collections::HashMap<String, String>) -> Option<String> {
-    resolve_setting(name, dotenv).or_else(|| {
-        let user_home = std::env::var("HOME").ok();
-        let path = home::harness_credentials_path(
-            std::env::var("DSH_HOME").ok().as_deref(),
-            user_home.as_deref(),
-        )?;
-        let text = std::fs::read_to_string(path).ok()?;
-        home::harness_refs(&text, name)
-    })
+    resolve_setting(name, dotenv)
 }
 
 /// The `~/.fleet/.env` map, empty when no home is known.

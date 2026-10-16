@@ -77,11 +77,11 @@ One line per check — credentials, home, API reachability, shell, the routing r
 
 | Setting | Where Fleet reads it |
 |---|---|
-| API key | `DEEPSEEK_API_KEY`, else `KEY=VALUE` in `<home>/.env`, else the DeepSeek Harness credential store's `refs` (`$DSH_HOME/.credentials.yaml`, default `~/.dsh/.credentials.yaml`) |
+| API key | `DEEPSEEK_API_KEY`, else `KEY=VALUE` in `<home>/.env` |
 | API base | `DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`) |
 | Home | `FLEET_HOME`, else `~/.fleet` |
 
-The `.env` fallback is a convenience, not a config contract: `KEY=VALUE` lines and `#` comments, malformed lines skipped. The Harness credential store is read-only — one stored key serves both harnesses. Credentials never print; `fleet doctor` masks the key to its last four characters.
+The `.env` fallback is a convenience, not a config contract: `KEY=VALUE` lines and `#` comments, malformed lines skipped. Fleet reads its own home and nothing else — no other harness's config file is ever read (the owner's 2026-10-16 ruling). Credentials never print; `fleet doctor` masks the key to its last four characters.
 
 ## Sessions
 

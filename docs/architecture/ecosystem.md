@@ -60,6 +60,6 @@ Nothing below is built — this is the shape of the work, for slice-2 planning:
 
 ## Known cross-repo facts
 
-- The DeepSeek Harness credential store (`~/.dsh/.credentials.yaml`, `refs` block) is the shared key mechanism — Fleet reads it read-only and so does the fork.
+- The DeepSeek Harness credential store (`~/.dsh/.credentials.yaml`, `refs` block) is the fork's key mechanism; Fleet never reads it — it resolves from its own environment and `<FLEET_HOME>/.env` only (the owner's 2026-10-16 ruling).
 - The router kit's roster is authored in its checkout and rendered by `kit apply` into its state home; do not point at a checkout path from another app (the defect fixed 2026-10-13).
 - gen1's media lane and the router kit share a machine-row JSON contract (`devdec` wire vocabulary) for calibration.

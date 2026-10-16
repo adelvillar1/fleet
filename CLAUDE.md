@@ -29,7 +29,7 @@ Verified inventory and per-repo state: [docs/architecture/ecosystem.md](docs/arc
 1. **Plan before non-trivial work.** Draft `docs/plans/YYYY-MM-DD-<slug>.md` with acceptance criteria before any feature ≥15 min or >2 files; update its `status` in the same turn the work lands. Trivial work may go direct.
 2. **The gate is local and permanent:** `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`. Run it before every push and **read the exit code — never through a status-losing pipe** (KI-014). CI is disarmed by owner decision (no Actions funds); the workflow is manual-dispatch only until the owner re-arms it.
 3. **Commit each verified increment as it goes green.** Explicit paths only — never `git add -A`. `master` is the only branch (solo tool, no hosted surface).
-4. **Never commit secrets.** Credentials resolve at runtime: `DEEPSEEK_API_KEY` env → `<FLEET_HOME>/.env` → the DeepSeek Harness credential store's `refs` block (read-only). This repo stores no keys; env var names live in `CLAUDE.local.md`.
+4. **Never commit secrets.** Credentials resolve at runtime, from Fleet's own home and nothing else: `DEEPSEEK_API_KEY` env → `<FLEET_HOME>/.env`. No other harness's config file is ever read (the owner's 2026-10-16 ruling). This repo stores no keys; env var names live in `CLAUDE.local.md`.
 5. **Model-visible ⟺ logged** (inherited from the harness): anything the model sees must be reconstructable from the session log. The system prompt and tool declarations are compiled-in constants, reconstructed per request, never logged.
 6. **Native port, not a fork.** New work is Rust against the DeepSeek API; never reintroduce Node, a checkout dependency, or a dsh launch path (plan criterion C5).
 7. **Destructive operations** (session deletion, history rewrite, force push) require explicit approval in the current turn.
@@ -53,7 +53,7 @@ src/mcp.rs              the hand-rolled MCP stdio client (spawn, initialize, too
 src/lanes.rs            the five vendored lane cores: home resolution, launch specs, health probe
 src/lane_client.rs      the lane-kind candidate's boundary: a chat request in, blend1's grounded answer out
 src/session.rs          JSONL session log: append, replay, list, resume
-src/home.rs             FLEET_HOME / ~/.fleet, sessions dir, .env fallback, harness refs
+src/home.rs             FLEET_HOME / ~/.fleet, sessions dir, .env fallback (the whole credential chain)
 src/doctor.rs           the startup checks
 src/net.rs              loopback probe used by doctor
 src/route.rs            multi-provider routing: roster, sys1-judged selection, failover, decision rows

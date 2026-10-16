@@ -68,9 +68,9 @@ pub const CONFIG_FILE: &str = "config.json";
 pub const CONFIG_SCAFFOLD: &str = "{\n  \"pin\": null,\n  \"providers\": []\n}\n";
 
 /// The credential environment name the install's note carries. The
-/// resolution chain — process env, then `<home>/.env`, then the
-/// DeepSeek Harness credential store's `refs` block (read-only) — is
-/// named in the install's output and in the feature doc; no value ever
+/// resolution chain — process env, then `<home>/.env`, and nothing else
+/// (the owner's 2026-10-16 ruling: no other harness's config is read) —
+/// is named in the install's output and in the feature doc; no value ever
 /// appears in either.
 pub const CREDENTIAL_ENV: &str = "DEEPSEEK_API_KEY";
 
@@ -909,22 +909,14 @@ fn render_lane_line(lane: &Lane, outcome: &LaneOutcome, venv: &Path) -> String {
     )
 }
 
-/// The credential chain note: the environment name, the `<home>/.env`
-/// fallback, and the Harness credential store's `refs` block, named
-/// with its resolved path. Names only — no value is ever read or
-/// printed here, and the doctor's credentials check below is the place
-/// that reports whether one resolved.
+/// The credential chain note: the environment name and the `<home>/.env`
+/// fallback — Fleet's own home and nothing else (the owner's 2026-10-16
+/// ruling). Names only — no value is ever read or printed here, and the
+/// doctor's credentials check below is the place that reports whether
+/// one resolved.
 fn render_credentials(home: &Path) -> String {
-    let harness = crate::home::harness_credentials_path(
-        std::env::var("DSH_HOME").ok().as_deref(),
-        std::env::var("HOME").ok().as_deref(),
-    );
-    let named = harness
-        .as_deref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "~/.dsh/.credentials.yaml".to_string());
     format!(
-        "  {DIM}!{RESET} {TEXT}{:<12}{RESET} {DIM}{CREDENTIAL_ENV}: process env → {}/.env → the harness refs ({named}, read-only){RESET}\n",
+        "  {DIM}!{RESET} {TEXT}{:<12}{RESET} {DIM}{CREDENTIAL_ENV}: process env → {}/.env{RESET}\n",
         "credentials",
         home.display()
     )

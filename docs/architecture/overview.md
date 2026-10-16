@@ -30,7 +30,7 @@ The whole binary is Rust across the modules below; dependencies are `ureq` (HTTP
 
 ## Request flow (`fleet run "<task>"`)
 
-1. Resolve credentials (env → `<FLEET_HOME>/.env` → harness credential store `refs`, read-only) and base URL.
+1. Resolve credentials (env → `<FLEET_HOME>/.env`, and nothing else — no other harness's config) and base URL.
 2. Open or create the session log; replay seeds the message list, so a resumed run continues with its own prior answers in view.
 3. Each turn: prepend the compiled-in system prompt, send messages + the four tool declarations, accumulate usage.
 4. No tool calls → record `end` (`completed`), print the final answer, exit 0.

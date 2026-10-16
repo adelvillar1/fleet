@@ -538,8 +538,7 @@ options for cron:
                       without anyone there to approve them (add)
 
 environment:
-  DEEPSEEK_API_KEY    required; also read from ~/.fleet/.env and the
-                      DeepSeek Harness credential store (~/.dsh/.credentials.yaml)
+  DEEPSEEK_API_KEY    required; also read from ~/.fleet/.env
   DEEPSEEK_BASE_URL   optional API base (default https://api.deepseek.com)
   FLEET_HOME          optional home (default ~/.fleet)
   FLEET_JUDGE_BUDGET_USD_DAY

@@ -68,8 +68,9 @@ pub struct Candidate {
     pub id: String,
     pub base_url: String,
     /// The environment variable NAME holding this candidate's key. The
-    /// value is resolved at runtime from the environment, `<home>/.env`,
-    /// or the harness credential store — never stored here.
+    /// value is resolved at runtime from the environment or
+    /// `<home>/.env` — never stored here, and never read from another
+    /// harness's config.
     pub key_env: String,
     /// The provider's models, in the provider's own preference order;
     /// the first is its default. The preference of execution chooses
@@ -821,19 +822,12 @@ impl Resolved {
 }
 
 /// Resolve one key env-var name the same way the rest of Fleet resolves a
-/// setting: the process environment, then `<home>/.env`, then the DeepSeek
-/// Harness credential store's `refs` block (read-only). One stored key
-/// serves every candidate whose `key_env` names it.
+/// setting: the process environment, then `<home>/.env` — Fleet's own
+/// home, and nothing else (the owner's 2026-10-16 ruling: the router
+/// never reads another harness's config). One stored key serves every
+/// candidate whose `key_env` names it.
 fn resolve_key(name: &str, dotenv: &HashMap<String, String>) -> Option<String> {
-    crate::home::resolve_setting(name, dotenv).or_else(|| {
-        let user_home = std::env::var("HOME").ok();
-        let path = crate::home::harness_credentials_path(
-            std::env::var("DSH_HOME").ok().as_deref(),
-            user_home.as_deref(),
-        )?;
-        let text = std::fs::read_to_string(path).ok()?;
-        crate::home::harness_refs(&text, name)
-    })
+    crate::home::resolve_setting(name, dotenv)
 }
 
 /// Resolve every candidate's key for this run. `dotenv` is the

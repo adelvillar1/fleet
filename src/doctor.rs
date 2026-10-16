@@ -25,14 +25,15 @@ pub fn render(check: &Check) -> String {
 }
 
 /// The credentials check from a resolved `DEEPSEEK_API_KEY` (after the
-/// `.env` and Harness credential-store fallbacks). The detail masks
-/// everything but the last four characters.
+/// `.env` fallback). The detail masks everything but the last four
+/// characters.
 pub fn evaluate_credentials(key: Option<&str>) -> Check {
     match key {
         None => Check {
             name: "credentials",
             ok: false,
-            detail: "DEEPSEEK_API_KEY is not set; export it, add it to ~/.fleet/.env, or store it in ~/.dsh/.credentials.yaml".to_string(),
+            detail: "DEEPSEEK_API_KEY is not set; export it, or add it to ~/.fleet/.env"
+                .to_string(),
         },
         Some(key) => Check {
             name: "credentials",

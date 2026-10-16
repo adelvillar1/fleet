@@ -61,60 +61,44 @@ pub fn read_dotenv(home: &Path) -> HashMap<String, String> {
 }
 
 /// Resolve a setting: the process environment wins, `home/.env` is the
-/// fallback, and an empty value counts as unset.
+/// fallback, and an empty value counts as unset. Fleet's own home is
+/// the whole story — no other harness's config is ever read (the
+/// owner's 2026-10-16 ruling).
 pub fn resolve_setting(name: &str, dotenv: &HashMap<String, String>) -> Option<String> {
     let from_env = std::env::var(name).ok().filter(|value| !value.is_empty());
     from_env.or_else(|| dotenv.get(name).filter(|value| !value.is_empty()).cloned())
 }
 
-/// The DeepSeek Harness credentials store: `$DSH_HOME/.credentials.yaml`,
-/// else `<user home>/.dsh/.credentials.yaml`. One stored key serves both
-/// harnesses; Fleet only ever reads it.
-pub fn harness_credentials_path(
-    dsh_home_env: Option<&str>,
-    user_home: Option<&str>,
-) -> Option<PathBuf> {
-    match dsh_home_env
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(value) => Some(PathBuf::from(value).join(".credentials.yaml")),
-        None => user_home.map(|home| PathBuf::from(home).join(".dsh").join(".credentials.yaml")),
-    }
-}
-
-/// Read `refs.<name>` from the harness credentials store's text. The `refs`
-/// block is a flat `NAME: value` map at one indent level, so a line scan
-/// stands in for a YAML dependency; values are unquoted. A missing file,
-/// block, or name, or an empty value, is `None`.
-pub fn harness_refs(text: &str, name: &str) -> Option<String> {
-    let mut in_refs = false;
-    for line in text.lines() {
-        if !in_refs {
-            if line.trim_end() == "refs:" {
-                in_refs = true;
-            }
-            continue;
-        }
-        if !line.starts_with(' ') {
-            // A top-level key ends the block.
-            return None;
-        }
-        let Some((key, value)) = line.trim().split_once(':') else {
-            continue;
-        };
-        if key.trim() == name {
-            let value = value.trim();
-            let unquoted = value.trim_matches(|c| c == '\'' || c == '"');
-            return (!unquoted.is_empty()).then(|| unquoted.to_string());
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Set `name` for the duration of the guard, restoring whatever was
+    /// there before — including its absence — on the way out.
+    struct EnvVar {
+        name: String,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVar {
+        fn set(name: &str, value: &str) -> EnvVar {
+            let previous = std::env::var_os(name);
+            std::env::set_var(name, value);
+            EnvVar {
+                name: name.to_string(),
+                previous,
+            }
+        }
+    }
+
+    impl Drop for EnvVar {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(&self.name, value),
+                None => std::env::remove_var(&self.name),
+            }
+        }
+    }
 
     #[test]
     fn home_prefers_fleet_home_env() {
@@ -167,34 +151,40 @@ mod tests {
         assert_eq!(resolve_setting("FLEET_TEST_UNSET_VAR_XYZ", &dotenv), None);
     }
 
+    /// The owner's 2026-10-16 ruling, pinned: a key that lives only in
+    /// another harness's store does not resolve, even when that store's
+    /// home is named in the environment.
     #[test]
-    fn harness_credentials_path_honors_dsh_home() {
-        let path = harness_credentials_path(Some("/tmp/dsh"), Some("/Users/x")).unwrap();
-        assert_eq!(path, PathBuf::from("/tmp/dsh/.credentials.yaml"));
-        let path = harness_credentials_path(None, Some("/Users/x")).unwrap();
-        assert_eq!(path, PathBuf::from("/Users/x/.dsh/.credentials.yaml"));
-        assert_eq!(harness_credentials_path(Some("  "), None), None);
-    }
+    fn resolve_setting_reads_fleets_home_and_no_other_harnesss_store() {
+        // The env-mutating test serializes on the same lock the other
+        // modules use; `cargo test` runs a module's tests on threads.
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
 
-    #[test]
-    fn harness_refs_reads_the_refs_block_and_stops_at_the_next_key() {
-        let text = "version: 1\nrefs:\n  DEEPSEEK_API_KEY: 'sk-test'\n  UNQUOTED: plain-value\nrecords:\n  something:\n    DEEPSEEK_API_KEY: 'decoy'\n";
+        let name = "FLEET_TEST_HARNESS_ONLY_KEY";
+        let home = std::env::temp_dir().join(format!("fleet-home-test-{}", std::process::id()));
+        fs::create_dir_all(&home).unwrap();
+        fs::write(home.join(".env"), "OWNED_KEY=from-fleets-own-env\n").unwrap();
+
+        // A neighboring harness store that names this key, its home
+        // named in the environment exactly as the removed leg read it.
+        let dsh = std::env::temp_dir().join(format!("fleet-dsh-test-{}", std::process::id()));
+        fs::create_dir_all(&dsh).unwrap();
+        fs::write(
+            dsh.join(".credentials.yaml"),
+            format!("version: 1\nrefs:\n  {name}: from-the-other-harness\n"),
+        )
+        .unwrap();
+        let _dsh_home = EnvVar::set("DSH_HOME", &dsh.display().to_string());
+
+        let dotenv = read_dotenv(&home);
+        assert_eq!(resolve_setting(name, &dotenv), None);
         assert_eq!(
-            harness_refs(text, "DEEPSEEK_API_KEY").as_deref(),
-            Some("sk-test")
+            resolve_setting("OWNED_KEY", &dotenv).as_deref(),
+            Some("from-fleets-own-env")
         );
-        assert_eq!(
-            harness_refs(text, "UNQUOTED").as_deref(),
-            Some("plain-value")
-        );
-        assert_eq!(harness_refs(text, "MISSING"), None);
-        assert_eq!(
-            harness_refs(
-                "records:\n  DEEPSEEK_API_KEY: 'decoy'\n",
-                "DEEPSEEK_API_KEY"
-            ),
-            None
-        );
-        assert_eq!(harness_refs("refs:\n  EMPTY: ''\n", "EMPTY"), None);
+
+        fs::remove_dir_all(&home).ok();
+        fs::remove_dir_all(&dsh).ok();
     }
 }
