@@ -171,14 +171,56 @@ pub const DESTRUCTIVE: &[&str] = &[
 /// set is out of the class by construction rather than by inspection.
 const BASH_TOOL: &str = "bash";
 
+/// The call as the gate reads it, whatever name it arrived under: the
+/// `subagent → ` label — one per delegation level — is stripped, and a
+/// labelled call's wrapper arguments (`goal`, `tool`, `arguments`) are
+/// unwrapped to the tool call the child actually issued. The class
+/// rules key on what a call does, not on where it came from, so the
+/// destructive check and the always-ask check read the bare call at
+/// every depth (KI-209, KI-210). A call with no label passes through
+/// byte-for-byte.
+fn unlabel(call: &ToolCall) -> ToolCall {
+    let prefix = crate::tools::subagent_call_prefix();
+    let mut name = call.function.name.as_str();
+    let mut labelled = false;
+    while let Some(stripped) = name.strip_prefix(&prefix) {
+        name = stripped;
+        labelled = true;
+    }
+    let mut arguments = call.function.arguments.clone();
+    if labelled {
+        if let Some(inner) = serde_json::from_str::<serde_json::Value>(&arguments)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("arguments")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+        {
+            arguments = inner;
+        }
+    }
+    ToolCall {
+        id: call.id.clone(),
+        kind: call.kind.clone(),
+        function: crate::api::FunctionCall {
+            name: name.to_string(),
+            arguments,
+        },
+    }
+}
+
 /// The command a call would run, or `None` when there is no command to
 /// read: the call is not a `bash` call, its arguments are not valid
-/// JSON, or the arguments name no `command` string.
+/// JSON, or the arguments name no `command` string. A forwarded child
+/// call is read through its label (KI-209).
 ///
 /// The `None` case is not "safe", it is "unknown" — [`Gate::is_destructive`]
 /// decides which of the two a caller should treat it as, and it treats
 /// unknown as destructive.
 fn bash_command(call: &ToolCall) -> Option<String> {
+    let call = &unlabel(call);
     if call.function.name != BASH_TOOL {
         return None;
     }
@@ -356,16 +398,13 @@ pub fn config_word(home: &std::path::Path) -> Option<String> {
 pub const ALWAYS_ASK_TOOLS: &[&str] = &["computer_use"];
 
 /// Whether this call asks regardless of mode: a tool in
-/// [`ALWAYS_ASK_TOOLS`], or a forwarded child call to one. A
-/// subagent's calls reach the owner's gate named `subagent → <tool>`,
-/// and the prefix is what the prompt reads — not what the rule keys on
-/// — so it is stripped before the lookup.
+/// [`ALWAYS_ASK_TOOLS`], or a forwarded child call to one. A subagent's
+/// calls reach the owner's gate named `subagent → <tool>` — one label
+/// per delegation level — and the prefix is what the prompt reads, not
+/// what the rule keys on, so every repetition is stripped before the
+/// lookup (KI-210: the class survives depth 2).
 pub fn asks_regardless(call: &ToolCall) -> bool {
-    let name = call.function.name.as_str();
-    let bare = name
-        .strip_prefix(&crate::tools::subagent_call_prefix())
-        .unwrap_or(name);
-    ALWAYS_ASK_TOOLS.contains(&bare)
+    ALWAYS_ASK_TOOLS.contains(&unlabel(call).function.name.as_str())
 }
 
 #[cfg(test)]
@@ -423,12 +462,86 @@ mod tests {
         call("bash", &arguments)
     }
 
+    /// The call as a child's approver forwards it: renamed with the
+    /// label — once per delegation level — and its real arguments
+    /// wrapped in the goal/tool envelope `subagents::labelled` builds.
+    fn forwarded(name: &str, arguments: &str, depth: usize) -> ToolCall {
+        let prefix = crate::tools::subagent_call_prefix().repeat(depth);
+        let wrapped = serde_json::json!({
+            "goal": "the child's goal",
+            "tool": name,
+            "arguments": arguments,
+        })
+        .to_string();
+        call(&format!("{prefix}{name}"), &wrapped)
+    }
+
     #[test]
     fn ask_approves_nothing_without_asking() {
         let gate = Gate::new(Mode::Ask);
         assert!(!gate.approves_without_asking(&bash("grep -rn fleet src")));
         assert!(!gate.approves_without_asking(&bash("rm -rf /tmp/x")));
         assert!(!gate.approves_without_asking(&call("write_file", r#"{"path":"/tmp/x"}"#)));
+    }
+
+    #[test]
+    fn a_forwarded_destructive_bash_call_is_destructive_through_its_label() {
+        // The class keys on what the call does, not on the name it
+        // arrived under (KI-209).
+        assert!(Gate::is_destructive(&forwarded(
+            "bash",
+            r#"{"command":"rm -rf /tmp/x"}"#,
+            1
+        )));
+        assert!(!Gate::is_destructive(&forwarded(
+            "bash",
+            r#"{"command":"echo hello"}"#,
+            1
+        )));
+    }
+
+    #[test]
+    fn yes_guarded_stops_a_forwarded_destructive_call_and_runs_a_benign_one() {
+        let gate = Gate::new(Mode::YesGuarded);
+        assert!(
+            !gate.approves_without_asking(&forwarded(
+                "bash",
+                r#"{"command":"git push --force"}"#,
+                1
+            )),
+            "the destructive class survives the label"
+        );
+        assert!(gate.approves_without_asking(&forwarded("bash", r#"{"command":"echo hello"}"#, 1)));
+    }
+
+    #[test]
+    fn the_always_ask_class_survives_every_depth_of_forwarding() {
+        // Depth 1 and depth 2 both land in the class, and no mode waives
+        // it (KI-210).
+        for depth in [1, 2] {
+            let desktop = forwarded("computer_use", r#"{"action":"screenshot"}"#, depth);
+            assert!(asks_regardless(&desktop), "depth {depth}");
+            assert!(
+                !Gate::new(Mode::Yes).approves_without_asking(&desktop),
+                "depth {depth}"
+            );
+            assert!(
+                !Gate::new(Mode::YesGuarded).approves_without_asking(&desktop),
+                "depth {depth}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_forwarded_benign_call_reads_its_real_arguments_not_the_wrapper() {
+        // The envelope's own keys never read as the command: the gate
+        // sees the inner arguments, and an unparsable one fails closed
+        // into the destructive class.
+        let gate = Gate::new(Mode::YesGuarded);
+        assert!(
+            !gate.approves_without_asking(&forwarded("bash", r#"{"command":"rm -rf /tmp/x"}"#, 2)),
+            "depth 2 is read through both labels"
+        );
     }
 
     #[test]
