@@ -251,19 +251,40 @@ impl Session {
 
 /// Read every record of a log. Unknown record types fail loud: reading an
 /// unreadable format silently would corrupt replays.
+///
+/// One exception, at exactly one position: a FINAL line that fails to
+/// parse is the torn tail of an interrupted `record` — the last write
+/// died mid-line, and only ever the last line can be torn (KI-213). It
+/// is dropped and named, so every intact record before it stays
+/// readable and the session resumes. A malformed line anywhere else —
+/// or a final line whose log ends with its newline — is corruption, and
+/// still fails loud, naming the file and the line.
 pub fn replay(path: &Path) -> io::Result<Vec<Record>> {
     let text = fs::read_to_string(path)?;
     let mut records = Vec::new();
-    for (index, line) in text.lines().enumerate() {
+    let torn_tail = !text.ends_with('\n');
+    let mut lines = text.lines().enumerate().peekable();
+    while let Some((index, line)) = lines.next() {
         if line.is_empty() {
             continue;
         }
-        records.push(serde_json::from_str(line).map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("{} line {}: {error}", path.display(), index + 1),
-            )
-        })?);
+        match serde_json::from_str(line) {
+            Ok(record) => records.push(record),
+            Err(error) if torn_tail && lines.peek().is_none() => {
+                eprintln!(
+                    "fleet: {} line {}: tolerated a torn trailing record \
+                     (the last write was interrupted): {error}",
+                    path.display(),
+                    index + 1
+                );
+            }
+            Err(error) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{} line {}: {error}", path.display(), index + 1),
+                ));
+            }
+        }
     }
     Ok(records)
 }
@@ -586,6 +607,90 @@ mod tests {
         assert!(matches!(
             &records[0],
             Record::Start { v: 1, model, .. } if model == "deepseek-chat"
+        ));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_torn_trailing_record_is_tolerated_and_the_session_survives() {
+        let home = temp_home("torn-tail");
+        let mut session = Session::create(&home, "deepseek-chat").unwrap();
+        session
+            .record(&Record::User {
+                content: "hello".into(),
+            })
+            .unwrap();
+        session
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+            })
+            .unwrap();
+        // The interrupted last write: a partial record, no newline.
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .open(session.path())
+            .unwrap();
+        use std::io::Write;
+        write!(file, "{{\"type\":\"tool_res").unwrap();
+        drop(file);
+
+        // Every intact record reads back; the torn tail is dropped and
+        // named on stderr.
+        let records = replay(session.path()).unwrap();
+        assert_eq!(records.len(), 3);
+        assert!(matches!(
+            records.last().unwrap(),
+            Record::End { stop_reason, .. } if stop_reason == "completed"
+        ));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_malformed_mid_log_line_still_fails_loud() {
+        let home = temp_home("mid-log-garbage");
+        let mut session = Session::create(&home, "deepseek-chat").unwrap();
+        session
+            .record(&Record::User {
+                content: "hello".into(),
+            })
+            .unwrap();
+        let path = session.path().to_path_buf();
+        drop(session);
+        // Corruption in the middle: appended garbage with its newline,
+        // so it is a complete line, not a torn tail.
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        use std::io::Write;
+        writeln!(file, "not json at all").unwrap();
+        drop(file);
+
+        let error = replay(&path).unwrap_err();
+        assert!(error.to_string().contains("line 3"), "{error}");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_final_line_that_parses_is_kept_even_without_its_newline() {
+        let home = temp_home("untorn-final");
+        let mut session = Session::create(&home, "deepseek-chat").unwrap();
+        session
+            .record(&Record::User {
+                content: "hello".into(),
+            })
+            .unwrap();
+        // A complete final record whose newline never landed — a full
+        // write cut before the push('\n') — is a record, not a tear.
+        let path = session.path().to_path_buf();
+        drop(session);
+        let mut text = fs::read_to_string(&path).unwrap();
+        text.push_str("{\"type\":\"end\",\"stop_reason\":\"completed\",\"turns\":1}");
+        fs::write(&path, text).unwrap();
+
+        let records = replay(&path).unwrap();
+        assert_eq!(records.len(), 3);
+        assert!(matches!(
+            records.last().unwrap(),
+            Record::End { stop_reason, .. } if stop_reason == "completed"
         ));
         fs::remove_dir_all(&home).ok();
     }
