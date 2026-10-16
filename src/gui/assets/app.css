@@ -1,85 +1,861 @@
-/* The seam's page. Dark and quiet on purpose: this is a console the
-   owner leaves open beside the work, not a poster. */
+/* Fleet's browser face.
+
+   The visual language is the plan's: quiet by default, one accent, and
+   a card or a bar where a plain-text table would otherwise do. The
+   colour chain has three tiers and nothing skips one — the reference
+   palette (`--dsw-static-*`) names where the colours came from, the
+   alias tier (`--dsw-alias-*`) names what they mean, and the component
+   tokens name where they land. A change to the accent is one line in
+   the middle tier and the whole face follows.
+
+   DeepSeek blue is the accent. Dark, because this is a console the
+   owner leaves open beside the work and not a poster. */
+
 :root {
-  --bg: #0e1116;
-  --panel: #161b22;
-  --line: #232a33;
-  --ink: #e6edf3;
-  --muted: #8b949e;
-  --accent: #4c8dff;
-  --ok: #3fb950;
-  --down: #f85149;
+  /* --- the static palette: the reference, verbatim ------------------ */
+  --dsw-static-deepseek-700: rgb(28, 66, 148);
+  --dsw-static-deepseek-600: rgb(46, 92, 197);
+  --dsw-static-deepseek-500: rgb(65, 118, 230);
+  --dsw-static-deepseek-400: rgb(122, 170, 255);
+  --dsw-static-deepseek-300: rgb(178, 206, 255);
+  --dsw-static-ink-900: rgb(11, 14, 18);
+  --dsw-static-ink-800: rgb(16, 20, 26);
+  --dsw-static-ink-700: rgb(22, 27, 34);
+  --dsw-static-ink-600: rgb(31, 38, 47);
+  --dsw-static-ink-500: rgb(45, 53, 64);
+  --dsw-static-ink-400: rgb(96, 108, 124);
+  --dsw-static-ink-300: rgb(139, 149, 160);
+  --dsw-static-ink-200: rgb(186, 195, 205);
+  --dsw-static-ink-100: rgb(230, 237, 243);
+  --dsw-static-ok-500: rgb(63, 185, 80);
+  --dsw-static-down-500: rgb(248, 81, 73);
+  --dsw-static-warn-500: rgb(210, 153, 34);
+
+  /* --- the alias tier: the meaning --------------------------------- */
+  --dsw-alias-accent: var(--dsw-static-deepseek-500);
+  --dsw-alias-accent-deep: var(--dsw-static-deepseek-600);
+  --dsw-alias-accent-lift: var(--dsw-static-deepseek-400);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-static-deepseek-500) 14%, transparent);
+  --dsw-alias-page: var(--dsw-static-ink-900);
+  --dsw-alias-surface: var(--dsw-static-ink-800);
+  --dsw-alias-surface-raised: var(--dsw-static-ink-700);
+  --dsw-alias-hairline: color-mix(in srgb, var(--dsw-static-ink-500) 55%, transparent);
+  --dsw-alias-hairline-strong: var(--dsw-static-ink-500);
+  --dsw-alias-ink: var(--dsw-static-ink-100);
+  --dsw-alias-ink-secondary: var(--dsw-static-ink-300);
+  --dsw-alias-ink-tertiary: var(--dsw-static-ink-400);
+  --dsw-alias-ok: var(--dsw-static-ok-500);
+  --dsw-alias-down: var(--dsw-static-down-500);
+  --dsw-alias-warn: var(--dsw-static-warn-500);
+  --dsw-alias-gradient: linear-gradient(
+    100deg,
+    var(--dsw-static-deepseek-500),
+    var(--dsw-static-deepseek-400)
+  );
+
+  /* --- the component tokens: where they land ----------------------- */
+  --topbar-bg: color-mix(in srgb, var(--dsw-alias-surface) 88%, transparent);
+  --topbar-height: 52px;
+  --card-bg: var(--dsw-alias-surface);
+  --card-radius: 12px;
+  --card-hairline: 0.5px solid var(--dsw-alias-hairline);
+  --card-pad: 14px 16px;
+  --card-value: 22px;
+  --card-label: 12px;
+  --bubble-bg: var(--dsw-alias-surface-raised);
+  --bubble-radius: 12px;
+  --composer-bg: var(--dsw-alias-surface);
+  --composer-radius: 12px;
+  --seat-bg: color-mix(in srgb, var(--dsw-alias-accent) 10%, var(--dsw-alias-surface));
+  --seat-radius: 12px;
+  --rail-width: 300px;
+  --drawer-width: 380px;
+  --shadow-lift: 0 8px 28px rgb(0 0 0 / 45%);
+
+  /* SF first, because the machine this runs on has it; the stack falls
+     back through what every other machine has. */
+  --font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas,
+    monospace;
 }
 
 * { box-sizing: border-box; }
 
+html, body { height: 100%; }
+
 body {
   margin: 0;
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: var(--bg);
-  color: var(--ink);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink);
+  font: 15px/1.6 var(--font-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-.seam { width: min(560px, calc(100vw - 48px)); }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
-.seam-head h1 {
-  margin: 0;
-  font-size: 28px;
+/* The accent, once, where the eye should land: the wordmark's glyph.
+   Everything else on the face stays neutral unless it means something. */
+.mark-glyph {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--dsw-alias-gradient);
+}
+
+/* ---------------------------------------------------------------- topbar */
+
+.face {
+  display: grid;
+  grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr);
+  height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px;
+  background: var(--topbar-bg);
+  border-bottom: var(--card-hairline);
+  backdrop-filter: blur(12px);
+}
+
+.mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dsw-alias-ink);
+  text-decoration: none;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 
-.seam-sub {
-  margin: 2px 0 20px;
-  color: var(--muted);
+.mark-name { font-size: 15px; }
+
+.addresses {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.addresses::-webkit-scrollbar { display: none; }
+
+.address {
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
   font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
-.seam-card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 18px 20px;
+.address:hover { background: var(--dsw-alias-accent-wash); color: var(--dsw-alias-ink); }
+
+.address[aria-current="page"] {
+  background: var(--dsw-alias-accent-wash);
+  color: var(--dsw-alias-accent-lift);
 }
 
-.seam-row {
+.topbar-right {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
+  gap: 12px;
+  margin-left: auto;
 }
+
+.stats {
+  display: flex;
+  gap: 14px;
+  margin: 0;
+}
+
+.stat { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+
+.stat dt {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: var(--card-label);
+  letter-spacing: 0.02em;
+}
+
+/* Tabular numerals, so a rising spend does not shuffle the row. */
+.stat dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----------------------------------------------------------------- pills */
 
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 3px 11px;
-  border: 1px solid var(--line);
+  padding: 3px 10px;
+  border: var(--card-hairline);
   border-radius: 999px;
-  font-size: 12px;
-  color: var(--muted);
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink-secondary);
+  font-size: var(--card-label);
+  white-space: nowrap;
 }
 
 .pill::before {
   content: "";
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentColor;
 }
 
-.pill[data-state="live"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
-.pill[data-state="down"] { color: var(--down); border-color: color-mix(in srgb, var(--down) 40%, var(--line)); }
-.pill[data-state="connecting"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.pill[data-state="idle"] { color: var(--dsw-alias-ink-tertiary); }
+.pill[data-state="live"] { color: var(--dsw-alias-ok); }
+.pill[data-state="routed"] { color: var(--dsw-alias-accent-lift); }
+.pill[data-state="working"] { color: var(--dsw-alias-accent-lift); }
+.pill[data-state="waiting"] { color: var(--dsw-alias-warn); }
+.pill[data-state="down"] { color: var(--dsw-alias-down); }
 
-.beats { color: var(--muted); font-size: 12px; }
-.beats b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* ------------------------------------------------- the context meter bar */
 
-.line { margin: 0 0 6px; }
-.line.muted { color: var(--muted); font-size: 13px; margin: 0; }
+/* One hairline of progress under the topbar. It is a bar, not a number
+   in a sentence: the owner glances at it and knows where they are. */
+.meter {
+  position: relative;
+  background: var(--dsw-alias-hairline);
+  overflow: hidden;
+}
 
-.seam-foot { margin-top: 16px; font-size: 12px; }
-.muted { color: var(--muted); }
+.meter-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--dsw-alias-gradient);
+  transition: width 220ms ease;
+}
+
+.meter[data-level="high"] .meter-fill {
+  background: var(--dsw-alias-warn);
+}
+
+.meter[data-level="full"] .meter-fill {
+  background: var(--dsw-alias-down);
+}
+
+/* ----------------------------------------------------------------- stage */
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail-width);
+  gap: 0;
+  min-height: 0;
+}
+
+.column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------ empty state */
+
+.empty {
+  align-self: center;
+  justify-self: center;
+  width: min(620px, calc(100% - 48px));
+  padding: 28px 30px;
+  border: var(--card-hairline);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+}
+
+.empty[hidden] { display: none; }
+
+.empty h1 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.empty p {
+  margin: 0 0 18px;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 14px;
+}
+
+.offers { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.offer {
+  padding: 7px 12px;
+  border: var(--card-hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.offer:hover {
+  border-color: var(--dsw-alias-accent);
+  color: var(--dsw-alias-accent-lift);
+}
+
+/* ------------------------------------------------------------------- log */
+
+.log {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 0 8px;
+  scroll-behavior: smooth;
+}
+
+.log[hidden] { display: none; }
+
+.stream {
+  width: min(760px, calc(100% - 48px));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The owner's own words. A card, not a bubble: this face is a console,
+   and the console keeps its rows aligned. */
+.owner {
+  align-self: flex-end;
+  max-width: 82%;
+  padding: 10px 14px;
+  border: var(--card-hairline);
+  border-radius: var(--bubble-radius);
+  background: var(--bubble-bg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.owner-tag {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: var(--card-label);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* The assistant's streamed words. Nothing around them: the text is the
+   surface. */
+.assistant {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.assistant.streaming::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--dsw-alias-accent-lift);
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink { to { visibility: hidden; } }
+
+.turn-mark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 2px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: var(--card-label);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.turn-mark::before,
+.turn-mark::after {
+  content: "";
+  flex: 1;
+  height: 0.5px;
+  background: var(--dsw-alias-hairline);
+}
+
+/* ----------------------------------------------------------------- cards */
+
+/* One card shape for everything that is not prose: a tool call, a
+   route, a memory recall, a delegation, a compaction. Quiet until it
+   is clicked, which opens the inspector. */
+.card-row {
+  border: var(--card-hairline);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+  overflow: hidden;
+}
+
+.card-row > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 13px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-row > button:hover { background: var(--dsw-alias-accent-wash); }
+
+.card-row .glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.card-row[data-kind="route"] .glyph { color: var(--dsw-alias-accent-lift); }
+.card-row[data-kind="memory"] .glyph { color: var(--dsw-alias-accent-lift); }
+.card-row[data-kind="skills"] .glyph { color: var(--dsw-alias-accent-lift); }
+.card-row[data-kind="delegation"] .glyph { color: var(--dsw-alias-accent-lift); }
+.card-row[data-kind="lane"] .glyph { color: var(--dsw-alias-accent-lift); }
+/* A note the client owes and the server never sent: not part of the
+   intelligence family, and the warm colour says so. */
+.card-row[data-kind="notice"] .glyph { color: var(--dsw-alias-warn); }
+.card-row[data-kind="dropped"] .glyph { color: var(--dsw-alias-warn); }
+
+.card-row .body { min-width: 0; flex: 1; }
+
+.card-row .title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-row .sub {
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-row .value {
+  flex: none;
+  font-size: var(--card-value);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.card-row .label {
+  flex: none;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: var(--card-label);
+  text-align: right;
+}
+
+.card-row .note {
+  padding: 0 13px 11px 45px;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.card-row .note[hidden] { display: none; }
+
+/* A tool call's own row: the name and the summary are the card, and
+   the result's preview opens under them. */
+.tool .status {
+  flex: none;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: var(--card-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool[data-status="running"] .status { color: var(--dsw-alias-accent-lift); }
+.tool[data-status="ok"] .status { color: var(--dsw-alias-ok); }
+.tool[data-status="refused"] .status { color: var(--dsw-alias-down); }
+
+/* ------------------------------------------------------------------ seat */
+
+/* The seat is the one thing on the face that is never quiet. It stands
+   above the composer because the answer is typed where it is read. */
+.seat {
+  width: min(760px, calc(100% - 48px));
+  margin: 0 auto 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-accent);
+  border-radius: var(--seat-radius);
+  background: var(--seat-bg);
+  box-shadow: var(--shadow-lift);
+}
+
+.seat[hidden] { display: none; }
+
+.seat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.seat-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.seat-label {
+  color: var(--dsw-alias-accent-lift);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.seat-summary {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.seat-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.decision {
+  padding: 7px 13px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.decision:hover { border-color: var(--dsw-alias-accent); }
+
+.decision[data-decision="deny"]:hover {
+  border-color: var(--dsw-alias-down);
+  color: var(--dsw-alias-down);
+}
+
+/* The one that writes a rule, so it reads as the consequential choice
+   it is rather than as the fourth button. */
+.decision[data-decision="remember"] {
+  border-color: var(--dsw-alias-accent);
+  background: var(--dsw-alias-accent);
+  color: #fff;
+}
+
+.decision[data-decision="remember"]:hover { background: var(--dsw-alias-accent-deep); }
+
+.decision[disabled] { opacity: 0.45; cursor: default; }
+
+.seat-note {
+  margin: 10px 0 0;
+  color: var(--dsw-alias-warn);
+  font-size: 12.5px;
+}
+
+.seat-note[hidden] { display: none; }
+
+/* -------------------------------------------------------------- composer */
+
+.composer {
+  width: min(760px, calc(100% - 48px));
+  margin: 0 auto;
+  padding-bottom: 16px;
+}
+
+.composer:focus-within { }
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 46px;
+  max-height: 200px;
+  padding: 12px 14px;
+  border: var(--card-hairline);
+  border-radius: var(--composer-radius);
+  background: var(--composer-bg);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  resize: none;
+}
+
+.composer textarea:focus {
+  outline: none;
+  border-color: var(--dsw-alias-accent);
+}
+
+.composer textarea::placeholder { color: var(--dsw-alias-ink-tertiary); }
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.composer-hint { color: var(--dsw-alias-ink-tertiary); font-size: 12px; }
+
+.send {
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--dsw-alias-gradient);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.send:hover { filter: brightness(1.08); }
+
+.send[disabled] { opacity: 0.45; cursor: default; filter: none; }
+
+/* ------------------------------------------------------------------ rail */
+
+.rail {
+  min-width: 0;
+  padding: 16px;
+  border-left: var(--card-hairline);
+  background: color-mix(in srgb, var(--dsw-alias-page) 60%, var(--dsw-alias-surface));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rail .card {
+  border: var(--card-hairline);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+  padding: var(--card-pad);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.card-head h2 {
+  margin: 0;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: var(--card-label);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ghost {
+  padding: 3px 8px;
+  border: var(--card-hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ghost:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent-lift); }
+
+.facts { display: grid; gap: 9px; margin: 0; }
+
+.fact { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+
+.fact dt { color: var(--dsw-alias-ink-tertiary); font-size: var(--card-label); }
+
+.fact dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  word-break: break-all;
+}
+
+.card-note {
+  margin: 0 0 10px;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+.rules li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface-raised);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.rules .empty-rule {
+  border-style: dashed;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--font-text);
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------- inspector drawer */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 40%);
+  z-index: 20;
+}
+
+.scrim[hidden] { display: none; }
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--drawer-width);
+  max-width: 100vw;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  border-left: var(--card-hairline);
+  background: var(--dsw-alias-surface);
+  box-shadow: var(--shadow-lift);
+}
+
+.drawer[hidden] { display: none; }
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: var(--card-hairline);
+}
+
+.drawer-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.drawer h3 {
+  margin: 0 0 8px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: var(--card-label);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.drawer dl { display: grid; gap: 7px; margin: 0; }
+
+.drawer .fact dt { color: var(--dsw-alias-ink-tertiary); font-size: 12px; }
+
+.drawer .fact dd { font-size: 13px; }
+
+/* The raw event, in mono, wrapped: the inspector's whole job is that
+   nothing on this face is unreadable at the source. */
+pre.raw {
+  margin: 0;
+  padding: 12px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.derivation { color: var(--dsw-alias-ink-secondary); font-size: 12.5px; line-height: 1.55; }
+.derivation code { font-family: var(--font-mono); font-size: 12px; color: var(--dsw-alias-accent-lift); }
+
+/* ---------------------------------------------------------- narrow faces */
+
+/* Below the rail's width the rail folds under the conversation, and the
+   meter cluster keeps only what a glance needs. */
+@media (max-width: 1080px) {
+  .stage { grid-template-columns: minmax(0, 1fr); }
+  .rail { border-left: 0; border-top: var(--card-hairline); }
+  .face { grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr); height: auto; min-height: 100%; }
+  .log { max-height: none; }
+}
+
+@media (max-width: 720px) {
+  .topbar { gap: 10px; }
+  .addresses { display: none; }
+  .stat:nth-child(2) { display: none; }
+  .drawer { width: 100vw; }
+}

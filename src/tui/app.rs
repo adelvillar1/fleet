@@ -582,6 +582,15 @@ impl App {
                 self.status.turn = turn;
                 self.status.working = true;
             }
+            UiEvent::Usage { .. } => {
+                // The browser face reads this one: it has no finished
+                // `RunReport` to sum, so the per-response numbers are
+                // how its spend line and context meter are fed. This
+                // pane's counters are summed from the finished run's
+                // report (`StatusUpdate::Usage`), which already
+                // includes every response — folding these in as well
+                // would count the same run twice.
+            }
             UiEvent::ToolCall { name, summary } => {
                 self.flush_streaming();
                 self.entries.push(Entry::Tool(ToolCard {

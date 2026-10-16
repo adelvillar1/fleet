@@ -1114,6 +1114,12 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         events,
         vec![
             UiEvent::Turn(1),
+            // The turn's own reading of the measure the compaction check
+            // reads, so a live surface and the compactor see one number.
+            UiEvent::Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+            },
             UiEvent::ToolCall {
                 name: "bash".to_string(),
                 summary: "echo hi".to_string()
@@ -1126,6 +1132,10 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
             UiEvent::Turn(2),
             UiEvent::Token("All ".to_string()),
             UiEvent::Token("done.".to_string()),
+            UiEvent::Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+            },
             UiEvent::Finished {
                 stop_reason: "completed".to_string()
             },
@@ -2344,6 +2354,10 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
         events,
         vec![
             UiEvent::Turn(1),
+            UiEvent::Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+            },
             UiEvent::ToolCall {
                 name: "mcp__sem1__probe".to_string(),
                 summary: "embeddings \u{b7} probe {}".to_string(),
@@ -2361,6 +2375,10 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             },
             UiEvent::Turn(2),
             UiEvent::Token("Probed.".to_string()),
+            UiEvent::Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+            },
             UiEvent::Finished {
                 stop_reason: "completed".to_string()
             },

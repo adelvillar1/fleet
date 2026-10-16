@@ -224,6 +224,27 @@ pub enum UiEvent {
     Token(String),
     /// A turn started.
     Turn(u64),
+    /// What the response that just landed cost, and where it left the
+    /// conversation's window.
+    ///
+    /// One emission per response, at the turn loop's accumulation site,
+    /// where the number is already being read for the window check: a
+    /// live surface's spend line and context meter show the measure
+    /// the run itself is checked against rather than a second one. The
+    /// compaction fold's own request does not emit — it is the fold's
+    /// cost, not a turn in the conversation, and a header that counted
+    /// it would move while the conversation stood still. A provider
+    /// that reports no usage emits the estimate, which is the same
+    /// fallback the window check uses, so the meter is never left
+    /// showing a number nobody computed.
+    Usage {
+        /// The prompt this request carried: the API's own count when it
+        /// reported one, the chars/4 estimate of the assembled
+        /// conversation when it did not.
+        prompt_tokens: u64,
+        /// What this response generated.
+        completion_tokens: u64,
+    },
     /// The model requested a tool call, before the approval gate.
     ToolCall { name: String, summary: String },
     /// A call finished: executed or denied.
@@ -1165,6 +1186,16 @@ impl<'a> Agent<'a> {
             // `None`, and the window check falls back to the estimate.
             self.last_prompt_tokens =
                 (response.usage.prompt_tokens > 0).then_some(response.usage.prompt_tokens);
+            // The live surface's own reading of the same measure
+            // `maybe_compact` checks one line of code later: the
+            // reported prompt when there is one, the estimate when
+            // there is not.
+            self.emit(UiEvent::Usage {
+                prompt_tokens: self
+                    .last_prompt_tokens
+                    .unwrap_or_else(|| compaction::estimate_tokens(&self.messages)),
+                completion_tokens: response.usage.completion_tokens,
+            });
             let choice = response.choices.into_iter().next().ok_or_else(|| {
                 AgentError::Api(ClientError::Decode("response had no choices".to_string()))
             })?;
@@ -3196,7 +3227,12 @@ fn parse_arguments(arguments: &str) -> serde_json::Value {
 }
 
 /// One-line summary of what a call does, for prompts and UI events.
-fn call_summary(call: &ToolCall) -> String {
+///
+/// Crate-visible because a third surface builds the same prompt the
+/// console and the TUI build: the browser's approval seat carries this
+/// summary beside the call, and a second derivation of "what does this
+/// call do" is a second answer to the same question.
+pub(crate) fn call_summary(call: &ToolCall) -> String {
     // A subagent's forwarded call: `subagent → <tool>`, carrying the goal
     // beside the call's own arguments. The summary names the goal and the
     // inner call, so an approval prompt answers "whose call is this, and

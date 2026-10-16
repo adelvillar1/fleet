@@ -29,9 +29,11 @@
 //! The TUI is untouched by any of this: it is the other face of the
 //! same core, and this module adds a third rather than replacing one.
 
+pub mod bridge;
 pub mod server;
 
 use std::process::Command;
+use std::sync::Arc;
 
 /// What `fleet gui` is told to do.
 pub struct GuiOptions {
@@ -74,8 +76,28 @@ pub fn prompt_line(base_url: &str) -> String {
 /// the process. The URL carries the token because the browser needs it
 /// once, and it is printed to the terminal only — never logged, never
 /// written to a file, never carried in a payload.
+///
+/// The home and the session are resolved here exactly the way `tui::run`
+/// resolves them, so the browser face and the terminal face are the same
+/// core over a different seat: one home, one fresh session, one agent
+/// thread behind the bridge.
 pub async fn serve(options: GuiOptions) -> Result<(), String> {
-    let (server, _port) = server::Server::bind(&options.host, options.port).await?;
+    let user_home = std::env::var("HOME").ok();
+    let home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        user_home.as_deref(),
+    )?;
+    let session = crate::session::Session::create(&home, crate::api::DEFAULT_MODEL)
+        .map_err(|error| format!("could not create the session: {error}"))?;
+    let base_url = format!("http://{}:{}", options.host, options.port);
+    let bridge = bridge::Bridge::spawn(
+        home,
+        crate::api::DEFAULT_MODEL.to_string(),
+        session.id().to_string(),
+        base_url,
+    );
+    let (server, _port) =
+        server::Server::bind(&options.host, options.port, Arc::new(bridge)).await?;
     let url = format!("{}?token={}", server.base_url(), server.token());
     println!("fleet gui — the browser face is live");
     println!("  {url}");

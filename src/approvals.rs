@@ -407,6 +407,175 @@ pub fn asks_regardless(call: &ToolCall) -> bool {
     ALWAYS_ASK_TOOLS.contains(&unlabel(call).function.name.as_str())
 }
 
+/// One remembered approval, kept so its class stops prompting.
+///
+/// A rule names a tool and, for the shell, the program that leads the
+/// command: `{"tool":"bash","program":"cargo"}` remembers every `cargo`
+/// invocation without remembering anything about its flags. The program
+/// is the part of a command that stays the same between two calls to
+/// the same tool and the arguments are the part that does not, so the
+/// rule is keyed where it stays true. A rule for any other tool is the
+/// tool name alone — a `write` call IS its arguments, and a rule that
+/// tried to narrow further would be remembering one call rather than a
+/// class of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rule {
+    /// The tool's name, as the API declares it, with any `subagent → `
+    /// label stripped: the class rules key on what a call does, not on
+    /// where it came from (KI-209, KI-210).
+    pub tool: String,
+    /// The leading program of the command, for the shell only. `None`
+    /// for every other tool — and for a hand-written `{"tool":"bash"}`
+    /// entry, which reads as every shell call.
+    pub program: Option<String>,
+}
+
+impl Rule {
+    /// The rule a "don't ask again" on this call would write.
+    ///
+    /// Derived from the call here, in the module that already reads a
+    /// call's tool and command for the class checks, so there is one
+    /// place a call becomes a rule and a second site cannot derive a
+    /// different one.
+    pub fn for_call(call: &ToolCall) -> Rule {
+        let bare = unlabel(call);
+        let program = bash_command(call)
+            .as_deref()
+            .and_then(|command| command.split_whitespace().next())
+            .map(str::to_string);
+        Rule {
+            tool: bare.function.name,
+            program,
+        }
+    }
+
+    /// The rule as config.json carries it. `program` is omitted when
+    /// there is none, so the file reads the way the class is spoken.
+    pub fn to_value(&self) -> serde_json::Value {
+        let mut object = serde_json::Map::new();
+        object.insert(
+            "tool".to_string(),
+            serde_json::Value::String(self.tool.clone()),
+        );
+        if let Some(program) = &self.program {
+            object.insert(
+                "program".to_string(),
+                serde_json::Value::String(program.clone()),
+            );
+        }
+        serde_json::Value::Object(object)
+    }
+
+    /// The rule one list entry describes, or `None` when the entry is
+    /// not a rule: not an object, naming no tool, or carrying a program
+    /// that is not a string. A caller reading a hand-edited file skips
+    /// such an entry rather than treating it as a rule about nothing.
+    pub fn from_value(value: &serde_json::Value) -> Option<Rule> {
+        let object = value.as_object()?;
+        let tool = object.get("tool")?.as_str()?.trim().to_string();
+        if tool.is_empty() {
+            return None;
+        }
+        let program = match object.get("program") {
+            Some(program) => Some(program.as_str()?.trim().to_string()),
+            None => None,
+        };
+        Some(Rule { tool, program })
+    }
+
+    /// The rule as one line: `bash · cargo`, `write`.
+    pub fn label(&self) -> String {
+        match &self.program {
+            Some(program) => format!("{} · {}", self.tool, program),
+            None => self.tool.clone(),
+        }
+    }
+
+    /// Whether this rule covers `call`.
+    ///
+    /// The tool must match exactly, after the label is stripped. A rule
+    /// with a program matches a shell call whose command leads with
+    /// that program; a rule without one matches every call to the tool,
+    /// which is what a hand-written `{"tool":"bash"}` asks for.
+    fn covers_call(&self, call: &ToolCall) -> bool {
+        if unlabel(call).function.name != self.tool {
+            return false;
+        }
+        let Some(program) = &self.program else {
+            return true;
+        };
+        bash_command(call)
+            .as_deref()
+            .and_then(|command| command.split_whitespace().next())
+            == Some(program.as_str())
+    }
+}
+
+/// The remembered approvals a surface consults before it prompts.
+///
+/// This is the second half of the seat: the modes say whether a run
+/// asks at all, and these say which of the calls it asks about the
+/// owner has already answered. The two compose in the GUI's approver —
+/// remembered rules first, then the mode's own gate, then the prompt —
+/// so a run in `ask` with one remembered rule prompts for everything
+/// except that rule's class, which is what "prompts thin out over
+/// time" means concretely.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Rules {
+    rules: Vec<Rule>,
+}
+
+impl Rules {
+    /// Read the rules out of a config document's `approval_rules` list.
+    ///
+    /// Tolerant the way the loaders are: a malformed document, a
+    /// missing key, or one unreadable entry leaves the rules it could
+    /// read rather than failing the run. A hand-edited list with a bad
+    /// line is a file to fix, not a reason to stop the conversation.
+    pub fn from_config(document: &serde_json::Value) -> Rules {
+        let Some(entries) = document
+            .get("approval_rules")
+            .and_then(|list| list.as_array())
+        else {
+            return Rules::default();
+        };
+        Rules {
+            rules: entries.iter().filter_map(Rule::from_value).collect(),
+        }
+    }
+
+    /// Whether anything is remembered. A surface with nothing to show
+    /// says so rather than rendering an empty list.
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
+    /// The rules in the file's order, which is the order they were
+    /// remembered.
+    pub fn list(&self) -> &[Rule] {
+        &self.rules
+    }
+
+    /// Whether a remembered rule already covers this call.
+    pub fn covers(&self, call: &ToolCall) -> bool {
+        self.rules.iter().any(|rule| rule.covers_call(call))
+    }
+}
+
+/// Whether "don't ask again" is a promise this class of call can keep.
+///
+/// Two classes are out, and they are the same two
+/// [`Gate::approves_without_asking`] already refuses to wave through:
+/// the always-ask class and the destructive class. Hard rule 7 wants
+/// approval in the current turn, and a remembered rule is by
+/// construction NOT the current turn — so a rule covering either class
+/// would be a way to retire the owner's house rule by clicking a
+/// button once. The seat reads this to decide whether to offer the
+/// choice at all, and the writer reads it again before it stores one.
+pub fn allowlistable(call: &ToolCall) -> bool {
+    !asks_regardless(call) && !Gate::is_destructive(call)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

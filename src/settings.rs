@@ -1348,3 +1348,91 @@ pub fn remove_workload(home: &Path, workload: &str, force: bool) -> Result<(), S
         &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
     )
 }
+
+/// The remembered approvals, as the trust surface reads them.
+///
+/// A missing or malformed config reads as nothing remembered rather
+/// than an error, the way every other reader here tolerates a file it
+/// does not own: a run must not stop because a list it was going to
+/// consult could not be parsed.
+pub fn approval_rules(home: &Path) -> crate::approvals::Rules {
+    let document = read_json(&home.join("config.json")).unwrap_or_default();
+    crate::approvals::Rules::from_config(&document)
+}
+
+/// Remember one approval, so its class stops prompting.
+///
+/// The rule rides `approval_rules` in config.json — the third list
+/// beside `providers` and `workloads` — through this same writer, so
+/// the browser's "yes, and don't ask again" and a hand-edit land
+/// identically. The rule is derived from the call here rather than
+/// taken from the caller, so there is one place a call becomes a rule;
+/// and the class is checked here as well as at the seat, because this
+/// is the last writer anything passes through and a refusal that lived
+/// only in the HTTP handler would be one crafted POST away from
+/// nothing.
+///
+/// Two refusals, both naming the rule they protect: the always-ask and
+/// destructive classes, which hard rule 7 keeps behind a prompt in the
+/// current turn, and a rule naming no tool, which would match calls no
+/// tool issued. Remembering a rule that is already there is a no-op
+/// that still returns it, so a second click on the same seat is
+/// idempotent rather than a duplicate line in the file.
+pub fn allow_tool(
+    home: &Path,
+    call: &crate::api::ToolCall,
+) -> Result<crate::approvals::Rule, String> {
+    if !crate::approvals::allowlistable(call) {
+        return Err(format!(
+            "a `{}` call is in the class the owner's rule keeps behind a prompt \
+             (the always-ask class, or the destructive class), so it cannot be \
+             remembered — approval has to happen in the current turn",
+            crate::approvals::Rule::for_call(call).label()
+        ));
+    }
+    let rule = crate::approvals::Rule::for_call(call);
+    let path = home.join("config.json");
+    let mut document = read_json(&path)?;
+    let rules = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?
+        .entry("approval_rules")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let array = rules
+        .as_array_mut()
+        .ok_or_else(|| "`approval_rules` is not a list".to_string())?;
+    let value = rule.to_value();
+    if array.iter().any(|existing| existing == &value) {
+        return Ok(rule);
+    }
+    array.push(value);
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
+    )?;
+    Ok(rule)
+}
+
+/// Forget one remembered approval, the way it was remembered: through
+/// the writer, so the browser and a hand-edit cannot disagree about
+/// what the file holds.
+pub fn forget_tool(home: &Path, rule: &crate::approvals::Rule) -> Result<(), String> {
+    let path = home.join("config.json");
+    let mut document = read_json(&path)?;
+    let array = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?
+        .get_mut("approval_rules")
+        .and_then(|rules| rules.as_array_mut())
+        .ok_or_else(|| "`approval_rules` is not a list".to_string())?;
+    let value = rule.to_value();
+    let position = array.iter().position(|existing| existing == &value);
+    let Some(index) = position else {
+        return Err(format!("`{}` is not remembered", rule.label()));
+    };
+    array.remove(index);
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
+    )
+}

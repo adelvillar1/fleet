@@ -3,7 +3,7 @@
 //! Hand-rolled HTTP/1.1 over tokio's `TcpListener`, because the crate
 //! contract is one static Rust binary: a framework would buy this
 //! surface nothing it does not already do by hand — three GET routes,
-//! one SSE stream, and a token on every one of them.
+//! one SSE stream, three actions, and a token on every one of them.
 //!
 //! ## The security shape
 //!
@@ -14,27 +14,35 @@
 //!   entropy and printed with the URL. Every route requires it — from
 //!   the `x-fleet-token` header, the `token` query parameter, or the
 //!   `fleet_gui` cookie the page's first reply sets — so there is no
-//!   anonymous page, no anonymous asset, and no anonymous stream. A
-//!   port scan sees 401s and learns nothing else.
-//! - **No credentials in any payload.** The page, the assets, and the
-//!   stream carry names and presence, never values: the masking rule
-//!   doctor holds is the rule here.
+//!   anonymous page, no anonymous asset, no anonymous stream, and no
+//!   anonymous action. A port scan sees 401s and learns nothing else.
+//! - **No credentials in any payload.** The page, the assets, the
+//!   stream, and the action replies carry names and presence, never
+//!   values: the masking rule doctor holds is the rule here.
 //!
-//! ## The stream
+//! ## The stream and the actions
 //!
 //! `/events` is the only long-lived connection. It answers a hello that
 //! tells the page where it is, then a heartbeat on an interval for as
-//! long as the browser listens. Everything a later increment shows —
-//! a run's turns, a route's decision, a memory's recall — rides this
-//! same stream as one more event shape, so G1's seam is the wire the
-//! rest of the face speaks on.
+//! long as the browser listens. Everything the face shows — a run's
+//! turns, a route's decision, a memory's recall, a tool's approval seat
+//! — rides this same stream as one more event shape, so G1's seam is
+//! the wire the rest of the face speaks on. The actions are the other
+//! direction: `POST /api/run` hands the browser's task to the agent
+//! thread, and `POST /api/approve` answers the seat that thread is
+//! waiting on. A page that has just loaded reads `GET /api/state` for
+//! the replay, then subscribes for what comes next; the two agree
+//! because they are the same log.
 
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use crate::gui::bridge::Bridge;
 
 /// The page, its stylesheet, and its script, embedded in the binary:
 /// there is no asset directory to ship beside it and nothing served
@@ -56,26 +64,33 @@ const HEARTBEAT: Duration = Duration::from_secs(5);
 /// sends the terminator from holding a task forever.
 const MAX_HEAD_BYTES: usize = 16 * 1024;
 
+/// The largest request body this surface reads. A task is a paragraph
+/// and a decision is a word; the cap is what stops a peer that declares
+/// a length and never sends it from holding a task forever.
+const MAX_BODY_BYTES: usize = 64 * 1024;
+
 /// The token's length in bytes before hex encoding: 16 bytes is 128
 /// bits, which is where a guess stops being a threat model.
 const TOKEN_BYTES: usize = 16;
 
-/// One launch's face: the listener, the token, and the address the
-/// owner was given. A `Server` is deliberately not cloneable — one
-/// launch, one token, one listener — and the per-connection tasks
-/// carry what they need by value instead.
+/// One launch's face: the listener, the token, the address the owner
+/// was given, and the bridge to the agent thread the actions speak to.
+/// A `Server` is deliberately not cloneable — one launch, one token,
+/// one listener — and the per-connection tasks carry what they need by
+/// value instead.
 pub struct Server {
     token: String,
     base_url: String,
     heartbeat: Duration,
     listener: tokio::net::TcpListener,
+    bridge: Arc<Bridge>,
 }
 
 impl Server {
     /// Binds the loopback listener and mints the launch's token. `port`
     /// zero asks the operating system for a free one, which is what a
     /// second concurrent launch and the tests need.
-    pub async fn bind(host: &str, port: u16) -> Result<(Server, u16), String> {
+    pub async fn bind(host: &str, port: u16, bridge: Arc<Bridge>) -> Result<(Server, u16), String> {
         let address = loopback_address(host)?;
         let listener = tokio::net::TcpListener::bind((address, port))
             .await
@@ -90,6 +105,7 @@ impl Server {
             base_url,
             heartbeat: HEARTBEAT,
             listener,
+            bridge,
         };
         Ok((server, bound.port()))
     }
@@ -116,9 +132,10 @@ impl Server {
                         let token = self.token.clone();
                         let base_url = self.base_url.clone();
                         let heartbeat = self.heartbeat;
+                        let bridge = Arc::clone(&self.bridge);
                         tokio::spawn(async move {
                             if let Err(e) =
-                                serve_connection(stream, &token, &base_url, heartbeat).await
+                                serve_connection(stream, &token, &base_url, heartbeat, &bridge).await
                             {
                                 eprintln!("fleet gui: {e}");
                             }
@@ -143,8 +160,9 @@ async fn serve_connection(
     token: &str,
     base_url: &str,
     heartbeat: Duration,
+    bridge: &Arc<Bridge>,
 ) -> Result<(), String> {
-    let head = read_head(&mut stream).await?;
+    let (head, rest) = read_head(&mut stream).await?;
     let request = Request::parse(&head)?;
     if request.presented_token() != Some(token) {
         return write_reply(&mut stream, unauthorized()).await;
@@ -157,35 +175,159 @@ async fn serve_connection(
         ("GET", "/app.js") => {
             write_reply(&mut stream, asset("text/javascript; charset=utf-8", SCRIPT)).await
         }
-        ("GET", "/events") => stream_events(&mut stream, base_url, heartbeat).await,
+        ("GET", "/events") => {
+            stream_events(&mut stream, base_url, heartbeat, bridge.subscribe()).await
+        }
+        ("GET", "/api/state") => write_reply(&mut stream, api(200, bridge.state())).await,
+        ("POST", "/api/run") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let task = match task_of(&body) {
+                Ok(task) => task,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.run(&task) {
+                Ok(()) => {
+                    write_reply(
+                        &mut stream,
+                        api(200, json!({"type": "run", "task": task, "accepted": true})),
+                    )
+                    .await
+                }
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/approve") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let decision = match decision_of(&body) {
+                Ok(decision) => decision,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.answer(&decision) {
+                Ok(answered) => write_reply(&mut stream, api(200, answered)).await,
+                Err(crate::gui::bridge::AnswerError::NoSeat) => {
+                    write_reply(
+                        &mut stream,
+                        api(409, json!({"error": "no approval is waiting"})),
+                    )
+                    .await
+                }
+                Err(crate::gui::bridge::AnswerError::Unknown(word)) => {
+                    write_reply(&mut stream, api(400, json!({"error": word}))).await
+                }
+            }
+        }
         ("GET", _) => write_reply(&mut stream, not_found(&request.path)).await,
         _ => write_reply(&mut stream, method_not_allowed(&request.method)).await,
     }
 }
 
-/// Reads one request head: bytes up to the `\r\n\r\n` that ends them,
-/// capped so a peer that never sends it cannot hold a task forever.
-async fn read_head(stream: &mut tokio::net::TcpStream) -> Result<String, String> {
+/// Reads one request head and whatever arrived past it: bytes up to the
+/// `\r\n\r\n` that ends them, capped so a peer that never sends it
+/// cannot hold a task forever. The second value is the body bytes that
+/// rode the same read — a browser sends a short POST in one packet, so
+/// discarding them would lose the task the owner just typed.
+async fn read_head(stream: &mut tokio::net::TcpStream) -> Result<(String, Vec<u8>), String> {
     let mut head: Vec<u8> = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
-    loop {
+    let end = loop {
         let read = stream
             .read(&mut chunk)
             .await
             .map_err(|e| format!("fleet gui could not read the request: {e}"))?;
         if read == 0 {
-            break;
+            break None;
         }
         head.extend_from_slice(&chunk[..read]);
         if let Some(end) = head_end(&head) {
-            head.truncate(end);
-            break;
+            break Some(end);
         }
         if head.len() > MAX_HEAD_BYTES {
             return Err("fleet gui refused an oversized request head".to_string());
         }
+    };
+    let (head, rest) = match end {
+        Some(end) => (
+            String::from_utf8(head[..end].to_vec())
+                .map_err(|_| "fleet gui refused a non-UTF-8 request head".to_string())?,
+            head[end..].to_vec(),
+        ),
+        None => (
+            String::from_utf8(head)
+                .map_err(|_| "fleet gui refused a non-UTF-8 request head".to_string())?,
+            Vec::new(),
+        ),
+    };
+    Ok((head, rest))
+}
+
+/// Reads one request body: the `Content-Length` bytes the head declared,
+/// starting with the bytes that rode past the head's terminator. A body
+/// larger than the cap is refused rather than read, and a body that
+/// ends early is a malformed request — both are the caller's 400.
+async fn read_body(
+    stream: &mut tokio::net::TcpStream,
+    request: &Request,
+    rest: Vec<u8>,
+) -> Result<String, String> {
+    let length = request
+        .header("content-length")
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    if length > MAX_BODY_BYTES {
+        return Err(format!(
+            "fleet gui refused a body of {length} bytes; the cap is {MAX_BODY_BYTES}"
+        ));
     }
-    String::from_utf8(head).map_err(|_| "fleet gui refused a non-UTF-8 request head".to_string())
+    let mut body = rest;
+    if body.len() > length {
+        body.truncate(length);
+    }
+    let mut chunk = [0u8; 4096];
+    while body.len() < length {
+        let read = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|e| format!("fleet gui could not read the body: {e}"))?;
+        if read == 0 {
+            return Err(format!(
+                "fleet gui read {} of the {length} bytes the head declared",
+                body.len()
+            ));
+        }
+        body.extend_from_slice(&chunk[..read]);
+        body.truncate(length.min(body.len()));
+    }
+    String::from_utf8(body).map_err(|_| "fleet gui refused a non-UTF-8 body".to_string())
+}
+
+/// The task a run's body carries. Anything that is not a JSON object
+/// with a `task` string is a malformed request, and saying so is the
+/// whole reply.
+fn task_of(body: &str) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
+    parsed
+        .get("task")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "a run's body is a JSON object with a task string".to_string())
+}
+
+/// The decision an approval's body carries, in the seat's four words.
+fn decision_of(body: &str) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the answer's body: {e}"))?;
+    parsed
+        .get("decision")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "an answer's body is a JSON object with a decision string".to_string())
 }
 
 /// Where a head ends: just past the first `\r\n\r\n`.
@@ -352,12 +494,49 @@ fn not_found(path: &str) -> Reply {
     }
 }
 
+/// An action's answer, as JSON: the state document, the run's receipt,
+/// or the answer's outcome. One shape for every reply the browser
+/// parses, so the page reads one content type forever.
+fn api(status: u16, body: serde_json::Value) -> Reply {
+    Reply {
+        status: status_line(status),
+        content_type: "application/json; charset=utf-8",
+        extra: Vec::new(),
+        body: format!("{body}\n"),
+    }
+}
+
+fn bad_request(message: &str) -> Reply {
+    Reply {
+        status: "400 Bad Request",
+        content_type: "text/plain; charset=utf-8",
+        extra: Vec::new(),
+        body: format!("{message}\n"),
+    }
+}
+
+/// The status line this surface writes. The set is small and fixed —
+/// five lines — and naming them is cheaper than a status-code crate for
+/// a surface that answers nothing else.
+fn status_line(status: u16) -> &'static str {
+    match status {
+        200 => "200 OK",
+        400 => "400 Bad Request",
+        404 => "404 Not Found",
+        405 => "405 Method Not Allowed",
+        409 => "409 Conflict",
+        _ => "500 Internal Server Error",
+    }
+}
+
 fn method_not_allowed(method: &str) -> Reply {
     Reply {
         status: "405 Method Not Allowed",
         content_type: "text/plain; charset=utf-8",
         extra: Vec::new(),
-        body: format!("fleet gui answers GET; {method} is not a route.\n"),
+        body: format!(
+            "fleet gui answers GET on its pages and POST on its actions; {method} is neither.\n"
+        ),
     }
 }
 
@@ -373,13 +552,17 @@ async fn write_reply(stream: &mut tokio::net::TcpStream, reply: Reply) -> Result
 }
 
 /// The stream: the head, a hello that tells the page where it is, then
-/// a beat on the interval for as long as the browser listens. A write
-/// that fails is the browser being gone — the stream ends with it,
-/// quietly, because that is the normal way a tab closes.
+/// a beat on an interval and every event the bridge broadcasts, for as
+/// long as the browser listens. A write that fails is the browser being
+/// gone — the stream ends with it, quietly, because that is the normal
+/// way a tab closes. A browser too slow to keep up is told how many
+/// events it missed rather than being left to wonder, and a closed
+/// channel is the agent thread being gone, which ends the stream.
 async fn stream_events(
     stream: &mut tokio::net::TcpStream,
     base_url: &str,
     heartbeat: Duration,
+    mut events: tokio::sync::broadcast::Receiver<serde_json::Value>,
 ) -> Result<(), String> {
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
     stream
@@ -396,12 +579,30 @@ async fn stream_events(
     // first heartbeat a full interval out, which is what a beat means.
     ticks.tick().await;
     loop {
-        ticks.tick().await;
-        let beat = json!({"type": "heartbeat"});
-        if write_event(stream, &beat).await.is_err() {
-            return Ok(());
+        tokio::select! {
+            received = events.recv() => match received {
+                Ok(payload) => {
+                    if write_event(stream, &payload).await.is_err() {
+                        return Ok(());
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    let missed = json!({"type": "lagged", "skipped": skipped});
+                    if write_event(stream, &missed).await.is_err() {
+                        return Ok(());
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            },
+            _ = ticks.tick() => {
+                let beat = json!({"type": "heartbeat"});
+                if write_event(stream, &beat).await.is_err() {
+                    return Ok(());
+                }
+            }
         }
     }
+    Ok(())
 }
 
 /// One server-sent event: the `data:` line and the blank line that ends
@@ -461,14 +662,40 @@ mod tests {
     /// that a test does not wait five seconds for a beat. The server
     /// runs on its own task; the client below blocks on the test's
     /// thread, which is why these tests ask for a multi-thread runtime.
+    /// The bridge behind it is detached — no agent thread — so the
+    /// routes answer exactly what the bridge holds and nothing the
+    /// network would decide.
     async fn launch() -> (String, u16) {
-        let (mut server, port) = Server::bind("127.0.0.1", 0).await.unwrap();
+        let home = std::env::temp_dir().join(format!("fleet-gui-server-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let (bridge, _sources) = Bridge::detached(
+            home,
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .unwrap();
         server.heartbeat = Duration::from_millis(20);
         let token = server.token().to_string();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
         (token, port)
+    }
+
+    /// A POST with a JSON body and the token in the query, which is how
+    /// the browser's fetches arrive.
+    fn post(port: u16, path: &str, token: &str, body: &str) -> String {
+        ask(
+            port,
+            &format!(
+                "POST {path}?token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{body}",
+                body.len()
+            ),
+            None,
+        )
     }
 
     /// Sends one request and reads the reply, stopping when `needle`
@@ -567,7 +794,13 @@ mod tests {
             assert!(served.starts_with("HTTP/1.1 200"), "{served}");
         }
         let css = get(port, "/app.css", &token);
-        assert!(css.contains("--bg"), "{css}");
+        // The real stylesheet, and the visual language intact: the plan's
+        // colour chain has three tiers and nothing skips one, so the face
+        // is not shipped with a bare token standing in for the alias it
+        // should be reading.
+        for tier in ["--dsw-static-", "--dsw-alias-", "--card-"] {
+            assert!(css.contains(tier), "{css}");
+        }
         let js = get(port, "/app.js", &token);
         assert!(js.contains("EventSource"), "{js}");
     }
@@ -614,10 +847,24 @@ mod tests {
         assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
     }
 
+    /// A bridge with no agent thread behind it, for the tests that need
+    /// a server to exist at all.
+    fn bridge() -> Arc<Bridge> {
+        let home = std::env::temp_dir().join(format!("fleet-gui-bind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let (bridge, _sources) = Bridge::detached(
+            home,
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        Arc::new(bridge)
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_host_that_is_not_loopback_is_refused_by_name() {
         for host in ["0.0.0.0", "192.168.1.5", "example.com"] {
-            let refused = Server::bind(host, 0).await;
+            let refused = Server::bind(host, 0, bridge()).await;
             let error = refused
                 .err()
                 .unwrap_or_else(|| panic!("{host} must be refused"));
@@ -633,7 +880,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_loopback_host_binds_and_mints_a_token_no_guess_reaches() {
         for host in ["127.0.0.1", "localhost"] {
-            let (server, port) = Server::bind(host, 0).await.expect(host);
+            let (server, port) = Server::bind(host, 0, bridge()).await.expect(host);
             assert!(port > 0, "{host} bound no port");
             assert!(
                 server.base_url().starts_with("http://127.0.0."),
@@ -649,10 +896,64 @@ mod tests {
         // surface's: Linux routes all of 127.0.0.0/8 to loopback while
         // macOS assigns .1 alone, so the address either binds or fails
         // with itself named — never a quiet move to another port.
-        if let Err(message) = Server::bind("127.0.0.2", 0).await {
+        if let Err(message) = Server::bind("127.0.0.2", 0, bridge()).await {
             assert!(message.contains("127.0.0.2"), "{message}");
             assert!(message.contains("cannot bind"), "{message}");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_state_document_is_the_replay_the_stream_agrees_with() {
+        let (token, port) = launch().await;
+        let anonymous = ask(
+            port,
+            "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+        );
+        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        let state = get(port, "/api/state", &token);
+        assert!(state.starts_with("HTTP/1.1 200"), "{state}");
+        assert!(state.contains("application/json"), "{state}");
+        assert!(state.contains("\"session\":\"session-test\""), "{state}");
+        assert!(state.contains("\"model\":\"deepseek-chat\""), "{state}");
+        assert!(state.contains("\"budget\""), "{state}");
+        assert!(state.contains("\"running\":false"), "{state}");
+        assert!(state.contains("\"events\":[]"), "{state}");
+        assert!(state.contains("\"approval\":null"), "{state}");
+        assert!(state.contains("\"rules\":[]"), "{state}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_task_crosses_the_run_route_and_lands_in_the_log() {
+        let (token, port) = launch().await;
+        let anonymous = post(port, "/api/run", "wrong", r#"{"task":"say hello"}"#);
+        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        let refused = post(port, "/api/run", &token, r#"{"nope":"say hello"}"#);
+        assert!(refused.starts_with("HTTP/1.1 400"), "{refused}");
+        let empty = post(port, "/api/run", &token, r#"{"task":"   "}"#);
+        assert!(empty.starts_with("HTTP/1.1 409"), "{empty}");
+        // The detached bridge has no agent thread behind it, so the run
+        // is refused — but the owner's message is already in the log,
+        // which is the honest order the browser shows.
+        let accepted = post(port, "/api/run", &token, r#"{"task":"say hello"}"#);
+        assert!(accepted.starts_with("HTTP/1.1 409"), "{accepted}");
+        let state = get(port, "/api/state", &token);
+        assert!(state.contains("\"type\":\"message\""), "{state}");
+        assert!(state.contains("\"text\":\"say hello\""), "{state}");
+        assert!(state.contains("\"type\":\"failed\""), "{state}");
+    }
+
+    /// The seat round-trips: the bridge stands a seat, the browser
+    /// answers it, and the answer crosses. A browser that answers when
+    /// nothing is waiting gets a conflict, and a word that is not a
+    /// decision is refused with the seat still standing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_answer_crosses_the_approve_route_and_a_bad_one_does_not() {
+        let (token, port) = launch().await;
+        let conflict = post(port, "/api/approve", &token, r#"{"decision":"once"}"#);
+        assert!(conflict.starts_with("HTTP/1.1 409"), "{conflict}");
+        let malformed = post(port, "/api/approve", &token, r#"{"word":"once"}"#);
+        assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
