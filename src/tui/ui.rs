@@ -1359,17 +1359,21 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Span::styled(" ● ", Style::new().fg(dot)),
         Span::styled(state, Style::new().fg(dot)),
         Span::styled("  ", Style::new()),
-        Span::styled(&status.model, Style::new().fg(palette::ACCENT)),
-        Span::styled("  session ", Style::new().fg(palette::DIM)),
-        Span::styled(short_id(&status.session_id), Style::new().fg(palette::TEXT)),
-        Span::styled("  turn ", Style::new().fg(palette::DIM)),
-        Span::styled(turn, Style::new().fg(palette::TEXT)),
-        Span::styled("  tokens ", Style::new().fg(palette::DIM)),
-        Span::styled(
-            format!("{}/{}", status.prompt_tokens, status.completion_tokens),
-            Style::new().fg(palette::TEXT),
-        ),
     ];
+    // When the router is active the model name is the resolved endpoint,
+    // not the workload's real target: show routing mode instead.
+    if status.route_how.is_none() {
+        spans.push(Span::styled(&status.model, Style::new().fg(palette::ACCENT)));
+    }
+    spans.push(Span::styled("  session ", Style::new().fg(palette::DIM)));
+    spans.push(Span::styled(short_id(&status.session_id), Style::new().fg(palette::TEXT)));
+    spans.push(Span::styled("  turn ", Style::new().fg(palette::DIM)));
+    spans.push(Span::styled(turn, Style::new().fg(palette::TEXT)));
+    spans.push(Span::styled("  tokens ", Style::new().fg(palette::DIM)));
+    spans.push(Span::styled(
+        format!("{}/{}", status.prompt_tokens, status.completion_tokens),
+        Style::new().fg(palette::TEXT),
+    ));
     // The active routing mode and how it was chosen, once a routed run has
     // reported one — the tui's half of slice 5's route surfacing.
     if let Some(how) = &status.route_how {
