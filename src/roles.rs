@@ -61,9 +61,7 @@ impl Role {
     fn parse(name: &str, text: &str, path: PathBuf) -> Result<Role, String> {
         let lines: Vec<&str> = text.lines().collect();
         if lines.first().map(|line| line.trim_end()) != Some("---") {
-            return Err(format!(
-                "the role file does not open with a `---` frontmatter fence"
-            ));
+            return Err("the role file does not open with a `---` frontmatter fence".to_string());
         }
         let mut fields: Vec<(String, String)> = Vec::new();
         let mut closing: Option<usize> = None;

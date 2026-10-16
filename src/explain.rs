@@ -238,7 +238,7 @@ impl ExplainOutcome {
 pub fn budget_usd_day() -> f64 {
     match std::env::var(EXPLAIN_BUDGET_ENV) {
         Ok(value) => match value.trim().parse::<f64>() {
-            Ok(lower) if lower.is_finite() && lower >= 0.0 && lower < EXPLAIN_BUDGET_USD_DAY => {
+            Ok(lower) if lower.is_finite() && (0.0..EXPLAIN_BUDGET_USD_DAY).contains(&lower) => {
                 lower
             }
             _ => EXPLAIN_BUDGET_USD_DAY,

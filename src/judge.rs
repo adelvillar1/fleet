@@ -259,7 +259,7 @@ impl JudgeOutcome {
 pub fn budget_usd_day() -> f64 {
     match std::env::var(JUDGE_BUDGET_ENV) {
         Ok(value) => match value.trim().parse::<f64>() {
-            Ok(lower) if lower.is_finite() && lower >= 0.0 && lower < JUDGE_BUDGET_USD_DAY => lower,
+            Ok(lower) if lower.is_finite() && (0.0..JUDGE_BUDGET_USD_DAY).contains(&lower) => lower,
             _ => JUDGE_BUDGET_USD_DAY,
         },
         Err(_) => JUDGE_BUDGET_USD_DAY,
@@ -1093,10 +1093,11 @@ pub fn disposition(
     stream.record(Row::RouteJudged(row.clone()));
     let (_, failed) = stream.finish();
     if failed > 0 {
-        return Err(format!(
+        return Err(
             "the disposition's row could not be recorded to the calibration stream — the \
              owner's grading is not on disk and the automated verdict still stands"
-        ));
+                .to_string(),
+        );
     }
     Ok(row)
 }

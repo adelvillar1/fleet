@@ -425,10 +425,11 @@ pub fn services_root() -> Result<PathBuf, RootError> {
         }
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("services");
-    manifest
-        .is_dir()
-        .then_some(Ok(manifest))
-        .unwrap_or(Err(RootError::NotFound))
+    if manifest.is_dir() {
+        Ok(manifest)
+    } else {
+        Err(RootError::NotFound)
+    }
 }
 
 /// The launch spec for one lane, or the reason it cannot launch.
@@ -1026,7 +1027,11 @@ mod tests {
         // And every declared name is one the lane's own source reads —
         // no accidental `*` and no unrelated credential.
         for lane in LANES {
-            assert!(lane.passthrough.len() > 0, "{} declares nothing", lane.name);
+            assert!(
+                !lane.passthrough.is_empty(),
+                "{} declares nothing",
+                lane.name
+            );
             assert!(
                 lane.passthrough
                     .iter()

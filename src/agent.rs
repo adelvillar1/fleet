@@ -1269,7 +1269,7 @@ impl<'a> Agent<'a> {
             .zip(&self.messages[..tail_start])
             .filter(|(_, message)| message.role == Role::Assistant)
             .map(|(turn, _)| *turn)
-            .last()
+            .next_back()
             .unwrap_or(first_turn);
         let turns = compaction::turns_in_range(first_turn, last_turn);
 
@@ -1433,7 +1433,7 @@ impl<'a> Agent<'a> {
         let bounded = steer_text(text);
         let _ = writeln!(self.progress, "\u{2014} steer: {}", preview(&bounded, 72));
         let _ = self.progress.flush();
-        self.push_message(Message::text(Role::User, &steer_frame(&bounded)))
+        self.push_message(Message::text(Role::User, steer_frame(&bounded)))
     }
 
     /// Land an owner's stop: the progress line, the log's own ending
@@ -3405,7 +3405,7 @@ enum LaneChild {
     /// Spawned, initialized, and listed: its tools are in the model's
     /// tool set until the run ends, dead child or not.
     Live {
-        server: McpServer,
+        server: Box<McpServer>,
         tools: Vec<LaneTool>,
     },
     /// Failed or gone: the tools it brought stay declared — the model saw
@@ -3520,8 +3520,13 @@ impl LaneRoster {
                     let tools = tools::namespaced(lane, &listed);
                     joined = Some(tools.clone());
                     self.order.push(lane.to_string());
-                    self.children
-                        .insert(lane.to_string(), LaneChild::Live { server, tools });
+                    self.children.insert(
+                        lane.to_string(),
+                        LaneChild::Live {
+                            server: Box::new(server),
+                            tools,
+                        },
+                    );
                 }
                 // A lane that cannot start is dead for the rest of the
                 // run: the reason is recorded once and reused, so a

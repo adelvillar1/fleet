@@ -549,7 +549,7 @@ fn unique_suffix() -> u32 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.subsec_nanos())
         .unwrap_or(0);
-    nanos.rotate_left(7) ^ (std::process::id() as u32)
+    nanos.rotate_left(7) ^ std::process::id()
 }
 
 #[cfg(test)]
@@ -581,7 +581,7 @@ mod tests {
                 turns: 1,
             })
             .unwrap();
-        let records = replay(&session.path()).unwrap();
+        let records = replay(session.path()).unwrap();
         assert_eq!(records.len(), 3);
         assert!(matches!(
             &records[0],
@@ -700,7 +700,7 @@ mod tests {
             "{recorded}"
         );
 
-        let records = replay(&session.path()).unwrap();
+        let records = replay(session.path()).unwrap();
         match &records[1] {
             Record::LaneTools { lane, tools } => {
                 assert_eq!(lane, "sem1");
@@ -785,7 +785,7 @@ mod tests {
             "{recorded}"
         );
 
-        let records = replay(&session.path()).unwrap();
+        let records = replay(session.path()).unwrap();
         match &records[1] {
             Record::Skills { skills } => {
                 assert_eq!(skills.len(), 1);
@@ -868,7 +868,7 @@ mod tests {
         assert!(recorded.contains("\"identity\""), "{recorded}");
         assert!(recorded.contains("\"working-note\""), "{recorded}");
 
-        let records = replay(&session.path()).unwrap();
+        let records = replay(session.path()).unwrap();
         match &records[1] {
             Record::Memory { shape, facts } => {
                 assert_eq!(shape, "deploy");

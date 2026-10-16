@@ -509,10 +509,8 @@ fn parse_sse(
         }
         for choice in &chunk.choices {
             if let Some(delta) = &choice.delta.content {
-                if !delta.is_empty() {
-                    if events.send(StreamEvent::Content(delta.clone())).is_err() {
-                        return Ok(true);
-                    }
+                if !delta.is_empty() && events.send(StreamEvent::Content(delta.clone())).is_err() {
+                    return Ok(true);
                 }
             }
             for call in &choice.delta.tool_calls {

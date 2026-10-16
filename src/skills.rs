@@ -634,7 +634,7 @@ impl Lesson {
     /// file, so its frontmatter must stay the skill's), and the body is
     /// the live body plus the drafted addition — a diff a reviewer can
     /// read.
-    fn as_update(self, existing: &Skill) -> Lesson {
+    fn into_update(self, existing: &Skill) -> Lesson {
         let addition = format!(
             "\n\n## Proposed addition (drafted {})\n\n{}\n\nEvidence: {}\n",
             crate::calib::today(),
@@ -1045,7 +1045,7 @@ pub fn draft_session(home: &Path, session_path: &Path, user_home: Option<&str>) 
     let mut filed: Vec<PathBuf> = Vec::new();
     for lesson in lessons(&records, &rows, &session_id) {
         let lesson = match live.iter().find(|skill| skill.name == lesson.name) {
-            Some(existing) => lesson.as_update(existing),
+            Some(existing) => lesson.into_update(existing),
             None => lesson,
         };
         if let Some(path) = file_proposal(home, &lesson) {

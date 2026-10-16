@@ -164,6 +164,11 @@ fn create_session(home: &Path, model: &str) -> Result<String, String> {
 
 /// The event loop: drain the agent's channels, read the keyboard, render.
 /// The loop never blocks on the network; `poll` only ever waits on input.
+///
+/// The parameters are the four channels the agent thread and the UI meet
+/// at, plus the surfaces they feed — they are the wiring itself, and a
+/// struct would bundle them without reducing what the loop is handed.
+#[allow(clippy::too_many_arguments)]
 fn event_loop(
     home: &Path,
     app: &mut App,

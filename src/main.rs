@@ -444,7 +444,7 @@ fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
             fleet::calib::Stream::open(fleet::calib::resolve_root(&home, user_home.as_deref()))
         });
         let result = fleet::memory::consolidate(&root, &fleet::calib::today(), stream.as_ref());
-        print!("{}\n", fleet::memory::render_consolidation(&result));
+        println!("{}", fleet::memory::render_consolidation(&result));
     }
     // The corpus is loaded after the cycle, so the cards show what the
     // pass left behind — the new summary in, the archived facts out.
@@ -949,6 +949,11 @@ async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
 /// Build the routed agent and run `task`, printing the final answer to
 /// stdout. The route line and the decision row are the caller's: `run`
 /// prints once per task, `chat` once per session.
+///
+/// The parameters are the CLI's own flags carried one-to-one into the
+/// agent's options — grouping them would rename, not reduce, what the
+/// two commands hand the run.
+#[allow(clippy::too_many_arguments)]
 async fn drive(
     prepared: &route::Prepared,
     model: String,
@@ -999,7 +1004,7 @@ async fn drive(
     // `Ask` has a user to ask.
     let mode = fleet::approvals::resolve(
         yes.then_some(true),
-        fleet::approvals::config_word(&home).as_deref(),
+        fleet::approvals::config_word(home).as_deref(),
     );
     let approver: Box<dyn Approver> = match mode {
         // The default: every call asks. The owner's house rule stands.
@@ -1149,7 +1154,7 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
         .zip(&conversation.messages[..tail_start])
         .filter(|(_, message)| message.role == fleet::api::Role::Assistant)
         .map(|(turn, _)| *turn)
-        .last()
+        .next_back()
         .unwrap_or(first_turn);
     let turns = fleet::compaction::turns_in_range(first_turn, last_turn);
 

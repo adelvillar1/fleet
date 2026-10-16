@@ -304,6 +304,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     })
 }
 
+/// The pending waiters, shared between the server and its reader task:
+/// request id to the one-shot that answers it.
+type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>>;
+
 /// One MCP server child, with its reader task and pending waiters.
 pub struct McpServer {
     child: Mutex<Option<Child>>,
@@ -315,7 +319,7 @@ pub struct McpServer {
     /// Waiters keyed by request id. The reader task owns the only other
     /// handle; an entry lives from the write until its reply, its timeout,
     /// or the child's death.
-    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>>,
+    pending: Pending,
     next_id: AtomicU64,
     timeouts: Timeouts,
     reader: JoinHandle<()>,
@@ -371,8 +375,7 @@ impl McpServer {
             .stderr
             .take()
             .ok_or_else(|| McpError::Protocol("the child's stderr was not piped".to_string()))?;
-        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let reader = tokio::spawn(read_frames(stdout, Arc::clone(&pending)));
         let stderr_tail: Arc<Mutex<StderrTail>> = Arc::new(Mutex::new(StderrTail::default()));
         let stderr_drain = tokio::spawn(drain_stderr(stderr, Arc::clone(&stderr_tail)));
@@ -807,10 +810,7 @@ where
 /// output ends — the child exited, closed the pipe, spoke a line that is
 /// not valid UTF-8, or blew the line cap — every waiter is failed with
 /// the matching typed error rather than left hanging.
-async fn read_frames(
-    stdout: ChildStdout,
-    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>>,
-) {
+async fn read_frames(stdout: ChildStdout, pending: Pending) {
     let mut reader = BufReader::new(stdout);
     let mut line: Vec<u8> = Vec::new();
     let ended = loop {

@@ -459,7 +459,7 @@ fn one_edit_inside_a_token_is_flagged() {
     // Two edits with a shorter prefix is two different words, not drift:
     // `califs` and `calib` share four, so that one IS flagged; `recol`
     // and `recall` share three, so it is not.
-    assert_eq!(check_in(&vocabulary, "califs").is_some(), false);
+    assert!(check_in(&vocabulary, "califs").is_none());
     write(&root, "src/calib.rs", "pub fn calib() {}\n");
     let vocabulary = derive(&root);
     assert_eq!(

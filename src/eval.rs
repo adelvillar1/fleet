@@ -1302,7 +1302,7 @@ async fn two_turn_tool_loop(mock_bin: PathBuf) -> ScenarioOutcome {
                 "say hello",
             )
             .await;
-            let records = session::replay(&session.path()).unwrap_or_default();
+            let records = session::replay(session.path()).unwrap_or_default();
             // The third record is the assistant's call, read through a
             // checked access: a short log grades the check failed
             // rather than panicking on the index.
@@ -1395,7 +1395,7 @@ async fn session_corpus_replay(mock_bin: PathBuf) -> ScenarioOutcome {
                     ScenarioOutcome::fail(NAME, family, format!("the run failed: {error}"))
                 }
                 Ok(_) => {
-                    let records = session::replay(&session.path()).unwrap_or_default();
+                    let records = session::replay(session.path()).unwrap_or_default();
                     // The reconstructed conversation (message-only face) must equal
                     // the messages the second request actually carried, minus the
                     // compiled-in system prompt. The request was built before the
@@ -1606,7 +1606,7 @@ async fn conversation_fold(mock_bin: PathBuf) -> ScenarioOutcome {
                     "the task",
                 )
                 .await;
-                let records = session::replay(&session.path()).unwrap_or_default();
+                let records = session::replay(session.path()).unwrap_or_default();
                 match outcome {
                     Err(error) => {
                         ScenarioOutcome::fail(NAME, family, format!("the run failed: {error}"))
@@ -1698,7 +1698,7 @@ async fn subagent_delegation(mock_bin: PathBuf) -> ScenarioOutcome {
                     ScenarioOutcome::fail(NAME, family, format!("the run failed: {error}"))
                 }
                 Ok(_) => {
-                    let parent_records = session::replay(&session.path()).unwrap_or_default();
+                    let parent_records = session::replay(session.path()).unwrap_or_default();
                     let summaries = session::list(&home).unwrap_or_default();
                     let children: Vec<&session::SessionSummary> = summaries
                         .iter()
@@ -1822,7 +1822,7 @@ async fn memory_recall(mock_bin: PathBuf) -> ScenarioOutcome {
                         "the railway deploy is failing",
                     )
                     .await;
-                    let records = session::replay(&session.path()).unwrap_or_default();
+                    let records = session::replay(session.path()).unwrap_or_default();
                     match outcome {
                         Err(error) => {
                             ScenarioOutcome::fail(NAME, family, format!("the run failed: {error}"))
@@ -4890,7 +4890,7 @@ async fn run_blend1(
     )
     .await
     .map_err(|error| format!("the run failed: {error}"))?;
-    let records = session::replay(&session.path()).unwrap_or_default();
+    let records = session::replay(session.path()).unwrap_or_default();
     let lane_answer = tool_message(&mock, 1);
     let call = records.iter().find_map(|record| match record {
         Record::Assistant { tool_calls, .. } => tool_calls

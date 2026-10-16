@@ -1192,22 +1192,20 @@ fn board_rows(value: Option<&Value>) -> Vec<GateRow> {
     };
     let mut rows: Vec<GateRow> = board
         .iter()
-        .filter_map(|(gate, row)| {
-            Some(GateRow {
-                gate: gate.clone(),
-                verdicts: number(row, "verdicts").unwrap_or(0),
-                dispositions: number(row, "dispositions").unwrap_or(0),
-                graded_progress: text(row, "graded_progress").unwrap_or_default(),
-                graded_rows: number(row, "graded_rows").unwrap_or(0),
-                fit_ready: row
-                    .get("fit_ready")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                override_rate: row
-                    .get("override_rate")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0),
-            })
+        .map(|(gate, row)| GateRow {
+            gate: gate.clone(),
+            verdicts: number(row, "verdicts").unwrap_or(0),
+            dispositions: number(row, "dispositions").unwrap_or(0),
+            graded_progress: text(row, "graded_progress").unwrap_or_default(),
+            graded_rows: number(row, "graded_rows").unwrap_or(0),
+            fit_ready: row
+                .get("fit_ready")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            override_rate: row
+                .get("override_rate")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
         })
         .collect();
     rows.sort_by(|left, right| {
@@ -1269,13 +1267,11 @@ fn parse_harness(section: Section<Value>) -> Section<HarnessRead> {
             recent: rows(value.get("recent"))
                 .into_iter()
                 .flatten()
-                .filter_map(|row| {
-                    Some(HarnessEvent {
-                        ts: text(row, "ts").unwrap_or_default(),
-                        kind: text(row, "kind").unwrap_or_default(),
-                        label: text(row, "label").unwrap_or_default(),
-                        outcome: text(row, "outcome").unwrap_or_default(),
-                    })
+                .map(|row| HarnessEvent {
+                    ts: text(row, "ts").unwrap_or_default(),
+                    kind: text(row, "kind").unwrap_or_default(),
+                    label: text(row, "label").unwrap_or_default(),
+                    outcome: text(row, "outcome").unwrap_or_default(),
                 })
                 .take(8)
                 .collect(),
@@ -1395,14 +1391,12 @@ fn parse_reports(section: Section<Value>) -> Section<ReportsRead> {
             conflicts: rows(value.get("conflicts"))
                 .into_iter()
                 .flatten()
-                .filter_map(|row| {
-                    Some(ConflictRow {
-                        task: text(row, "task").unwrap_or_default(),
-                        class: text(row, "type").unwrap_or_default(),
-                        severity: text(row, "severity").unwrap_or_default(),
-                        claim: text(row, "claim").unwrap_or_default(),
-                        reality: text(row, "reality").unwrap_or_default(),
-                    })
+                .map(|row| ConflictRow {
+                    task: text(row, "task").unwrap_or_default(),
+                    class: text(row, "type").unwrap_or_default(),
+                    severity: text(row, "severity").unwrap_or_default(),
+                    claim: text(row, "claim").unwrap_or_default(),
+                    reality: text(row, "reality").unwrap_or_default(),
                 })
                 .take(6)
                 .collect(),
@@ -2141,15 +2135,13 @@ mod tests {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
             let port = listener.local_addr().expect("the bound port").port();
             thread::spawn(move || {
-                for stream in listener.incoming().take(4) {
+                for stream in listener.incoming().take(4).flatten() {
                     // Hold the connection open without a word: the read
                     // must name its own bound rather than wait forever.
-                    if let Ok(stream) = stream {
-                        thread::spawn(move || {
-                            thread::sleep(Duration::from_secs(30));
-                            drop(stream);
-                        });
-                    }
+                    thread::spawn(move || {
+                        thread::sleep(Duration::from_secs(30));
+                        drop(stream);
+                    });
                 }
             });
             DeafKit(port)
@@ -3008,7 +3000,7 @@ mod tests {
         assert_eq!(boards.active.label(), "router");
         boards.cycle();
         assert_eq!(boards.active, BoardKind::Brain);
-        assert_eq!(boards.slot(BoardKind::Brain).loading, true);
+        assert!(boards.slot(BoardKind::Brain).loading);
         boards.cycle();
         assert_eq!(boards.active, BoardKind::Tower);
         boards.cycle();

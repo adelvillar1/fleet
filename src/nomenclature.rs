@@ -649,7 +649,7 @@ fn is_test_scaffolding(root: &Path, path: &Path) -> bool {
         .components()
         .filter_map(|component| component.as_os_str().to_str())
         .collect();
-    if parts.iter().any(|part| *part == "tests") {
+    if parts.contains(&"tests") {
         return true;
     }
     let name = parts.last().copied().unwrap_or_default();
@@ -1350,7 +1350,7 @@ pub fn fresh(root: &Path) -> bool {
         return true;
     };
     let mut paths = walk(root);
-    paths.all(|path| file_secs(&path).map_or(true, |secs| secs <= newest))
+    paths.all(|path| file_secs(&path).is_none_or(|secs| secs <= newest))
 }
 
 #[cfg(test)]

@@ -1974,7 +1974,7 @@ pub async fn prepare(
     let calibration = calibration_config(home);
     let skips = if calibration.informs_failover {
         calibration_skips(
-            &calib.root(),
+            calib.root(),
             &calib::today(),
             &resolved,
             &decision.provider,
@@ -1989,7 +1989,7 @@ pub async fn prepare(
     // so the provider is not skipped. Same gate, same scope.
     let notes = if calibration.informs_failover {
         calibration_notes(
-            &calib.root(),
+            calib.root(),
             &calib::today(),
             &resolved,
             &decision.provider,
@@ -2096,6 +2096,10 @@ pub fn calibration_note_clause(cell: &calib::CalibrationCell) -> String {
     )
 }
 
+/// One walk's order: (provider id, model) pairs, in the order the walk
+/// tries them.
+type ProviderModels = Vec<(String, String)>;
+
 /// Reorder one walk's order for this session: the selected candidate
 /// keeps the head — the judgment is untouched — every other candidate
 /// keeps its preference order, and the demoted ones move to the end. A
@@ -2106,7 +2110,7 @@ pub fn reorder_for_demotion(
     selected: &str,
     demoted: &[String],
 ) -> Vec<(String, String)> {
-    let (demoted_entries, mut kept): (Vec<(String, String)>, Vec<(String, String)>) = order
+    let (demoted_entries, mut kept): (ProviderModels, ProviderModels) = order
         .iter()
         .cloned()
         .partition(|(provider, _)| demoted.iter().any(|id| id == provider) && provider != selected);
@@ -2458,7 +2462,7 @@ mod tests {
     fn an_exhausted_walk_serves_no_one() {
         let (served, attempts) = simulate_walk(
             0,
-            &[WalkOutcome::Failed {
+            [WalkOutcome::Failed {
                 class: "quota",
                 streamed: false,
             }; 3]

@@ -926,6 +926,11 @@ pub fn file_from_tool(home: &Path, repo: &Path, arguments: &serde_json::Value) -
 
 /// One proposal file's text: the frontmatter the skills parser reads,
 /// then the four body sections with the change as a fenced JSON block.
+///
+/// The parameters are the proposal's own fields — every one lands in
+/// the file verbatim — so grouping them into a struct would move the
+/// count, not remove it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_proposal(
     name: &str,
     target: Target,
@@ -1507,13 +1512,12 @@ fn stage(proposal: &Proposal, ctx: &Apply<'_>) -> Result<Landed, Hold> {
     // as the same file — the sha is what tells the two apart — so the
     // apply refuses by name rather than writing a change reasoned
     // about a file that no longer exists in that shape.
-    let drifted = drifted_targets(&ctx.repo, &proposal.target_shas);
+    let drifted = drifted_targets(ctx.repo, &proposal.target_shas);
     if !drifted.is_empty() {
         let named = drifted
             .iter()
             .map(|stamped| {
-                let now =
-                    file_sha(&ctx.repo, &stamped.path).unwrap_or_else(|| "absent".to_string());
+                let now = file_sha(ctx.repo, &stamped.path).unwrap_or_else(|| "absent".to_string());
                 format!(
                     "`{}` (drafted at {}, now {now})",
                     stamped.path, stamped.sha256
@@ -1668,7 +1672,7 @@ fn stage_memory(
     // The same dirty-tree guard the patch path carries: the supersede
     // rewrites the fact files, and a red gate's revert restores HEAD
     // over them.
-    let dirty = dirty_paths(&ctx.repo, &[&format!("{MEMORIES_DIR}/{}.md", fact.name)]);
+    let dirty = dirty_paths(ctx.repo, &[&format!("{MEMORIES_DIR}/{}.md", fact.name)]);
     if !dirty.is_empty() {
         return Err(Hold::Refused(format!(
             "`{MEMORIES_DIR}/{}.md` carries uncommitted work ({}) — commit or stash it first; the apply's revert would restore HEAD over it",
@@ -1755,7 +1759,7 @@ fn stage_config(
         &path,
         &serde_json::to_string_pretty(&document).unwrap_or_default(),
     )
-    .map_err(|reason| Hold::Refused(reason))?;
+    .map_err(Hold::Refused)?;
     let stash = preimages_dir(ctx.home).join(format!("{}.config.json", proposal.name));
     if let Some(text) = &pre {
         stash_bytes(&stash, text.as_bytes())?;
@@ -1811,7 +1815,7 @@ fn stage_config_remove(proposal: &Proposal, id: &str, ctx: &Apply<'_>) -> Result
         &path,
         &serde_json::to_string_pretty(&document).unwrap_or_default(),
     )
-    .map_err(|reason| Hold::Refused(reason))?;
+    .map_err(Hold::Refused)?;
     let stash = preimages_dir(ctx.home).join(format!("{}.config.json", proposal.name));
     stash_bytes(&stash, pre.as_bytes())?;
     Ok(Landed {
@@ -1868,7 +1872,7 @@ fn stage_patch(
             "`{path}` is under `{MEMORIES_DIR}/`: a fact changes through the `supersede` op, whose provenance rule is the permission model — a patch would bypass it"
         )));
     }
-    let dirty = dirty_paths(&ctx.repo, &[path]);
+    let dirty = dirty_paths(ctx.repo, &[path]);
     if !dirty.is_empty() {
         return Err(Hold::Refused(format!(
             "`{path}` carries uncommitted work ({}) — the apply overwrites the target before the gate runs, and a red gate's revert restores HEAD over it, so the work would be silently destroyed; commit or stash it first",

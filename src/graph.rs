@@ -404,6 +404,10 @@ impl fmt::Display for GraphError {
 
 impl std::error::Error for GraphError {}
 
+/// The fact-gate's shape: the parent's closure over one node, answering
+/// whether the node's work has actually landed.
+type NodePredicate = Box<dyn Fn(&Node) -> bool>;
+
 /// The declared graph, and the predicate that decides which of its
 /// nodes has actually landed.
 pub struct Graph {
@@ -417,7 +421,7 @@ pub struct Graph {
     /// The fact-gate. `None` is the conservative default: nothing
     /// verifies, nothing unlocks, and every score sits where it was
     /// declared.
-    verify: Option<Box<dyn Fn(&Node) -> bool>>,
+    verify: Option<NodePredicate>,
 }
 
 impl fmt::Debug for Graph {

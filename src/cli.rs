@@ -990,10 +990,9 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
                     .get(index + 1)
                     .filter(|value| !value.starts_with('-'))
                     .ok_or_else(|| {
-                        format!(
-                            "`--steer` needs the session's id and the owner's text: \
-                             `fleet delegate --steer <session> <text>`"
-                        )
+                        "`--steer` needs the session's id and the owner's text: \
+                         `fleet delegate --steer <session> <text>`"
+                            .to_string()
                     })?;
                 if control.is_some() {
                     return Err("delegate takes one control: --steer or --stop".to_string());

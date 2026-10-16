@@ -113,7 +113,7 @@ assertion to the ordering the patch intends.";
 fn scripted_lane(reply: &str) -> Option<ServerSpec> {
     let bin = crate::eval::mock_mcp_binary()?;
     let scratch = scratch("lane-script");
-    let entries = vec![
+    let entries = [
         serde_json::json!({ "reply": {
             "jsonrpc": "2.0", "id": "$echo",
             "result": {

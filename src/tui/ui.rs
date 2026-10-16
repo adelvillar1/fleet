@@ -243,7 +243,7 @@ fn settings_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     // made is shown here rather than silently changing nothing.
     if let Some(note) = &app.settings_note {
         lines.push(Line::from(Span::styled(
-            format!("{note}"),
+            note.to_string(),
             Style::new().fg(palette::PENDING),
         )));
     }

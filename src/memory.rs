@@ -2584,7 +2584,7 @@ fn spillover_route_room(shape: Option<&str>) -> String {
 
 /// One token per four characters, rounded up — the fork's estimate.
 fn estimate_tokens(chars: usize) -> usize {
-    (chars + 3) / 4
+    chars.div_ceil(4)
 }
 
 /// One protected fact as the assembled context carries it: its type and
@@ -6378,7 +6378,7 @@ mod tests {
         let unclassified = rows
             .iter()
             .filter(|row| row.op == calib::OP_RECALL_HIT)
-            .last()
+            .next_back()
             .expect("the second recall_hit row");
         assert_eq!(unclassified.shape, "");
         let _ = fs::remove_dir_all(&root);
@@ -6526,7 +6526,7 @@ mod tests {
     /// above the floor, and one below it.
     fn pressure_corpus(root: &Path) {
         write_fact(
-            &root,
+            root,
             "identity",
             &good_fact(
                 "identity",
@@ -6536,7 +6536,7 @@ mod tests {
             ),
         );
         write_fact(
-            &root,
+            root,
             "rule",
             &good_fact(
                 "rule",
@@ -6546,7 +6546,7 @@ mod tests {
             ),
         );
         write_fact(
-            &root,
+            root,
             "top",
             &good_fact(
                 "top",
@@ -6556,7 +6556,7 @@ mod tests {
             ),
         );
         write_fact(
-            &root,
+            root,
             "middle",
             &good_fact(
                 "middle",
@@ -6566,7 +6566,7 @@ mod tests {
             ),
         );
         write_fact(
-            &root,
+            root,
             "bottom",
             &good_fact(
                 "bottom",
@@ -6576,7 +6576,7 @@ mod tests {
             ),
         );
         write_fact(
-            &root,
+            root,
             "junk",
             &good_fact("junk", "the walnut table texture", "project", ""),
         );

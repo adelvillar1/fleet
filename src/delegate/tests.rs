@@ -298,7 +298,7 @@ fn parent_log(dir: &Path, session: &str, child: &str, continued: bool) -> PathBu
 fn scripted_lane(reply: &str) -> Option<ServerSpec> {
     let bin = crate::eval::mock_mcp_binary()?;
     let scratch = scratch("lane-script");
-    let entries = vec![
+    let entries = [
         serde_json::json!({ "reply": {
             "jsonrpc": "2.0", "id": "$echo",
             "result": {
@@ -1313,9 +1313,9 @@ fn three_confident_wrongs_cross_the_floor_in_the_weighted_regime() {
     assert!(cell.weighted_wrong_rate > WRONG_RATE_FLOOR);
     assert!(cell.informs_failover());
     // The same three wrongs unweighted do not cross, and four would:
-    // the true unweighted crossing, stated rather than guessed at.
-    assert!((3.0 / 8.0) < WRONG_RATE_FLOOR);
-    assert!((4.0 / 8.0) >= WRONG_RATE_FLOOR);
+    // the true unweighted crossing, pinned at compile time.
+    const _: () = assert!((3.0 / 8.0) < WRONG_RATE_FLOOR);
+    const _: () = assert!((4.0 / 8.0) >= WRONG_RATE_FLOOR);
 }
 
 #[test]

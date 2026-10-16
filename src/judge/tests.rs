@@ -122,7 +122,7 @@ fn judged_row(
 fn scripted_lane(reply: &str) -> Option<ServerSpec> {
     let bin = crate::eval::mock_mcp_binary()?;
     let scratch = scratch("lane-script");
-    let entries = vec![
+    let entries = [
         serde_json::json!({ "reply": {
             "jsonrpc": "2.0", "id": "$echo",
             "result": {
@@ -1123,8 +1123,9 @@ fn three_confident_wrongs_cross_the_floor_in_the_weighted_regime() {
     assert!(cell.weighted_wrong_rate > calib::WRONG_RATE_FLOOR);
     assert!(cell.informs_failover());
     // The same three wrongs unweighted do not cross: three of eight is
-    // 0.375, and the weighted reading is what carries it over.
-    assert!((3.0 / 8.0) < calib::WRONG_RATE_FLOOR);
+    // 0.375, and the weighted reading is what carries it over — pinned
+    // at compile time.
+    const _: () = assert!((3.0 / 8.0) < calib::WRONG_RATE_FLOOR);
 }
 
 #[test]

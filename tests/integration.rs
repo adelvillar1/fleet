@@ -697,7 +697,7 @@ async fn run_completes_a_two_turn_tool_loop() {
     assert_eq!(replayed_calls[0]["id"], "call-1");
 
     // The log holds exactly what the model saw plus bookkeeping.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert_eq!(records.len(), 6);
     assert!(matches!(&records[0], Record::Start { v: 1, model, .. } if model == "test-model"));
     assert!(matches!(&records[1], Record::User { content } if content == "say hello"));
@@ -774,7 +774,7 @@ async fn streamed_tokens_reach_progress_before_the_run_ends() {
 
     // The assembled answer is logged once, as one assistant record: deltas
     // are transport, not log content.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let assistants: Vec<&Record> = records
         .iter()
         .filter(|record| matches!(record, Record::Assistant { .. }))
@@ -807,7 +807,7 @@ async fn resume_seeds_the_next_request_from_the_log() {
         .unwrap();
 
     let second = MockApi::start(vec![assistant_stream("Second answer.")]);
-    let mut resumed = Session::open(&session.path()).unwrap();
+    let mut resumed = Session::open(session.path()).unwrap();
     let report = run_on(
         &second,
         &mut resumed,
@@ -849,7 +849,7 @@ async fn denied_call_is_recorded_and_shown_to_the_model() {
         .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     match &records[3] {
         Record::ToolResult {
             output,
@@ -889,7 +889,7 @@ async fn unknown_tool_and_bad_arguments_are_model_visible_errors() {
         .await
         .unwrap();
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let outputs: Vec<&str> = records
         .iter()
         .filter_map(|record| match record {
@@ -930,7 +930,7 @@ async fn tool_failure_is_a_model_visible_error_result() {
     .await
     .unwrap();
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     match &records[3] {
         Record::ToolResult {
             output,
@@ -963,7 +963,7 @@ async fn max_turns_stops_the_loop_and_marks_the_log() {
     assert_eq!(report.final_message, None);
     assert_eq!(mock.bodies().len(), 2);
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert!(matches!(
         records.last(),
         Some(Record::End { stop_reason, turns: 2 }) if stop_reason == "max-turns"
@@ -1003,7 +1003,7 @@ async fn oversized_tool_output_is_truncated_in_the_log() {
     .await
     .unwrap();
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     match &records[5] {
         Record::ToolResult {
             output,
@@ -1803,6 +1803,10 @@ fn a_relative_services_root_fails_with_a_named_reason() {
 /// with its own environment, so the assertion is on what actually crossed
 /// the spawn boundary rather than on the list the client builds.
 #[tokio::test]
+// The ambient lock is a std mutex by design: it serializes the process's
+// environment against the other tests for the whole awaited body, because
+// the thing guarded (env) is process-global and not async.
+#[allow(clippy::await_holding_lock)]
 async fn a_spawned_child_does_not_inherit_the_ambient_environment() {
     let fake = FakeMcp::start(vec![
         serde_json::json!({ "reply": initialize_reply() }),
@@ -2108,7 +2112,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
 
     // The log holds the whole turn, in order: the assistant's call, the
     // lane that joined for it, the result, and the answer.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert_eq!(records.len(), 7, "{records:?}");
     assert!(
         matches!(&records[1], Record::User { content } if content == "probe the embeddings worker")
@@ -2219,7 +2223,7 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
 
     // Two failures, two different shapes: the child's death, then the
     // fail-fast that proves nothing respawned.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let outputs: Vec<String> = records
         .iter()
         .filter_map(|record| match record {
@@ -2397,7 +2401,7 @@ async fn a_lane_answer_past_the_cap_is_bounded_and_marked() {
     assert_eq!(report.stop_reason, StopReason::Completed);
     assert_eq!(report.turns, 2);
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let output = match &records[4] {
         Record::ToolResult {
             name,
@@ -2475,7 +2479,7 @@ async fn a_lane_tool_refusal_is_recorded_as_a_failure_with_its_text() {
     assert_eq!(report.stop_reason, StopReason::Completed);
     assert_eq!(report.turns, 2);
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     match &records[4] {
         Record::ToolResult {
             name,
@@ -2522,7 +2526,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert!(
         records
             .iter()
@@ -2587,7 +2591,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
 
     assert_eq!(report.stop_reason, StopReason::Completed);
     assert_eq!(report.turns, 3);
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let outputs: Vec<String> = records
         .iter()
         .filter_map(|record| match record {
@@ -2735,7 +2739,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
 
     // The session log is unchanged in vocabulary: no routing record, just
     // the ordinary turn and its orderly end.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert!(records.iter().any(
         |record| matches!(record, Record::End { stop_reason, .. } if stop_reason == "completed")
     ));
@@ -2991,7 +2995,7 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
     assert!(row.reason.contains("lane latency 812ms"), "{}", row.reason);
     // The session log is an ordinary session: the routed model in the
     // start record, the lane's answer as the turn's content.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert!(records.iter().any(|record| matches!(
         record,
         Record::Start { model, .. } if model == "blend1"
@@ -3314,7 +3318,7 @@ async fn an_unknown_role_is_refused_by_name_and_the_child_never_runs() {
     assert_eq!(mock.bodies().len(), 2);
     // The refusal is the tool result the model read, and it names the
     // role and where roles live.
-    let (output, _) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
+    let (output, _) = tool_result(&session::replay(session.path()).unwrap(), "subagent");
     assert!(output.contains("no role named `no-such-role`"), "{output}");
     assert!(output.contains("fleet roles"), "{output}");
     std::fs::remove_dir_all(&home).ok();
@@ -3914,7 +3918,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
 
     // One `skills` record, written once at run start, and it replays to
     // no message: the prompt the model saw stays reconstructable.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let declared_records: Vec<&Record> = records
         .iter()
         .filter(|record| matches!(record, Record::Skills { .. }))
@@ -3961,7 +3965,7 @@ async fn an_unknown_skill_is_a_typed_error_result() {
         .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     match &records[4] {
         Record::ToolResult { name, output, .. } => {
             assert_eq!(name, "use_skill");
@@ -4539,6 +4543,9 @@ fn the_doctor_recall_line_names_the_live_path() {
 
 #[tokio::test]
 #[ignore = "real-API e2e; run with `cargo test --test integration -- --ignored` and DEEPSEEK_API_KEY set"]
+// The ambient lock is a std mutex by design: it serializes the process's
+// environment against the other tests for the whole awaited body.
+#[allow(clippy::await_holding_lock)]
 async fn live_api_completes_a_tool_task() {
     // The ambient-key test sets DEEPSEEK_API_KEY for its own duration, so
     // the read here serializes against it.
@@ -4705,7 +4712,7 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
 
     // The `memory` record keeps the prompt reconstructable (hard rule
     // 5): the shape and every fact name, in block order.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     match records
         .iter()
         .find(|record| matches!(record, Record::Memory { .. }))
@@ -4766,7 +4773,7 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "computer_use"
         ]
     );
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert!(
         !records
             .iter()
@@ -4814,7 +4821,7 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "computer_use"
         ]
     );
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert!(
         !records
             .iter()
@@ -4869,7 +4876,7 @@ async fn the_remember_tool_writes_a_fact_inside_a_run() {
     assert_eq!(loaded[0].body, "The full content.");
 
     // Both results rode the log: the confirmation and the refusal.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let results: Vec<(String, String)> = records
         .iter()
         .filter_map(|record| match record {
@@ -4988,7 +4995,7 @@ async fn a_confirmed_by_supersede_lands_with_approval_and_is_refused_without_it(
     // The file still carries its bare (unset) `superseded-by:` line —
     // what must be absent is the stamp naming the replacement.
     assert!(!old.contains("superseded-by: load-bearing-v2"), "{old}");
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let denial = records
         .iter()
         .find_map(|record| match record {
@@ -5108,7 +5115,7 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
 
     // The tool_result the model read names the filing and where it
     // landed, and the live skills tree is untouched — nothing applied.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let (output, approved) = tool_result(&records, "improve");
     assert!(approved);
     assert!(
@@ -5329,7 +5336,7 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
 
     // The parent's session log carries the call and its result: the
     // outcome, the child's session, its log path, and its words.
-    let parent_records = session::replay(&session.path()).unwrap();
+    let parent_records = session::replay(session.path()).unwrap();
     let (output, approved) = tool_result(&parent_records, "subagent");
     assert!(approved, "the delegation was approved");
     assert!(output.starts_with("subagent completed"), "{output}");
@@ -5602,7 +5609,7 @@ async fn a_child_stops_at_its_turn_cap_with_its_partial_log_intact() {
 
     // The parent's result names the outcome and carries the child's last
     // words — the partial result, not silence.
-    let (output, _) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
+    let (output, _) = tool_result(&session::replay(session.path()).unwrap(), "subagent");
     assert!(output.starts_with("subagent max-turns"), "{output}");
     assert!(output.contains("2 turns"), "{output}");
     assert!(output.contains("checked two of five"), "{output}");
@@ -5668,7 +5675,7 @@ async fn a_failed_child_returns_its_partial_result_and_its_reason() {
 
     // The parent's result is the typed failure: the reason, the log path,
     // and the child's last words.
-    let (output, approved) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
+    let (output, approved) = tool_result(&session::replay(session.path()).unwrap(), "subagent");
     assert!(approved, "{output}");
     assert!(
         output.starts_with("subagent failed (API error 500: the child's model went away)"),
@@ -5754,7 +5761,7 @@ async fn a_malformed_delegation_is_a_typed_refusal() {
     .await
     .unwrap();
 
-    let (output, _) = tool_result(&session::replay(&session.path()).unwrap(), "subagent");
+    let (output, _) = tool_result(&session::replay(session.path()).unwrap(), "subagent");
     assert!(output.starts_with("error:"), "{output}");
     assert!(output.contains("goal"), "{output}");
     // No child was created: the refusal happened before any session.
@@ -6025,7 +6032,7 @@ async fn a_conversation_past_the_budget_compacts_and_the_next_request_carries_th
 
     // The log reconstructs that request byte for byte: replay's message
     // list is exactly what was sent after the system prompt.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let replayed = session::messages(before_final_answer(&records));
     assert_eq!(replayed, after[1..].to_vec(), "replay equals what was sent");
 
@@ -6085,7 +6092,7 @@ async fn the_measure_is_the_apis_own_count_when_it_reports_one() {
     assert_eq!(mock.bodies().len(), 2);
     let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
     assert!(!written.contains("compacted"), "{written}");
-    assert!(!session::replay(&session.path())
+    assert!(!session::replay(session.path())
         .unwrap()
         .iter()
         .any(|record| matches!(record, Record::Compaction { .. })));
@@ -6141,7 +6148,7 @@ async fn the_measure_falls_back_to_the_estimate_when_usage_is_absent() {
     // The record's `tokens_before` is the estimate, which is what the
     // absence of usage forces — and it is at least the budget, because
     // that is what made it fire.
-    match session::replay(&session.path())
+    match session::replay(session.path())
         .unwrap()
         .iter()
         .find(|record| matches!(record, Record::Compaction { .. }))
@@ -6154,7 +6161,7 @@ async fn the_measure_falls_back_to_the_estimate_when_usage_is_absent() {
     // And the request after the fold is the compacted shape.
     let after = request_messages(&mock, 6);
     assert_eq!(after.len(), 1 + 1 + 4 * 2, "{after:?}");
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert_eq!(
         session::messages(before_final_answer(&records)),
         after[1..].to_vec(),
@@ -6194,7 +6201,7 @@ async fn a_failed_compaction_request_lets_the_run_continue_un_compacted() {
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     // No compaction happened, and the log records none that did not.
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert_eq!(
         records
             .iter()
@@ -6248,7 +6255,7 @@ async fn one_compaction_per_crossing_and_the_tool_loop_survives_it() {
     .unwrap();
     assert_eq!(report.stop_reason, StopReason::Completed);
 
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert_eq!(
         records
             .iter()
@@ -6398,7 +6405,7 @@ async fn an_empty_summary_skips_the_fold_rather_than_dropping_the_conversation()
     let written = String::from_utf8(std::mem::take(&mut progress)).unwrap();
     assert!(written.contains("compaction skipped"), "{written}");
     assert!(!written.contains("compacted:"), "{written}");
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert!(
         !records
             .iter()
@@ -6431,7 +6438,7 @@ async fn a_run_under_the_budget_logs_no_compaction_record() {
     assert!(!written.contains("compaction skipped"), "{written}");
     // Two requests, the log's own shape, and no compaction marker.
     assert_eq!(mock.bodies().len(), 2);
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     assert_eq!(records.len(), 6, "{records:?}");
     assert!(!session::list(&home).unwrap()[0].compacted);
     // Every message the second request carried is reconstructable from the
@@ -6466,7 +6473,7 @@ async fn the_compaction_request_is_reconstructable_from_the_log() {
     assert!(String::from_utf8(std::mem::take(&mut progress))
         .unwrap()
         .contains("compacted:"));
-    let records = session::replay(&session.path()).unwrap();
+    let records = session::replay(session.path()).unwrap();
     let fold = records
         .iter()
         .position(|record| matches!(record, Record::Compaction { .. }))
