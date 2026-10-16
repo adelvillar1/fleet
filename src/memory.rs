@@ -132,7 +132,9 @@
 //! runs it on its timer in the long-lived processes, and
 //! `fleet memories --consolidate` runs one pass on demand. The turn path
 //! calls [`Memory::assemble`] with [`Memory::working`] and records the
-//! hits the assembly surfaced through [`Memory::record_hits`].
+//! hits the assembly surfaced through [`Memory::record_hits`] — after
+//! the first successful model response, so a hit means the model saw
+//! the fact (KI-068).
 
 use std::collections::HashMap;
 use std::fs;
@@ -1846,7 +1848,8 @@ impl Memory {
     /// Read-only by construction: the recall-count bump writes to a
     /// fact's `path`, and a synthetic fact's path is the session log
     /// it was derived from, so a synthetic Memory must never be routed
-    /// through [`Memory::recall_hits`] — the session archive's own
+    /// through the hit-recording path — [`Memory::recall_hits`] or
+    /// [`Memory::record_hits`] — the session archive's own
     /// feedback loop is a later piece of its plan. `root` is empty
     /// because synthetic facts have no corpus root; the caller already
     /// holds the sessions directory they came from.
@@ -1991,26 +1994,33 @@ impl Memory {
         facts
     }
 
-    /// The feedback entry point — the turn path's per-instruction call
-    /// in the shape that also ranks: every hit updates the fact's
-    /// `recall-count` in its file (a bounded, frontmatter-preserving
-    /// rewrite), re-ranks on the next recall, and appends one
-    /// `recall_hit` calibration row naming the fact, the shape, and the
-    /// score. The rewrite is best-effort: a file that cannot be
-    /// rewritten logs one line and the hit is still recorded — the
-    /// audit trail must not depend on the corpus being writable.
+    /// Rank an instruction and record what it surfaced, in one call:
+    /// every hit updates the fact's `recall-count` in its file (a
+    /// bounded, frontmatter-preserving rewrite), re-ranks on the next
+    /// recall, and appends one `recall_hit` calibration row naming the
+    /// fact, the shape, and the score. This is the direct caller's
+    /// entry point, where ranking and recording are one step; the
+    /// agent loop instead records the assembly's own hits through
+    /// [`Memory::record_hits`], after the model's first answer, so a
+    /// hit there means the model saw the fact (KI-068). The rewrite is
+    /// best-effort: a file that cannot be rewritten logs one line and
+    /// the hit is still recorded — the audit trail must not depend on
+    /// the corpus being writable.
     pub fn recall_hits(&self, instruction: &str, stream: Option<&calib::Stream>) -> Vec<ScoredFact> {
         let hits = self.recall(instruction);
         self.record_hits(&hits, classify_shape(instruction), stream);
         hits
     }
 
-    /// Record the hits an assembly actually surfaced — the turn path's
-    /// call, with the assembly's `recalled` slice. One ranking per
-    /// turn, and the row's score is the score the fact entered the
-    /// turn at, which is what makes the stream's numbers mean the same
-    /// thing the assembled block does. A fact the budget dropped never
-    /// reached the model, so it is not a hit.
+    /// Record the hits an assembly actually surfaced — the agent loop's
+    /// call, with the assembly's `recalled` slice, made after the first
+    /// successful model response rather than at assembly time (KI-068):
+    /// the bump and the row mean the model saw the fact, and a run
+    /// whose call fails before any response records nothing. One
+    /// ranking per turn, and the row's score is the score the fact
+    /// entered the turn at, which is what makes the stream's numbers
+    /// mean the same thing the assembled block does. A fact the budget
+    /// dropped never reached the model, so it is not a hit.
     pub fn record_hits(
         &self,
         hits: &[ScoredFact],

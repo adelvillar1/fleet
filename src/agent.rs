@@ -28,7 +28,7 @@ use crate::api::{ChatRequest, Client, ClientError, Message, Role, StreamEvent, T
 use crate::compaction;
 use crate::lanes;
 use crate::mcp::{CallResult, McpServer, ServerSpec, ToolInfo};
-use crate::memory::{self, Memory};
+use crate::memory::{self, Memory, ScoredFact};
 use crate::session::{Conversation, Record, Session};
 use crate::tools::{self, LaneTool, LaneTools, Tool, ToolOutcome};
 use std::collections::{HashMap, VecDeque};
@@ -569,6 +569,25 @@ pub struct Agent<'a> {
     /// when it reported none — in which case the window check falls back
     /// to the chars/4 estimate of the assembled messages.
     last_prompt_tokens: Option<u64>,
+    /// The recall hits this run's assembly surfaced, held from assembly
+    /// until the model's first answer lands. KI-068's fix: the bump and
+    /// the `recall_hit` rows mean the model saw the fact, so they fire
+    /// after the first successful response rather than at assembly — a
+    /// run whose call fails before any response takes them unrecorded
+    /// and the corpus stays untouched. Taken when they fire, so one
+    /// assembly records exactly once.
+    pending_hits: Option<PendingHits>,
+}
+
+/// The recall hits an assembly surfaced, waiting for the model's first
+/// answer: the `recalled` slice the block rendered, the shape it
+/// rendered under, and the corpus that ranked them. The bump and the
+/// rows fire from [`Agent::record_recall_hits`], once a response has
+/// landed.
+struct PendingHits {
+    memory: Arc<Memory>,
+    recalled: Vec<ScoredFact>,
+    shape: Option<&'static str>,
 }
 
 impl<'a> Agent<'a> {
@@ -621,6 +640,7 @@ impl<'a> Agent<'a> {
             compaction_latch: false,
             compact_now,
             last_prompt_tokens: None,
+            pending_hits: None,
             improve_home,
         })
     }
@@ -797,8 +817,10 @@ impl<'a> Agent<'a> {
     /// Assemble this run's memory: the protected tier, shape-routed
     /// recall, and the recent working memory, as the block the system
     /// prompt carries. Three things ride along with it — the recall
-    /// hits the assembly earned (one `recall_hit` row per fact that
-    /// entered, at the score it entered at), the `memory` record that
+    /// hits the assembly earned, held as pending state until the
+    /// model's first answer lands (one `recall_hit` row per fact that
+    /// entered, at the score it entered at, fired by
+    /// [`Agent::record_recall_hits`]), the `memory` record that
     /// keeps the prompt reconstructable from the log (hard rule 5, the
     /// `skills` record's precedent), and one progress line and UI event
     /// naming the shape and the fact count.
@@ -814,7 +836,6 @@ impl<'a> Agent<'a> {
         if block.is_empty() {
             return Ok(None);
         }
-        memory.record_hits(&assembly.recalled, assembly.shape, self.calib.as_ref());
         let shape = assembly.shape.unwrap_or_default().to_string();
         let facts: Vec<String> = assembly
             .protected
@@ -823,6 +844,16 @@ impl<'a> Agent<'a> {
             .chain(assembly.recalled.iter().map(|hit| hit.fact.name.clone()))
             .chain(assembly.working.iter().map(|fact| fact.name.clone()))
             .collect();
+        // The hits do not fire here. KI-068: a hit means the model saw
+        // the fact, and at assembly time no request has been made yet —
+        // they ride along as pending state and the loop records them
+        // after the first successful response, so a run that never gets
+        // one leaves the corpus untouched.
+        self.pending_hits = Some(PendingHits {
+            memory,
+            recalled: assembly.recalled,
+            shape: assembly.shape,
+        });
         self.record(&Record::Memory { shape: shape.clone(), facts: facts.clone() })?;
         let named = if shape.is_empty() {
             "no shape (surface recall)".to_string()
@@ -838,6 +869,22 @@ impl<'a> Agent<'a> {
         let _ = self.progress.flush();
         self.emit(UiEvent::Memory { shape, facts: facts.len() });
         Ok(Some(block))
+    }
+
+    /// Record the recall hits the assembly surfaced — once, after the
+    /// first successful model response. KI-068: the bump and the
+    /// `recall_hit` rows mean the model saw the fact, which is only
+    /// true once an answer has landed, so the turn loop calls this
+    /// immediately after its first response and before any tool-call
+    /// handling. A run whose call fails before any response — an API
+    /// error, a refused connection — returns from the loop with these
+    /// still pending and the corpus untouched. The take makes it
+    /// exactly once per assembly: later turns find nothing held.
+    fn record_recall_hits(&mut self) {
+        let Some(pending) = self.pending_hits.take() else { return };
+        pending
+            .memory
+            .record_hits(&pending.recalled, pending.shape, self.calib.as_ref());
     }
 
     /// Run `task` to a stop. The session log receives every message and the
@@ -1026,6 +1073,12 @@ impl<'a> Agent<'a> {
                 })
                 .await
                 .map_err(AgentError::Api)?;
+            // The recall hits fire here: the first response has
+            // landed, so the assembled facts were ones the model saw
+            // (KI-068). Before any tool-call handling, and taken on
+            // the first turn only — a run that dies before this line
+            // records nothing.
+            self.record_recall_hits();
             self.usage.prompt_tokens += response.usage.prompt_tokens;
             self.usage.completion_tokens += response.usage.completion_tokens;
             // The API's own count of this request's prompt, when it
@@ -3811,7 +3864,12 @@ You are auditing a change. Read the diff before you judge it.
     }
 
     #[tokio::test]
-    async fn the_assembly_records_the_memory_record_and_the_hits() {
+    async fn the_assembly_records_the_memory_record_and_defers_the_hits() {
+        // KI-068 re-based: the assembly still records the `memory`
+        // record and the progress line, but the hits — the bump and
+        // the `recall_hit` rows — no longer fire at assembly. They
+        // wait for the model's first answer, which this test stands in
+        // for with the loop's moved call itself.
         let home = scratch("memory-assembly");
         let root = corpus(
             "memory-assembly-corpus",
@@ -3851,6 +3909,22 @@ You are auditing a change. Read the diff before you judge it.
             .expect("the corpus assembles");
         assert!(block.contains("Standing context (protected"), "{block}");
         assert!(block.contains("shape-routed recall for `deploy`"), "{block}");
+
+        // Nothing has fired yet: no `recall_hit` row has landed, and
+        // neither recalled fact's count has moved — the assembly
+        // surfaced them into the block, not to the model.
+        let rows = crate::calib::read_day(&stream_root, &crate::calib::today(), 64);
+        assert!(
+            rows.iter().all(|row| row.op != crate::calib::OP_RECALL_HIT),
+            "{rows:?}"
+        );
+        for name in ["top", "bottom"] {
+            let text = std::fs::read_to_string(root.join(format!("{name}.md"))).unwrap();
+            assert!(text.contains("recall-count: 0"), "{text}");
+        }
+
+        // The model's first answer lands; the loop's moved call fires.
+        agent.record_recall_hits();
         // The agent is done: its borrows of the leaked progress and
         // session end here, and both are read back below.
         drop(agent);
@@ -3880,6 +3954,86 @@ You are auditing a change. Read the diff before you judge it.
             .map(|row| row.fact.as_str())
             .collect();
         assert_eq!(hits, vec!["top", "bottom"]);
+        // And the bump: both recalled facts counted, on disk.
+        for name in ["top", "bottom"] {
+            let text = std::fs::read_to_string(root.join(format!("{name}.md"))).unwrap();
+            assert!(text.contains("recall-count: 1"), "{text}");
+        }
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&stream_root);
+    }
+
+    #[tokio::test]
+    async fn a_run_whose_first_call_fails_bumps_nothing_and_rows_nothing() {
+        // KI-068's own test. The assembly runs — the `memory` record
+        // below proves the corpus surfaced its facts — and the first
+        // request dies on a refused connection before any response
+        // lands. The bump and the `recall_hit` rows mean the model saw
+        // the facts, so a run that never got an answer leaves the
+        // corpus untouched and the stream row-less.
+        let home = scratch("memory-failed-call");
+        let root = corpus(
+            "memory-failed-call-corpus",
+            &[
+                ("identity", &confirmed("identity", "the owner's standing rule about the gate")),
+                ("top", &inferred("top", "the railway deploy is failing per branch")),
+            ],
+        );
+        let stream_root = scratch("memory-failed-call-stream");
+        let stream = crate::calib::Stream::open(&stream_root);
+        let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
+        let session = Box::leak(Box::new(
+            crate::session::Session::create(&home, "m").unwrap(),
+        ));
+        let memory = Arc::new(Memory::load_with(&root, Box::new(crate::memory::KeywordOnly)));
+        let options = AgentOptions {
+            model: "m".to_string(),
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: Some(stream.clone()),
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: Some(memory),
+            scope: None,
+            improve_home: None,
+            compact_now: false,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent =
+            Agent::new(client, options, session, Box::new(ApproveAll), &mut *progress).unwrap();
+
+        let error = agent.run("the railway deploy is failing").await.unwrap_err();
+        assert!(matches!(error, AgentError::Api(_)), "{error:?}");
+        drop(agent);
+
+        // The assembly ran and surfaced a fact: the run had hits to
+        // record, and the `memory` record names what entered.
+        let records = crate::session::replay(session.path()).unwrap();
+        match records.iter().find(|record| matches!(record, Record::Memory { .. })) {
+            Some(Record::Memory { shape, facts }) => {
+                assert_eq!(shape, "deploy");
+                assert_eq!(facts, &vec!["identity".to_string(), "top".to_string()]);
+            }
+            other => panic!("expected a memory record, got {other:?}"),
+        }
+        // The bump: the recalled fact's count on disk is untouched.
+        let top = std::fs::read_to_string(root.join("top.md")).unwrap();
+        assert!(top.contains("recall-count: 0"), "{top}");
+        // The row: nothing landed. The stream is live — the run's own
+        // failed turn row is there — so the absence is the ordering,
+        // not a dead stream.
+        drop(stream);
+        let rows = crate::calib::read_day(&stream_root, &crate::calib::today(), 64);
+        assert!(
+            rows.iter().all(|row| row.op != crate::calib::OP_RECALL_HIT),
+            "{rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.op == crate::calib::OP_TURN),
+            "{rows:?}"
+        );
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&stream_root);
