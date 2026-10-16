@@ -46,6 +46,8 @@
 //! authenticates to anything, and nothing here carries a key value.
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -785,6 +787,575 @@ fn demotion_guidance(state: &RouterState) -> Vec<(String, String)> {
         .into_iter()
         .map(|id| (id.clone(), "demoted \u{2014} walked last".to_string()))
         .collect()
+}
+
+// --- the delegation panel ----------------------------------------------------
+
+/// How many session logs one delegation read considers. The logs are
+/// the tree's only source, so the bound is on the scan rather than on
+/// the tree: the newest ids are read first, and a home with more logs
+/// than this names the rest rather than reading without end.
+pub const DELEGATION_LOG_CAP: usize = 256;
+
+/// How many past trees the panel carries. The unit is one orchestrator
+/// run, so eight is eight runs of history — enough to see a pattern and
+/// few enough that the panel stays a picture.
+pub const DELEGATION_TREE_CAP: usize = 8;
+
+/// The aggregate bound on one delegation read, on the tower scan's own
+/// rule: a sum of bounded reads is not itself bounded. Once it is spent
+/// the tree stops where it stands and the snapshot names that it did.
+pub const DELEGATION_SCAN_BUDGET_SECS: u64 = 5;
+
+/// The bound on one log's opening read. A `start` record carries the
+/// version, the model, the stamp and at most two names, so a window this
+/// size reads it whole and cannot be made to read a model's whole first
+/// answer.
+const DELEGATION_START_BYTES: u64 = 2048;
+
+/// The bound on one log's head read, which is where the goal lives: the
+/// first user record, the brief the run was handed. A goal that does not
+/// fit the window is absent rather than the read growing to find it.
+const DELEGATION_HEAD_BYTES: u64 = 64 * 1024;
+
+/// The bound on one log's tail read, which is where an orderly stop
+/// lives: the `end` record is the last line, so a window this size reads
+/// it whole however large the run grew.
+const DELEGATION_TAIL_BYTES: u64 = 4096;
+
+/// One read of the delegation surface: the live run's tree, the past
+/// runs' trees, and the declared dependency graph with the unlock
+/// conditions the code actually requires.
+///
+/// The tree comes from the session logs and nothing else. Every
+/// `start` record names the session that delegated to it, which is what
+/// makes the chain reconstructable from the logs alone (hard rule 5) —
+/// the same walk [`crate::subagents::Chain::resolve`] walks, run from
+/// the other end. The depth cap is the code's own
+/// [`crate::subagents::SUBAGENT_MAX_DEPTH`], read from the constant
+/// rather than restated, and it rides the snapshot so the panel shows
+/// the wall rather than a tree that merely stops.
+///
+/// The graph comes from `<home>/graph.json` through
+/// [`crate::graph::Graph::load`], which names every failure rather than
+/// defaulting. A refused graph read leaves `graph` `None` and names the
+/// refusal, because an empty graph silently substituted for a missing
+/// one would render as "nothing is blocking anything" — the one reading
+/// this surface must never produce by accident.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DelegationSnapshot {
+    /// When this read landed, the same stamp every board carries.
+    pub read_at: String,
+    /// The depth cap the tree is drawn against, which is the code's own
+    /// constant rather than this module's idea of one.
+    pub depth_cap: usize,
+    /// The live run's tree, rooted at the session this face is serving.
+    /// `None` when that session's log cannot be read, which names
+    /// itself rather than drawing an empty tree that reads as "this run
+    /// delegated nothing".
+    pub live: Option<DelegationNode>,
+    /// The past runs' trees, newest root first: one tree per
+    /// orchestrator run.
+    pub history: Vec<DelegationNode>,
+    /// The declared dependency graph, or `None` with a named refusal.
+    pub graph: Option<GraphSnapshot>,
+    /// Everything this read could not do, named. An empty list means
+    /// every source answered.
+    pub refused: Vec<String>,
+}
+
+/// One session in a tree: what it ran, where it sits, and what it was
+/// handed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DelegationNode {
+    pub id: String,
+    pub model: String,
+    /// The `kind` the log's `start` record carries, when it carries one:
+    /// `subagent` for a delegated run, `scheduled` for a job's.
+    pub kind: Option<String>,
+    /// How many parents stand above this node. The orchestrator's own
+    /// run is 0, its children 1, its grandchildren 2.
+    pub depth: usize,
+    /// The task it was handed: its first user record's brief.
+    pub goal: Option<String>,
+    /// `running` while the log carries no `end` record, `stopped` once
+    /// it does — the distinction the session module itself draws.
+    pub status: String,
+    /// The code's own stop word, verbatim: `completed`, `max-turns`,
+    /// `failed`, an owner's stop.
+    pub stop_reason: Option<String>,
+    /// The turns the stop recorded.
+    pub turns: Option<u64>,
+    pub children: Vec<DelegationNode>,
+}
+
+/// The declared dependency graph, flattened for the browser: the nodes
+/// in declaration order, the edges as index pairs into that order, and
+/// the graph's own aggregates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphSnapshot {
+    pub nodes: Vec<GraphNode>,
+    /// `(prerequisite index, node index)`. A prerequisite that is not a
+    /// node is not an edge — it is named in that node's `unresolved`,
+    /// which is where the code puts it.
+    pub edges: Vec<(usize, usize)>,
+    pub critical_path: Vec<String>,
+    pub blocks_most_work: Option<String>,
+    pub revisions: usize,
+    pub diff_score: u64,
+    pub replan: bool,
+}
+
+/// One graph node with the conditions the code actually requires, read
+/// off [`crate::graph::Graph::unlock`] rather than derived a second time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphNode {
+    pub id: String,
+    pub cost: u64,
+    /// The remaining work in this node's dependency closure.
+    pub score: u64,
+    /// The highest that score has been: the readiness bar's denominator.
+    pub peak: u64,
+    /// The status the file carries.
+    pub status: String,
+    /// The state this node stands in, named by the same function the
+    /// terminal render uses, so the two cannot disagree.
+    pub state: String,
+    pub approach: Option<String>,
+    pub paths: Vec<String>,
+    /// The capability declaration, as the phrase the graph renders.
+    pub capabilities: String,
+    pub prereqs: Vec<String>,
+    pub unlock: UnlockShape,
+    /// The named reason this node is held, or `None` when it is not.
+    pub reason: Option<String>,
+    pub delta: Option<DeltaShape>,
+}
+
+/// The three unlock conditions, reported separately and all necessary —
+/// the code's own reading, not a summary of it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnlockShape {
+    pub score_zero: bool,
+    pub resource_free: bool,
+    pub deps_verified: bool,
+    pub unlocked: bool,
+    pub waiting: Vec<String>,
+    pub failed: Vec<String>,
+    pub unresolved: Vec<String>,
+    /// `(holder, path)`: the sibling running this node's admitted path.
+    pub held: Vec<(String, String)>,
+}
+
+impl UnlockShape {
+    fn of(unlock: &crate::graph::Unlock) -> Self {
+        Self {
+            score_zero: unlock.score_zero,
+            resource_free: unlock.resource_free,
+            deps_verified: unlock.deps_verified,
+            unlocked: unlock.is_unlocked(),
+            waiting: unlock.waiting.clone(),
+            failed: unlock.failed.clone(),
+            unresolved: unlock.unresolved.clone(),
+            held: unlock
+                .held
+                .iter()
+                .map(|hold| (hold.holder.clone(), hold.path.clone()))
+                .collect(),
+        }
+    }
+}
+
+/// The angle between the approach a node was handed and the one it ran,
+/// as the categories the delta's own vocabulary names.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeltaShape {
+    pub state: String,
+    pub reason: String,
+}
+
+/// One log's opening record: what it runs, the `kind` that marks a
+/// delegated or scheduled run, and the session that delegated to it.
+#[derive(Debug, Clone)]
+struct StartShape {
+    model: String,
+    kind: Option<String>,
+    parent: Option<String>,
+}
+
+/// One log's shape, once its head and tail have been read.
+#[derive(Debug, Clone)]
+struct SessionShape {
+    id: String,
+    model: String,
+    kind: Option<String>,
+    goal: Option<String>,
+    stop_reason: Option<String>,
+    turns: Option<u64>,
+}
+
+/// One read of the delegation panel's two pictures.
+///
+/// The scan is bounded three ways — a cap on the logs, a byte window per
+/// read, and a wall-clock budget across the whole thing — because the
+/// panel refreshes while a run is in flight and a read that grows with
+/// the run it is watching is a read that eventually stops landing.
+pub fn read_delegation(home: &Path, session: &str) -> DelegationSnapshot {
+    let sessions = crate::home::sessions_dir(home);
+    let deadline = Instant::now() + Duration::from_secs(DELEGATION_SCAN_BUDGET_SECS);
+    let mut refused: Vec<String> = Vec::new();
+    let mut starts: HashMap<String, StartShape> = HashMap::new();
+    let mut children_of: HashMap<String, Vec<String>> = HashMap::new();
+
+    let mut names: Vec<String> = match std::fs::read_dir(&sessions) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
+            .filter_map(|entry| {
+                entry
+                    .path()
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().to_string())
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    // The ids are timestamp-shaped, so ascending is oldest first: reading
+    // the tail of that order reads the recent runs, which is the half of
+    // the history a tree is for.
+    names.sort();
+    let dropped = names.len().saturating_sub(DELEGATION_LOG_CAP);
+    if dropped > 0 {
+        refused.push(format!(
+            "{dropped} session logs are older than the newest {DELEGATION_LOG_CAP}"
+        ));
+    }
+    for id in names.iter().rev().take(DELEGATION_LOG_CAP) {
+        if Instant::now() >= deadline {
+            refused.push("the session scan spent its budget before it finished".to_string());
+            break;
+        }
+        let Some(start) = start_shape(&sessions.join(format!("{id}.jsonl"))) else {
+            continue;
+        };
+        if let Some(parent) = start.parent.clone().filter(|parent| !parent.is_empty()) {
+            children_of.entry(parent).or_default().push(id.clone());
+        }
+        starts.insert(id.clone(), start);
+    }
+    // The live tree's root is read even when the cap or the budget
+    // dropped it: a tree without its root is not a tree.
+    if !starts.contains_key(session) {
+        if let Some(start) = start_shape(&sessions.join(format!("{session}.jsonl"))) {
+            starts.insert(session.to_string(), start);
+        }
+    }
+    for children in children_of.values_mut() {
+        children.sort();
+    }
+
+    let depth = depth_of(&starts, session);
+    let live = tree_of(
+        &sessions,
+        &starts,
+        &children_of,
+        session,
+        depth,
+        deadline,
+        &mut refused,
+    );
+    if live.is_none() {
+        refused.push(format!("{session} has no readable session log"));
+    }
+
+    // A past tree is rooted at a session that delegated to somebody and
+    // was itself delegated to by nobody — an orchestrator's own run. A
+    // mid-tree node's subtree already sits inside its root's tree, so
+    // listing it again would draw one run twice.
+    let mut roots: Vec<String> = children_of
+        .keys()
+        .filter(|id| id.as_str() != session)
+        .filter(|id| {
+            starts
+                .get(id.as_str())
+                .and_then(|start| start.parent.clone())
+                .is_none_or(|parent| parent.is_empty())
+        })
+        .cloned()
+        .collect();
+    roots.sort_by(|left, right| right.cmp(left));
+    roots.truncate(DELEGATION_TREE_CAP);
+    let mut history: Vec<DelegationNode> = Vec::new();
+    for root in &roots {
+        if let Some(tree) = tree_of(
+            &sessions,
+            &starts,
+            &children_of,
+            root,
+            depth_of(&starts, root),
+            deadline,
+            &mut refused,
+        ) {
+            history.push(tree);
+        }
+    }
+
+    let graph = graph_snapshot(home, &mut refused);
+    DelegationSnapshot {
+        read_at: now_stamp(),
+        depth_cap: crate::subagents::SUBAGENT_MAX_DEPTH,
+        live,
+        history,
+        graph,
+        refused,
+    }
+}
+
+/// How many parents stand above `id`, walked off the logs' own `start`
+/// records — the walk [`crate::subagents::Chain::resolve`] walks, from
+/// the top down. The walk stops at a log that names no parent, at a log
+/// that was not read, or at the cap, whichever comes first.
+fn depth_of(starts: &HashMap<String, StartShape>, id: &str) -> usize {
+    let mut depth = 0;
+    let mut cursor = id.to_string();
+    while depth < crate::subagents::SUBAGENT_MAX_DEPTH {
+        match starts
+            .get(&cursor)
+            .and_then(|start| start.parent.clone())
+            .filter(|parent| !parent.is_empty())
+        {
+            Some(parent) => {
+                depth += 1;
+                cursor = parent;
+            }
+            None => break,
+        }
+    }
+    depth
+}
+
+/// One tree, grown from `id` downward.
+///
+/// A node at the depth cap grows no children, because the code refuses
+/// to make them: the tree stops at the wall rather than drawing a
+/// subtree that could not have run. A node whose own log cannot be read
+/// is absent, and the tree it would have rooted is absent with it.
+fn tree_of(
+    sessions: &Path,
+    starts: &HashMap<String, StartShape>,
+    children_of: &HashMap<String, Vec<String>>,
+    id: &str,
+    depth: usize,
+    deadline: Instant,
+    refused: &mut Vec<String>,
+) -> Option<DelegationNode> {
+    let start = starts.get(id)?;
+    let shape = session_shape(sessions, id, start);
+    let mut node = DelegationNode {
+        id: shape.id,
+        model: shape.model,
+        kind: shape.kind,
+        depth,
+        goal: shape.goal,
+        status: if shape.stop_reason.is_some() {
+            "stopped".to_string()
+        } else {
+            "running".to_string()
+        },
+        stop_reason: shape.stop_reason,
+        turns: shape.turns,
+        children: Vec::new(),
+    };
+    if depth < crate::subagents::SUBAGENT_MAX_DEPTH {
+        if let Some(children) = children_of.get(id) {
+            for child in children {
+                if Instant::now() >= deadline {
+                    refused.push(format!(
+                        "the tree stopped at {id} \u{2014} the read spent its budget"
+                    ));
+                    break;
+                }
+                if let Some(grown) = tree_of(
+                    sessions,
+                    starts,
+                    children_of,
+                    child,
+                    depth + 1,
+                    deadline,
+                    refused,
+                ) {
+                    node.children.push(grown);
+                }
+            }
+        }
+    }
+    Some(node)
+}
+
+/// One log's opening record, read inside its byte window. `None` for a
+/// log that cannot be opened or whose first line is not a start record.
+fn start_shape(path: &Path) -> Option<StartShape> {
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::new(file).take(DELEGATION_START_BYTES);
+    let mut line = String::new();
+    if reader.read_line(&mut line).ok()? == 0 {
+        return None;
+    }
+    match serde_json::from_str::<crate::session::Record>(&line).ok()? {
+        crate::session::Record::Start {
+            model,
+            kind,
+            parent,
+            ..
+        } => Some(StartShape {
+            model,
+            kind,
+            parent,
+        }),
+        _ => None,
+    }
+}
+
+/// One log's shape: its opening record, the goal it was handed, and the
+/// stop it recorded. The head read is where the goal lives and the tail
+/// read is where an orderly stop lives, and neither is read past its
+/// window, so a log that has grown to hundreds of kilobytes costs what a
+/// fresh one costs.
+///
+/// The sessions directory and the id, rather than a path: a caller that
+/// held a path could hold the directory's, and reading a directory for a
+/// goal reads nothing while looking like a log that carried none.
+fn session_shape(sessions: &Path, id: &str, start: &StartShape) -> SessionShape {
+    let path = sessions.join(format!("{id}.jsonl"));
+    let (stop_reason, turns) = read_stop(&path);
+    SessionShape {
+        id: id.to_string(),
+        model: start.model.clone(),
+        kind: start.kind.clone(),
+        goal: read_goal(&path),
+        stop_reason,
+        turns,
+    }
+}
+
+/// The task a log was handed: its first user record, which is the brief.
+/// `None` for a log whose head window holds no user record.
+fn read_goal(path: &Path) -> Option<String> {
+    let mut text = String::new();
+    File::open(path)
+        .ok()?
+        .take(DELEGATION_HEAD_BYTES)
+        .read_to_string(&mut text)
+        .ok()?;
+    for line in text.lines() {
+        if let Ok(crate::session::Record::User { content }) =
+            serde_json::from_str::<crate::session::Record>(line)
+        {
+            if !content.trim().is_empty() {
+                return Some(crate::subagents::Brief::parse(&content).task);
+            }
+        }
+    }
+    None
+}
+
+/// The stop a log recorded: the `end` record, which is the last line of
+/// an orderly log. A log without one was interrupted, which reads as
+/// `(None, None)` rather than as a stop that never happened.
+fn read_stop(path: &Path) -> (Option<String>, Option<u64>) {
+    let Ok(mut file) = File::open(path) else {
+        return (None, None);
+    };
+    let Ok(len) = file.seek(SeekFrom::End(0)) else {
+        return (None, None);
+    };
+    // Clamped, because a seek backwards past the start of a short log is
+    // an error rather than a read from zero.
+    let from = len.saturating_sub(DELEGATION_TAIL_BYTES);
+    if file.seek(SeekFrom::Start(from)).is_err() {
+        return (None, None);
+    }
+    let mut bytes = Vec::new();
+    if file
+        .take(DELEGATION_TAIL_BYTES)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return (None, None);
+    }
+    // Read as bytes and decoded lossily: the window's first byte can
+    // land inside a multi-byte character, and the record this read is
+    // for is the last one, not the first.
+    let text = String::from_utf8_lossy(&bytes);
+    for line in text.lines().rev() {
+        if let Ok(crate::session::Record::End { stop_reason, turns }) =
+            serde_json::from_str::<crate::session::Record>(line)
+        {
+            return (Some(stop_reason), Some(turns));
+        }
+    }
+    (None, None)
+}
+
+/// The declared graph, with every node's actual conditions. A missing
+/// file is not a failure — a home that has declared no graph is the
+/// ordinary state — but it is named, because an empty graph rendered in
+/// its place would read as "nothing is blocking anything".
+fn graph_snapshot(home: &Path, refused: &mut Vec<String>) -> Option<GraphSnapshot> {
+    let path = crate::graph::path_in(home);
+    if !path.exists() {
+        refused.push(format!("{} holds no declared graph", path.display()));
+        return None;
+    }
+    let graph = match crate::graph::Graph::load(&path) {
+        Ok(graph) => graph,
+        Err(error) => {
+            refused.push(error);
+            return None;
+        }
+    };
+    let nodes: Vec<GraphNode> = graph
+        .nodes()
+        .iter()
+        .map(|node| {
+            let unlock = graph.unlock(&node.id).unwrap_or_default();
+            GraphNode {
+                id: node.id.clone(),
+                cost: node.cost,
+                score: graph.score(&node.id).unwrap_or(0),
+                peak: node.peak(),
+                status: node.status.as_str().to_string(),
+                state: crate::graph::state_word(node, &unlock).to_string(),
+                approach: (!node.approach.trim().is_empty()).then(|| node.approach.clone()),
+                paths: node.paths.clone(),
+                capabilities: node.capabilities.phrase(),
+                prereqs: node.prereqs.clone(),
+                unlock: UnlockShape::of(&unlock),
+                reason: unlock.reason(),
+                delta: node.delta.as_ref().map(|delta| DeltaShape {
+                    state: delta.state.label().to_string(),
+                    reason: delta.reason.label().to_string(),
+                }),
+            }
+        })
+        .collect();
+    let mut edges: Vec<(usize, usize)> = Vec::new();
+    for (index, node) in graph.nodes().iter().enumerate() {
+        for prereq in &node.prereqs {
+            if let Some(from) = graph.nodes().iter().position(|other| &other.id == prereq) {
+                edges.push((from, index));
+            }
+        }
+    }
+    Some(GraphSnapshot {
+        nodes,
+        edges,
+        critical_path: graph.critical_path(),
+        blocks_most_work: graph.blocks_most_work(),
+        revisions: graph.revisions().len(),
+        diff_score: graph.diff_score(),
+        replan: graph.should_replan(),
+    })
 }
 
 // --- the second-brain board --------------------------------------------------
@@ -3158,6 +3729,419 @@ mod tests {
             Duration::from_secs(5),
         );
         assert_eq!(branch.as_deref().map(str::trim), Some("main"));
+    }
+
+    // --- the delegation panel ------------------------------------------------
+
+    /// A session log in a scratch home: the `start` record the tree is
+    /// built off, the brief it was handed, and the stop it recorded. A
+    /// test writes the log directly rather than through `Session`,
+    /// because the panel's read is of the file on disk.
+    fn write_log(
+        sessions: &Path,
+        id: &str,
+        model: &str,
+        kind: Option<&str>,
+        parent: Option<&str>,
+        goal: &str,
+        stop: Option<(&str, u64)>,
+    ) {
+        let mut start = serde_json::json!({
+            "type": "start",
+            "v": crate::session::SESSION_FORMAT_VERSION,
+            "model": model,
+            "created": "2026-10-16T09:00:00Z",
+        });
+        if let Some(kind) = kind {
+            start["kind"] = serde_json::json!(kind);
+        }
+        if let Some(parent) = parent {
+            start["parent"] = serde_json::json!(parent);
+        }
+        let mut lines = vec![
+            start.to_string(),
+            serde_json::json!({ "type": "user", "content": goal }).to_string(),
+        ];
+        if let Some((reason, turns)) = stop {
+            lines.push(
+                serde_json::json!({ "type": "end", "stop_reason": reason, "turns": turns })
+                    .to_string(),
+            );
+        }
+        std::fs::write(
+            sessions.join(format!("{id}.jsonl")),
+            format!("{}\n", lines.join("\n")),
+        )
+        .expect("the session log");
+    }
+
+    /// A home whose sessions directory holds the logs, and whose
+    /// `graph.json` declares three nodes in a chain.
+    fn delegation_home(name: &str) -> (Scratch, String) {
+        let scratch = Scratch::new(name);
+        let sessions = scratch.path().join("sessions");
+        std::fs::create_dir_all(&sessions).expect("the sessions directory");
+        let root = "20261016T090000Z-root";
+        write_log(
+            &sessions,
+            root,
+            "deepseek-chat",
+            None,
+            None,
+            "revamp the delegation panel",
+            None,
+        );
+        write_log(
+            &sessions,
+            "20261016T090100Z-child",
+            "stepfun/step-3.7-flash",
+            Some(crate::session::SUBAGENT_KIND),
+            Some(root),
+            "read the session logs",
+            Some(("completed", 3)),
+        );
+        write_log(
+            &sessions,
+            "20261016T090200Z-grandchild",
+            "zai-coding-plan/GLM-5.3-Flash",
+            Some(crate::session::SUBAGENT_KIND),
+            Some("20261016T090100Z-child"),
+            "read the graph file",
+            None,
+        );
+        // A great-grandchild: the depth cap means the code never made
+        // this one, so the tree must stop at the grandchild.
+        write_log(
+            &sessions,
+            "20261016T090300Z-great",
+            "deepseek-chat",
+            Some(crate::session::SUBAGENT_KIND),
+            Some("20261016T090200Z-grandchild"),
+            "a run that could not have happened",
+            None,
+        );
+        write_graph(scratch.path());
+        (scratch, root.to_string())
+    }
+
+    /// A declared graph file: six nodes that between them stand in every
+    /// state the code names, so one read proves the panel reports the
+    /// conditions rather than a summary of them.
+    ///
+    /// Written as the file the panel reads, because the file is the
+    /// contract: a fixture built through the in-memory API would be one
+    /// transition away from a graph the surface never sees.
+    fn write_graph(home: &Path) {
+        let node = |id: &str, cost: u64, prereqs: &[&str], paths: &[&str], status: &str| {
+            serde_json::json!({
+                "id": id,
+                "cost": cost,
+                "prereqs": prereqs,
+                "paths": paths,
+                "capabilities": { "tools": ["read"], "skills": [], "workflows": [], "loops": [] },
+                "approach": format!("the approach for {id}"),
+                "status": status,
+            })
+        };
+        let file = serde_json::json!({
+            "nodes": [
+                // Verified: its closure is empty, so the score-zero
+                // condition holds and it is unlocked.
+                node("probe", 2, &[], &[], "verified"),
+                // Pending behind a verified node: a verified prereq
+                // carries no cost into the score, so this one's closure
+                // is zero and all three conditions hold. It is `ready`,
+                // which is the row that keeps `ready` from reading as
+                // "nothing is left to do".
+                node("plan", 3, &["probe"], &[], "pending"),
+                // Pending behind a pending node: it waits on `plan` by
+                // name, the deps condition fails, and the score carries
+                // what is left behind it. The graph names the dep rather
+                // than hiding it.
+                node("build", 5, &["plan"], &[], "pending"),
+                // Held: `run` is in flight on this node's admitted path,
+                // so the resource condition is the one that fails. Its
+                // own score is zero and its deps are verified, so a
+                // summary of the three would read this node as ready.
+                node("audit", 1, &[], &["src/boards.rs"], "pending"),
+                node("run", 1, &[], &["src/boards.rs"], "running"),
+                // A prerequisite that is not a node: it is named in
+                // `unresolved`, it is not an edge, and it is the only
+                // thing separating this node from `plan`.
+                node("ghost", 1, &["missing"], &[], "pending"),
+            ],
+            "revisions": [],
+        });
+        std::fs::write(
+            crate::graph::path_in(home),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&file).expect("the graph json")
+            ),
+        )
+        .expect("the declared graph");
+    }
+
+    #[test]
+    fn the_delegation_read_builds_the_live_tree_from_the_logs_own_start_records() {
+        let (scratch, root) = delegation_home("delegation-live");
+        let snapshot = read_delegation(scratch.path(), &root);
+
+        let live = snapshot.live.as_ref().expect("the live tree");
+        assert_eq!(live.id, root);
+        assert_eq!(live.model, "deepseek-chat");
+        assert_eq!(live.depth, 0);
+        // The root's log has no `end` record, so it is still running: the
+        // distinction the session module itself draws.
+        assert_eq!(live.status, "running");
+        assert_eq!(live.stop_reason, None);
+        assert_eq!(live.goal.as_deref(), Some("revamp the delegation panel"));
+
+        assert_eq!(live.children.len(), 1, "{live:?}");
+        let child = &live.children[0];
+        assert_eq!(child.kind.as_deref(), Some(crate::session::SUBAGENT_KIND));
+        assert_eq!(child.depth, 1);
+        assert_eq!(child.model, "stepfun/step-3.7-flash");
+        assert_eq!(child.status, "stopped");
+        assert_eq!(child.stop_reason.as_deref(), Some("completed"));
+        assert_eq!(child.turns, Some(3));
+
+        // The grandchild is at the cap: the code refuses to make it a
+        // parent, so the tree stops there even though its log exists.
+        assert_eq!(child.children.len(), 1, "{child:?}");
+        let grandchild = &child.children[0];
+        assert_eq!(grandchild.depth, 2);
+        assert_eq!(grandchild.status, "running");
+        assert!(
+            grandchild.children.is_empty(),
+            "a node at the cap grew children: {:?}",
+            grandchild.children
+        );
+    }
+
+    #[test]
+    fn the_depth_cap_is_the_codes_own() {
+        let (scratch, root) = delegation_home("delegation-cap");
+        let snapshot = read_delegation(scratch.path(), &root);
+        // The cap is read off the code, not written into the panel.
+        assert_eq!(
+            snapshot.depth_cap,
+            crate::subagents::SUBAGENT_MAX_DEPTH,
+            "the panel's cap drifted from the code's"
+        );
+        // A great-grandchild's log is on disk and still not in the tree.
+        assert!(
+            snapshot
+                .refused
+                .iter()
+                .all(|reason| !reason.contains("great-grandchild")),
+            "{:?}",
+            snapshot.refused
+        );
+        let text = format!("{snapshot:?}");
+        assert!(
+            !text.contains("a run that could not have happened"),
+            "a run past the cap was drawn: {text}"
+        );
+    }
+
+    #[test]
+    fn the_dependency_graph_carries_the_conditions_the_code_actually_requires() {
+        let (scratch, root) = delegation_home("delegation-graph");
+        let snapshot = read_delegation(scratch.path(), &root);
+        let graph = snapshot.graph.as_ref().expect("the declared graph");
+
+        assert_eq!(graph.nodes.len(), 6);
+        // One edge per declared prerequisite, as index pairs — and the
+        // prerequisite that is not a node is not an edge, because the
+        // code puts it in `unresolved` instead.
+        assert_eq!(graph.edges, vec![(0, 1), (1, 2)]);
+        // The critical path is the graph's own: the head is the highest
+        // remaining score, and the walk stops at a verified prerequisite.
+        assert_eq!(graph.critical_path, vec!["build", "plan"]);
+
+        // A verified node: its closure is empty, so the score-zero
+        // condition holds and it is unlocked.
+        let probe = &graph.nodes[0];
+        assert_eq!(probe.status, "verified");
+        assert_eq!(probe.state, "verified");
+        assert_eq!(probe.score, 0, "{probe:?}");
+        assert!(probe.unlock.score_zero, "{probe:?}");
+        assert!(probe.unlock.resource_free, "{probe:?}");
+        assert!(probe.unlock.deps_verified, "{probe:?}");
+        assert!(probe.unlock.unlocked, "{probe:?}");
+        assert!(probe.unlock.waiting.is_empty(), "{probe:?}");
+
+        // A pending node behind a verified one: the score counts what is
+        // left in the closure, and a verified prerequisite carries none,
+        // so all three conditions hold and it reads `ready`. This is the
+        // row that proves the three are not one summary — `plan` and
+        // `build` are both pending with pending-only dependencies, and
+        // the difference between them is which condition fails.
+        let plan = &graph.nodes[1];
+        assert_eq!(plan.state, "ready");
+        assert_eq!(plan.score, 0, "{plan:?}");
+        assert!(plan.unlock.score_zero, "{plan:?}");
+        assert!(plan.unlock.resource_free, "{plan:?}");
+        assert!(plan.unlock.deps_verified, "{plan:?}");
+        assert!(plan.unlock.unlocked, "{plan:?}");
+        assert!(plan.unlock.waiting.is_empty(), "{plan:?}");
+        assert_eq!(plan.approach.as_deref(), Some("the approach for plan"));
+        assert_eq!(plan.capabilities, "tools: read");
+
+        // A pending node behind a pending one: the dep it waits on is
+        // named, and it is not verified — so the deps condition fails
+        // and the score carries what is left behind it.
+        let build = &graph.nodes[2];
+        assert_eq!(build.state, "waiting");
+        assert_eq!(build.score, 3, "{build:?}");
+        assert!(!build.unlock.score_zero, "{build:?}");
+        assert!(build.unlock.resource_free, "{build:?}");
+        assert!(!build.unlock.deps_verified, "{build:?}");
+        assert_eq!(build.unlock.waiting, vec!["plan".to_string()]);
+        assert!(build.unlock.failed.is_empty(), "{build:?}");
+        assert!(build.unlock.unresolved.is_empty(), "{build:?}");
+
+        // The held node: the resource condition is the one that fails,
+        // and the sibling holding the path is named. Its own score is
+        // zero and its deps are verified, so a one-word summary of the
+        // three would read this node as ready.
+        let audit = &graph.nodes[3];
+        assert_eq!(audit.state, "held");
+        assert_eq!(audit.score, 0, "{audit:?}");
+        assert!(audit.unlock.score_zero, "{audit:?}");
+        assert!(audit.unlock.deps_verified, "{audit:?}");
+        assert!(!audit.unlock.resource_free, "{audit:?}");
+        assert_eq!(
+            audit.unlock.held,
+            vec![("run".to_string(), "src/boards.rs".to_string())]
+        );
+        assert!(!audit.unlock.unlocked, "{audit:?}");
+
+        // The running sibling: in flight, so it is the holder, and a
+        // running node holds whether or not it is unlocked.
+        let run = &graph.nodes[4];
+        assert_eq!(run.state, "running");
+        assert_eq!(run.score, 0, "{run:?}");
+
+        // The unresolved prerequisite is named, not drawn as an edge:
+        // its score is zero and its resource free, so only the deps
+        // condition separates it from `plan`.
+        let ghost = &graph.nodes[5];
+        assert_eq!(ghost.state, "waiting");
+        assert_eq!(ghost.score, 0, "{ghost:?}");
+        assert!(ghost.unlock.score_zero, "{ghost:?}");
+        assert!(ghost.unlock.resource_free, "{ghost:?}");
+        assert!(!ghost.unlock.deps_verified, "{ghost:?}");
+        assert_eq!(ghost.unlock.unresolved, vec!["missing".to_string()]);
+        assert!(ghost.unlock.waiting.is_empty(), "{ghost:?}");
+    }
+
+    #[test]
+    fn a_home_with_no_declared_graph_says_so_rather_than_rendering_an_empty_one() {
+        let scratch = Scratch::new("delegation-no-graph");
+        let sessions = scratch.path().join("sessions");
+        std::fs::create_dir_all(&sessions).expect("the sessions directory");
+        write_log(
+            &sessions,
+            "20261016T090000Z-root",
+            "deepseek-chat",
+            None,
+            None,
+            "a run that delegated nothing",
+            None,
+        );
+        let snapshot = read_delegation(scratch.path(), "20261016T090000Z-root");
+        assert!(snapshot.graph.is_none(), "{:?}", snapshot.graph);
+        assert!(
+            snapshot
+                .refused
+                .iter()
+                .any(|reason| reason.contains("holds no declared graph")
+                    && reason.contains("graph.json")),
+            "{:?}",
+            snapshot.refused
+        );
+    }
+
+    #[test]
+    fn a_malformed_graph_file_is_named_never_substituted() {
+        let (scratch, root) = delegation_home("delegation-bad-graph");
+        std::fs::write(crate::graph::path_in(scratch.path()), "{ not json").expect("the file");
+        let snapshot = read_delegation(scratch.path(), &root);
+        assert!(snapshot.graph.is_none(), "{:?}", snapshot.graph);
+        assert!(
+            snapshot
+                .refused
+                .iter()
+                .any(|reason| reason.contains("graph.json")),
+            "{:?}",
+            snapshot.refused
+        );
+    }
+
+    #[test]
+    fn a_session_with_no_log_is_named_rather_than_drawn_as_an_empty_tree() {
+        let scratch = Scratch::new("delegation-no-log");
+        let snapshot = read_delegation(scratch.path(), "20261016T090000Z-absent");
+        assert!(snapshot.live.is_none());
+        assert!(
+            snapshot
+                .refused
+                .iter()
+                .any(|reason| reason.contains("has no readable session log")),
+            "{:?}",
+            snapshot.refused
+        );
+    }
+
+    #[test]
+    fn a_past_runs_tree_is_in_the_history_without_being_drawn_twice() {
+        let (scratch, root) = delegation_home("delegation-history");
+        // An earlier orchestrator run that delegated once: the history
+        // root a tree is built for.
+        let sessions = scratch.path().join("sessions");
+        let past = "20261015T080000Z-past";
+        write_log(
+            &sessions,
+            past,
+            "deepseek-chat",
+            None,
+            None,
+            "the run before this one",
+            Some(("completed", 4)),
+        );
+        write_log(
+            &sessions,
+            "20261015T080100Z-past-child",
+            "stepfun/step-3.7-flash",
+            Some(crate::session::SUBAGENT_KIND),
+            Some(past),
+            "the earlier delegation",
+            Some(("completed", 2)),
+        );
+
+        let snapshot = read_delegation(scratch.path(), &root);
+        assert_eq!(snapshot.history.len(), 1, "{:?}", snapshot.history);
+        assert_eq!(snapshot.history[0].id, past);
+        assert_eq!(snapshot.history[0].status, "stopped");
+        assert_eq!(snapshot.history[0].children.len(), 1);
+        // The past run's child is not a history root of its own: one run
+        // is never drawn twice.
+        assert!(
+            !snapshot
+                .history
+                .iter()
+                .any(|tree| tree.id == "20261015T080100Z-past-child"),
+            "{:?}",
+            snapshot.history
+        );
+        // And neither is the live root.
+        assert!(
+            !snapshot.history.iter().any(|tree| tree.id == root),
+            "{:?}",
+            snapshot.history
+        );
     }
 
     // --- the refresher -------------------------------------------------------

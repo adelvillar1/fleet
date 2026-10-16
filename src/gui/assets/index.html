@@ -116,6 +116,14 @@
     <div class="board" id="router-board"></div>
   </main>
 
+  <!-- The delegation. The tree of the run in flight and the runs before
+       it, rebuilt off the session logs' own start records, and the
+       declared dependency graph off its file — a graph of nodes and
+       edges, because what blocks what is a shape and not a row. -->
+  <main class="stage stage-board" id="panel-delegation" hidden>
+    <div class="board" id="delegation-board"></div>
+  </main>
+
   <!-- The other addresses of the plan's route table. They are keyed
        panels, not routes: the browser never asks the server for a page,
        and a surface that is not built yet says so instead of pretending. -->

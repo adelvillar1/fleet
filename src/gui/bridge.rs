@@ -266,6 +266,28 @@ impl Bridge {
         }
     }
 
+    /// The delegation panel's document: the live run's tree, the past
+    /// runs' trees, and the declared dependency graph with the unlock
+    /// conditions the code actually requires. Read-only, and read off
+    /// the async worker for the same reason the router read is — it
+    /// touches every session log's opening record and the graph file,
+    /// and a page request must not hold the runtime while they are read.
+    ///
+    /// The live tree is rooted at this face's own session, so the panel
+    /// shows the run the owner is watching rather than whichever run
+    /// happens to be newest.
+    pub async fn delegation(&self) -> Value {
+        let home = self.home.clone();
+        let session = self.session.clone();
+        match tokio::task::spawn_blocking(move || delegation_read(&home, &session)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "delegation",
+                "refused": ["the delegation read did not land"],
+            }),
+        }
+    }
+
     /// Hand the browser's task to the agent thread. The owner's message
     /// lands in the log first, so a refresh replays what was asked and
     /// the header's running flag moves on the same event.
@@ -488,6 +510,84 @@ fn router_read(home: &std::path::Path) -> Value {
                 "count": count,
             })).collect::<Vec<_>>(),
         },
+    })
+}
+
+/// One read of the delegation board, shaped for the browser. The tree
+/// nodes and the graph nodes ride through as they were read — the panel
+/// draws them, and a document that re-decided what a node's state was
+/// would be a second opinion about the graph's own facts.
+fn delegation_read(home: &std::path::Path, session: &str) -> Value {
+    let snapshot = crate::boards::read_delegation(home, session);
+    json!({
+        "type": "delegation",
+        "read_at": snapshot.read_at,
+        "depth_cap": snapshot.depth_cap,
+        "live": snapshot.live.as_ref().map(delegation_node),
+        "history": snapshot.history.iter().map(delegation_node).collect::<Vec<_>>(),
+        "graph": snapshot.graph.as_ref().map(graph_document),
+        "refused": snapshot.refused,
+    })
+}
+
+/// One tree node and its children, recursively.
+fn delegation_node(node: &crate::boards::DelegationNode) -> Value {
+    json!({
+        "id": node.id,
+        "model": node.model,
+        "kind": node.kind,
+        "depth": node.depth,
+        "goal": node.goal,
+        "status": node.status,
+        "stop_reason": node.stop_reason,
+        "turns": node.turns,
+        "children": node.children.iter().map(delegation_node).collect::<Vec<_>>(),
+    })
+}
+
+/// The dependency graph: the nodes in declaration order, the edges as
+/// index pairs into that order, and the graph's own aggregates.
+fn graph_document(graph: &crate::boards::GraphSnapshot) -> Value {
+    json!({
+        "nodes": graph.nodes.iter().map(|node| json!({
+            "id": node.id,
+            "cost": node.cost,
+            "score": node.score,
+            "peak": node.peak,
+            "status": node.status,
+            "state": node.state,
+            "approach": node.approach,
+            "paths": node.paths,
+            "capabilities": node.capabilities,
+            "prereqs": node.prereqs,
+            "unlock": {
+                "score_zero": node.unlock.score_zero,
+                "resource_free": node.unlock.resource_free,
+                "deps_verified": node.unlock.deps_verified,
+                "unlocked": node.unlock.unlocked,
+                "waiting": node.unlock.waiting,
+                "failed": node.unlock.failed,
+                "unresolved": node.unlock.unresolved,
+                "held": node.unlock.held.iter().map(|(holder, path)| json!({
+                    "holder": holder,
+                    "path": path,
+                })).collect::<Vec<_>>(),
+            },
+            "reason": node.reason,
+            "delta": node.delta.as_ref().map(|delta| json!({
+                "state": delta.state,
+                "reason": delta.reason,
+            })),
+        })).collect::<Vec<_>>(),
+        "edges": graph.edges.iter().map(|(from, to)| json!({
+            "from": from,
+            "to": to,
+        })).collect::<Vec<_>>(),
+        "critical_path": graph.critical_path,
+        "blocks_most_work": graph.blocks_most_work,
+        "revisions": graph.revisions,
+        "diff_score": graph.diff_score,
+        "replan": graph.replan,
     })
 }
 

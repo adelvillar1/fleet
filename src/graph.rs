@@ -109,6 +109,20 @@ impl Default for Status {
     }
 }
 
+impl Status {
+    /// The word this state is called, everywhere: the file, the render,
+    /// and the browser. One accessor rather than each surface matching
+    /// the enum again, so a node's status cannot be named two ways.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Status::Pending => "pending",
+            Status::Running => "running",
+            Status::Verified => "verified",
+            Status::Failed => "failed",
+        }
+    }
+}
+
 /// The capability declaration D9 asks for at decomposition: what this
 /// subtree is likely to need. The declaration IS the scope — a declared
 /// tool is admitted and an undeclared one is refused by name — so a
@@ -656,7 +670,7 @@ impl Graph {
             .collect()
     }
 
-    /// The two conditions for one node, reported separately.
+    /// The three conditions for one node, reported separately.
     pub fn unlock(&self, id: &str) -> Option<Unlock> {
         let index = self.index_of(id)?;
         let mut cache = vec![None; self.nodes.len()];
@@ -700,7 +714,7 @@ impl Graph {
         self.unlock(id).is_some_and(|unlock| unlock.is_unlocked())
     }
 
-    /// The nodes whose two conditions both hold and that have not
+    /// The nodes whose three conditions all hold and that have not
     /// started, in declaration order. The graph's own view:
     /// [`Graph::dispatchable`] applies the concurrency bound and the
     /// caller's record of what is in flight.
@@ -1218,19 +1232,37 @@ fn readiness_bar(score: u64, peak: u64, color: &str) -> String {
     )
 }
 
-/// One node's status as a dot, a word, and a colour. Verified is the
-/// only state that subtracts; a node that is unblocked but held reads
-/// `held` rather than `waiting`, because those call for different
-/// actions from the owner.
-fn node_state(node: &Node, unlock: &Unlock) -> (&'static str, &'static str, &'static str) {
+/// One node's state as the word every surface names it by:
+/// `verified`, `failed`, `running`, `ready`, `held`, `waiting`.
+///
+/// Verified is the only state that subtracts; a node that is unblocked
+/// but held reads `held` rather than `waiting`, because those call for
+/// different actions from the owner. The browser's delegation panel
+/// names a node through this function rather than deriving the word
+/// itself, so the panel and the terminal cannot disagree about what is
+/// blocking a node.
+pub fn state_word(node: &Node, unlock: &Unlock) -> &'static str {
     match node.status {
-        Status::Verified => ("\u{2713}", "verified", OK),
-        Status::Failed => ("\u{2717}", "failed", ERROR),
-        Status::Running => ("\u{25cf}", "running", ACCENT),
-        Status::Pending if unlock.is_unlocked() => ("\u{25cf}", "ready", OK),
-        Status::Pending if !unlock.resource_free => ("\u{25cf}", "held", WARN),
-        Status::Pending => ("\u{25cb}", "waiting", DIM),
+        Status::Verified => "verified",
+        Status::Failed => "failed",
+        Status::Running => "running",
+        Status::Pending if unlock.is_unlocked() => "ready",
+        Status::Pending if !unlock.resource_free => "held",
+        Status::Pending => "waiting",
     }
+}
+
+/// One node's status as a dot, a word, and a colour.
+fn node_state(node: &Node, unlock: &Unlock) -> (&'static str, &'static str, &'static str) {
+    let (dot, colour) = match node.status {
+        Status::Verified => ("\u{2713}", OK),
+        Status::Failed => ("\u{2717}", ERROR),
+        Status::Running => ("\u{25cf}", ACCENT),
+        Status::Pending if unlock.is_unlocked() => ("\u{25cf}", OK),
+        Status::Pending if !unlock.resource_free => ("\u{25cf}", WARN),
+        Status::Pending => ("\u{25cb}", DIM),
+    };
+    (dot, state_word(node, unlock), colour)
 }
 
 // --- the replan -------------------------------------------------------------

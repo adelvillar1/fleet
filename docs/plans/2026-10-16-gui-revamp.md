@@ -341,7 +341,7 @@ Launch: `fleet gui [--port N] [--no-open] [--host H]`, default
 - [ ] C2: the router panel renders the chain, the workload table, and the
   live decision from the board's own reads; a refused read keeps the last
   snapshot and names why.
-- [ ] C3: the delegation panel renders the live tree and the dependency
+- [x] C3: the delegation panel renders the live tree and the dependency
   graph with the code's actual unlock conditions, and the graph.rs doc
   lag is fixed.
 - [ ] C4: the memory and skills panels render the corpus, the recall
@@ -630,6 +630,18 @@ count; the feed names its build time; exit 0.
   TUI pane (or the GUI) changes what the pane shows, not what a run uses.
   G8 closes it — the resolution chain walks fleet.env for those two keys
   — or discloses it by name; it must not ship papered over.
+- **A G4 gate flake, disclosed rather than fixed inside the increment.**
+  The first full gate run failed one test —
+  `gui::bridge::tests::a_remembered_rule_stops_the_prompt_and_rides_the_rules_event`
+  — with `rule` coming back null. It is not a delegation defect: the
+  `bridge()` test fixture keys its temp home on the process id alone
+  (`src/gui/bridge.rs:1094`), so every test in the binary shares one
+  home and one test's `remove_dir_all` can delete the directory out
+  from under another test's `settings::allow_tool` write. It is
+  timing-dependent and passes on re-run (three clean full runs
+  followed, 1070 passed). The fixture needs a per-test home, which is
+  a test-hygiene change of its own; it is named here so it is not
+  mistaken for a product defect later.
 - Increments G1+ follow this document; each lands gated and committed
   with explicit paths, and this file's `updated` field moves with the
   work.

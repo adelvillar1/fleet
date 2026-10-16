@@ -36,9 +36,11 @@
 //!
 //! The read routes beyond `/api/state` are the panels': `GET
 //! /api/router` is the router board's own reads plus the
-//! route-decision cache's counts, read off the async worker. A panel's
-//! document is the board's facts, not a second opinion about them, and
-//! it never carries a credential.
+//! route-decision cache's counts, read off the async worker, and `GET
+//! /api/delegation` is the live run's delegation tree off the session
+//! logs beside the dependency graph's own file. A panel's document is
+//! the board's facts, not a second opinion about them, and it never
+//! carries a credential.
 
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
@@ -186,6 +188,9 @@ async fn serve_connection(
         }
         ("GET", "/api/state") => write_reply(&mut stream, api(200, bridge.state())).await,
         ("GET", "/api/router") => write_reply(&mut stream, api(200, bridge.router().await)).await,
+        ("GET", "/api/delegation") => {
+            write_reply(&mut stream, api(200, bridge.delegation().await)).await
+        }
         ("POST", "/api/run") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -705,6 +710,84 @@ mod tests {
         home
     }
 
+    /// The home a delegation-panel test reads: the bridge's own session
+    /// id has a log, it delegated to one child, and the home declares a
+    /// graph with one node in each state the code names. A fresh home
+    /// would render a panel with nothing in it, which is the one case
+    /// the panel is not for.
+    fn delegation_home() -> std::path::PathBuf {
+        let home = fresh_home();
+        let sessions = home.join("sessions");
+        std::fs::create_dir_all(&sessions).expect("the sessions directory");
+        let log = |id: &str, kind: Option<&str>, parent: Option<&str>, stop: Option<&str>| {
+            let mut start = serde_json::json!({
+                "type": "start",
+                "v": crate::session::SESSION_FORMAT_VERSION,
+                "model": "deepseek-chat",
+                "created": "2026-10-16T09:00:00Z",
+            });
+            if let Some(kind) = kind {
+                start["kind"] = serde_json::json!(kind);
+            }
+            if let Some(parent) = parent {
+                start["parent"] = serde_json::json!(parent);
+            }
+            let mut lines = vec![
+                start.to_string(),
+                serde_json::json!({"type": "user", "content": "revamp the delegation panel"})
+                    .to_string(),
+            ];
+            if let Some(stop) = stop {
+                lines.push(
+                    serde_json::json!({"type": "end", "stop_reason": stop, "turns": 2}).to_string(),
+                );
+            }
+            std::fs::write(
+                sessions.join(format!("{id}.jsonl")),
+                format!("{}\n", lines.join("\n")),
+            )
+            .expect("a session log");
+        };
+        // The bridge's own session, and the child it delegated to.
+        log("session-test", None, None, None);
+        log(
+            "20261016T090100Z-child",
+            Some(crate::session::SUBAGENT_KIND),
+            Some("session-test"),
+            Some("completed"),
+        );
+        let node = |id: &str, cost: u64, prereqs: &[&str], paths: &[&str], status: &str| {
+            serde_json::json!({
+                "id": id,
+                "cost": cost,
+                "prereqs": prereqs,
+                "paths": paths,
+                "capabilities": { "tools": ["read"], "skills": [], "workflows": [], "loops": [] },
+                "approach": "the approach",
+                "status": status,
+            })
+        };
+        std::fs::write(
+            crate::graph::path_in(&home),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "nodes": [
+                    node("probe", 2, &[], &[], "verified"),
+                    node("plan", 3, &["probe"], &[], "pending"),
+                    // Held: `run` is in flight on this node's admitted
+                    // path, so the resource condition is the one that
+                    // fails and the panel must say so rather than
+                    // reading the node as ready.
+                    node("audit", 1, &[], &["src/boards.rs"], "pending"),
+                    node("run", 1, &[], &["src/boards.rs"], "running"),
+                ],
+                "revisions": [],
+            }))
+            .expect("the graph json"),
+        )
+        .expect("the declared graph");
+        home
+    }
+
     async fn launch() -> (String, u16) {
         launch_at(fresh_home()).await
     }
@@ -1036,6 +1119,107 @@ mod tests {
         // Names and presence, never values.
         assert!(!body.contains("api_key"), "{body}");
         assert!(!body.contains("DEEPSEEK_API_KEY"), "{body}");
+    }
+
+    /// The delegation panel's document is the board's own read: the live
+    /// run's tree off the session logs' `start` records, and the declared
+    /// graph with each node's three unlock conditions carried separately.
+    /// A home whose graph has declared nothing says so in `refused`
+    /// rather than rendering an empty graph — an empty graph reads as
+    /// "nothing is blocking anything", which is a different claim.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_delegation_document_is_the_boards_own_read() {
+        let (token, port) = launch_at(delegation_home()).await;
+        let anonymous = ask(
+            port,
+            "GET /api/delegation HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+        );
+        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        let reply = get(port, "/api/delegation", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("application/json"), "{reply}");
+        let body = reply
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("a body past the head");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["type"], "delegation");
+        // The cap is the code's own, read off the subagents module.
+        assert_eq!(document["depth_cap"], crate::subagents::SUBAGENT_MAX_DEPTH);
+        // The live tree: the bridge's own session at the root, the child
+        // it delegated to beneath it, and the child's stop.
+        let live = &document["live"];
+        assert_eq!(live["id"], "session-test");
+        assert_eq!(live["status"], "running");
+        assert_eq!(live["goal"], "revamp the delegation panel");
+        let children = live["children"].as_array().expect("the children");
+        assert_eq!(children.len(), 1, "{document}");
+        assert_eq!(children[0]["kind"], crate::session::SUBAGENT_KIND);
+        assert_eq!(children[0]["status"], "stopped");
+        assert_eq!(children[0]["stop_reason"], "completed");
+        assert_eq!(children[0]["depth"], 1);
+        // The dependency graph, with the three conditions per node.
+        let graph = &document["graph"];
+        let nodes = graph["nodes"].as_array().expect("the nodes");
+        assert_eq!(nodes.len(), 4, "{document}");
+        // `plan`'s only prerequisite is verified, so a verified prereq
+        // carries no cost into the score: all three conditions hold and
+        // the node reads `ready`. The panel reports the three marks, not
+        // one word derived from them.
+        let plan = &nodes[1];
+        assert_eq!(plan["state"], "ready");
+        assert_eq!(plan["score"], 0);
+        let unlock = &plan["unlock"];
+        assert_eq!(unlock["score_zero"], true);
+        assert_eq!(unlock["resource_free"], true);
+        assert_eq!(unlock["deps_verified"], true);
+        assert_eq!(unlock["unlocked"], true);
+        // `audit` admits a path `run` is in flight on, so the resource
+        // condition is the one that fails — score zero, deps verified,
+        // and the holder named. A one-word summary would read this node
+        // as ready, which is the difference the panel exists to show.
+        let audit = &nodes[2];
+        assert_eq!(audit["state"], "held");
+        assert_eq!(audit["unlock"]["score_zero"], true);
+        assert_eq!(audit["unlock"]["deps_verified"], true);
+        assert_eq!(audit["unlock"]["resource_free"], false);
+        assert_eq!(audit["unlock"]["unlocked"], false);
+        assert_eq!(audit["unlock"]["held"][0]["holder"], "run");
+        assert_eq!(audit["unlock"]["held"][0]["path"], "src/boards.rs");
+        // The verified node's own closure is empty.
+        assert_eq!(nodes[0]["state"], "verified");
+        assert_eq!(nodes[0]["score"], 0);
+        assert!(!body.contains("api_key"), "{body}");
+    }
+
+    /// A home with no logs and no declared graph names both, rather than
+    /// drawing an empty tree and an empty graph.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_home_with_nothing_delegated_names_it_rather_than_drawing_an_empty_graph() {
+        let (token, port) = launch().await;
+        let reply = get(port, "/api/delegation", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let body = reply
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("a body past the head");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert!(document["live"].is_null(), "{document}");
+        assert!(document["graph"].is_null(), "{document}");
+        let refused = document["refused"].as_array().expect("the refusals");
+        assert!(
+            refused.iter().any(|reason| reason
+                .as_str()
+                .is_some_and(|reason| reason.contains("holds no declared graph"))),
+            "{document}"
+        );
+        assert!(
+            refused.iter().any(|reason| reason
+                .as_str()
+                .is_some_and(|reason| reason.contains("has no readable session log"))),
+            "{document}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

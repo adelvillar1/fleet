@@ -38,10 +38,12 @@
     addresses: document.getElementById('addresses'),
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
+    panelDelegation: document.getElementById('panel-delegation'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
     routerBoard: document.getElementById('router-board'),
+    delegationBoard: document.getElementById('delegation-board'),
     routePill: document.getElementById('route-pill'),
     statePill: document.getElementById('state-pill'),
     spend: document.getElementById('spend'),
@@ -104,7 +106,12 @@
     // the panel keeps the two apart.
     panel: 'chat',
     router: null,
-    routerAt: 0
+    routerAt: 0,
+    // The delegation panel's read, and when it last landed. It is the
+    // session logs and the graph file, so it moves as a run delegates
+    // and as the plan's work declares nodes.
+    delegation: null,
+    delegationAt: 0
   };
 
   // A short mark for a tool, so a card reads at a glance without an
@@ -588,10 +595,31 @@
     'var(--dsw-static-ink-600)'
   ];
 
-  function svg(name, attrs) {
+  // An SVG element, its attributes, and the text it carries. A node's
+  // `<title>` is the whole of what its box had to clip, so the third
+  // argument is not optional in spirit: an element that says nothing
+  // shows no tooltip and the clipped words are simply gone.
+  function svg(name, attrs, said) {
     var made = document.createElementNS('http://www.w3.org/2000/svg', name);
     Object.keys(attrs || {}).forEach(function (key) { made.setAttribute(key, attrs[key]); });
+    if (said != null) made.textContent = said;
     return made;
+  }
+
+  // A card's inner width, from the board it stands in. Every chart is
+  // laid out against this, so a chart fills the card it was drawn for at
+  // the scale it was drawn at rather than being stretched to whatever
+  // width it happens to land in. The board is twelve equal tracks with a
+  // gap between them, so a card of span n is n tracks and n-1 gaps.
+  // A board nobody has laid out yet measures zero, and the board's own
+  // designed width stands in for it.
+  var BOARD_WIDE = 1280, CARD_GAP = 14, CARD_PAD = 32;
+
+  function cardWide(board, span) {
+    var wide = board.clientWidth;
+    if (wide < 240) wide = BOARD_WIDE;
+    var track = (wide - CARD_GAP * 11) / 12;
+    return Math.max(240, Math.round(track * span + CARD_GAP * (span - 1) - CARD_PAD));
   }
 
   function boardCard(span, title, stamp, note) {
@@ -628,14 +656,15 @@
   // the hour's calls, and the calls that did not serve stacked at the top
   // in the down colour. An hour with no calls is not a zero-height column
   // — the board already left those out, and a chart that drew them would
-  // be inventing the shape of a day it never saw.
-  function dayChart(hours) {
+  // be inventing the shape of a day it never saw. The width is the card's
+  // own, so the columns widen with the card instead of the whole chart
+  // being scaled up to it.
+  function dayChart(hours, wide) {
     var wrap = node('div', 'chart');
-    var W = 320, H = 118, base = H - 18, top = 14, gap = 6;
+    var W = Math.max(240, Math.round(wide || 320)), H = 118, base = H - 18, top = 14, gap = 6;
     var width = hours.length ? (W - gap * (hours.length - 1)) / hours.length : 0;
     var most = hours.reduce(function (peak, column) { return Math.max(peak, column.calls); }, 0);
-    var plot = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img',
-      'aria-label': 'the day\u2019s calls by their own hour' });
+    var plot = svgPlot(W, H, 'the day\u2019s calls by their own hour');
     plot.appendChild(svg('line', { x1: 0, y1: base + 0.5, x2: W, y2: base + 0.5, class: 'chart-base' }));
     hours.forEach(function (column, index) {
       var x = index * (width + gap);
@@ -672,8 +701,7 @@
     var wrap = node('div', 'donut');
     var R = 34, C = 2 * Math.PI * R;
     var total = models.reduce(function (sum, entry) { return sum + entry.calls; }, 0);
-    var plot = svg('svg', { width: 92, height: 92, viewBox: '0 0 92 92', role: 'img',
-      'aria-label': 'the day\u2019s calls by model' });
+    var plot = svgPlot(92, 92, 'the day\u2019s calls by model');
     plot.appendChild(svg('circle', { cx: 46, cy: 46, r: R, class: 'donut-track', 'stroke-width': 13 }));
     var run = 0;
     models.forEach(function (entry, index) {
@@ -856,7 +884,7 @@
   }
 
   // The day: the ledger's own tiles and the day column chart.
-  function dayCard(read) {
+  function dayCard(read, wide) {
     var el0 = boardCard(7, 'today\u2019s ledger', 'the board\u2019s read \u00b7 ' + clock(read.read_at));
     var totals = read.totals;
     if (!totals) {
@@ -877,7 +905,7 @@
         'than drawn as a zero.');
       note.style.marginTop = '14px';
       el0.appendChild(note);
-      el0.appendChild(dayChart(read.hours));
+      el0.appendChild(dayChart(read.hours, wide));
     }
     return el0;
   }
@@ -1020,6 +1048,7 @@
 
   function paintRouter() {
     var read = face.router;
+    var wide7 = cardWide(el.routerBoard, 7);
     el.routerBoard.textContent = '';
     // Before the first read lands, the panel says so rather than drawing
     // an empty grid. The live decision is not in the read and paints
@@ -1035,7 +1064,7 @@
     }
     el.routerBoard.appendChild(decisionCard());
     el.routerBoard.appendChild(cacheCard(read));
-    el.routerBoard.appendChild(dayCard(read));
+    el.routerBoard.appendChild(dayCard(read, wide7));
     el.routerBoard.appendChild(mixCard(read));
     el.routerBoard.appendChild(chainCard(read));
     el.routerBoard.appendChild(rowsCard(read));
@@ -1064,6 +1093,488 @@
       .then(function (doc) {
         face.router = doc;
         if (face.panel === 'router') paintRouter();
+      })
+      .catch(function () { });
+  }
+
+  // ------------------------------------------------- the delegation panel
+
+  // The two pictures the panel owes: the tree of the run in flight and
+  // the runs before it, and the declared dependency graph. Both are
+  // nodes and edges, because what blocks what is a shape and not a row.
+
+  // The gaps that separate a tree node from its children, and a graph
+  // node from the layer under it; the height a node needs to carry what
+  // it says. A node's own width is not a constant: it is derived from the
+  // card the chart stands in, so the nodes fill their card at the scale
+  // they were drawn at rather than being stretched to it.
+  var PLOT_MARGIN = 8;
+  var TREE_H = 58, TREE_X = 26, TREE_Y = 40, TREE_MIN_W = 150;
+  var GRAPH_H = 66, GRAPH_X = 30, GRAPH_Y = 54, GRAPH_MIN_W = 150, GRAPH_MAX_W = 300;
+
+  // The state words the graph's own `state_word` returns, and the tone
+  // each reads in. The panel inherits the vocabulary rather than
+  // inventing a second one, so a node cannot be named two ways here and
+  // in the terminal.
+  var GRAPH_TONE = {
+    verified: 'ok', ready: 'ok', running: 'live',
+    held: 'warn', waiting: 'idle', failed: 'down'
+  };
+
+  // A tree node's own words: `running` while its log carries no end
+  // record, `stopped` once it does — the session module's distinction.
+  var TREE_TONE = { running: 'live', stopped: 'idle' };
+
+  function clip(text, most) {
+    var said = String(text == null ? '' : text);
+    return said.length > most ? said.slice(0, most - 1) + '\u2026' : said;
+  }
+
+  // A tone word to the colour the face already uses for it, so the
+  // panel's dots are the same dots the rest of the face draws.
+  function toneColour(tone) {
+    return tone === 'ok' ? 'var(--dsw-alias-ok)'
+      : tone === 'down' ? 'var(--dsw-alias-down)'
+      : tone === 'warn' ? 'var(--dsw-alias-warn)'
+      : tone === 'live' ? 'var(--dsw-alias-accent)'
+      : 'var(--dsw-alias-ink-tertiary)';
+  }
+
+  function dot(x, y, tone, radius) {
+    return svg('circle', {
+      cx: x, cy: y, r: radius || 3.5,
+      fill: toneColour(tone), class: 'node-dot'
+    });
+  }
+
+  // A plot carries its own size as well as its own coordinate system. The
+  // size matters: a chart that only declares a viewBox is scaled by the
+  // stylesheet to whatever width it lands in, and an SVG scales its text
+  // with its geometry — a 12px label blown up three times is not a label
+  // any more. Declaring the size lets a chart shrink to fit a narrow card
+  // without ever growing past the scale it was drawn at.
+  function svgPlot(w, h, label) {
+    return svg('svg', {
+      width: w, height: h,
+      viewBox: '0 0 ' + w + ' ' + h,
+      role: 'img',
+      'aria-label': label
+    });
+  }
+
+  // A line of text in a plot, anchored where it starts: SVG text does
+  // not wrap, so a label longer than its box is clipped by the caller
+  // rather than by the renderer.
+  function label(x, y, className, said, anchor) {
+    var made = svg('text', { x: x, y: y, class: className });
+    if (anchor) made.setAttribute('text-anchor', anchor);
+    made.textContent = said;
+    return made;
+  }
+
+  // --- the tree ---
+
+  // How many leaf slots a subtree needs. A node with no children needs
+  // one; a node with them needs their sum, which is what centres a
+  // parent over its children rather than over the leftmost one.
+  function treeLeaves(node) {
+    return node.children && node.children.length
+      ? node.children.reduce(function (sum, child) { return sum + treeLeaves(child); }, 0)
+      : 1;
+  }
+
+  // The leaf range a subtree occupies, left to right. A node's own centre
+  // is the middle of its range, so a parent sits over its children and a
+  // lone child sits over its own slot.
+  function layTree(node, depth, left, placed) {
+    var leaves = treeLeaves(node);
+    placed.push({ node: node, depth: depth, lo: left, hi: left + leaves - 1 });
+    var cursor = left;
+    (node.children || []).forEach(function (child) {
+      cursor = layTree(child, depth + 1, cursor, placed);
+    });
+    return left + leaves;
+  }
+
+  // A node's left edge: the middle of its leaf range, less half a box.
+  // The half-gap between slots is taken off the ends so the outermost box
+  // starts flush with the plot's own margin.
+  function treeLeft(one, boxW) {
+    return PLOT_MARGIN + (one.lo + one.hi + 1) / 2 * (boxW + TREE_X) - TREE_X / 2 - boxW / 2;
+  }
+
+  // The width the boxes take when `leaves` of them share a card of
+  // `wide` units. They share the whole card: one node alone is a wide
+  // node rather than a small one swimming in whitespace, and a bushy
+  // subtree narrows them until they stop being readable, at which point
+  // the whole chart is scaled down instead and keeps its proportions.
+  function treeBoxWide(wide, leaves) {
+    var usable = Math.max(320, wide) - PLOT_MARGIN * 2 - TREE_X * (leaves - 1);
+    return Math.max(TREE_MIN_W, usable / leaves);
+  }
+
+  // A parent to its child: one cubic, whose control points sit halfway
+  // down the gap, so an edge leaves the parent's bottom and enters the
+  // child's top going straight down on both ends.
+  function treeEdges(node, at, into, boxW) {
+    (node.children || []).forEach(function (child) {
+      var a = at[node.id], b = at[child.id];
+      var x1 = a.x + boxW / 2, y1 = a.y + TREE_H;
+      var x2 = b.x + boxW / 2, y2 = b.y;
+      var mid = y1 + (y2 - y1) / 2;
+      into.appendChild(svg('path', {
+        d: 'M' + x1 + ' ' + y1 + 'C' + x1 + ' ' + mid + ' ' + x2 + ' ' + mid + ' ' + x2 + ' ' + y2,
+        class: 'tree-edge'
+      }));
+      treeEdges(child, at, into, boxW);
+    });
+  }
+
+  // One node of a tree: the model it ran, the task it was handed, the
+  // depth it sits at, and its state. A node at the cap is dashed,
+  // because the code refuses to make it a parent and a subtree drawn
+  // there would be a subtree that could not have run.
+  function treeBox(one, at, cap, boxW) {
+    var made = svg('g', { class: 'tree-node' });
+    var x = at.x, y = at.y;
+    var tone = TREE_TONE[one.status] || 'idle';
+    var box = svg('rect', {
+      x: x, y: y, width: boxW, height: TREE_H, rx: 8,
+      class: 'tree-box', 'data-tone': tone
+    });
+    if (cap && one.depth >= cap) box.classList.add('is-cap');
+    made.appendChild(box);
+    made.appendChild(dot(x + 15, y + 16, tone));
+    // What a label may say is the box's own width: SVG text does not
+    // wrap, so a name or a goal longer than its box would run into the
+    // next one rather than be clipped by the renderer.
+    var nameMost = Math.max(10, Math.floor((boxW - 40) / 6.9));
+    var goalMost = Math.max(18, Math.floor((boxW - 24) / 6.0));
+    made.appendChild(label(x + 26, y + 20, 'tree-name', clip(one.model || 'a model', nameMost)));
+    made.appendChild(label(x + boxW - 10, y + 20, 'tree-depth', 'd' + one.depth, 'end'));
+    made.appendChild(label(x + 12, y + 42, 'tree-goal',
+      clip(one.goal || 'no brief in the log', goalMost)));
+    var said = (one.goal || 'no brief in the log')
+      + '\n' + (one.model || 'a model')
+      + ' \u00b7 depth ' + one.depth
+      + ' \u00b7 ' + one.status
+      + (one.kind ? ' \u00b7 ' + one.kind : '')
+      + (one.stop_reason ? ' \u00b7 stopped: ' + one.stop_reason : '')
+      + (one.turns != null ? ' \u00b7 ' + one.turns + ' turns' : '');
+    if (cap && one.depth >= cap) {
+      said += '\nthe depth cap: the code refuses to delegate from here';
+    }
+    made.appendChild(svg('title', null, said));
+    return made;
+  }
+
+  function treeCard(root, title, note, cap, wide) {
+    var card = boardCard(12, title, null, note);
+    var placed = [];
+    var leaves = layTree(root, 0, 0, placed);
+    var depthMost = placed.reduce(function (most, one) {
+      return Math.max(most, one.depth);
+    }, 0);
+    var boxW = treeBoxWide(wide, leaves);
+    var w = PLOT_MARGIN * 2 + leaves * boxW + (leaves - 1) * TREE_X;
+    var h = PLOT_MARGIN * 2 + (depthMost + 1) * (TREE_H + TREE_Y) - TREE_Y;
+    var wrap = node('div', 'chart');
+    var made = svgPlot(w, h, title);
+    var at = {};
+    placed.forEach(function (one) {
+      at[one.node.id] = {
+        x: treeLeft(one, boxW),
+        y: PLOT_MARGIN + one.depth * (TREE_H + TREE_Y)
+      };
+    });
+    treeEdges(root, at, made, boxW);
+    placed.forEach(function (one) {
+      made.appendChild(treeBox(one.node, at[one.node.id], cap, boxW));
+    });
+    wrap.appendChild(made);
+    card.appendChild(wrap);
+    return card;
+  }
+
+  // --- the graph ---
+
+  // A node's layer is the longest chain of prerequisites under it, so a
+  // node sits below everything that must finish before it rather than
+  // beside it. A prerequisite the file names but does not declare has no
+  // layer to wait for: it is unresolved, which the node's own card says.
+  function graphLayers(graph) {
+    var index = {};
+    graph.nodes.forEach(function (one, at) { index[one.id] = at; });
+    var layer = graph.nodes.map(function () { return 0; });
+    for (var pass = 0; pass < graph.nodes.length; pass++) {
+      var moved = false;
+      graph.nodes.forEach(function (one, at) {
+        var want = 0;
+        one.prereqs.forEach(function (prereq) {
+          var from = index[prereq];
+          if (from != null) want = Math.max(want, layer[from] + 1);
+        });
+        if (want > layer[at]) { layer[at] = want; moved = true; }
+      });
+      if (!moved) break;
+    }
+    return layer;
+  }
+
+  function graphEdges(graph, at, into, boxW) {
+    graph.edges.forEach(function (edge) {
+      var a = at[graph.nodes[edge.from].id], b = at[graph.nodes[edge.to].id];
+      if (!a || !b) return;
+      var x1 = a.x + boxW, y1 = a.y + GRAPH_H / 2;
+      var x2 = b.x, y2 = b.y + GRAPH_H / 2;
+      var mid = x1 + (x2 - x1) / 2;
+      into.appendChild(svg('path', {
+        d: 'M' + x1 + ' ' + y1 + 'C' + mid + ' ' + y1 + ' ' + mid + ' ' + y2 + ' ' + x2 + ' ' + y2,
+        class: 'graph-edge'
+      }));
+    });
+  }
+
+  // One graph node: its name, the state it stands in, and its score
+  // against its own peak — the readiness bar the graph keeps.
+  function graphBox(one, at, boxW) {
+    var made = svg('g', { class: 'graph-node' });
+    var tone = GRAPH_TONE[one.state] || 'idle';
+    var x = at.x, y = at.y;
+    made.appendChild(svg('rect', {
+      x: x, y: y, width: boxW, height: GRAPH_H, rx: 8,
+      class: 'graph-box', 'data-tone': tone
+    }));
+    made.appendChild(dot(x + 14, y + 17, tone));
+    made.appendChild(label(x + 24, y + 21, 'graph-name', clip(one.id, Math.max(8, Math.floor((boxW - 40) / 6.9)))));
+    made.appendChild(label(x + boxW - 10, y + 21, 'graph-state', one.state, 'end'));
+    // The score as a bar against the peak: what is left of this node's
+    // closure, drawn as the fraction of the most it has ever been.
+    made.appendChild(svg('rect', {
+      x: x + 14, y: y + 36, width: boxW - 28, height: 4, rx: 2,
+      class: 'graph-track'
+    }));
+    var share = one.peak > 0 ? Math.min(1, one.score / one.peak) : 0;
+    if (share > 0) {
+      made.appendChild(svg('rect', {
+        x: x + 14, y: y + 36, width: (boxW - 28) * share, height: 4, rx: 2,
+        class: 'graph-fill', 'data-tone': tone
+      }));
+    }
+    made.appendChild(label(x + 14, y + 56, 'graph-score',
+      one.score + ' of ' + one.peak + ' left \u00b7 cost ' + one.cost));
+    var said = one.id + ' \u00b7 ' + one.state
+      + '\nscore ' + one.score + ' of a peak of ' + one.peak + ', cost ' + one.cost
+      + (one.reason ? '\nheld: ' + one.reason : '');
+    made.appendChild(svg('title', null, said));
+    return made;
+  }
+
+  function graphCard(graph, wide) {
+    var card = boardCard(12, 'the dependency graph', null,
+      'Every node\u2019s state is named by the same function the terminal render uses, and an edge runs ' +
+      'from a prerequisite to the node waiting on it.');
+    var layer = graphLayers(graph);
+    var widest = 0, deepest = 0;
+    var at = {};
+    var seen = {};
+    graph.nodes.forEach(function (one, index) {
+      var row = layer[index];
+      seen[row] = (seen[row] || 0) + 1;
+      widest = Math.max(widest, seen[row]);
+      deepest = Math.max(deepest, row);
+      at[one.id] = { row: row, at: seen[row] - 1 };
+    });
+    // A node of the graph says little — a name, a state, a score — so a
+    // wide card would leave it mostly empty. The nodes widen to fill the
+    // card up to a point and then stop, and the chart centres itself in
+    // what is left rather than stretching its text to fill it.
+    var usable = Math.max(320, wide) - PLOT_MARGIN * 2 - GRAPH_X * (widest - 1);
+    var boxW = Math.max(GRAPH_MIN_W, Math.min(GRAPH_MAX_W, usable / widest));
+    graph.nodes.forEach(function (one) {
+      var where = at[one.id];
+      where.x = PLOT_MARGIN + where.at * (boxW + GRAPH_X);
+      where.y = PLOT_MARGIN + where.row * (GRAPH_H + GRAPH_Y);
+    });
+    var w = PLOT_MARGIN * 2 + widest * boxW + (widest - 1) * GRAPH_X;
+    var h = PLOT_MARGIN * 2 + (deepest + 1) * (GRAPH_H + GRAPH_Y) - GRAPH_Y;
+    var wrap = node('div', 'chart');
+    var made = svgPlot(w, h, 'the declared dependency graph');
+    graphEdges(graph, at, made, boxW);
+    graph.nodes.forEach(function (one) {
+      made.appendChild(graphBox(one, at[one.id], boxW));
+    });
+    wrap.appendChild(made);
+    card.appendChild(wrap);
+    return card;
+  }
+
+  // --- the unlock conditions ---
+
+  // The three conditions the code requires, per node, each as its own
+  // mark. This is the panel's whole answer to "why is nothing running":
+  // all three are necessary, and the one that is not met is named rather
+  // than summarised.
+  function unlockRow(one) {
+    var row = node('div', 'unlock');
+    var head = node('div', 'unlock-head');
+    var name = node('span', 'unlock-name', one.id);
+    name.title = one.id;
+    head.appendChild(name);
+    var state = node('span', 'unlock-state', one.state);
+    state.dataset.tone = GRAPH_TONE[one.state] || 'idle';
+    head.appendChild(state);
+    var score = node('span', 'unlock-score',
+      one.score + ' of ' + one.peak + ' left');
+    head.appendChild(score);
+    row.appendChild(head);
+
+    var marks = node('div', 'unlock-marks');
+    [['score zero', one.unlock.score_zero],
+      ['resource free', one.unlock.resource_free],
+      ['deps verified', one.unlock.deps_verified]].forEach(function (pair) {
+        var mark = node('span', 'unlock-mark');
+        mark.dataset.met = pair[1] ? 'yes' : 'no';
+        mark.appendChild(dotHtml(pair[1] ? 'ok' : 'down'));
+        mark.appendChild(node('span', null, pair[0]));
+        marks.appendChild(mark);
+      });
+    row.appendChild(marks);
+
+    if (one.approach) row.appendChild(node('p', 'unlock-approach', one.approach));
+    var said = [];
+    if (one.unlock.waiting.length) said.push('waiting on ' + one.unlock.waiting.join(', '));
+    if (one.unlock.failed.length) said.push('failed: ' + one.unlock.failed.join(', '));
+    if (one.unlock.unresolved.length) said.push('undeclared prerequisites: ' + one.unlock.unresolved.join(', '));
+    one.unlock.held.forEach(function (hold) {
+      said.push(hold.path + ' is admitted by ' + hold.holder);
+    });
+    if (one.capabilities) said.push(one.capabilities);
+    if (one.paths.length) said.push('paths: ' + one.paths.join(', '));
+    if (one.delta) said.push('delta: ' + one.delta.state + ' \u00b7 ' + one.delta.reason);
+    if (said.length) row.appendChild(node('p', 'unlock-said', said.join(' \u00b7 ')));
+    return row;
+  }
+
+  // The dot the marks draw, in the face's own voice: a small span rather
+  // than an SVG, because it sits in a line of text.
+  function dotHtml(tone) {
+    var made = node('span', 'unlock-dot');
+    made.dataset.tone = tone;
+    return made;
+  }
+
+  function unlockCard(graph) {
+    var card = boardCard(7, 'what each node is waiting for', null,
+      'All three conditions are necessary and none is a summary of the others.');
+    var body = node('div', 'unlocks');
+    graph.nodes.forEach(function (one) { body.appendChild(unlockRow(one)); });
+    card.appendChild(body);
+    return card;
+  }
+
+  function graphTiles(graph) {
+    var card = boardCard(5, 'the graph\u2019s own aggregates', null, null);
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(graph.nodes.length, 'nodes'));
+    tiles.appendChild(tile(graph.edges.length, 'edges'));
+    tiles.appendChild(tile(graph.critical_path.length, 'critical path'));
+    tiles.appendChild(tile(graph.revisions, 'revisions'));
+    tiles.appendChild(tile(graph.diff_score, 'diff score'));
+    tiles.appendChild(tile(graph.replan ? 'yes' : 'no', 'replan', graph.replan ? 'warn' : null));
+    card.appendChild(tiles);
+    if (graph.blocks_most_work) {
+      var note = node('p', 'board-note',
+        'blocking the most work: ' + graph.blocks_most_work
+        + (graph.critical_path.length ? ' \u00b7 critical path ' + graph.critical_path.join(' \u2192 ') : ''));
+      note.style.marginTop = '12px';
+      card.appendChild(note);
+    }
+    return card;
+  }
+
+  function refusedCard(refused) {
+    var card = boardCard(12, 'reads that did not land', 'the panel\u2019s own read');
+    card.appendChild(node('p', 'board-empty', refused.join(' \u00b7 ')));
+    return card;
+  }
+
+  function paintDelegation() {
+    var read = face.delegation;
+    var wide = cardWide(el.delegationBoard, 12);
+    el.delegationBoard.textContent = '';
+    if (!read) {
+      var waiting = boardCard(12, 'delegation', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The delegation read has not landed yet. It reads the session logs and the graph file, ' +
+        'both of which are this machine\u2019s own.'));
+      el.delegationBoard.appendChild(waiting);
+      return;
+    }
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(read.depth_cap, 'depth cap'));
+    tiles.appendChild(tile(read.live ? countNodes(read.live) : 0, 'in this run'));
+    tiles.appendChild(tile(read.history.length, 'recent runs'));
+    tiles.appendChild(tile(read.graph ? read.graph.nodes.length : 0, 'graph nodes'));
+    var head = boardCard(12, 'delegation', null, null);
+    head.appendChild(tiles);
+    el.delegationBoard.appendChild(head);
+
+    if (read.live) {
+      el.delegationBoard.appendChild(treeCard(read.live,
+        'the run in flight', null, read.depth_cap, wide));
+    } else {
+      var none = boardCard(12, 'the run in flight', null, null);
+      none.appendChild(node('p', 'board-empty',
+        'No readable session log for this run yet. A tree is rebuilt off the logs\u2019 own start ' +
+        'records, so a run that has not written one has no tree to draw.'));
+      el.delegationBoard.appendChild(none);
+    }
+
+    read.history.forEach(function (root) {
+      el.delegationBoard.appendChild(treeCard(root,
+        'run ' + clip(root.id, 22),
+        (root.stop_reason ? 'stopped: ' + root.stop_reason : 'no end record')
+        + (root.turns != null ? ' \u00b7 ' + root.turns + ' turns' : '')
+        + (root.goal ? ' \u00b7 ' + root.goal : ''),
+        read.depth_cap, wide));
+    });
+
+    if (read.graph && read.graph.nodes.length) {
+      el.delegationBoard.appendChild(graphCard(read.graph, wide));
+      el.delegationBoard.appendChild(unlockCard(read.graph));
+      el.delegationBoard.appendChild(graphTiles(read.graph));
+    } else {
+      var empty = boardCard(12, 'the dependency graph', null, null);
+      empty.appendChild(node('p', 'board-empty',
+        'This home has declared no dependency graph. The graph is a file the plan\u2019s work ' +
+        'writes; nothing here is inferred from what a run did.'));
+      el.delegationBoard.appendChild(empty);
+    }
+
+    if (read.refused && read.refused.length) {
+      el.delegationBoard.appendChild(refusedCard(read.refused));
+    }
+  }
+
+  function countNodes(node0) {
+    return 1 + (node0.children || []).reduce(function (sum, child) {
+      return sum + countNodes(child);
+    }, 0);
+  }
+
+  function readDelegation(force) {
+    var now = Date.now();
+    if (!force && face.delegation && now - face.delegationAt < 4000) return Promise.resolve();
+    face.delegationAt = now;
+    return fetch('/api/delegation', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.delegation = doc;
+        if (face.panel === 'delegation') paintDelegation();
       })
       .catch(function () { });
   }
@@ -1330,6 +1841,7 @@
     if (address === 'chat') {
       el.panelChat.hidden = false;
       el.panelRouter.hidden = true;
+      el.panelDelegation.hidden = true;
       el.panelLater.hidden = true;
       return;
     }
@@ -1344,12 +1856,22 @@
       readRouter(true).then(paintRouter);
       return;
     }
+    if (address === 'delegation') {
+      el.panelChat.hidden = true;
+      el.panelLater.hidden = true;
+      el.panelRouter.hidden = true;
+      el.panelDelegation.hidden = false;
+      paintDelegation();
+      readDelegation(true).then(paintDelegation);
+      return;
+    }
     var named = known || [which, which];
     el.laterTitle.textContent = named[1];
     el.laterNote.textContent = named[1] + ' is a later increment of the same plan. ' +
       'The conversation is live now, and every surface reads the one event log this face already holds.';
     el.panelChat.hidden = true;
     el.panelRouter.hidden = true;
+    el.panelDelegation.hidden = true;
     el.panelLater.hidden = false;
   }
 
@@ -1365,9 +1887,12 @@
 
   // The board's read on the panel's own clock, and only while the panel
   // is showing: a day's ledger moves without the log saying anything, and
-  // a face nobody is looking at has nothing to refresh.
+  // a face nobody is looking at has nothing to refresh. The delegation
+  // read rides the same clock for the same reason — a run delegates
+  // while the owner watches the tree grow.
   window.setInterval(function () {
     if (face.panel === 'router') readRouter(false);
+    if (face.panel === 'delegation') readDelegation(false);
   }, 5000);
 
   load().then(listen).catch(function (error) {
