@@ -1358,6 +1358,310 @@ fn graph_snapshot(home: &Path, refused: &mut Vec<String>) -> Option<GraphSnapsho
     })
 }
 
+// --- the memory panel ------------------------------------------------------
+
+/// How many recall-hit rows the panel reads. The day's tail, oldest
+/// first — the bound the router board puts on its own rows, because a
+/// panel that grows with the stream it reads is a panel that eventually
+/// stops landing.
+const RECALL_HIT_CAP: usize = 64;
+
+/// One fact in the corpus browser: the frontmatter the substrate parses,
+/// and the body verbatim. The body rides whole because the panel's edit
+/// form needs the fact as it stands on disk, and the fact's own write
+/// path reads what the form hands it — a summary would be a second
+/// truth.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryFact {
+    pub name: String,
+    pub description: String,
+    pub fact_type: String,
+    pub basis: String,
+    pub tier: String,
+    pub date: String,
+    pub recall_count: u64,
+    /// The substrate's own reading: identity and standing preferences
+    /// are protected from the lifecycle's compaction.
+    pub protected: bool,
+    /// A supersession folded this fact away, or its `valid-until` has
+    /// passed. The corpus keeps it and recall skips it, so the browser
+    /// shows it marked rather than hiding it.
+    pub retired: bool,
+    pub superseded_by: String,
+    pub valid_until: String,
+    pub shape: Vec<String>,
+    pub phrases: Vec<String>,
+    pub missing: Vec<String>,
+    pub body: String,
+    pub path: String,
+}
+
+/// One recall hit the stream recorded, off the row's own fields: the
+/// fact, the shape the instruction routed under, and the score it ranked
+/// at.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryHit {
+    pub ts: String,
+    pub fact: String,
+    pub shape: String,
+    pub score: f64,
+}
+
+/// One read of the corpus and the day's recall hits.
+///
+/// The corpus root and the calibration root are both resolved by the
+/// caller — the same way the agent thread resolves them — so the browser
+/// reads the corpus the running agent reads, never a second one. A home
+/// with no corpus names itself rather than showing an empty grid that
+/// would read as "fleet has no memory".
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemorySnapshot {
+    pub read_at: String,
+    /// The day whose hits were read, `YYYY-MM-DD`.
+    pub day: String,
+    /// The corpus this read walked, named so the panel can say which one
+    /// it is showing.
+    pub root: String,
+    pub facts: Vec<MemoryFact>,
+    /// The day's recorded hits, oldest first. A `recall_hit` row names no
+    /// session, so the bound is the day rather than one run; the live
+    /// run's own recall is already in the event log as its `memory` card,
+    /// and that is where the panel reads it from.
+    pub hits: Vec<MemoryHit>,
+    pub refused: Vec<String>,
+}
+
+/// Read the corpus and the day's recall hits, off the two roots the
+/// caller resolved.
+pub fn read_memory(root: &Path, calib_root: &Path, day: &str) -> MemorySnapshot {
+    let mut refused: Vec<String> = Vec::new();
+    if !root.exists() {
+        refused.push(format!("{} holds no corpus", root.display()));
+    }
+    let facts = crate::memory::load_facts(root)
+        .iter()
+        .map(|fact| MemoryFact {
+            name: fact.name.clone(),
+            description: fact.description.clone(),
+            fact_type: fact.fact_type.clone(),
+            basis: fact.basis.label().to_string(),
+            tier: fact.tier.label().to_string(),
+            date: fact.date.clone(),
+            recall_count: fact.recall_count,
+            protected: fact.protected(),
+            retired: fact.forgotten(day),
+            superseded_by: fact.superseded_by.clone(),
+            valid_until: fact.valid_until.clone(),
+            shape: fact.shape.clone(),
+            phrases: fact.phrases.clone(),
+            missing: fact.missing.clone(),
+            body: fact.body.clone(),
+            path: fact.path.display().to_string(),
+        })
+        .collect();
+    let hits =
+        crate::calib::read_op_day(calib_root, day, crate::calib::OP_RECALL_HIT, RECALL_HIT_CAP)
+            .iter()
+            .map(|row| MemoryHit {
+                ts: row.ts.clone(),
+                fact: row.fact.clone(),
+                shape: row.shape.clone(),
+                score: row.score,
+            })
+            .collect();
+    MemorySnapshot {
+        read_at: now_stamp(),
+        day: day.to_string(),
+        root: root.display().to_string(),
+        facts,
+        hits,
+        refused,
+    }
+}
+
+// --- the skills panel ------------------------------------------------------
+
+/// How many sessions the usage scan reads for the curation card's unused
+/// count. The code's own default, read off the constant rather than
+/// restated here.
+const SKILL_USAGE_SESSIONS: usize = crate::skills::DEFAULT_RETIRE_AFTER_SESSIONS;
+
+/// One skill in the library: its frontmatter, how many times the scan saw
+/// it selected and approved, and where it came from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillsSkill {
+    pub name: String,
+    pub description: String,
+    /// Times the scan saw this skill selected and approved. Zero names a
+    /// skill the scan never saw used, which is the whole measure the
+    /// substrate reports.
+    pub uses: usize,
+    pub modified: String,
+    pub path: String,
+}
+
+/// One skill the library declined to load, and the reason in its own
+/// words — the reason is free-form, so the panel carries it rather than
+/// classifying it a second time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillsSkip {
+    pub name: String,
+    pub reason: String,
+}
+
+/// One proposal awaiting a decision: the kind it asks for, its evidence,
+/// and the body it would land.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillsProposal {
+    pub name: String,
+    pub description: String,
+    pub kind: String,
+    pub evidence: String,
+    pub body: String,
+    pub path: String,
+}
+
+/// One merge candidate: two skills whose descriptions read as
+/// near-identical, scored by the substrate's own function at its own
+/// threshold.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillsMerge {
+    /// The survivor, the alphabetically first name — the rule
+    /// [`crate::skills::curate`] files a merge under.
+    pub survivor: String,
+    /// The one a merge would absorb.
+    pub absorbed: String,
+    pub similarity: f64,
+    pub threshold: f64,
+}
+
+/// One read of the library, its skips, its proposals, and the curation
+/// candidates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillsSnapshot {
+    pub read_at: String,
+    /// The canonical library this read loaded, named.
+    pub canonical: String,
+    pub skills: Vec<SkillsSkill>,
+    pub skips: Vec<SkillsSkip>,
+    pub proposals: Vec<SkillsProposal>,
+    pub merges: Vec<SkillsMerge>,
+    /// The similarity the merge candidates were scored at — the code's
+    /// own constant, carried so the card names the threshold the
+    /// substrate actually uses rather than a second one.
+    pub threshold: f64,
+    /// How many sessions the usage scan actually saw.
+    pub sessions: usize,
+    /// How many loaded skills were never selected across those sessions.
+    /// A count, which is all the usage scan reports; the cards beside it
+    /// name which ones, from their own `uses`.
+    pub unused: usize,
+    /// Why the retire action is not one. Retirement curation is a
+    /// standing no-op under KI-215: the usage scan reads fleet's sessions
+    /// only, and the canonical library is cross-harness, so a fleet-side
+    /// count would retire another harness's skill. Carried by the read so
+    /// the card and the code cannot disagree about why.
+    pub curation_note: String,
+    pub refused: Vec<String>,
+}
+
+/// Read the library, the proposals awaiting a decision, and the curation
+/// candidates, off the library the caller resolved.
+///
+/// Nothing here writes. The merge candidates are the same pairs
+/// [`crate::skills::curate`] would file, computed with the same function
+/// at the same threshold — a read of that judgment rather than the
+/// proposals it would leave behind.
+pub fn read_skills(canonical: Option<&Path>, home: &Path) -> SkillsSnapshot {
+    let mut refused: Vec<String> = Vec::new();
+    let (skills, skips) = match canonical {
+        Some(dir) => crate::skills::load_reported(dir),
+        None => {
+            refused.push(
+                "no skills library resolved \u{2014} set $FLEET_SKILLS_DIR or install ~/.agents/skills"
+                    .to_string(),
+            );
+            (Vec::new(), Vec::new())
+        }
+    };
+    let proposals = crate::skills::load_proposals(home);
+    let usage = crate::skills::scan_usage(home, SKILL_USAGE_SESSIONS);
+    let unused = usage.unused(&skills);
+    let threshold = crate::skills::MERGE_SIMILARITY_THRESHOLD;
+    // Each description is tokenized once and the pairs are scored off the
+    // token sets: the same rule [`crate::skills::curate`] files a merge
+    // under, read off the substrate's own tokenizer, so a second copy
+    // cannot drift — and a library of four hundred skills lands inside a
+    // refresh interval.
+    let mut merges: Vec<SkillsMerge> = Vec::new();
+    let sets: Vec<crate::skills::TokenSet> = skills
+        .iter()
+        .map(|skill| crate::skills::TokenSet::of(&skill.description))
+        .collect();
+    for (index, (left, left_set)) in skills.iter().zip(sets.iter()).enumerate() {
+        for (right, right_set) in skills[index + 1..].iter().zip(sets[index + 1..].iter()) {
+            let similarity = left_set.similarity(right_set);
+            if similarity >= threshold {
+                let (survivor, absorbed) = if left.name <= right.name {
+                    (left, right)
+                } else {
+                    (right, left)
+                };
+                merges.push(SkillsMerge {
+                    survivor: survivor.name.clone(),
+                    absorbed: absorbed.name.clone(),
+                    similarity,
+                    threshold,
+                });
+            }
+        }
+    }
+    let loaded: Vec<SkillsSkill> = skills
+        .iter()
+        .map(|skill| SkillsSkill {
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            uses: usage.count(&skill.name),
+            modified: skill
+                .modified
+                .map(|time| crate::session::iso_utc_stamp(time).unwrap_or_default())
+                .unwrap_or_default(),
+            path: skill.path.display().to_string(),
+        })
+        .collect();
+    SkillsSnapshot {
+        read_at: now_stamp(),
+        canonical: canonical
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default(),
+        skips: skips
+            .iter()
+            .map(|skip| SkillsSkip {
+                name: skip.name.clone(),
+                reason: skip.reason.clone(),
+            })
+            .collect(),
+        unused,
+        sessions: usage.sessions,
+        skills: loaded,
+        proposals: proposals
+            .iter()
+            .map(|proposal| SkillsProposal {
+                name: proposal.name.clone(),
+                description: proposal.description.clone(),
+                kind: proposal.kind.label().to_string(),
+                evidence: proposal.evidence.clone(),
+                body: proposal.body.clone(),
+                path: proposal.path.display().to_string(),
+            })
+            .collect(),
+        merges,
+        threshold,
+        curation_note: "retirement curation is a standing no-op \u{2014} the usage scan reads fleet's sessions only and the canonical library is cross-harness (KI-215)".to_string(),
+        refused,
+    }
+}
+
 // --- the second-brain board --------------------------------------------------
 
 /// One board read of the second-brain's derived state files. Every file
@@ -4141,6 +4445,205 @@ mod tests {
             !snapshot.history.iter().any(|tree| tree.id == root),
             "{:?}",
             snapshot.history
+        );
+    }
+
+    // --- the memory panel ----------------------------------------------------
+
+    /// One fact file in the writer's own field order.
+    fn fact_file(name: &str, description: &str, kind: &str, basis: &str, tier: &str) -> String {
+        format!(
+            "---\nname: {name}\ndescription: \"{description}\"\ntype: {kind}\ndate: {}\nbasis: {basis}\ntier: {tier}\nshape: []\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe body.\n",
+            crate::calib::today()
+        )
+    }
+
+    /// One `recall_hit` row, the shape the stream writes.
+    fn hit_row(ts: &str, fact: &str, shape: &str, score: f64) -> String {
+        serde_json::json!({
+            "op": crate::calib::OP_RECALL_HIT,
+            "ts": ts,
+            "fact": fact,
+            "shape": shape,
+            "score": score,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn the_memory_panel_reads_the_corpus_and_the_days_hits() {
+        let corpus = Scratch::new("memory-corpus");
+        let logs = Scratch::new("memory-logs");
+        std::fs::write(
+            corpus.path().join("a-fact.md"),
+            fact_file(
+                "a-fact",
+                "the corpus is one fact per file",
+                "project",
+                "inferred",
+                "durable",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            corpus.path().join("a-protected.md"),
+            fact_file(
+                "a-protected",
+                "the owner stated a standing preference",
+                "user",
+                "confirmed-by",
+                "durable",
+            ),
+        )
+        .unwrap();
+        // A superseded fact stays in the corpus and recall skips it, so
+        // the browser shows it marked rather than hiding it.
+        std::fs::write(
+            corpus.path().join("a-folded.md"),
+            format!(
+                "---\nname: a-folded\ndescription: \"a fact folded into another\"\ntype: project\ndate: {}\nbasis: inferred\ntier: durable\nshape: []\nrecall-count: 3\nsuperseded-by: a-fact\nvalid-until:\n---\n\nThe body.\n",
+                crate::calib::today()
+            ),
+        )
+        .unwrap();
+        let day = "2026-10-16";
+        write_day(
+            logs.path(),
+            day,
+            &[
+                screen_row("2026-10-16T09:00:00Z"),
+                hit_row("2026-10-16T09:00:01Z", "a-fact", "debugging", 0.82),
+                hit_row("2026-10-16T09:00:02Z", "a-protected", "planning", 0.71),
+            ],
+        );
+
+        let snapshot = read_memory(corpus.path(), logs.path(), day);
+
+        assert_eq!(snapshot.facts.len(), 3, "{:?}", snapshot.facts);
+        assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
+        // Every fact carries its body verbatim: the edit form needs the
+        // fact as it stands on disk, not a summary of it.
+        let fact = snapshot
+            .facts
+            .iter()
+            .find(|fact| fact.name == "a-fact")
+            .expect("a-fact");
+        assert_eq!(fact.body, "The body.");
+        assert_eq!(fact.tier, "durable");
+        assert_eq!(fact.basis, "inferred");
+        assert!(!fact.protected);
+        assert!(!fact.retired);
+        let protected = snapshot
+            .facts
+            .iter()
+            .find(|fact| fact.name == "a-protected")
+            .expect("a-protected");
+        assert!(protected.protected);
+        let folded = snapshot
+            .facts
+            .iter()
+            .find(|fact| fact.name == "a-folded")
+            .expect("a-folded");
+        assert!(folded.retired);
+        assert_eq!(folded.superseded_by, "a-fact");
+        assert_eq!(folded.recall_count, 3);
+        // The hits are the day's recall rows, oldest first, and the
+        // screening rows between them do not ride along.
+        assert_eq!(snapshot.hits.len(), 2, "{:?}", snapshot.hits);
+        assert_eq!(snapshot.hits[0].fact, "a-fact");
+        assert_eq!(snapshot.hits[0].shape, "debugging");
+        assert_eq!(snapshot.hits[1].fact, "a-protected");
+    }
+
+    #[test]
+    fn a_home_with_no_corpus_names_itself_rather_than_showing_an_empty_one() {
+        let corpus = Scratch::new("memory-empty");
+        let logs = Scratch::new("memory-empty-logs");
+        std::fs::remove_dir_all(corpus.path()).unwrap();
+
+        let snapshot = read_memory(corpus.path(), logs.path(), "2026-10-16");
+
+        assert!(snapshot.facts.is_empty());
+        assert!(snapshot.hits.is_empty());
+        assert_eq!(snapshot.refused.len(), 1, "{:?}", snapshot.refused);
+        assert!(
+            snapshot.refused[0].contains("holds no corpus"),
+            "{}",
+            snapshot.refused[0]
+        );
+    }
+
+    // --- the skills panel ----------------------------------------------------
+
+    /// One SKILL.md in the library's own format.
+    fn skill_file(name: &str, description: &str) -> String {
+        format!("---\nname: {name}\ndescription: \"{description}\"\n---\n\nThe body.\n")
+    }
+
+    #[test]
+    fn the_skills_panel_reads_the_library_its_skips_and_its_proposals() {
+        let home = Scratch::new("skills-home");
+        let library = Scratch::new("skills-library");
+        std::fs::create_dir_all(library.path().join("alpha")).unwrap();
+        std::fs::write(
+            library.path().join("alpha/SKILL.md"),
+            skill_file("alpha", "write the docs for a slice"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(library.path().join("beta")).unwrap();
+        std::fs::write(
+            library.path().join("beta/SKILL.md"),
+            skill_file("beta", "write the docs for a slice"),
+        )
+        .unwrap();
+        // A proposal awaiting a decision, in the skills draft's own store.
+        let drafts = crate::skills::proposals_dir(home.path());
+        std::fs::create_dir_all(&drafts).unwrap();
+        std::fs::write(
+            drafts.join("gamma.md"),
+            "---\nname: gamma\ndescription: \"a drafted skill\"\nproposed: true\nkind: create\nevidence: session s1\n---\n\nThe drafted body.\n",
+        )
+        .unwrap();
+
+        let snapshot = read_skills(Some(library.path()), home.path());
+
+        assert!(snapshot.refused.is_empty(), "{:?}", snapshot.refused);
+        assert_eq!(snapshot.skills.len(), 2, "{:?}", snapshot.skills);
+        assert!(snapshot.skills.iter().all(|skill| skill.uses == 0));
+        assert_eq!(snapshot.proposals.len(), 1, "{:?}", snapshot.proposals);
+        assert_eq!(snapshot.proposals[0].name, "gamma");
+        assert_eq!(snapshot.proposals[0].kind, "create");
+        assert_eq!(snapshot.proposals[0].body, "The drafted body.");
+        // The two near-identical descriptions are the merge candidates,
+        // scored by the substrate's own function at its own threshold.
+        assert_eq!(snapshot.merges.len(), 1, "{:?}", snapshot.merges);
+        assert_eq!(snapshot.merges[0].survivor, "alpha");
+        assert_eq!(snapshot.merges[0].absorbed, "beta");
+        assert_eq!(
+            snapshot.merges[0].threshold,
+            crate::skills::MERGE_SIMILARITY_THRESHOLD
+        );
+        // Retirement curation is a standing no-op, and the read says so
+        // rather than leaving the card to guess why.
+        assert!(
+            snapshot.curation_note.contains("KI-215"),
+            "{}",
+            snapshot.curation_note
+        );
+    }
+
+    #[test]
+    fn a_skills_read_with_no_library_names_the_refusal() {
+        let home = Scratch::new("skills-none-home");
+
+        let snapshot = read_skills(None, home.path());
+
+        assert!(snapshot.skills.is_empty());
+        assert_eq!(snapshot.refused.len(), 1, "{:?}", snapshot.refused);
+        assert!(
+            snapshot.refused[0].contains("no skills library resolved"),
+            "{}",
+            snapshot.refused[0]
         );
     }
 

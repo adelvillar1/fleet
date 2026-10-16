@@ -344,7 +344,7 @@ Launch: `fleet gui [--port N] [--no-open] [--host H]`, default
 - [x] C3: the delegation panel renders the live tree and the dependency
   graph with the code's actual unlock conditions, and the graph.rs doc
   lag is fixed.
-- [ ] C4: the memory and skills panels render the corpus, the recall
+- [x] C4: the memory and skills panels render the corpus, the recall
   hits, and the library with its skips; a proposal is approved from the
   browser through skills.rs's own function.
 - [ ] C5: the settings surface writes every knob and both lists through
@@ -642,6 +642,80 @@ count; the feed names its build time; exit 0.
   followed, 1070 passed). The fixture needs a per-test home, which is
   a test-hygiene change of its own; it is named here so it is not
   mistaken for a product defect later.
+- **The skills-manager reference, adopted as a concept and refused as a
+  dependency.** The owner pointed at
+  `github.com/xingkongliang/skills-manager` (a Tauri 2 desktop app: React
+  19, TypeScript, Vite, SQLite/rusqlite, react-i18next) that manages and
+  syncs skills across 50+ coding tools. What transfers is the UX shape,
+  and G5 is built on it: a card library with per-item badges (loaded /
+  skipped, kind, usage count), preview-before-acting in the inspector, a
+  decisions queue as a first-class card, an activity trail (fleet already
+  has one — the calibration stream's `propose` and `recall_hit` rows),
+  and search. The memory panel is the same concept extended to facts,
+  and it gets something skills-manager has no analogue for: the
+  recall-hit trail. What does not transfer: the Tauri + React + SQLite +
+  Node dev toolchain against "one static Rust binary, no Node runtime, no
+  checkout dependency"; SQLite as a second store when the substrate is
+  the filesystem (one fact per file, one directory per skill) and a
+  second store would be a second truth; and marketplace/git install plus
+  deploying to 50 harnesses, which is the opposite of the own-home
+  ruling — fleet is a consumer of `~/.agents/skills` and never writes
+  another harness's config. A second desktop window would also fragment
+  the one console surface the owner asked for.
+- **The memory edit rides the substrate's public modify path, and the
+  plan's "in place" wording is narrower than the code allows.** The
+  panel spec says a fact "edits in place through the substrate's own
+  rewriter". `memory::rewrite_field` — the one in-place rewriter, which
+  re-renders a named frontmatter line and preserves every other byte
+  through a temp file and a rename — was private. G5 widens it into a
+  public `memory::edit(root, &FactEdit)` that rides it for every field
+  and adds `rewrite_body` for the body, so the browser's edit is the
+  corpus's own write path rather than a file write of the GUI's. What
+  the read cannot do is rename a fact: the name is the fact's identity
+  and its file's stem, so a rename is a supersession
+  (`Memory::supersede`), which records why. The name, the tier and the
+  basis are therefore not editable from the browser, and the form says
+  so.
+- **The skills approve rides improve.rs, because skills.rs has no
+  approve.** `skills.rs` loads the library, the skips and the proposals;
+  it applies nothing. The apply path is `improve::apply(name, &Apply)`,
+  which stages the change, runs the four cargo steps in the repo, and
+  keeps the change only when every step is green. `POST /api/skill`
+  rides exactly that function with `approved: true` — the click is the
+  approval — so an approve takes as long as the gate does, and the
+  button says so while it runs. A skills write is home-side, so it
+  creates no commit; the pre-image stash beside it is what
+  `fleet improve undo` restores. Two consequences are named rather than
+  papered over: the eval-corpus step is unwired because a source target
+  is refused by name before the gate (this is the skills panel's
+  approve, and a source edit's corpus step is a CLI step), and the gate
+  runs on the process's own PATH, so a `fleet gui` launched from an
+  environment without cargo refuses the approve and names why — the same
+  exposure the CLI has.
+- **Retirement curation is a standing no-op, and the card says so.**
+  `skills::curate` files merge-only proposals; a retirement draft would
+  measure use across fleet's sessions while the canonical library is
+  cross-harness, so a fleet-side count would retire another harness's
+  skill (KI-215). The read therefore carries the KI-215 refusal in
+  `curation_note` rather than offering a retire button that could not
+  work. The merge candidates ARE offered, computed read-only with the
+  substrate's own tokenizer at its own threshold — the same pairs
+  `curate` would file, without the write.
+- **A read that did not land, found by building it.** The first skills
+  read scored 97,020 description pairs by re-tokenizing both sides per
+  pair and took 8.4 seconds — far past a 5-second refresh interval. G5
+  adds `skills::TokenSet`, which tokenizes each description once and
+  scores a pair by a merge over two sorted sets, and `description_similarity`
+  now delegates to it so there is one rule and not two. The read lands
+  in 275 ms against the real 441-skill library.
+- **The corpus root is resolved once and shared.** The browser's memory
+  panel and the agent thread's consolidator both walked for a corpus
+  root. `Bridge` now holds the root resolved by the agent's own rule
+  (`memory::resolve_root` off the process's working directory) and hands
+  the same root to the consolidator, so the two cannot disagree about
+  which corpus this face is looking at. The server tests point the panel
+  at a corpus they built through a `#[cfg(test)]` seam, which keeps the
+  production rule out of the test's way.
 - Increments G1+ follow this document; each lands gated and committed
   with explicit paths, and this file's `updated` field moves with the
   work.

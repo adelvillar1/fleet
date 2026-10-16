@@ -39,11 +39,15 @@
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
     panelDelegation: document.getElementById('panel-delegation'),
+    panelMemory: document.getElementById('panel-memory'),
+    panelSkills: document.getElementById('panel-skills'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
     routerBoard: document.getElementById('router-board'),
     delegationBoard: document.getElementById('delegation-board'),
+    memoryBoard: document.getElementById('memory-board'),
+    skillsBoard: document.getElementById('skills-board'),
     routePill: document.getElementById('route-pill'),
     statePill: document.getElementById('state-pill'),
     spend: document.getElementById('spend'),
@@ -111,7 +115,15 @@
     // session logs and the graph file, so it moves as a run delegates
     // and as the plan's work declares nodes.
     delegation: null,
-    delegationAt: 0
+    delegationAt: 0,
+    // The memory panel's read, its clock, and the query the search box
+    // holds. The corpus is one read; the search is the panel's own.
+    memory: null,
+    memoryAt: 0,
+    query: '',
+    // The skills panel's read and its clock.
+    skills: null,
+    skillsAt: 0
   };
 
   // A short mark for a tool, so a card reads at a glance without an
@@ -1579,6 +1591,480 @@
       .catch(function () { });
   }
 
+  // ------------------------------------------------- the memory and skills
+
+  // The memory panel. The corpus is one read and the search is the
+  // panel's own — filtering a read in the browser is cheaper than a read
+  // per keystroke, and the corpus is the machine's own to hold. The
+  // day's hits come off the calibration stream's rows; this run's own
+  // recall is already in the event log, so it is reduced off the log
+  // rather than read a second time.
+  function paintMemory() {
+    var read = face.memory;
+    el.memoryBoard.textContent = '';
+    if (!read) {
+      var waiting = boardCard(12, 'memory', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The corpus read has not landed yet. It reads the memories tree and the day\u2019s ' +
+        'calibration stream, both of which are this machine\u2019s own.'));
+      el.memoryBoard.appendChild(waiting);
+      return;
+    }
+    var facts = read.facts || [];
+    var live = facts.filter(function (fact) { return !fact.retired; });
+    var hits = read.hits || [];
+    var recalls = face.events.filter(function (event) { return event.type === 'memory'; });
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(live.length, 'live facts'));
+    tiles.appendChild(tile(facts.filter(function (fact) { return fact.protected; }).length, 'protected'));
+    tiles.appendChild(tile(facts.length - live.length, 'retired'));
+    tiles.appendChild(tile(hits.length, 'hits ' + read.day));
+    tiles.appendChild(tile(recalls.length, 'recalls this run', recalls.length ? 'live' : null));
+    var head = boardCard(12, 'memory', null, 'the corpus at ' + read.root);
+    head.appendChild(tiles);
+    head.appendChild(memorySearch());
+    el.memoryBoard.appendChild(head);
+
+    var shown = live.filter(function (fact) { return matchesQuery(fact); });
+    if (shown.length) {
+      el.memoryBoard.appendChild(factGrid(shown));
+    } else {
+      var none = boardCard(12, 'the corpus', null, null);
+      none.appendChild(node('p', 'board-empty',
+        live.length
+          ? 'No live fact matches \u201c' + face.query + '\u201d. The search reads the name, the ' +
+            'sentence, the type, the shape tags and the body \u2014 every field the fact carries.'
+          : 'This home holds no live facts. A fact is one file under the memories tree, and the ' +
+            'agent writes them through the substrate\u2019s own writer.'));
+      el.memoryBoard.appendChild(none);
+    }
+
+    el.memoryBoard.appendChild(recallCard(recalls, hits, read.day));
+
+    var retired = facts.filter(function (fact) { return fact.retired; });
+    if (retired.length) {
+      var folded = boardCard(12, 'retired facts', null,
+        'a supersession folded these away, or their valid-until passed. The corpus keeps them and recall skips them.');
+      folded.appendChild(factGrid(retired));
+      el.memoryBoard.appendChild(folded);
+    }
+    if (read.refused && read.refused.length) {
+      el.memoryBoard.appendChild(refusedCard(read.refused));
+    }
+  }
+
+  // The search box, and the query it holds. It is built once per paint
+  // and keeps its own value, so typing in it repaints the grid without
+  // touching the read.
+  function memorySearch() {
+    var wrap = node('div', 'panel-search');
+    var box = node('input', 'panel-search-box');
+    box.type = 'search';
+    box.placeholder = 'search the corpus \u2014 name, sentence, type, shape, body';
+    box.value = face.query || '';
+    box.setAttribute('aria-label', 'search the corpus');
+    box.addEventListener('input', function () {
+      face.query = box.value;
+      paintMemory();
+      var again = el.memoryBoard.querySelector('.panel-search-box');
+      if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+    });
+    wrap.appendChild(box);
+    return wrap;
+  }
+
+  // Whether one fact matches the panel's query: every field the fact
+  // carries, lowercased, because a search that read only the name would
+  // miss the fact whose body is the reason it was recalled.
+  function matchesQuery(fact) {
+    var asked = (face.query || '').trim().toLowerCase();
+    if (!asked) return true;
+    var haystack = [
+      fact.name, fact.description, fact.fact_type, fact.tier, fact.basis,
+      (fact.shape || []).join(' '), (fact.phrases || []).join(' '),
+      (fact.missing || []).join(' '), fact.body, fact.valid_until
+    ].join(' ').toLowerCase();
+    return haystack.indexOf(asked) !== -1;
+  }
+
+  // The corpus as cards: one per fact, with its type and tier as badges
+  // and its recall count beside the name. A card opens the fact in the
+  // inspector, where its whole body is and its edit lives.
+  function factGrid(facts) {
+    var grid = node('div', 'fact-grid');
+    facts.forEach(function (fact) {
+      var card0 = node('article', 'fact-card');
+      card0.dataset.tone = fact.protected ? 'protected' : fact.retired ? 'retired' : 'live';
+      var name = node('h3', 'fact-name', fact.name);
+      var recalls = node('span', 'fact-recalls',
+        fact.recall_count + (fact.recall_count === 1 ? ' recall' : ' recalls'));
+      card0.appendChild(name);
+      card0.appendChild(recalls);
+      var badges = node('div', 'fact-badges');
+      badges.appendChild(badge(fact.fact_type, fact.protected ? 'accent' : null));
+      badges.appendChild(badge(fact.tier, fact.tier === 'working' ? 'warn' : null));
+      if (fact.retired) badges.appendChild(badge('retired', 'down'));
+      card0.appendChild(badges);
+      card0.appendChild(node('p', 'fact-said', fact.description));
+      if (fact.shape && fact.shape.length) {
+        card0.appendChild(node('p', 'fact-meta',
+          'shape: ' + fact.shape.map(function (tag) { return clip(tag, 18); }).join(' \u00b7 ')));
+      }
+      card0.appendChild(node('p', 'fact-meta',
+        'basis: ' + fact.basis + (fact.valid_until ? ' \u00b7 valid until ' + fact.valid_until : '')));
+      card0.addEventListener('click', function () { inspectFact(fact); });
+      grid.appendChild(card0);
+    });
+    return grid;
+  }
+
+  function badge(text, tone) {
+    var el0 = node('span', 'badge', String(text));
+    if (tone) el0.dataset.tone = tone;
+    return el0;
+  }
+
+  // The recall card: this run's own recall, reduced off the log, beside
+  // the day's recorded hits. The two are labelled for what they are,
+  // because one is the run in front of the owner and the other is the
+  // stream's own audit trail.
+  function recallCard(recalls, hits, day) {
+    var card0 = boardCard(12, 'recall', null, null);
+    var body = node('div', 'board-body recall-body');
+    var mine = node('section', 'recall-side');
+    mine.appendChild(node('h3', null, 'this run'));
+    if (recalls.length) {
+      var list = node('ul', 'recall-list');
+      recalls.forEach(function (event) {
+        list.appendChild(node('li', null,
+          (event.shape ? 'shape ' + event.shape + ' \u2014 ' : '') + event.facts + ' facts'));
+      });
+      mine.appendChild(list);
+    } else {
+      mine.appendChild(node('p', 'board-empty',
+        'No recall has happened in this run yet. Each recall rides the event log as its own card, ' +
+        'so the panel reads the same place the conversation does.'));
+    }
+    var theirs = node('section', 'recall-side');
+    theirs.appendChild(node('h3', null, 'the stream, ' + day));
+    if (hits.length) {
+      var rows = node('div', 'rows');
+      hits.forEach(function (hit) {
+        var row0 = node('div', 'rrow');
+        row0.appendChild(node('span', 'rrow-at', clock(hit.ts)));
+        row0.appendChild(node('span', 'rrow-what',
+          (hit.shape ? 'shape ' + hit.shape + ' \u00b7 ' : '') + hit.fact));
+        var side = node('span', 'rrow-side');
+        side.appendChild(node('span', 'rrow-outcome', hit.score.toFixed(2)));
+        row0.appendChild(side);
+        rows.appendChild(row0);
+      });
+      theirs.appendChild(rows);
+    } else {
+      theirs.appendChild(node('p', 'board-empty',
+        'No recall hit is recorded for today. A hit is one calibration row per fact a recall surfaced.'));
+    }
+    body.appendChild(mine);
+    body.appendChild(theirs);
+    card0.appendChild(body);
+    return card0;
+  }
+
+  // One fact in the inspector: its whole body, and the edit that rides
+  // the substrate's own rewriter. The form carries the fields the
+  // rewriter owns and nothing else — the name, the tier and the basis
+  // are the corpus's own, not a surface's.
+  function inspectFact(fact) {
+    var form = node('form', 'fact-edit');
+    form.appendChild(field('description', 'the fact as one sentence', fact.description, 'text'));
+    form.appendChild(field('type', 'the kind the corpus files it under', fact.fact_type, 'text'));
+    form.appendChild(field('shape', 'comma-separated structure tags', (fact.shape || []).join(', '), 'text'));
+    form.appendChild(field('phrases', 'one per line', (fact.phrases || []).join('\n'), 'area'));
+    form.appendChild(field('missing', 'one per line', (fact.missing || []).join('\n'), 'area'));
+    form.appendChild(field('valid-until', 'YYYY-MM-DD, or empty', fact.valid_until, 'text'));
+    form.appendChild(field('body', 'everything after the frontmatter fence', fact.body, 'area'));
+    var save = node('button', 'fact-save', 'save the fact');
+    save.type = 'submit';
+    form.appendChild(save);
+    var said = node('p', 'fact-said-note',
+      'The save rides the substrate\u2019s own rewriter: the named frontmatter lines are re-rendered ' +
+      'and every other byte survives. The name, the tier and the basis are not editable \u2014 ' +
+      'renaming a fact is a supersession, which records why.');
+    form.appendChild(said);
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      save.disabled = true;
+      save.textContent = 'rewriting\u2026';
+      var lines = function (name) {
+        return form.querySelector('[name="' + name + '"]').value
+          .split('\n').map(function (line) { return line.trim(); })
+          .filter(function (line) { return line.length > 0; });
+      };
+      post('/api/fact', {
+        name: fact.name,
+        description: form.querySelector('[name="description"]').value,
+        type: form.querySelector('[name="type"]').value,
+        shape: form.querySelector('[name="shape"]').value,
+        phrases: lines('phrases'),
+        missing: lines('missing'),
+        'valid-until': form.querySelector('[name="valid-until"]').value,
+        body: form.querySelector('[name="body"]').value
+      }).then(function (reply) {
+        if (reply.status === 200) {
+          closeDrawer();
+          readMemory(true).then(paintMemory);
+          return;
+        }
+        save.disabled = false;
+        save.textContent = 'save the fact';
+        notice('the fact was not rewritten', reply.body.error || 'the substrate refused it');
+      }).catch(function () {
+        save.disabled = false;
+        save.textContent = 'save the fact';
+        notice('the fact was not rewritten', 'the server did not answer');
+      });
+    });
+    openDrawer(fact.name, [
+      ['the fact', node('p', 'derivation',
+        'type ' + fact.fact_type + ' \u00b7 tier ' + fact.tier + ' \u00b7 basis ' + fact.basis +
+        ' \u00b7 ' + fact.recall_count + ' recalls \u00b7 ' + fact.path)],
+      ['edit in place', form]
+    ]);
+  }
+
+  function field(name, label, value, kind) {
+    var wrap = node('label', 'fact-field');
+    wrap.appendChild(node('span', 'fact-field-label', label));
+    var box = kind === 'area' ? document.createElement('textarea') : document.createElement('input');
+    box.name = name;
+    box.value = value == null ? '' : value;
+    if (kind !== 'area') box.type = kind || 'text';
+    wrap.appendChild(box);
+    return wrap;
+  }
+
+  function readMemory(force) {
+    var now = Date.now();
+    if (!force && face.memory && now - face.memoryAt < 4000) return Promise.resolve();
+    face.memoryAt = now;
+    return fetch('/api/memory', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.memory = doc;
+        if (face.panel === 'memory') paintMemory();
+      })
+      .catch(function () { });
+  }
+
+  // The skills panel: the library with its loaded/skipped split, the
+  // proposals awaiting a decision, and the curation candidates. The
+  // approve rides improve's own apply, so its button says the gate is
+  // running while it does — the gate is the real one, and a reply that
+  // came back before it ran would be an approve of nothing.
+  function paintSkills() {
+    var read = face.skills;
+    el.skillsBoard.textContent = '';
+    if (!read) {
+      var waiting = boardCard(12, 'skills', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The library read has not landed yet. It reads the canonical skills directory and the ' +
+        'home\u2019s own proposals, both of which are this machine\u2019s.'));
+      el.skillsBoard.appendChild(waiting);
+      return;
+    }
+    var skills = read.skills || [];
+    var skips = read.skips || [];
+    var proposals = read.proposals || [];
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(skills.length, 'loaded'));
+    tiles.appendChild(tile(skips.length, 'skipped', skips.length ? 'warn' : null));
+    tiles.appendChild(tile(proposals.length, 'awaiting a decision', proposals.length ? 'live' : null));
+    tiles.appendChild(tile(read.unused, 'never selected'));
+    tiles.appendChild(tile(read.sessions, 'sessions scanned'));
+    var head = boardCard(12, 'skills', null, 'the library at ' + (read.canonical || '\u2014'));
+    head.appendChild(tiles);
+    el.skillsBoard.appendChild(head);
+
+    if (proposals.length) {
+      el.skillsBoard.appendChild(proposalCards(proposals));
+    } else {
+      var none = boardCard(12, 'the decisions queue', null, null);
+      none.appendChild(node('p', 'board-empty',
+        'No proposal is awaiting a decision. A proposal is a drafted change under the home\u2019s own ' +
+        'proposals directory, and an approve here rides the same apply the CLI rides.'));
+      el.skillsBoard.appendChild(none);
+    }
+
+    if (skills.length) {
+      var library = boardCard(12, 'the library', null, null);
+      library.appendChild(skillGrid(skills));
+      el.skillsBoard.appendChild(library);
+    }
+    if (skips.length) {
+      el.skillsBoard.appendChild(skipCard(skips));
+    }
+    el.skillsBoard.appendChild(curationCard(read));
+    if (read.refused && read.refused.length) {
+      el.skillsBoard.appendChild(refusedCard(read.refused));
+    }
+  }
+
+  // The proposals as cards, each with the approve that rides the apply.
+  function proposalCards(proposals) {
+    var card0 = boardCard(12, 'awaiting a decision', null,
+      'an approve runs the four cargo steps the CLI runs, in the same order, and keeps the change ' +
+      'only when every step is green. A skills write is home-side, so it creates no commit \u2014 ' +
+      'the pre-image stash beside it is what makes it restorable by `fleet improve undo`.');
+    var grid = node('div', 'fact-grid');
+    proposals.forEach(function (proposal) {
+      var item = node('article', 'fact-card');
+      item.dataset.tone = 'live';
+      item.appendChild(node('h3', 'fact-name', proposal.name));
+      item.appendChild(node('span', 'fact-recalls', proposal.kind));
+      var badges = node('div', 'fact-badges');
+      badges.appendChild(badge(proposal.kind, 'accent'));
+      item.appendChild(badges);
+      item.appendChild(node('p', 'fact-said', proposal.description));
+      item.appendChild(node('p', 'fact-meta', 'evidence: ' + clip(proposal.evidence, 120)));
+      var approve = node('button', 'fact-save', 'approve');
+      approve.type = 'button';
+      approve.addEventListener('click', function (event) {
+        event.stopPropagation();
+        approve.disabled = true;
+        approve.textContent = 'the gate is running\u2026';
+        post('/api/skill', { name: proposal.name }).then(function (reply) {
+          if (reply.status === 200) {
+            approve.textContent = 'applied';
+            notice('the proposal landed', reply.body.summary || proposal.name + ' applied');
+            readSkills(true).then(paintSkills);
+            return;
+          }
+          approve.disabled = false;
+          approve.textContent = 'approve';
+          notice('the approve was refused', reply.body.error || 'the apply refused it');
+        }).catch(function () {
+          approve.disabled = false;
+          approve.textContent = 'approve';
+          notice('the approve did not cross', 'the server did not answer');
+        });
+      });
+      item.appendChild(approve);
+      item.addEventListener('click', function () { inspectProposal(proposal); });
+      grid.appendChild(item);
+    });
+    card0.appendChild(grid);
+    return card0;
+  }
+
+  // The library as cards, each with its usage count: a skill the scan
+  // never saw selected reads zero, which is the whole measure the
+  // substrate reports.
+  function skillGrid(skills) {
+    var grid = node('div', 'fact-grid');
+    skills.forEach(function (skill) {
+      var item = node('article', 'fact-card');
+      item.dataset.tone = skill.uses ? 'live' : 'retired';
+      item.appendChild(node('h3', 'fact-name', skill.name));
+      item.appendChild(node('span', 'fact-recalls',
+        skill.uses + (skill.uses === 1 ? ' use' : ' uses')));
+      item.appendChild(node('p', 'fact-said', skill.description));
+      if (skill.modified) {
+        item.appendChild(node('p', 'fact-meta', 'modified ' + clock(skill.modified)));
+      }
+      item.addEventListener('click', function () { inspectSkill(skill); });
+      grid.appendChild(item);
+    });
+    return grid;
+  }
+
+  function skipCard(skips) {
+    var card0 = boardCard(12, 'the library declined these', null,
+      'a skip is the loader\u2019s own report, in its own words: a directory with no readable ' +
+      'SKILL.md, a malformed one, or a proposal that reached the live tree.');
+    var rows = node('div', 'rows');
+    skips.forEach(function (skip) {
+      var row0 = node('div', 'rrow');
+      row0.appendChild(node('span', 'rrow-what', skip.name));
+      var side = node('span', 'rrow-side');
+      side.appendChild(node('span', 'rrow-outcome', clip(skip.reason, 90)));
+      row0.appendChild(side);
+      rows.appendChild(row0);
+    });
+    card0.appendChild(rows);
+    return card0;
+  }
+
+  // The curation card: the merge candidates, scored by the substrate's
+  // own rule at its own threshold, and the standing refusal that says
+  // why a retire is not offered. Both come off the read, so the card and
+  // the code cannot disagree.
+  function curationCard(read) {
+    var merges = read.merges || [];
+    var card0 = boardCard(12, 'curation candidates', null, read.curation_note);
+    if (!merges.length) {
+      card0.appendChild(node('p', 'board-empty',
+        'No two descriptions in the library read as near-identical. A candidate is a pair scoring ' +
+        'at or above ' + read.threshold + ' token Jaccard \u2014 the same rule the substrate\u2019s ' +
+        'own curation files a merge under.'));
+      return card0;
+    }
+    var rows = node('div', 'rows');
+    merges.forEach(function (merge) {
+      var row0 = node('div', 'rrow');
+      row0.appendChild(node('span', 'rrow-what',
+        merge.survivor + ' would absorb ' + merge.absorbed));
+      var side = node('span', 'rrow-side');
+      side.appendChild(node('span', 'rrow-outcome', merge.similarity.toFixed(2)));
+      row0.appendChild(side);
+      rows.appendChild(row0);
+    });
+    card0.appendChild(rows);
+    return card0;
+  }
+
+  function inspectSkill(skill) {
+    openDrawer(skill.name, [
+      ['the skill', node('p', 'derivation',
+        skill.uses + ' uses across ' + (face.skills ? face.skills.sessions : 0) + ' scanned sessions' +
+        ' \u00b7 ' + skill.path)],
+      ['the body', node('pre', 'drawer-code', skill.body || '')],
+      ['what the model sees', node('p', 'derivation',
+        'the system prompt carries the name and the one sentence. The body enters context only when ' +
+        'the skill is selected, and then it is already in the log as that call\u2019s result.')]
+    ]);
+  }
+
+  function inspectProposal(proposal) {
+    openDrawer(proposal.name, [
+      ['the proposal', node('p', 'derivation',
+        proposal.kind + ' \u00b7 ' + proposal.evidence + ' \u00b7 ' + proposal.path)],
+      ['the proposed body', node('pre', 'drawer-code', proposal.body || '')],
+      ['what an approve does', node('p', 'derivation',
+        'the change is staged, the four cargo steps run in the repo, and the change is kept only ' +
+        'when every step is green. A skills write is home-side, so it creates no commit; the ' +
+        'pre-image stash beside it is what `fleet improve undo` restores.')]
+    ]);
+  }
+
+  function readSkills(force) {
+    var now = Date.now();
+    if (!force && face.skills && now - face.skillsAt < 4000) return Promise.resolve();
+    face.skillsAt = now;
+    return fetch('/api/skills', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.skills = doc;
+        if (face.panel === 'skills') paintSkills();
+      })
+      .catch(function () { });
+  }
+
   // ------------------------------------------------------------- actions
 
   function post(path, body) {
@@ -1842,6 +2328,8 @@
       el.panelChat.hidden = false;
       el.panelRouter.hidden = true;
       el.panelDelegation.hidden = true;
+      el.panelMemory.hidden = true;
+      el.panelSkills.hidden = true;
       el.panelLater.hidden = true;
       return;
     }
@@ -1860,9 +2348,33 @@
       el.panelChat.hidden = true;
       el.panelLater.hidden = true;
       el.panelRouter.hidden = true;
+      el.panelMemory.hidden = true;
+      el.panelSkills.hidden = true;
       el.panelDelegation.hidden = false;
       paintDelegation();
       readDelegation(true).then(paintDelegation);
+      return;
+    }
+    if (address === 'memory') {
+      el.panelChat.hidden = true;
+      el.panelLater.hidden = true;
+      el.panelRouter.hidden = true;
+      el.panelDelegation.hidden = true;
+      el.panelSkills.hidden = true;
+      el.panelMemory.hidden = false;
+      paintMemory();
+      readMemory(true).then(paintMemory);
+      return;
+    }
+    if (address === 'skills') {
+      el.panelChat.hidden = true;
+      el.panelLater.hidden = true;
+      el.panelRouter.hidden = true;
+      el.panelDelegation.hidden = true;
+      el.panelMemory.hidden = true;
+      el.panelSkills.hidden = false;
+      paintSkills();
+      readSkills(true).then(paintSkills);
       return;
     }
     var named = known || [which, which];
@@ -1872,6 +2384,8 @@
     el.panelChat.hidden = true;
     el.panelRouter.hidden = true;
     el.panelDelegation.hidden = true;
+    el.panelMemory.hidden = true;
+    el.panelSkills.hidden = true;
     el.panelLater.hidden = false;
   }
 
@@ -1889,10 +2403,14 @@
   // is showing: a day's ledger moves without the log saying anything, and
   // a face nobody is looking at has nothing to refresh. The delegation
   // read rides the same clock for the same reason — a run delegates
-  // while the owner watches the tree grow.
+  // while the owner watches the tree grow. The memory and skills reads
+  // do too: the corpus changes when the agent writes a fact, and the
+  // library changes when a proposal lands.
   window.setInterval(function () {
     if (face.panel === 'router') readRouter(false);
     if (face.panel === 'delegation') readDelegation(false);
+    if (face.panel === 'memory') readMemory(false);
+    if (face.panel === 'skills') readSkills(false);
   }, 5000);
 
   load().then(listen).catch(function (error) {

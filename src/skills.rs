@@ -684,22 +684,67 @@ fn tokens(text: &str) -> Vec<String> {
 /// An empty token set on either side scores 0 — two descriptions with no
 /// words in common with anything are not similar, they are absent.
 pub fn description_similarity(left: &str, right: &str) -> f64 {
-    let left = tokens(left);
-    let right = tokens(right);
-    if left.is_empty() || right.is_empty() {
-        return 0.0;
+    TokenSet::of(left).similarity(&TokenSet::of(right))
+}
+
+/// One description's normalized token set, sorted and deduplicated.
+///
+/// The seam a surface that scores many pairs against one library needs:
+/// a library of four hundred skills is eighty thousand pairs, and a scan
+/// that re-tokenizes — or re-scans — per pair does not land inside a
+/// refresh interval. Each description is tokenized once into one of
+/// these, and the pairs are scored by a merge over sorted sets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenSet {
+    sorted: Vec<String>,
+}
+
+impl TokenSet {
+    /// The token set of one description.
+    pub fn of(text: &str) -> TokenSet {
+        let mut sorted = tokens(text);
+        sorted.sort();
+        TokenSet { sorted }
     }
-    let mut union = left.clone();
-    for token in &right {
-        if !union.iter().any(|seen| seen == token) {
-            union.push(token.clone());
+
+    /// How many distinct tokens this set carries.
+    pub fn len(&self) -> usize {
+        self.sorted.len()
+    }
+
+    /// Whether this set carries no tokens at all.
+    pub fn is_empty(&self) -> bool {
+        self.sorted.is_empty()
+    }
+
+    /// The Jaccard against another set: the shared tokens over the union,
+    /// read by a merge over the two sorted sets. An empty set on either
+    /// side scores 0.
+    pub fn similarity(&self, other: &TokenSet) -> f64 {
+        if self.sorted.is_empty() || other.sorted.is_empty() {
+            return 0.0;
         }
+        let mut left = self.sorted.iter().peekable();
+        let mut right = other.sorted.iter().peekable();
+        let mut shared = 0usize;
+        while let (Some(a), Some(b)) = (left.peek(), right.peek()) {
+            match a.cmp(b) {
+                std::cmp::Ordering::Equal => {
+                    shared += 1;
+                    left.next();
+                    right.next();
+                }
+                std::cmp::Ordering::Less => {
+                    left.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    right.next();
+                }
+            }
+        }
+        let union = self.sorted.len() + other.sorted.len() - shared;
+        shared as f64 / union as f64
     }
-    let shared = left
-        .iter()
-        .filter(|token| right.iter().any(|seen| seen == *token))
-        .count();
-    shared as f64 / union.len() as f64
 }
 
 // --- the drafter -----------------------------------------------------------

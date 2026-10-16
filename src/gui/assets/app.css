@@ -950,6 +950,7 @@ pre.raw {
 
 .tile[data-tone="down"] .tile-value { color: var(--dsw-alias-down); }
 .tile[data-tone="ok"] .tile-value { color: var(--dsw-alias-ok); }
+.tile[data-tone="live"] .tile-value { color: var(--dsw-alias-accent-lift); }
 
 /* The day column chart. Hand-rolled SVG: a baseline, one column per
    hour the ledger actually saw, and the failed calls stacked at the top
@@ -1378,6 +1379,191 @@ pre.raw {
   word-break: break-word;
 }
 
+/* ------------------------------------------- the memory and skills panels */
+
+/* The corpus and the library are both read as cards, one per fact or
+   skill, with the name and its count on one line and the badges under
+   it. A card grid rather than a table: what a fact carries is a shape,
+   and the house bar is cards, dots, bars, and graphs. */
+.fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.fact-card {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+  padding: 12px 13px;
+  border: var(--card-hairline);
+  border-radius: 10px;
+  background: var(--dsw-alias-page);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.fact-card:hover { border-color: var(--dsw-alias-accent); background: var(--dsw-alias-surface-raised); }
+
+.fact-card[data-tone="retired"] { opacity: 0.62; }
+.fact-card[data-tone="protected"] { border-left: 2px solid var(--dsw-alias-accent); }
+
+.fact-name {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-ink);
+  word-break: break-word;
+}
+
+.fact-recalls {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fact-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.badge {
+  padding: 1px 7px;
+  border: var(--card-hairline);
+  border-radius: 999px;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.badge[data-tone="accent"] { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent-lift); }
+.badge[data-tone="warn"] { border-color: var(--dsw-alias-warn); color: var(--dsw-alias-warn); }
+.badge[data-tone="down"] { border-color: var(--dsw-alias-down); color: var(--dsw-alias-down); }
+
+.fact-said {
+  margin: 0;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.fact-meta {
+  margin: 0;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* The panel's own search: one read, filtered in the browser, so typing
+   costs nothing on the machine that holds the corpus. */
+.panel-search { margin-top: 12px; }
+
+.panel-search-box {
+  width: 100%;
+  padding: 8px 11px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+}
+
+.panel-search-box::placeholder { color: var(--dsw-alias-ink-tertiary); }
+.panel-search-box:focus { outline: none; border-color: var(--dsw-alias-accent); }
+
+/* The recall card's two halves: the run in front of the owner, and the
+   stream's own audit trail. They sit side by side while there is room
+   and stack when there is not. */
+.recall-body { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+
+.recall-side { min-width: 0; }
+
+.recall-side h3 {
+  margin: 0 0 8px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: var(--card-label);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.recall-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+.recall-list li {
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The fact edit form in the inspector. */
+.fact-edit { display: grid; gap: 12px; }
+
+.fact-field { display: grid; gap: 5px; }
+
+.fact-field-label {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+.fact-field input, .fact-field textarea {
+  width: 100%;
+  padding: 7px 9px;
+  border: var(--card-hairline);
+  border-radius: 7px;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.fact-field input:focus, .fact-field textarea:focus {
+  outline: none;
+  border-color: var(--dsw-alias-accent);
+}
+
+.fact-save {
+  justify-self: start;
+  padding: 7px 14px;
+  border: var(--card-hairline);
+  border-radius: 7px;
+  background: var(--dsw-alias-accent);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 160ms ease;
+}
+
+.fact-save:hover { opacity: 0.88; }
+.fact-save:disabled { opacity: 0.5; cursor: default; }
+
+.fact-said-note {
+  margin: 0;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+pre.drawer-code {
+  margin: 0;
+  padding: 12px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ---------------------------------------------------------- narrow faces */
 
 /* Below the rail's width the rail folds under the conversation, and the
@@ -1405,4 +1591,6 @@ pre.raw {
   .rrow { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .rrow-side { text-align: left; }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .recall-body { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .fact-grid { grid-template-columns: minmax(0, 1fr); }
 }

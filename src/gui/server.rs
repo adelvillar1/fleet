@@ -36,11 +36,21 @@
 //!
 //! The read routes beyond `/api/state` are the panels': `GET
 //! /api/router` is the router board's own reads plus the
-//! route-decision cache's counts, read off the async worker, and `GET
+//! route-decision cache's counts, read off the async worker, `GET
 //! /api/delegation` is the live run's delegation tree off the session
-//! logs beside the dependency graph's own file. A panel's document is
-//! the board's facts, not a second opinion about them, and it never
-//! carries a credential.
+//! logs beside the dependency graph's own file, `GET /api/memory` is
+//! the corpus and the day's recall hits, and `GET /api/skills` is the
+//! library with its skips, its proposals, and its curation candidates.
+//! A panel's document is the board's facts, not a second opinion about
+//! them, and it never carries a credential.
+//!
+//! The write actions are the panels' own, and each rides the
+//! substrate's path rather than a file write of this surface's: `POST
+//! /api/fact` edits a fact in place through memory's own rewriter, and
+//! `POST /api/skill` approves a skills proposal through improve's own
+//! apply — the same gate `fleet improve apply` runs, so the reply waits
+//! on it. Neither can reach a credential, and neither writes anything
+//! the substrate would refuse.
 
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
@@ -191,6 +201,8 @@ async fn serve_connection(
         ("GET", "/api/delegation") => {
             write_reply(&mut stream, api(200, bridge.delegation().await)).await
         }
+        ("GET", "/api/memory") => write_reply(&mut stream, api(200, bridge.memory().await)).await,
+        ("GET", "/api/skills") => write_reply(&mut stream, api(200, bridge.skills().await)).await,
         ("POST", "/api/run") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -232,6 +244,36 @@ async fn serve_connection(
                 Err(crate::gui::bridge::AnswerError::Unknown(word)) => {
                     write_reply(&mut stream, api(400, json!({"error": word}))).await
                 }
+            }
+        }
+        ("POST", "/api/fact") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            // The edit rides the substrate's own rewriter, so the body is
+            // the fact-edit's own arguments object rather than a shape
+            // this surface invented.
+            match bridge.fact_edit(&body).await {
+                Ok(edited) => write_reply(&mut stream, api(200, edited)).await,
+                Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/skill") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let name = match proposal_of(&body) {
+                Ok(name) => name,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            // The gate is the real one, so the reply waits on it: an
+            // approve that answered before the gate ran would be an
+            // approve of nothing.
+            match bridge.skill_apply(&name).await {
+                Ok(applied) => write_reply(&mut stream, api(200, applied)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
         ("GET", _) => write_reply(&mut stream, not_found(&request.path)).await,
@@ -340,6 +382,17 @@ fn decision_of(body: &str) -> Result<String, String> {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "an answer's body is a JSON object with a decision string".to_string())
+}
+
+/// The proposal an approve's body carries.
+fn proposal_of(body: &str) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the approve's body: {e}"))?;
+    parsed
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "an approve's body is a JSON object with a name string".to_string())
 }
 
 /// Where a head ends: just past the first `\r\n\r\n`.
@@ -788,6 +841,71 @@ mod tests {
         home
     }
 
+    /// The home a memory-panel test reads: a corpus it built itself and a
+    /// calibration root it owns, so the facts and the hits are the test's
+    /// own rather than the machine's. The corpus is handed to the bridge
+    /// through [`Bridge::point_at_memories`], the seam that keeps the
+    /// production rule — the agent's own resolve off the working
+    /// directory — out of the test's way.
+    fn memory_home() -> (std::path::PathBuf, std::path::PathBuf) {
+        let home = router_home();
+        let corpus = fresh_home();
+        let day = crate::calib::today();
+        std::fs::write(
+            corpus.join("a-fact.md"),
+            format!(
+                "---\nname: a-fact\ndescription: \"the corpus is one fact per file\"\ntype: project\ndate: {day}\nbasis: inferred\ntier: durable\nshape: []\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe body.\n"
+            ),
+        )
+        .expect("a fact file");
+        let logs = home
+            .join("logs")
+            .join(&day[..4])
+            .join(&day[5..7])
+            .join(&day[8..10]);
+        std::fs::create_dir_all(&logs).expect("the day's log directory");
+        std::fs::write(
+            logs.join("events.jsonl"),
+            format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "op": crate::calib::OP_RECALL_HIT,
+                    "ts": format!("{day}T09:00:00Z"),
+                    "fact": "a-fact",
+                    "shape": "docs",
+                    "score": 0.82,
+                }),
+                serde_json::json!({
+                    "op": crate::calib::OP_TOOL_SCREEN,
+                    "ts": format!("{day}T09:00:01Z"),
+                    "tool": "read",
+                    "verdict": "allow",
+                }),
+            ),
+        )
+        .expect("the day's stream");
+        (home, corpus)
+    }
+
+    /// A live server over `home`, whose memory panel reads `corpus`.
+    async fn launch_over(home: std::path::PathBuf, corpus: std::path::PathBuf) -> (String, u16) {
+        let (mut bridge, _sources) = Bridge::detached(
+            home,
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        bridge.point_at_memories(corpus);
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .unwrap();
+        server.heartbeat = Duration::from_millis(20);
+        let token = server.token().to_string();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        (token, port)
+    }
+
     async fn launch() -> (String, u16) {
         launch_at(fresh_home()).await
     }
@@ -1191,6 +1309,172 @@ mod tests {
         assert_eq!(nodes[0]["state"], "verified");
         assert_eq!(nodes[0]["score"], 0);
         assert!(!body.contains("api_key"), "{body}");
+    }
+
+    /// The memory panel's document is the corpus and the day's recall
+    /// hits: the facts with their bodies whole, because the panel's edit
+    /// form needs the fact as it stands on disk, and the hits off the
+    /// calibration stream's own rows — the screening rows between them do
+    /// not ride along. Nothing in it carries a credential.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_memory_document_is_the_corpus_and_the_days_hits() {
+        let (home, corpus) = memory_home();
+        let (token, port) = launch_over(home, corpus.clone()).await;
+        let anonymous = ask(
+            port,
+            "GET /api/memory HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+        );
+        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        let reply = get(port, "/api/memory", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("application/json"), "{reply}");
+        let body = reply
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("a body past the head");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["type"], "memory");
+        // The corpus root is named, so the panel can say which one it is
+        // showing.
+        assert_eq!(document["root"], corpus.display().to_string());
+        let facts = document["facts"].as_array().expect("the facts");
+        assert_eq!(facts.len(), 1, "{document}");
+        assert_eq!(facts[0]["name"], "a-fact");
+        assert_eq!(facts[0]["body"], "The body.");
+        assert_eq!(facts[0]["tier"], "durable");
+        // The day's recall rows, oldest first — and the screening row
+        // that sat between them is not one.
+        let hits = document["hits"].as_array().expect("the hits");
+        assert_eq!(hits.len(), 1, "{document}");
+        assert_eq!(hits[0]["fact"], "a-fact");
+        assert_eq!(hits[0]["shape"], "docs");
+        assert!(
+            document["refused"]
+                .as_array()
+                .is_some_and(|refused| refused.is_empty()),
+            "{document}"
+        );
+        assert!(!body.contains("api_key"), "{body}");
+        let _ = std::fs::remove_dir_all(&corpus);
+    }
+
+    /// A fact edits through the substrate's own rewriter: the named
+    /// frontmatter lines are re-rendered and every other byte survives,
+    /// so the panel's edit is the corpus's own write path rather than a
+    /// second one. An unknown fact is a refusal that names it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fact_edits_through_the_substrates_own_rewriter() {
+        let (home, corpus) = memory_home();
+        let (token, port) = launch_over(home, corpus.clone()).await;
+        let reply = post(
+            port,
+            "/api/fact",
+            &token,
+            r#"{"name":"a-fact","description":"the corpus is one fact per file, rewritten","shape":"docs"}"#,
+        );
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let body = reply
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("a body past the head");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["edited"], true);
+        assert_eq!(
+            document["fact"]["description"],
+            "the corpus is one fact per file, rewritten"
+        );
+        assert_eq!(document["fact"]["shape"][0], "docs");
+        // The body survived the rewrite: the rewriter owns one line and
+        // preserves every other byte.
+        assert_eq!(document["fact"]["body"], "The body.");
+        let on_disk = std::fs::read_to_string(corpus.join("a-fact.md")).expect("the fact file");
+        assert!(
+            on_disk.contains("description: \"the corpus is one fact per file, rewritten\""),
+            "{on_disk}"
+        );
+        assert!(on_disk.contains("shape: [docs]"), "{on_disk}");
+        assert!(on_disk.contains("The body."), "{on_disk}");
+        // A fact that is not there is refused by name, and the reason is
+        // the part the owner needs.
+        let unknown = post(
+            port,
+            "/api/fact",
+            &token,
+            r#"{"name":"no-such-fact","description":"a fact that is not there"}"#,
+        );
+        assert!(unknown.starts_with("HTTP/1.1 400"), "{unknown}");
+        assert!(unknown.contains("no fact named"), "{unknown}");
+        let _ = std::fs::remove_dir_all(&corpus);
+    }
+
+    /// The skills panel's document is the library with its skips, the
+    /// proposals awaiting a decision, and the curation candidates. The
+    /// curation card names KI-215 rather than offering a retire the
+    /// substrate refuses to draft.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_skills_document_is_the_library_its_skips_and_its_proposals() {
+        let (token, port) = launch().await;
+        let anonymous = ask(
+            port,
+            "GET /api/skills HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+        );
+        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        let reply = get(port, "/api/skills", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("application/json"), "{reply}");
+        let body = reply
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("a body past the head");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["type"], "skills");
+        // The library, its skips, its proposals, and its merge candidates
+        // are all carried, each as its own list.
+        assert!(document["skills"].is_array(), "{document}");
+        assert!(document["skips"].is_array(), "{document}");
+        assert!(document["proposals"].is_array(), "{document}");
+        assert!(document["merges"].is_array(), "{document}");
+        assert!(document["sessions"].is_number(), "{document}");
+        assert!(document["unused"].is_number(), "{document}");
+        assert!(
+            document["curation_note"]
+                .as_str()
+                .is_some_and(|note| note.contains("KI-215")),
+            "{document}"
+        );
+        // The canonical library is named, so the panel can say which one
+        // it is showing.
+        assert!(document["canonical"].is_string(), "{document}");
+        assert!(!body.contains("api_key"), "{body}");
+    }
+
+    /// The approve route reaches the substrate's own apply and reports
+    /// what it says. A proposal that is not awaiting a decision is
+    /// refused by the apply itself, in its own words — and a proposal
+    /// whose target is not a skill is refused before the gate, because
+    /// this is the skills panel's approve and a source edit's corpus step
+    /// is a CLI step, not a button.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_approve_route_reaches_the_substrates_own_apply() {
+        let (token, port) = launch().await;
+        // Nothing is awaiting a decision on a fresh home, so the apply
+        // refuses it in its own words rather than the route inventing one.
+        let missing = post(port, "/api/skill", &token, r#"{"name":"no-such-proposal"}"#);
+        assert!(missing.starts_with("HTTP/1.1 409"), "{missing}");
+        assert!(
+            missing.contains("no proposal named") || missing.contains("awaiting a decision"),
+            "{missing}"
+        );
+        // A body with no name is a malformed request, not an apply.
+        let malformed = post(
+            port,
+            "/api/skill",
+            &token,
+            r#"{"proposal":"no-such-proposal"}"#,
+        );
+        assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
     }
 
     /// A home with no logs and no declared graph names both, rather than

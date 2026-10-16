@@ -124,6 +124,24 @@
     <div class="board" id="delegation-board"></div>
   </main>
 
+  <!-- The memory. The corpus — one fact per file — with its tiers, its
+       recall counts and its shape tags, the day's recall hits off the
+       calibration stream, and the live run's own recall off the event
+       log. A fact edits in place through the substrate's own rewriter:
+       the named frontmatter lines are re-rendered and every other byte
+       survives. -->
+  <main class="stage stage-board" id="panel-memory" hidden>
+    <div class="board" id="memory-board"></div>
+  </main>
+
+  <!-- The skills. The library with its loaded/skipped split, the
+       proposals awaiting a decision, and the curation candidates. An
+       approve rides improve's own apply — the same gate the CLI runs —
+       so the button says the gate is running while it does. -->
+  <main class="stage stage-board" id="panel-skills" hidden>
+    <div class="board" id="skills-board"></div>
+  </main>
+
   <!-- The other addresses of the plan's route table. They are keyed
        panels, not routes: the browser never asks the server for a page,
        and a surface that is not built yet says so instead of pretending. -->

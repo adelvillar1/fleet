@@ -84,6 +84,9 @@ struct AgentInputs {
     approval_tx: UnboundedSender<ApprovalRequest>,
     command_rx: UnboundedReceiver<Command>,
     base_url: String,
+    /// The corpus root the consolidator walks — the same root the
+    /// browser's memory panel reads, resolved once by the bridge.
+    memories_root: PathBuf,
 }
 
 /// The live face's shared truth: the ordered event log, whether a run is
@@ -114,6 +117,12 @@ pub struct Bridge {
     home: PathBuf,
     model: String,
     session: String,
+    /// The corpus root the browser's memory panel reads and the agent
+    /// thread's consolidator walks, resolved once so the two cannot
+    /// disagree about which corpus this face is looking at. The rule is
+    /// the agent's own: [`crate::memory::resolve_root`] off the process's
+    /// working directory.
+    memories: PathBuf,
     state: Arc<Mutex<GuiState>>,
     rules: Arc<Mutex<approvals::Rules>>,
     events: broadcast::Sender<Value>,
@@ -153,6 +162,7 @@ impl Bridge {
             home,
             model,
             session,
+            memories: crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default()),
             state,
             rules,
             events,
@@ -183,12 +193,26 @@ impl Bridge {
         receiver
     }
 
+    /// Point the memory panel at a corpus other than the one the working
+    /// directory resolves. The production path never calls this — the
+    /// rule is the agent's own, resolved once in [`Bridge::detached`] —
+    /// so this exists for a test that must read a corpus it built rather
+    /// than the machine's.
+    #[cfg(test)]
+    pub(crate) fn point_at_memories(&mut self, root: PathBuf) {
+        self.memories = root;
+    }
+
     /// A bridge with the agent thread behind it: the thread this module
     /// spawns is the same shape `tui::spawn_agent` spawns, with the
     /// browser's prompt line and the seat's approver.
     pub fn spawn(home: PathBuf, model: String, session: String, base_url: String) -> Bridge {
         let (mut bridge, sources) = Bridge::detached(home.clone(), model.clone(), session.clone());
         let command_rx = bridge.connect();
+        // One resolution, shared: the consolidator the thread starts and
+        // the browser's memory panel read the same corpus because they
+        // are handed the same root, not because they each walked for one.
+        let memories = bridge.memories.clone();
         let handle = thread::spawn(move || {
             let _ = spawn_agent(AgentInputs {
                 home,
@@ -198,6 +222,7 @@ impl Bridge {
                 approval_tx: sources.seat,
                 command_rx,
                 base_url,
+                memories_root: memories,
             });
         });
         Bridge {
@@ -285,6 +310,159 @@ impl Bridge {
                 "type": "delegation",
                 "refused": ["the delegation read did not land"],
             }),
+        }
+    }
+
+    /// The memory panel's document: the corpus, the day's recall hits,
+    /// and the corpus root named.
+    ///
+    /// The live run's own recall is not here. It is already in the event
+    /// log as its `memory` card, and the panel reduces it off the log the
+    /// way the router panel reduces its own decision — one source per
+    /// picture, not two.
+    pub async fn memory(&self) -> Value {
+        let home = self.home.clone();
+        let memories = self.memories.clone();
+        match tokio::task::spawn_blocking(move || memory_read(&home, &memories)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "memory",
+                "refused": ["the memory read did not land"],
+            }),
+        }
+    }
+
+    /// The skills panel's document: the library with its skips, the
+    /// proposals awaiting a decision, and the curation candidates.
+    pub async fn skills(&self) -> Value {
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || skills_read(&home)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "skills",
+                "refused": ["the skills read did not land"],
+            }),
+        }
+    }
+
+    /// One in-place edit of a fact, through the substrate's own rewriter.
+    ///
+    /// The body is the arguments object the browser handed over. A
+    /// refusal rides the reply as its reason rather than a bare status,
+    /// because the reason is the part the owner needs: `no fact named …`,
+    /// or `… was folded into …`.
+    pub async fn fact_edit(&self, body: &str) -> Result<Value, String> {
+        let arguments: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("the edit is not a JSON object: {error}"))?;
+        let request =
+            crate::memory::FactEdit::parse(&arguments).map_err(|error| error.to_string())?;
+        let root = self.memories.clone();
+        match tokio::task::spawn_blocking(move || crate::memory::edit(&root, &request)).await {
+            Ok(Ok(fact)) => Ok(json!({
+                "type": "fact",
+                "edited": true,
+                "fact": {
+                    "name": fact.name,
+                    "description": fact.description,
+                    "fact_type": fact.fact_type,
+                    "tier": fact.tier.label(),
+                    "basis": fact.basis.label(),
+                    "recall_count": fact.recall_count,
+                    "valid_until": fact.valid_until,
+                    "shape": fact.shape,
+                    "phrases": fact.phrases,
+                    "missing": fact.missing,
+                    "body": fact.body,
+                    "path": fact.path.display().to_string(),
+                },
+            })),
+            Ok(Err(error)) => Err(error.to_string()),
+            Err(_) => Err("the edit did not land".to_string()),
+        }
+    }
+
+    /// Approve one skills proposal through the apply path.
+    ///
+    /// The click is the approval, and the gate is the real one: the same
+    /// four cargo steps `fleet improve apply` runs, in the same order, on
+    /// the ambient toolchain, with the change kept only when every step
+    /// is green. A skills write is home-side, so it creates no commit —
+    /// the pre-image stash beside it is what makes it restorable, by
+    /// `fleet improve undo`.
+    ///
+    /// Only a skills proposal is approved here. A proposal whose target
+    /// is the source or the config is refused by name, because this is
+    /// the skills panel's approve and the eval-corpus step that grades a
+    /// source edit is a CLI step, not a button.
+    pub async fn skill_apply(&self, name: &str) -> Result<Value, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("an approve needs a proposal name".to_string());
+        }
+        let home = self.home.clone();
+        let asked = name.to_string();
+        let applied_name = name.to_string();
+        let verdict = tokio::task::spawn_blocking(move || {
+            // The target is read before anything is staged, so a
+            // proposal this surface does not own never reaches the gate.
+            match crate::improve::load_one(&home, &asked) {
+                Some(proposal) if proposal.target == crate::improve::Target::Skill => {}
+                Some(proposal) => {
+                    return crate::improve::Verdict::Refused {
+                        reason: format!(
+                            "`{}` targets the {}, which is not a skill; approve it from the CLI, where its gate is the one it needs",
+                            proposal.name,
+                            proposal.target.label()
+                        ),
+                    }
+                }
+                None => {
+                    return crate::improve::Verdict::Refused {
+                        reason: format!("no proposal named `{asked}` is awaiting a decision"),
+                    }
+                }
+            }
+            let repo = std::env::current_dir().unwrap_or_default();
+            let user_home = std::env::var("HOME").ok();
+            let stream = crate::calib::Stream::open(crate::calib::resolve_root(
+                &home,
+                user_home.as_deref(),
+            ));
+            let gate = crate::improve::Gate::local(&repo);
+            let Some(canonical) = crate::skills::resolve_skills_dir(
+                std::env::var("FLEET_SKILLS_DIR").ok().as_deref(),
+                user_home.as_deref(),
+            ) else {
+                return crate::improve::Verdict::Refused {
+                    reason: "no skills library resolvable \u{2014} set FLEET_SKILLS_DIR or HOME"
+                        .to_string(),
+                };
+            };
+            // The eval-corpus probe is deliberately unwired: it grades a
+            // source edit, and a source target is refused above.
+            let ctx = crate::improve::Apply {
+                home: &home,
+                repo: &repo,
+                gate: &gate,
+                approved: true,
+                stream: Some(&stream),
+                eval: None,
+                skills_dir: &canonical,
+            };
+            crate::improve::apply(&asked, &ctx)
+        })
+        .await
+        .map_err(|_| "the approve did not land".to_string())?;
+        match verdict {
+            crate::improve::Verdict::Applied { summary, commit } => Ok(json!({
+                "type": "skill",
+                "verdict": "applied",
+                "name": applied_name,
+                "summary": summary,
+                "commit": commit,
+            })),
+            crate::improve::Verdict::Refused { reason } => Err(reason),
+            crate::improve::Verdict::Waiting { reason } => Err(reason),
         }
     }
 
@@ -526,6 +704,91 @@ fn delegation_read(home: &std::path::Path, session: &str) -> Value {
         "live": snapshot.live.as_ref().map(delegation_node),
         "history": snapshot.history.iter().map(delegation_node).collect::<Vec<_>>(),
         "graph": snapshot.graph.as_ref().map(graph_document),
+        "refused": snapshot.refused,
+    })
+}
+
+/// The memory panel's document, hand-built from the read's snapshot:
+/// memory.rs carries no serde derives, so the shapes are translated here
+/// rather than derived twice.
+fn memory_read(home: &std::path::Path, memories: &std::path::Path) -> Value {
+    let user_home = std::env::var("HOME").ok();
+    let calib_root = crate::calib::resolve_root(home, user_home.as_deref());
+    let snapshot = crate::boards::read_memory(memories, &calib_root, &crate::calib::today());
+    json!({
+        "type": "memory",
+        "read_at": snapshot.read_at,
+        "day": snapshot.day,
+        "root": snapshot.root,
+        "facts": snapshot.facts.iter().map(|fact| json!({
+            "name": fact.name,
+            "description": fact.description,
+            "fact_type": fact.fact_type,
+            "basis": fact.basis,
+            "tier": fact.tier,
+            "date": fact.date,
+            "recall_count": fact.recall_count,
+            "protected": fact.protected,
+            "retired": fact.retired,
+            "superseded_by": fact.superseded_by,
+            "valid_until": fact.valid_until,
+            "shape": fact.shape,
+            "phrases": fact.phrases,
+            "missing": fact.missing,
+            "body": fact.body,
+            "path": fact.path,
+        })).collect::<Vec<_>>(),
+        "hits": snapshot.hits.iter().map(|hit| json!({
+            "ts": hit.ts,
+            "fact": hit.fact,
+            "shape": hit.shape,
+            "score": hit.score,
+        })).collect::<Vec<_>>(),
+        "refused": snapshot.refused,
+    })
+}
+
+/// The skills panel's document, hand-built from the read's snapshot for
+/// the same reason: skills.rs derives nothing.
+fn skills_read(home: &std::path::Path) -> Value {
+    let override_dir = std::env::var("FLEET_SKILLS_DIR").ok();
+    let user_home = std::env::var("HOME").ok();
+    let canonical =
+        crate::skills::resolve_skills_dir(override_dir.as_deref(), user_home.as_deref());
+    let snapshot = crate::boards::read_skills(canonical.as_deref(), home);
+    json!({
+        "type": "skills",
+        "read_at": snapshot.read_at,
+        "canonical": snapshot.canonical,
+        "skills": snapshot.skills.iter().map(|skill| json!({
+            "name": skill.name,
+            "description": skill.description,
+            "uses": skill.uses,
+            "modified": skill.modified,
+            "path": skill.path,
+        })).collect::<Vec<_>>(),
+        "skips": snapshot.skips.iter().map(|skip| json!({
+            "name": skip.name,
+            "reason": skip.reason,
+        })).collect::<Vec<_>>(),
+        "proposals": snapshot.proposals.iter().map(|proposal| json!({
+            "name": proposal.name,
+            "description": proposal.description,
+            "kind": proposal.kind,
+            "evidence": proposal.evidence,
+            "body": proposal.body,
+            "path": proposal.path,
+        })).collect::<Vec<_>>(),
+        "merges": snapshot.merges.iter().map(|merge| json!({
+            "survivor": merge.survivor,
+            "absorbed": merge.absorbed,
+            "similarity": merge.similarity,
+            "threshold": merge.threshold,
+        })).collect::<Vec<_>>(),
+        "threshold": snapshot.threshold,
+        "sessions": snapshot.sessions,
+        "unused": snapshot.unused,
+        "curation_note": snapshot.curation_note,
         "refused": snapshot.refused,
     })
 }
@@ -891,6 +1154,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             approval_tx,
             command_rx,
             base_url,
+            memories_root,
         } = inputs;
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
         // The scheduled consolidation cycle: one pass now, then one every
@@ -899,8 +1163,6 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
         // routing never produced one.
         let user_home = std::env::var("HOME").ok();
         let calib_root = crate::calib::resolve_root(&home, user_home.as_deref());
-        let memories_root =
-            crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
         crate::memory::spawn_consolidator(memories_root, crate::calib::Stream::open(&calib_root));
         // The scheduled jobs: the catch-up pass once at startup, then one
         // tick per second for the life of the process. A fire is an

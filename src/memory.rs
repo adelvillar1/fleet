@@ -3019,6 +3019,222 @@ impl Remember {
     }
 }
 
+/// One in-place edit of a fact, handed from a surface.
+///
+/// Every field rides [`rewrite_field`], the module's one in-place
+/// rewriter: the named frontmatter line is re-rendered, every other byte
+/// — the body above all — survives, and the write lands through a temp
+/// file and a rename. Nothing here writes a fact file whole, because a
+/// second write path would drift from this one's bound and its
+/// atomicity, and a surface that wrote around the rewriter would leave
+/// the corpus with two truths about how a fact changed.
+///
+/// The name is not editable: it is the fact's identity and its file's
+/// own stem, so renaming one is a supersession, which records why.
+/// Neither are the tier and the basis, which are the lifecycle's inputs
+/// rather than a surface's.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FactEdit {
+    /// The fact being edited.
+    pub name: String,
+    pub description: Option<String>,
+    pub fact_type: Option<String>,
+    pub shape: Option<Vec<String>>,
+    pub phrases: Option<Vec<String>>,
+    pub missing: Option<Vec<String>>,
+    pub valid_until: Option<String>,
+    /// The replacement body: everything after the frontmatter fence.
+    pub body: Option<String>,
+}
+
+impl FactEdit {
+    /// Parse and validate the arguments object — the same key vocabulary
+    /// [`Remember::parse`] reads, and the same bounds, because an edit
+    /// that landed a field the writer would refuse would be a fact the
+    /// corpus's own rules do not accept.
+    pub fn parse(arguments: &serde_json::Value) -> Result<FactEdit, WriteError> {
+        let name = string_argument(arguments, "name")?
+            .map(|name| name.to_ascii_lowercase())
+            .unwrap_or_default();
+        if !valid_name(&name) {
+            return Err(WriteError::Name(format!(
+                "`{name}` is not a fact name: lowercase letters, digits, and hyphens, up to {MAX_NAME_CHARS} characters, no leading or trailing hyphen"
+            )));
+        }
+        let description = string_argument(arguments, "description")?
+            .map(|text| sanitize_line(&text, MAX_DESCRIPTION_CHARS));
+        if description.as_deref() == Some("") {
+            return Err(WriteError::Description(
+                "the `description` argument is empty; the fact as one sentence is required"
+                    .to_string(),
+            ));
+        }
+        let fact_type =
+            string_argument(arguments, "type")?.map(|text| sanitize_line(&text, MAX_TYPE_CHARS));
+        if fact_type.as_deref() == Some("") {
+            return Err(WriteError::Type(
+                "the `type` argument is empty; omit it to leave the type alone".to_string(),
+            ));
+        }
+        let valid_until = string_argument(arguments, "valid-until")?;
+        if let Some(day) = &valid_until {
+            if !day.is_empty() && !crate::cli::valid_calendar_day(day) {
+                return Err(WriteError::ValidUntil(format!(
+                    "`{day}` is not a day; use valid-until YYYY-MM-DD"
+                )));
+            }
+        }
+        let body = string_argument(arguments, "body")?;
+        if let Some(body) = &body {
+            if body.len() > MAX_BODY_BYTES {
+                return Err(WriteError::Body(format!(
+                    "the `body` argument is {} bytes, past the {MAX_BODY_BYTES}-byte bound",
+                    body.len()
+                )));
+            }
+        }
+        Ok(FactEdit {
+            name,
+            description,
+            fact_type,
+            // The shape rides the same scalar the writer reads, parsed
+            // here so an absent argument and an empty list stay two
+            // different statements: leave the tags alone, or clear them.
+            shape: match string_argument(arguments, "shape")? {
+                Some(text) => Some(parse_shape(&Some(text))?),
+                None => None,
+            },
+            phrases: match string_array_argument(arguments, "phrases")? {
+                Some(list) => Some(parse_phrases(&Some(list))?),
+                None => None,
+            },
+            missing: match string_array_argument(arguments, "missing")? {
+                Some(list) => Some(parse_missing(&Some(list))?),
+                None => None,
+            },
+            valid_until,
+            body,
+        })
+    }
+}
+
+/// Apply one in-place edit through the module's own rewriter, and hand
+/// the fact back as it now stands on disk.
+///
+/// An unknown name is a typed refusal, and so is a fact a supersession
+/// already folded away: editing a retired fact would rewrite a record
+/// the corpus keeps for its trail. The tier and the basis are left
+/// alone by design — they are the lifecycle's inputs.
+pub fn edit(root: &Path, request: &FactEdit) -> Result<Fact, WriteError> {
+    let Some(fact) = load_facts(root)
+        .into_iter()
+        .find(|fact| fact.name == request.name)
+    else {
+        return Err(WriteError::UnknownFact(format!(
+            "no fact named `{}` under {}",
+            request.name,
+            root.display()
+        )));
+    };
+    if !fact.superseded_by.trim().is_empty() {
+        return Err(WriteError::Retired(format!(
+            "`{}` was folded into `{}`; a retired fact is a record, not a draft",
+            fact.name, fact.superseded_by
+        )));
+    }
+    let path = fact.path.clone();
+    if let Some(description) = &request.description {
+        rewrite_field(&path, "description", &format!("\"{description}\""))?;
+    }
+    if let Some(fact_type) = &request.fact_type {
+        rewrite_field(&path, "type", fact_type)?;
+    }
+    if let Some(shape) = &request.shape {
+        rewrite_field(&path, "shape", &render_list(shape))?;
+    }
+    if let Some(phrases) = &request.phrases {
+        rewrite_field(&path, "phrases", &render_list(phrases))?;
+    }
+    if let Some(missing) = &request.missing {
+        rewrite_field(&path, "missing", &render_list(missing))?;
+    }
+    if let Some(valid_until) = &request.valid_until {
+        rewrite_field(&path, "valid-until", valid_until)?;
+    }
+    if let Some(body) = &request.body {
+        rewrite_body(&path, body)?;
+    }
+    // Read the fact back as it now stands, so a caller sees what the
+    // rewrite landed rather than what it asked for.
+    load_facts(root)
+        .into_iter()
+        .find(|fact| fact.name == request.name)
+        .ok_or_else(|| {
+            WriteError::UnknownFact(format!(
+                "`{}` did not read back after its edit",
+                request.name
+            ))
+        })
+}
+
+/// One tag list as the frontmatter renders it: `[]` when empty, the
+/// bracket form otherwise.
+fn render_list(entries: &[String]) -> String {
+    if entries.is_empty() {
+        return "[]".to_string();
+    }
+    format!("[{}]", entries.join(", "))
+}
+
+/// Replace everything after the frontmatter fence, preserving the fence
+/// and every byte above it. The body's counterpart to
+/// [`rewrite_field`], with the same bound and the same atomicity: the
+/// write lands through a unique temp file and a rename, so a reader
+/// never sees a half-written fact.
+fn rewrite_body(path: &Path, body: &str) -> Result<(), WriteError> {
+    let Ok(text) = fs::read_to_string(path) else {
+        let reason = format!("could not re-read {} to rewrite its body", path.display());
+        eprintln!("fleet: memories: {reason}");
+        return Err(WriteError::Io(reason));
+    };
+    let Some(closing) = text.find("\n---\n") else {
+        let reason = format!(
+            "{} lost its frontmatter fence; its body was not rewritten",
+            path.display()
+        );
+        eprintln!("fleet: memories: {reason}");
+        return Err(WriteError::Io(reason));
+    };
+    let mut out = String::from(&text[..closing + 5]);
+    out.push('\n');
+    out.push_str(body);
+    if !body.is_empty() && !body.ends_with('\n') {
+        out.push('\n');
+    }
+    let serial = REWRITE_SERIAL.fetch_add(1, Ordering::Relaxed);
+    let mut temp = path.to_path_buf().into_os_string();
+    temp.push(format!(".{}.{}.tmp", std::process::id(), serial));
+    let temp = PathBuf::from(temp);
+    match fs::write(&temp, &out) {
+        Ok(()) => {
+            if fs::rename(&temp, path).is_ok() {
+                Ok(())
+            } else {
+                let _ = fs::remove_file(&temp);
+                let reason = format!("could not replace {} with its new body", path.display());
+                eprintln!("fleet: memories: {reason}");
+                Err(WriteError::Io(reason))
+            }
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            let reason = format!("could not write {}: {error}", temp.display());
+            eprintln!("fleet: memories: {reason}");
+            Err(WriteError::Io(reason))
+        }
+    }
+}
+
 /// One string argument read off the arguments object: `None` when the
 /// key is absent or null — the caller decides whether that is required
 /// — and a typed error when the key is present but is not a string, so
@@ -8731,5 +8947,156 @@ mod tests {
         // The working one names its tier.
         assert!(rendered.contains("tier: working"), "{rendered}");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // --- the in-place edit ---
+
+    /// One fact file in the writer's own field order.
+    fn a_fact(name: &str, description: &str) -> String {
+        format!(
+            "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {}\nbasis: inferred\ntier: durable\nshape: []\nphrases: []\nmissing: []\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe body.\n",
+            crate::calib::today()
+        )
+    }
+
+    #[test]
+    fn an_edit_rewrites_the_named_fields_and_preserves_the_body() {
+        let root = scratch("edit-fields");
+        write_fact(&root, "a-fact", &a_fact("a-fact", "the old sentence"));
+        let request = FactEdit {
+            name: "a-fact".to_string(),
+            description: Some("the new sentence".to_string()),
+            fact_type: Some("reference".to_string()),
+            shape: Some(vec!["docs".to_string()]),
+            valid_until: Some("2099-01-01".to_string()),
+            ..Default::default()
+        };
+
+        let edited = edit(&root, &request).expect("the edit lands");
+
+        assert_eq!(edited.description, "the new sentence");
+        assert_eq!(edited.fact_type, "reference");
+        assert_eq!(edited.shape, vec!["docs".to_string()]);
+        assert_eq!(edited.valid_until, "2099-01-01");
+        // The body above all survives: the rewrite owns one line and
+        // every other byte is preserved.
+        assert_eq!(edited.body, "The body.");
+        // The name, the tier, and the basis are not a surface's to move.
+        assert_eq!(edited.name, "a-fact");
+        assert_eq!(edited.tier, Tier::Durable);
+        assert_eq!(edited.basis, Basis::Inferred);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_edit_of_the_body_replaces_everything_after_the_fence() {
+        let root = scratch("edit-body");
+        write_fact(&root, "a-fact", &a_fact("a-fact", "the sentence"));
+        let request = FactEdit {
+            name: "a-fact".to_string(),
+            body: Some("A whole new body.\n".to_string()),
+            ..Default::default()
+        };
+
+        let edited = edit(&root, &request).expect("the edit lands");
+
+        // The body reads back as the loader normalizes it: one trailing
+        // newline is the file's own, not the fact's.
+        assert_eq!(edited.body, "A whole new body.");
+        assert_eq!(edited.description, "the sentence");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_edit_that_asks_for_nothing_lands_no_write() {
+        let root = scratch("edit-empty");
+        let path = write_fact(&root, "a-fact", &a_fact("a-fact", "the sentence"));
+        let before = fs::read_to_string(&path).unwrap();
+
+        let edited = edit(
+            &root,
+            &FactEdit {
+                name: "a-fact".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("an edit with no fields is a no-op, not an error");
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(edited.description, "the sentence");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_edit_of_an_unknown_or_retired_fact_is_a_typed_error() {
+        let root = scratch("edit-refused");
+        write_fact(
+            &root,
+            "a-folded",
+            &a_fact("a-folded", "the folded sentence"),
+        );
+        let folded = root.join("a-folded.md");
+        let mut text = fs::read_to_string(&folded).unwrap();
+        text = text.replace("superseded-by:\n", "superseded-by: a-fact\n");
+        fs::write(&folded, text).unwrap();
+
+        let unknown = edit(
+            &root,
+            &FactEdit {
+                name: "no-such-fact".to_string(),
+                ..Default::default()
+            },
+        );
+        assert!(
+            matches!(unknown, Err(WriteError::UnknownFact(_))),
+            "{unknown:?}"
+        );
+        let retired = edit(
+            &root,
+            &FactEdit {
+                name: "a-folded".to_string(),
+                description: Some("rewriting a record".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(
+            matches!(retired, Err(WriteError::Retired(_))),
+            "{retired:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_edit_parses_the_writers_own_key_vocabulary_and_bounds() {
+        let arguments = serde_json::json!({
+            "name": "a-fact",
+            "description": "the new sentence",
+            "shape": "docs",
+            "phrases": ["read the log directly"],
+            "missing": ["the log"],
+            "valid-until": "2099-01-01",
+        });
+        let request = FactEdit::parse(&arguments).expect("the arguments parse");
+        assert_eq!(request.name, "a-fact");
+        assert_eq!(request.shape, Some(vec!["docs".to_string()]));
+        assert_eq!(
+            request.phrases,
+            Some(vec!["read the log directly".to_string()])
+        );
+
+        // An absent field is not a cleared one.
+        let absent = FactEdit::parse(&serde_json::json!({"name": "a-fact"})).unwrap();
+        assert_eq!(absent.description, None);
+        assert_eq!(absent.shape, None);
+
+        // An empty description is refused rather than landed.
+        let empty = FactEdit::parse(&serde_json::json!({"name": "a-fact", "description": "  "}));
+        assert!(
+            matches!(empty, Err(WriteError::Description(_))),
+            "{empty:?}"
+        );
+        // A day that is not a day is refused.
+        let day = FactEdit::parse(&serde_json::json!({"name": "a-fact", "valid-until": "soon"}));
+        assert!(matches!(day, Err(WriteError::ValidUntil(_))), "{day:?}");
     }
 }
