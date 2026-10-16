@@ -2805,6 +2805,130 @@ async fn sys1_judges_the_route_through_the_injected_spec() {
     assert_eq!(decision.start_index, 0);
 }
 
+/// The orchestrator's ruling: the walked chain leaves the judged
+/// workload. A task judged `quick` is still planned by `hard`'s head —
+/// the row records the judged label, the order is `hard`'s own, and
+/// the reason names both.
+#[tokio::test]
+async fn the_orchestrator_walks_hard_whatever_the_task_was_judged() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "content": [{ "type": "text",
+                "text": r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"quick","confidence":0.91}}}}"# }],
+                "isError": false }
+        }}),
+    ]);
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), fake.spec());
+
+    let preferences = vec![
+        fleet::route::Preference {
+            workload: "quick",
+            candidates: vec![
+                ("stand-in", "weak-model"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+            ],
+        },
+        fleet::route::Preference {
+            workload: "hard",
+            candidates: vec![("zai-coding-plan", "GLM-5.3-Flash"), ("stand-in", "auto")],
+        },
+    ];
+    let resolved = vec![
+        resolved(
+            "stand-in",
+            "http://127.0.0.1:8400/v1".to_string(),
+            false,
+            None,
+        ),
+        resolved(
+            "zai-coding-plan",
+            "https://api.z.ai".to_string(),
+            true,
+            Some("sk-fake-test"),
+        ),
+    ];
+    let (decision, _latency) = fleet::route::select(
+        &resolved,
+        None,
+        "a one-line question",
+        &specs,
+        &preferences,
+        fleet::route::Gates::default(),
+        None,
+    )
+    .await;
+    // The row still records what sys1 judged.
+    assert_eq!(decision.how, How::Judged);
+    assert_eq!(decision.workload.as_deref(), Some("quick"));
+    // But the walk is the orchestrator's: `hard`'s own chain.
+    assert_eq!(decision.provider, "zai-coding-plan");
+    assert_eq!(
+        decision.order,
+        vec![
+            ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
+            ("stand-in".to_string(), "auto".to_string()),
+        ]
+    );
+    assert!(
+        decision.reason.contains("sys1 judged `quick`"),
+        "{}",
+        decision.reason
+    );
+    assert!(
+        decision
+            .reason
+            .contains("the orchestrator walks `hard`'s chain"),
+        "{}",
+        decision.reason
+    );
+}
+
+/// The owner's override of `hard` governs the orchestrator's walk: the
+/// merged table's `hard` list is what the walk consumes.
+#[tokio::test]
+async fn the_orchestrators_walk_follows_a_hard_override() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "content": [{ "type": "text",
+                "text": r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"hard","confidence":0.91}}}}"# }],
+                "isError": false }
+        }}),
+    ]);
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), fake.spec());
+
+    // The merged table as an override of `hard` would leave it: the
+    // owner's list replaces the compiled-in one.
+    let preferences = vec![fleet::route::Preference {
+        workload: "hard",
+        candidates: vec![("stand-in", "overridden-model")],
+    }];
+    let resolved = vec![resolved(
+        "stand-in",
+        "http://127.0.0.1:8400/v1".to_string(),
+        false,
+        None,
+    )];
+    let (decision, _latency) = fleet::route::select(
+        &resolved,
+        None,
+        "refactor the crate",
+        &specs,
+        &preferences,
+        fleet::route::Gates::default(),
+        None,
+    )
+    .await;
+    assert_eq!(decision.how, How::Judged);
+    assert_eq!(decision.provider, "stand-in");
+    assert_eq!(decision.model, "overridden-model");
+}
+
 /// The route-decision cache: a recorded judgment serves without
 /// spawning the lane again, and the decision says the verdict came
 /// from the record. The no-spawn proof is the mock's own `on_eof`
@@ -2931,9 +3055,20 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
     specs.insert("sys1".to_string(), judge.spec());
     specs.insert("blend1".to_string(), answer.spec());
 
-    // The default roster already declares blend1 as the composed
-    // workload's lane-kind candidate; no config is needed.
+    // The task is judged `composed`, but the orchestrator walks `hard`
+    // (the owner's ruling), so the owner's override aims `hard` at the
+    // lane: the row records the judgment, the walk follows the ruling.
     let home = temp_home("composed-lane");
+    std::fs::write(
+        home.join("routing.json"),
+        serde_json::json!({
+            "workloads": [
+                { "workload": "hard", "candidates": ["blend1/blend1"] }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
     let prepared = fleet::route::prepare(
         &home,
         &std::collections::HashMap::new(),
@@ -3012,8 +3147,11 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
 async fn a_lane_that_refuses_advances_the_walk_by_name() {
     let stand_in = MockApi::start(vec![assistant_stream("Answered by the stand-in.")]);
     let home = temp_home("composed-lane-refusal");
-    // A declared table: `composed` walks blend1, then the stand-in. The stand-in's
-    // endpoint is the mock, so the failover leg lands somewhere real.
+    // A declared table: the ORCHESTRATOR walks `hard`, and the owner's
+    // override makes that blend1, then the stand-in. The task is still
+    // judged `composed` — the row records the judgment, the walk follows
+    // the ruling. The stand-in's endpoint is the mock, so the failover
+    // leg lands somewhere real.
     std::fs::write(
         home.join("config.json"),
         serde_json::json!({
@@ -3029,7 +3167,7 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         home.join("routing.json"),
         serde_json::json!({
             "workloads": [
-                { "workload": "composed", "candidates": ["blend1/blend1", "stand-in/auto"] }
+                { "workload": "hard", "candidates": ["blend1/blend1", "stand-in/auto"] }
             ]
         })
         .to_string(),

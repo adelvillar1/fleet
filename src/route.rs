@@ -368,6 +368,14 @@ pub fn preference_for<'a>(table: &'a [Preference], workload: &str) -> Option<&'a
     table.iter().find(|entry| entry.workload == workload)
 }
 
+/// The workload whose chain the orchestrator walks. The first model a
+/// run loads is the planner — it assigns the work and supervises it —
+/// so it is whatever the table assigns to the owner's strong category,
+/// whatever the task itself was judged (the owner's 2026-10-16 ruling).
+/// A `routing.json` override of that workload's candidates governs the
+/// walk the same way it governs the judgment's own.
+pub const ORCHESTRATOR_WORKLOAD: &str = "hard";
+
 /// A roster plus its optional pin. The chain order is the compiled-in
 /// declared order; the config file overrides entries per-field, never the
 /// order (slice 6's calibration reorders candidates over time).
@@ -1045,11 +1053,27 @@ pub async fn select(
         ),
     };
 
-    let decision = match preference_for(table, &workload) {
+    // The orchestrator's ruling: the walk leaves the judged workload
+    // here. The first model a run loads is the planner, so the walked
+    // chain is `ORCHESTRATOR_WORKLOAD`'s; the judgment still ran, the
+    // row still records its label, and a table without the orchestrator
+    // workload falls back to the judged chain.
+    let walked = if preference_for(table, ORCHESTRATOR_WORKLOAD).is_some() {
+        ORCHESTRATOR_WORKLOAD
+    } else {
+        workload.as_str()
+    };
+    let orchestrator_note = if walked == workload {
+        String::new()
+    } else {
+        format!("the orchestrator walks `{ORCHESTRATOR_WORKLOAD}`'s chain; ")
+    };
+
+    let decision = match preference_for(table, walked) {
         Some(preference) => {
-            // The walk is the workload's own list — a provider pin
-            // filters it to that provider, and the router still decides
-            // the model from what the workload asks of it.
+            // The walk is the walked workload's own list — a provider
+            // pin filters it to that provider, and the router still
+            // decides the model from what the workload asks of it.
             let order: Vec<(String, String)> = preference
                 .candidates
                 .iter()
@@ -1057,7 +1081,7 @@ pub async fn select(
                 .map(|(provider, model)| (provider.to_string(), model.to_string()))
                 .collect();
             let (order, reason) = if order.is_empty() {
-                // The workload names no candidate from the pinned
+                // The walked workload names no candidate from the pinned
                 // provider: the provider's own default model serves,
                 // and the reason says so rather than silently
                 // substituting some other provider.
@@ -1071,17 +1095,15 @@ pub async fn select(
                                 .map(|entry| entry.candidate.model().to_string())
                                 .unwrap_or_default(),
                         )],
-                        format!(
-                            "`{workload}` names no {pin} candidate; using {pin}'s default model"
-                        ),
+                        format!("`{walked}` names no {pin} candidate; using {pin}'s default model"),
                     ),
-                    None => (Vec::new(), format!("`{workload}`'s preference is empty")),
+                    None => (Vec::new(), format!("`{walked}`'s preference is empty")),
                 }
             } else {
                 let reason = if let Some(pin) = provider_pin {
-                    format!("pinned to {pin}; sys1 judged `{workload}`")
+                    format!("pinned to {pin}; sys1 judged `{workload}`; {orchestrator_note}")
                 } else {
-                    format!("sys1 judged `{workload}`")
+                    format!("sys1 judged `{workload}`; {orchestrator_note}")
                 };
                 (order, reason)
             };
@@ -2655,20 +2677,28 @@ mod tests {
         )
         .await;
         assert_eq!(decision.how, How::Fallback);
-        // The default workload's preference is the walk — stepfun
-        // first, exactly as the table says.
+        // The default workload's label is recorded, but the walk is the
+        // orchestrator's: `hard`'s own chain, stepfun's strong model at
+        // the head.
         assert_eq!(decision.provider, "stepfun");
-        assert_eq!(decision.model, "step-3.7-flash");
+        assert_eq!(decision.model, "step-5-preview");
         assert_eq!(
             decision.order,
             vec![
-                ("stepfun".to_string(), "step-3.7-flash".to_string()),
+                ("stepfun".to_string(), "step-5-preview".to_string()),
+                ("xiaomi-mimo".to_string(), "mimo-v2.6-pro".to_string()),
                 ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
-                ("xiaomi-mimo".to_string(), "mimo-v2.6-flash".to_string()),
             ]
         );
         assert!(
             decision.reason.contains("sys1 gave no usable verdict"),
+            "{}",
+            decision.reason
+        );
+        assert!(
+            decision
+                .reason
+                .contains("the orchestrator walks `hard`'s chain"),
             "{}",
             decision.reason
         );
@@ -2744,8 +2774,9 @@ mod tests {
                 cwd: None,
             },
         );
-        // No usable verdict → the default workload (standard_code) →
-        // its list filtered to stepfun: stepfun's model for that shape.
+        // No usable verdict → the default workload's label is recorded,
+        // but the walk is the orchestrator's: `hard`'s list filtered to
+        // stepfun — stepfun's strong model for the chain.
         let (decision, _latency) = select(
             &resolved,
             Some("stepfun"),
@@ -2758,7 +2789,7 @@ mod tests {
         .await;
         assert_eq!(decision.how, How::Pinned);
         assert_eq!(decision.provider, "stepfun");
-        assert_eq!(decision.model, "step-3.7-flash");
+        assert_eq!(decision.model, "step-5-preview");
         assert!(
             decision.reason.contains("pinned to stepfun"),
             "{}",

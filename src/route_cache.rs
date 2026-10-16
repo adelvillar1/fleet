@@ -88,13 +88,14 @@ impl Cache {
     /// inherit the old lane's verdicts.
     pub fn key_for(spec: &ServerSpec) -> String {
         format!(
-            "{} {} [{}]",
+            "{} {} [{}] walk={}",
             spec.program,
             spec.args.join(" "),
             spec.cwd
                 .as_ref()
                 .map(|dir| dir.display().to_string())
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            crate::route::ORCHESTRATOR_WORKLOAD
         )
     }
 
@@ -205,6 +206,27 @@ mod tests {
             reloaded.keyed_for(&Cache::key_for(&spec("python3", "/lane-a"))),
             "the same launch identity still matches"
         );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The key names the routing rule the decision was made under: the
+    /// orchestrator's walked workload rides the key, so a pre-change
+    /// cache (a bare producer key, no `walk=`) cannot serve a decision
+    /// made under the current rule — it invalidates whole and
+    /// self-heals on the first run.
+    #[test]
+    fn the_cache_key_names_the_walked_workload() {
+        let key = Cache::key_for(&spec("python3", "/lane-a"));
+        assert!(key.ends_with("walk=hard"), "{key}");
+        let home = scratch("route-cache-walk-key");
+        let mut cache = Cache::load(&home);
+        cache.put("abc123".to_string(), verdict());
+        cache.flush(&key);
+        let reloaded = Cache::load(&home);
+        // The pre-change key format — the producer alone — is a
+        // different key: the recorded verdict does not serve.
+        assert!(!reloaded.keyed_for("python3 -u service/mcp_server.py [/lane-a]"));
+        assert!(reloaded.keyed_for(&key));
         let _ = std::fs::remove_dir_all(&home);
     }
 
