@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
-use super::app::{App, Entry, Mode, ToolStatus};
+use super::app::{App, Entry, Mode, SettingsRow, ToolStatus};
 use crate::boards::{self, BoardData, BoardKind, Section, Slot};
 use crate::lanes::LaneState;
 
@@ -65,6 +65,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Mode::Lanes => render_lanes(frame, app),
         Mode::Explain => render_explain(frame, app),
         Mode::Settings | Mode::SettingsEdit => render_settings(frame, app),
+        Mode::SettingsConfirm => render_settings_confirm(frame, app),
     }
 }
 
@@ -73,19 +74,35 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
 /// selection marked and the editor replacing the list while a value is
 /// being typed. The value's source rides each row, because a value the
 /// environment owns would shadow a file write and the owner deserves to
-/// know that before editing it.
+/// know that before editing it. The two list-shaped surfaces — the
+/// provider overrides and the workload preferences the home's own files
+/// carry — render as cards beside the scalars, so the pane reaches
+/// every surface the CLI's `fleet settings` addresses.
 fn render_settings(frame: &mut Frame<'_>, app: &App) {
-    let area = centered_sized(SETTINGS_MODAL_PERCENT, 80, frame.area());
-    frame.render_widget(Clear, area);
+    // The modal's width comes from the frame, so every line is composed
+    // for the columns it will actually be drawn in — the same share
+    // `centered_sized` lays out, read off the frame independently of the
+    // height the lines then decide.
+    let [columns] = Layout::horizontal([Constraint::Percentage(SETTINGS_MODAL_PERCENT)])
+        .flex(Flex::Center)
+        .areas(frame.area());
+    let width = columns.width.saturating_sub(2).max(1) as usize;
     let editing = app.mode == Mode::SettingsEdit;
+    let mut lines = if editing {
+        editor_lines(app, width)
+    } else {
+        settings_lines(app, width)
+    };
     let title = if editing {
         format!(
             " settings — editing {} — enter writes, esc abandons ",
-            app.editing_key().unwrap_or("")
+            app.editing_label()
         )
     } else {
-        " settings — enter edits, esc close ".to_string()
+        " settings — enter edits, r removes, esc close ".to_string()
     };
+    let area = centered_sized(SETTINGS_MODAL_PERCENT, settings_height(lines.len()), frame.area());
+    frame.render_widget(Clear, area);
     let block = Block::bordered()
         .title(title)
         .title_style(title_style())
@@ -94,65 +111,6 @@ fn render_settings(frame: &mut Frame<'_>, app: &App) {
     frame.render_widget(block, area);
     if inner.height == 0 {
         return;
-    }
-    let width = inner.width as usize;
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    if editing {
-        // The editor: the buffer as one line, with the setting's own
-        // summary above it so an edit is made against what it changes.
-        if let Some((key, buffer)) = &app.editing {
-            if let Some(state) = app.settings.iter().find(|state| state.key == key) {
-                lines.push(line_of(
-                    vec![(state.summary.to_string(), Style::new().fg(palette::DIM))],
-                    width,
-                ));
-            }
-            lines.push(Line::from(Span::styled(
-                format!("> {buffer}"),
-                Style::new().fg(palette::TEXT),
-            )));
-        }
-    } else {
-        for (index, state) in app.settings.iter().enumerate() {
-            let selected = index == app.selected;
-            let marker = if selected { "\u{25b8}" } else { " " };
-            let value = state.rendered();
-            let source = state.source();
-            let key_style = if selected {
-                Style::new().fg(palette::ACCENT)
-            } else {
-                Style::new().fg(palette::TEXT)
-            };
-            lines.push(Line::from(vec![
-                Span::styled(format!("{marker} "), key_style),
-                Span::styled(state.key.to_string(), key_style),
-                Span::styled(
-                    format!("  {value}"),
-                    Style::new().fg(if state.from_env { palette::PENDING } else { palette::TEXT }),
-                ),
-                Span::styled(format!("  ({source})"), Style::new().fg(palette::DIM)),
-            ]));
-            if selected {
-                // The selection's own summary, indented under it: what
-                // the knob does is what the owner needs before editing.
-                lines.push(line_of(
-                    vec![(format!("  {}", state.summary), Style::new().fg(palette::DIM))],
-                    width,
-                ));
-            }
-        }
-        // The last write's outcome, named: a refusal the loader would
-        // have made is shown here rather than silently changing nothing.
-        if let Some(note) = &app.settings_note {
-            lines.push(Line::from(Span::styled(
-                format!("{note}"),
-                Style::new().fg(palette::PENDING),
-            )));
-        }
-        lines.push(Line::from(Span::styled(
-            format!("{} settings", app.settings.len()),
-            Style::new().fg(palette::DIM),
-        )));
     }
     let visible = inner.height as usize;
     if lines.len() > visible {
@@ -163,6 +121,217 @@ fn render_settings(frame: &mut Frame<'_>, app: &App) {
             Style::new().fg(palette::DIM),
         )));
     }
+    frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// The settings modal's height in rows: one row per rendered line, the
+/// border, and a line of headroom — clamped, so a small frame cannot
+/// push the modal off screen and a long pane names what it holds back
+/// rather than being cut silently. The two list sections made the pane
+/// taller than a fixed share of a 24-row frame, and a card clipped by
+/// its own modal is the failure the boards already learned from.
+fn settings_height(lines: usize) -> u16 {
+    (lines as u16).saturating_add(4).clamp(4, 44)
+}
+
+/// The editor's lines: the buffer as one line, with the row's own
+/// summary above it so an edit is made against what it changes.
+fn editor_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if let Some((key, buffer)) = &app.editing {
+        if let Some(state) = app.settings.iter().find(|state| state.key == key) {
+            lines.push(line_of(
+                vec![(state.summary.to_string(), Style::new().fg(palette::DIM))],
+                width,
+            ));
+        }
+        lines.push(Line::from(Span::styled(
+            format!("> {buffer}"),
+            Style::new().fg(palette::TEXT),
+        )));
+    }
+    lines
+}
+
+/// The pane's list: the scalar knobs exactly as they rendered before
+/// the list surfaces arrived, then a Providers section, then a Workloads
+/// section — one card per entry the home's own files carry, with the
+/// compiled-in fallback named where a file carries none.
+fn settings_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let selected = app.settings_rows().get(app.selected).copied();
+    for (index, state) in app.settings.iter().enumerate() {
+        let selected = matches!(selected, Some(SettingsRow::Scalar(row)) if row == index);
+        let marker = if selected { "▸" } else { " " };
+        let value = state.rendered();
+        let source = state.source();
+        let key_style = if selected {
+            Style::new().fg(palette::ACCENT)
+        } else {
+            Style::new().fg(palette::TEXT)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{marker} "), key_style),
+            Span::styled(state.key.to_string(), key_style),
+            Span::styled(
+                format!("  {value}"),
+                Style::new().fg(if state.from_env { palette::PENDING } else { palette::TEXT }),
+            ),
+            Span::styled(format!("  ({source})"), Style::new().fg(palette::DIM)),
+        ]));
+        if selected {
+            // The selection's own summary, indented under it: what the
+            // knob does is what the owner needs before editing it.
+            lines.push(line_of(
+                vec![(format!("  {}", state.summary), Style::new().fg(palette::DIM))],
+                width,
+            ));
+        }
+    }
+    // --- the provider cards -------------------------------------------
+    lines.push(section("Providers"));
+    let providers: Vec<&crate::settings::ListState> = app
+        .settings_lists
+        .iter()
+        .filter(|entry| entry.kind == crate::settings::ListKind::Provider)
+        .collect();
+    if providers.is_empty() {
+        lines.push(line_of(
+            vec![(
+                "   no provider overrides — the compiled-in roster serves".to_string(),
+                Style::new().fg(palette::DIM),
+            )],
+            width,
+        ));
+    }
+    for (index, entry) in providers.iter().enumerate() {
+        let selected = matches!(selected, Some(SettingsRow::Provider(row)) if row == index);
+        lines.extend(list_card(entry, selected, width));
+    }
+    // --- the workload cards -------------------------------------------
+    lines.push(section("Workloads"));
+    let workloads: Vec<&crate::settings::ListState> = app
+        .settings_lists
+        .iter()
+        .filter(|entry| entry.kind == crate::settings::ListKind::Workload)
+        .collect();
+    if workloads.is_empty() {
+        lines.push(line_of(
+            vec![(
+                "   no workload preferences — the compiled-in table serves".to_string(),
+                Style::new().fg(palette::DIM),
+            )],
+            width,
+        ));
+    }
+    for (index, entry) in workloads.iter().enumerate() {
+        let selected = matches!(selected, Some(SettingsRow::Workload(row)) if row == index);
+        lines.extend(list_card(entry, selected, width));
+    }
+    // The last write's outcome, named: a refusal the loader would have
+    // made is shown here rather than silently changing nothing.
+    if let Some(note) = &app.settings_note {
+        lines.push(Line::from(Span::styled(
+            format!("{note}"),
+            Style::new().fg(palette::PENDING),
+        )));
+    }
+    lines.push(line_of(
+        vec![(
+            format!(
+                "{} knobs · {} provider overrides · {} workload preferences",
+                app.settings.len(),
+                providers.len(),
+                workloads.len()
+            ),
+            Style::new().fg(palette::DIM),
+        )],
+        width,
+    ));
+    lines.push(line_of(
+        vec![(
+            "enter edits · r removes a list entry · esc close".to_string(),
+            Style::new().fg(palette::DIM),
+        )],
+        width,
+    ));
+    lines
+}
+
+/// One list entry as a card: its key as the head, the class its removal
+/// belongs to beside it, and the entry's own detail indented underneath.
+/// A card, never a table row — the removal's class rides the head
+/// because the owner needs to know which kind of `r` they are about to
+/// press, and the file-added class is the destructive one.
+fn list_card(
+    entry: &crate::settings::ListState,
+    selected: bool,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let marker = if selected { "▸" } else { " " };
+    let key_style = if selected {
+        Style::new().fg(palette::ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(palette::TEXT)
+    };
+    let (class, class_style) = match (entry.kind, entry.reverts) {
+        (crate::settings::ListKind::Provider, true) => ("override", palette::DIM),
+        (crate::settings::ListKind::Provider, false) => ("added by the file", palette::PENDING),
+        (crate::settings::ListKind::Workload, true) => ("preference", palette::DIM),
+        (crate::settings::ListKind::Workload, false) => ("added by the file", palette::PENDING),
+    };
+    let mut lines = vec![line_of(
+        vec![
+            (format!("{marker} "), Style::new().fg(palette::ACCENT)),
+            (entry.key.clone(), key_style),
+            (format!("  {class}"), Style::new().fg(class_style)),
+        ],
+        width,
+    )];
+    lines.extend(wrapped("   ", &entry.detail, Style::new().fg(palette::DIM), width));
+    if selected {
+        // The affordance, named where the selection is: an entry is
+        // edited with enter and removed with `r`, and a knob has no
+        // removal at all.
+        lines.push(line_of(
+            vec![(
+                "   enter edits this entry · r removes it".to_string(),
+                Style::new().fg(palette::DIM),
+            )],
+            width,
+        ));
+    }
+    lines
+}
+
+/// The destructive confirmation over the pane that armed it: exactly
+/// what will be removed, named, and the two answers. The pane asks
+/// because the CLI's `force` flag is a shell word and a pane has nowhere
+/// to put one — the question is what stands in for it, and the writer's
+/// own compiled-in rule still answers when the removal lands.
+fn render_settings_confirm(frame: &mut Frame<'_>, app: &App) {
+    let Some(removal) = &app.settings_removal else { return };
+    let area = centered(SETTINGS_CONFIRM_PERCENT, 30, frame.area());
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .title(" remove — y confirms, any other key abandons ")
+        .title_style(title_style())
+        .border_style(Style::new().fg(palette::PENDING));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
+    let width = inner.width as usize;
+    let mut lines = vec![Line::from("")];
+    lines.extend(wrapped(" ", &removal.detail, Style::new().fg(palette::TEXT), width));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(" [y]", Style::new().fg(palette::DENIED).add_modifier(Modifier::BOLD)),
+        Span::styled(" remove   ", Style::new().fg(palette::TEXT)),
+        Span::styled("any other key", Style::new().fg(palette::DIM)),
+        Span::styled(" abandons, writing nothing", Style::new().fg(palette::TEXT)),
+    ]));
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -1173,6 +1342,11 @@ fn explain_height(lines: usize) -> u16 {
 /// The settings modal's width, as a percentage of the frame.
 const SETTINGS_MODAL_PERCENT: u16 = 70;
 
+/// The destructive confirmation's width, as a share of the frame: the
+/// same share the sessions picker takes, so the two overlays read as
+/// one family.
+const SETTINGS_CONFIRM_PERCENT: u16 = 78;
+
 fn render_explain(frame: &mut Frame<'_>, app: &App) {
     let [columns] = Layout::horizontal([Constraint::Percentage(EXPLAIN_MODAL_PERCENT)])
         .flex(Flex::Center)
@@ -1797,9 +1971,181 @@ mod tests {
         out
     }
 
+    /// A scratch home the settings pane can read and write, carrying
+    /// both classes of list entry.
+    fn list_home(tag: &str) -> std::path::PathBuf {
+        let home =
+            std::env::temp_dir().join(format!("fleet-tui-lists-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        crate::settings::set_provider(&home, r#"{"id":"stepfun","enabled":false}"#).unwrap();
+        crate::settings::set_provider(
+            &home,
+            r#"{"id":"my-own-gateway","base_url":"http://127.0.0.1:9/v1"}"#,
+        )
+        .unwrap();
+        crate::settings::set_workload(&home, "quick", &["stepfun/step-3.7-flash".to_string()])
+            .unwrap();
+        home
+    }
+
+    /// The settings modal's interior: the rows and columns strictly
+    /// inside its border. An assertion about the pane's own content must
+    /// never trip over another pane's border, so the modal is located by
+    /// its title and walked down its left edge.
+    fn settings_interior(text: &str) -> String {
+        let rows: Vec<Vec<char>> = text.lines().map(|line| line.chars().collect()).collect();
+        let top = rows
+            .iter()
+            .position(|row| {
+                let line: String = row.iter().collect();
+                line.contains(" settings ") && line.contains('\u{250c}')
+            })
+            .expect("the settings modal's top border");
+        let left = rows[top]
+            .iter()
+            .position(|cell| *cell == '\u{250c}')
+            .expect("the modal's left edge");
+        let right = rows[top]
+            .iter()
+            .rposition(|cell| *cell == '\u{2510}')
+            .expect("the modal's right edge");
+        let mut bottom = top;
+        while bottom + 1 < rows.len() && rows[bottom + 1].get(left) == Some(&'\u{2502}') {
+            bottom += 1;
+        }
+        let mut out = String::new();
+        for row in &rows[top + 1..bottom] {
+            let line: String = row[left + 1..right.min(row.len())].iter().collect();
+            out.push_str(line.trim_end());
+            out.push('\n');
+        }
+        out
+    }
+
+    /// The pane renders the two list surfaces as cards beside the scalar
+    /// knobs, never a plain-text table: one card per entry the file
+    /// carries, the compiled-in fallback named where a file carries none,
+    /// and no table glyphs anywhere inside the pane.
+    #[test]
+    fn the_settings_pane_renders_the_lists_as_cards_and_never_a_table() {
+        let home = list_home("cards");
+        let mut app = App::new("deepseek-chat", "session-1");
+        app.open_settings(home.clone());
+        let interior = settings_interior(&draw(&app, 120, 60));
+        // The scalars are still there, beside the lists.
+        assert!(interior.contains("pin"), "{interior}");
+        assert!(interior.contains("approvals"), "{interior}");
+        assert!(interior.contains("unset"), "{interior}");
+        // The two sections, named.
+        assert!(interior.contains("Providers"), "{interior}");
+        assert!(interior.contains("Workloads"), "{interior}");
+        // One card per entry the file carries, with its own facts.
+        assert!(interior.contains("stepfun"), "{interior}");
+        assert!(interior.contains("disabled"), "{interior}");
+        assert!(interior.contains("my-own-gateway"), "{interior}");
+        assert!(interior.contains("http://127.0.0.1:9/v1"), "{interior}");
+        assert!(interior.contains("stepfun/step-3.7-flash"), "{interior}");
+        // The removal's class rides each card: the override reverts, the
+        // file-added one is the destructive class.
+        assert!(interior.contains("override"), "{interior}");
+        assert!(interior.contains("added by the file"), "{interior}");
+        // And the affordance is named on the pane's own footer.
+        assert!(interior.contains("r removes a list entry"), "{interior}");
+        // Cards, never a table: no column separators, no junction
+        // glyphs, no double rules anywhere inside the pane.
+        for glyph in [
+            '\u{2500}', '\u{2502}', '\u{250c}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{251c}',
+            '\u{2524}', '\u{252c}', '\u{2534}', '\u{253c}', '\u{2550}', '\u{2551}',
+        ] {
+            assert!(
+                !interior.contains(glyph),
+                "a table glyph rendered inside the pane: {glyph:?}"
+            );
+        }
+        // The selection's own card names its affordance in place.
+        let row = app
+            .settings_rows()
+            .iter()
+            .position(|row| matches!(row, SettingsRow::Provider(_)))
+            .expect("a provider card");
+        app.selected = row;
+        let selected = settings_interior(&draw(&app, 120, 60));
+        assert!(selected.contains("enter edits this entry"), "{selected}");
+        assert!(selected.contains("r removes it"), "{selected}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A file that carries no list entries says so, and names what
+    /// serves instead — an empty section is never a silently blank one.
+    #[test]
+    fn an_empty_lists_section_names_what_serves_instead() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-tui-empty-lists-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut app = App::new("deepseek-chat", "session-1");
+        app.open_settings(home.clone());
+        let interior = settings_interior(&draw(&app, 120, 60));
+        assert!(interior.contains("Providers"), "{interior}");
+        assert!(
+            interior.contains("no provider overrides — the compiled-in roster serves"),
+            "{interior}"
+        );
+        assert!(interior.contains("Workloads"), "{interior}");
+        assert!(
+            interior.contains("no workload preferences — the compiled-in table serves"),
+            "{interior}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The armed removal asks in a modal of its own, naming exactly what
+    /// will be removed and the two answers — and the pane's list is not
+    /// drawn underneath the question.
+    #[test]
+    fn the_destructive_confirmation_names_what_it_will_remove() {
+        let home = list_home("confirm");
+        let mut app = App::new("deepseek-chat", "session-1");
+        app.open_settings(home.clone());
+        let row = app
+            .settings_rows()
+            .iter()
+            .position(|row| matches!(row, SettingsRow::Provider(_)))
+            .expect("a provider card");
+        app.selected = row;
+        app.apply(Action::SettingsRemove);
+        assert_eq!(app.mode, Mode::SettingsConfirm);
+        let text = draw(&app, 120, 60);
+        assert!(text.contains("y confirms"), "{text}");
+        assert!(text.contains("any other key abandons"), "{text}");
+        assert!(text.contains("stepfun"), "{text}");
+        assert!(text.contains("comes back"), "{text}");
+        // The pane's own list is replaced by the question.
+        assert!(!text.contains("enter edits"), "{text}");
+        // The file-added class names the blast radius instead. Abandoning
+        // the first question writes nothing, exactly as it promises.
+        app.apply(Action::SettingsAbandon);
+        assert_eq!(app.mode, Mode::Settings);
+        app.selected = app
+            .settings_rows()
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row, SettingsRow::Provider(_)))
+            .nth(1)
+            .map(|(index, _)| index)
+            .expect("a second provider card");
+        app.apply(Action::SettingsRemove);
+        let destructive = draw(&app, 120, 60);
+        assert!(destructive.contains("my-own-gateway"), "{destructive}");
+        assert!(destructive.contains("every walk"), "{destructive}");
+        assert!(destructive.contains("does not come back"), "{destructive}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     use crate::agent::UiEvent;
     use crate::session::SessionSummary;
-    use crate::tui::app::{Action, ApprovalPrompt, App, Entry, Mode};
+    use crate::tui::app::{Action, ApprovalPrompt, App, Entry, Mode, SettingsRow};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
@@ -1910,6 +2256,43 @@ mod tests {
         assert!(modal.contains("approval"), "{modal}");
         assert!(modal.contains("rm -rf build"), "{modal}");
         assert!(modal.contains("always"), "{modal}");
+
+        // The settings pane, its editor, and the armed removal — at a
+        // standard size and at a tiny one, where a modal smaller than
+        // its own border still renders rather than panicking.
+        let home =
+            std::env::temp_dir().join(format!("fleet-tui-every-mode-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        crate::settings::set_provider(&home, r#"{"id":"stepfun","enabled":false}"#).unwrap();
+        crate::settings::set_workload(&home, "quick", &["stepfun/step-3.7-flash".to_string()])
+            .unwrap();
+        let mut settings = fresh();
+        settings.open_settings(home.clone());
+        let pane = draw(&settings, 80, 24);
+        assert!(pane.contains("Providers"), "{pane}");
+        assert!(pane.contains("Workloads"), "{pane}");
+        assert!(pane.contains("stepfun/step-3.7-flash"), "{pane}");
+        let tiny_pane = draw(&settings, 20, 6);
+        assert!(tiny_pane.contains("settings"), "{tiny_pane}");
+        settings.selected = settings
+            .settings_rows()
+            .iter()
+            .position(|row| matches!(row, SettingsRow::Provider(_)))
+            .expect("a provider card");
+        settings.apply(Action::Pick);
+        let editor = draw(&settings, 80, 24);
+        assert!(editor.contains("enter writes"), "{editor}");
+        assert!(editor.contains("provider stepfun"), "{editor}");
+        let _ = draw(&settings, 20, 6);
+        settings.apply(Action::CloseOverlay);
+        settings.apply(Action::SettingsRemove);
+        assert_eq!(settings.mode, Mode::SettingsConfirm);
+        let question = draw(&settings, 80, 24);
+        assert!(question.contains("y confirms"), "{question}");
+        let tiny_question = draw(&settings, 20, 6);
+        assert!(!tiny_question.is_empty());
+        let _ = std::fs::remove_dir_all(&home);
 
         // A tiny terminal still renders: the panes clamp instead of dying.
         let tiny = draw(&fresh(), 20, 6);

@@ -859,6 +859,66 @@ mod list_tests {
         assert!(workloads.contains(&"quick".to_string()), "{workloads:?}");
         assert!(workloads.contains(&"composed".to_string()), "{workloads:?}");
     }
+
+    /// `list_states` reads the home's two lists as card states, and
+    /// classifies each entry against the crate's own compiled-in sets —
+    /// the same ones the writer's destructive rule reads, so the pane
+    /// can never disagree with it about which class an entry is in.
+    #[test]
+    fn list_states_reads_the_homes_two_lists_and_classifies_them() {
+        let home = scratch("list-states");
+        // An empty home carries no cards at all.
+        assert!(list_states(&home).is_empty(), "no files, no cards");
+        set_provider(&home, r#"{"id":"stepfun","enabled":false}"#).unwrap();
+        set_provider(&home, r#"{"id":"my-own-gateway","base_url":"http://127.0.0.1:9/v1"}"#)
+            .unwrap();
+        set_workload(&home, "quick", &["stepfun/step-3.7-flash".to_string()]).unwrap();
+        set_workload(&home, "my-own-shape", &["stepfun/step-3.7-flash".to_string()]).unwrap();
+        let states = list_states(&home);
+        let providers: Vec<&ListState> = states
+            .iter()
+            .filter(|entry| entry.kind == ListKind::Provider)
+            .collect();
+        let workloads: Vec<&ListState> = states
+            .iter()
+            .filter(|entry| entry.kind == ListKind::Workload)
+            .collect();
+        assert_eq!(providers.len(), 2, "{states:?}");
+        assert_eq!(workloads.len(), 2, "{states:?}");
+        // The compiled-in override reverts; the file-added one is the
+        // destructive class. Read from the crate, not decided here.
+        let stepfun = providers
+            .iter()
+            .find(|entry| entry.key == "stepfun")
+            .expect("the stepfun override");
+        assert!(stepfun.reverts, "a compiled-in id's override reverts");
+        assert!(stepfun.detail.contains("disabled"), "{}", stepfun.detail);
+        let own = providers
+            .iter()
+            .find(|entry| entry.key == "my-own-gateway")
+            .expect("the added provider");
+        assert!(!own.reverts, "an added provider's removal is the destructive one");
+        assert!(own.detail.contains("http://127.0.0.1:9/v1"), "{}", own.detail);
+        // The seed is the buffer the writer parses: writing it back is
+        // the same entry, in place, not a second one.
+        assert_eq!(set_provider(&home, &own.seed).unwrap(), "my-own-gateway");
+        assert_eq!(list_states(&home).len(), 4, "the seed round-trips in place");
+        // The workloads classify the same way, and the seed is the
+        // comma-joined list the writer's own branch reads.
+        let quick = workloads
+            .iter()
+            .find(|entry| entry.key == "quick")
+            .expect("the quick preference");
+        assert!(quick.reverts, "a compiled-in workload's preference reverts");
+        assert_eq!(quick.seed, "stepfun/step-3.7-flash");
+        assert!(quick.detail.contains("stepfun/step-3.7-flash"), "{}", quick.detail);
+        let own_shape = workloads
+            .iter()
+            .find(|entry| entry.key == "my-own-shape")
+            .expect("the added workload");
+        assert!(!own_shape.reverts, "an added workload's removal is the destructive one");
+        let _ = fs::remove_dir_all(&home);
+    }
 }
 
 #[cfg(test)]
@@ -939,6 +999,129 @@ pub fn compiled_in_workloads() -> Vec<String> {
         .into_iter()
         .map(|preference| preference.workload.to_string())
         .collect()
+}
+
+/// One list-shaped entry as the surface renders it: a provider override
+/// or a workload preference the home's own files carry. The scalars are
+/// [`State`]s and stay exactly the table they are; these are the two
+/// lists beside them, and each one carries its destructive class so the
+/// pane never re-derives the rule the writer already enforces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListState {
+    /// Which of the two lists this entry belongs to.
+    pub kind: ListKind,
+    /// The entry's key material: the provider's id, or the workload's
+    /// name — what `remove_provider` and `remove_workload` address.
+    pub key: String,
+    /// The card's one line: a provider's base_url and key env, or a
+    /// workload's candidates in walk order.
+    pub detail: String,
+    /// True when removing this entry reverts it to the compiled-in
+    /// default, because its key is one the compiled-in roster or
+    /// preference table carries. False when the file added the entry,
+    /// so removing it takes the entry out of every walk that names it.
+    pub reverts: bool,
+    /// The buffer the editor seeds with, in the shape the writer's own
+    /// branch parses: a provider entry's JSON, or a workload's
+    /// comma-joined candidates.
+    pub seed: String,
+}
+
+/// Which of the home's two list-shaped surfaces an entry belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListKind {
+    /// A provider override in config.json's `providers` list.
+    Provider,
+    /// A workload preference in routing.json's `workloads` list.
+    Workload,
+}
+
+/// Read the home's two list-shaped surfaces as card states: the provider
+/// overrides config.json carries, then the workload preferences
+/// routing.json carries. A sibling of [`states`], which keeps the
+/// scalars — the lists are their own source, read from the very files
+/// the writer writes.
+///
+/// Each entry's destructive class is read from the crate's compiled-in
+/// roster and preference table through the same helpers the writer's
+/// own rule reads, never a copy of them: an id the compiled-in set
+/// carries is an override whose removal reverts, and an id it does not
+/// carry was added by the file, so its removal is the destructive one.
+/// A pane that classified these itself would drift from the writer the
+/// first time the roster moved.
+pub fn list_states(home: &Path) -> Vec<ListState> {
+    let (config_path, routing_path, _) = paths(home);
+    let compiled_in = compiled_in_providers();
+    let compiled_in_shapes = compiled_in_workloads();
+    let mut out: Vec<ListState> = Vec::new();
+    // A file too broken to parse reads as empty, the way `states` reads
+    // one: the roster load has already failed loud on it, and a pane
+    // that guessed at a broken file would be a second opinion nobody
+    // asked for.
+    let config = read_json(&config_path).unwrap_or_else(|_| Value::Object(Map::new()));
+    if let Some(providers) = config.get("providers").and_then(|list| list.as_array()) {
+        for entry in providers {
+            let Some(id) = entry.get("id").and_then(|id| id.as_str()) else { continue };
+            out.push(ListState {
+                kind: ListKind::Provider,
+                key: id.to_string(),
+                detail: provider_detail(entry),
+                reverts: compiled_in.iter().any(|known| known == id),
+                // The entry's own JSON, compact: the buffer the writer's
+                // `set_provider` parses, so an edit is a change to that
+                // entry rather than a second pane-local writer.
+                seed: entry.to_string(),
+            });
+        }
+    }
+    let routing = read_json(&routing_path).unwrap_or_else(|_| Value::Object(Map::new()));
+    if let Some(workloads) = routing.get("workloads").and_then(|list| list.as_array()) {
+        for entry in workloads {
+            let Some(name) = entry.get("workload").and_then(|name| name.as_str()) else { continue };
+            let candidates: Vec<String> = entry
+                .get("candidates")
+                .and_then(|list| list.as_array())
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|candidate| candidate.as_str())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let detail = if candidates.is_empty() {
+                "no candidates — the loader would walk this workload into its default".to_string()
+            } else {
+                candidates.join(" → ")
+            };
+            out.push(ListState {
+                kind: ListKind::Workload,
+                key: name.to_string(),
+                detail,
+                reverts: compiled_in_shapes.iter().any(|known| known == name),
+                seed: candidates.join(","),
+            });
+        }
+    }
+    out
+}
+
+/// A provider card's one line: the base_url and the key's env var name
+/// the entry carries, with the compiled-in default named wherever the
+/// entry does not override it, and its enabled state when the entry
+/// names one — an override that disables a provider is the most common
+/// edit there is, so the card says so. A key's VALUE is never rendered:
+/// the env var's name is configuration, the value behind it is a secret.
+fn provider_detail(entry: &Value) -> String {
+    let base = entry.get("base_url").and_then(|value| value.as_str());
+    let key_env = entry.get("key_env").and_then(|value| value.as_str());
+    let mut parts = vec![
+        base.unwrap_or("the compiled-in base_url").to_string(),
+        key_env.unwrap_or("the compiled-in key env").to_string(),
+    ];
+    if let Some(enabled) = entry.get("enabled").and_then(|value| value.as_bool()) {
+        parts.push(if enabled { "enabled".to_string() } else { "disabled".to_string() });
+    }
+    parts.join(" · ")
 }
 
 /// Add or replace one provider override. The entry validates through

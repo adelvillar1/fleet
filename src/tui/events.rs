@@ -28,16 +28,27 @@ pub fn action_for(app: &App, key: &KeyEvent) -> Option<Action> {
             KeyCode::Char('q') if !control => Some(Action::Quit),
             _ => None,
         },
-        // The settings pane is a menu: move, edit the selection, close.
-        // Enter opens the editor rather than picking, because the pane's
-        // whole job is to change something.
+        // The settings pane is a menu over the scalars and the two
+        // lists beside them: move, edit the selection, close. Enter
+        // opens the editor rather than picking, because the pane's
+        // whole job is to change something; `r` arms the destructive
+        // confirmation for a list entry, which is the one key that
+        // changes something without editing it.
         Mode::Settings => match key.code {
             KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
             KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
             KeyCode::Enter => Some(Action::Pick),
+            KeyCode::Char('r') if !control => Some(Action::SettingsRemove),
             KeyCode::Esc => Some(Action::CloseOverlay),
             KeyCode::Char('q') if !control => Some(Action::Quit),
             _ => None,
+        },
+        // The armed removal is answered or abandoned on any key: `y`
+        // lands it, and every other key walks away with nothing
+        // written — the same shape the approval modal answers on.
+        Mode::SettingsConfirm => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => Some(Action::SettingsConfirm),
+            _ => Some(Action::SettingsAbandon),
         },
         // The editor: type, backspace, commit on Enter, abandon on Esc.
         Mode::SettingsEdit => match key.code {
@@ -269,6 +280,39 @@ mod tests {
         // Enter picks nothing here, and letters are not text.
         assert_eq!(action_for(&app, &key(KeyCode::Enter)), None);
         assert_eq!(action_for(&app, &key(KeyCode::Char('x'))), None);
+    }
+
+    /// The settings pane's keys: move, edit, and the removal affordance
+    /// that arms the confirmation — which then answers `y` and abandons
+    /// on every other key, the way the approval modal does.
+    #[test]
+    fn the_settings_pane_arms_a_removal_and_the_question_answers_y_or_abandons() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-events-settings-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let typing = app();
+        let mut app = app();
+        app.open_settings(home.clone());
+        assert_eq!(action_for(&app, &key(KeyCode::Down)), Some(Action::Move(1)));
+        assert_eq!(action_for(&app, &key(KeyCode::Enter)), Some(Action::Pick));
+        assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::CloseOverlay));
+        // `r` arms the destructive confirmation; ctrl+r is not it.
+        assert_eq!(action_for(&app, &key(KeyCode::Char('r'))), Some(Action::SettingsRemove));
+        assert_eq!(action_for(&app, &control(KeyCode::Char('r'))), None);
+        // And `r` is a letter everywhere else.
+        assert_eq!(action_for(&typing, &key(KeyCode::Char('r'))), Some(Action::Input('r')));
+
+        // The armed question answers `y` and abandons on every other
+        // key, while ctrl+c still quits out of it.
+        app.mode = Mode::SettingsConfirm;
+        assert_eq!(action_for(&app, &key(KeyCode::Char('y'))), Some(Action::SettingsConfirm));
+        assert_eq!(action_for(&app, &key(KeyCode::Char('Y'))), Some(Action::SettingsConfirm));
+        assert_eq!(action_for(&app, &key(KeyCode::Esc)), Some(Action::SettingsAbandon));
+        assert_eq!(action_for(&app, &key(KeyCode::Enter)), Some(Action::SettingsAbandon));
+        assert_eq!(action_for(&app, &key(KeyCode::Char('n'))), Some(Action::SettingsAbandon));
+        assert_eq!(action_for(&app, &control(KeyCode::Char('c'))), Some(Action::Quit));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

@@ -110,6 +110,10 @@ pub enum Mode {
     Settings,
     /// One setting is being edited inside the settings pane.
     SettingsEdit,
+    /// A destructive removal is armed and the pane is asking whether it
+    /// lands. The CLI's `force` flag is a shell word; a pane has nowhere
+    /// to put one, so the question is what stands in for it.
+    SettingsConfirm,
 }
 
 /// One key press, translated for the current mode.
@@ -143,6 +147,12 @@ pub enum Action {
     SettingsCommit,
     /// Abandon the setting being edited.
     SettingsCancel,
+    /// Arm the destructive confirmation for the selected list entry.
+    SettingsRemove,
+    /// The armed removal lands.
+    SettingsConfirm,
+    /// The armed removal is abandoned, with nothing written.
+    SettingsAbandon,
     /// Open the lane health view.
     OpenLanes,
     /// Open the latest explanation card.
@@ -179,6 +189,34 @@ pub enum Effect {
 pub struct ApprovalPrompt {
     pub name: String,
     pub summary: String,
+}
+
+/// One armed destructive removal: the commit key it lands through — the
+/// writer's own branch, never a pane-local path — and the sentence
+/// naming exactly what will be gone. The pane asks before it lands
+/// because the CLI's `force` flag is a shell word and a pane has nowhere
+/// to put one; the writer's compiled-in rule still answers when the
+/// removal lands, so the two surfaces cannot disagree about what is
+/// destructive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsRemoval {
+    pub key: String,
+    pub detail: String,
+}
+
+/// One selectable row in the settings pane, in render order: the scalar
+/// knobs, then the provider cards, then the workload cards. The
+/// selection indexes this list, so walking off the last scalar lands on
+/// the first provider card rather than on a second cursor the owner has
+/// to discover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsRow {
+    /// The `n`-th scalar knob, as `settings::states` returned it.
+    Scalar(usize),
+    /// The `n`-th provider override the home's config.json carries.
+    Provider(usize),
+    /// The `n`-th workload preference the home's routing.json carries.
+    Workload(usize),
 }
 
 /// The status bar's facts.
@@ -249,8 +287,14 @@ pub struct App {
     /// types into. The buffer starts as the setting's current value, so
     /// an edit is a change rather than a retype.
     pub settings: Vec<crate::settings::State>,
+    /// The two list-shaped surfaces beside the scalars: the provider
+    /// overrides and the workload preferences the home's own files
+    /// carry, exactly as `settings::list_states` reads them.
+    pub settings_lists: Vec<crate::settings::ListState>,
     pub settings_home: Option<std::path::PathBuf>,
     pub editing: Option<(String, String)>,
+    /// The armed destructive removal, while the pane is asking about it.
+    pub settings_removal: Option<SettingsRemoval>,
     /// A settings write's outcome, named on one line rather than
     /// silently changing nothing: a refusal the loader would have made
     /// is shown here, in the pane, where the owner is looking.
@@ -288,8 +332,10 @@ impl App {
             lanes_probe: 0,
             explain: None,
             settings: Vec::new(),
+            settings_lists: Vec::new(),
             settings_home: None,
             editing: None,
+            settings_removal: None,
             settings_note: None,
             selected: 0,
             approval: None,
@@ -331,16 +377,22 @@ impl App {
                 }
                 _ => None,
             },
-            // The settings pane is a menu over a typed list: move,
-            // edit the selection, close. Editing is the only way out
-            // that changes anything, and the writer is the CLI's own.
+            // The settings pane is a menu over the scalars and the two
+            // lists beside them: move, edit the selection, close. Editing
+            // and the removal affordance are the only ways out that
+            // change anything, and the writer is the CLI's own.
             Mode::Settings => match action {
                 Action::Move(delta) => {
-                    self.move_selection(delta, self.settings.len());
+                    let rows = self.settings_rows();
+                    self.move_selection(delta, rows.len());
                     None
                 }
                 Action::Pick => {
-                    self.edit_selected_setting();
+                    self.edit_selected_row();
+                    None
+                }
+                Action::SettingsRemove => {
+                    self.arm_removal();
                     None
                 }
                 Action::CloseOverlay => {
@@ -353,6 +405,23 @@ impl App {
                     Some(Effect::Quit)
                 }
                 _ => None,
+            },
+            // The armed removal is answered or abandoned on any key: `y`
+            // lands it through the writer's own branch, and everything
+            // else walks away with nothing written.
+            Mode::SettingsConfirm => match action {
+                Action::SettingsConfirm => {
+                    self.confirm_removal();
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                _ => {
+                    self.abandon_removal();
+                    None
+                }
             },
             // The editor types, commits, or abandons. A commit that the
             // loader's own validation refuses lands back in the pane
@@ -665,62 +734,170 @@ impl App {
     /// Open the settings pane over the conversation, with the states the
     /// writer reads. The home rides the pane because a write needs it,
     /// and a pane that could show a value it could not change would be a
-    /// lie about what is configurable here.
+    /// lie about what is configurable here. The two list-shaped surfaces
+    /// are read beside the scalars, so the pane carries every surface the
+    /// CLI's `fleet settings` addresses.
     pub fn open_settings(&mut self, home: std::path::PathBuf) {
         self.settings = crate::settings::states(&home);
+        self.settings_lists = crate::settings::list_states(&home);
         self.settings_home = Some(home);
         self.editing = None;
+        self.settings_removal = None;
         self.settings_note = None;
         self.selected = 0;
         self.mode = Mode::Settings;
     }
 
-    /// Begin editing the selected setting. The buffer starts as the
-    /// setting's current value, so an edit is a change rather than a
-    /// retype — and a value the environment owns starts empty, because
-    /// typing over it would be writing a file the env var shadows.
-    pub fn edit_selected_setting(&mut self) {
-        let Some(state) = self.settings.get(self.selected) else { return };
-        let seed = if state.from_env {
-            String::new()
-        } else {
-            state.value.clone().unwrap_or_default()
+    /// Every row the settings pane can select, in the order it renders
+    /// them: the scalar knobs, then the provider cards, then the workload
+    /// cards.
+    pub fn settings_rows(&self) -> Vec<SettingsRow> {
+        let mut rows: Vec<SettingsRow> =
+            (0..self.settings.len()).map(SettingsRow::Scalar).collect();
+        let mut providers = 0usize;
+        let mut workloads = 0usize;
+        for entry in &self.settings_lists {
+            match entry.kind {
+                crate::settings::ListKind::Provider => {
+                    rows.push(SettingsRow::Provider(providers));
+                    providers += 1;
+                }
+                crate::settings::ListKind::Workload => {
+                    rows.push(SettingsRow::Workload(workloads));
+                    workloads += 1;
+                }
+            }
+        }
+        rows
+    }
+
+    /// The `index`-th entry of one list, in the order `list_states`
+    /// returned them.
+    fn list_entry(
+        &self,
+        kind: crate::settings::ListKind,
+        index: usize,
+    ) -> Option<&crate::settings::ListState> {
+        self.settings_lists
+            .iter()
+            .filter(|entry| entry.kind == kind)
+            .nth(index)
+    }
+
+    /// Begin editing the selected row. A scalar's buffer starts as its
+    /// current value, so an edit is a change rather than a retype — and
+    /// a value the environment owns starts empty, because typing over it
+    /// would be writing a file the env var shadows. A list entry seeds
+    /// with the writer's own shape: the entry's JSON under
+    /// `provider.add:`, its comma-joined candidates under
+    /// `workload.set:` — the same buffer the CLI's key would carry, so
+    /// committing routes through the writer's own function.
+    pub fn edit_selected_row(&mut self) {
+        let Some(row) = self.settings_rows().get(self.selected).copied() else { return };
+        let (key, seed) = match row {
+            SettingsRow::Scalar(index) => {
+                let Some(state) = self.settings.get(index) else { return };
+                let seed = if state.from_env {
+                    String::new()
+                } else {
+                    state.value.clone().unwrap_or_default()
+                };
+                (state.key.to_string(), seed)
+            }
+            SettingsRow::Provider(index) => {
+                let Some(entry) = self.list_entry(crate::settings::ListKind::Provider, index)
+                else {
+                    return;
+                };
+                (format!("provider.add:{}", entry.seed), entry.seed.clone())
+            }
+            SettingsRow::Workload(index) => {
+                let Some(entry) = self.list_entry(crate::settings::ListKind::Workload, index)
+                else {
+                    return;
+                };
+                (format!("workload.set:{}", entry.key), entry.seed.clone())
+            }
         };
-        self.editing = Some((state.key.to_string(), seed));
+        self.editing = Some((key, seed));
         self.settings_note = None;
         self.mode = Mode::SettingsEdit;
     }
 
+    /// The editor's title, named for a human. The key rides the writer's
+    /// whole shape — a provider entry's JSON, a workload's name — so the
+    /// title names the entry rather than repeating its JSON back at the
+    /// owner.
+    pub fn editing_label(&self) -> String {
+        let Some((key, _)) = self.editing.as_ref() else { return String::new() };
+        if let Some(entry) = key.strip_prefix("provider.add:") {
+            let id = serde_json::from_str::<serde_json::Value>(entry)
+                .ok()
+                .and_then(|value| {
+                    value.get("id").and_then(|id| id.as_str()).map(str::to_string)
+                });
+            return match id {
+                Some(id) => format!("provider {id}"),
+                None => "provider entry".to_string(),
+            };
+        }
+        if let Some(name) = key.strip_prefix("workload.set:") {
+            return format!("workload {name}");
+        }
+        key.clone()
+    }
+
     /// Commit the setting being edited, through the same writer the CLI
-    /// calls. The pane then re-reads every state, so the card the owner
-    /// is looking at is the resolved value rather than what they typed —
-    /// a clamped similarity or a rejected word shows its real result.
+    /// calls. The pane then re-reads every state and both lists, so the
+    /// card the owner is looking at is the resolved value rather than
+    /// what they typed — a clamped similarity or a rejected word shows
+    /// its real result.
     pub fn commit_setting(&mut self) {
         let Some((key, buffer)) = self.editing.take() else { return };
+        self.write_setting(&key, &buffer);
+        self.mode = Mode::Settings;
+    }
+
+    /// One write through the writer the CLI calls. The key decides the
+    /// branch: a plain key goes through `settings::set`, and the four
+    /// list keys go through the writer's own list functions — never a
+    /// pane-local path, so the two surfaces cannot drift. A refusal
+    /// lands back as the note, naming the rule that stopped it, and a
+    /// success re-reads the scalars and both lists so the cards show the
+    /// resolved result.
+    fn write_setting(&mut self, key: &str, buffer: &str) {
         let Some(home) = self.settings_home.clone() else { return };
         let outcome = if key.starts_with("provider.add:") {
-            crate::settings::set_provider(&home, &buffer).map(|id| format!("provider `{id}` written"))
-        } else if key.starts_with("provider.remove:") {
-            crate::settings::remove_provider(&home, &buffer, false)
-                .map(|()| "provider override removed".to_string())
-        } else if key.starts_with("workload.set:") {
+            // The buffer is the entry's own JSON, which is what
+            // `set_provider` parses; the key carries the same JSON so the
+            // editor's title can name the entry.
+            crate::settings::set_provider(&home, buffer).map(|id| format!("provider `{id}` written"))
+        } else if let Some(id) = key.strip_prefix("provider.remove:") {
+            let id = if id.is_empty() { buffer } else { id };
+            crate::settings::remove_provider(&home, id, false).map(|()| {
+                format!("provider `{id}`'s override removed — it reverts to the compiled-in default")
+            })
+        } else if let Some(name) = key.strip_prefix("workload.set:") {
             let candidates: Vec<String> = buffer
                 .split(',')
                 .map(|candidate| candidate.trim().to_string())
                 .filter(|candidate| !candidate.is_empty())
                 .collect();
-            crate::settings::set_workload(&home, &buffer, &candidates)
-                .map(|()| "workload written".to_string())
-        } else if key.starts_with("workload.remove:") {
-            crate::settings::remove_workload(&home, &buffer, false)
-                .map(|()| "workload preference removed".to_string())
+            crate::settings::set_workload(&home, name, &candidates)
+                .map(|()| format!("workload `{name}` written"))
+        } else if let Some(name) = key.strip_prefix("workload.remove:") {
+            let name = if name.is_empty() { buffer } else { name };
+            crate::settings::remove_workload(&home, name, false).map(|()| {
+                format!("workload `{name}`'s preference removed — it reverts to the compiled-in table")
+            })
         } else {
-            crate::settings::set(&home, &key, &buffer).map(|()| "written".to_string())
+            crate::settings::set(&home, key, buffer).map(|()| "written".to_string())
         };
         match outcome {
             Ok(message) => {
                 self.settings_note = Some(message);
                 self.settings = crate::settings::states(&home);
+                self.settings_lists = crate::settings::list_states(&home);
             }
             Err(error) => {
                 // A refusal is a value the owner reads: it names the rule
@@ -728,13 +905,90 @@ impl App {
                 self.settings_note = Some(error);
             }
         }
-        self.mode = Mode::Settings;
     }
 
     /// Abandon the edit, leaving the file untouched.
     pub fn cancel_setting(&mut self) {
         self.editing = None;
         self.settings_note = None;
+        self.mode = Mode::Settings;
+    }
+
+    /// Arm the destructive confirmation for the selected list entry. The
+    /// pane never passes `force`: the CLI's flag is a shell word, and a
+    /// pane has nowhere to put one — so the question is what stands in
+    /// for it, and the writer's own compiled-in rule still answers when
+    /// the removal lands. Each class is named in the question, because
+    /// an owner confirming a removal deserves to know which kind it is.
+    pub fn arm_removal(&mut self) {
+        let Some(row) = self.settings_rows().get(self.selected).copied() else { return };
+        let entry = match row {
+            SettingsRow::Scalar(_) => {
+                // A knob has no removal: it is cleared by emptying its
+                // value, which is an ordinary edit.
+                self.settings_note =
+                    Some("a knob is cleared by emptying its value, not removed".to_string());
+                return;
+            }
+            SettingsRow::Provider(index) => {
+                self.list_entry(crate::settings::ListKind::Provider, index)
+            }
+            SettingsRow::Workload(index) => {
+                self.list_entry(crate::settings::ListKind::Workload, index)
+            }
+        };
+        let Some(entry) = entry else { return };
+        let (key, detail) = match (entry.kind, entry.reverts) {
+            (crate::settings::ListKind::Provider, true) => (
+                format!("provider.remove:{}", entry.key),
+                format!(
+                    "remove provider `{}`'s override — the compiled-in default comes back",
+                    entry.key
+                ),
+            ),
+            (crate::settings::ListKind::Provider, false) => (
+                format!("provider.remove:{}", entry.key),
+                format!(
+                    "remove provider `{}` — this removes it from every walk; the compiled-in default does not come back",
+                    entry.key
+                ),
+            ),
+            (crate::settings::ListKind::Workload, true) => (
+                format!("workload.remove:{}", entry.key),
+                format!(
+                    "remove workload `{}`'s preference — the compiled-in table's candidates come back",
+                    entry.key
+                ),
+            ),
+            (crate::settings::ListKind::Workload, false) => (
+                format!("workload.remove:{}", entry.key),
+                format!(
+                    "remove workload `{}` — this leaves the workload with no candidates at all; the compiled-in table does not come back",
+                    entry.key
+                ),
+            ),
+        };
+        self.settings_removal = Some(SettingsRemoval { key, detail });
+        self.settings_note = None;
+        self.mode = Mode::SettingsConfirm;
+    }
+
+    /// The armed removal, confirmed. It lands through the writer's own
+    /// branch with `force` left false: the pane's question is the
+    /// confirmation, and the writer's compiled-in rule decides whether
+    /// the edit is a revert or a refusal. Either way the note names what
+    /// happened.
+    fn confirm_removal(&mut self) {
+        let Some(removal) = self.settings_removal.take() else { return };
+        self.write_setting(&removal.key, "");
+        self.mode = Mode::Settings;
+    }
+
+    /// The armed removal, abandoned: nothing is written, and the note
+    /// says so — an abandoned question is not a silent one.
+    fn abandon_removal(&mut self) {
+        self.settings_removal = None;
+        self.settings_note = Some("nothing removed".to_string());
         self.mode = Mode::Settings;
     }
 
@@ -1206,6 +1460,300 @@ mod tests {
         app.selected = endpoint;
         app.apply(Action::Pick);
         assert_eq!(app.editing_buffer(), Some(""));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A scratch home carrying one compiled-in provider override, one
+    /// provider the file itself added (fully specified, so the roster
+    /// still loads it), and both classes of workload.
+    fn list_home(tag: &str) -> std::path::PathBuf {
+        let home = settings_home(tag);
+        crate::settings::set_provider(&home, r#"{"id":"stepfun","enabled":false}"#).unwrap();
+        crate::settings::set_provider(
+            &home,
+            r#"{"id":"my-own-gateway","base_url":"http://127.0.0.1:9/v1","key_env":"MY_OWN_GATEWAY_KEY","models":["m-1"]}"#,
+        )
+        .unwrap();
+        crate::settings::set_workload(&home, "quick", &["stepfun/step-3.7-flash".to_string()])
+            .unwrap();
+        crate::settings::set_workload(
+            &home,
+            "my-own-shape",
+            &["stepfun/step-3.7-flash".to_string()],
+        )
+        .unwrap();
+        home
+    }
+
+    /// The row indices of one kind of list card, in pane order.
+    fn rows_of(app: &App, keep: impl Fn(SettingsRow) -> bool) -> Vec<usize> {
+        app.settings_rows()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, row)| keep(*row))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// The pane's rows are the scalars beside the two lists, and picking
+    /// a provider card opens the editor seeded with that entry's own
+    /// JSON — the buffer the writer parses, so committing routes through
+    /// the writer's own `set_provider`.
+    #[test]
+    fn the_pane_carries_the_two_lists_and_seeds_the_editor_from_the_entry() {
+        let home = list_home("lists");
+        let mut app = app();
+        app.open_settings(home.clone());
+        let providers = rows_of(&app, |row| matches!(row, SettingsRow::Provider(_)));
+        let workloads = rows_of(&app, |row| matches!(row, SettingsRow::Workload(_)));
+        assert_eq!(providers.len(), 2, "two provider cards");
+        assert_eq!(workloads.len(), 2, "two workload cards");
+        // The scalars come first, then the providers, then the workloads.
+        assert!(providers[0] >= app.settings.len(), "the scalars render first");
+        assert!(workloads[0] > providers[1], "the workloads render last");
+
+        // Picking the compiled-in override seeds its own JSON.
+        app.selected = providers[0];
+        app.apply(Action::Pick);
+        assert_eq!(app.mode, Mode::SettingsEdit);
+        let key = app.editing_key().expect("editing").to_string();
+        assert!(key.starts_with("provider.add:"), "{key}");
+        let seeded: serde_json::Value =
+            serde_json::from_str(app.editing_buffer().expect("a buffer"))
+                .expect("the entry's own JSON");
+        assert_eq!(seeded["id"], "stepfun");
+        assert_eq!(seeded["enabled"], false);
+        // Committing it lands through the writer's own set_provider.
+        app.apply(Action::Submit);
+        assert_eq!(app.mode, Mode::Settings);
+        assert_eq!(app.settings_note.as_deref(), Some("provider `stepfun` written"));
+
+        // Picking a workload card seeds the comma-joined candidates under
+        // the writer's own key.
+        app.selected = workloads[0];
+        app.apply(Action::Pick);
+        assert_eq!(app.editing_key(), Some("workload.set:quick"));
+        assert_eq!(app.editing_buffer(), Some("stepfun/step-3.7-flash"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Removing an override of a compiled-in provider reverts it from
+    /// the pane: the file's entry goes, and the compiled-in roster still
+    /// walks the provider. The question is asked first, and `y` is what
+    /// lands it.
+    #[test]
+    fn removing_a_compiled_in_override_reverts_it_from_the_pane() {
+        let home = list_home("revert");
+        let mut app = app();
+        app.open_settings(home.clone());
+        app.selected = rows_of(&app, |row| matches!(row, SettingsRow::Provider(_)))[0];
+        app.apply(Action::SettingsRemove);
+        assert_eq!(app.mode, Mode::SettingsConfirm);
+        let detail = app
+            .settings_removal
+            .as_ref()
+            .map(|removal| removal.detail.clone())
+            .expect("the removal is armed");
+        assert!(detail.contains("stepfun"), "{detail}");
+        assert!(detail.contains("comes back"), "{detail}");
+        // `y` lands it.
+        app.apply(Action::SettingsConfirm);
+        assert_eq!(app.mode, Mode::Settings);
+        assert!(app.settings_removal.is_none());
+        assert!(
+            app.settings_note
+                .as_deref()
+                .is_some_and(|note| note.contains("stepfun")),
+            "{:?}",
+            app.settings_note
+        );
+        // The file's entry is gone, and the compiled-in roster still
+        // walks the provider — a revert, not a removal.
+        let text = std::fs::read_to_string(home.join("config.json")).unwrap();
+        assert!(!text.contains("stepfun"), "{text}");
+        let roster = crate::route::load_roster(&home).expect("the roster still loads");
+        assert!(
+            roster.candidates.iter().any(|candidate| candidate.id == "stepfun"),
+            "the compiled-in roster still walks it"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Removing one the file itself added refuses, and the refusal names
+    /// the rule — the writer's own sentence, read from the crate's
+    /// compiled-in roster, exactly as the CLI enforces it.
+    #[test]
+    fn removing_a_file_added_provider_refuses_and_names_the_rule() {
+        let home = list_home("refuse");
+        let mut app = app();
+        app.open_settings(home.clone());
+        app.selected = rows_of(&app, |row| matches!(row, SettingsRow::Provider(_)))[1];
+        app.apply(Action::SettingsRemove);
+        assert_eq!(app.mode, Mode::SettingsConfirm);
+        let detail = app
+            .settings_removal
+            .as_ref()
+            .map(|removal| removal.detail.clone())
+            .expect("the removal is armed");
+        assert!(detail.contains("every walk"), "{detail}");
+        assert!(detail.contains("does not come back"), "{detail}");
+        app.apply(Action::SettingsConfirm);
+        // The writer refused, by name, and nothing was written.
+        let note = app.settings_note.clone().expect("the refusal is named");
+        assert!(note.contains("my-own-gateway"), "{note}");
+        assert!(note.contains("compiled-in roster"), "{note}");
+        assert!(note.contains("every walk"), "{note}");
+        let text = std::fs::read_to_string(home.join("config.json")).unwrap();
+        assert!(text.contains("my-own-gateway"), "{text}");
+        assert_eq!(app.mode, Mode::Settings);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The question's two outcomes: `y` lands the removal, and every
+    /// other key abandons it with nothing written and a note that says
+    /// so.
+    #[test]
+    fn the_confirmation_asks_and_every_other_key_abandons_it() {
+        let home = list_home("confirm");
+        let mut app = app();
+        app.open_settings(home.clone());
+        app.selected = rows_of(&app, |row| matches!(row, SettingsRow::Provider(_)))[0];
+        let carries = || std::fs::read_to_string(home.join("config.json")).unwrap();
+
+        // Escape abandons: nothing written, the note says so.
+        app.apply(Action::SettingsRemove);
+        app.apply(Action::CloseOverlay);
+        assert_eq!(app.mode, Mode::Settings);
+        assert!(app.settings_removal.is_none());
+        assert_eq!(app.settings_note.as_deref(), Some("nothing removed"));
+        assert!(carries().contains("stepfun"), "nothing was written");
+
+        // A stray key abandons too — the question is total.
+        app.apply(Action::SettingsRemove);
+        app.apply(Action::Move(1));
+        assert_eq!(app.mode, Mode::Settings);
+        assert!(app.settings_removal.is_none());
+        assert_eq!(app.settings_note.as_deref(), Some("nothing removed"));
+        assert!(carries().contains("stepfun"), "nothing was written");
+
+        // `y` lands it.
+        app.apply(Action::SettingsRemove);
+        app.apply(Action::SettingsConfirm);
+        assert!(!carries().contains("stepfun"), "the removal landed");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A knob has no removal: `r` on a scalar says how one is cleared
+    /// rather than arming a question about nothing.
+    #[test]
+    fn arming_a_removal_on_a_knob_names_how_one_is_cleared() {
+        let home = list_home("knob-remove");
+        let mut app = app();
+        app.open_settings(home.clone());
+        app.selected = 0;
+        app.apply(Action::SettingsRemove);
+        assert_eq!(app.mode, Mode::Settings, "no question about a knob");
+        assert!(app.settings_removal.is_none());
+        assert!(
+            app.settings_note
+                .as_deref()
+                .is_some_and(|note| note.contains("emptying its value")),
+            "{:?}",
+            app.settings_note
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The workload surfaces are reachable the same way, with the
+    /// writer's own validation naming a bad candidate and the same
+    /// destructive rule answering a removal.
+    #[test]
+    fn a_workload_round_trips_through_the_pane_with_a_bad_candidate_refused() {
+        let home = list_home("workload");
+        let mut app = app();
+        app.open_settings(home.clone());
+        let workloads = rows_of(&app, |row| matches!(row, SettingsRow::Workload(_)));
+        app.selected = workloads[0];
+
+        // A bad candidate is refused by the writer's own name for it.
+        app.apply(Action::Pick);
+        assert_eq!(app.editing_key(), Some("workload.set:quick"));
+        let seeded = app.editing_buffer().map(str::len).unwrap_or(0);
+        for _ in 0..seeded {
+            app.apply(Action::Backspace);
+        }
+        for character in "stepfun".chars() {
+            app.apply(Action::Input(character));
+        }
+        app.apply(Action::Submit);
+        let note = app.settings_note.clone().expect("the refusal is named");
+        assert!(note.contains("provider/model"), "{note}");
+        assert!(note.contains("stepfun"), "{note}");
+        // Nothing landed, and the card still reads what it read.
+        let text = std::fs::read_to_string(home.join("routing.json")).unwrap();
+        assert!(!text.contains("\"stepfun\""), "{text}");
+
+        // A well-formed list lands, and the pane re-reads the card.
+        app.selected = workloads[0];
+        app.apply(Action::Pick);
+        let seeded = app.editing_buffer().map(str::len).unwrap_or(0);
+        for _ in 0..seeded {
+            app.apply(Action::Backspace);
+        }
+        for character in "zai-coding-plan/GLM-5.3-Flash,stepfun/step-3.7-flash".chars() {
+            app.apply(Action::Input(character));
+        }
+        app.apply(Action::Submit);
+        assert_eq!(app.settings_note.as_deref(), Some("workload `quick` written"));
+        let card = app
+            .settings_lists
+            .iter()
+            .find(|entry| entry.key == "quick")
+            .expect("the card");
+        assert!(card.detail.contains("GLM-5.3-Flash"), "{}", card.detail);
+        let text = std::fs::read_to_string(home.join("routing.json")).unwrap();
+        assert!(text.contains("GLM-5.3-Flash"), "{text}");
+
+        // Removing the compiled-in workload's preference reverts it, and
+        // the compiled-in table still serves the workload.
+        app.selected = rows_of(&app, |row| matches!(row, SettingsRow::Workload(_)))[0];
+        app.apply(Action::SettingsRemove);
+        assert_eq!(app.mode, Mode::SettingsConfirm);
+        let detail = app
+            .settings_removal
+            .as_ref()
+            .map(|removal| removal.detail.clone())
+            .expect("the removal is armed");
+        assert!(detail.contains("quick"), "{detail}");
+        assert!(detail.contains("come back"), "{detail}");
+        app.apply(Action::SettingsConfirm);
+        assert!(
+            app.settings_note
+                .as_deref()
+                .is_some_and(|note| note.contains("quick")),
+            "{:?}",
+            app.settings_note
+        );
+        assert!(
+            !app.settings_lists.iter().any(|entry| entry.key == "quick"),
+            "the card is gone"
+        );
+        let roster = crate::route::load_roster(&home).expect("the roster still loads");
+        assert!(
+            crate::route::preference_for(&roster.preferences, "quick").is_some(),
+            "the compiled-in table still carries it"
+        );
+
+        // The file-added workload refuses, naming the rule.
+        app.selected = rows_of(&app, |row| matches!(row, SettingsRow::Workload(_)))[0];
+        app.apply(Action::SettingsRemove);
+        app.apply(Action::SettingsConfirm);
+        let note = app.settings_note.clone().expect("the refusal is named");
+        assert!(note.contains("my-own-shape"), "{note}");
+        assert!(note.contains("compiled-in table"), "{note}");
+        assert!(note.contains("no candidates"), "{note}");
+        let text = std::fs::read_to_string(home.join("routing.json")).unwrap();
+        assert!(text.contains("my-own-shape"), "{text}");
         let _ = std::fs::remove_dir_all(&home);
     }
 
