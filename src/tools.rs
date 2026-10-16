@@ -808,12 +808,34 @@ pub fn bound(outcome: ToolOutcome) -> ToolOutcome {
     }
 }
 
+/// How long a finished command's pipes may keep draining after the call
+/// is otherwise over: a background process that inherited them gets this
+/// much grace, then the call returns with what arrived, cut and named
+/// (KI-211). Two seconds is orders of magnitude over the drain any real
+/// command needs — an already-buffered pipe delivers in microseconds.
+const DRAIN_GRACE: Duration = Duration::from_secs(2);
+
+/// One drained pipe's news: a chunk of bytes, or the read that failed.
+enum DrainEvent {
+    Bytes(Vec<u8>),
+    ReadFailed(std::io::Error),
+}
+
 /// Run `command` through the platform shell and collect its output.
 ///
 /// Stdout and stderr are drained on their own threads from the start so a
 /// child writing past the pipe buffer cannot deadlock the wait; the wait
-/// itself polls so the deadline can kill a hung child.
+/// itself polls so the deadline can kill a hung child. After the shell is
+/// reaped — by exiting or by the deadline — each pipe gets [`DRAIN_GRACE`]
+/// to deliver the rest: a background process that inherited the pipe can
+/// keep it, but it cannot keep the call (KI-211).
 fn run_bash(command: &str) -> Result<ToolOutcome, String> {
+    run_bash_within(command, BASH_TIMEOUT)
+}
+
+/// [`run_bash`] with the deadline made explicit — the seam the tests
+/// drive, so the timeout path does not cost a real `BASH_TIMEOUT`.
+fn run_bash_within(command: &str, timeout: Duration) -> Result<ToolOutcome, String> {
     let mut child = shell_command(command)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -821,30 +843,29 @@ fn run_bash(command: &str) -> Result<ToolOutcome, String> {
         .spawn()
         .map_err(|error| format!("could not spawn the shell: {error}"))?;
 
-    let mut stdout_pipe = child.stdout.take();
-    let mut stderr_pipe = child.stderr.take();
-    let stdout_reader = std::thread::spawn(move || drain(&mut stdout_pipe));
-    let stderr_reader = std::thread::spawn(move || drain(&mut stderr_pipe));
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
+    // The readers detach from this thread the moment they are spawned:
+    // when the collect stops waiting, a stream still held open by a
+    // background process keeps its thread until that process exits, and
+    // the call does not wait for it.
+    std::thread::spawn(move || drain_stream(stdout_pipe, stdout_tx));
+    std::thread::spawn(move || drain_stream(stderr_pipe, stderr_tx));
 
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
+            Ok(Some(status)) => break Some(status),
             Ok(None) => {
-                if started.elapsed() >= BASH_TIMEOUT {
+                if started.elapsed() >= timeout {
+                    // The kill reaps the shell, not anything it
+                    // backgrounded — the pipes may outlive it, which the
+                    // collect below bounds.
                     let _ = child.kill();
                     let _ = child.wait();
-                    let stdout = stdout_reader.join().unwrap_or_default();
-                    let stderr = stderr_reader.join().unwrap_or_default();
-                    return Ok(ToolOutcome {
-                        output: format!(
-                            "timed out after {}s\n--- stdout ---\n{}--- stderr ---\n{}",
-                            BASH_TIMEOUT.as_secs(),
-                            stdout,
-                            stderr
-                        ),
-                        truncated: false,
-                    });
+                    break None;
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -852,10 +873,29 @@ fn run_bash(command: &str) -> Result<ToolOutcome, String> {
         }
     };
 
-    let stdout = stdout_reader.join().unwrap_or_default();
-    let stderr = stderr_reader.join().unwrap_or_default();
-    let code = status.code().unwrap_or(-1);
-    let mut output = format!("exit {code}\n");
+    let (stdout_bytes, stdout_cut, stdout_failure) = collect_stream(stdout_rx, DRAIN_GRACE);
+    let (stderr_bytes, stderr_cut, stderr_failure) = collect_stream(stderr_rx, DRAIN_GRACE);
+    let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
+
+    let mut output = match status {
+        Some(status) => format!("exit {}\n", status.code().unwrap_or(-1)),
+        None => format!("timed out after {}s\n", timeout.as_secs()),
+    };
+    // A read that failed mid-stream is named, never folded into clean
+    // output: the model has to be able to tell a partial read from a
+    // whole one.
+    for (name, failure) in [("stdout", &stdout_failure), ("stderr", &stderr_failure)] {
+        if let Some(failure) = failure {
+            output.push_str(&format!("--- {name} read failed: {failure} ---\n"));
+        }
+    }
+    if stdout_cut || stderr_cut {
+        output.push_str(&format!(
+            "--- output cut: a process still holds the pipe after {}s of grace ---\n",
+            DRAIN_GRACE.as_secs()
+        ));
+    }
     if !stdout.is_empty() {
         output.push_str("--- stdout ---\n");
         output.push_str(&stdout);
@@ -869,7 +909,7 @@ fn run_bash(command: &str) -> Result<ToolOutcome, String> {
     }
     Ok(ToolOutcome {
         output,
-        truncated: false,
+        truncated: stdout_cut || stderr_cut,
     })
 }
 
@@ -889,13 +929,60 @@ fn shell_command(command: &str) -> Command {
     }
 }
 
-/// Read a pipe to the end, lossily decoding UTF-8.
-fn drain<R: Read>(pipe: &mut Option<R>) -> String {
-    let mut bytes = Vec::new();
-    if let Some(pipe) = pipe {
-        let _ = pipe.read_to_end(&mut bytes);
+/// Read a pipe to its end, streaming each chunk as it arrives — a collect
+/// that has stopped waiting can still take what already crossed (KI-211).
+fn drain_stream<R: Read + Send + 'static>(
+    pipe: Option<R>,
+    tx: std::sync::mpsc::Sender<DrainEvent>,
+) {
+    let Some(mut pipe) = pipe else {
+        return;
+    };
+    let mut buf = [0u8; 8192];
+    loop {
+        match pipe.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                // A send failure means the collect has moved on: the pipe
+                // may still be held by a background process, and this
+                // thread's job is done.
+                if tx.send(DrainEvent::Bytes(buf[..n].to_vec())).is_err() {
+                    break;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                let _ = tx.send(DrainEvent::ReadFailed(error));
+                break;
+            }
+        }
     }
-    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Take one stream's output, waiting at most `grace` past the call for
+/// the rest of it. Returns the bytes, whether the stream was cut with
+/// life left in it, and its read failure if there was one.
+fn collect_stream(
+    rx: std::sync::mpsc::Receiver<DrainEvent>,
+    grace: Duration,
+) -> (Vec<u8>, bool, Option<String>) {
+    let deadline = Instant::now() + grace;
+    let mut bytes = Vec::new();
+    let mut failure = None;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .unwrap_or_default();
+        if remaining.is_zero() {
+            return (bytes, true, failure);
+        }
+        match rx.recv_timeout(remaining) {
+            Ok(DrainEvent::Bytes(mut chunk)) => bytes.append(&mut chunk),
+            Ok(DrainEvent::ReadFailed(error)) => failure = Some(error.to_string()),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return (bytes, true, failure),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return (bytes, false, failure),
+        }
+    }
 }
 
 fn run_read_file(path: &str) -> Result<ToolOutcome, String> {
@@ -1073,6 +1160,79 @@ mod tests {
         assert!(outcome.truncated);
         assert!(outcome.output.len() <= MAX_TOOL_OUTPUT + 64);
         assert!(outcome.output.contains("[truncated"));
+    }
+
+    #[test]
+    fn a_background_process_holding_the_pipe_cannot_keep_the_call() {
+        let started = Instant::now();
+        let outcome = run_bash_within("echo handed-back; tail -f /dev/null &", BASH_TIMEOUT)
+            .expect("the call returns");
+        // Bounded by the grace, not by the holder: the shell exited at
+        // once, and only the drain had anything left to wait for.
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the call returned in {:?}",
+            started.elapsed()
+        );
+        assert!(outcome.output.contains("handed-back"), "{}", outcome.output);
+        assert!(outcome.output.contains("output cut"), "{}", outcome.output);
+        assert!(outcome.truncated);
+    }
+
+    #[test]
+    fn the_deadline_kills_a_hung_shell_and_the_collect_bounds_its_survivors() {
+        let started = Instant::now();
+        let outcome =
+            run_bash_within("sleep 30 & wait", Duration::from_secs(1)).expect("the call returns");
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_secs(1), "the deadline fired");
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "bounded by the grace after the kill, not by the survivor: {elapsed:?}"
+        );
+        assert!(
+            outcome.output.contains("timed out after 1s"),
+            "{}",
+            outcome.output
+        );
+        assert!(outcome.output.contains("output cut"), "{}", outcome.output);
+        assert!(outcome.truncated);
+    }
+
+    #[test]
+    fn a_plain_command_reports_exit_and_output_unchanged() {
+        let outcome = run_bash_within("echo plain-run", BASH_TIMEOUT).expect("runs");
+        assert!(outcome.output.starts_with("exit 0\n"), "{}", outcome.output);
+        assert!(outcome.output.contains("plain-run"), "{}", outcome.output);
+        assert!(!outcome.truncated);
+    }
+
+    #[test]
+    fn a_read_failure_is_named_not_folded_into_clean_output() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(DrainEvent::ReadFailed(std::io::Error::other(
+            "the pipe broke",
+        )))
+        .unwrap();
+        drop(tx);
+        let (bytes, cut, failure) = collect_stream(rx, Duration::from_millis(50));
+        assert!(bytes.is_empty());
+        assert!(!cut);
+        assert!(failure
+            .as_deref()
+            .unwrap_or_default()
+            .contains("the pipe broke"));
+    }
+
+    #[test]
+    fn a_clean_end_of_stream_is_not_a_cut() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(DrainEvent::Bytes(b"done".to_vec())).unwrap();
+        drop(tx);
+        let (bytes, cut, failure) = collect_stream(rx, Duration::from_secs(2));
+        assert_eq!(bytes, b"done");
+        assert!(!cut);
+        assert!(failure.is_none());
     }
 
     #[test]
