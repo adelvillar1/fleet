@@ -3809,55 +3809,80 @@ pub fn consolidate(root: &Path, today: &str, stream: Option<&calib::Stream>) -> 
     let summary = if compress.is_empty() && supersede.is_empty() {
         None
     } else {
-        Some(write_summary(root, today, &compress, &supersede))
+        match write_summary(root, today, &compress, &supersede) {
+            Ok(name) => Some(name),
+            Err(error) => {
+                // The fold did not land: nothing is stamped, nothing is
+                // recorded, and nothing is archived — every source fact
+                // stays live and rankable for the next pass. Named, not
+                // silent: a fold the audit trail claims but the disk
+                // contradicts is the one lie this cycle cannot afford
+                // (KI-212).
+                eprintln!(
+                    "fleet: the consolidation summary could not be written ({error}); \
+                     nothing was folded and every source fact stays live"
+                );
+                None
+            }
+        }
     };
+    // The forget half only follows a landed fold. `None` here means one
+    // of two things: there was nothing to fold (the pass still forgets,
+    // exactly as before), or the fold failed (nothing is archived — the
+    // expired facts are retried whole next pass).
+    let fold_landed = summary.is_some() || (compress.is_empty() && supersede.is_empty());
 
     for fact in &compress {
+        // The action exists only when its fold did: a failed summary
+        // leaves the fact unstamped, unrecorded, and unarchived — the
+        // pass reports nothing it did not do (KI-212).
         if let Some(summary) = &summary {
             // Best-effort, and logged by the rewriter itself: a stamp
             // the cycle could not land leaves the fact live and names
             // the reason on stderr, and the cycle's pass is advisory
             // rather than a gated action.
             let _ = rewrite_field(&fact.path, "superseded-by", summary);
+            let reason = if fact.forgotten(today) {
+                format!("working memory past its valid-until {}", fact.valid_until)
+            } else {
+                format!("working memory older than {WORKING_MAX_AGE_DAYS} days")
+            };
+            record_cycle(stream, calib::ACTION_COMPRESS, &fact.name, &reason);
+            out.actions.push(CycleAction {
+                action: calib::ACTION_COMPRESS,
+                fact: fact.name.clone(),
+                reason,
+            });
         }
-        let reason = if fact.forgotten(today) {
-            format!("working memory past its valid-until {}", fact.valid_until)
-        } else {
-            format!("working memory older than {WORKING_MAX_AGE_DAYS} days")
-        };
-        record_cycle(stream, calib::ACTION_COMPRESS, &fact.name, &reason);
-        out.actions.push(CycleAction {
-            action: calib::ACTION_COMPRESS,
-            fact: fact.name.clone(),
-            reason,
-        });
     }
     for fact in &supersede {
         if let Some(summary) = &summary {
             let _ = rewrite_field(&fact.path, "superseded-by", summary);
-        }
-        let reason = format!("inferred, never recalled, older than {STALE_AFTER_DAYS} days");
-        record_cycle(stream, calib::ACTION_SUPERSEDE, &fact.name, &reason);
-        out.actions.push(CycleAction {
-            action: calib::ACTION_SUPERSEDE,
-            fact: fact.name.clone(),
-            reason,
-        });
-    }
-
-    for fact in &facts {
-        let expired = matches!(day_age(&fact.valid_until, today_days), Some(age) if age > 0);
-        if !expired || !fact.superseded_by.trim().is_empty() {
-            continue;
-        }
-        if archive_fact(root, fact) {
-            let reason = format!("expired {}", fact.valid_until);
-            record_cycle(stream, calib::ACTION_FORGET, &fact.name, &reason);
+            let reason = format!("inferred, never recalled, older than {STALE_AFTER_DAYS} days");
+            record_cycle(stream, calib::ACTION_SUPERSEDE, &fact.name, &reason);
             out.actions.push(CycleAction {
-                action: calib::ACTION_FORGET,
+                action: calib::ACTION_SUPERSEDE,
                 fact: fact.name.clone(),
                 reason,
             });
+        }
+    }
+
+    if fold_landed {
+        for fact in &facts {
+            let expired = matches!(day_age(&fact.valid_until, today_days), Some(age) if age > 0);
+            if !expired || !fact.superseded_by.trim().is_empty() {
+                continue;
+            }
+            if archive_fact(root, fact) {
+                let reason = format!("expired {}", fact.valid_until);
+                record_cycle(stream, calib::ACTION_FORGET, &fact.name, &reason);
+                out.actions.push(CycleAction {
+                    action: calib::ACTION_FORGET,
+                    fact: fact.name.clone(),
+                    reason,
+                });
+            }
         }
     }
 
@@ -3881,8 +3906,15 @@ fn record_cycle(stream: Option<&calib::Stream>, action: &str, fact: &str, reason
 /// pass folded, so a compression preserves the content it removes from
 /// the working tier. The name is the day, numbered past any earlier
 /// pass the same day already wrote — `consolidation-2026-10-13`,
-/// then `-2`, so two passes never collide on one file.
-fn write_summary(root: &Path, today: &str, compressed: &[Fact], superseded: &[Fact]) -> String {
+/// then `-2`, so two passes never collide on one file. A write that
+/// fails is the caller's to name: the fold it was to carry did not
+/// happen (KI-212).
+fn write_summary(
+    root: &Path,
+    today: &str,
+    compressed: &[Fact],
+    superseded: &[Fact],
+) -> Result<String, WriteError> {
     let folded = compressed.len() + superseded.len();
     let mut body = format!("What the consolidation cycle folded on {today}.\n");
     if !compressed.is_empty() {
@@ -3929,8 +3961,8 @@ fn write_summary(root: &Path, today: &str, compressed: &[Fact], superseded: &[Fa
         body,
     };
     // The name is free by construction, so the existence check is off.
-    let _ = write_document(root, &request, today, false);
-    name
+    write_document(root, &request, today, false)?;
+    Ok(name)
 }
 
 /// The archive's collision shape: the fact's own name for the first
@@ -4605,6 +4637,7 @@ fn dashes_for(left: &str, right: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
 
     /// A scratch corpus root, unique per call.
@@ -7956,6 +7989,54 @@ mod tests {
             root,
             "fresh",
             &good_fact("fresh", "a durable fact written today", "project", "deploy"),
+        );
+    }
+
+    #[test]
+    fn a_fold_that_cannot_land_stamps_records_and_archives_nothing() {
+        let root = scratch("cycle-failed-fold");
+        write_fact(
+            &root,
+            "expired-note",
+            &working_fact(
+                "expired-note",
+                "a working note whose time has passed",
+                &days_ago(10),
+                &days_ago(1),
+            ),
+        );
+        // The corpus goes read-only: the summary's write cannot land,
+        // and with it neither the stamps, the rows, nor the archive
+        // move (KI-212).
+        let mut sealed = fs::metadata(&root).unwrap().permissions();
+        sealed.set_mode(0o555);
+        fs::set_permissions(&root, sealed).unwrap();
+        let result = consolidate(&root, &calib::today(), None);
+        let mut open = fs::metadata(&root).unwrap().permissions();
+        open.set_mode(0o755);
+        fs::set_permissions(&root, open).unwrap();
+
+        // The pass names nothing it did not do: no summary, no actions,
+        // and the source fact is exactly as it was — live, rankable,
+        // unstamped.
+        assert!(result.summary.is_none());
+        assert!(result.actions.is_empty());
+        let fact_text = fs::read_to_string(root.join("expired-note.md")).unwrap();
+        assert!(fact_text.contains("The note's body."), "{fact_text}");
+        assert!(
+            fact_text.contains("superseded-by:\n"),
+            "unstamped: {fact_text}"
+        );
+
+        // The next pass, with the disk writable again, folds it whole.
+        let retried = consolidate(&root, &calib::today(), None);
+        assert!(retried.summary.is_some());
+        assert!(
+            retried
+                .actions
+                .iter()
+                .any(|action| action.action == calib::ACTION_COMPRESS
+                    && action.fact == "expired-note")
         );
     }
 

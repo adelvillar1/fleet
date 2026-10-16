@@ -4737,6 +4737,76 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
 }
 
 #[tokio::test]
+async fn a_degenerate_stream_is_still_one_answer_and_the_hits_fire_once() {
+    // The degenerate stream: a 200 that closes with `[DONE]` and no
+    // chunks. The client assembles one empty choice from it, so the run
+    // completes — this IS a successful first response, and the hits
+    // fire for it exactly once, after it (KI-068's ordering, pinned
+    // from the degenerate side). A run whose first call dies before any
+    // response bumps nothing; that is the failed-call unit test in
+    // agent.rs.
+    let mock = MockApi::start(vec![stream(vec!["data: [DONE]".to_string()])]);
+    let home = temp_home("memory-empty-answer");
+    let root = memory_corpus(
+        "empty-answer",
+        &[
+            (
+                "identity",
+                fact_file(
+                    "identity",
+                    "the owner's standing rule about the gate",
+                    "confirmed-by",
+                    "feedback",
+                    "",
+                ),
+            ),
+            (
+                "top",
+                fact_file(
+                    "top",
+                    "the railway deploy is failing per branch",
+                    "inferred",
+                    "project",
+                    "deploy",
+                ),
+            ),
+        ],
+    );
+    let calib_root = temp_home("memory-empty-answer-calib");
+    let stream = fleet::calib::Stream::open(&calib_root);
+    let memory = std::sync::Arc::new(fleet::memory::Memory::load_with(
+        &root,
+        Box::new(fleet::memory::KeywordOnly),
+    ));
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(memory),
+        Some(stream.clone()),
+        "the railway deploy is failing",
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.stop_reason, fleet::agent::StopReason::Completed);
+
+    // The answer was empty, and the answer was real: the surfaced
+    // fact's count moved exactly one step, and the stream carries the
+    // one `recall_hit` row — never two, whatever the stream looked
+    // like.
+    let top = std::fs::read_to_string(root.join("top.md")).unwrap();
+    assert!(top.contains("recall-count: 1"), "{top}");
+    drop(stream);
+    let rows = fleet::calib::read_day(&calib_root, &fleet::calib::today(), 64);
+    let hits = rows
+        .iter()
+        .filter(|row| row.op == fleet::calib::OP_RECALL_HIT)
+        .count();
+    assert_eq!(hits, 1, "{rows:?}");
+}
+
+#[tokio::test]
 async fn a_memory_less_run_is_byte_for_byte_unchanged() {
     let mock = MockApi::start(vec![assistant_stream("Done.")]);
     let home = temp_home("memory-less");

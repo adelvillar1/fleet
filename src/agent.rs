@@ -1110,12 +1110,6 @@ impl<'a> Agent<'a> {
                 })
                 .await
                 .map_err(AgentError::Api)?;
-            // The recall hits fire here: the first response has
-            // landed, so the assembled facts were ones the model saw
-            // (KI-068). Before any tool-call handling, and taken on
-            // the first turn only — a run that dies before this line
-            // records nothing.
-            self.record_recall_hits();
             self.usage.prompt_tokens += response.usage.prompt_tokens;
             self.usage.completion_tokens += response.usage.completion_tokens;
             // The API's own count of this request's prompt, when it
@@ -1126,6 +1120,13 @@ impl<'a> Agent<'a> {
             let choice = response.choices.into_iter().next().ok_or_else(|| {
                 AgentError::Api(ClientError::Decode("response had no choices".to_string()))
             })?;
+            // The recall hits fire here: the first response has landed
+            // AND yielded a choice, so the assembled facts were ones the
+            // model saw (KI-068 — and the seam's own residue: a
+            // degenerate zero-choice 200 is not an answer either). Taken
+            // on the first turn only — a run that dies before this line
+            // records nothing.
+            self.record_recall_hits();
 
             let message = choice.message;
             for call in &message.tool_calls {
