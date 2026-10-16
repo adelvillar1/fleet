@@ -2,18 +2,31 @@
 //!
 //! One `events.jsonl` per UTC day under the dev-decisions log root, in
 //! `devdec`'s row vocabulary, written through a bounded non-blocking queue
-//! that one background thread drains. Six ops are emitted today —
+//! that one background thread drains. Ten ops are emitted today —
 //! `route` (slice 5's decision row, shape unchanged), `tool_screen` (one
 //! approval decision), `turn` (one run ending, graded ok/failed with
-//! the partial endings named), `recall_hit` (slice 8's memory
-//! feedback: one fact retrieval surfaced, the shape it routed under,
-//! and the score it ranked at), `consolidate` (slice 8 part 2's
-//! lifecycle: one compress, supersede, or forget action, the
+//! the partial endings named), `recall_hit` (the memory feedback: one
+//! fact retrieval surfaced — a memories stem, or a session id for the
+//! session archive's own hits — the shape it routed under, and the
+//! score it ranked at), `consolidate` (slice 8 part 2's
+//! lifecycle: one compact, compress, supersede, or forget action, the
 //! fact it touched, and the reason), `propose` (slice 12's
 //! self-maintenance gate: one proposal's verdict — applied, refused, or
-//! left waiting — with the gate's per-step evidence), and `eval_corpus`
+//! left waiting — with the gate's per-step evidence), `eval_corpus`
 //! (slice 13's eval-corpus run: one run's per-scenario verdicts and its
-//! aggregate score — the harness's graded model of its own performance).
+//! aggregate score — the harness's graded model of its own performance),
+//! `explain` (slice 17's explanation beat: one verdict explained through
+//! the blend1 lane, eval-only and keyed to the judged artifact's sha),
+//! `route_judged` (the routing judgment: one decision graded against
+//! its outcome evidence through the sys1 lane, keyed by the judged
+//! route row), and `delegation` (the orchestrator's own row: one
+//! delegated run, keyed by the child's session id). An eleventh row
+//! shape lands beside the stream rather than through it:
+//! `delegation_judged`, one delegation graded against its outcome
+//! evidence, which the delegate beat appends to the same day file
+//! through its own writer — a beat that spends a lane ask must be
+//! unreachable from a synchronous path, so its row cannot ride the
+//! queue.
 //!
 //! The contract is dev-decisions' own: it **gates the operations, grades
 //! the outcomes, and earns autonomy on evidence**. Fleet's rows land in
@@ -121,7 +134,11 @@ pub struct TurnRow {
 #[derive(Debug, Clone, Serialize)]
 pub struct RecallHitRow {
     pub ts: String,
-    /// The fact's name, the file stem under `memories/`.
+    /// The fact's name — the file stem under `memories/`, or a session
+    /// id for the session archive's own hits, whose count store lives
+    /// beside the logs and whose synthetic fact's path is the log
+    /// itself. One field widened rather than a second op invented: the
+    /// shared devdec vocabulary does not grow for one beat's feedback.
     pub fact: String,
     /// The classified structure shape, or empty when unclassified.
     pub shape: String,
@@ -130,7 +147,8 @@ pub struct RecallHitRow {
 }
 
 /// One consolidation action: what the memory lifecycle did to one
-/// fact, and why. Three actions — `compress` folds old working memory
+/// fact, and why. Four actions — `compact` folds one session's stored
+/// context into a summary record, `compress` folds old working memory
 /// into an episodic summary, `supersede` retires a stale inferred fact
 /// from recall, `forget` archives an expired one — and every one of
 /// them lands here, so the loop's effect on the corpus is auditable
@@ -3445,6 +3463,24 @@ mod tests {
         assert_eq!(rows[0].op, OP_RECALL_HIT);
         assert_eq!(rows[0].fact, "a-fact");
         assert_eq!(rows[0].shape, "deploy");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_reader_keeps_a_recall_hit_row_whose_fact_names_a_session_id() {
+        // The session archive's own hits ride the same op: the fact
+        // field names a session id rather than a memories stem, the
+        // one field's meaning widened rather than a second op
+        // invented. The reader keeps the row with its shape — here the
+        // session's outcome word.
+        let root = scratch("read-recall-session");
+        write_rows(&root, "2026-10-13", &[recall_hit_row("20261015T000000Z-aaa", "resolved", 0.5)]);
+        let rows = read_day(&root, "2026-10-13", 512);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].op, OP_RECALL_HIT);
+        assert_eq!(rows[0].fact, "20261015T000000Z-aaa");
+        assert_eq!(rows[0].shape, "resolved");
+        assert!((rows[0].score - 0.5).abs() < 1e-12);
         let _ = std::fs::remove_dir_all(&root);
     }
 

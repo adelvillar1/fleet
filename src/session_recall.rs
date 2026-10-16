@@ -42,11 +42,21 @@
 //! transcript — the channel degrades by design rather than flooding
 //! the index with a long session's whole log.
 //!
-//! **What this module is not.** It ranks and it caches; the surface
-//! that renders [`ScoredHit`] as cards is the parent's, and the
-//! feedback loop that would bump a recalled session's recall-count is
-//! a later piece of the same plan — a synthetic fact's `path` is the
-//! session log, so the corpus's own bump must never be pointed at it.
+//! **What this module is not.** It ranks, it caches, and it closes its
+//! own feedback loop; the surface that renders [`ScoredHit`] as cards
+//! is the parent's. The loop is the archive's own because it cannot
+//! be the corpus's: a synthetic fact's `path` is the session log, so
+//! the corpus's own bump must never be pointed at it. Instead a
+//! recalled session bumps [`RecallCounts`] —
+//! `<sessions_dir>/.recall-counts.json`, a store on the recall
+//! index's exact discipline — which seeds the synthetic fact's
+//! `recall_count` and so feeds the history channel exactly as the
+//! corpus's own counts feed its, and lands one `recall_hit` row
+//! naming the session id through the stream's own path. The log stays
+//! append-only and the synthetic fact stays read-only by
+//! construction: the store is the only writer of a session's count,
+//! and [`memory::Memory::recall_hits`] is still never routed a
+//! synthetic fact.
 
 use std::collections::HashMap;
 use std::fs;
@@ -56,6 +66,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::{Deserialize, Serialize};
 
 use crate::api::FunctionCall;
+use crate::calib;
 use crate::memory;
 use crate::session::{self, Record};
 
@@ -102,6 +113,12 @@ fn facts_from_dir(sessions_dir: &Path) -> Vec<memory::Fact> {
     // The loader's own order: by path, which for one directory and one
     // extension is by session id.
     paths.sort();
+    // The archive's own feedback state, read once per load: a
+    // session's earned recall count, which seeds the synthetic fact's
+    // history channel. The store is `__pycache__` — an absent or
+    // malformed file reads as empty and costs a recompute of nothing
+    // at all, because the derivation is already in memory.
+    let counts = RecallCounts::load(sessions_dir);
     let mut facts: Vec<memory::Fact> = Vec::new();
     for path in paths {
         let Some(id) = path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string) else {
@@ -118,7 +135,7 @@ fn facts_from_dir(sessions_dir: &Path) -> Vec<memory::Fact> {
                 continue;
             }
         };
-        facts.push(fact_for(&id, &path, &records));
+        facts.push(fact_for(&id, &path, &records, counts.count_of(&id)));
     }
     facts
 }
@@ -140,8 +157,12 @@ fn facts_from_dir(sessions_dir: &Path) -> Vec<memory::Fact> {
 /// - `stamp` is the log's own `secs:nanos:len`, so the index can tell
 ///   a changed session from an untouched one;
 /// - `date` is the `start` record's day, which is what the freshness
-///   channel decays from — a session's age is its own.
-fn fact_for(id: &str, path: &Path, records: &[Record]) -> memory::Fact {
+///   channel decays from — a session's age is its own;
+/// - `recall_count` is seeded from the archive's own count store
+///   ([`RecallCounts`]), so the history channel reads a recalled
+///   session's earned count exactly as the facts corpus reads its own
+///   — the same feedback loop, closed on state that is not the log.
+fn fact_for(id: &str, path: &Path, records: &[Record], count: u64) -> memory::Fact {
     let task = task_text(records);
     memory::Fact {
         name: id.to_string(),
@@ -153,7 +174,7 @@ fn fact_for(id: &str, path: &Path, records: &[Record]) -> memory::Fact {
         shape: vec![outcome_word(records).to_string()],
         phrases: derived_phrases(records),
         missing: Vec::new(),
-        recall_count: 0,
+        recall_count: count,
         superseded_by: String::new(),
         valid_until: String::new(),
         body: digest(records, &task),
@@ -560,6 +581,158 @@ impl SessionIndex {
 /// A per-write serial for the index temp name, so two fleet processes
 /// — or two writes in one process — never share a temp file.
 static SESSION_INDEX_WRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
+
+// --- the count store -------------------------------------------------------
+
+/// The count store's file name: `<sessions_dir>/.recall-counts.json`,
+/// beside the logs it counts and beside the vector index — its own
+/// name, so it shares a line with neither.
+const COUNTS_FILE: &str = ".recall-counts.json";
+
+/// How many recalls each session has earned, keyed by session id —
+/// the archive's own feedback state, on the recall index's exact
+/// discipline.
+///
+/// Why the count cannot live in the log: the log is append-only, and
+/// a bounded frontmatter-preserving rewrite is exactly what the
+/// corpus's own bump performs on a fact's file. A synthetic fact's
+/// `path` IS the session log, so routing a session through the
+/// corpus's hit-recording path would rewrite an append-only log —
+/// which is why the archive's loop was deferred in the first place.
+/// The store is the resolution: the count lives in its own file, the
+/// log is never opened for writing, and the synthetic fact stays
+/// read-only by construction.
+///
+/// The discipline mirrors [`SessionIndex`] rather than reusing it:
+/// a cache never errors — an absent or malformed store reads as empty
+/// and costs a session its earned history until the next recall,
+/// which is the honest failure for state that only re-ranks — and a
+/// failed write is one logged line, never an error the surface has
+/// to answer for. The recall itself is never blocked, delayed, or
+/// failed by its own bookkeeping, the same contract the calibration
+/// stream runs on.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct RecallCounts {
+    /// One entry per session id: the recalls it has earned and the
+    /// day of the last one.
+    #[serde(default)]
+    sessions: HashMap<String, RecallCount>,
+}
+
+/// One session's earned recalls and the day of the last.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct RecallCount {
+    /// The recalls this session has earned.
+    count: u64,
+    /// The day of the last one, `YYYY-MM-DD`. The history channel's
+    /// own arithmetic reads the count; the day rides along so the
+    /// store says when the archive last reached for this session.
+    #[serde(default)]
+    last: String,
+}
+
+/// `<sessions_dir>/.recall-counts.json` — the store's own file, under
+/// the sessions directory beside the logs it counts.
+fn counts_path(sessions_dir: &Path) -> PathBuf {
+    sessions_dir.join(COUNTS_FILE)
+}
+
+impl RecallCounts {
+    /// Read the store. Never errors: an absent or malformed file reads
+    /// as empty, the recall index's own rule — the count is state that
+    /// only re-ranks, so a lost store costs a session its history
+    /// until the next recall and nothing else.
+    pub fn load(sessions_dir: &Path) -> RecallCounts {
+        fs::read_to_string(counts_path(sessions_dir))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    /// The count one session has earned; zero for a session the store
+    /// has never seen.
+    pub fn count_of(&self, session_id: &str) -> u64 {
+        self.sessions.get(session_id).map(|entry| entry.count).unwrap_or(0)
+    }
+
+    /// Bump one session's count and flush the store. Best-effort by
+    /// design: the write goes through a unique temp file and a rename
+    /// — the index's own discipline, so a reader never sees a
+    /// half-written store and two fleet processes cannot collide on
+    /// one temp — and a failed write is one logged line.
+    pub fn bump(sessions_dir: &Path, session_id: &str) {
+        let mut counts = Self::load(sessions_dir);
+        let entry = counts.sessions.entry(session_id.to_string()).or_default();
+        entry.count += 1;
+        entry.last = calib::today();
+        counts.write(sessions_dir);
+    }
+
+    /// Write the store through a unique temp file and a rename. A
+    /// failed write costs the next load the previous store — the
+    /// increment is lost, the history is not — and one line names it.
+    fn write(&self, sessions_dir: &Path) {
+        let Ok(text) = serde_json::to_string(self) else {
+            return;
+        };
+        let path = counts_path(sessions_dir);
+        let serial = COUNTS_WRITE_SERIAL.fetch_add(1, Ordering::Relaxed);
+        let mut temp = path.clone().into_os_string();
+        temp.push(format!(".{}.{}.tmp", std::process::id(), serial));
+        let temp = PathBuf::from(temp);
+        if fs::write(&temp, text).is_ok() {
+            let _ = fs::rename(&temp, &path);
+        } else {
+            eprintln!(
+                "fleet: sessions: the recall-count store could not be written \u{2014} the recall is unaffected"
+            );
+        }
+    }
+}
+
+/// A per-write serial for the store's temp name, so two fleet
+/// processes — or two recalls in one process — never share a temp
+/// file. The index's own serial, mirrored for the second store.
+static COUNTS_WRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
+
+/// One recalled session's feedback: bump the count store beside the
+/// archive and land one `recall_hit` row naming the session id, the
+/// shape it surfaced under, and the score it ranked at — through the
+/// stream's own record path, the same row the facts corpus lands.
+///
+/// This is the archive's own loop, and it closes the one the corpus
+/// runs without touching what makes a session synthetic: the store is
+/// the only writer of a session's count, the log is never opened for
+/// writing, and [`memory::Memory::recall_hits`] is still never routed
+/// a synthetic fact — a synthetic fact's `path` is the session log,
+/// and the corpus's bump would rewrite it. The next derivation reads
+/// the count back through [`RecallCounts`] and seeds the synthetic
+/// fact's `recall_count` from it, so the history channel reads a
+/// recalled session's earned count exactly as the corpus's own.
+///
+/// The row's `fact` field names a session id here rather than a
+/// memories stem — the one field's meaning widened rather than a new
+/// op invented, so the shared devdec vocabulary does not grow for one
+/// beat's feedback — and its `shape` carries the session's outcome
+/// word. Never errors: a failed store write is one logged line, and
+/// the row rides the stream's own never-blocks contract.
+pub fn record_hit(
+    sessions_dir: &Path,
+    session_id: &str,
+    shape: &str,
+    score: f64,
+    stream: Option<&calib::Stream>,
+) {
+    RecallCounts::bump(sessions_dir, session_id);
+    if let Some(stream) = stream {
+        stream.record(calib::Row::RecallHit(calib::RecallHitRow {
+            ts: calib::stamp(),
+            fact: session_id.to_string(),
+            shape: shape.to_string(),
+            score,
+        }));
+    }
+}
 
 // --- the hit --------------------------------------------------------------
 
@@ -1008,6 +1181,137 @@ mod tests {
         assert!(hit.score > 0.0);
         // B is below the floor: no direction, no words, standing alone.
         assert!(!hits.iter().any(|hit| hit.id == "b-session"));
+    }
+
+    // --- the count store ---
+
+    /// One completed session log under `dir`: a task, one successful
+    /// call, and a `completed` ending — the smallest log the
+    /// derivation ranks.
+    fn one_session(dir: &Path, id: &str, task: &str) -> PathBuf {
+        let mut records = vec![start(), Record::User { content: task.to_string() }];
+        records.extend(exchange("c1", "bash", "{\"command\":\"cargo test\"}", "ok"));
+        records.push(Record::End { stop_reason: "completed".to_string(), turns: 1 });
+        write_session(dir, id, &records)
+    }
+
+    #[test]
+    fn a_recalled_session_bumps_the_store_lands_one_row_and_never_touches_the_log() {
+        let dir = scratch("counts");
+        let log = one_session(&dir, "20261015T000000Z-aaa", "wire the recall counts");
+        let other = one_session(&dir, "20261015T000001Z-bbb", "another session");
+        // The logs' bytes before: the append-only property is proven
+        // by comparing them after, byte for byte.
+        let before: Vec<Vec<u8>> =
+            [&log, &other].iter().map(|path| fs::read(path).unwrap()).collect();
+        assert!(!counts_path(&dir).exists(), "no store before the first recall");
+
+        let stream_root = scratch("counts-stream");
+        let stream = calib::Stream::open(&stream_root);
+        record_hit(&dir, "20261015T000000Z-aaa", "resolved", 0.5, Some(&stream));
+        record_hit(&dir, "20261015T000000Z-aaa", "resolved", 0.5, Some(&stream));
+        drop(stream);
+
+        // The store: 0 -> 1 -> 2, keyed by session id, and the other
+        // session untouched.
+        let counts = RecallCounts::load(&dir);
+        assert_eq!(counts.count_of("20261015T000000Z-aaa"), 2);
+        assert_eq!(counts.count_of("20261015T000001Z-bbb"), 0, "the other session was not recalled");
+        let text = fs::read_to_string(counts_path(&dir)).unwrap();
+        assert!(text.contains("\"count\":2"), "{text}");
+
+        // The logs: byte-identical. The store is the only writer of a
+        // session's count; an append-only log is never rewritten.
+        for (path, bytes) in [&log, &other].iter().zip(&before) {
+            assert_eq!(&fs::read(path).unwrap(), bytes, "{} changed", path.display());
+        }
+
+        // The row: one recall_hit per hit, naming the session id, its
+        // shape, and its score — through the stream's own path.
+        let rows = calib::read_day(&stream_root, &calib::today(), 64);
+        let hits: Vec<_> = rows.iter().filter(|row| row.op == calib::OP_RECALL_HIT).collect();
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert_eq!(hits[0].fact, "20261015T000000Z-aaa");
+        assert_eq!(hits[0].shape, "resolved");
+        assert!((hits[0].score - 0.5).abs() < 1e-12, "{hits:?}");
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&stream_root);
+    }
+
+    #[test]
+    fn the_store_seeds_the_synthetic_facts_count_and_the_history_channel_reads_it() {
+        let dir = scratch("seed");
+        one_session(&dir, "20261015T000000Z-aaa", "prove the store seeds the count");
+        RecallCounts::bump(&dir, "20261015T000000Z-aaa");
+        RecallCounts::bump(&dir, "20261015T000000Z-aaa");
+
+        // The next derivation seeds the synthetic fact's recall_count
+        // from the store — the corpus's own feedback loop, closed on
+        // state that is not the log.
+        let facts = facts_from_dir(&dir);
+        assert_eq!(facts[0].recall_count, 2, "the count came from the store");
+
+        // And the ranker reads it: the history channel is the count
+        // over the ceiling, the same arithmetic the corpus's facts
+        // ride, so a recalled session re-ranks on its own history.
+        let mut index = SessionIndex::load(&dir);
+        let hits = index.recall(
+            &dir,
+            Box::new(memory::KeywordOnly),
+            "prove the store seeds the count",
+        );
+        let hit =
+            hits.iter().find(|hit| hit.id == "20261015T000000Z-aaa").expect("the session ranked");
+        assert!(hit.history > 0.0, "the history channel read the earned count: {hit:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_malformed_store_reads_as_empty_and_a_failed_write_never_errors() {
+        let dir = scratch("malformed-counts");
+        one_session(&dir, "20261015T000000Z-aaa", "one session");
+        // The store a crashed writer could leave: half a file, not a
+        // file. It reads as empty and costs the session its earned
+        // count until the next recall — never a panic, never an error.
+        fs::write(counts_path(&dir), "{\"sessions\": {\"2026").unwrap();
+        let counts = RecallCounts::load(&dir);
+        assert_eq!(counts.count_of("20261015T000000Z-aaa"), 0, "a malformed store read as empty");
+        assert_eq!(facts_from_dir(&dir)[0].recall_count, 0, "the derivation read it as empty too");
+
+        // A failed write is one logged line and never an error: a
+        // sessions directory that does not exist refuses the temp
+        // file, and the recall it books for is unaffected.
+        let absent = dir.join("no-such-dir");
+        record_hit(&absent, "20261015T000000Z-aaa", "resolved", 0.5, None);
+        assert!(!counts_path(&absent).exists(), "the failed write left no store");
+        // The readable store beside it still works.
+        RecallCounts::bump(&dir, "20261015T000000Z-aaa");
+        assert_eq!(RecallCounts::load(&dir).count_of("20261015T000000Z-aaa"), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_guard_holds_the_store_is_the_only_writer_of_a_sessions_count() {
+        let dir = scratch("guard");
+        let log = one_session(&dir, "20261015T000000Z-aaa", "the read-only synthetic fact");
+        let bytes = fs::read(&log).unwrap();
+
+        // The synthetic fact's path IS the session log — the reason
+        // the corpus's own bump must never be routed at it.
+        let facts = facts_from_dir(&dir);
+        assert_eq!(facts[0].path, log);
+
+        // The archive's own loop: the recall bumps the store and the
+        // row rides the stream, and the log the fact points at is
+        // untouched — byte for byte, with no recall-count line
+        // written into it the way the corpus's bump writes a fact's
+        // file.
+        record_hit(&dir, "20261015T000000Z-aaa", "resolved", 0.4, None);
+        assert_eq!(fs::read(&log).unwrap(), bytes, "the log was rewritten");
+        let text = String::from_utf8(fs::read(&log).unwrap()).unwrap();
+        assert!(!text.contains("recall-count"), "the log carries a count line: {text}");
+        assert_eq!(RecallCounts::load(&dir).count_of("20261015T000000Z-aaa"), 1);
+        let _ = fs::remove_dir_all(&dir);
     }
 }
 
