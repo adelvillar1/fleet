@@ -34,7 +34,7 @@ touches it.
 | Seam | What it carries | How to use it |
 |---|---|---|
 | `memories/` (this repo) | one durable fact per file, shape-first recall | the description enters the turn; `read_file` the fact for the full content |
-| `<FLEET_HOME>/skills/` | procedures as `SKILL.md`, disclosed description-first | `use_skill(name)` pulls a body; `fleet skills --proposed` lists drafts awaiting the gate |
+| skills — canonical at `~/.agents/skills/`, loaded from `<FLEET_HOME>/skills/` | procedures as `SKILL.md`, disclosed description-first; the canonical library is the owner's, and what you load is installed from it | `use_skill(name)` pulls a body; `fleet skills` cards the loaded set; `fleet skills --proposed` lists drafts awaiting the gate |
 | `~/.fleet/sessions/` | every past session's JSONL log | `fleet sessions --recall "<query>"` ranks the archive; `<id>` opens one log |
 | the calibration stream | what actually happened: routes, recalls, delegations, turns | `fleet calib` reads today; `fleet judge` / `fleet delegate` grade a day through sys1 |
 | `docs/` (this repo) | plans, recaps, the defect ledger, architecture, feature docs | `read_file` the file the task touches — the map is below |
@@ -171,5 +171,9 @@ already has a word for.
 When you learn something durable, write it where it lives: a fact
 through `remember` (one file, `basis: confirmed-by` or `inferred` — the
 basis is required, it is the permission model), a defect in the ledger,
-a procedure as a skill proposal. A fact that stays only in the
+a procedure as a skill — authored in the canonical library at
+`~/.agents/skills/` and installed into `<FLEET_HOME>/skills/` to be
+loadable (the self-authoring drafter files its proposals under
+`<FLEET_HOME>/skills/proposals/`, and nothing applies one but the
+gate). A fact that stays only in the
 conversation is lost at session end; the corpus is the memory.
