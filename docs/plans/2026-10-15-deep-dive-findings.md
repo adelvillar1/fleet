@@ -1,9 +1,6 @@
 # The deep dive's findings, addressed
 
-Status: active — implementation began 2026-10-15; C19 resolved by the
-owner's "implement plan as designed" with the plan's recommended
-default (the bump and the row move to after the first successful model
-response)
+Status: completed — all six phases landed and converged 2026-10-15; the converge record below grades every AC against the committed code, and the disclosed gaps are named rather than dropped
 Date: 2026-10-15
 
 ## Why
@@ -338,3 +335,78 @@ New: none.
 - The gate cannot run fmt or clippy on this machine — every increment
   discloses it, and CI is disarmed by budget, so the local gate is the
   only gate.
+
+## The converge record (2026-10-15)
+
+Every AC re-graded against the committed code, not against the
+implementers' summaries. The increments: `38a063d` (phase 1), `4d15ab7`
++ `bdeaada` (phase 2 and its wiring), `0d12636` (phase 5), `5d7c9c2`
+(phase 3, first half), `5ef6456` (phase 4 and phase 3's eval.rs half),
+`cd461c2` (phase 6 and phase 3's calib.rs half), `783b524` (the review
+round's must-fixes and the two wave-2 wirings).
+
+**Met, with the evidence:**
+
+- C1–C7 — the pane renders both lists as cards, seeds the editor from
+  the entry, commits through the writer's own functions, classifies
+  compiled-in versus file-added through the crate's own helpers, asks
+  in the pane before a destructive removal, and leaves `cli.rs`
+  byte-for-byte unchanged (`git diff 4a9ca02..783b524 -- src/cli.rs` is
+  empty). The spec reviewer traced each path; the parent exercised the
+  CLI surface on a scratch home (`settings set pin deepseek` round-trips
+  to "deepseek · file").
+- C8–C10 — live `fleet doctor` names the web leg (key by name, never a
+  value, informational, exit 0); live `fleet lanes` renders blend1's own
+  web availability; the evaluator is hermetic.
+- C11–C15 — the five doc-drift instances corrected against the
+  constants they drifted from (verified by reading each constant);
+  no behavior change (the gate's test delta is only the new tests).
+- C16–C18 — the fit decision excludes waived in both cells, the display
+  keeps the day's holding and the card names the split ("fit counts 7
+  graded verdicts of 9 judged · 2 waived set aside"), the cells render
+  their consumer live (`fleet delegate --dry-run` carries the ride-back
+  card), and the eval scenario drives the real render path.
+- C19/C20 — resolved with the plan's default by the owner's
+  "implement as designed"; the bump and the row fire after the first
+  successful response, and the failed-first-call test pins the absence.
+- C21–C23 — live `fleet sessions --recall` bumped the store for all 22
+  recalled sessions and landed 22 `recall_hit` rows naming session ids
+  (`fleet calib` shows them); the logs are untouched by construction and
+  by test; the synthetic fact stays read-only.
+
+**Verification gaps (closed by running the thing, not by code):** the
+TUI settings pane has still never been opened by a human — its
+behavior is pinned by the state-machine tests and its render by the
+TestBackend assertions, and the interactive open remains the
+experience's proof. The doctor/lanes split (key-state read versus the
+lane's own report) is exercised on this machine, where the key is set
+in the process env and the lane's venv lacks the tinyfish SDK — the two
+surfaces deliberately disagree, and both name their own truth.
+
+**Disclosed gaps (recorded, not dropped):**
+
+- C7's misspelled-field refusal is asserted at the writer's level
+  (`settings.rs`), not re-asserted through the pane; the pane routes
+  through the same `set_provider`, so it is the same code path, but a
+  pane-level assertion would close it symmetrically.
+- The pane's `provider.add` is an upsert: editing a seeded entry's id
+  creates a provider from the pane. The card re-read disambiguates; the
+  writer's return does not yet say add versus update.
+- The structured two-field provider editor (`base_url` + `enabled`) is
+  the named follow-up that beats the JSON buffer; the owner's standing
+  preference for structured fields is recorded here rather than
+  ignored.
+- KI-068 is closed-fixed with its evidence re-based; the pre-existing
+  nomenclature-proof red (a recap's backticked nonsense word, the doc
+  channel re-establishing vocabulary) was closed by writing the word in
+  plain prose, and the proof's comment records the third retirement
+  mechanism.
+
+**Review cycle:** the spec reviewer passed all ten criteria against the
+committed code. The quality reviewer requested changes with two
+criticals — the TUI's blend1 card drawing the web leg as a sixth
+sub-lane row (the ownership-seam drift the plan's own shared-file note
+predicted), and the confirm modal clipping its answers line at 80×24 —
+plus the selected-desync, the KI-068 ledger staleness, and the
+overclaiming doctor string. All were fixed by the parent in `783b524`
+and re-verified green (tui:: 88, doctor:: 21, blend1 6).
