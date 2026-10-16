@@ -250,6 +250,12 @@ pub struct Status {
     /// reports one.
     pub provider: Option<String>,
     pub route_how: Option<String>,
+    /// The routing mode at launch, before any run reports: `auto-router`,
+    /// or `pinned to <pin>` when the home carries one. The bar names the
+    /// mode, never the compiled-in default model — the default is the
+    /// DeepSeek reserve, and naming it as "the model in use" is the
+    /// misdirection this field exists to prevent (KI-217).
+    pub routing: Option<String>,
     /// What the last run's assembled memory carried: the shape the
     /// instruction routed under (empty when unclassified) and how many
     /// facts entered the turn's context. `None` until a run assembles
@@ -360,6 +366,7 @@ impl App {
                 working: false,
                 provider: None,
                 route_how: None,
+                routing: None,
                 memory: None,
             },
             error: None,

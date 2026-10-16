@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-16
 updated: 2026-10-16
 slug: tui-routing-label
@@ -38,11 +38,11 @@ model:
 
 ## Acceptance criteria
 
-- [ ] E1: at launch the bar shows `auto-router` (or the pin's label),
+- [x] E1: at launch the bar shows `auto-router` (or the pin's label),
       never `deepseek-chat`.
-- [ ] E2: a pinned run renders `pinned`, not `auto-router (pinned)`.
-- [ ] E3: the gate runs whole, exit codes read directly.
-- [ ] E4: KI-217 is in the ledger, closed with the fix.
+- [x] E2: a pinned run renders `pinned`, not `auto-router (pinned)`.
+- [x] E3: the gate runs whole, exit codes read directly.
+- [x] E4: KI-217 is in the ledger, closed with the fix.
 
 ## Files
 
@@ -55,3 +55,24 @@ Render tests: the bar with a launch label and no run shows
 `auto-router`; with a `pinned` `route_how` it shows `pinned` and not
 `auto-router`; with neither, the model fallback survives (the honest
 degradation). Gate per E3.
+
+## Convergence (graded 2026-10-16)
+
+The gate ran whole: all four legs exit 0, **1028 passed / 1 ignored**,
+exit codes read directly.
+
+- **E1 met** — the interface reads the home's routing state at startup
+  (`route::load_roster`'s pin) and sets `Status.routing`: `auto-router`,
+  or `pinned to <pin>` when the owner carries one. The bar renders the
+  launch label before any run and the default model never renders on
+  the TUI path. Pinned by the render tests: the launch case asserts
+  `auto-router` present and `deepseek-chat` absent; the pin case
+  asserts the pin's label.
+- **E2 met** — a reported `how = "pinned"` renders `route pinned`
+  (and never `auto-router`); `judged`/`fallback` render
+  `auto-router (judged)` / `(fallback)`. Pinned by the same tests.
+- **E3 met** — the gate, exit codes direct.
+- **E4 met** — KI-217 in the ledger, closed-fixed with this commit.
+  The model fallback (`routing` unset, no route reported) survives as
+  the honest degradation for a state the TUI's own path never
+  constructs — the original render test pins it.
