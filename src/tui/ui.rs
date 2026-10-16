@@ -1363,20 +1363,24 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // The bar names the routing mode, never the compiled-in default
     // model: the default is the DeepSeek reserve, and naming it as the
     // model in use is the exact misdirection the route surfacing exists
-    // to prevent (KI-217). Before the first routed run, the launch state
-    // says the mode (`auto-router`, or the owner's pin); after one, the
-    // route event refines it. The model name renders only when no
-    // routing state is known at all.
+    // to prevent (KI-217). The mode reads `auto`; a pin names its
+    // PROVIDER (`pinned · stepfun`), the owner's preference — the model
+    // is the router's business. After a run, the route event refines the
+    // label with the provider that actually served. The model name
+    // renders only when no routing state is known at all.
     match (&status.route_how, status.routing.as_deref()) {
         (Some(how), _) => {
             spans.push(Span::styled("  route ", Style::new().fg(palette::DIM)));
-            let mode = if how == "pinned" {
-                "pinned"
+            if how == "pinned" {
+                spans.push(Span::styled("pinned", Style::new().fg(palette::ACCENT)));
+                if let Some(provider) = &status.provider {
+                    spans.push(Span::styled(
+                        format!(" \u{b7} {provider}"),
+                        Style::new().fg(palette::ACCENT),
+                    ));
+                }
             } else {
-                "auto-router"
-            };
-            spans.push(Span::styled(mode, Style::new().fg(palette::ACCENT)));
-            if mode != "pinned" {
+                spans.push(Span::styled("auto", Style::new().fg(palette::ACCENT)));
                 spans.push(Span::styled(
                     format!(" ({how})"),
                     Style::new().fg(palette::DIM),
@@ -2636,35 +2640,37 @@ mod tests {
         assert!(chat.contains("session"), "{chat}");
 
         // The bar names the routing mode, never the default model (KI-217):
-        // at launch the mode is the home's own state — auto-router, or the
-        // owner's pin — and the compiled-in `deepseek-chat` never renders.
+        // at launch the mode is the home's own state — `auto`, or the
+        // owner's pin naming its PROVIDER — and the compiled-in
+        // `deepseek-chat` never renders.
         let mut routed_launch = fresh();
-        routed_launch.status.routing = Some("auto-router".to_string());
+        routed_launch.status.routing = Some("auto".to_string());
         let chat = draw(&routed_launch, 80, 24);
-        assert!(chat.contains("auto-router"), "{chat}");
+        assert!(chat.contains("route auto"), "{chat}");
         assert!(!chat.contains("deepseek-chat"), "{chat}");
 
-        // The owner's pin names the model that will serve: the mode is the
-        // pin, not the auto-router.
+        // A pin names the provider (`stepfun`, not `stepfun/step-5-preview`):
+        // the model is the router's business, the provider is the owner's.
         let mut pinned_launch = fresh();
-        pinned_launch.status.routing = Some("pinned to deepseek".to_string());
+        pinned_launch.status.routing = Some("pinned \u{b7} stepfun".to_string());
         let chat = draw(&pinned_launch, 80, 24);
-        assert!(chat.contains("pinned to deepseek"), "{chat}");
+        assert!(chat.contains("pinned \u{b7} stepfun"), "{chat}");
         assert!(!chat.contains("deepseek-chat"), "{chat}");
 
-        // After a run reports, the route event refines the label — and a
-        // pinned run says `pinned`, never `auto-router (pinned)`.
+        // After a run reports, the route event refines the label — a pinned
+        // run names the provider that served, an auto run stays `auto`.
         let mut pinned_run = fresh();
-        pinned_run.status.routing = Some("auto-router".to_string());
+        pinned_run.status.routing = Some("auto".to_string());
         pinned_run.status.route_how = Some("pinned".to_string());
+        pinned_run.status.provider = Some("deepseek".to_string());
         let chat = draw(&pinned_run, 80, 24);
-        assert!(chat.contains("route pinned"), "{chat}");
-        assert!(!chat.contains("auto-router"), "{chat}");
+        assert!(chat.contains("route pinned \u{b7} deepseek"), "{chat}");
+        assert!(!chat.contains("route auto"), "{chat}");
         let mut judged_run = fresh();
-        judged_run.status.routing = Some("auto-router".to_string());
+        judged_run.status.routing = Some("auto".to_string());
         judged_run.status.route_how = Some("judged".to_string());
         let chat = draw(&judged_run, 80, 24);
-        assert!(chat.contains("auto-router (judged)"), "{chat}");
+        assert!(chat.contains("auto (judged)"), "{chat}");
 
         // The picker overlay.
         app.open_sessions(vec![SessionSummary {

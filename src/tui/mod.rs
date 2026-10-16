@@ -130,14 +130,19 @@ pub fn run(config: Config) -> Result<(), String> {
     // The status bar names the routing mode, never the compiled-in
     // default: `deepseek-chat` is the fallback seed and the reserve, and
     // naming it as the model in use is the exact misdirection the route
-    // surfacing exists to prevent (KI-217). The home's pin is the one
-    // launch state where a model name is the truth.
+    // surfacing exists to prevent (KI-217). The mode reads `auto`, and a
+    // pin names its PROVIDER — `stepfun`, not `stepfun/step-5-preview` —
+    // the owner's preference (2026-10-16): the model is the router's
+    // business, the provider is the owner's.
     app.status.routing = Some(match route::load_roster(&config.home) {
         Ok(roster) => match roster.pin.as_deref() {
-            Some(pin) => format!("pinned to {pin}"),
-            None => "auto-router".to_string(),
+            Some(pin) => format!(
+                "pinned \u{b7} {}",
+                pin.split('/').next().unwrap_or(pin).trim()
+            ),
+            None => "auto".to_string(),
         },
-        Err(_) => "auto-router".to_string(),
+        Err(_) => "auto".to_string(),
     });
     let (lanes_tx, lanes_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, Vec<LaneHealth>)>();
     // The boards: their sources resolved once, exactly the way every
