@@ -1594,7 +1594,9 @@ pub struct DelegationCell {
 }
 
 impl DelegationCell {
-    /// How many more judged rows this cell needs before it is fit.
+    /// How many more judged rows the day must hold before this cell's
+    /// sample is whole — the **display** count, deliberately wider than
+    /// the fit decision's.
     ///
     /// The graded count, not the right+wrong pair: the fit rule counts
     /// every row the day graded — right, wrong, insufficient, **and
@@ -1605,8 +1607,34 @@ impl DelegationCell {
     /// the sample's size while staying out of the rate — the count says
     /// how much evidence the day holds, and the card shows how much of
     /// it the owner set aside.
+    ///
+    /// The fit *decision* reads [`DelegationCell::graded_verdicts`]
+    /// instead, which excludes the waived rows outright: a cell never
+    /// earns its ride-back on a row the owner set aside. The card names
+    /// both counts beside each other — the day's holding and the fit's
+    /// sample — so neither reads as a contradiction of the other.
     pub fn needs_rows(&self) -> usize {
         FIT_MIN_ROWS.saturating_sub(self.right + self.wrong + self.insufficient + self.waived)
+    }
+
+    /// The rows that carry a verdict after the owner's disposition is
+    /// applied — right, wrong, and insufficient — which is the sample
+    /// the fit decision reads. The waived rows are excluded: a row the
+    /// owner set aside is not evidence about the shape, so counting it
+    /// would let a cell earn its ride-back on rows nobody stands
+    /// behind. The conservative direction for a decision that moves
+    /// work, and the same arithmetic the routing cell's own summary
+    /// carries, so the two implementations answer one question one way.
+    pub fn graded_verdicts(&self) -> usize {
+        self.right + self.wrong + self.insufficient
+    }
+
+    /// How many more graded verdicts this cell needs before it is fit:
+    /// the gap the fit decision reads, waived rows excluded. The
+    /// decision-side twin of [`DelegationCell::needs_rows`], and the
+    /// two differ by exactly the rows the owner set aside.
+    pub fn needs_graded(&self) -> usize {
+        FIT_MIN_ROWS.saturating_sub(self.graded_verdicts())
     }
 
     /// How much more confidence span this cell needs before it is fit.
@@ -1777,11 +1805,16 @@ fn summarize(
         Some((low, high)) => high - low,
         None => 0.0,
     };
-    // The graded count for the fit rule: every row the day graded, the
-    // waived ones included. The rates above read only the rows that
-    // carry a verdict, and the card says how many the owner set aside.
-    let graded = graded_verdicts + waived;
-    let fit = if graded >= FIT_MIN_ROWS && confidence_span >= FIT_MIN_SPAN {
+    // The graded count for the fit rule: the rows that carry a verdict
+    // after the owner's disposition is applied, and the waived ones
+    // excluded outright. A row the owner set aside is not evidence
+    // about the shape, so counting it would let a cell earn its
+    // ride-back on rows nobody stands behind — the conservative
+    // direction for a decision that moves work. The same arithmetic the
+    // routing cell's own summary carries, so the two implementations
+    // answer one question one way; the day's whole holding rides the
+    // card beside it (see `calibration_card`).
+    let fit = if graded_verdicts >= FIT_MIN_ROWS && confidence_span >= FIT_MIN_SPAN {
         FitState::Fit
     } else {
         FitState::Unfit
@@ -2367,6 +2400,21 @@ fn calibration_card(cell: &DelegationCell) -> String {
             format!(" \u{b7} {}", parts.join(" \u{b7} "))
         },
     )];
+    // The fit sample, named beside the day's holding: the fit reads the
+    // graded verdicts and the waived rows are set aside, so the two
+    // counts this card draws never read as a contradiction of each
+    // other. Rendered on every card, fit or not, because the arithmetic
+    // is the same either way.
+    lines.push(format!(
+        "{DIM}\u{2502}{RESET} {TEXT}fit counts {graded} graded verdict{graded_plural} of {judged} judged \u{b7} {waived} waived set aside{RESET}",
+        DIM = palette::DIM,
+        RESET = palette::RESET,
+        TEXT = palette::TEXT,
+        graded = cell.graded_verdicts(),
+        graded_plural = plural(cell.graded_verdicts()),
+        judged = cell.judged,
+        waived = cell.waived,
+    ));
     if cell.fit == FitState::Fit {
         let rate_color = if cell.informs_failover() {
             palette::WARN
@@ -2456,7 +2504,11 @@ fn calibration_card(cell: &DelegationCell) -> String {
             }
         }
     } else {
-        // Unfit: what it still needs, named, and no score.
+        // Unfit: what it still needs, named, and no score. The day's own
+        // holding and the fit's gap are named apart whenever they
+        // disagree — a cell holding waived rows can be whole on the
+        // day's rows and still short on verdicts, and one number alone
+        // would read as a contradiction of the other.
         let mut needs = Vec::new();
         if cell.needs_rows() > 0 {
             needs.push(format!(
@@ -2464,6 +2516,10 @@ fn calibration_card(cell: &DelegationCell) -> String {
                 cell.needs_rows(),
                 plural(cell.needs_rows())
             ));
+        }
+        let gap = cell.needs_graded();
+        if gap > 0 && gap != cell.needs_rows() {
+            needs.push(format!("{} more graded verdict{}", gap, plural(gap)));
         }
         if cell.needs_span() > 0.0 {
             needs.push(format!("{:.2} more confidence span", cell.needs_span()));
@@ -2612,6 +2668,206 @@ fn plural(count: usize) -> &'static str {
     } else {
         "s"
     }
+}
+
+// --- the ride-back, made visible ------------------------------------------
+
+/// The clause one skip cell rides in the ride-back section: the cell's
+/// own numbers, so the section says which (provider × brief shape) cell
+/// would move a suggestion and at what rate. The same vocabulary the
+/// router's walk carries in its decision row — the shape, the
+/// confidence-weighted wrong-rate, the judged count, the confidence
+/// span — beside the split the fit decision reads, so a cell that
+/// earned its move on graded verdicts alone says so rather than leaving
+/// the waived rows to be assumed into it.
+fn skip_clause(cell: &DelegationCell) -> String {
+    format!(
+        "would move the suggestion past {provider} for shape `{shape}`: judged wrong at {rate:.2} \
+         on a fit cell of {graded} graded verdict{graded_plural} from {judged} judged \
+         row{judged_plural} (span {span:.2}){waived}",
+        provider = cell.provider_name(),
+        shape = cell.shape(),
+        rate = cell.weighted_wrong_rate,
+        graded = cell.graded_verdicts(),
+        graded_plural = plural(cell.graded_verdicts()),
+        judged = cell.judged,
+        judged_plural = plural(cell.judged),
+        span = cell.confidence_span,
+        waived = if cell.waived == 0 {
+            String::new()
+        } else {
+            format!(", {} waived and set aside", cell.waived)
+        },
+    )
+}
+
+/// The clause one companion-noting cell rides: informational, and it
+/// moves no one. The third vector's own read, in the router's own
+/// vocabulary, so a later reader sees why the suggestion behaved as it
+/// did rather than having to infer it.
+fn note_clause(cell: &DelegationCell) -> String {
+    format!(
+        "names {provider} for shape `{shape}`: {rate:.2} insufficient on a fit cell of {graded} \
+         graded verdict{graded_plural} from {judged} judged row{judged_plural} (span \
+         {span:.2}){waived} \u{2014} the direction is right and nothing is moved",
+        provider = cell.provider_name(),
+        shape = cell.shape(),
+        rate = cell.weighted_insufficient_rate,
+        graded = cell.graded_verdicts(),
+        graded_plural = plural(cell.graded_verdicts()),
+        judged = cell.judged,
+        judged_plural = plural(cell.judged),
+        span = cell.confidence_span,
+        waived = if cell.waived == 0 {
+            String::new()
+        } else {
+            format!(", {} waived and set aside", cell.waived)
+        },
+    )
+}
+
+/// What the calibration would move for a brief shape, rendered beside
+/// the graded rows: the ride-back made visible.
+///
+/// One card in the house shape — never a plain-text table — naming each
+/// cell that would move a suggestion and each cell that would only name
+/// its companions, every one with the clause that says which
+/// (provider × brief shape) cell it is and what its numbers are. The
+/// cells are the day's own, read through the same two queries the
+/// suggestion's ride-back consults ([`delegation_skips`] and
+/// [`delegation_notes`]), so what this renders is exactly what the
+/// ride-back would do — no more, and nothing a reader has to infer.
+///
+/// A shape whose cells move nothing says so rather than rendering an
+/// empty section: "the calibration would move nothing" is a fact an
+/// operator wants named, not an absence they have to notice.
+pub fn render_ride_back(cells: &[DelegationCell], notes: &[DelegationCell]) -> String {
+    let mut body: Vec<String> = Vec::new();
+    if !cells.is_empty() {
+        body.push(format!(
+            "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{WARN}would move{RESET} {DIM}\u{b7} {count} cell{plural}{RESET}",
+            count = cells.len(),
+            plural = plural(cells.len()),
+            DIM = palette::DIM,
+            RESET = palette::RESET,
+            BOLD = palette::BOLD,
+            WARN = palette::WARN,
+        ));
+        for cell in cells {
+            for line in wrap_detail(&skip_clause(cell), CARD_WIDTH - 8) {
+                body.push(format!("{DIM}\u{b7}{RESET} {WARN}{line}{RESET}"));
+            }
+        }
+    }
+    if !notes.is_empty() {
+        body.push(format!(
+            "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{TEXT}would name{RESET} {DIM}\u{b7} {count} cell{plural}{RESET}",
+            count = notes.len(),
+            plural = plural(notes.len()),
+            DIM = palette::DIM,
+            RESET = palette::RESET,
+            BOLD = palette::BOLD,
+            TEXT = palette::TEXT,
+        ));
+        for cell in notes {
+            for line in wrap_detail(&note_clause(cell), CARD_WIDTH - 8) {
+                body.push(format!("{DIM}\u{b7}{RESET} {TEXT}{line}{RESET}"));
+            }
+        }
+    }
+    if body.is_empty() {
+        body.push(format!(
+            "{DIM}the calibration would move nothing: no cell for any of the day's shapes is fit \
+             and at or over the floor{RESET}"
+        ));
+    }
+    body.push(inner_rule());
+    body.push(format!(
+        "{DIM}\u{b7}{RESET} {TEXT}a read of the stream \u{b7} no ask, no row, no spend{RESET}"
+    ));
+    frame(
+        "delegate",
+        "what the calibration would move",
+        body,
+        "the ride-back moves only a suggestion among the remaining candidates, and only for the \
+         brief shape's own cell",
+    )
+}
+
+/// The brief shapes a day's judged rows carry, in the order the rows
+/// first name them: the shapes a ride-back could be scoped to. An empty
+/// shape reads as `unshaped`, the word the cards carry, because that is
+/// the word the shape-scoped filter matches on.
+pub fn day_shapes(rows: &[DelegationJudgedRow]) -> Vec<String> {
+    let mut shapes: Vec<String> = Vec::new();
+    for row in rows {
+        let shape = if row.brief_shape.is_empty() {
+            "unshaped".to_string()
+        } else {
+            row.brief_shape.clone()
+        };
+        if !shapes.contains(&shape) {
+            shapes.push(shape);
+        }
+    }
+    shapes
+}
+
+/// The whole section `fleet delegate` renders beside the graded rows:
+/// for every brief shape the day's rows carry, what the calibration
+/// would move — the cells that would move a suggestion and the cells
+/// that would only name their companions.
+///
+/// A pure read of the stream: no lane ask, no row, no spend, the
+/// module's batch-only discipline holding exactly as it does for
+/// [`render_calibration`]. The gate rides as a parameter the way the
+/// sibling surface carries it, so a surface that reads the owner's
+/// config can say the ride-back is off rather than rendering an
+/// influence that will not happen.
+///
+/// Each shape is read through [`delegation_skips`] and
+/// [`delegation_notes`] rather than a second filter written here, so
+/// the section and the ride-back cannot drift: one query, one meaning.
+/// The day's file is read once per shape per query, which is bounded by
+/// the day's shape count and costs nothing a turn path pays.
+pub fn render_ride_back_day(
+    root: &Path,
+    day: &str,
+    candidates: &[&str],
+    informs_failover: bool,
+) -> String {
+    let mut out = format!(
+        "{BOLD}fleet delegate{RESET} {DIM}\u{2014} what the calibration would move{RESET}\n{DIM}{day} (UTC){RESET}\n\n",
+        BOLD = palette::BOLD,
+        RESET = palette::RESET,
+        DIM = palette::DIM,
+    );
+    if !informs_failover {
+        out.push_str(&format!(
+            "{DIM}gate delegation.informs_failover off \u{b7} nothing moves today{RESET}\n",
+            DIM = palette::DIM,
+            RESET = palette::RESET,
+        ));
+        return out;
+    }
+    let rows = read_day(root, day);
+    let shapes = day_shapes(&rows.judged);
+    if shapes.is_empty() {
+        out.push_str(&format!(
+            "{DIM}no judged delegations for {day} yet \u{b7} `fleet delegate` grades them{RESET}\n",
+            DIM = palette::DIM,
+            RESET = palette::RESET,
+        ));
+        return out;
+    }
+    let mut skips: Vec<DelegationCell> = Vec::new();
+    let mut notes: Vec<DelegationCell> = Vec::new();
+    for shape in &shapes {
+        skips.extend(delegation_skips(root, day, candidates, shape));
+        notes.extend(delegation_notes(root, day, candidates, shape));
+    }
+    out.push_str(&render_ride_back(&skips, &notes));
+    out
 }
 
 #[cfg(test)]

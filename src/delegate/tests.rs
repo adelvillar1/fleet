@@ -28,6 +28,27 @@ fn plain(card: &str) -> String {
     out
 }
 
+/// The section as one run of characters with the decoration removed:
+/// the ANSI escapes, the frame's own line prefix, the card's bullet, and
+/// every space. The cards wrap their detail lines on a character count
+/// and never drop a character, so what survives is exactly the text an
+/// operator reads, in order, wherever the card happened to break — an
+/// assertion over it reads the section rather than its line breaks.
+fn prose(card: &str) -> String {
+    plain(card)
+        .lines()
+        .map(|line| {
+            line.trim_start()
+                .trim_start_matches('\u{2502}')
+                .trim_start()
+                .trim_start_matches('\u{b7}')
+        })
+        .collect::<String>()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
 /// A scratch directory, unique per call.
 fn scratch(tag: &str) -> PathBuf {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1411,7 +1432,7 @@ fn the_owners_disposition_overrides_the_automated_verdict_in_the_math() {
 }
 
 #[test]
-fn an_unfit_cell_counts_its_insufficient_and_waived_rows_toward_fit() {
+fn an_unfit_cell_counts_its_insufficient_rows_toward_fit_and_sets_the_waived_aside() {
     // Six insufficient rows spanning 0.42: the cell is unfit on rows,
     // and it says it needs TWO more judged rows — not eight. The fit
     // rule counts every graded row, so `needs_rows` reads the graded
@@ -1437,9 +1458,12 @@ fn an_unfit_cell_counts_its_insufficient_and_waived_rows_toward_fit() {
     assert_eq!(cell.fit, FitState::Unfit);
     assert_eq!(cell.needs_rows(), 2);
 
-    // The two extra rows make the sample whole: six insufficient beside
-    // two waived is eight judged rows, and the waived pair counts toward
-    // the graded count while staying out of the rate.
+    // Six insufficient beside two waived is eight judged rows, and the
+    // two counts now read apart: the day's holding is whole — eight
+    // judged rows, `needs_rows` at zero — while the fit decision reads
+    // the six graded verdicts and stays unfit. A waived row is a row
+    // the owner set aside, so it counts toward what the day holds and
+    // never toward the sample that earns a ride-back.
     let mut mixed = rows;
     mixed.extend([
         read_judged("xiaomi-mimo", "hard", calib::VERDICT_INSUFFICIENT, 0.95, ""),
@@ -1453,12 +1477,23 @@ fn an_unfit_cell_counts_its_insufficient_and_waived_rows_toward_fit() {
     assert_eq!(cell.judged, 8);
     assert_eq!(cell.insufficient, 6);
     assert_eq!(cell.waived, 2);
+    // The display count keeps counting every graded row the day holds.
     assert_eq!(cell.needs_rows(), 0);
-    assert_eq!(cell.fit, FitState::Fit);
-    assert!((cell.weighted_insufficient_rate - 1.0).abs() < 1e-9, "{}", cell.weighted_insufficient_rate);
-    // The insufficient-rate notes the companions and moves nothing.
-    assert!(cell.notes_companions());
+    // The fit decision excludes the waived, and the gap is named apart.
+    assert_eq!(cell.graded_verdicts(), 6);
+    assert_eq!(cell.needs_graded(), 2);
+    assert_eq!(cell.fit, FitState::Unfit);
+    // The waived pair still stays out of the rate, which is the whole of
+    // the rate's own reading.
+    assert!(
+        (cell.weighted_insufficient_rate - 1.0).abs() < 1e-9,
+        "{}",
+        cell.weighted_insufficient_rate
+    );
+    // Unfit, so neither vector fires: no ride-back, and no companion
+    // note either — the note is a fit cell's own read.
     assert!(!cell.informs_failover());
+    assert!(!cell.notes_companions());
 }
 
 #[test]
@@ -2240,6 +2275,203 @@ fn the_ride_back_moves_only_a_fit_cells_wrong_rate_and_names_the_shape() {
     assert!(delegation_skips(&root, &day, &["xiaomi-mimo"], "hard").is_empty());
     assert!(delegation_skips(&root, &day, &["zai-coding-plan"], "quick").is_empty());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_cell_whose_rows_are_mostly_waived_never_earns_its_ride_back() {
+    // Seven wrong rows at full spread beside two the owner waived: nine
+    // judged rows on the day, and only seven of them carry a verdict.
+    // The fit decision reads the seven, so the cell is unfit however
+    // wrong it looks and however much the day holds — the conservative
+    // direction, because a ride-back moves work and a waived row is a
+    // row nobody stands behind.
+    let root = scratch("mostly-waived");
+    let day = day();
+    let mut rows: Vec<serde_json::Value> = (0..7)
+        .map(|index| {
+            judged_value(&read_judged(
+                "zai-coding-plan",
+                "hard",
+                calib::VERDICT_WRONG,
+                0.95 - index as f64 * 0.06,
+                "",
+            ))
+        })
+        .collect();
+    rows.extend([
+        judged_value(&read_judged(
+            "zai-coding-plan",
+            "hard",
+            calib::VERDICT_WRONG,
+            0.90,
+            calib::DISPOSITION_WAIVED,
+        )),
+        judged_value(&read_judged(
+            "zai-coding-plan",
+            "hard",
+            calib::VERDICT_WRONG,
+            0.90,
+            calib::DISPOSITION_WAIVED,
+        )),
+    ]);
+    write_day(&root, &day, &rows);
+    let cells = calibration(&read_day(&root, &day).judged);
+    let cell = &cells[0];
+    // What the day holds: nine judged rows, two of them set aside.
+    assert_eq!(cell.judged, 9);
+    assert_eq!(cell.waived, 2);
+    assert_eq!(cell.wrong, 7);
+    // What the fit reads: the seven graded verdicts, and the gap named
+    // apart from the day's whole holding.
+    assert_eq!(cell.graded_verdicts(), 7);
+    assert_eq!(cell.needs_rows(), 0);
+    assert_eq!(cell.needs_graded(), 1);
+    assert_eq!(cell.fit, FitState::Unfit);
+    // Every graded row is wrong and the rate says so — and it still
+    // moves nothing, because the fit requirement outranks the number.
+    assert!((cell.weighted_wrong_rate - 1.0).abs() < 1e-9, "{}", cell.weighted_wrong_rate);
+    assert!(!cell.informs_failover());
+    // The card names the split rather than leaving the two counts to
+    // read as a contradiction of each other.
+    let rendered = render_calibration(&root, &day, true);
+    assert!(
+        rendered.contains("fit counts 7 graded verdicts of 9 judged \u{b7} 2 waived set aside"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("1 more graded verdict"), "{rendered}");
+    assert!(!rendered.contains("more judged row"), "{rendered}");
+    assert!(rendered.contains("no score is drawn from this sample"), "{rendered}");
+
+    // The same day with the owner's waiver lifted: nine graded verdicts,
+    // the same wrong-rate, and the cell earns its ride-back. The waived
+    // pair was the only thing holding it back.
+    let mut standing = rows;
+    for row in standing.iter_mut().skip(7) {
+        row.as_object_mut()
+            .unwrap()
+            .remove("disposition")
+            .expect("the waived pair's disposition");
+    }
+    write_day(&root, &day, &standing);
+    let cells = calibration(&read_day(&root, &day).judged);
+    let cell = &cells[0];
+    assert_eq!(cell.judged, 9);
+    assert_eq!(cell.waived, 0);
+    assert_eq!(cell.graded_verdicts(), 9);
+    assert_eq!(cell.fit, FitState::Fit);
+    assert!(cell.informs_failover());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_beat_renders_what_the_calibration_would_move_beside_the_graded_rows() {
+    // The cells' named consumer: `fleet delegate` renders what the
+    // calibration would move for the day's shapes — which cell, for
+    // which shape, with the clause that names it. Driven through the
+    // real render path over a scripted day's rows.
+    let root = scratch("ride-back-render");
+    let day = day();
+    let mut rows: Vec<serde_json::Value> = (0..FIT_MIN_ROWS)
+        .map(|index| {
+            judged_value(&read_judged(
+                "zai-coding-plan",
+                "hard",
+                calib::VERDICT_WRONG,
+                0.95 - index as f64 * 0.05,
+                "",
+            ))
+        })
+        .collect();
+    rows.extend((0..FIT_MIN_ROWS).map(|index| {
+        judged_value(&read_judged(
+            "zai-coding-plan",
+            "prose",
+            calib::VERDICT_INSUFFICIENT,
+            0.95 - index as f64 * 0.05,
+            "",
+        ))
+    }));
+    // A third shape that is fit and right: it earns nothing, and the
+    // section must not name it.
+    rows.extend((0..FIT_MIN_ROWS).map(|index| {
+        judged_value(&read_judged(
+            "zai-coding-plan",
+            "triage",
+            calib::VERDICT_RIGHT,
+            0.95 - index as f64 * 0.05,
+            "",
+        ))
+    }));
+    write_day(&root, &day, &rows);
+
+    let rendered = render_ride_back_day(&root, &day, &["zai-coding-plan"], true);
+    // The card wraps its clauses on a character count, so the assertions
+    // read the section through `prose`: the wrap splits a line and never
+    // drops a character, so the words survive it exactly and the
+    // assertion reads what an operator reads.
+    let text = prose(&rendered);
+    // The shape that earned the move, named with the router's own
+    // clause vocabulary: shape, weighted wrong-rate, judged count,
+    // confidence span.
+    assert!(
+        text.contains(&prose(
+            "would move the suggestion past zai-coding-plan for shape `hard`"
+        )),
+        "{text}"
+    );
+    assert!(text.contains(&prose("judged wrong at 1.00")), "{text}");
+    assert!(
+        text.contains(&prose(
+            "a fit cell of 8 graded verdicts from 8 judged rows (span 0.35)"
+        )),
+        "{text}"
+    );
+    // The third vector rides beside it and moves no one.
+    assert!(text.contains(&prose("would name")), "{text}");
+    assert!(
+        text.contains(&prose("names zai-coding-plan for shape `prose`")),
+        "{text}"
+    );
+    assert!(text.contains(&prose("1.00 insufficient")), "{text}");
+    assert!(
+        text.contains(&prose("the direction is right and nothing is moved")),
+        "{text}"
+    );
+    // And nothing for the shape that earned nothing.
+    assert!(!text.contains(&prose("for shape `triage`")), "{text}");
+    // A card in the house shape, never a plain-text table, and every
+    // line inside the house width.
+    assert!(rendered.contains('\u{250c}'), "{rendered}");
+    assert!(!rendered.contains("| id |"), "{rendered}");
+    for line in rendered.lines() {
+        let width = plain(line).chars().count();
+        assert!(width <= CARD_WIDTH, "a line is {width} wide: {}", plain(line));
+    }
+
+    // The gate off says the ride-back is off rather than rendering an
+    // influence that will not happen.
+    let gated = plain(&render_ride_back_day(&root, &day, &["zai-coding-plan"], false));
+    assert!(gated.contains("gate delegation.informs_failover off"), "{gated}");
+    assert!(!gated.contains("would move the suggestion past"), "{gated}");
+
+    // A day whose cells earn nothing says so rather than rendering an
+    // empty section: one fit-and-right shape, and nothing to move.
+    let empty = scratch("ride-back-empty");
+    write_day(
+        &empty,
+        &day,
+        &[judged_value(&read_judged(
+            "zai-coding-plan",
+            "triage",
+            calib::VERDICT_RIGHT,
+            0.90,
+            "",
+        ))],
+    );
+    let nothing = plain(&render_ride_back_day(&empty, &day, &["zai-coding-plan"], true));
+    assert!(nothing.contains("the calibration would move nothing"), "{nothing}");
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&empty);
 }
 
 // --- the surface's shape ---

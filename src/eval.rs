@@ -772,10 +772,11 @@ pub fn last_row(root: &Path) -> Option<calib::ReadRow> {
 pub type EvalProbe = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 /// The bound the probe's `fleet eval` subprocess runs under: the
-/// corpus is ten deterministic runs — six mock-server runs and four
-/// lane runs over a scripted MCP child — so a child that has
-/// not finished within this many seconds is a hung probe — killed
-/// and named, never a gate that hangs with it.
+/// corpus is twenty deterministic scenarios across eleven families,
+/// each graded headless against the mock API and, on the lane legs,
+/// over a scripted MCP child — so a child that has not finished
+/// within this many seconds is a hung probe — killed and named,
+/// never a gate that hangs with it.
 pub const PROBE_TIMEOUT_SECS: u64 = 120;
 
 /// The same bound as a [`std::time::Duration`], the form the runner
@@ -861,9 +862,9 @@ fn grade_output(output: &std::process::Output) -> Result<(), String> {
 /// Run `fleet eval` as a bounded subprocess and collect its output. A
 /// reader thread drains both pipes, so a child that fills its pipe
 /// buffer cannot deadlock the wait; the parent keeps the child so it
-/// can kill it when the bound expires. The corpus is ten
-/// deterministic mock-server runs — a child that has not finished
-/// within `timeout` is a hung probe, not a hung gate.
+/// can kill it when the bound expires. The corpus is twenty
+/// deterministic scenarios across eleven families — a child that has
+/// not finished within `timeout` is a hung probe, not a hung gate.
 fn run_eval_subprocess(
     exe: &Path,
     timeout: std::time::Duration,
@@ -3709,6 +3710,103 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
             .is_empty(),
     ));
 
+    // The cells' named consumer, driven through the beat's real render
+    // path: `fleet delegate` renders what the calibration would move
+    // beside the graded rows. The cards wrap their clauses on a
+    // character count and never drop one, so the assertions read the
+    // section's prose with the frame's decoration and the spaces
+    // removed — what an operator reads, wherever the wrap landed.
+    let prose = |card: &str| -> String {
+        strip_ansi(card)
+            .lines()
+            .map(|line| {
+                line.trim_start()
+                    .trim_start_matches('\u{2502}')
+                    .trim_start()
+                    .trim_start_matches('\u{b7}')
+            })
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    let squeeze = |text: &str| -> String {
+        text.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+    };
+    let ride_back = prose(&crate::delegate::render_ride_back_day(
+        &wrong_root,
+        &day,
+        &["zai-coding-plan", "stepfun"],
+        true,
+    ));
+    checks.push((
+        "the beat renders what the calibration would move for the shape that earned it",
+        ride_back.contains(&squeeze(
+            "would move the suggestion past zai-coding-plan for shape `refactor`",
+        )) && ride_back.contains(&squeeze("judged wrong at 1.00"))
+            && ride_back.contains(&squeeze("8 graded verdicts from 8 judged rows")),
+    ));
+    checks.push((
+        "and renders nothing for the shape that earned nothing",
+        !ride_back.contains(&squeeze("for shape `triage`")),
+    ));
+    // A cell whose rows are mostly waived never earns its ride-back:
+    // seven wrong verdicts beside two the owner set aside is nine rows
+    // on the day and seven in the fit's sample, so the conservative
+    // direction holds and the section moves no one.
+    let waived_root = match scratch_dir("delegate-waived") {
+        Ok(root) => root,
+        Err(error) => return ScenarioOutcome::fail(NAME, family, error),
+    };
+    let mut waived_rows: Vec<serde_json::Value> = (0..7)
+        .map(|index| {
+            delegation_judged_line(
+                &format!("waived-wrong-{index:016x}"),
+                "zai-coding-plan",
+                "refactor",
+                calib::VERDICT_WRONG,
+                0.95 - index as f64 * 0.06,
+            )
+        })
+        .collect();
+    for index in 0..2 {
+        let mut row = delegation_judged_line(
+            &format!("waived-aside-{index:016x}"),
+            "zai-coding-plan",
+            "refactor",
+            calib::VERDICT_WRONG,
+            0.90,
+        );
+        row["disposition"] = serde_json::json!(calib::DISPOSITION_WAIVED);
+        waived_rows.push(row);
+    }
+    write_day_file(&waived_root, &day, &waived_rows);
+    let waived_day = crate::delegate::read_day(&waived_root, &day);
+    let waived_cell = crate::delegate::calibration(&waived_day.judged)
+        .into_iter()
+        .next()
+        .expect("the (zai-coding-plan, refactor) cell");
+    checks.push((
+        "a cell whose rows are mostly waived holds nine rows and reads seven verdicts",
+        waived_cell.judged == 9
+            && waived_cell.waived == 2
+            && waived_cell.graded_verdicts() == 7
+            && waived_cell.needs_rows() == 0
+            && waived_cell.needs_graded() == 1
+            && waived_cell.fit == calib::FitState::Unfit
+            && !waived_cell.informs_failover(),
+    ));
+    let waived_ride_back = prose(&crate::delegate::render_ride_back_day(
+        &waived_root,
+        &day,
+        &["zai-coding-plan"],
+        true,
+    ));
+    checks.push((
+        "so the beat renders no move for it, however wrong the rate reads",
+        !waived_ride_back.contains(&squeeze("would move the suggestion past")),
+    ));
+
     // The fail-open leg: the lane's own fallback shape is a named
     // refusal, not a judgment — no row, and the recorded decisions
     // stand. A fresh root holds one unjudged delegation.
@@ -3809,7 +3907,15 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         crate::delegate::disposition(&root, &day, "no-such-session", "agreed").is_err(),
     ));
 
-    for scratch in [&home, &root, &dry_root, &wrong_root, &unfit_root, &open_root] {
+    for scratch in [
+        &home,
+        &root,
+        &dry_root,
+        &wrong_root,
+        &unfit_root,
+        &waived_root,
+        &open_root,
+    ] {
         let _ = std::fs::remove_dir_all(scratch);
     }
     grade(NAME, family, &checks)
