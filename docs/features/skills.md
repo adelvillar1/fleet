@@ -1,10 +1,10 @@
 # Skills (slice 7)
 
-Fleet's procedural memory: SKILL.md files loaded from
-`<FLEET_HOME>/skills/`, disclosed to the model description-first, fetched
-body-on-demand through the `use_skill` tool — and drafted by the harness
-itself from session evidence, filed as proposals that never apply
-silently.
+Fleet's procedural memory: SKILL.md files loaded from the canonical
+library — `$FLEET_SKILLS_DIR`, else `<user home>/.agents/skills` —
+disclosed to the model description-first, fetched body-on-demand through
+the `use_skill` tool — and drafted by the harness itself from session
+evidence, filed as proposals that never apply silently.
 
 ```
 src/skills.rs     loading, the frontmatter subset, use_skill, the drafter, curation, the surface
@@ -17,20 +17,28 @@ src/main.rs       `fleet skills`, and the drafter's wiring after a session
 
 ## The layout
 
-One directory per skill under `<FLEET_HOME>/skills/`, each holding a
-`SKILL.md` whose frontmatter carries at least `name` and `description`,
-with the body after the fence — the owner's own convention, the same
-shape the fork's `packages/skill` speaks:
+One directory per skill in the **canonical library** — the owner's
+cross-harness library at `~/.agents/skills` (owner ruling 2026-10-16:
+the canonical source of skills, so a skill is authored once and every
+harness loads the same source) — each holding a `SKILL.md` whose
+frontmatter carries at least `name` and `description`, with the body
+after the fence. Fleet's own home holds only the draft staging:
 
 ```
-~/.fleet/skills/
+~/.agents/skills/     the canonical library (every harness's source)
   bash-recovery/
     SKILL.md
   embeddings-probe/
     SKILL.md
-  proposals/          drafts awaiting the slice-12 gate; never a live skill
+~/.fleet/skills/
+  proposals/          fleet's drafts awaiting the slice-12 gate; never a live skill
     bash-recovery.md
 ```
+
+`$FLEET_SKILLS_DIR` redirects the library (tests and sandboxed homes use
+it); resolution is env → default, the house style. The gate's apply
+path is what writes into the library — a skill proposal applies there,
+and its undo restores the pre-image stashed under the fleet home.
 
 The frontmatter is hand-parsed, not YAML-parsed. The subset is small and
 its rejections are named:
@@ -42,13 +50,16 @@ its rejections are named:
   lines inside the fence are fine. Unknown keys are kept, not rejected —
   a future field must not invalidate today's file. A leading UTF-8 BOM
   is stripped before anything else: editors write them, and a BOM'd
-  file is a valid file.
+  file is a valid file. The library's continuation dialect loads too: a
+  `key:` whose value is empty followed by indented lines or column-0
+  `- item` entries (the `metadata:` and `platforms:` shapes 227 of the
+  library's 444 files carry) rides the key as one opaque value.
 - **Rejected, each with the reason named:** no opening fence; no closing
-  fence; a fence line that is not a `key: value` pair (an indented
-  nested block, a `- item` list entry, a bare scalar); a key whose
-  quotes do not balance; a key that appears twice; an empty key; an
-  empty value. A BOM'd file that still fails names the BOM in its
-  reason, so the complaint is not misdirected at the fence.
+  fence; a continuation line (indented, or a `- item`) with no key
+  before it; a key whose quotes do not balance; a key that appears
+  twice; an empty key; an empty value whose continuation block never
+  comes. A BOM'd file that still fails names the BOM in its reason, so
+  the complaint is not misdirected at the fence.
 
 A skill whose frontmatter is missing or malformed is **skipped by name**
 with one logged line naming it — a broken skill never blocks the others,
@@ -83,8 +94,11 @@ it, one line per run is logged — `N skills declared; the list is
 growing the prompt — curation retires unused ones`. A warning only:
 nothing is hidden, every skill stays declared and callable, and the
 prompt still carries all of them. The list is re-sent on every request
-of every run, so an unbounded list is an unbounded per-turn cost, and
-curation retiring unused skills is the lever that brings it down.
+of every run, so an unbounded list is an unbounded per-turn cost. The
+owner's library is 444 skills, so the cap fires on every run of this
+machine — the known, accepted cost of portability; curated disclosure
+(subsetting what is declared) is the named follow-up, not curation's
+retirement, which no longer applies to a cross-harness library.
 
 `use_skill` goes through the same Approver as every other tool: a
 skill's body is model-visible content, and approving a body into
@@ -165,12 +179,16 @@ logs, the `use_skill` calls whose results were approved, counted per
 skill. This is usage-scan curation, not semantic recall — slice 8's
 memory upgrades it.
 
-- **Retirement.** A skill unused across the last N sessions (N
-  configurable, default 20, `skills.retire_after_sessions` in
-  `<FLEET_HOME>/config.json`) is proposed for retirement, with the
-  window size in its evidence. The rule refuses to judge on a short
-  window: with fewer sessions of history than N, nothing is proposed —
-  "unused across the last 20" is not knowable from three sessions.
+- **Retirement — a no-op against the canonical library.** The rule
+  (unused across the last N sessions, N = `skills.retire_after_sessions`,
+  default 20) files nothing now, and one logged line says why whenever
+  the window is long enough to have judged: the usage scan reads
+  fleet's own session logs only, and a skill no fleet session selected
+  may be another harness's daily driver — "unused by fleet" is not
+  unused across harnesses (KI-215). A hand-filed retirement proposal
+  still goes through the gate; what stopped is the automatic drafting.
+  The deeper fix — per-skill provenance, so the scan could see who
+  installed what — is the named follow-up.
 - **Merge.** Two skills whose descriptions are near-identical are
   proposed for merge. The similarity is **token Jaccard over the
   normalized descriptions**: lowercased, split on every non-alphanumeric

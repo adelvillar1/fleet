@@ -52,6 +52,22 @@ declared HEAD and says so. Routing never blocks a run: sys1 that cannot
 launch or cannot judge is a fallback, not an error. A configured `pin`
 bypasses judgment entirely.
 
+**The orchestrator walks `hard`.** The first model a run loads is the
+planner — it assigns the work and supervises it — so the walk leaves the
+judged workload at one point: the chain is `ORCHESTRATOR_WORKLOAD`'s
+(`hard`), whatever the task was judged, per the owner's 2026-10-16
+ruling. The judgment still runs and the decision row still records its
+label — `fleet judge` grades the judgment, and a relabeled row would
+corrupt that grading — while the reason names both halves when they
+diverge ("sys1 judged `quick`; the orchestrator walks `hard`'s chain").
+An owner override of `hard`'s candidates in `routing.json` governs the
+walk, which is what "whatever is assigned to the hard category" means.
+The route-decision cache's key names the walked workload, so a cache
+written under an older rule serves nothing: the key format changed, the
+cache invalidates whole, and the first run re-judges. Delegation
+children inherit the parent's model (CLAUDE.md hard rule 9), so the
+strengthened head is the whole run's.
+
 ## Failover
 
 `Router::chat_stream` walks the declared chain from the selected candidate.

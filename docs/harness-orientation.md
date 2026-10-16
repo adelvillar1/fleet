@@ -34,7 +34,7 @@ touches it.
 | Seam | What it carries | How to use it |
 |---|---|---|
 | `memories/` (this repo) | one durable fact per file, shape-first recall | the description enters the turn; `read_file` the fact for the full content |
-| skills — canonical at `~/.agents/skills/`, loaded from `<FLEET_HOME>/skills/` | procedures as `SKILL.md`, disclosed description-first; the canonical library is the owner's, and what you load is installed from it | `use_skill(name)` pulls a body; `fleet skills` cards the loaded set; `fleet skills --proposed` lists drafts awaiting the gate |
+| skills — the canonical library at `~/.agents/skills/`, loaded directly | procedures as `SKILL.md`, disclosed description-first; the library is the owner's cross-harness source, and fleet reads it in place | `use_skill(name)` pulls a body; `fleet skills` cards the loaded set; `fleet skills --proposed` lists drafts awaiting the gate |
 | `~/.fleet/sessions/` | every past session's JSONL log | `fleet sessions --recall "<query>"` ranks the archive; `<id>` opens one log |
 | the calibration stream | what actually happened: routes, recalls, delegations, turns | `fleet calib` reads today; `fleet judge` / `fleet delegate` grade a day through sys1 |
 | `docs/` (this repo) | plans, recaps, the defect ledger, architecture, feature docs | `read_file` the file the task touches — the map is below |
@@ -149,10 +149,14 @@ defect; a plan names the ones it fixes.
   idea is recorded and undecided.
 - **The router is in-process.** `route::select` in this crate is the
   router; there is no router process or port to find. The roster's keys
-  live in `<FLEET_HOME>/.env`. DeepSeek is funded but declared in no
-  workload's chain: it serves only when the owner pins it in
-  `<FLEET_HOME>/routing.json`. A session log's `start` record names the
-  CLI default — the calibration route row names what actually served.
+  live in `<FLEET_HOME>/.env`. The orchestrator — the first model a run
+  loads, the planner that assigns and supervises — always walks `hard`'s
+  chain (the owner's strong category), whatever the task was judged; the
+  judgment still runs and the route row records it. DeepSeek is funded
+  but declared in no workload's chain: it serves only when the owner
+  pins it in `<FLEET_HOME>/routing.json`. A session log's `start` record
+  names the CLI default — the calibration route row names what actually
+  served.
 - **The lanes are local.** The five vendored lane cores launch over
   fleet's own MCP stdio client; the embeddings that serve recall are
   probed at `127.0.0.1:8901` and degrade to keyword-only, by design,
@@ -172,8 +176,8 @@ When you learn something durable, write it where it lives: a fact
 through `remember` (one file, `basis: confirmed-by` or `inferred` — the
 basis is required, it is the permission model), a defect in the ledger,
 a procedure as a skill — authored in the canonical library at
-`~/.agents/skills/` and installed into `<FLEET_HOME>/skills/` to be
-loadable (the self-authoring drafter files its proposals under
-`<FLEET_HOME>/skills/proposals/`, and nothing applies one but the
-gate). A fact that stays only in the
+`~/.agents/skills/`, which fleet loads directly (the self-authoring
+drafter files its proposals under `<FLEET_HOME>/skills/proposals/`, and
+the gate is what writes an applied proposal into the library). A fact
+that stays only in the
 conversation is lost at session end; the corpus is the memory.

@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-16
 updated: 2026-10-16
 slug: orchestrator-routes-hard
@@ -47,13 +47,13 @@ meaning:
 
 ## Use cases
 
-- [ ] A: A task sys1 judges `quick` is planned by `hard`'s head
+- [x] A: A task sys1 judges `quick` is planned by `hard`'s head
       (`stepfun/step-5-preview` today), with the reason naming both.
-- [ ] B: The owner overrides `hard`'s candidates in `routing.json`;
+- [x] B: The owner overrides `hard`'s candidates in `routing.json`;
       the next orchestrator walk follows the override.
-- [ ] C: A cache written before this change serves nothing; the first
+- [x] C: A cache written before this change serves nothing; the first
       run after it re-judges and re-walks.
-- [ ] D: A pinned run still judges, records, and walks — filtered to
+- [x] D: A pinned run still judges, records, and walks — filtered to
       the pin, with the divergence named.
 
 ## UX routes
@@ -64,23 +64,23 @@ unchanged.
 
 ## Acceptance criteria
 
-- [ ] B1: `route::select` walks `ORCHESTRATOR_WORKLOAD`'s ("hard")
+- [x] B1: `route::select` walks `ORCHESTRATOR_WORKLOAD`'s ("hard")
       chain, falling back to the judged workload's chain only when the
       table names no `hard`; the sys1 judgment still runs and the row's
       `workload` field stays the judged label.
-- [ ] B2: the reason names the judged workload and, when the walk
+- [x] B2: the reason names the judged workload and, when the walk
       diverges, that the orchestrator walked `hard`'s chain; the pin
       path composes.
-- [ ] B3: a `routing.json` `workloads` override of `hard` governs the
+- [x] B3: a `routing.json` `workloads` override of `hard` governs the
       orchestrator's walk.
-- [ ] B4: the cache key folds the walked workload in; a pre-change
+- [x] B4: the cache key folds the walked workload in; a pre-change
       cache serves nothing and self-heals on the first run.
-- [ ] B5: demotion reorders the walked chain and never the selection,
+- [x] B5: demotion reorders the walked chain and never the selection,
       unchanged; failover walks the strong chain.
-- [ ] B6: the gate runs whole — `cargo fmt --all --check`,
+- [x] B6: the gate runs whole — `cargo fmt --all --check`,
       `cargo clippy --all-targets -- -D warnings`,
       `cargo build --release`, `cargo test` — exit codes read directly.
-- [ ] B7: the records say the ruling — `docs/features/routing.md`,
+- [x] B7: the records say the ruling — `docs/features/routing.md`,
       `docs/harness-orientation.md`'s environment section,
       `CLAUDE.local.md`'s roster paragraph, and a corpus fact.
 
@@ -145,3 +145,45 @@ cargo fmt --all --check && cargo clippy --all-targets -- -D warnings \
 - CLAUDE.md hard rule 9 (delegation inherits the parent's base model) —
   unchanged; this plan is what makes the inherited model the strong
   one.
+
+## Convergence (graded 2026-10-16)
+
+Commit `69c7d0d`. The gate ran whole at the increment: all four legs
+exit 0, 1022 passed / 1 ignored, exit codes read directly.
+
+- **B1 met** — the walk leaves the judged workload at one point:
+  `walked` resolves to `ORCHESTRATOR_WORKLOAD` when the table names it,
+  else the judged label; the judgment still runs and
+  `decision_from(..., Some(workload.clone()), ...)` keeps the judged
+  label in the row. Pinned at the unit level by the updated fallback
+  and pin tests (both walk `hard`'s chain now) and at the integration
+  level by `the_orchestrator_walks_hard_whatever_the_task_was_judged`
+  (a `quick`-judged task whose row records `quick` and whose order is
+  `hard`'s own).
+- **B2 met** — the reason composes `sys1 judged \`<label>\`; the
+  orchestrator walks \`hard\`'s chain; ` when they diverge, and the pin
+  path composes the same way; asserted in the integration test.
+- **B3 met** — `the_orchestrators_walk_follows_a_hard_override` drives
+  an overridden `hard` list through select; the two rewired lane tests
+  exercise the real `routing.json` override path through `prepare`
+  (the owner's `hard` override aims the walk at blend1).
+- **B4 met** — `key_for` appends `walk=<ORCHESTRATOR_WORKLOAD>`; the
+  pre-change key format (the bare producer key) no longer matches, and
+  `the_cache_key_names_the_walked_workload` pins both the new key's
+  shape and the old format's refusal.
+- **B5 met** — the demotion reorder and failover tests pass unchanged;
+  the rewired refusal test proves the walk still advances by name
+  past a failing candidate, on the orchestrator's chain.
+- **B6 met** — the gate, exit codes direct.
+- **B7 met** — `docs/features/routing.md` carries the orchestrator
+  paragraph, `docs/harness-orientation.md`'s environment bullet names
+  the ruling, `CLAUDE.local.md`'s roster paragraph says it, and
+  `memories/orchestrator-walks-the-hard-chain.md` records it.
+
+The named risk held: two walk-mechanics tests (`a_composed_judgment_answers_through_the_blend1_lane`,
+`a_lane_that_refuses_advances_the_walk_by_name`) asserted
+per-workload chains and were rewired onto the ruling — their fixtures
+override `hard` through `routing.json`, which is also the B3 path, and
+their walk/failover mechanics pass unchanged. The eval corpus needed no
+change: its scenarios assert against the mock roster where the walked
+head was already the assertion's subject.
