@@ -242,6 +242,19 @@ pub const LANES: &[Lane] = &[
         note: "the ONNX weights (~/.cache/gen1/tts/kokoro-v1.0.onnx and voices-v1.0.bin) are machine-owner downloads, not installed here",
     },
     Lane {
+        // The browser lane installs no venv: its child is stdlib Python
+        // that shells to Chrome and speaks CDP over a plain socket, so
+        // `fleet install --lanes` builds it nothing. Chrome itself is a
+        // machine resource, named by `BROWSER_CHROME`, the same class of
+        // dependency as gen1's ONNX weights.
+        name: "browser",
+        role: "render",
+        packages: &[],
+        env_var: None,
+        env_target: EnvTarget::Root,
+        note: "Chrome is a machine resource, not installed here — set BROWSER_CHROME to its binary; the lane probes the usual suspects when it is unset",
+    },
+    Lane {
         name: "blend1",
         role: "grounded",
         // The union of the three siblings' sets: blend1's own core is
@@ -1053,9 +1066,17 @@ mod tests {
     }
 
     #[test]
-    fn the_lane_table_is_the_five_vendored_cores() {
+    fn the_lane_table_is_the_six_lanes_five_of_them_vendored_cores() {
         let names: Vec<&str> = LANES.iter().map(|lane| lane.name).collect();
-        assert_eq!(names, vec!["sys1", "sdm1", "sem1", "gen1", "blend1"]);
+        assert_eq!(
+            names,
+            vec!["sys1", "sdm1", "sem1", "gen1", "browser", "blend1"]
+        );
+        // The browser lane is the one that installs nothing: its child is
+        // stdlib Python and its dependency is a machine resource.
+        let browser = LANES.iter().find(|lane| lane.name == "browser").unwrap();
+        assert!(browser.packages.is_empty());
+        assert_eq!(browser.env_var, None);
         // The fork's vocabulary, ported: each lane names the packages
         // its venv carries and the environment name its core reads.
         let sem1 = LANES.iter().find(|lane| lane.name == "sem1").unwrap();

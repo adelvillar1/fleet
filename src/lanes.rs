@@ -60,7 +60,7 @@ pub struct Lane {
     pub passthrough: &'static [&'static str],
 }
 
-/// The five lanes, in launch order.
+/// The six lanes, in launch order.
 pub const LANES: &[Lane] = &[
     Lane {
         name: "sys1",
@@ -144,6 +144,19 @@ pub const LANES: &[Lane] = &[
             "GEN1_KOKORO_PYTHON",
             "GEN1_TELEMETRY_FILE",
         ],
+    },
+    Lane {
+        name: "browser",
+        role: "render",
+        python_path_env: "BROWSER_PYTHONPATH",
+        home_env: "FLEET_LANE_BROWSER_HOME",
+        // The one locator this lane cannot discover: Chrome's binary. The
+        // usual suspects are probed when it is unset, and the refusal
+        // names what was looked for — but a machine that keeps Chrome
+        // somewhere unusual says so here rather than relying on the
+        // probe. A lane child never inherits the caller's environment
+        // (KI-031), so this name is the whole of what crosses.
+        passthrough: &["BROWSER_CHROME"],
     },
     Lane {
         name: "blend1",
@@ -958,9 +971,17 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_names_the_five_lanes_in_launch_order() {
+    fn the_registry_names_the_six_lanes_in_launch_order() {
         let names: Vec<&str> = LANES.iter().map(|lane| lane.name).collect();
-        assert_eq!(names, vec!["sys1", "sdm1", "sem1", "gen1", "blend1"]);
+        assert_eq!(
+            names,
+            vec!["sys1", "sdm1", "sem1", "gen1", "browser", "blend1"]
+        );
+        // The browser lane's own names, and the one locator it declares.
+        assert_eq!(lane("browser").python_path_env, "BROWSER_PYTHONPATH");
+        assert_eq!(lane("browser").home_env, "FLEET_LANE_BROWSER_HOME");
+        assert_eq!(lane("browser").role, "render");
+        assert_eq!(lane("browser").passthrough, &["BROWSER_CHROME"]);
         // Each lane's env names follow the fork's convention.
         assert_eq!(lane("sem1").python_path_env, "SEM1_PYTHONPATH");
         assert_eq!(lane("sem1").home_env, "FLEET_LANE_SEM1_HOME");

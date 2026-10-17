@@ -602,8 +602,19 @@ fn the_blend1_launch_spec_carries_its_keys_and_scrubs_fleets_own() {
 #[test]
 fn both_lane_tables_carry_blend1_as_the_fifth_entry() {
     // The install's table: the venvs `fleet install --lanes` builds.
-    assert_eq!(LANES.len(), 5, "the fifth lane is the last: {LANES:?}");
-    assert_eq!(LANES[4].name, "blend1");
+    assert_eq!(
+        LANES.len(),
+        6,
+        "the browser lane joins before the blend: {LANES:?}"
+    );
+    assert_eq!(LANES[5].name, "blend1");
+    // The browser lane is stdlib-only: it shells to Chrome and speaks CDP
+    // over a plain socket, so `fleet install --lanes` builds it no venv.
+    let browser = LANES
+        .iter()
+        .find(|lane| lane.name == "browser")
+        .expect("the browser lane");
+    assert!(browser.packages.is_empty(), "{browser:?}");
     let blend1 = LANES
         .iter()
         .find(|lane| lane.name == "blend1")
@@ -656,7 +667,10 @@ fn both_lane_tables_carry_blend1_as_the_fifth_entry() {
     // The registry's table: the launch identity the probe and the
     // agent's tool loop resolve.
     let names: Vec<&str> = lanes::LANES.iter().map(|lane| lane.name).collect();
-    assert_eq!(names, vec!["sys1", "sdm1", "sem1", "gen1", "blend1"]);
+    assert_eq!(
+        names,
+        vec!["sys1", "sdm1", "sem1", "gen1", "browser", "blend1"]
+    );
     let registry = lane("blend1");
     assert_eq!(registry.role, "grounded");
     assert_eq!(registry.python_path_env, "BLEND1_PYTHONPATH");
