@@ -21,7 +21,7 @@ const STYLES: &str = include_str!("assets/app.css");
 /// The minimum contrast for text, WCAG AA. The tertiary token carries
 /// 10.5px labels, which is why it is held to the same bar as body text
 /// rather than the large-text 3:1.
-const MIN_TEXT: f64 = 4.5;
+pub const MIN_TEXT: f64 = 4.5;
 
 /// The themes the stylesheet declares, in the order the picker shows
 /// them. The first is the default.
@@ -156,6 +156,106 @@ fn themes() -> Vec<(String, Theme)> {
             (name, theme)
         })
         .collect()
+}
+
+/// One theme's measured contrast: the worst text ratio it offers, and
+/// every token's ratio against every surface.
+///
+/// This is what an action card is built on. "Your theme's tertiary text
+/// is at 4.3:1" is a measurement, not an opinion, and the card that
+/// offers to fix it is offering a number the browser can check.
+#[derive(Debug, Clone)]
+pub struct ThemeReport {
+    pub theme: String,
+    /// The worst text ratio the theme offers, over every token against
+    /// every surface.
+    pub worst: f64,
+    /// The floor every text token is held to, WCAG AA.
+    pub floor: f64,
+    /// `(token, ratio)` for the tokens that clear the floor, worst first.
+    pub passing: Vec<(String, f64)>,
+    /// `(token, ratio)` for the ones that do not, worst first. Empty for
+    /// a theme that is fully readable.
+    pub failing: Vec<(String, f64)>,
+}
+
+impl ThemeReport {
+    /// Whether every text token clears the floor.
+    pub fn holds(&self) -> bool {
+        self.failing.is_empty()
+    }
+
+    /// The report as one line, the way every other model-visible answer
+    /// in this crate reads.
+    pub fn line(&self) -> String {
+        if self.holds() {
+            return format!(
+                "`{}` holds \u{2014} its worst text token is {:.2}:1 against a {:.1}:1 floor",
+                self.theme, self.worst, self.floor
+            );
+        }
+        let named: Vec<String> = self
+            .failing
+            .iter()
+            .map(|(token, ratio)| format!("{token} at {ratio:.2}:1"))
+            .collect();
+        format!(
+            "`{}` falls to {:.2}:1 \u{2014} {} under the {:.1}:1 floor",
+            self.theme,
+            self.worst,
+            named.join(", "),
+            self.floor
+        )
+    }
+}
+
+/// The short name of a token, for a report the browser can read.
+fn token_name(token: &str) -> String {
+    token
+        .trim_start_matches("--dsw-alias-")
+        .replace(['-', '_'], " ")
+}
+
+/// Measure one declared theme against the contrast floor.
+///
+/// `None` when the stylesheet declares no theme by that name, which is
+/// the honest answer rather than an empty report that would read as
+/// "this theme is unreadable".
+pub fn measure(name: &str) -> Option<ThemeReport> {
+    let found = themes();
+    let (_, theme) = found.iter().find(|(theme, _)| theme == name)?;
+    let surfaces = [theme.page, theme.surface, theme.raised];
+    let mut passing: Vec<(String, f64)> = Vec::new();
+    let mut failing: Vec<(String, f64)> = Vec::new();
+    let mut worst = f64::INFINITY;
+    for (token, colour) in &theme.text {
+        let ratio = surfaces
+            .into_iter()
+            .flatten()
+            .map(|surface| contrast(*colour, surface))
+            .fold(0.0, f64::max);
+        worst = worst.min(ratio);
+        let named = token_name(token);
+        if ratio >= MIN_TEXT {
+            passing.push((named, ratio));
+        } else {
+            failing.push((named, ratio));
+        }
+    }
+    passing.sort_by(|left, right| right.1.total_cmp(&left.1));
+    failing.sort_by(|left, right| left.1.total_cmp(&right.1));
+    Some(ThemeReport {
+        theme: name.to_string(),
+        worst,
+        floor: MIN_TEXT,
+        passing,
+        failing,
+    })
+}
+
+/// Every declared theme's report, in the order the picker shows them.
+pub fn measure_all() -> Vec<ThemeReport> {
+    THEMES.iter().filter_map(|theme| measure(theme)).collect()
 }
 
 #[cfg(test)]

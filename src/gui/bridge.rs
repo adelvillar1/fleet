@@ -517,6 +517,27 @@ impl Bridge {
         json!({"type": "rank", "ranked": ranked})
     }
 
+    /// The theme set's measured contrast, for the action card that offers
+    /// a readable alternative when the current theme does not clear the
+    /// floor. A measurement, not an opinion — the card offers a number
+    /// the browser can check.
+    pub fn contrast(&self) -> Value {
+        let reports = crate::gui::themes::measure_all();
+        json!({
+            "type": "contrast",
+            "floor": crate::gui::themes::MIN_TEXT,
+            "themes": reports.iter().map(|report| json!({
+                "theme": report.theme,
+                "worst": report.worst,
+                "holds": report.holds(),
+                "failing": report.failing.iter().map(|(token, ratio)| json!({
+                    "token": token, "ratio": ratio
+                })).collect::<Vec<_>>(),
+                "line": report.line(),
+            })).collect::<Vec<_>>(),
+        })
+    }
+
     /// The pane's web read: fetch one page and reduce it to what is
     /// readable. The guard is the substrate's — a private or loopback
     /// address is refused, so a browser that can name a URL cannot name

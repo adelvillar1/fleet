@@ -78,7 +78,14 @@
     ['go', ['jump', 'open'], 'jump to a surface by name',
       function (rest) { if (rest) window.location.hash = '#/' + rest.trim().split(/\s+/)[0]; }],
     ['compact', ['fold', 'summarise'], 'fold the conversation now, without waiting for the budget',
-      function () { face.compactNow = true; notice('the fold is armed', 'it lands at the next turn boundary'); }],
+      function () {
+        // The flag is the browser's own: the agent reads its forced-fold
+        // once, when the run starts, so arming it here does not fold
+        // anything yet. Saying otherwise would be a command that claims
+        // a result it does not produce.
+        notice('the fold is not wired yet',
+          'the agent reads its forced-fold flag once, when a run starts; arming it mid-run needs a shared flag the agent reads per turn');
+      }],
     ['clear', ['new', 'reset'], 'clear the transcript and start a fresh session view',
       function () { window.location.hash = '#/chat'; load(true); }],
     ['approve', ['allow', 'yes'], 'answer the waiting approval: once, always, or deny',
@@ -126,6 +133,7 @@
     panePreviewPanel: document.getElementById('pane-preview'),
     themeToggle: document.getElementById('theme-toggle'),
     themes: document.getElementById('themes'),
+    actions: document.getElementById('actions'),
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
     panelDelegation: document.getElementById('panel-delegation'),
@@ -219,6 +227,9 @@
     // second fetch of the same page.
     page: null,
     pageAt: '',
+    // The theme set's measured contrast, which is what the action card
+    // offers a fix against.
+    contrast: null,
     // The palette's rows and which of them is selected, so the arrow keys
     // move a cursor the same way the panel reads move theirs.
     paletteRows: [],
@@ -3238,6 +3249,9 @@
   }
 
   setTheme(themeNow());
+  // The theme measurement, read once so the picker's ratios and the
+  // action card carry the substrate's own numbers rather than a swatch.
+  readContrast(true);
   // The toggle opens the picker rather than flipping: with four themes a
   // blind cycle is a guess, and a one-click choice is not. The picker is
   // the same shape the commands use, so one interaction pattern serves
@@ -3256,10 +3270,74 @@
       row.addEventListener('click', function () {
         setTheme(theme[0]);
         closeThemes();
+        readContrast();
       });
+      // The measured ratio rides the row, so the choice is made against
+      // a number rather than a swatch.
+      var report = (face.contrast && face.contrast.themes || [])
+        .filter(function (entry) { return entry.theme === theme[0]; })[0];
+      if (report) {
+        var mark = node('span', 'theme-row-ratio',
+          report.worst.toFixed(2) + ':1' + (report.holds ? '' : ' \u00b7 under the floor'));
+        if (!report.holds) mark.dataset.tone = 'down';
+        row.appendChild(mark);
+      }
       el.themes.appendChild(row);
     });
     el.themes.hidden = false;
+  }
+
+  // The theme measurement, read once per launch and again whenever the
+  // theme changes. It is the substrate's own computation, so the card and
+  // the guard cannot disagree.
+  function readContrast(force) {
+    if (!force && face.contrast) return Promise.resolve();
+    return paneGet('/api/contrast')
+      .then(function (doc) {
+        face.contrast = doc;
+        paintContrast();
+      })
+      .catch(function () { });
+  }
+
+  // The action card. It appears only when the current theme does not
+  // clear the floor, it names the measurement, and its one button is the
+  // fix already computed — the readable theme, not a promise to find
+  // one. That is the whole pattern: the interface calculates the flaw
+  // and offers the correction as one click, before the owner hits it.
+  function paintContrast() {
+    var doc = face.contrast;
+    if (!el.actions) return;
+    el.actions.textContent = '';
+    var here = doc && (doc.themes || []).filter(function (entry) {
+      return entry.theme === themeNow();
+    })[0];
+    if (!here || here.holds) { el.actions.hidden = true; return; }
+    var best = (doc.themes || []).filter(function (entry) { return entry.holds; })
+      .sort(function (left, right) { return right.worst - left.worst; })[0];
+    var card0 = node('div', 'action');
+    card0.dataset.kind = 'contrast';
+    card0.appendChild(node('span', 'action-mark', '\u25d0'));
+    var body = node('div', 'action-body');
+    body.appendChild(node('p', 'action-title', 'this theme falls below the readable floor'));
+    body.appendChild(node('p', 'action-said',
+      'its worst text is ' + here.worst.toFixed(2) + ':1 against the ' + doc.floor.toFixed(1) +
+      ':1 floor \u2014 ' + here.failing.map(function (entry) {
+        return entry.token + ' at ' + entry.ratio.toFixed(2) + ':1';
+      }).join(', ')));
+    if (best) {
+      var fix = node('button', 'action-do');
+      fix.type = 'button';
+      fix.textContent = 'switch to ' + best.theme + ' (' + best.worst.toFixed(2) + ':1)';
+      fix.addEventListener('click', function () {
+        setTheme(best.theme);
+        readContrast(true);
+      });
+      body.appendChild(fix);
+    }
+    card0.appendChild(body);
+    el.actions.appendChild(card0);
+    el.actions.hidden = false;
   }
 
   function closeThemes() { el.themes.hidden = true; }
