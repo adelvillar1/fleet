@@ -203,6 +203,18 @@ async fn serve_connection(
         }
         ("GET", "/api/memory") => write_reply(&mut stream, api(200, bridge.memory().await)).await,
         ("GET", "/api/skills") => write_reply(&mut stream, api(200, bridge.skills().await)).await,
+        // The pane's two reads. Both are contained to the working
+        // directory by the bridge, and both refuse a credential file by
+        // name — the browser can ask for a file now, which is exactly
+        // where one would leak.
+        ("GET", "/api/tree") => {
+            let asked = decode_query(&request.query, "path");
+            write_reply(&mut stream, api(200, bridge.tree(&asked).await)).await
+        }
+        ("GET", "/api/file") => {
+            let asked = decode_query(&request.query, "path");
+            write_reply(&mut stream, api(200, bridge.file(&asked).await)).await
+        }
         ("POST", "/api/run") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -469,6 +481,30 @@ impl Request {
             .find(|(name, _)| *name == COOKIE_NAME)
             .map(|(_, value)| value)
     }
+}
+
+/// One query parameter's value, percent-decoded. The pane's paths are
+/// the exotic case the token never was: a file path carries spaces,
+/// hashes and non-ASCII, and the browser encodes all of them before they
+/// reach the wire, so they have to come back off it.
+fn decode_query(query: &str, name: &str) -> String {
+    let raw = query_value(query, name).unwrap_or_default();
+    let bytes = raw.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' && at + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[at + 1..at + 3]).ok();
+            if let Some(value) = hex.and_then(|hex| u8::from_str_radix(hex, 16).ok()) {
+                out.push(value);
+                at += 3;
+                continue;
+            }
+        }
+        out.push(bytes[at]);
+        at += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| raw.to_string())
 }
 
 /// One query parameter's value. The token is hex, so nothing needs
@@ -1475,6 +1511,98 @@ mod tests {
             r#"{"proposal":"no-such-proposal"}"#,
         );
         assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+    }
+
+    /// The pane's two routes, behind the launch token like every other.
+    /// The tree reads the working directory this face was launched from,
+    /// the file read carries the text, and both refuse what they must:
+    /// a path that escapes the root, and a credential file by name.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_pane_routes_read_the_tree_and_the_file_and_refuse_the_rest() {
+        let (token, port) = launch().await;
+        let anonymous = ask(
+            port,
+            "GET /api/tree?path=src HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+        );
+        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+
+        let tree = ask(
+            port,
+            &format!("GET /api/tree?path=src&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+            None,
+        );
+        assert!(tree.starts_with("HTTP/1.1 200"), "{tree}");
+        let document: serde_json::Value =
+            serde_json::from_str(tree.split("\r\n\r\n").nth(1).expect("a body past the head"))
+                .expect("a JSON document");
+        assert_eq!(document["type"], "tree");
+        let entries = document["entries"].as_array().expect("the entries");
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry["name"] == "gui" && entry["kind"] == "dir"),
+            "{document}"
+        );
+
+        // The file read carries the text and names its language.
+        let file = ask(
+            port,
+            &format!(
+                "GET /api/file?path=src%2Fgui%2Fassets%2Fapp.css&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+            ),
+            None,
+        );
+        assert!(file.starts_with("HTTP/1.1 200"), "{file}");
+        let document: serde_json::Value =
+            serde_json::from_str(file.split("\r\n\r\n").nth(1).expect("a body past the head"))
+                .expect("a JSON document");
+        assert_eq!(document["type"], "file");
+        assert_eq!(document["language"], "css");
+        assert!(
+            document["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("--dsw-alias-page")),
+            "{document}"
+        );
+
+        // A path that escapes the root, and a credential file, are both
+        // refused by name — the browser can ask for a file now, which is
+        // exactly where one would leak.
+        let escaped = ask(
+            port,
+            &format!(
+                "GET /api/file?path=..%2F..%2Fetc%2Fpasswd&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+            ),
+            None,
+        );
+        let document: serde_json::Value = serde_json::from_str(
+            escaped
+                .split("\r\n\r\n")
+                .nth(1)
+                .expect("a body past the head"),
+        )
+        .expect("a JSON document");
+        assert_eq!(document["refused"][0], "outside the working directory");
+        let dotenv = ask(
+            port,
+            &format!("GET /api/file?path=.env&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+            None,
+        );
+        assert!(
+            dotenv.contains("a credential file is never served"),
+            "{dotenv}"
+        );
+        // A path with a space rides the query percent-encoded, and the
+        // decoder has to bring it back.
+        let spaced = ask(
+            port,
+            &format!(
+                "GET /api/file?path=docs%2Fplans%2F2026-10-16-gui-revamp.md&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+            ),
+            None,
+        );
+        assert!(spaced.starts_with("HTTP/1.1 200"), "{spaced}");
     }
 
     /// A home with no logs and no declared graph names both, rather than

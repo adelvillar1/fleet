@@ -85,6 +85,16 @@
     paletteRows: document.getElementById('palette-rows'),
     paletteCount: document.getElementById('palette-count'),
     paletteOpen: document.getElementById('palette-open'),
+    pane: document.getElementById('pane'),
+    paneOpen: document.getElementById('pane-open'),
+    paneClose: document.getElementById('pane-close'),
+    paneTree: document.getElementById('pane-tree'),
+    paneFile: document.getElementById('pane-file'),
+    panePreview: document.getElementById('pane-preview-body'),
+    tabFiles: document.getElementById('tab-files'),
+    tabPreview: document.getElementById('tab-preview'),
+    paneFiles: document.getElementById('pane-files'),
+    panePreviewPanel: document.getElementById('pane-preview'),
     themeToggle: document.getElementById('theme-toggle'),
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
@@ -177,7 +187,14 @@
     // The palette's rows and which of them is selected, so the arrow keys
     // move a cursor the same way the panel reads move theirs.
     paletteRows: [],
-    paletteAt: 0
+    paletteAt: 0,
+    // The pane: which directory the tree is showing, which file is open,
+    // and which of its two views is in front. The tree is one read per
+    // directory and the file is one read per open, so neither polls.
+    tree: null,
+    treeAt: '',
+    file: null,
+    paneTab: 'files'
   };
 
   // A short mark for a tool, so a card reads at a glance without an
@@ -2437,6 +2454,270 @@
     el.panelLater.hidden = false;
   }
 
+  // ------------------------------------------------------------ the pane
+
+  // The pane reads the working directory through two routes the bridge
+  // contains: the tree is one directory's entries, the file is one
+  // file's text. Both are behind the launch token like every other
+  // route, and the bridge refuses a credential file by name and a path
+  // that escapes the root — the browser can ask for a file now, which is
+  // exactly where a credential would leak.
+
+  function paneGet(path) {
+    return fetch(path, { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      });
+  }
+
+  // The tree, for one directory. A click on a directory reads it; a click
+  // on a file opens it in the viewer and the preview.
+  function readTree(asked, force) {
+    var now = Date.now();
+    if (!force && face.tree && face.treeAt === asked && now - face.treeAt2 < 4000) {
+      return Promise.resolve();
+    }
+    face.treeAt = asked;
+    face.treeAt2 = now;
+    return paneGet('/api/tree?path=' + encodeURIComponent(asked))
+      .then(function (doc) {
+        face.tree = doc;
+        if (face.paneTab === 'files') paintTree();
+      })
+      .catch(function () { });
+  }
+
+  function paintTree() {
+    var read = face.tree;
+    el.paneTree.textContent = '';
+    if (!read) {
+      el.paneTree.appendChild(node('p', 'pane-empty', 'The tree read has not landed yet.'));
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.paneTree.appendChild(node('p', 'pane-empty', read.refused.join(' \u00b7 ')));
+      return;
+    }
+    // The breadcrumb: where in the tree this read stands, and a way up.
+    var crumb = node('div', 'pane-crumb');
+    var up = node('button', 'pane-crumb-up');
+    up.type = 'button';
+    up.textContent = read.path ? '\u2026 / ' + clip(read.path, 26) : '/';
+    up.addEventListener('click', function () {
+      var parts = String(read.path || '').split('/');
+      parts.pop();
+      readTree(parts.join('/'), true);
+    });
+    crumb.appendChild(up);
+    el.paneTree.appendChild(crumb);
+
+    (read.entries || []).forEach(function (entry) {
+      var row = node('button', 'pane-row');
+      row.type = 'button';
+      row.dataset.kind = entry.kind;
+      row.appendChild(node('span', 'pane-row-mark', entry.kind === 'dir' ? '\u2338' : '\u00b7'));
+      row.appendChild(node('span', 'pane-row-name', entry.name));
+      if (entry.kind === 'dir') {
+        row.addEventListener('click', function () {
+          var at = read.path ? read.path + '/' + entry.name : entry.name;
+          readTree(at, true);
+        });
+      } else {
+        row.appendChild(node('span', 'pane-row-size', bytes(entry.size)));
+        row.addEventListener('click', function () {
+          var at = read.path ? read.path + '/' + entry.name : entry.name;
+          openFile(at);
+        });
+      }
+      el.paneTree.appendChild(row);
+    });
+    if (read.truncated) {
+      el.paneTree.appendChild(node('p', 'pane-note',
+        'this directory has more entries than one read carries'));
+    }
+  }
+
+  // One file, in the viewer and in the preview. The viewer shows the
+  // actual code with its line numbers; the preview renders it when it is
+  // a deliverable — markdown today, and text for everything else.
+  function openFile(asked) {
+    return paneGet('/api/file?path=' + encodeURIComponent(asked))
+      .then(function (doc) {
+        face.file = doc;
+        paintFile();
+        if (face.paneTab === 'preview') paintPreview();
+      })
+      .catch(function () { });
+  }
+
+  function paintFile() {
+    var read = face.file;
+    el.paneFile.textContent = '';
+    if (!read) return;
+    if (read.refused && read.refused.length) {
+      el.paneFile.appendChild(node('p', 'pane-empty', read.refused.join(' \u00b7 ')));
+      return;
+    }
+    var head = node('div', 'pane-file-head');
+    head.appendChild(node('span', 'pane-file-name', read.name));
+    head.appendChild(node('span', 'pane-file-meta',
+      read.language + ' \u00b7 ' + bytes(read.bytes) + (read.truncated ? ' \u00b7 cut' : '')));
+    el.paneFile.appendChild(head);
+    var lines = String(read.text || '').split('\n');
+    var code = node('div', 'pane-code');
+    lines.forEach(function (line, index) {
+      var row = node('div', 'pane-line');
+      row.appendChild(node('span', 'pane-line-no', String(index + 1)));
+      row.appendChild(node('span', 'pane-line-text', line.length ? line : ' '));
+      code.appendChild(row);
+    });
+    el.paneFile.appendChild(code);
+  }
+
+  // The preview: markdown rendered, everything else shown as text with
+  // its own line breaks. A half-written markdown renderer is worse than
+  // none, so the subset here is the one this repository's own documents
+  // actually use — headings, paragraphs, lists, code fences, emphasis,
+  // links and inline code.
+  function paintPreview() {
+    var read = face.file;
+    el.panePreview.textContent = '';
+    if (!read) {
+      el.panePreview.appendChild(node('p', 'pane-empty',
+        'Open a file from the tree to preview it here.'));
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.panePreview.appendChild(node('p', 'pane-empty', read.refused.join(' \u00b7 ')));
+      return;
+    }
+    if (read.language !== 'markdown') {
+      var plain = node('pre', 'pane-plain', read.text || '');
+      el.panePreview.appendChild(plain);
+      return;
+    }
+    el.panePreview.appendChild(markdown(String(read.text || '')));
+  }
+
+  function markdown(text) {
+    var out = node('div', 'md');
+    var fence = null;
+    var list = null;
+    var para = [];
+    var flushPara = function () {
+      if (!para.length) return;
+      var p = node('p', 'md-p');
+      p.appendChild(inline(para.join(' ')));
+      out.appendChild(p);
+      para = [];
+    };
+    var flushList = function () {
+      if (!list) return;
+      out.appendChild(list);
+      list = null;
+    };
+    text.split('\n').forEach(function (raw) {
+      var line = raw.replace(/\s+$/, '');
+      var fenceAt = line.match(/^```(\w*)$/);
+      if (fenceAt) {
+        if (fence) {
+          out.appendChild(node('pre', 'md-code', fence.join('\n')));
+          fence = null;
+        } else {
+          flushPara(); flushList();
+          fence = [];
+        }
+        return;
+      }
+      if (fence) { fence.push(raw); return; }
+      if (!line.trim()) { flushPara(); flushList(); return; }
+      var heading = line.match(/^(#{1,4})\s+(.*)$/);
+      if (heading) {
+        flushPara(); flushList();
+        var level = Math.min(4, heading[1].length + 2);
+        var h = node('h' + level, 'md-h');
+        h.appendChild(inline(heading[2]));
+        out.appendChild(h);
+        return;
+      }
+      var item = line.match(/^\s*[-*]\s+(.*)$/);
+      if (item) {
+        flushPara();
+        if (!list) list = node('ul', 'md-ul');
+        var li = node('li', 'md-li');
+        li.appendChild(inline(item[1]));
+        list.appendChild(li);
+        return;
+      }
+      flushList();
+      para.push(line.trim());
+    });
+    if (fence) out.appendChild(node('pre', 'md-code', fence.join('\n')));
+    flushPara();
+    flushList();
+    return out;
+  }
+
+  // Inline markdown: code, bold, italic, links. Text is built as nodes
+  // rather than innerHTML, so a document can never inject markup.
+  function inline(text) {
+    var span = node('span');
+    var rest = String(text);
+    var pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\([^)]+\))/g;
+    var at = 0;
+    var match;
+    while ((match = pattern.exec(rest)) !== null) {
+      if (match.index > at) span.appendChild(document.createTextNode(rest.slice(at, match.index)));
+      if (match[1]) {
+        span.appendChild(node('code', 'md-inline-code', match[1].slice(1, -1)));
+      } else if (match[2]) {
+        span.appendChild(node('strong', 'md-strong', match[2].slice(2, -2)));
+      } else if (match[3]) {
+        var link = match[3].match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+        var a = node('a', 'md-link', link[1]);
+        a.href = link[2];
+        span.appendChild(a);
+      }
+      at = match.index + match[0].length;
+    }
+    if (at < rest.length) span.appendChild(document.createTextNode(rest.slice(at)));
+    return span;
+  }
+
+  function bytes(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' kB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  // The pane's open and closed state, and which of its two views is in
+  // front. The pane is layout, not an overlay: it takes its own column
+  // beside the stage so a preview and the run are readable together.
+  function openPane() {
+    el.pane.hidden = false;
+    document.body.dataset.pane = 'open';
+    if (!face.tree) readTree('', true);
+  }
+
+  function closePane() {
+    el.pane.hidden = true;
+    document.body.dataset.pane = 'closed';
+  }
+
+  function showPaneTab(which) {
+    face.paneTab = which;
+    var files = which === 'files';
+    el.tabFiles.classList.toggle('active', files);
+    el.tabPreview.classList.toggle('active', !files);
+    el.tabFiles.setAttribute('aria-selected', files ? 'true' : 'false');
+    el.tabPreview.setAttribute('aria-selected', files ? 'false' : 'true');
+    el.paneFiles.hidden = !files;
+    el.panePreviewPanel.hidden = files;
+    if (files) paintTree(); else paintPreview();
+  }
+
   // ------------------------------------------------- the rail and the palette
 
   // The rail: four destinations, one flat level beneath each. Built from
@@ -2446,13 +2727,11 @@
     el.rail.textContent = '';
     GROUPS.forEach(function (group) {
       var id = group[0], label = group[1], items = group[2];
-      var head = node('span', 'rail-group', label);
-      el.rail.appendChild(head);
-      var button = node('button', 'rail-dest');
+      var button = node('button', 'surfaces-dest');
       button.type = 'button';
       button.dataset.group = id;
-      button.appendChild(node('span', 'rail-mark', GROUP_MARKS[id] || label.slice(0, 1)));
-      button.appendChild(node('span', 'rail-name', label));
+      button.appendChild(node('span', 'surfaces-mark', GROUP_MARKS[id] || label.slice(0, 1)));
+      button.appendChild(node('span', 'surfaces-name', label));
       // The destination itself opens its first surface — the one an owner
       // opening the group almost always wants — so a group is one click
       // rather than two.
@@ -2460,26 +2739,7 @@
         window.location.hash = '#/' + items[0][0];
       });
       el.rail.appendChild(button);
-      var sub = node('div', 'rail-sub');
-      items.forEach(function (item) {
-        var address = item[0], name = item[1];
-        var link = node('button', 'rail-link');
-        link.type = 'button';
-        link.dataset.address = address;
-        link.textContent = name;
-        link.addEventListener('click', function () {
-          window.location.hash = '#/' + address;
-        });
-        sub.appendChild(link);
-      });
-      el.rail.appendChild(sub);
     });
-    var open = node('button', 'rail-palette');
-    open.type = 'button';
-    open.appendChild(node('span', 'rail-mark', '\u2318'));
-    open.appendChild(node('span', 'rail-name', 'jump to anything'));
-    open.addEventListener('click', function () { openPalette(); });
-    el.rail.appendChild(open);
   }
 
   // Which surfaces are live today, and which are a later increment — the
@@ -2488,14 +2748,7 @@
 
   function markRail() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');
-    Array.prototype.forEach.call(el.rail.querySelectorAll('.rail-link'), function (link) {
-      if (link.dataset.address === which) {
-        link.setAttribute('aria-current', 'page');
-      } else {
-        link.removeAttribute('aria-current');
-      }
-    });
-    Array.prototype.forEach.call(el.rail.querySelectorAll('.rail-dest'), function (button) {
+    Array.prototype.forEach.call(el.rail.querySelectorAll('.surfaces-dest'), function (button) {
       var here = WHERE[which] && WHERE[which][0] === button.dataset.group;
       if (here) {
         button.setAttribute('aria-current', 'page');
@@ -2634,6 +2887,14 @@
     setTheme(themeNow() === 'light' ? 'dark' : 'light');
   });
 
+  // The pane's controls. Its shortcut is cmd+backslash — the editor
+  // convention for a side pane — and Esc from a pane with nothing open
+  // comes home rather than closing it, so one key always means one thing.
+  el.paneOpen.addEventListener('click', openPane);
+  el.paneClose.addEventListener('click', closePane);
+  el.tabFiles.addEventListener('click', function () { showPaneTab('files'); });
+  el.tabPreview.addEventListener('click', function () { showPaneTab('preview'); });
+
   buildRail();
   setRail(railCollapsed() ? 'icons' : 'full');
   el.railToggle.addEventListener('click', function () {
@@ -2661,8 +2922,14 @@
       if (el.palette.hidden) openPalette(); else closePalette();
       return;
     }
+    if ((event.metaKey || event.ctrlKey) && event.key === '\\') {
+      event.preventDefault();
+      if (el.pane.hidden) openPane(); else closePane();
+      return;
+    }
     if (event.key !== 'Escape') return;
     if (!el.palette.hidden) { closePalette(); return; }
+    if (!el.pane.hidden && !face.file) { closePane(); return; }
     var which = (window.location.hash || '').replace(/^#\/?/, '');
     if (which && which !== 'chat') window.location.hash = '#/chat';
   });

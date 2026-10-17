@@ -123,6 +123,12 @@ pub struct Bridge {
     /// the agent's own: [`crate::memory::resolve_root`] off the process's
     /// working directory.
     memories: PathBuf,
+    /// The directory this face was launched from, which is the root the
+    /// pane's tree and file reads are contained to. It is the process's
+    /// own working directory rather than anything read from another
+    /// harness's config — the own-home ruling, applied to a browser that
+    /// can now ask for a file.
+    cwd: PathBuf,
     state: Arc<Mutex<GuiState>>,
     rules: Arc<Mutex<approvals::Rules>>,
     events: broadcast::Sender<Value>,
@@ -163,6 +169,7 @@ impl Bridge {
             model,
             session,
             memories: crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default()),
+            cwd: std::env::current_dir().unwrap_or_default(),
             state,
             rules,
             events,
@@ -466,6 +473,26 @@ impl Bridge {
         }
     }
 
+    /// The pane's tree read, off the working directory.
+    pub async fn tree(&self, asked: &str) -> Value {
+        let root = self.cwd.clone();
+        let asked = asked.to_string();
+        match tokio::task::spawn_blocking(move || tree_read(&root, &asked)).await {
+            Ok(document) => document,
+            Err(_) => json!({"type": "tree", "refused": ["the tree read did not land"]}),
+        }
+    }
+
+    /// The pane's file read, off the working directory.
+    pub async fn file(&self, asked: &str) -> Value {
+        let root = self.cwd.clone();
+        let asked = asked.to_string();
+        match tokio::task::spawn_blocking(move || file_read(&root, &asked)).await {
+            Ok(document) => document,
+            Err(_) => json!({"type": "file", "refused": ["the file read did not land"]}),
+        }
+    }
+
     /// Hand the browser's task to the agent thread. The owner's message
     /// lands in the log first, so a refresh replays what was asked and
     /// the header's running flag moves on the same event.
@@ -745,6 +772,169 @@ fn memory_read(home: &std::path::Path, memories: &std::path::Path) -> Value {
             "score": hit.score,
         })).collect::<Vec<_>>(),
         "refused": snapshot.refused,
+    })
+}
+
+/// The pane's two reads, and the boundary they hold.
+///
+/// The root is the process's own working directory, resolved the way the
+/// memory corpus resolves — nearest ancestor carrying `memories/`, else
+/// the cwd — so the browser sees the tree this face was launched from
+/// and nothing above it. Every path is canonicalized and checked against
+/// that root, so a `..` that escapes is refused by name rather than
+/// served. A credential file is refused by name too: the own-home ruling
+/// is that no credential ever reaches the browser, and a file browser is
+/// precisely where one would leak.
+///
+/// How many entries one tree read returns. A directory with more is
+/// named as truncated rather than walked to exhaustion — the pane is for
+/// exploring, and `target/` has a hundred thousand entries.
+const TREE_ENTRY_CAP: usize = 400;
+
+/// How many bytes of one file the pane carries. The corpus measured in
+/// the thousands; a source file in the tens of thousands; a log or a
+/// build artifact in the millions. The cap is the artifact case.
+const FILE_BYTE_CAP: usize = 512 * 1024;
+
+/// Directories the tree skips by name: build output and version control
+/// internals, which are noise to browse and enormous to walk.
+const TREE_SKIP: &[&str] = &[".git", "target", "node_modules", ".DS_Store"];
+
+/// Resolve one pane path against the root, or name why it cannot be
+/// read. The check is the canonicalized path's prefix, not the string's,
+/// so a symlink out of the tree is refused too.
+fn pane_path(root: &std::path::Path, asked: &str) -> Result<std::path::PathBuf, String> {
+    let asked = asked.trim().trim_start_matches('/');
+    if asked.is_empty() {
+        return Ok(root.to_path_buf());
+    }
+    // The lexical check runs before anything touches the disk, so a path
+    // that walks out of the root is refused for that reason whether or
+    // not it exists — and a path that does not exist is not mistaken for
+    // an escape. The canonical check below then catches a symlink that
+    // points out, which the lexical walk cannot see.
+    let mut depth: i64 = 0;
+    for part in asked.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err("outside the working directory".to_string());
+                }
+            }
+            _ => depth += 1,
+        }
+    }
+    let candidate = root.join(asked);
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", candidate.display()))?;
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", root.display()))?;
+    if !canonical.starts_with(&root) {
+        return Err("outside the working directory".to_string());
+    }
+    Ok(canonical)
+}
+
+/// The viewer's language for one file, from its extension — the handful
+/// this repository actually carries, and a plain default for the rest.
+fn viewer_language(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("rs") => "rust",
+        Some("js") => "javascript",
+        Some("css") => "css",
+        Some("html") => "html",
+        Some("json") => "json",
+        Some("md") => "markdown",
+        Some("toml") => "toml",
+        Some("yml" | "yaml") => "yaml",
+        Some("sh") => "shell",
+        _ => "text",
+    }
+}
+
+/// One directory's entries, directories first then files, each with its
+/// size in bytes.
+fn tree_read(root: &std::path::Path, asked: &str) -> Value {
+    let directory = match pane_path(root, asked) {
+        Ok(path) => path,
+        Err(reason) => return json!({"type": "tree", "refused": [reason]}),
+    };
+    if !directory.is_dir() {
+        return json!({"type": "tree", "refused": [format!("{} is not a directory", directory.display())]});
+    }
+    let mut entries: Vec<(bool, String, u64)> = Vec::new();
+    let Ok(read) = std::fs::read_dir(&directory) else {
+        return json!({"type": "tree", "refused": [format!("{} could not be read", directory.display())]});
+    };
+    for entry in read.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if TREE_SKIP.contains(&name.as_str()) {
+            continue;
+        }
+        let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+        let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+        entries.push((is_dir, name, size));
+    }
+    let total = entries.len();
+    entries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    entries.truncate(TREE_ENTRY_CAP);
+    json!({
+        "type": "tree",
+        "root": root.display().to_string(),
+        "path": asked,
+        "truncated": total > TREE_ENTRY_CAP,
+        "entries": entries.iter().map(|(is_dir, name, size)| json!({
+            "name": name,
+            "kind": if *is_dir { "dir" } else { "file" },
+            "size": size,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// One file's text, its language, and whether the read was cut. A file
+/// that is not UTF-8 is refused rather than mangled — the viewer shows
+/// text, and a binary shown as text is a lie about what is there.
+fn file_read(root: &std::path::Path, asked: &str) -> Value {
+    // The credential check is lexical and first, so a dotenv is refused
+    // by name whether or not it exists — a browser that can ask for a
+    // file is exactly where a credential would leak, and the refusal must
+    // not depend on the file being there to refuse.
+    let name = asked.rsplit('/').next().unwrap_or(asked);
+    if name == ".env" || name.starts_with(".env.") {
+        return json!({"type": "file", "refused": ["a credential file is never served"]});
+    }
+    let path = match pane_path(root, asked) {
+        Ok(path) => path,
+        Err(reason) => return json!({"type": "file", "refused": [reason]}),
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => return json!({"type": "file", "refused": [format!("{error}")]}),
+    };
+    let truncated = bytes.len() > FILE_BYTE_CAP;
+    let cut = if truncated {
+        &bytes[..FILE_BYTE_CAP]
+    } else {
+        &bytes[..]
+    };
+    let text = match String::from_utf8(cut.to_vec()) {
+        Ok(text) => text,
+        Err(_) => {
+            return json!({"type": "file", "refused": [format!("{} is not text", path.display())]})
+        }
+    };
+    json!({
+        "type": "file",
+        "path": asked,
+        "name": name,
+        "language": viewer_language(&path),
+        "bytes": bytes.len(),
+        "truncated": truncated,
+        "text": text,
     })
 }
 
@@ -1641,6 +1831,48 @@ mod tests {
         assert_eq!(events[3]["type"], "finished");
         assert_eq!(state["running"], false, "the run ended");
         assert_eq!(state["budget"], crate::compaction::COMPACTION_TOKEN_BUDGET);
+    }
+
+    /// The pane's tree: one directory's entries, with each entry's kind
+    /// and size. The root is the process's own working directory — the
+    /// same rule the memory corpus resolves by — so the browser sees the
+    /// tree this face was launched from and nothing above it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_tree_reads_one_directory_under_the_root() {
+        let (bridge, _sources, _door) = bridge().await;
+        let here = std::env::current_dir().expect("a working directory");
+        let document = bridge.tree("src").await;
+        assert_eq!(document["type"], "tree");
+        assert_eq!(document["root"], here.display().to_string());
+        let entries = document["entries"].as_array().expect("the entries");
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry["name"] == "gui" && entry["kind"] == "dir"),
+            "{document}"
+        );
+        // A path that escapes the root is refused by name, and the
+        // refusal says so rather than serving the parent.
+        let escaped = bridge.tree("../../etc").await;
+        assert_eq!(escaped["refused"][0], "outside the working directory");
+    }
+
+    /// The pane's file read: the text, its language for the viewer, and
+    /// whether it was cut. A credential file is refused by name — the
+    /// own-home ruling is that no credential ever reaches the browser,
+    /// and a file browser is exactly where that would leak.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_file_read_carries_the_text_and_refuses_a_credential() {
+        let (bridge, _sources, _door) = bridge().await;
+        let document = bridge.file("src/gui/assets/app.css").await;
+        assert_eq!(document["type"], "file");
+        assert_eq!(document["language"], "css");
+        let text = document["text"].as_str().expect("the text");
+        assert!(text.contains("--dsw-alias-page"), "{text}");
+        assert_eq!(document["truncated"], false);
+        // The dotenv is refused by name, with the reason the pane shows.
+        let dotenv = bridge.file(".env").await;
+        assert_eq!(dotenv["refused"][0], "a credential file is never served");
     }
 
     #[tokio::test(flavor = "multi_thread")]

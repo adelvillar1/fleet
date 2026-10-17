@@ -36,7 +36,7 @@
          rail and the command palette, so there is one structure and not
          two to keep in sync. The rail orients; the palette reaches any
          surface by name. -->
-    <nav class="rail" id="rail" aria-label="surfaces"></nav>
+    <nav class="surfaces" id="rail" aria-label="surfaces"></nav>
     <button class="rail-toggle" id="rail-toggle" type="button"
             aria-label="collapse the surfaces rail" aria-expanded="true">
       <span class="rail-toggle-mark" aria-hidden="true">‹</span>
@@ -58,6 +58,10 @@
       <button class="theme-toggle" id="theme-toggle" type="button"
               aria-label="switch to the light theme" title="switch to the light theme">
         <span class="theme-mark" aria-hidden="true">◐</span>
+      </button>
+      <button class="pane-open" id="pane-open" type="button"
+              aria-label="open the files and deliverables pane" title="files, code and deliverables">
+        <span class="pane-open-mark" aria-hidden="true">⌷</span>
       </button>
       <button class="palette-open" id="palette-open" type="button"
               aria-label="jump to any surface" title="jump to any surface">
@@ -209,6 +213,33 @@
 </div>
 
 <div class="scrim" id="scrim" hidden></div>
+
+  <!-- The pane: the working directory, beside the surface rather than in
+       it. The tree explores, the viewer reads the actual code, and the
+       preview renders a deliverable. It is contained to the directory
+       this face was launched from, and a credential file is refused by
+       name — the browser can ask for a file now, which is exactly where
+       one would leak. -->
+  <aside class="pane" id="pane" hidden aria-label="files and deliverables">
+    <header class="pane-head">
+      <div class="pane-tabs" role="tablist" aria-label="pane view">
+        <button class="pane-tab active" id="tab-files" type="button" role="tab"
+                aria-controls="pane-files" aria-selected="true">files</button>
+        <button class="pane-tab" id="tab-preview" type="button" role="tab"
+                aria-controls="pane-preview" aria-selected="false">preview</button>
+      </div>
+      <button class="pane-close" id="pane-close" type="button" aria-label="close the pane">
+        <span aria-hidden="true">›</span>
+      </button>
+    </header>
+    <div class="pane-body" id="pane-files" role="tabpanel" aria-labelledby="tab-files">
+      <nav class="pane-tree" id="pane-tree" aria-label="the working directory"></nav>
+      <div class="pane-file" id="pane-file"></div>
+    </div>
+    <div class="pane-body" id="pane-preview" role="tabpanel" aria-labelledby="tab-preview" hidden>
+      <div class="pane-preview" id="pane-preview-body"></div>
+    </div>
+  </aside>
 
 <!-- The inspector: the raw event behind anything on the face, plus the
      derivation of every number in the header. One place, so a figure
