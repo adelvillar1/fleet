@@ -18,15 +18,16 @@
   --dsw-static-deepseek-500: rgb(65, 118, 230);
   --dsw-static-deepseek-400: rgb(122, 170, 255);
   --dsw-static-deepseek-300: rgb(178, 206, 255);
-  --dsw-static-ink-900: rgb(11, 14, 18);
-  --dsw-static-ink-800: rgb(16, 20, 26);
-  --dsw-static-ink-700: rgb(22, 27, 34);
-  --dsw-static-ink-600: rgb(31, 38, 47);
-  --dsw-static-ink-500: rgb(45, 53, 64);
-  --dsw-static-ink-400: rgb(96, 108, 124);
-  --dsw-static-ink-300: rgb(139, 149, 160);
-  --dsw-static-ink-200: rgb(186, 195, 205);
-  --dsw-static-ink-100: rgb(230, 237, 243);
+  --dsw-static-ink-900: rgb(16, 14, 13);
+  --dsw-static-ink-800: rgb(22, 19, 18);
+  --dsw-static-ink-700: rgb(29, 25, 24);
+  --dsw-static-ink-600: rgb(38, 33, 31);
+  --dsw-static-ink-500: rgb(52, 46, 43);
+  --dsw-static-ink-400: rgb(134, 124, 118);
+  --dsw-static-ink-300: rgb(148, 140, 135);
+  --dsw-static-ink-200: rgb(194, 187, 182);
+  --dsw-static-ink-100: rgb(235, 231, 228);
+  --dsw-static-hairline-light: rgb(255 255 255 / 10%);
   --dsw-static-ok-500: rgb(63, 185, 80);
   --dsw-static-down-500: rgb(248, 81, 73);
   --dsw-static-warn-500: rgb(210, 153, 34);
@@ -39,7 +40,7 @@
   --dsw-alias-page: var(--dsw-static-ink-900);
   --dsw-alias-surface: var(--dsw-static-ink-800);
   --dsw-alias-surface-raised: var(--dsw-static-ink-700);
-  --dsw-alias-hairline: color-mix(in srgb, var(--dsw-static-ink-500) 55%, transparent);
+  --dsw-alias-hairline: var(--dsw-static-hairline-light);
   --dsw-alias-hairline-strong: var(--dsw-static-ink-500);
   --dsw-alias-ink: var(--dsw-static-ink-100);
   --dsw-alias-ink-secondary: var(--dsw-static-ink-300);
@@ -58,6 +59,7 @@
   --topbar-height: 52px;
   --card-bg: var(--dsw-alias-surface);
   --card-radius: 12px;
+  --card-radius-inner: 8px;
   --card-hairline: 0.5px solid var(--dsw-alias-hairline);
   --card-pad: 14px 16px;
   --card-value: 22px;
@@ -70,7 +72,7 @@
   --seat-radius: 12px;
   --rail-width: 300px;
   --drawer-width: 380px;
-  --shadow-lift: 0 8px 28px rgb(0 0 0 / 45%);
+  --shadow-lift: 0 8px 28px rgb(0 0 0 / 22%);
 
   /* SF first, because the machine this runs on has it; the stack falls
      back through what every other machine has. */
@@ -155,7 +157,7 @@ body {
 .address {
   padding: 4px 9px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--card-radius-inner);
   background: transparent;
   color: var(--dsw-alias-ink-secondary);
   font: inherit;
@@ -245,7 +247,7 @@ body {
   height: 100%;
   width: 0;
   background: var(--dsw-alias-gradient);
-  transition: width 220ms ease;
+  transition: width 180ms ease-out;
 }
 
 .meter[data-level="high"] .meter-fill {
@@ -370,7 +372,7 @@ body {
 .assistant {
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.65;
 }
 
@@ -565,7 +567,7 @@ body {
 .decision {
   padding: 7px 13px;
   border: var(--card-hairline);
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-surface-raised);
   color: var(--dsw-alias-ink);
   font: inherit;
@@ -645,7 +647,7 @@ body {
 .send {
   padding: 8px 18px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-gradient);
   color: #fff;
   font: inherit;
@@ -747,7 +749,7 @@ body {
   gap: 8px;
   padding: 7px 9px;
   border: var(--card-hairline);
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-surface-raised);
   font-family: var(--font-mono);
   font-size: 12px;
@@ -835,7 +837,7 @@ pre.raw {
   margin: 0;
   padding: 12px;
   border: var(--card-hairline);
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-page);
   color: var(--dsw-alias-ink-secondary);
   font-family: var(--font-mono);
@@ -929,11 +931,12 @@ pre.raw {
 .tile {
   padding: 10px 12px;
   border: var(--card-hairline);
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-surface-raised);
 }
 
 .tile-value {
+  font-variant-numeric: tabular-nums;
   font-size: var(--card-value);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -984,7 +987,7 @@ pre.raw {
 .donut { display: flex; align-items: center; gap: 18px; }
 .donut svg { flex: 0 0 auto; }
 .donut-track { fill: none; stroke: var(--dsw-alias-surface-raised); }
-.donut-seg { fill: none; transition: stroke-dasharray 240ms ease; }
+.donut-seg { fill: none; transition: stroke-dasharray 180ms ease-out; }
 
 .legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
 
@@ -1022,7 +1025,7 @@ pre.raw {
   align-items: center;
   padding: 8px 10px;
   border: var(--card-hairline);
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-surface-raised);
 }
 
@@ -1079,7 +1082,7 @@ pre.raw {
   align-items: baseline;
   padding: 8px 10px;
   border: var(--card-hairline);
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-surface-raised);
 }
 
@@ -1125,7 +1128,7 @@ pre.raw {
 
 .rrow-side { text-align: right; white-space: nowrap; }
 
-.rrow-outcome { display: block; font-size: 11.5px; font-weight: 600; }
+.rrow-outcome { display: block; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .rrow-outcome[data-ok="yes"] { color: var(--dsw-alias-ok); }
 .rrow-outcome[data-ok="no"] { color: var(--dsw-alias-down); }
 
@@ -1178,7 +1181,7 @@ pre.raw {
 
 .decision-model {
   font-family: var(--font-mono);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--dsw-alias-ink);
 }
@@ -1299,7 +1302,7 @@ pre.raw {
 .unlock {
   padding: 10px 12px;
   border: var(--card-hairline);
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-surface-raised);
 }
 
@@ -1401,8 +1404,10 @@ pre.raw {
   border-radius: 10px;
   background: var(--dsw-alias-page);
   cursor: pointer;
-  transition: border-color 160ms ease, background 160ms ease;
+  transition: border-color 180ms ease-out, background 180ms ease-out, transform 120ms ease-out;
 }
+
+.fact-card:active { transform: scale(0.99); }
 
 .fact-card:hover { border-color: var(--dsw-alias-accent); background: var(--dsw-alias-surface-raised); }
 
@@ -1419,6 +1424,7 @@ pre.raw {
 }
 
 .fact-recalls {
+  font-variant-numeric: tabular-nums;
   color: var(--dsw-alias-ink-tertiary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -1463,10 +1469,10 @@ pre.raw {
   width: 100%;
   padding: 8px 11px;
   border: var(--card-hairline);
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-page);
   color: var(--dsw-alias-ink);
-  font-family: var(--font-sans);
+  font-family: var(--font-text);
   font-size: 12.5px;
 }
 
@@ -1512,7 +1518,7 @@ pre.raw {
   width: 100%;
   padding: 7px 9px;
   border: var(--card-hairline);
-  border-radius: 7px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-page);
   color: var(--dsw-alias-ink);
   font-family: var(--font-mono);
@@ -1530,14 +1536,14 @@ pre.raw {
   justify-self: start;
   padding: 7px 14px;
   border: var(--card-hairline);
-  border-radius: 7px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-accent);
   color: #fff;
-  font-family: var(--font-sans);
+  font-family: var(--font-text);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 160ms ease;
+  transition: opacity 180ms ease-out;
 }
 
 .fact-save:hover { opacity: 0.88; }
@@ -1554,7 +1560,7 @@ pre.drawer-code {
   margin: 0;
   padding: 12px;
   border: var(--card-hairline);
-  border-radius: 8px;
+  border-radius: var(--card-radius-inner);
   background: var(--dsw-alias-page);
   color: var(--dsw-alias-ink-secondary);
   font-family: var(--font-mono);
