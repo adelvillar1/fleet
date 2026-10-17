@@ -22,7 +22,9 @@ pub enum Command {
         force: bool,
     },
     /// The settings surface: list every knob, or write one.
-    Settings { set: Option<(String, String)> },
+    Settings {
+        set: Option<(String, String)>,
+    },
     /// Probe the four vendored lanes' health.
     Lanes,
     /// List the routing roster in declared chain order with per-provider state.
@@ -60,6 +62,7 @@ pub enum Command {
     /// proposal in both stores; `apply` runs one through the gate and
     /// `undo` reverts an applied one.
     Improve(ImproveOptions),
+    Vault(VaultOptions),
     /// Write one fact into the memory corpus: the CLI form of the
     /// `remember` tool, structured flags over the same field names.
     Remember(RememberOptions),
@@ -356,6 +359,30 @@ pub struct ImproveOptions {
     pub action: ImproveAction,
 }
 
+/// What `fleet vault` was asked to do.
+#[derive(Debug, PartialEq, Eq)]
+pub struct VaultOptions {
+    pub action: VaultAction,
+}
+
+/// What `fleet vault` was asked to do.
+#[derive(Debug, PartialEq, Eq)]
+pub enum VaultAction {
+    /// Create a vault, deriving the key from a passphrase, and migrate
+    /// the plaintext `.env` into it.
+    Init,
+    /// Seal one entry. The value rides the argument, never a file, so it
+    /// stays out of the shell history's reach as far as it can.
+    Set { name: String, value: String },
+    /// Open one entry and print it — the one command that does, and it
+    /// is deliberate: a secret has to be able to reach a pipe.
+    Get { name: String },
+    /// Drop one entry.
+    Remove { name: String },
+    /// List the entry names, never their values.
+    List,
+}
+
 /// What `fleet improve` was asked to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ImproveAction {
@@ -596,6 +623,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
         "improve" => parse_improve(rest),
+        "vault" => parse_vault(rest),
         "remember" => parse_remember(rest),
         "doctor" => parse_doctor(rest),
         "install" => parse_install(rest),
@@ -1278,6 +1306,71 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
 /// confirming a destructive change in this turn; `undo <name>` reverts
 /// an applied one. The proposal is named positionally — one grammar
 /// for the whole surface — and a missing name is a named usage error.
+fn parse_vault(args: &[String]) -> Result<Command, String> {
+    let Some(subcommand) = args.first() else {
+        return Ok(Command::Vault(VaultOptions {
+            action: VaultAction::List,
+        }));
+    };
+    if *subcommand == "--help" || *subcommand == "-h" {
+        return Ok(Command::Help);
+    }
+    let rest = &args[1..];
+    let verb = subcommand.as_str();
+    let mut positional: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < rest.len() {
+        let arg = rest[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            // The value may ride a flag so a secret does not have to sit
+            // in the shell history as a bare positional.
+            "--value" if verb == "set" => {
+                index += 1;
+                let Some(value) = rest.get(index) else {
+                    return Err("`--value` needs the secret it carries".to_string());
+                };
+                positional.push(value.clone());
+            }
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown vault option `{arg}`"));
+            }
+            _ => positional.push(arg.to_string()),
+        }
+        index += 1;
+    }
+    let action = match verb {
+        "init" => VaultAction::Init,
+        "set" => {
+            if positional.len() < 2 {
+                return Err(
+                    "`fleet vault set NAME VALUE` seals one entry; `--value VALUE` keeps the secret out of the history"
+                        .to_string(),
+                );
+            }
+            VaultAction::Set {
+                name: positional[0].clone(),
+                value: positional[1].clone(),
+            }
+        }
+        "get" => {
+            let Some(name) = positional.first().cloned() else {
+                return Err("`fleet vault get NAME` opens one entry".to_string());
+            };
+            VaultAction::Get { name }
+        }
+        "rm" | "remove" => {
+            let Some(name) = positional.first().cloned() else {
+                return Err("`fleet vault rm NAME` drops one entry".to_string());
+            };
+            VaultAction::Remove { name }
+        }
+        "list" => VaultAction::List,
+        other => return Err(format!("unknown vault action `{other}` — try `fleet help`")),
+    };
+    Ok(Command::Vault(VaultOptions { action }))
+}
+
 fn parse_improve(args: &[String]) -> Result<Command, String> {
     let Some(subcommand) = args.first() else {
         return Ok(Command::Improve(ImproveOptions {

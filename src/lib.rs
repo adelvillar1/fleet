@@ -42,3 +42,4 @@ pub mod skills;
 pub mod subagents;
 pub mod tools;
 pub mod tui;
+pub mod vault;

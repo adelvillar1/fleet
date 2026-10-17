@@ -9,9 +9,9 @@ use fleet::agent::{
     DEFAULT_MAX_TURNS,
 };
 use fleet::api::{Client, DEFAULT_BASE_URL};
-use fleet::cli::{self, ChatOptions, Command, CronAction, ImproveAction, RunOptions};
+use fleet::cli::{self, ChatOptions, Command, CronAction, ImproveAction, RunOptions, VaultAction};
 use fleet::doctor;
-use fleet::home::{self, resolve_setting};
+use fleet::home;
 use fleet::net;
 use fleet::route;
 use fleet::session::{self, Session};
@@ -56,6 +56,7 @@ async fn main() -> ExitCode {
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
         Ok(Command::Improve(options)) => improve_command(&options),
+        Ok(Command::Vault(options)) => vault_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
         Ok(Command::Doctor(options)) => doctor_command(&options),
         Ok(Command::Install(options)) => install_command(&options),
@@ -93,11 +94,36 @@ fn tui_command() -> ExitCode {
     }
 }
 
-/// Resolve a setting: the environment, then `~/.fleet/.env`
-/// (`resolve_setting`) — Fleet's own home, and nothing else (the
-/// owner's 2026-10-16 ruling: no other harness's config is ever read).
+/// Resolve a setting: the environment, then the vault, then
+/// `~/.fleet/.env` — Fleet's own home, and nothing else (the owner's
+/// 2026-10-16 ruling: no other harness's config is ever read).
+///
+/// The vault sits between the two because that is the migration order
+/// the owner wants: an encrypted entry is preferred over a plaintext
+/// line, so migrating a home stops the plaintext copy from being the one
+/// that answers. A passphrase is required to read it, and a home with no
+/// vault — or a passphrase that does not open it — falls through to the
+/// plaintext leg rather than failing the run, because a run that cannot
+/// start is worse than a run reading the key the owner already had
+/// there.
 fn setting(name: &str, dotenv: &std::collections::HashMap<String, String>) -> Option<String> {
-    resolve_setting(name, dotenv)
+    let from_env = std::env::var(name).ok().filter(|value| !value.is_empty());
+    if from_env.is_some() {
+        return from_env;
+    }
+    vault_get(name).or_else(|| dotenv.get(name).filter(|value| !value.is_empty()).cloned())
+}
+
+/// One entry out of the vault, when there is a vault and a passphrase
+/// that opens it. A missing or unopenable vault is not an error here:
+/// the caller falls through to the plaintext leg.
+fn vault_get(name: &str) -> Option<String> {
+    let home = fleet_home().ok()?;
+    let path = home.join(fleet::vault::VAULT_FILE);
+    let text = std::fs::read_to_string(&path).ok()?;
+    let vault = fleet::vault::Vault::from_json(&text).ok()?;
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok()?;
+    vault.get(&passphrase, name).ok()
 }
 
 /// The `~/.fleet/.env` map, empty when no home is known.
@@ -688,6 +714,182 @@ fn mutate(
 /// — always exit 0. `apply` and `undo` exit 0 only when the change
 /// landed or reverted; a refusal, a wait, and a failed revert each
 /// exit 1 with the reason named.
+/// The vault's commands. Every one names its entry and never its value,
+/// except `get`, which is the one deliberate exception — a secret has to
+/// be able to reach a pipe.
+fn vault_command(options: &cli::VaultOptions) -> ExitCode {
+    match &options.action {
+        VaultAction::List => {
+            let Ok(home) = fleet_home() else {
+                eprintln!("fleet: vault: no home is known");
+                return ExitCode::FAILURE;
+            };
+            let path = home.join(fleet::vault::VAULT_FILE);
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                println!(
+                    "fleet: vault: no vault at {} — run `fleet vault init`",
+                    path.display()
+                );
+                return ExitCode::SUCCESS;
+            };
+            let vault = match fleet::vault::Vault::from_json(&text) {
+                Ok(vault) => vault,
+                Err(reason) => {
+                    eprintln!("fleet: vault: {reason}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if vault.is_empty() {
+                println!("fleet: vault: the vault holds no entries");
+                return ExitCode::SUCCESS;
+            }
+            // Names, never values — the one rule this surface holds.
+            for name in vault.names() {
+                println!("{name}");
+            }
+            ExitCode::SUCCESS
+        }
+        VaultAction::Set { name, value } => {
+            let Ok(home) = fleet_home() else {
+                eprintln!("fleet: vault: no home is known");
+                return ExitCode::FAILURE;
+            };
+            let passphrase = match std::env::var("FLEET_VAULT_PASSPHRASE") {
+                Ok(passphrase) if !passphrase.is_empty() => passphrase,
+                _ => {
+                    eprintln!(
+                        "fleet: vault: FLEET_VAULT_PASSPHRASE is not set — the vault is keyed by it"
+                    );
+                    return ExitCode::FAILURE;
+                }
+            };
+            let path = home.join(fleet::vault::VAULT_FILE);
+            let mut vault = match std::fs::read_to_string(&path) {
+                Ok(text) => fleet::vault::Vault::from_json(&text)
+                    .unwrap_or_else(|_| fleet::vault::Vault::init()),
+                Err(_) => fleet::vault::Vault::init(),
+            };
+            vault.set(&passphrase, name, value);
+            match std::fs::write(&path, vault.to_json()) {
+                Ok(()) => {
+                    println!("fleet: vault: sealed `{name}`");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: vault: could not write {}: {error}", path.display());
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        VaultAction::Get { name } => {
+            let Ok(home) = fleet_home() else {
+                eprintln!("fleet: vault: no home is known");
+                return ExitCode::FAILURE;
+            };
+            let Ok(passphrase) = std::env::var("FLEET_VAULT_PASSPHRASE") else {
+                eprintln!("fleet: vault: FLEET_VAULT_PASSPHRASE is not set");
+                return ExitCode::FAILURE;
+            };
+            let path = home.join(fleet::vault::VAULT_FILE);
+            let text = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(_) => {
+                    eprintln!("fleet: vault: no vault at {}", path.display());
+                    return ExitCode::FAILURE;
+                }
+            };
+            match fleet::vault::Vault::from_json(&text)
+                .and_then(|vault| vault.get(&passphrase, name))
+            {
+                // The one command that prints a secret, because a secret
+                // has to be able to reach a pipe.
+                Ok(secret) => {
+                    println!("{secret}");
+                    ExitCode::SUCCESS
+                }
+                Err(reason) => {
+                    eprintln!("fleet: vault: {reason}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        VaultAction::Remove { name } => {
+            let Ok(home) = fleet_home() else {
+                eprintln!("fleet: vault: no home is known");
+                return ExitCode::FAILURE;
+            };
+            let path = home.join(fleet::vault::VAULT_FILE);
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                eprintln!("fleet: vault: no vault at {}", path.display());
+                return ExitCode::FAILURE;
+            };
+            let mut vault = match fleet::vault::Vault::from_json(&text) {
+                Ok(vault) => vault,
+                Err(reason) => {
+                    eprintln!("fleet: vault: {reason}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(reason) = vault.remove(name) {
+                eprintln!("fleet: vault: {reason}");
+                return ExitCode::FAILURE;
+            }
+            if let Err(error) = std::fs::write(&path, vault.to_json()) {
+                eprintln!("fleet: vault: could not write {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+            println!("fleet: vault: dropped `{name}`");
+            ExitCode::SUCCESS
+        }
+        VaultAction::Init => {
+            let Ok(home) = fleet_home() else {
+                eprintln!("fleet: vault: no home is known");
+                return ExitCode::FAILURE;
+            };
+            let passphrase = match std::env::var("FLEET_VAULT_PASSPHRASE") {
+                Ok(passphrase) if !passphrase.is_empty() => passphrase,
+                _ => {
+                    eprintln!(
+                        "fleet: vault: FLEET_VAULT_PASSPHRASE is not set — it is the vault's key, so set it once and keep it"
+                    );
+                    return ExitCode::FAILURE;
+                }
+            };
+            let path = home.join(fleet::vault::VAULT_FILE);
+            let mut vault = fleet::vault::Vault::init();
+            // Migrate whatever the plaintext .env already holds: the
+            // point of the vault is that the plaintext copy stops being
+            // the one that answers.
+            let dotenv = home::read_dotenv(&home);
+            let mut migrated = 0;
+            for (name, value) in &dotenv {
+                if name.is_empty() || value.is_empty() {
+                    continue;
+                }
+                vault.set(&passphrase, name, value);
+                migrated += 1;
+            }
+            match std::fs::write(&path, vault.to_json()) {
+                Ok(()) => {
+                    println!(
+                        "fleet: vault: created {} with {migrated} entr{} migrated from .env",
+                        path.display(),
+                        if migrated == 1 { "y" } else { "ies" }
+                    );
+                    println!(
+                        "fleet: vault: the plaintext .env still holds its lines — remove the ones you have sealed"
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: vault: could not write {}: {error}", path.display());
+                    ExitCode::FAILURE
+                }
+            }
+        }
+    }
+}
+
 fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
