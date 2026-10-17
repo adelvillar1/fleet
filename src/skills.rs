@@ -256,7 +256,16 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
         return Err("the file does not open with a `---` frontmatter fence".to_string());
     }
     let mut fields: Vec<(String, String)> = Vec::new();
-    let mut pending: Option<String> = None;
+    // The key awaiting its block, and whether that block folds. YAML's
+    // `>` opens a folded block — the continuation lines are one value
+    // joined by spaces — and `|` a literal one. A writer using either is
+    // writing ordinary YAML, and a parser that reads the indicator as the
+    // value hands the model a description that begins `>`.
+    let mut pending: Option<(String, bool)> = None;
+    // The key whose block is currently being read, when that block folds.
+    // The flag has to outlive the first continuation line: a folded block
+    // is one value across all of its lines, not just its first.
+    let mut folding: Option<String> = None;
     let mut closing: Option<usize> = None;
     for (index, line) in lines.iter().enumerate().skip(1) {
         if line.trim_end() == "---" {
@@ -273,7 +282,7 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
         // nested one.
         if line.starts_with(' ') || line.starts_with('\t') || trimmed.starts_with('-') {
             let key = match pending.take() {
-                Some(awaited) => {
+                Some((awaited, _)) => {
                     fields.push((awaited.clone(), String::new()));
                     awaited
                 }
@@ -287,11 +296,17 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
                     }
                 },
             };
+            let folded = folding.as_deref() == Some(key.as_str());
             if let Some((_, value)) = fields.iter_mut().find(|(seen, _)| *seen == key) {
                 if !value.is_empty() {
-                    value.push('\n');
+                    value.push(if folded { ' ' } else { '\n' });
                 }
-                value.push_str(line.trim_end());
+                // A folded block is one value, so its continuation lines
+                // lose the block's indentation on the way in — YAML
+                // strips it, and a description that carries two leading
+                // spaces reads as a mistake.
+                let line = if folded { line.trim() } else { line.trim_end() };
+                value.push_str(line);
             }
             continue;
         }
@@ -303,6 +318,7 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
         };
         // Keys unquote the way values do: `"name": x` is `name: x`,
         // which is what a writer that quotes every key emits.
+        folding = None;
         let raw = key.trim();
         let key = unquote(raw);
         if key.is_empty() {
@@ -318,12 +334,22 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
                 index + 1
             ));
         }
-        let value = unquote(value.trim());
+        // A YAML block-scalar indicator is an empty value that opens a
+        // block, exactly as a bare `key:` does — and it says whether that
+        // block folds.
+        let raw_value = unquote(value.trim());
+        let folded = matches!(raw_value, ">" | ">-" | ">+");
+        let literal = matches!(raw_value, "|" | "|-" | "|+");
+        let value = if folded || literal {
+            String::new()
+        } else {
+            raw_value.to_string()
+        };
         // An empty value opens a continuation block, which the next
         // indented or `- item` line fills. A block that never comes is
         // the old empty-value error under its new, more precise name.
         if value.is_empty() {
-            if let Some(awaited) = &pending {
+            if let Some((awaited, _)) = &pending {
                 return Err(format!(
                     "frontmatter key `{awaited}` has an empty value with no continuation block"
                 ));
@@ -331,10 +357,11 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
             if fields.iter().any(|(seen, _)| seen == key) {
                 return Err(format!("frontmatter key `{key}` appears twice"));
             }
-            pending = Some(key.to_string());
+            pending = Some((key.to_string(), folded));
+            folding = folded.then(|| key.to_string());
             continue;
         }
-        if let Some(awaited) = &pending {
+        if let Some((awaited, _)) = &pending {
             return Err(format!(
                 "frontmatter key `{awaited}` has an empty value with no continuation block"
             ));
@@ -344,7 +371,7 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
         }
         fields.push((key.to_string(), value.to_string()));
     }
-    if let Some(awaited) = &pending {
+    if let Some((awaited, _)) = &pending {
         return Err(format!(
             "frontmatter key `{awaited}` has an empty value with no continuation block"
         ));
@@ -1625,13 +1652,16 @@ mod tests {
         assert!(parse_document("---\nname: demo\n")
             .unwrap_err()
             .contains("never closes"));
-        // A nested block's indent after a valued key is the library's
-        // continuation dialect: the block rides the key as one opaque
-        // value, indicator line included.
+        // A YAML block-scalar indicator opens a folded block: the
+        // continuation rides the key as one value, the indicator itself
+        // dropped and the block's indent stripped. This assertion used to
+        // read `">\n  folded text"` — the parser handing the model a
+        // description that began with the indicator, which is what the
+        // shipped library did to every skill written the ordinary way.
         let document =
             parse_document("---\nname: demo\ndescription: >\n  folded text\n---\nbody\n")
                 .expect("the continuation parses");
-        assert_eq!(document.get("description"), Some(">\n  folded text"));
+        assert_eq!(document.get("description"), Some("folded text"));
         // A list entry with no key before it.
         assert!(parse_document("---\n- item\n---\nbody\n")
             .unwrap_err()
@@ -2501,6 +2531,39 @@ mod tests {
     }
 
     // --- the surface ---
+
+    #[test]
+    fn a_folded_description_reads_as_one_line_not_the_indicator() {
+        // A writer using YAML's `>` is writing ordinary YAML. A parser
+        // that reads the indicator as the value hands the model a
+        // description that begins `>` and carries newlines — which is
+        // what the shipped library did until this was fixed.
+        let folded = "---\nname: a-skill\ndescription: >\n  The first line of it\n  and the second.\n---\n\nThe body.\n";
+        let document = parse_document(folded).expect("the folded block parses");
+        assert_eq!(
+            document.get("description"),
+            Some("The first line of it and the second.")
+        );
+        // A literal block keeps its line breaks rather than folding them,
+        // which is the reason the two indicators differ. The parser keeps
+        // the lines as written rather than stripping the block's common
+        // indent — a deviation from full YAML that predates this change
+        // and that the nested-block dialect depends on, so it is named
+        // here rather than quietly tightened.
+        let literal = "---\nname: a-skill\ndescription: |\n  The first line\n  and the second.\n---\n\nThe body.\n";
+        let document = parse_document(literal).expect("the literal block parses");
+        assert_eq!(
+            document.get("description"),
+            Some("  The first line\n  and the second.")
+        );
+        // A plain scalar is unchanged, and a chomping indicator (`>-`)
+        // is the same fold.
+        let plain = parse_document("---\nname: a\ndescription: one line\n---\n\nb").unwrap();
+        assert_eq!(plain.get("description"), Some("one line"));
+        let chomped =
+            parse_document("---\nname: a\ndescription: >-\n  folded\n  too\n---\n\nb").unwrap();
+        assert_eq!(chomped.get("description"), Some("folded too"));
+    }
 
     #[test]
     fn the_surface_is_cards_and_never_a_table() {
