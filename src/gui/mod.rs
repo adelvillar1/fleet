@@ -31,6 +31,12 @@
 
 pub mod bridge;
 pub mod server;
+/// The theme set's contrast guard. Test-only: it reads the shipped
+/// stylesheet and fails the build when a theme's text drops under the
+/// floor, which is a property of the artifact rather than of the crate's
+/// runtime.
+#[cfg(test)]
+mod themes;
 
 use std::process::Command;
 use std::sync::Arc;

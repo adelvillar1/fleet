@@ -13,9 +13,9 @@
   // where a body attribute cannot be set yet.
   try {
     document.documentElement.dataset.theme =
-      window.localStorage.getItem('fleet-theme') === 'light' ? 'light' : 'dark';
+      window.localStorage.getItem('fleet-theme') || 'console';
   } catch (error) {
-    document.documentElement.dataset.theme = 'dark';
+    document.documentElement.dataset.theme = 'console';
   }
 </script>
 </head>
@@ -56,9 +56,10 @@
       </dl>
       <span class="pill" id="state-pill" data-state="idle">idle</span>
       <button class="theme-toggle" id="theme-toggle" type="button"
-              aria-label="switch to the light theme" title="switch to the light theme">
+              aria-label="choose a theme" title="choose a theme" data-theme="dark">
         <span class="theme-mark" aria-hidden="true">◐</span>
       </button>
+      <div class="themes" id="themes" hidden role="listbox" aria-label="themes"></div>
       <button class="pane-open" id="pane-open" type="button"
               aria-label="open the files and deliverables pane" title="files, code and deliverables">
         <span class="pane-open-mark" aria-hidden="true">⌷</span>
