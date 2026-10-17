@@ -19,7 +19,15 @@
          the address, not routed: the browser never asks the server for
          a page. Only the conversation exists in this increment; the
          rest say so rather than pretend. -->
-    <nav class="addresses" id="addresses" aria-label="surfaces"></nav>
+    <!-- The surfaces, grouped. One declaration in app.js builds both this
+         rail and the command palette, so there is one structure and not
+         two to keep in sync. The rail orients; the palette reaches any
+         surface by name. -->
+    <nav class="rail" id="rail" aria-label="surfaces"></nav>
+    <button class="rail-toggle" id="rail-toggle" type="button"
+            aria-label="collapse the surfaces rail" aria-expanded="true">
+      <span class="rail-toggle-mark" aria-hidden="true">‹</span>
+    </button>
 
     <div class="topbar-right">
       <span class="pill" id="route-pill" data-state="idle" title="where this run's work went">no route yet</span>
@@ -34,8 +42,33 @@
         </div>
       </dl>
       <span class="pill" id="state-pill" data-state="idle">idle</span>
+      <button class="palette-open" id="palette-open" type="button"
+              aria-label="jump to any surface" title="jump to any surface">
+        <span class="palette-open-mark" aria-hidden="true">⌘</span>K
+      </button>
     </div>
   </header>
+
+  <!-- The command palette: every surface and every action, grouped by
+       the same destinations the rail shows, so one structure serves
+       both and there is nothing to keep in sync. -->
+  <div class="palette-scrim" id="palette-scrim" hidden></div>
+  <div class="palette" id="palette" role="dialog" aria-modal="true"
+       aria-label="jump to any surface" hidden>
+    <div class="palette-query">
+      <span class="palette-caret" aria-hidden="true">›</span>
+      <input class="palette-input" id="palette-input" type="text" autocomplete="off"
+             spellcheck="false" aria-label="search the surfaces"
+             placeholder="jump to a surface, or ask for something">
+      <span class="palette-count" id="palette-count" aria-live="polite"></span>
+    </div>
+    <div class="palette-rows" id="palette-rows" role="listbox" aria-label="results"></div>
+    <div class="palette-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+      <span><kbd>↵</kbd> open</span>
+      <span><kbd>esc</kbd> dismiss</span>
+    </div>
+  </div>
 
   <div class="meter" id="context-meter" role="img" aria-label="context used against the compaction budget">
     <span class="meter-fill" id="context-fill"></span>

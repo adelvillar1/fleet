@@ -34,8 +34,57 @@
     ['second-brain', 'second brain']
   ];
 
+  // The same ten surfaces, grouped by what the owner came to do rather
+  // than by subsystem. ONE declaration: the rail is built from it and
+  // the palette searches it, so there is a single structure and nothing
+  // to keep in sync between the two. The research is explicit that no
+  // numeric cap on destinations is defensible — what it supports is
+  // chunking, one flat level, and never a second tier, which is what
+  // this is: four groups, one level beneath each, and the palette as
+  // the parallel path that makes the grouping a convenience rather than
+  // a maze.
+  var GROUPS = [
+    ['work', 'work', [
+      ['chat', 'conversation'],
+      ['sessions', 'sessions']
+    ]],
+    ['intelligence', 'intelligence', [
+      ['router', 'router'],
+      ['delegation', 'delegation']
+    ]],
+    ['knowledge', 'knowledge', [
+      ['memory', 'memory'],
+      ['skills', 'skills'],
+      ['second-brain', 'second brain']
+    ]],
+    ['system', 'system', [
+      ['settings', 'settings'],
+      ['calibration', 'calibration'],
+      ['tower', 'tower']
+    ]]
+  ];
+
+  // A short mark per destination, so the collapsed rail still reads at a
+  // glance. The house rule for glyphs: a mark is always the surface's own
+  // first letter rather than an icon set shipped beside the binary.
+  var GROUP_MARKS = { work: 'w', intelligence: 'i', knowledge: 'k', system: 's' };
+
+  // Which group an address belongs to, and its label in that group —
+  // derived once so the rail, the palette and the panel all agree.
+  var WHERE = {};
+  GROUPS.forEach(function (group) {
+    group[2].forEach(function (item) { WHERE[item[0]] = [group[0], item[1]]; });
+  });
+
   var el = {
-    addresses: document.getElementById('addresses'),
+    rail: document.getElementById('rail'),
+    railToggle: document.getElementById('rail-toggle'),
+    palette: document.getElementById('palette'),
+    paletteScrim: document.getElementById('palette-scrim'),
+    paletteInput: document.getElementById('palette-input'),
+    paletteRows: document.getElementById('palette-rows'),
+    paletteCount: document.getElementById('palette-count'),
+    paletteOpen: document.getElementById('palette-open'),
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
     panelDelegation: document.getElementById('panel-delegation'),
@@ -123,7 +172,11 @@
     query: '',
     // The skills panel's read and its clock.
     skills: null,
-    skillsAt: 0
+    skillsAt: 0,
+    // The palette's rows and which of them is selected, so the arrow keys
+    // move a cursor the same way the panel reads move theirs.
+    paletteRows: [],
+    paletteAt: 0
   };
 
   // A short mark for a tool, so a card reads at a glance without an
@@ -2316,14 +2369,8 @@
     var which = (window.location.hash || '').replace(/^#\/?/, '');
     var known = ROUTES.filter(function (route) { return route[0] === which; })[0];
     var address = which === 'chat' || !known ? 'chat' : which;
-    Array.prototype.forEach.call(el.addresses.children, function (button) {
-      if (button.dataset.address === address) {
-        button.setAttribute('aria-current', 'page');
-      } else {
-        button.removeAttribute('aria-current');
-      }
-    });
     face.panel = address;
+    markRail();
     if (address === 'chat') {
       el.panelChat.hidden = false;
       el.panelRouter.hidden = true;
@@ -2389,13 +2436,213 @@
     el.panelLater.hidden = false;
   }
 
-  ROUTES.forEach(function (route) {
-    var button = node('button', 'address', route[1]);
-    button.type = 'button';
-    button.dataset.address = route[0];
-    button.addEventListener('click', function () { window.location.hash = '#/' + route[0]; });
-    el.addresses.appendChild(button);
+  // ------------------------------------------------- the rail and the palette
+
+  // The rail: four destinations, one flat level beneath each. Built from
+  // GROUPS, the same declaration the palette searches, so the two can
+  // never disagree about where a surface lives.
+  function buildRail() {
+    el.rail.textContent = '';
+    GROUPS.forEach(function (group) {
+      var id = group[0], label = group[1], items = group[2];
+      var head = node('span', 'rail-group', label);
+      el.rail.appendChild(head);
+      var button = node('button', 'rail-dest');
+      button.type = 'button';
+      button.dataset.group = id;
+      button.appendChild(node('span', 'rail-mark', GROUP_MARKS[id] || label.slice(0, 1)));
+      button.appendChild(node('span', 'rail-name', label));
+      // The destination itself opens its first surface — the one an owner
+      // opening the group almost always wants — so a group is one click
+      // rather than two.
+      button.addEventListener('click', function () {
+        window.location.hash = '#/' + items[0][0];
+      });
+      el.rail.appendChild(button);
+      var sub = node('div', 'rail-sub');
+      items.forEach(function (item) {
+        var address = item[0], name = item[1];
+        var link = node('button', 'rail-link');
+        link.type = 'button';
+        link.dataset.address = address;
+        link.textContent = name;
+        link.addEventListener('click', function () {
+          window.location.hash = '#/' + address;
+        });
+        sub.appendChild(link);
+      });
+      el.rail.appendChild(sub);
+    });
+    var open = node('button', 'rail-palette');
+    open.type = 'button';
+    open.appendChild(node('span', 'rail-mark', '\u2318'));
+    open.appendChild(node('span', 'rail-name', 'jump to anything'));
+    open.addEventListener('click', function () { openPalette(); });
+    el.rail.appendChild(open);
+  }
+
+  // Which surfaces are live today, and which are a later increment — the
+  // rail says so rather than pretending all ten are built.
+  var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills'];
+
+  function markRail() {
+    var which = (window.location.hash || '').replace(/^#\/?/, '');
+    Array.prototype.forEach.call(el.rail.querySelectorAll('.rail-link'), function (link) {
+      if (link.dataset.address === which) {
+        link.setAttribute('aria-current', 'page');
+      } else {
+        link.removeAttribute('aria-current');
+      }
+    });
+    Array.prototype.forEach.call(el.rail.querySelectorAll('.rail-dest'), function (button) {
+      var here = WHERE[which] && WHERE[which][0] === button.dataset.group;
+      if (here) {
+        button.setAttribute('aria-current', 'page');
+      } else {
+        button.removeAttribute('aria-current');
+      }
+    });
+  }
+
+  // The rail's collapsed state, remembered across launches: deep in a run
+  // the rail is chrome, and while navigating it is the map, so the one
+  // switch worth offering is a mode rather than a fork of the structure.
+  function railCollapsed() {
+    try { return window.localStorage.getItem('fleet-rail') === 'icons'; } catch (error) { return false; }
+  }
+
+  function setRail(mode) {
+    document.body.dataset.rail = mode;
+    el.railToggle.setAttribute('aria-expanded', mode === 'icons' ? 'false' : 'true');
+    el.railToggle.setAttribute('aria-label',
+      mode === 'icons' ? 'expand the surfaces rail' : 'collapse the surfaces rail');
+    try { window.localStorage.setItem('fleet-rail', mode); } catch (error) { }
+  }
+
+  // ------------------------------------------------------ the palette
+
+  // The palette's rows: every surface, grouped by the same destinations
+  // the rail shows. A result that matches nothing is dropped with its
+  // group, so an empty group never shows a heading over nothing.
+  function paletteRows(asked) {
+    var query = (asked || '').trim().toLowerCase();
+    var groups = [];
+    GROUPS.forEach(function (group) {
+      var hits = group[2].filter(function (item) {
+        if (!query) return true;
+        var hay = (item[1] + ' ' + item[0] + ' ' + group[1]).toLowerCase();
+        return hay.indexOf(query) !== -1;
+      });
+      if (hits.length) groups.push([group, hits]);
+    });
+    return groups;
+  }
+
+  function paintPalette() {
+    var asked = el.paletteInput.value;
+    var groups = paletteRows(asked);
+    el.paletteRows.textContent = '';
+    var shown = 0;
+    var first = null;
+    groups.forEach(function (entry) {
+      var group = entry[0], hits = entry[1];
+      el.paletteRows.appendChild(node('span', 'palette-group', group[1]));
+      hits.forEach(function (item) {
+        var row = node('button', 'palette-row');
+        row.type = 'button';
+        row.setAttribute('role', 'option');
+        row.dataset.address = item[0];
+        row.appendChild(node('span', 'palette-row-mark', GROUP_MARKS[group[0]] || group[1].slice(0, 1)));
+        row.appendChild(node('span', 'palette-row-name', item[1]));
+        // Whether the surface is live is on the row, not hidden: a later
+        // increment says so here rather than opening to a surprise.
+        row.appendChild(node('span', 'palette-row-hint',
+          BUILT.indexOf(item[0]) === -1 ? 'later' : 'open'));
+        row.addEventListener('click', function () { choosePalette(item[0]); });
+        if (!first) first = row;
+        shown += 1;
+        el.paletteRows.appendChild(row);
+      });
+    });
+    if (!shown) {
+      el.paletteRows.appendChild(node('p', 'palette-none',
+        'No surface matches \u201c' + asked + '\u201d. The palette reaches the ten surfaces ' +
+        'and their groups; a run is asked for in the composer.'));
+    }
+    el.paletteCount.textContent = shown ? shown + (shown === 1 ? ' result' : ' results') : '';
+    if (first) {
+      first.setAttribute('aria-selected', 'true');
+      face.paletteAt = 0;
+      face.paletteRows = Array.prototype.slice.call(el.paletteRows.querySelectorAll('.palette-row'));
+    } else {
+      face.paletteRows = [];
+    }
+  }
+
+  function movePalette(step) {
+    var rows = face.paletteRows || [];
+    if (!rows.length) return;
+    var at = face.paletteAt || 0;
+    rows[at].removeAttribute('aria-selected');
+    var next = (at + step + rows.length) % rows.length;
+    rows[next].setAttribute('aria-selected', 'true');
+    face.paletteAt = next;
+    rows[next].scrollIntoView({ block: 'nearest' });
+  }
+
+  function choosePalette(address) {
+    closePalette();
+    window.location.hash = '#/' + address;
+  }
+
+  function openPalette() {
+    el.palette.hidden = false;
+    el.paletteScrim.hidden = false;
+    el.paletteInput.value = '';
+    paintPalette();
+    el.paletteInput.focus();
+  }
+
+  function closePalette() {
+    el.palette.hidden = true;
+    el.paletteScrim.hidden = true;
+    el.paletteInput.value = '';
+    el.paletteInput.blur();
+  }
+
+  buildRail();
+  setRail(railCollapsed() ? 'icons' : 'full');
+  el.railToggle.addEventListener('click', function () {
+    setRail(railCollapsed() ? 'full' : 'icons');
   });
+  el.paletteOpen.addEventListener('click', openPalette);
+  el.paletteScrim.addEventListener('click', closePalette);
+  el.paletteInput.addEventListener('input', paintPalette);
+  el.paletteInput.addEventListener('keydown', function (event) {
+    if (event.key === 'ArrowDown') { event.preventDefault(); movePalette(1); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); movePalette(-1); }
+    else if (event.key === 'Enter') {
+      event.preventDefault();
+      var rows = face.paletteRows || [];
+      if (rows.length) choosePalette(rows[face.paletteAt || 0].dataset.address);
+    }
+  });
+  // The palette's own key, and Esc from anywhere: the one keystroke that
+  // reaches every surface, and the one that always comes home.
+  window.addEventListener('keydown', function (event) {
+    var typing = document.activeElement === el.paletteInput
+      || document.activeElement === el.task;
+    if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
+      event.preventDefault();
+      if (el.palette.hidden) openPalette(); else closePalette();
+      return;
+    }
+    if (event.key !== 'Escape') return;
+    if (!el.palette.hidden) { closePalette(); return; }
+    var which = (window.location.hash || '').replace(/^#\/?/, '');
+    if (which && which !== 'chat') window.location.hash = '#/chat';
+  });
+
   window.addEventListener('hashchange', showRoute);
   showRoute();
 

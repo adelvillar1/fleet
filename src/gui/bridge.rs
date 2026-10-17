@@ -1353,8 +1353,16 @@ mod tests {
     /// empty, with the command door held open by the test: the run is
     /// accepted and stays in flight, which is what a face waiting on an
     /// agent thread looks like.
+    /// A bridge over a temp home of its own. The home is unique per call
+    /// rather than per process: tests in this binary run concurrently, and
+    /// a shared home lets one test's `remove_dir_all` delete the directory
+    /// out from under another's settings write — a flake the G4 gate hit
+    /// and the plan named rather than fixed at the time.
     async fn bridge() -> (Bridge, Sources, UnboundedReceiver<Command>) {
-        let home = std::env::temp_dir().join(format!("fleet-gui-bridge-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let home =
+            std::env::temp_dir().join(format!("fleet-gui-bridge-{}-{serial}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a temp home");
         let (mut bridge, sources) = Bridge::detached(
