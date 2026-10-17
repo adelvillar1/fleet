@@ -1033,6 +1033,33 @@ pub fn unmapped_workload_candidate() -> &'static str {
     workload_candidate(Gates::default().default_workload).unwrap_or(HEAD_ID)
 }
 
+/// The route decision for a workload that is chosen rather than judged.
+///
+/// A vision task is not a shape sys1 classifies — the sys1 lane is a
+/// vendored Python server whose vocabulary this crate does not own — so
+/// the workload is named by the caller and its own preference list is
+/// the walk. The table is the compiled-in default: an owner's
+/// `routing.json` override of the vision workload's candidates governs
+/// the run's own route, and this route reads the default until the table
+/// rides the agent too, which is named rather than papered over.
+pub fn workload_decision(workload: &str) -> Option<RouteDecision> {
+    let table = default_preferences();
+    let preference = preference_for(&table, workload)?;
+    let order: Vec<(String, String)> = preference
+        .candidates
+        .iter()
+        .map(|(provider, model)| (provider.to_string(), model.to_string()))
+        .collect();
+    Some(decision_from(
+        order,
+        How::Judged,
+        Some(workload.to_string()),
+        None,
+        format!("the {workload} workload's own chain"),
+        JudgedFrom::None,
+    ))
+}
+
 /// Choose the route for `task`: a pin wins (a provider pin still lets
 /// the router decide the model), else sys1 judges the workload and the
 /// workload's own preference list is the walk. Never fails and never
@@ -1686,6 +1713,14 @@ impl Router {
 
     /// The initial selection decision (for the headless line and the TUI
     /// status bar).
+    /// The roster this router walks, resolved. A caller that needs a
+    /// second route off the same roster — the vision workload's own
+    /// chain, say — reads it here rather than resolving the owner's
+    /// config a second time and risking a different answer.
+    pub fn resolved(&self) -> &[Resolved] {
+        &self.resolved
+    }
+
     pub fn decision(&self) -> RouteDecision {
         self.decision.clone()
     }

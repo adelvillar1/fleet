@@ -551,6 +551,14 @@ impl Client {
         }
     }
 
+    /// The router this client walks, or `None` for a plain
+    /// single-endpoint client. A caller that needs a second route off the
+    /// same roster — the vision workload's own chain — reads the resolved
+    /// candidates from it rather than resolving the owner's config again.
+    pub fn router(&self) -> Option<&Router> {
+        self.router.as_deref()
+    }
+
     /// The routing decision this client was built with, or `None` for a
     /// plain single-endpoint client.
     pub fn route_decision(&self) -> Option<RouteDecision> {

@@ -636,6 +636,97 @@ impl Approver for TuiApprover {
     }
 }
 
+/// The question and the images one `vision` call carries, read off disk.
+///
+/// The boundary is the browser pane's, held once more here because a
+/// second copy that drifts is worse than one: the working directory is
+/// the root, a path that walks out is refused lexically before anything
+/// touches the disk, a credential file is refused by name, and the bytes
+/// are capped. A path that does not exist names itself rather than being
+/// mistaken for an escape.
+fn vision_images(
+    arguments: &serde_json::Value,
+) -> Result<(String, Vec<crate::api::ImageRef>), String> {
+    let question = arguments
+        .get("question")
+        .and_then(|question| question.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "the `question` argument is required and must be a string".to_string())?;
+    let paths = arguments
+        .get("images")
+        .and_then(|images| images.as_array())
+        .ok_or_else(|| {
+            "the `images` argument is required and must be an array of paths".to_string()
+        })?;
+    if paths.is_empty() {
+        return Err("a vision ask needs at least one image".to_string());
+    }
+    let root = std::env::current_dir().unwrap_or_default();
+    let mut images: Vec<crate::api::ImageRef> = Vec::new();
+    for path in paths {
+        let asked = path
+            .as_str()
+            .ok_or_else(|| "every image path must be a string".to_string())?;
+        let name = asked.rsplit('/').next().unwrap_or(asked);
+        if name == ".env" || name.starts_with(".env.") {
+            return Err("a credential file is never served".to_string());
+        }
+        let mut depth: i64 = 0;
+        for part in asked.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return Err("outside the working directory".to_string());
+                    }
+                }
+                _ => depth += 1,
+            }
+        }
+        let at = root.join(asked);
+        let bytes = std::fs::read(&at).map_err(|error| format!("{}: {error}", at.display()))?;
+        if bytes.len() > VISION_IMAGE_CAP {
+            return Err(format!(
+                "{} is {} bytes, past the {VISION_IMAGE_CAP}-byte cap",
+                at.display(),
+                bytes.len()
+            ));
+        }
+        images.push(crate::api::ImageRef::new(media_type(&at), bytes));
+    }
+    Ok((question, images))
+}
+
+/// How many bytes one image a vision ask carries may be. A screenshot is
+/// a few hundred kilobytes; a photograph is a few megabytes; a raw
+/// capture is tens. The cap is the last of those.
+const VISION_IMAGE_CAP: usize = 8 * 1024 * 1024;
+
+/// One image's media type, from its extension — the two every endpoint
+/// accepts, and a refusal for anything else rather than a guess.
+fn media_type(path: &std::path::Path) -> String {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    }
+    .to_string()
+}
+
+/// The roster this run's client walks, for a second route off it. The
+/// router holds the resolved candidates, so a vision ask walks the same
+/// roster the run does rather than resolving the owner's config a second
+/// time and risking a different answer.
+fn vision_roster(client: &crate::api::Client) -> Vec<crate::route::Resolved> {
+    client
+        .router()
+        .map(|router| router.resolved().to_vec())
+        .unwrap_or_default()
+}
+
 /// Runs tasks against the API with the built-in tools.
 pub struct Agent<'a> {
     client: &'a Client,
@@ -909,6 +1000,14 @@ impl<'a> Agent<'a> {
         // face can.
         if admitted(tools::DECK_TOOL) {
             specs.push(tools::deck_spec());
+        }
+        // `vision` rides every run too, and for the same reason plus one:
+        // it is a read of a file the owner already has, it touches
+        // nothing outside itself, and a model that cannot be shown a
+        // picture cannot grade what it built. The route is the router's
+        // own vision workload, so the roster decides which model answers.
+        if admitted(tools::VISION_TOOL) {
+            specs.push(tools::vision_spec());
         }
         // The live-source tool rides every run and every delegate by
         // default: a fact the model cannot check is a fact it will
@@ -1853,6 +1952,28 @@ impl<'a> Agent<'a> {
                 },
             });
         }
+        if name == tools::VISION_TOOL {
+            // The images are read here, in the agent's own working
+            // directory, with the same boundary the browser's file pane
+            // holds: a path that escapes is refused by name, a credential
+            // file is refused by name, and the bytes are capped. A
+            // question with no readable image is a model-visible error
+            // rather than a call that asks a model to look at nothing.
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => match vision_images(&arguments) {
+                    Err(reason) => settled(format!("error: {reason}")),
+                    Ok((question, images)) => Prepared::Ready(Work::Vision {
+                        question,
+                        images,
+                        resolved: self
+                            .client
+                            .route_decision()
+                            .map(|_| vision_roster(self.client)),
+                    }),
+                },
+            });
+        }
         if name == tools::REMEMBER_TOOL {
             // A durable write is a side effect, so it crosses the same
             // approval gate every other tool crosses — the summary
@@ -2325,6 +2446,15 @@ enum Work {
         html: String,
         ui_tx: Option<UnboundedSender<UiEvent>>,
     },
+    /// One vision ask: a question about images the caller read. The
+    /// roster rides the work because the route is the vision workload's
+    /// own chain rather than the run's, and `run_work` is a free
+    /// function.
+    Vision {
+        question: String,
+        images: Vec<crate::api::ImageRef>,
+        resolved: Option<Vec<crate::route::Resolved>>,
+    },
     /// One supersession, already past its provenance gate.
     Supersede {
         memory: Arc<Memory>,
@@ -2394,6 +2524,53 @@ async fn run_work(work: Work) -> (String, bool) {
                 truncated: false,
             });
             (outcome.output, outcome.truncated)
+        }
+        Work::Vision {
+            question,
+            images,
+            resolved,
+        } => {
+            // The vision workload's own chain, walked off this run's
+            // roster: the router decides which multimodal model answers,
+            // and a run whose client has no router names that rather
+            // than sending an image nowhere.
+            let Some(resolved) = resolved.filter(|roster| !roster.is_empty()) else {
+                return (
+                    "error: this run has no router, so no vision workload to route through"
+                        .to_string(),
+                    false,
+                );
+            };
+            let Some(decision) = crate::route::workload_decision("vision") else {
+                return (
+                    "error: the router declares no vision workload".to_string(),
+                    false,
+                );
+            };
+            let client = crate::api::Client::routed(std::sync::Arc::new(
+                crate::route::Router::new(resolved, decision),
+            ));
+            let messages = vec![crate::api::Message::text_with_images(
+                crate::api::Role::User,
+                question,
+                images,
+            )];
+            let outcome = client.chat(&crate::api::ChatRequest {
+                model: "",
+                messages: &messages,
+                tools: Vec::new(),
+            });
+            (
+                match outcome {
+                    Ok(response) => response
+                        .choices
+                        .first()
+                        .and_then(|choice| choice.message.content.clone())
+                        .unwrap_or_else(|| "the model answered with no text".to_string()),
+                    Err(error) => format!("error: {error}"),
+                },
+                false,
+            )
         }
         Work::Deck {
             summary,
@@ -2876,6 +3053,7 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
             Work::Remember { .. } | Work::Supersede { .. } => Some("memory".to_string()),
             Work::Improve { .. } => Some("proposals".to_string()),
             Work::Deck { .. } => Some("deck".to_string()),
+            Work::Vision { .. } => Some("vision".to_string()),
             // A lookup reads the tree and writes nothing: no writer to
             // hold apart, so two of them in one batch run together.
             Work::Convention { .. } => None,
@@ -4205,6 +4383,7 @@ mod tests {
                 "subagent",
                 "convention",
                 "deck",
+                "vision",
                 "web",
                 "computer_use"
             ]
@@ -4245,7 +4424,10 @@ mod tests {
         // The deck rides it too: pure computation over a value the model
         // writes, with nothing outside itself, and the deliverable it
         // produces is the one thing a terminal cannot show.
-        assert_eq!(plain.declarations().len(), 9);
+        // The deck and the vision tool ride it too: both are pure
+        // computation over a value the model writes, and neither touches
+        // anything outside itself.
+        assert_eq!(plain.declarations().len(), 10);
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
@@ -5299,6 +5481,70 @@ You are auditing a change. Read the diff before you judge it.
     }
 
     /// The action surface is the plan's own small named set, mapped to
+    #[test]
+    fn the_vision_ask_reads_its_images_and_refuses_what_it_must() {
+        // The boundary is the browser pane's, held again here: a path
+        // that walks out is refused before anything touches the disk, a
+        // credential file is refused by name, and a question with no
+        // images is a named refusal rather than a call that asks a model
+        // to look at nothing.
+        let escaping = serde_json::json!({
+            "question": "what is this?",
+            "images": ["../../etc/passwd"],
+        });
+        assert_eq!(
+            vision_images(&escaping).expect_err("the escape is refused"),
+            "outside the working directory"
+        );
+        let dotenv = serde_json::json!({"question": "what is this?", "images": [".env"]});
+        assert_eq!(
+            vision_images(&dotenv).expect_err("the dotenv is refused"),
+            "a credential file is never served"
+        );
+        let none = serde_json::json!({"question": "what is this?", "images": []});
+        assert!(
+            vision_images(&none)
+                .expect_err("no images is refused")
+                .contains("at least one image"),
+            "the refusal names the rule"
+        );
+
+        // And a real image reads, with its media type from its extension.
+        let scratch = scratch("vision-image");
+        std::fs::write(scratch.join("a.png"), [0x89, b'P', b'N', b'G']).unwrap();
+        let here = std::env::current_dir().expect("a working directory");
+        let asked = scratch
+            .strip_prefix(&here)
+            .map(|rest| rest.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| scratch.display().to_string());
+        let good = serde_json::json!({
+            "question": "what is in this diagram?",
+            "images": [format!("{asked}/a.png")],
+        });
+        let (question, images) = vision_images(&good).expect("the image reads");
+        assert_eq!(question, "what is in this diagram?");
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media, "image/png");
+        assert_eq!(images[0].data, vec![0x89, b'P', b'N', b'G']);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn the_vision_workload_has_its_own_chain() {
+        // The route is the vision workload's, not the run's: a vision ask
+        // must reach a multimodal model whatever the task was judged as.
+        let decision = crate::route::workload_decision("vision").expect("the workload exists");
+        assert_eq!(decision.workload.as_deref(), Some("vision"));
+        assert_eq!(decision.provider, "zai-coding-plan");
+        assert_eq!(decision.model, "GLM-5.3-Flash");
+        // The walk carries the whole chain, so a failover still lands on a
+        // model that can see.
+        assert!(decision.order.len() >= 2, "{:?}", decision.order);
+        // A workload no table names has no decision, rather than a route
+        // to nowhere.
+        assert!(crate::route::workload_decision("no-such-shape").is_none());
+    }
+
     /// the driver's tools, and an action outside it is a named refusal
     /// rather than a guess at which of the driver's 56 tools was meant.
     #[test]

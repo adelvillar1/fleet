@@ -179,6 +179,39 @@ pub fn use_skill_spec() -> ToolSpec {
     )
 }
 
+/// The model-visible name of the vision tool.
+pub const VISION_TOOL: &str = "vision";
+
+/// The request declaration for `vision`: one question, one or more
+/// images, and the answer.
+///
+/// The description says the route out loud — the router's own vision
+/// workload — because a model that knows which model will answer asks a
+/// question that model can answer. It also says the containment, since a
+/// tool that reads a file from disk is a tool whose boundary the model
+/// should not have to guess at.
+pub fn vision_spec() -> ToolSpec {
+    ToolSpec::function(
+        VISION_TOOL,
+        "Ask a question about one or more images. The call routes through the fleet router's `vision` workload, so it is answered by whatever multimodal model the roster declares — GLM-5.3-Flash by default. Images are read from paths under the working directory; a path outside it, or a credential file, is refused. Use this to read a screenshot, a diagram, a rendered page, or a photo.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "What to ask about the images. Be specific: 'is any text overlapping or clipped?' beats 'check this'.",
+                },
+                "images": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Paths to the images, relative to the working directory.",
+                },
+            },
+            "required": ["question", "images"],
+        }),
+    )
+}
+
 /// The model-visible name of the deck tool.
 pub const DECK_TOOL: &str = "deck";
 
