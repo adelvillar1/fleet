@@ -233,6 +233,8 @@
                 aria-controls="pane-files" aria-selected="true">files</button>
         <button class="pane-tab" id="tab-preview" type="button" role="tab"
                 aria-controls="pane-preview" aria-selected="false">preview</button>
+        <button class="pane-tab" id="tab-web" type="button" role="tab"
+                aria-controls="pane-web" aria-selected="false">web</button>
       </div>
       <button class="pane-close" id="pane-close" type="button" aria-label="close the pane">
         <span aria-hidden="true">›</span>
@@ -244,6 +246,15 @@
     </div>
     <div class="pane-body" id="pane-preview" role="tabpanel" aria-labelledby="tab-preview" hidden>
       <div class="pane-preview" id="pane-preview-body"></div>
+    </div>
+    <div class="pane-body" id="pane-web" role="tabpanel" aria-labelledby="tab-web" hidden>
+      <form class="pane-address" id="pane-address">
+        <input class="pane-address-box" id="pane-address-box" type="text"
+               autocomplete="off" spellcheck="false" placeholder="an http or https address"
+               aria-label="the address to read">
+        <button class="pane-address-go" type="submit">read</button>
+      </form>
+      <div class="pane-page" id="pane-page"></div>
     </div>
   </aside>
 

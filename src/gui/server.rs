@@ -211,6 +211,10 @@ async fn serve_connection(
             let asked = decode_query(&request.query, "path");
             write_reply(&mut stream, api(200, bridge.tree(&asked).await)).await
         }
+        ("GET", "/api/web") => {
+            let asked = decode_query(&request.query, "url");
+            write_reply(&mut stream, api(200, bridge.web(&asked).await)).await
+        }
         ("GET", "/api/file") => {
             let asked = decode_query(&request.query, "path");
             write_reply(&mut stream, api(200, bridge.file(&asked).await)).await

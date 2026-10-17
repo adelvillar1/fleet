@@ -517,6 +517,48 @@ impl Bridge {
         json!({"type": "rank", "ranked": ranked})
     }
 
+    /// The pane's web read: fetch one page and reduce it to what is
+    /// readable. The guard is the substrate's — a private or loopback
+    /// address is refused, so a browser that can name a URL cannot name
+    /// the embedding model or the cloud metadata service.
+    pub async fn web(&self, url: &str) -> Value {
+        let url = url.trim().to_string();
+        match tokio::task::spawn_blocking(move || crate::web::fetch(&url)).await {
+            Ok(Ok(page)) => {
+                let readable = crate::web::readable(&page.body);
+                json!({
+                    "type": "web",
+                    "url": page.url,
+                    "status": page.status,
+                    "content_type": page.content_type,
+                    "title": readable.title,
+                    "blocks": readable.blocks.iter().map(|block| match block {
+                        crate::web::Block::Heading { level, text } => json!({
+                            "kind": "heading", "level": level, "text": text
+                        }),
+                        crate::web::Block::Paragraph(text) => json!({
+                            "kind": "paragraph", "text": text
+                        }),
+                        crate::web::Block::Item(text) => json!({
+                            "kind": "item", "text": text
+                        }),
+                        crate::web::Block::Code(text) => json!({
+                            "kind": "code", "text": text
+                        }),
+                        crate::web::Block::Quote(text) => json!({
+                            "kind": "quote", "text": text
+                        }),
+                    }).collect::<Vec<_>>(),
+                    "links": readable.links.iter().map(|(label, href)| json!({
+                        "label": label, "href": href
+                    })).collect::<Vec<_>>(),
+                })
+            }
+            Ok(Err(reason)) => json!({"type": "web", "refused": [reason.to_string()]}),
+            Err(_) => json!({"type": "web", "refused": ["the fetch did not land"]}),
+        }
+    }
+
     /// The pane's tree read, off the working directory.
     pub async fn tree(&self, asked: &str) -> Value {
         let root = self.cwd.clone();

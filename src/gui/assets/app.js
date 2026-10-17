@@ -117,6 +117,11 @@
     panePreview: document.getElementById('pane-preview-body'),
     tabFiles: document.getElementById('tab-files'),
     tabPreview: document.getElementById('tab-preview'),
+    tabWeb: document.getElementById('tab-web'),
+    paneWeb: document.getElementById('pane-web'),
+    paneAddress: document.getElementById('pane-address'),
+    paneAddressBox: document.getElementById('pane-address-box'),
+    panePage: document.getElementById('pane-page'),
     paneFiles: document.getElementById('pane-files'),
     panePreviewPanel: document.getElementById('pane-preview'),
     themeToggle: document.getElementById('theme-toggle'),
@@ -209,6 +214,11 @@
     // The skills panel's read and its clock.
     skills: null,
     skillsAt: 0,
+    // The pane's web tab: the page in front and the address it came
+    // from. One read per address, so re-reading is a refresh and not a
+    // second fetch of the same page.
+    page: null,
+    pageAt: '',
     // The palette's rows and which of them is selected, so the arrow keys
     // move a cursor the same way the panel reads move theirs.
     paletteRows: [],
@@ -2676,6 +2686,82 @@
     el.paneFile.appendChild(code);
   }
 
+  // ------------------------------------------------------- the web tab
+
+  // One page, read. The address is the cache key: re-reading the same
+  // address is a refresh, and a new address is a new read. A refused
+  // read names its reason rather than showing a blank pane, because a
+  // blank pane would read as "this site is empty".
+  function readPage(asked, force) {
+    var url = (asked || '').trim();
+    if (!url) return Promise.resolve();
+    if (!force && face.page && face.pageAt === url) return Promise.resolve();
+    face.pageAt = url;
+    return paneGet('/api/web?url=' + encodeURIComponent(url))
+      .then(function (doc) {
+        face.page = doc;
+        if (face.paneTab === 'web') paintPage();
+      })
+      .catch(function () { });
+  }
+
+  function paintPage() {
+    var read = face.page;
+    el.panePage.textContent = '';
+    if (!read) {
+      el.panePage.appendChild(node('p', 'pane-empty',
+        'Read an address to see it here. The page is fetched and reduced to its ' +
+        'prose — no script from it runs, and a private or loopback address is refused.'));
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.panePage.appendChild(node('p', 'pane-empty', read.refused.join(' · ')));
+      return;
+    }
+    if (read.title) {
+      el.panePage.appendChild(node('h2', 'page-title', read.title));
+    }
+    var where = node('p', 'page-where', read.url);
+    el.panePage.appendChild(where);
+    (read.blocks || []).forEach(function (block) {
+      var level = Math.min(6, Math.max(3, Number(block.level) || 3));
+      if (block.kind === 'heading') {
+        el.panePage.appendChild(node('h' + level, 'md-h', block.text));
+      } else if (block.kind === 'item') {
+        el.panePage.appendChild(node('p', 'page-item', '· ' + block.text));
+      } else if (block.kind === 'code') {
+        el.panePage.appendChild(node('pre', 'md-code', block.text));
+      } else if (block.kind === 'quote') {
+        el.panePage.appendChild(node('blockquote', 'page-quote', block.text));
+      } else {
+        el.panePage.appendChild(node('p', 'md-p', block.text));
+      }
+    });
+    if (read.links && read.links.length) {
+      var box = node('div', 'page-links');
+      box.appendChild(node('h3', null, read.links.length + ' links on this page'));
+      read.links.forEach(function (link) {
+        var row = node('button', 'page-link');
+        row.type = 'button';
+        row.appendChild(node('span', 'page-link-label', link.label));
+        row.appendChild(node('span', 'page-link-href', link.href));
+        // A link is read the way a typed address is, relative to the
+        // page it came from.
+        row.addEventListener('click', function () {
+          var target = link.href;
+          if (target.indexOf('://') === -1) {
+            var base = read.url.split('/').slice(0, 3).join('/');
+            target = target.charAt(0) === '/' ? base + target : base + '/' + target;
+          }
+          el.paneAddressBox.value = target;
+          readPage(target, true);
+        });
+        box.appendChild(row);
+      });
+      el.panePage.appendChild(box);
+    }
+  }
+
   // The preview: markdown rendered, everything else shown as text with
   // its own line breaks. A half-written markdown renderer is worse than
   // none, so the subset here is the one this repository's own documents
@@ -2953,14 +3039,26 @@
   function showPaneTab(which) {
     face.paneTab = which;
     var files = which === 'files';
+    var preview = which === 'preview';
+    var web = which === 'web';
     el.tabFiles.classList.toggle('active', files);
-    el.tabPreview.classList.toggle('active', !files);
+    el.tabPreview.classList.toggle('active', preview);
+    el.tabWeb.classList.toggle('active', web);
     el.tabFiles.setAttribute('aria-selected', files ? 'true' : 'false');
-    el.tabPreview.setAttribute('aria-selected', files ? 'false' : 'true');
+    el.tabPreview.setAttribute('aria-selected', preview ? 'true' : 'false');
+    el.tabWeb.setAttribute('aria-selected', web ? 'true' : 'false');
     el.paneFiles.hidden = !files;
-    el.panePreviewPanel.hidden = files;
-    if (files) paintTree(); else paintPreview();
+    el.panePreviewPanel.hidden = !preview;
+    el.paneWeb.hidden = !web;
+    if (files) paintTree();
+    else if (preview) paintPreview();
+    else paintPage();
   }
+
+  el.paneAddress.addEventListener('submit', function (event) {
+    event.preventDefault();
+    readPage(el.paneAddressBox.value, true);
+  });
 
   // ------------------------------------------------- the rail and the palette
 
@@ -3173,6 +3271,7 @@
   el.paneClose.addEventListener('click', closePane);
   el.tabFiles.addEventListener('click', function () { showPaneTab('files'); });
   el.tabPreview.addEventListener('click', function () { showPaneTab('preview'); });
+  el.tabWeb.addEventListener('click', function () { showPaneTab('web'); });
 
   buildRail();
   setRail(railCollapsed() ? 'icons' : 'full');

@@ -43,3 +43,4 @@ pub mod subagents;
 pub mod tools;
 pub mod tui;
 pub mod vault;
+pub mod web;
