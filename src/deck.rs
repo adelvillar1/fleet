@@ -667,6 +667,407 @@ fn escape(text: &str) -> String {
     out
 }
 
+// --- the PPTX export -------------------------------------------------------
+
+/// The export: one deck as a `.pptx` file's bytes.
+///
+/// A PPTX is a ZIP of XML parts, and the crate contract is one static
+/// binary with no new dependency — so the ZIP is written here, stored
+/// rather than deflated, which every reader accepts. The parts are the
+/// minimum a PowerPoint-compatible reader needs: the content types, the
+/// relationships, a presentation, one slide per node, and the theme and
+/// master a slide cannot render without.
+///
+/// Text rides as real text boxes with real positions rather than a
+/// rendered picture, which is the whole point of the export: the owner
+/// can open it and edit it, and a locked image of a slide is the thing
+/// the blueprint explicitly refuses.
+pub fn to_pptx(deck: &Deck) -> Vec<u8> {
+    let mut parts: Vec<(String, Vec<u8>)> = vec![
+        (
+            "[Content_Types].xml".to_string(),
+            content_types(deck.nodes.len()).into_bytes(),
+        ),
+        (
+            "_rels/.rels".to_string(),
+            ROOT_RELS.to_string().into_bytes(),
+        ),
+        (
+            "ppt/presentation.xml".to_string(),
+            presentation(deck.nodes.len()).into_bytes(),
+        ),
+        (
+            "ppt/_rels/presentation.xml.rels".to_string(),
+            presentation_rels(deck.nodes.len()).into_bytes(),
+        ),
+        (
+            "ppt/slideMasters/slideMaster1.xml".to_string(),
+            SLIDE_MASTER.to_string().into_bytes(),
+        ),
+        (
+            "ppt/slideMasters/_rels/slideMaster1.xml.rels".to_string(),
+            MASTER_RELS.to_string().into_bytes(),
+        ),
+        (
+            "ppt/slideLayouts/slideLayout1.xml".to_string(),
+            SLIDE_LAYOUT.to_string().into_bytes(),
+        ),
+        (
+            "ppt/slideLayouts/_rels/slideLayout1.xml.rels".to_string(),
+            LAYOUT_RELS.to_string().into_bytes(),
+        ),
+        (
+            "ppt/theme/theme1.xml".to_string(),
+            THEME.to_string().into_bytes(),
+        ),
+    ];
+    for (index, node) in deck.nodes.iter().enumerate() {
+        let number = index + 1;
+        parts.push((
+            format!("ppt/slides/slide{number}.xml"),
+            slide(node).into_bytes(),
+        ));
+        parts.push((
+            format!("ppt/slides/_rels/slide{number}.xml.rels"),
+            SLIDE_RELS.to_string().into_bytes(),
+        ));
+    }
+    zip(&parts)
+}
+
+/// The theme's colours, so a slide inherits the face's own palette rather
+/// than Office's defaults.
+const THEME: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="fleet"><a:themeElements><a:clrScheme name="fleet"><a:dk1><a:srgbClr val="100E0D"/></a:dk1><a:lt1><a:srgbClr val="EBE7E4"/></a:lt1><a:dk2><a:srgbClr val="16130F"/></a:dk2><a:lt2><a:srgbClr val="1D1918"/></a:lt2><a:accent1><a:srgbClr val="4176E6"/></a:accent1><a:accent2><a:srgbClr val="7AAAFF"/></a:accent2><a:accent3><a:srgbClr val="3FB950"/></a:accent3><a:accent4><a:srgbClr val="D29922"/></a:accent4><a:accent5><a:srgbClr val="F85149"/></a:accent5><a:accent6><a:srgbClr val="948C87"/></a:accent6><a:hlink><a:srgbClr val="7AAAFF"/></a:hlink><a:folHlink><a:srgbClr val="948C87"/></a:folHlink></a:clrScheme><a:fontScheme name="fleet"><a:majorFont><a:latin typeface="SF Pro Text"/></a:majorFont><a:minorFont><a:latin typeface="SF Pro Text"/></a:minorFont></a:fontScheme><a:fmtScheme name="fleet"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>"#;
+
+const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>"#;
+
+const PRESENTATION_RELS_HEAD: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>"#;
+
+const MASTER_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>"#;
+
+/// One slide's relationships: it renders against the one layout, and every
+/// slide names the same one — so this is a constant rather than a `format!`
+/// with nothing to format.
+const SLIDE_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>"#;
+
+const LAYOUT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>"#;
+
+const SLIDE_MASTER: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld><p:clrMap bg1="dk1" tx1="lt1" bg2="dk2" tx2="lt2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:sldMaster>"#;
+
+const SLIDE_LAYOUT: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank"><p:cSld name="blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld></p:sldLayout>"#;
+
+/// The content types, one slide override per node.
+fn content_types(nodes: usize) -> String {
+    let mut slides = String::new();
+    for number in 1..=nodes {
+        slides.push_str(&format!(
+            "<Override PartName=\"/ppt/slides/slide{number}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/>"
+        ));
+    }
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/ppt/presentation.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/><Override PartName=\"/ppt/slideMasters/slideMaster1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml\"/><Override PartName=\"/ppt/slideLayouts/slideLayout1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml\"/><Override PartName=\"/ppt/theme/theme1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.theme+xml\"/>{slides}</Types>"
+    )
+}
+
+fn presentation(nodes: usize) -> String {
+    let mut ids = String::new();
+    for number in 1..=nodes {
+        ids.push_str(&format!(
+            "<p:sldId id=\"{}\" r:id=\"rId{}\"/>",
+            255 + number,
+            number + 2
+        ));
+    }
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<p:presentation xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"><p:sldMasterIdLst><p:sldMasterId id=\"2147483648\" r:id=\"rId1\"/></p:sldMasterIdLst><p:sldIdLst>{ids}</p:sldIdLst></p:presentation>"
+    )
+}
+
+fn presentation_rels(nodes: usize) -> String {
+    let mut slides = String::new();
+    for number in 1..=nodes {
+        slides.push_str(&format!(
+            "<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"slides/slide{}.xml\"/>",
+            number + 2,
+            number
+        ));
+    }
+    format!("{PRESENTATION_RELS_HEAD}{slides}</Relationships>")
+}
+
+/// One slide: its eyebrow, its headline, and its components as positioned
+/// text boxes. The positions come from the layout the planner chose, so a
+/// `split_two_column` node's evidence really does sit beside its
+/// conclusion rather than wherever the writer put it.
+fn slide(node: &Node) -> String {
+    let mut shapes: Vec<String> = Vec::new();
+    let mut id = 2u32;
+    // The headline, top left, at the size the node's role asks for.
+    shapes.push(text_box(
+        &mut id,
+        &TextBox {
+            left: 685_800,
+            top: 457_200,
+            width: 10_795_000,
+            height: 1_000_000,
+            text: strip_markup(&node.headline),
+            size: 2800,
+            bold: true,
+        },
+    ));
+    if !node.eyebrow.trim().is_empty() {
+        shapes.push(text_box(
+            &mut id,
+            &TextBox {
+                left: 685_800,
+                top: 274_320,
+                width: 10_795_000,
+                height: 320_000,
+                text: strip_markup(&node.eyebrow),
+                size: 1100,
+                bold: false,
+            },
+        ));
+    }
+    // The components, laid out by the node's own template.
+    let columns = component_columns(node);
+    for (index, component) in node.components.iter().enumerate() {
+        let (column, of) = columns[index];
+        let width = 10_795_000 / of as u32;
+        let left = 685_800 + width * column as u32;
+        shapes.push(text_box(
+            &mut id,
+            &TextBox {
+                left,
+                top: 1_600_000,
+                width,
+                height: 4_400_000,
+                text: component_text(component),
+                size: match component {
+                    Component::Metric { .. } | Component::Metrics { .. } => 2000,
+                    _ => 1300,
+                },
+                bold: false,
+            },
+        ));
+    }
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<p:sld xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{}</p:spTree></p:cSld></p:sld>",
+        shapes.join(""),
+    )
+}
+
+/// How many columns each component sits in, and which one: a
+/// `split_two_column` node puts its evidence beside its conclusion, a
+/// `metric_row` spreads its figures across the width, and everything else
+/// stacks.
+fn component_columns(node: &Node) -> Vec<(usize, usize)> {
+    let count = node.components.len();
+    match node.layout {
+        Layout::SplitTwoColumn | Layout::Comparison | Layout::MetricRow => (0..count)
+            .map(|index| (index.min(count - 1), count.max(1)))
+            .collect(),
+        _ => (0..count).map(|_| (0, 1)).collect(),
+    }
+}
+
+/// One component as the text a slide carries. A chart becomes its
+/// caption and its series as lines, which is what a static slide can
+/// hold without a chart engine.
+fn component_text(component: &Component) -> String {
+    match component {
+        Component::BulletList { items } => items
+            .iter()
+            .map(|item| format!("\u{2022} {}", strip_markup(item)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Component::Metric { value, label } => {
+            format!("{}\n{}", strip_markup(value), strip_markup(label))
+        }
+        Component::Metrics { items } => items
+            .iter()
+            .map(|(value, label)| format!("{}  {}", strip_markup(value), strip_markup(label)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Component::Steps { items } => items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| format!("{}. {}", index + 1, strip_markup(item)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Component::Contrast { left, right } => {
+            format!("{}\n\n{}", strip_markup(left), strip_markup(right))
+        }
+        Component::Quote { text, attribution } => {
+            format!(
+                "\u{201c}{}\u{201d}\n\u{2014} {}",
+                strip_markup(text),
+                strip_markup(attribution)
+            )
+        }
+        Component::Chart { caption, series } => {
+            let mut out = strip_markup(caption);
+            for (label, value) in series {
+                out.push_str(&format!(
+                    "\n{}: {}",
+                    strip_markup(label),
+                    format_number(*value)
+                ));
+            }
+            out
+        }
+        Component::Prose { text } => strip_markup(text),
+    }
+}
+
+/// One text box, as the geometry and the run it carries. The size is in
+/// hundredths of a point and the offsets in EMU, which is the unit every
+/// one of these attributes carries.
+struct TextBox {
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+    text: String,
+    size: u32,
+    bold: bool,
+}
+
+/// One text box rendered as a shape.
+fn text_box(id: &mut u32, box_at: &TextBox) -> String {
+    *id += 1;
+    let identifier = *id;
+    let TextBox {
+        left,
+        top,
+        width,
+        height,
+        size,
+        ..
+    } = *box_at;
+    let boldness = if box_at.bold { " b=\"1\"" } else { "" };
+    format!(
+        "<p:sp><p:nvSpPr><p:cNvPr id=\"{identifier}\" name=\"TextBox {identifier}\"/><p:cNvSpPr txBox=\"1\"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x=\"{left}\" y=\"{top}\"/><a:ext cx=\"{width}\" cy=\"{height}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr wrap=\"square\"><a:normAutofit/></a:bodyPr><a:p><a:r><a:rPr lang=\"en\" sz=\"{size}\"{boldness} dirty=\"0\"/><a:t>{}</a:t></a:r></a:p></p:txBody></p:sp>",
+        xml_escape(&box_at.text)
+    )
+}
+
+/// The markup a slide cannot carry: `**bold**` becomes the words, since a
+/// run-level emphasis needs a second `<a:r>` and the bold flag already
+/// says it for a headline.
+fn strip_markup(text: &str) -> String {
+    text.replace("**", "")
+}
+
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// A ZIP of `parts`, stored rather than deflated. Every reader accepts a
+/// stored entry, and the crate contract is no new dependency — so the
+/// container is written here rather than pulled in for one export.
+fn zip(parts: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut central: Vec<u8> = Vec::new();
+    let mut offset: u32 = 0;
+    for (name, bytes) in parts {
+        let crc = crc32(bytes);
+        let header = local_header(name, crc, bytes.len() as u32);
+        out.extend_from_slice(&header);
+        out.extend_from_slice(bytes);
+        central.extend_from_slice(&central_header(name, crc, bytes.len() as u32, offset));
+        offset += header.len() as u32 + bytes.len() as u32;
+    }
+    let central_start = out.len() as u32;
+    let central_len = central.len() as u32;
+    out.extend_from_slice(&central);
+    // The end-of-central-directory record.
+    out.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0]);
+    out.extend_from_slice(&(parts.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(parts.len() as u16).to_le_bytes());
+    out.extend_from_slice(&central_len.to_le_bytes());
+    out.extend_from_slice(&central_start.to_le_bytes());
+    out.extend_from_slice(&[0, 0]);
+    out
+}
+
+fn local_header(name: &str, crc: u32, size: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
+    out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+    out.extend_from_slice(&0u16.to_le_bytes()); // flags
+    out.extend_from_slice(&0u16.to_le_bytes()); // stored
+    out.extend_from_slice(&0u16.to_le_bytes()); // time
+    out.extend_from_slice(&0x0021u16.to_le_bytes()); // date
+    out.extend_from_slice(&crc.to_le_bytes());
+    out.extend_from_slice(&size.to_le_bytes());
+    out.extend_from_slice(&size.to_le_bytes());
+    out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes()); // extra
+    out.extend_from_slice(name.as_bytes());
+    out
+}
+
+fn central_header(name: &str, crc: u32, size: u32, offset: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+    out.extend_from_slice(&20u16.to_le_bytes()); // version made by
+    out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+    out.extend_from_slice(&0u16.to_le_bytes()); // flags
+    out.extend_from_slice(&0u16.to_le_bytes()); // stored
+    out.extend_from_slice(&0u16.to_le_bytes()); // time
+    out.extend_from_slice(&0x0021u16.to_le_bytes()); // date
+    out.extend_from_slice(&crc.to_le_bytes());
+    out.extend_from_slice(&size.to_le_bytes());
+    out.extend_from_slice(&size.to_le_bytes());
+    out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes()); // extra
+    out.extend_from_slice(&0u16.to_le_bytes()); // comment
+    out.extend_from_slice(&0u16.to_le_bytes()); // disk
+    out.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+    out.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+    out.extend_from_slice(&offset.to_le_bytes());
+    out.extend_from_slice(name.as_bytes());
+    out
+}
+
+/// CRC-32, the checksum every ZIP entry carries. The table is computed
+/// once on first use rather than spelled out.
+fn crc32(bytes: &[u8]) -> u32 {
+    static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let mut table = [0u32; 256];
+        for (index, slot) in table.iter_mut().enumerate() {
+            let mut value = index as u32;
+            for _ in 0..8 {
+                value = if value & 1 != 0 {
+                    0xedb8_8320 ^ (value >> 1)
+                } else {
+                    value >> 1
+                };
+            }
+            *slot = value;
+        }
+        table
+    });
+    let mut crc = 0xffff_ffffu32;
+    for byte in bytes {
+        crc = table[((crc ^ u32::from(*byte)) & 0xff) as usize] ^ (crc >> 8);
+    }
+    crc ^ 0xffff_ffff
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1022,6 +1423,135 @@ mod tests {
         let html = render(&flat);
         assert!(html.contains("height:0%"), "{html}");
         assert!(!html.contains("height:100%"), "{html}");
+    }
+
+    #[test]
+    fn the_export_is_a_zip_a_reader_can_open() {
+        let deck = deck(vec![
+            node(
+                "slide_01",
+                "Q3 growth came from regional expansion",
+                vec![
+                    Component::BulletList {
+                        items: vec!["**54% increase** in APAC sales".to_string()],
+                    },
+                    Component::Metric {
+                        value: "$4.2M".to_string(),
+                        label: "Net new ARR".to_string(),
+                    },
+                ],
+            ),
+            node(
+                "slide_02",
+                "The reserve covers two quarters at current burn",
+                vec![Component::BulletList {
+                    items: vec!["**18 months** of runway".to_string()],
+                }],
+            ),
+        ]);
+        let bytes = to_pptx(&deck);
+        // A ZIP starts with its local-file-header signature, and ends with
+        // the end-of-central-directory record.
+        assert_eq!(&bytes[..4], &[0x50, 0x4b, 0x03, 0x04], "the local header");
+        let tail = &bytes[bytes.len() - 22..];
+        assert_eq!(&tail[..4], &[0x50, 0x4b, 0x05, 0x06], "the EOCD");
+        // Two slides, so two entries past the fixed parts.
+        let entries = u16::from_le_bytes([tail[10], tail[11]]);
+        assert_eq!(
+            entries, 13,
+            "the fixed parts plus one slide and its rels each"
+        );
+
+        // Every part a PowerPoint-compatible reader needs is present.
+        let text = String::from_utf8_lossy(&bytes);
+        for part in [
+            "[Content_Types].xml",
+            "ppt/presentation.xml",
+            "ppt/slides/slide1.xml",
+            "ppt/slides/slide2.xml",
+            "ppt/slideMasters/slideMaster1.xml",
+            "ppt/slideLayouts/slideLayout1.xml",
+            "ppt/theme/theme1.xml",
+        ] {
+            assert!(text.contains(part), "{part} missing");
+        }
+        // The content rides as text, not a picture: the whole point of the
+        // export is that the owner can open it and edit it.
+        assert!(
+            text.contains("Q3 growth came from regional expansion"),
+            "{text}"
+        );
+        assert!(text.contains("54% increase"), "{text}");
+        assert!(text.contains("$4.2M"), "{text}");
+        // And the bold marker is stripped rather than shown.
+        assert!(!text.contains("**54%"), "{text}");
+    }
+
+    #[test]
+    fn a_slides_text_boxes_are_positioned_by_its_layout() {
+        // A split_two_column node's evidence sits beside its conclusion
+        // rather than wherever the writer put it, so the two components
+        // carry different horizontal offsets.
+        let split = node(
+            "slide_01",
+            "Growth came from two regions, not one",
+            vec![
+                Component::BulletList {
+                    items: vec!["**54% increase** in APAC".to_string()],
+                },
+                Component::Metric {
+                    value: "$4.2M".to_string(),
+                    label: "ARR".to_string(),
+                },
+            ],
+        );
+        let xml = slide(&split);
+        let offsets: Vec<u32> = xml
+            .match_indices("<a:off x=\"")
+            .filter_map(|(at, _)| {
+                xml[at + 10..]
+                    .split('"')
+                    .next()
+                    .and_then(|value| value.parse().ok())
+            })
+            .collect();
+        // The headline, the eyebrow-less body, and the two components.
+        assert_eq!(offsets.len(), 3, "{offsets:?}");
+        assert_ne!(
+            offsets[1], offsets[2],
+            "the two columns differ: {offsets:?}"
+        );
+
+        // A stacked layout keeps everything in one column. The layout has
+        // to be named explicitly: `node` defaults to split_two_column,
+        // which is the whole difference under test.
+        let mut stacked = node(
+            "slide_01",
+            "Everything on one frame, read at a glance",
+            vec![
+                Component::BulletList {
+                    items: vec!["**one** point".to_string()],
+                },
+                Component::Prose {
+                    text: "and a paragraph".to_string(),
+                },
+            ],
+        );
+        stacked.layout = Layout::MetricCallout;
+        let xml = slide(&stacked);
+        let stacked_offsets: Vec<u32> = xml
+            .match_indices("<a:off x=\"")
+            .filter_map(|(at, _)| {
+                xml[at + 10..]
+                    .split('"')
+                    .next()
+                    .and_then(|value| value.parse().ok())
+            })
+            .collect();
+        assert_eq!(
+            stacked_offsets[1], stacked_offsets[2],
+            "{stacked_offsets:?}"
+        );
     }
 
     #[test]

@@ -377,6 +377,19 @@ pub fn default_preferences() -> Vec<Preference> {
             ],
         },
         Preference {
+            // The vision workload: a task that carries an image. The
+            // owner's pinned multimodal model heads it — GLM-5.3-Flash
+            // declares text, image and video — and step-5-preview
+            // follows, whose own input declaration carries images. A
+            // workload with no vision model in its chain fails by name
+            // rather than silently sending an image to a text-only one.
+            workload: "vision",
+            candidates: vec![
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+                ("stepfun", "step-5-preview"),
+            ],
+        },
+        Preference {
             workload: "composed",
             candidates: vec![
                 ("blend1", "blend1"),
@@ -3043,7 +3056,9 @@ mod tests {
         assert_eq!(roster.pin, None);
         // The preference table and the gates are the compiled-in
         // defaults when no routing.json names any.
-        assert_eq!(roster.preferences.len(), 6);
+        // Seven, the vision workload among them: a task that carries an
+        // image is its own shape, not a guess at a text workload.
+        assert_eq!(roster.preferences.len(), 7);
         assert!((roster.gates.min_confidence - 0.6).abs() < 1e-9);
         let _ = std::fs::remove_dir_all(&home);
     }

@@ -2930,6 +2930,7 @@ mod tests {
                 "hard",
                 "prose",
                 "deep_context",
+                "vision",
                 "composed"
             ]
         );
