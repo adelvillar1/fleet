@@ -85,6 +85,7 @@
     paletteRows: document.getElementById('palette-rows'),
     paletteCount: document.getElementById('palette-count'),
     paletteOpen: document.getElementById('palette-open'),
+    themeToggle: document.getElementById('theme-toggle'),
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
     panelDelegation: document.getElementById('panel-delegation'),
@@ -2609,6 +2610,29 @@
     el.paletteInput.value = '';
     el.paletteInput.blur();
   }
+
+  // The theme. One attribute on the document element is the whole
+  // switch — the alias tier re-points under it and every component token
+  // follows — so there is one thing to set and nothing else to keep in
+  // step. Dark is the default; the choice is remembered.
+  function themeNow() {
+    return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  }
+
+  function setTheme(mode) {
+    document.documentElement.dataset.theme = mode;
+    var light = mode === 'light';
+    el.themeToggle.setAttribute('aria-label',
+      light ? 'switch to the dark theme' : 'switch to the light theme');
+    el.themeToggle.title = light ? 'switch to the dark theme' : 'switch to the light theme';
+    el.themeToggle.dataset.state = light ? 'light' : 'dark';
+    try { window.localStorage.setItem('fleet-theme', mode); } catch (error) { }
+  }
+
+  setTheme(themeNow());
+  el.themeToggle.addEventListener('click', function () {
+    setTheme(themeNow() === 'light' ? 'dark' : 'light');
+  });
 
   buildRail();
   setRail(railCollapsed() ? 'icons' : 'full');

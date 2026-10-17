@@ -5,6 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fleet</title>
 <link rel="stylesheet" href="/app.css">
+<script>
+  // The theme is set before the first paint, from the same storage the
+  // toggle writes, so a light-mode owner never sees a dark flash. Dark is
+  // the default: this is a console the owner leaves open beside the work.
+  // It hangs off the document element because that exists in the head,
+  // where a body attribute cannot be set yet.
+  try {
+    document.documentElement.dataset.theme =
+      window.localStorage.getItem('fleet-theme') === 'light' ? 'light' : 'dark';
+  } catch (error) {
+    document.documentElement.dataset.theme = 'dark';
+  }
+</script>
 </head>
 <body>
 <div class="face">
@@ -42,6 +55,10 @@
         </div>
       </dl>
       <span class="pill" id="state-pill" data-state="idle">idle</span>
+      <button class="theme-toggle" id="theme-toggle" type="button"
+              aria-label="switch to the light theme" title="switch to the light theme">
+        <span class="theme-mark" aria-hidden="true">◐</span>
+      </button>
       <button class="palette-open" id="palette-open" type="button"
               aria-label="jump to any surface" title="jump to any surface">
         <span class="palette-open-mark" aria-hidden="true">⌘</span>K

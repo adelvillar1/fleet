@@ -11,6 +11,27 @@
    DeepSeek blue is the accent. Dark, because this is a console the
    owner leaves open beside the work and not a poster. */
 
+:root[data-theme="light"] {
+  /* --- the light theme: the alias tier, re-pointed ----------------- */
+  /* The selector carries `:root` as well as the attribute so it outranks
+     the `:root` block above at equal order — an attribute selector alone
+     ties with `:root`, and the tie goes to whichever comes last, which
+     made the dark values win no matter what the attribute said. */
+  --dsw-alias-page: var(--dsw-static-paper-900);
+  --dsw-alias-surface: var(--dsw-static-paper-800);
+  --dsw-alias-surface-raised: var(--dsw-static-paper-700);
+  --dsw-alias-hairline: var(--dsw-static-hairline-on-light);
+  --dsw-alias-hairline-strong: var(--dsw-static-paper-500);
+  --dsw-alias-ink: var(--dsw-static-paper-100);
+  --dsw-alias-ink-secondary: var(--dsw-static-paper-300);
+  --dsw-alias-ink-tertiary: var(--dsw-static-paper-400);
+  --dsw-alias-ok: var(--dsw-static-ok-on-light);
+  --dsw-alias-down: var(--dsw-static-down-on-light);
+  --dsw-alias-warn: var(--dsw-static-warn-on-light);
+  --dsw-alias-accent-lift: var(--dsw-static-accent-text-on-light);
+  --shadow-lift: 0 8px 28px rgb(0 0 0 / 12%);
+}
+
 :root {
   /* --- the static palette: the reference, verbatim ------------------ */
   --dsw-static-deepseek-700: rgb(28, 66, 148);
@@ -27,27 +48,49 @@
   --dsw-static-ink-300: rgb(148, 140, 135);
   --dsw-static-ink-200: rgb(194, 187, 182);
   --dsw-static-ink-100: rgb(235, 231, 228);
-  --dsw-static-hairline-light: rgb(255 255 255 / 10%);
-  --dsw-static-ok-500: rgb(63, 185, 80);
-  --dsw-static-down-500: rgb(248, 81, 73);
-  --dsw-static-warn-500: rgb(210, 153, 34);
+  --dsw-static-hairline-on-dark: rgb(255 255 255 / 10%);
+  --dsw-static-ok-on-dark: rgb(63, 185, 80);
+  --dsw-static-down-on-dark: rgb(248, 81, 73);
+  --dsw-static-warn-on-dark: rgb(210, 153, 34);
+
+  /* The light ramp, beside the dark one: a warm paper rather than a cool
+     white, for the same reason the dark ramp is warm — a cool gray on a
+     light ground reads muddy too. The status colours are darkened
+     because they carry text (the pills, the tool status, the glyphs),
+     and a bright green that reads at 7:1 on black reads at 2.5:1 on
+     white. */
+  --dsw-static-paper-900: rgb(247, 244, 241);
+  --dsw-static-paper-800: rgb(255, 252, 250);
+  --dsw-static-paper-700: rgb(240, 236, 232);
+  --dsw-static-paper-600: rgb(222, 217, 212);
+  --dsw-static-paper-500: rgb(203, 197, 191);
+  --dsw-static-paper-400: rgb(120, 112, 106);
+  --dsw-static-paper-300: rgb(88, 81, 76);
+  --dsw-static-paper-200: rgb(52, 47, 44);
+  --dsw-static-paper-100: rgb(28, 25, 23);
+  --dsw-static-hairline-on-light: rgb(0 0 0 / 10%);
+  --dsw-static-ok-on-light: rgb(22, 122, 46);
+  --dsw-static-down-on-light: rgb(190, 45, 40);
+  --dsw-static-warn-on-light: rgb(150, 100, 12);
+  --dsw-static-accent-text-on-light: var(--dsw-static-deepseek-600);
 
   /* --- the alias tier: the meaning --------------------------------- */
   --dsw-alias-accent: var(--dsw-static-deepseek-500);
   --dsw-alias-accent-deep: var(--dsw-static-deepseek-600);
   --dsw-alias-accent-lift: var(--dsw-static-deepseek-400);
+  --shadow-lift: 0 8px 28px rgb(0 0 0 / 34%);
   --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-static-deepseek-500) 14%, transparent);
   --dsw-alias-page: var(--dsw-static-ink-900);
   --dsw-alias-surface: var(--dsw-static-ink-800);
   --dsw-alias-surface-raised: var(--dsw-static-ink-700);
-  --dsw-alias-hairline: var(--dsw-static-hairline-light);
+  --dsw-alias-hairline: var(--dsw-static-hairline-on-dark);
   --dsw-alias-hairline-strong: var(--dsw-static-ink-500);
   --dsw-alias-ink: var(--dsw-static-ink-100);
   --dsw-alias-ink-secondary: var(--dsw-static-ink-300);
   --dsw-alias-ink-tertiary: var(--dsw-static-ink-400);
-  --dsw-alias-ok: var(--dsw-static-ok-500);
-  --dsw-alias-down: var(--dsw-static-down-500);
-  --dsw-alias-warn: var(--dsw-static-warn-500);
+  --dsw-alias-ok: var(--dsw-static-ok-on-dark);
+  --dsw-alias-down: var(--dsw-static-down-on-dark);
+  --dsw-alias-warn: var(--dsw-static-warn-on-dark);
   --dsw-alias-gradient: linear-gradient(
     100deg,
     var(--dsw-static-deepseek-500),
@@ -260,6 +303,27 @@ body[data-rail="icons"] .rail-toggle-mark { transform: rotate(180deg); }
    the parallel path that makes the rail's grouping a convenience rather
    than a maze, and it is where settings live — deferred from first run
    rather than shown on it. */
+/* The theme toggle: one mark, one attribute. The half-filled circle is
+   the honest glyph for a switch between two grounds — it needs no icon
+   set shipped beside the binary, and it reads the same in both themes. */
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: var(--card-hairline);
+  border-radius: var(--card-radius-inner);
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  cursor: pointer;
+  transition: color 180ms ease-out, background 180ms ease-out;
+}
+
+.theme-toggle:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
+.theme-toggle[data-state="light"] { color: var(--dsw-alias-warn); }
+.theme-mark { font-size: 13px; line-height: 1; }
+
 .palette-open {
   display: flex;
   align-items: center;
