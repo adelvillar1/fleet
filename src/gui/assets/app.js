@@ -215,10 +215,13 @@
     paletteAt: 0,
     // The pane: which directory the tree is showing, which file is open,
     // and which of its two views is in front. The tree is one read per
-    // directory and the file is one read per open, so neither polls.
+    // directory and the file is one read per open, so neither polls. A
+    // deck the run built rides here too, because the pane is where it
+    // renders full-page.
     tree: null,
     treeAt: '',
     file: null,
+    deck: null,
     paneTab: 'files'
   };
 
@@ -2241,10 +2244,20 @@
     el.scrim.hidden = true;
   }
 
-  // The deck in the inspector: the rendered fragment, as the tool
-  // produced it. The fragment references the face's own tokens, so it
-  // inherits the theme switch — the same three-tier chain the rest of the
-  // surface uses.
+  // The deck, full-page in the pane. The fragment references the face's
+  // own tokens, so it inherits the theme switch — and because the browser
+  // is what renders it, a full-page view is also what makes a screenshot
+  // one keystroke, which is the image the `vision` tool grades.
+  function showDeck(event) {
+    face.file = null;
+    face.deck = event;
+    showPaneTab('preview');
+    openPane();
+    paintPreview();
+  }
+
+  // The deck in the inspector: the same fragment, beside the run that
+  // produced it.
   function inspectDeck(event) {
     openDrawer('a ' + event.project + ' of ' + event.nodes + ' nodes', [
       ['the deck', node('div', 'deck-frame', event.html || '')]
@@ -2456,7 +2469,9 @@
     // A deck's card opens the rendered deck rather than the raw event:
     // the fragment is the deliverable, and the raw JSON is the thing
     // nobody asked for.
-    if (event && event.type === 'deck') { inspectDeck(event); return; }
+    // A deck opens full-page rather than in the inspector: the browser
+    // renders it, so the pane is the surface it was made for.
+    if (event && event.type === 'deck') { showDeck(event); return; }
     inspect(event);
   });
 
@@ -2669,6 +2684,17 @@
   function paintPreview() {
     var read = face.file;
     el.panePreview.textContent = '';
+    // A deck the run built renders ahead of any file: it is the
+    // deliverable, and the pane is where it is readable.
+    if (face.deck && face.deck.html) {
+      var head = node('div', 'pane-file-head');
+      head.appendChild(node('span', 'pane-file-name', 'a ' + face.deck.project));
+      head.appendChild(node('span', 'pane-file-meta',
+        face.deck.nodes + ' node' + (face.deck.nodes === 1 ? '' : 's')));
+      el.panePreview.appendChild(head);
+      el.panePreview.appendChild(node('div', 'deck-frame', face.deck.html));
+      return;
+    }
     if (!read) {
       el.panePreview.appendChild(node('p', 'pane-empty',
         'Open a file from the tree to preview it here.'));

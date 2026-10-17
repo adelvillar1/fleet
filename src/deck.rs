@@ -667,6 +667,192 @@ fn escape(text: &str) -> String {
     out
 }
 
+// --- the layout grader -----------------------------------------------------
+
+/// The line height a component's text sets at, in pixels. Every estimate
+/// below is against this and the box height, because an estimate against
+/// an unknown width is a guess.
+const LINE_PX: f64 = 19.0;
+
+/// The height a component's box has, in pixels: the slide's body below
+/// the headline.
+const BOX_PX: f64 = 264.0;
+
+/// How many characters one line holds at the component size. The mono
+/// face is narrower than the sans, but a deck's prose is the sans, and an
+/// estimate that is one character pessimistic is an estimate that refuses
+/// nothing it should have caught.
+const CHARS_PER_LINE: usize = 52;
+
+/// One layout fault the grader found: the deck is structurally valid —
+/// [`check`] passed — and it will still render badly.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LayoutFault {
+    /// A component's text will not fit the box it renders in.
+    Overfull {
+        node: String,
+        /// Which component, by its position in the node.
+        component: usize,
+        /// The estimated lines against the lines the box holds.
+        lines: usize,
+        holds: usize,
+    },
+    /// One column of a multi-column node carries far more than the other,
+    /// so the node reads lopsided.
+    Unbalanced {
+        node: String,
+        /// The estimated line counts, heaviest first.
+        columns: Vec<usize>,
+    },
+    /// The headline sets to more lines than its own box holds, so it
+    /// collides with the components beneath it.
+    HeadlineOverflow {
+        node: String,
+        lines: usize,
+        holds: usize,
+    },
+}
+
+impl LayoutFault {
+    /// The fault as one line, the way every other refusal in this crate
+    /// reads.
+    pub fn line(&self) -> String {
+        match self {
+            LayoutFault::Overfull {
+                node,
+                component,
+                lines,
+                holds,
+            } => format!(
+                "`{node}`: component {component} sets to about {lines} lines in a box that holds {holds}"
+            ),
+            LayoutFault::Unbalanced { node, columns } => format!(
+                "`{node}`: the columns set to {columns:?} lines \u{2014} one side is carrying the node"
+            ),
+            LayoutFault::HeadlineOverflow { node, lines, holds } => format!(
+                "`{node}`: the headline sets to about {lines} lines in a box that holds {holds}"
+            ),
+        }
+    }
+}
+
+/// How many lines one component's text sets to at the column width. An
+/// empty component is one line, not zero: an empty box is a box.
+fn component_lines(component: &Component) -> usize {
+    let chars = match component {
+        Component::BulletList { items } => items
+            .iter()
+            .map(|item| item.chars().count() + 2)
+            .sum::<usize>(),
+        Component::Metric { value, label } => value.chars().count() + label.chars().count(),
+        Component::Metrics { items } => items
+            .iter()
+            .map(|(value, label)| value.chars().count() + label.chars().count() + 2)
+            .sum::<usize>(),
+        Component::Steps { items } => items
+            .iter()
+            .map(|item| item.chars().count() + 3)
+            .sum::<usize>(),
+        Component::Contrast { left, right } => left.chars().count().max(right.chars().count()),
+        Component::Quote { text, attribution } => {
+            text.chars().count() + attribution.chars().count() + 2
+        }
+        Component::Chart { caption, series } => {
+            caption.chars().count()
+                + series
+                    .iter()
+                    .map(|(label, _)| label.chars().count() + 8)
+                    .sum::<usize>()
+        }
+        Component::Prose { text } => text.chars().count(),
+    };
+    chars.div_ceil(CHARS_PER_LINE).max(1)
+}
+
+/// How many lines one node's headline sets to at the full node width.
+/// A headline is the widest text on the node, so it holds more per line
+/// than a component's column does.
+fn headline_lines(node: &Node) -> usize {
+    let chars = node.headline.chars().count();
+    chars.div_ceil(CHARS_PER_LINE * 2).max(1)
+}
+
+/// How many lines the headline's own box holds: two, at the size a
+/// headline sets at.
+const HEADLINE_HOLDS: usize = 2;
+
+/// The ratio at which two columns of one node read as lopsided. The
+/// heavier column sets to this many times the lighter one's lines.
+const UNBALANCED_RATIO: usize = 3;
+
+/// Grade one deck's layout: whether its text fits its boxes and its
+/// columns carry comparable weight.
+///
+/// This is the arithmetic half of the review, and it is deliberately not
+/// a model call. Fleet renders a deck as HTML, and nothing in a static
+/// Rust binary rasterizes HTML — so there is no screenshot for a vision
+/// model to look at, and a grader that needed one would be a grader that
+/// never runs. The three failure classes the blueprint names are all
+/// computable from the structure: overlap is lines-against-box, contrast
+/// is already guarded at build time by the theme guard, and balance is
+/// one column's weight against its neighbour's. What a vision model adds
+/// — and what the `vision` tool is for — is grading a screenshot the
+/// owner already has, which is the honest division.
+pub fn review(deck: &Deck) -> Vec<LayoutFault> {
+    let mut faults: Vec<LayoutFault> = Vec::new();
+    let holds = (BOX_PX / LINE_PX).floor() as usize;
+    for node in &deck.nodes {
+        if headline_lines(node) > HEADLINE_HOLDS {
+            faults.push(LayoutFault::HeadlineOverflow {
+                node: node.id.clone(),
+                lines: headline_lines(node),
+                holds: HEADLINE_HOLDS,
+            });
+        }
+        let lines: Vec<usize> = node.components.iter().map(component_lines).collect();
+        for (index, set) in lines.iter().enumerate() {
+            if *set > holds {
+                faults.push(LayoutFault::Overfull {
+                    node: node.id.clone(),
+                    component: index,
+                    lines: *set,
+                    holds,
+                });
+            }
+        }
+        // Balance, only where there is something to balance: a
+        // multi-column node whose heaviest column is several times its
+        // lightest reads as one column with a stub beside it.
+        if lines.len() > 1 {
+            let heaviest = lines.iter().copied().max().unwrap_or(0);
+            let lightest = lines.iter().copied().min().unwrap_or(0);
+            if lightest > 0 && heaviest >= lightest * UNBALANCED_RATIO {
+                let mut ranked = lines.clone();
+                ranked.sort_unstable_by(|left, right| right.cmp(left));
+                faults.push(LayoutFault::Unbalanced {
+                    node: node.id.clone(),
+                    columns: ranked,
+                });
+            }
+        }
+    }
+    faults
+}
+
+/// The review as one line the agent can read: what it found, or that the
+/// layout holds. The same shape [`summary`] takes.
+pub fn review_line(deck: &Deck) -> String {
+    let faults = review(deck);
+    if faults.is_empty() {
+        return format!(
+            "the layout holds \u{2014} {} node(s), every component fits its box",
+            deck.nodes.len()
+        );
+    }
+    let named: Vec<String> = faults.iter().map(LayoutFault::line).collect();
+    format!("refused: {} \u{2014} {}", faults.len(), named.join("; "))
+}
+
 // --- the PPTX export -------------------------------------------------------
 
 /// The export: one deck as a `.pptx` file's bytes.
@@ -1551,6 +1737,136 @@ mod tests {
         assert_eq!(
             stacked_offsets[1], stacked_offsets[2],
             "{stacked_offsets:?}"
+        );
+    }
+
+    #[test]
+    fn the_grader_refuses_a_component_that_will_not_fit_its_box() {
+        // A bullet list long enough to set past the box is refused with
+        // its estimated lines against the lines the box holds.
+        let long_items: Vec<String> = (0..12)
+            .map(|index| format!("**point {index}** carries a full sentence of explanation here"))
+            .collect();
+        let overfull = deck(vec![node(
+            "slide_01",
+            "Twelve points will not fit one box on one slide",
+            vec![Component::BulletList { items: long_items }],
+        )]);
+        let faults = review(&overfull);
+        assert!(
+            faults
+                .iter()
+                .any(|fault| matches!(fault, LayoutFault::Overfull { .. })),
+            "{:?}",
+            faults
+        );
+        // And a headline long enough to set past two lines is its own
+        // fault, named separately.
+        let long_headline = deck(vec![node(
+            "slide_01",
+            "This headline is long enough that it will set to three or four lines at the width the node has, which means it collides with every component rendered beneath it and the whole node becomes unreadable rather than merely dense",
+            vec![Component::Prose { text: "short".to_string() }],
+        )]);
+        assert!(
+            review(&long_headline)
+                .iter()
+                .any(|fault| matches!(fault, LayoutFault::HeadlineOverflow { .. })),
+            "{:?}",
+            review(&long_headline)
+        );
+    }
+
+    #[test]
+    fn the_grader_refuses_a_node_whose_columns_are_lopsided() {
+        // One column carrying ten times the other reads as one column
+        // with a stub beside it.
+        let lopsided = deck(vec![node(
+            "slide_01",
+            "One column is carrying this node and the other is a stub",
+            vec![
+                Component::BulletList {
+                    items: (0..10)
+                        .map(|index| format!("**point {index}** with a full sentence of its own"))
+                        .collect(),
+                },
+                Component::Metric {
+                    value: "1".to_string(),
+                    label: "x".to_string(),
+                },
+            ],
+        )]);
+        let faults = review(&lopsided);
+        let unbalanced = faults
+            .iter()
+            .find(|fault| matches!(fault, LayoutFault::Unbalanced { .. }))
+            .expect("the lopsided node is named");
+        assert!(
+            unbalanced.line().contains("one side is carrying"),
+            "{unbalanced:?}"
+        );
+
+        // Two columns of comparable weight pass.
+        let even = deck(vec![node(
+            "slide_01",
+            "Both columns carry their share of this node",
+            vec![
+                Component::BulletList {
+                    items: vec![
+                        "**first** point with a sentence".to_string(),
+                        "**second** point with a sentence".to_string(),
+                    ],
+                },
+                Component::BulletList {
+                    items: vec![
+                        "**third** point with a sentence".to_string(),
+                        "**fourth** point with a sentence".to_string(),
+                    ],
+                },
+            ],
+        )]);
+        assert!(
+            !review(&even)
+                .iter()
+                .any(|fault| matches!(fault, LayoutFault::Unbalanced { .. })),
+            "{:?}",
+            review(&even)
+        );
+    }
+
+    #[test]
+    fn a_well_proportioned_deck_passes_the_review() {
+        // The grader is the ceiling above the checker's floor: a deck
+        // that passes both is one that renders.
+        let good = deck(vec![
+            node(
+                "slide_01",
+                "Q3 growth came from regional expansion",
+                vec![
+                    Component::BulletList {
+                        items: vec![
+                            "**54% increase** in APAC sales velocity".to_string(),
+                            "**Cloud adoption** outpaced local deployments".to_string(),
+                        ],
+                    },
+                    Component::Metric {
+                        value: "$4.2M".to_string(),
+                        label: "Net new ARR".to_string(),
+                    },
+                ],
+            ),
+            node(
+                "slide_02",
+                "The reserve covers two quarters at current burn",
+                vec![Component::BulletList {
+                    items: vec!["**18 months** of runway at plan spend".to_string()],
+                }],
+            ),
+        ]);
+        assert!(review(&good).is_empty(), "{:?}", review(&good));
+        assert!(
+            review_line(&good).contains("the layout holds"),
+            "{}",
+            review_line(&good)
         );
     }
 

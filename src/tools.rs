@@ -289,10 +289,20 @@ pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
             truncated: false,
         });
     }
-    let summary = crate::deck::summary(&deck);
+    // The layout review, after the constraints pass: the checker is the
+    // floor and this is the ceiling, so a deck that renders badly is
+    // refused here rather than shipped and seen to be bad.
+    let faults = crate::deck::review(&deck);
+    if !faults.is_empty() {
+        let named: Vec<String> = faults.iter().map(|fault| fault.line()).collect();
+        return Ok(ToolOutcome {
+            output: format!("error: {}", named.join("; ")),
+            truncated: false,
+        });
+    }
     let html = crate::deck::render(&deck);
     Ok(ToolOutcome {
-        output: format!("{summary}\n\n{html}"),
+        output: format!("{}\n\n{}", crate::deck::review_line(&deck), html),
         truncated: false,
     })
 }
@@ -1916,9 +1926,9 @@ mod tests {
         let at = outcome
             .output
             .find("\n\n")
-            .expect("a summary and a fragment");
+            .expect("a review and a fragment");
         let (summary, html) = (&outcome.output[..at], &outcome.output[at + 2..]);
-        assert!(summary.contains("ready to render"), "{summary}");
+        assert!(summary.contains("the layout holds"), "{summary}");
         assert!(html.contains("class=\"deck\""), "{html}");
         assert!(html.contains("<strong>54% increase</strong>"), "{html}");
         assert!(!outcome.truncated);
