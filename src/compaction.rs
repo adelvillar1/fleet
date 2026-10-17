@@ -194,6 +194,7 @@ mod tests {
             content: Some("working".to_string()),
             tool_calls: Vec::new(),
             tool_call_id: None,
+            images: Vec::new(),
         }
     }
 
@@ -214,6 +215,7 @@ mod tests {
                 },
             }],
             tool_call_id: None,
+            images: Vec::new(),
         }
     }
 

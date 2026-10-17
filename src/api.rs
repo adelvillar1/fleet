@@ -1,7 +1,7 @@
 //! The DeepSeek chat-completions client: typed requests, function-calling
 //! tool declarations, and error mapping with actionable messages.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,16 +46,21 @@ pub enum Role {
 
 /// One conversation message. This type is both the wire format and the
 /// session-log payload, so a replayed log reproduces requests exactly.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The two directions are hand-written rather than derived: the content
+/// is a string on the ordinary message and a parts array on one carrying
+/// images, and a derive would have forced a single shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     pub role: Role,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
     /// Present on `Role::Tool`: the call id this message answers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// The images this message carries, beside its text. Empty on the
+    /// ordinary text message, and the wire format is then exactly what it
+    /// has always been — a string. With images it is the parts array,
+    /// which is the whole point of the custom serialization below.
+    pub images: Vec<ImageRef>,
 }
 
 impl Message {
@@ -66,6 +71,23 @@ impl Message {
             content: Some(content.into()),
             tool_calls: Vec::new(),
             tool_call_id: None,
+            images: Vec::new(),
+        }
+    }
+
+    /// A text message carrying images. The text is the instruction the
+    /// images answer, which is the shape every vision endpoint takes.
+    pub fn text_with_images(
+        role: Role,
+        content: impl Into<String>,
+        images: Vec<ImageRef>,
+    ) -> Message {
+        Message {
+            role,
+            content: Some(content.into()),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            images,
         }
     }
 
@@ -76,8 +98,213 @@ impl Message {
             content: Some(content.into()),
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id.into()),
+            images: Vec::new(),
         }
     }
+}
+
+/// One image a message carries: its media type and its raw bytes. The
+/// bytes are base64-encoded on the wire, which is the only form every
+/// OpenAI-compatible endpoint accepts — and every provider on the roster
+/// is one, so there is one image format here rather than one per
+/// provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageRef {
+    /// The IANA media type: `image/png`, `image/jpeg`.
+    pub media: String,
+    /// The raw bytes, encoded on the way out.
+    pub data: Vec<u8>,
+}
+
+impl ImageRef {
+    /// One image from its media type and bytes.
+    pub fn new(media: impl Into<String>, data: Vec<u8>) -> ImageRef {
+        ImageRef {
+            media: media.into(),
+            data,
+        }
+    }
+
+    /// One PNG.
+    pub fn png(data: Vec<u8>) -> ImageRef {
+        ImageRef::new("image/png", data)
+    }
+
+    /// The data URL this image rides as on the wire.
+    fn data_url(&self) -> String {
+        format!("data:{};base64,{}", self.media, base64(&self.data))
+    }
+
+    /// One image read back off a data URL, or `None` for a URL that is
+    /// not one — an image that arrived by http reference rather than
+    /// inline bytes is a different thing, and a fact the log should not
+    /// pretend to hold.
+    fn from_data_url(url: &str) -> Option<ImageRef> {
+        let rest = url.strip_prefix("data:")?;
+        let (head, encoded) = rest.split_once(";base64,")?;
+        Some(ImageRef {
+            media: head.to_string(),
+            data: decode_base64(encoded)?,
+        })
+    }
+}
+
+/// Base64, standard alphabet with padding. The one encoding an image
+/// needs, and the crate contract is no new dependency for it.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let packed = (u32::from(chunk[0]) << 16)
+            | (u32::from(chunk.get(1).copied().unwrap_or(0)) << 8)
+            | u32::from(chunk.get(2).copied().unwrap_or(0));
+        for at in 0..4 {
+            if at <= chunk.len() {
+                let index = ((packed >> (18 - at * 6)) & 0x3f) as usize;
+                out.push(ALPHABET[index] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// `Message` serializes its content one of two ways, and which one is the
+/// whole design: with no images it is the string it has always been, so a
+/// text message's wire format and its log payload are unchanged; with
+/// images it is the parts array every OpenAI-compatible endpoint reads.
+/// Deriving both directions would have forced one shape or the other.
+impl Serialize for Message {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(5))?;
+        map.serialize_entry("role", &self.role)?;
+        if self.images.is_empty() {
+            map.serialize_entry("content", &self.content)?;
+        } else {
+            let mut parts: Vec<serde_json::Value> = Vec::new();
+            if let Some(text) = &self.content {
+                parts.push(serde_json::json!({"type": "text", "text": text}));
+            }
+            for image in &self.images {
+                parts.push(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": image.data_url()},
+                }));
+            }
+            map.serialize_entry("content", &parts)?;
+        }
+        if !self.tool_calls.is_empty() {
+            map.serialize_entry("tool_calls", &self.tool_calls)?;
+        }
+        if let Some(id) = &self.tool_call_id {
+            map.serialize_entry("tool_call_id", id)?;
+        }
+        map.end()
+    }
+}
+
+/// The read half, which accepts either shape: a string is text, an array
+/// is parts, and an image part is read back into its media type and its
+/// bytes so the log holds what was sent rather than a derived URL.
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Content {
+            Text(String),
+            Parts(Vec<Part>),
+        }
+        #[derive(Deserialize)]
+        struct Part {
+            #[serde(rename = "type")]
+            kind: String,
+            text: Option<String>,
+            image_url: Option<ImageUrl>,
+        }
+        #[derive(Deserialize)]
+        struct ImageUrl {
+            url: String,
+        }
+        #[derive(Deserialize)]
+        struct Raw {
+            role: Role,
+            content: Option<Content>,
+            #[serde(default)]
+            tool_calls: Vec<ToolCall>,
+            #[serde(default)]
+            tool_call_id: Option<String>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let (content, images) = match raw.content {
+            None => (None, Vec::new()),
+            Some(Content::Text(text)) => (Some(text), Vec::new()),
+            Some(Content::Parts(parts)) => {
+                let mut text: Option<String> = None;
+                let mut images: Vec<ImageRef> = Vec::new();
+                for part in parts {
+                    match part.kind.as_str() {
+                        "text" => text = part.text,
+                        "image_url" => {
+                            if let Some(url) = part.image_url {
+                                if let Some(image) = ImageRef::from_data_url(&url.url) {
+                                    images.push(image);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                (text, images)
+            }
+        };
+        Ok(Message {
+            role: raw.role,
+            content,
+            tool_calls: raw.tool_calls,
+            tool_call_id: raw.tool_call_id,
+            images,
+        })
+    }
+}
+
+/// Base64's inverse, for reading a logged image back. `None` for input
+/// that is not base64, so a malformed log names itself rather than
+/// silently decoding to nothing.
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    fn value(character: u8) -> Option<u8> {
+        match character {
+            b'A'..=b'Z' => Some(character - b'A'),
+            b'a'..=b'z' => Some(character - b'a' + 26),
+            b'0'..=b'9' => Some(character - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let bytes: Vec<u8> = text
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        let mut packed = 0u32;
+        for (at, byte) in chunk.iter().enumerate() {
+            if *byte == b'=' {
+                break;
+            }
+            packed |= u32::from(value(*byte)?) << (18 - at * 6);
+        }
+        out.push((packed >> 16) as u8);
+        if chunk.len() > 2 && chunk[2] != b'=' {
+            out.push((packed >> 8) as u8);
+        }
+        if chunk.len() > 3 && chunk[3] != b'=' {
+            out.push(packed as u8);
+        }
+    }
+    Some(out)
 }
 
 /// A function-calling tool declaration sent with a request.
@@ -447,6 +674,7 @@ impl Client {
                     content: (!content.is_empty()).then_some(content),
                     tool_calls,
                     tool_call_id: None,
+                    images: Vec::new(),
                 },
                 finish_reason: usage.finish_reason.clone(),
             }],
@@ -645,6 +873,107 @@ fn excerpt(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_text_message_serializes_as_the_string_it_always_was() {
+        // The whole design: a message with no images rides the wire
+        // exactly as it did before, so nothing downstream and no stored
+        // log changes shape.
+        let message = Message::text(Role::User, "hello");
+        let json = serde_json::to_value(&message).expect("serialises");
+        assert_eq!(json["role"], "user");
+        assert_eq!(json["content"], "hello");
+        assert!(json.get("images").is_none(), "{json}");
+        assert!(json.get("tool_calls").is_none(), "{json}");
+        // And it reads back.
+        let back: Message = serde_json::from_value(json).expect("deserialises");
+        assert_eq!(back, message);
+    }
+
+    #[test]
+    fn an_image_message_rides_the_parts_array_every_endpoint_reads() {
+        let message = Message::text_with_images(
+            Role::User,
+            "what is in this diagram?",
+            vec![ImageRef::png(vec![
+                0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a,
+            ])],
+        );
+        let json = serde_json::to_value(&message).expect("serialises");
+        let parts = json["content"].as_array().expect("the parts array");
+        assert_eq!(parts.len(), 2, "{json}");
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "what is in this diagram?");
+        assert_eq!(parts[1]["type"], "image_url");
+        let url = parts[1]["image_url"]["url"].as_str().expect("the data url");
+        assert!(url.starts_with("data:image/png;base64,"), "{url}");
+        // The PNG's own eight-byte signature, base64-encoded.
+        assert!(url.ends_with("iVBORw0KGgo="), "{url}");
+    }
+
+    #[test]
+    fn an_image_message_round_trips_through_the_log() {
+        // The log holds what was sent, not a derived URL: read back, the
+        // bytes are the bytes.
+        let original = Message::text_with_images(
+            Role::User,
+            "look",
+            vec![ImageRef::new("image/jpeg", vec![1, 2, 3, 4, 5])],
+        );
+        let text = serde_json::to_string(&original).expect("serialises");
+        let back: Message = serde_json::from_str(&text).expect("reads back");
+        assert_eq!(back, original);
+        assert_eq!(back.images[0].media, "image/jpeg");
+        assert_eq!(back.images[0].data, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn base64_round_trips_and_pads() {
+        // The RFC's own test vectors.
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foob"), "Zm9vYg==");
+        assert_eq!(base64(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        // And the inverse agrees, including the padded cases.
+        for input in [
+            b"" as &[u8],
+            b"f",
+            b"fo",
+            b"foo",
+            b"foob",
+            b"fooba",
+            b"foobar",
+        ] {
+            assert_eq!(
+                decode_base64(&base64(input)).as_deref(),
+                Some(input),
+                "{input:?}"
+            );
+        }
+        // Input that is not base64 names itself rather than decoding to
+        // nothing.
+        assert_eq!(decode_base64("!!!!"), None);
+    }
+
+    #[test]
+    fn an_image_that_arrived_by_url_is_not_pretended_to_be_inline() {
+        // A part carrying an http reference is not inline bytes, so the
+        // read half drops it rather than storing a URL as though it were
+        // data.
+        let json = serde_json::json!({
+            "role": "user",
+            "content": [{
+                "type": "image_url",
+                "image_url": {"url": "https://example.com/a.png"}
+            }]
+        });
+        let back: Message = serde_json::from_value(json).expect("reads back");
+        assert!(back.images.is_empty(), "{back:?}");
+        assert_eq!(back.content, None);
+    }
 
     #[test]
     fn excerpt_keeps_char_boundaries() {

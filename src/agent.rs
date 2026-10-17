@@ -4971,6 +4971,7 @@ You are auditing a change. Read the diff before you judge it.
                     ),
                 ],
                 tool_call_id: None,
+                images: Vec::new(),
             })
             .unwrap();
         agent
@@ -5025,6 +5026,7 @@ You are auditing a change. Read the diff before you judge it.
                 content: None,
                 tool_calls: vec![call("c1", "read_file", r#"{"path":"docs/ecosystem.md"}"#)],
                 tool_call_id: None,
+                images: Vec::new(),
             })
             .unwrap();
         agent
@@ -5045,6 +5047,7 @@ You are auditing a change. Read the diff before you judge it.
                     r#"{"command":"grep -n the_pin src/route.rs"}"#,
                 )],
                 tool_call_id: None,
+                images: Vec::new(),
             })
             .unwrap();
         agent
@@ -5088,6 +5091,7 @@ You are auditing a change. Read the diff before you judge it.
                     r#"{"command":"grep -n the_pin src/route.rs"}"#,
                 )],
                 tool_call_id: None,
+                images: Vec::new(),
             })
             .unwrap();
         agent
@@ -5412,6 +5416,7 @@ You are auditing a change. Read the diff before you judge it.
                 content: Some("third".into()),
                 tool_calls: Vec::new(),
                 tool_call_id: None,
+                images: Vec::new(),
             })
             .unwrap();
         assert_eq!(agent.message_turns.last().copied(), Some(3));
@@ -5796,6 +5801,7 @@ You are auditing a change. Read the diff before you judge it.
                 content: None,
                 tool_calls: calls.clone(),
                 tool_call_id: None,
+                images: Vec::new(),
             })
             .unwrap();
         agent.execute_calls(&calls).await.unwrap();

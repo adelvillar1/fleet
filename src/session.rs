@@ -452,6 +452,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
                     content: content.clone(),
                     tool_calls: tool_calls.clone(),
                     tool_call_id: None,
+                    images: Vec::new(),
                 });
                 turns.push(next_turn);
                 next_turn += 1;
