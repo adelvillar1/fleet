@@ -71,8 +71,8 @@
   // instant answer and semantically against these descriptions when the
   // machine's embedding backend is up.
   var COMMANDS = [
-    ['theme', ['dark', 'light', 'mode'], 'switch between the light and dark themes',
-      function () { setTheme(themeNow() === 'light' ? 'dark' : 'light'); }],
+    ['theme', ['paper', 'graphite', 'contrast', 'mode'], 'choose a theme \u2014 console, paper, graphite or contrast',
+      function () { openThemes(); }],
     ['pane', ['files', 'code', 'preview', 'explore'], 'open or close the files and deliverables pane',
       function () { if (el.pane.hidden) openPane(); else closePane(); }],
     ['go', ['jump', 'open'], 'jump to a surface by name',
