@@ -11,7 +11,7 @@
    DeepSeek blue is the accent. Dark, because this is a console the
    owner leaves open beside the work and not a poster. */
 
-:root[data-theme="light"] {
+:root[data-theme="paper"] {
   /* --- the light theme: the alias tier, re-pointed ----------------- */
   /* The selector carries `:root` as well as the attribute so it outranks
      the `:root` block above at equal order — an attribute selector alone
@@ -32,6 +32,43 @@
   --shadow-lift: 0 8px 28px rgb(0 0 0 / 12%);
 }
 
+:root[data-theme="graphite"] {
+  /* A cool neutral dark. Everything the warm console theme is, one hue
+     over — the alias tier is the only thing that moves. */
+  --dsw-alias-page: var(--dsw-static-graph-900);
+  --dsw-alias-surface: var(--dsw-static-graph-800);
+  --dsw-alias-surface-raised: var(--dsw-static-graph-700);
+  --dsw-alias-hairline: var(--dsw-static-hairline-on-dark);
+  --dsw-alias-hairline-strong: var(--dsw-static-graph-500);
+  --dsw-alias-ink: var(--dsw-static-graph-100);
+  --dsw-alias-ink-secondary: var(--dsw-static-graph-300);
+  --dsw-alias-ink-tertiary: var(--dsw-static-graph-400);
+  --dsw-alias-ok: var(--dsw-static-ok-on-dark);
+  --dsw-alias-down: var(--dsw-static-down-on-dark);
+  --dsw-alias-warn: var(--dsw-static-warn-on-dark);
+  --dsw-alias-accent-lift: var(--dsw-static-deepseek-400);
+  --shadow-lift: 0 8px 28px rgb(0 0 0 / 34%);
+}
+
+:root[data-theme="contrast"] {
+  /* The accessibility theme. Pure white ground, near-black ink, and a
+     hairline strong enough to see — the quiet look traded for the
+     maximum separation the ratios allow. */
+  --dsw-alias-page: var(--dsw-static-contrast-page);
+  --dsw-alias-surface: var(--dsw-static-contrast-surface);
+  --dsw-alias-surface-raised: var(--dsw-static-contrast-raised);
+  --dsw-alias-hairline: var(--dsw-static-contrast-hairline);
+  --dsw-alias-hairline-strong: rgb(0 0 0 / 45%);
+  --dsw-alias-ink: var(--dsw-static-contrast-ink);
+  --dsw-alias-ink-secondary: var(--dsw-static-contrast-secondary);
+  --dsw-alias-ink-tertiary: var(--dsw-static-contrast-tertiary);
+  --dsw-alias-ok: var(--dsw-static-ok-on-contrast);
+  --dsw-alias-down: var(--dsw-static-down-on-contrast);
+  --dsw-alias-warn: var(--dsw-static-warn-on-contrast);
+  --dsw-alias-accent-lift: var(--dsw-static-contrast-accent-text);
+  --shadow-lift: 0 4px 14px rgb(0 0 0 / 18%);
+}
+
 :root {
   /* --- the static palette: the reference, verbatim ------------------ */
   --dsw-static-deepseek-700: rgb(28, 66, 148);
@@ -44,7 +81,7 @@
   --dsw-static-ink-700: rgb(29, 25, 24);
   --dsw-static-ink-600: rgb(38, 33, 31);
   --dsw-static-ink-500: rgb(52, 46, 43);
-  --dsw-static-ink-400: rgb(134, 124, 118);
+  --dsw-static-ink-400: rgb(142, 132, 126);
   --dsw-static-ink-300: rgb(148, 140, 135);
   --dsw-static-ink-200: rgb(194, 187, 182);
   --dsw-static-ink-100: rgb(235, 231, 228);
@@ -64,15 +101,42 @@
   --dsw-static-paper-700: rgb(240, 236, 232);
   --dsw-static-paper-600: rgb(222, 217, 212);
   --dsw-static-paper-500: rgb(203, 197, 191);
-  --dsw-static-paper-400: rgb(120, 112, 106);
+  --dsw-static-paper-400: rgb(104, 96, 90);
   --dsw-static-paper-300: rgb(88, 81, 76);
   --dsw-static-paper-200: rgb(52, 47, 44);
   --dsw-static-paper-100: rgb(28, 25, 23);
   --dsw-static-hairline-on-light: rgb(0 0 0 / 10%);
   --dsw-static-ok-on-light: rgb(22, 122, 46);
   --dsw-static-down-on-light: rgb(190, 45, 40);
-  --dsw-static-warn-on-light: rgb(150, 100, 12);
+  --dsw-static-warn-on-light: rgb(132, 88, 8);
   --dsw-static-accent-text-on-light: var(--dsw-static-deepseek-600);
+
+  /* The graphite ramp: a cool neutral, for an owner who finds the warm
+     dark too brown. Same discipline — low saturation, monotonic
+     luminance, no pure black or white. */
+  --dsw-static-graph-900: rgb(13, 15, 18);
+  --dsw-static-graph-800: rgb(19, 22, 26);
+  --dsw-static-graph-700: rgb(26, 30, 35);
+  --dsw-static-graph-500: rgb(58, 66, 77);
+  --dsw-static-graph-400: rgb(132, 142, 155);
+  --dsw-static-graph-300: rgb(148, 158, 170);
+  --dsw-static-graph-200: rgb(192, 200, 210);
+  --dsw-static-graph-100: rgb(232, 238, 244);
+
+  /* The contrast ramp: pure ground, near-pure ink. This is the
+     accessibility theme, and it trades the quiet look for the maximum
+     separation the WCAG ratios allow. */
+  --dsw-static-contrast-page: rgb(255, 255, 255);
+  --dsw-static-contrast-surface: rgb(255, 255, 255);
+  --dsw-static-contrast-raised: rgb(238, 238, 238);
+  --dsw-static-contrast-ink: rgb(0, 0, 0);
+  --dsw-static-contrast-secondary: rgb(38, 38, 38);
+  --dsw-static-contrast-tertiary: rgb(70, 70, 70);
+  --dsw-static-contrast-hairline: rgb(0 0 0 / 20%);
+  --dsw-static-contrast-accent-text: rgb(20, 60, 150);
+  --dsw-static-ok-on-contrast: rgb(0, 104, 32);
+  --dsw-static-down-on-contrast: rgb(176, 20, 20);
+  --dsw-static-warn-on-contrast: rgb(124, 82, 6);
 
   /* --- the alias tier: the meaning --------------------------------- */
   --dsw-alias-accent: var(--dsw-static-deepseek-500);
@@ -330,8 +394,58 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 
 .theme-toggle:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
-.theme-toggle[data-state="light"] { color: var(--dsw-alias-warn); }
 .theme-mark { font-size: 13px; line-height: 1; }
+
+/* The theme picker. The same shape the commands use, so one interaction
+   pattern serves both: a row per choice, the current one marked, one
+   click to take it. */
+.themes {
+  position: fixed;
+  z-index: 41;
+  top: 52px;
+  right: 12px;
+  display: grid;
+  gap: 1px;
+  width: min(340px, calc(100vw - 24px));
+  padding: 5px;
+  border: var(--card-hairline);
+  border-radius: var(--card-radius);
+  background: var(--dsw-alias-surface);
+  box-shadow: var(--shadow-lift);
+}
+
+.themes[hidden] { display: none; }
+
+.theme-row {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--card-radius-inner);
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.theme-row:hover, .theme-row[aria-selected="true"] {
+  background: var(--dsw-alias-surface-raised);
+}
+
+.theme-row[aria-selected="true"] { color: var(--dsw-alias-ink); }
+
+.theme-row-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-accent-lift);
+}
+
+.theme-row[aria-selected="true"] .theme-row-name { color: var(--dsw-alias-ink); }
+
+.theme-row-said { color: var(--dsw-alias-ink-tertiary); font-size: 11px; }
 
 .palette-open {
   display: flex;

@@ -31,6 +31,9 @@ pub enum Entry {
     /// something the model said — the run belongs to a job, in a log
     /// of its own, never a turn in this conversation.
     Cron(CronCard),
+    /// One deck the run built. The browser face renders the fragment; a
+    /// terminal carries the fact that it exists and its shape.
+    Deck(DeckCard),
 }
 
 /// One tool call as a card: name, one-line summary, a status dot, and the
@@ -90,6 +93,17 @@ pub struct CronCard {
     pub detail: String,
     /// The session log the run wrote, when it got as far as one.
     pub session: Option<String>,
+}
+
+/// One deck the run built, as a terminal carries it: the kind, the
+/// size, and where to see it. The fragment itself rides the event log
+/// for the browser face, which can render it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeckCard {
+    /// `presentation`, `infographic` or `poster`.
+    pub project: String,
+    /// How many nodes it carries.
+    pub nodes: usize,
 }
 
 /// Where a tool call stands.
@@ -581,6 +595,20 @@ impl App {
                 self.flush_streaming();
                 self.status.turn = turn;
                 self.status.working = true;
+            }
+            // The browser face renders a deck; a terminal cannot. The
+            // deck still lands as its own card-shaped line so the run
+            // that produced it reads as having produced something, and
+            // the fragment itself stays in the log for the browser.
+            UiEvent::Deck { project, nodes, .. } => {
+                // The browser face renders a deck; a terminal cannot. The
+                // deck still lands as its own card, the shape a cron fire
+                // uses — a fact about the run rather than model text — so
+                // the run that produced it reads as having produced
+                // something. The fragment itself stays in the log for the
+                // browser.
+                self.flush_streaming();
+                self.entries.push(Entry::Deck(DeckCard { project, nodes }));
             }
             UiEvent::Usage { .. } => {
                 // The browser face reads this one: it has no finished

@@ -120,6 +120,7 @@
     paneFiles: document.getElementById('pane-files'),
     panePreviewPanel: document.getElementById('pane-preview'),
     themeToggle: document.getElementById('theme-toggle'),
+    themes: document.getElementById('themes'),
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
     panelDelegation: document.getElementById('panel-delegation'),
@@ -3081,28 +3082,63 @@
     el.paletteInput.blur();
   }
 
+  // The theme set. Each one is the alias tier re-pointed, so a theme is
+  // one block of custom properties and nothing else moves — the component
+  // tokens read the aliases, which is the whole reason the chain has
+  // three tiers. Every theme's text tokens clear 4.5:1 against all three
+  // of its surfaces; the contrast theme is the accessibility one and
+  // trades the quiet look for the maximum separation.
+  var THEMES = [
+    ['console', 'console', 'warm dark \u00b7 the default, a console left open beside the work'],
+    ['paper', 'paper', 'warm light \u00b7 the same structure over a warm paper ground'],
+    ['graphite', 'graphite', 'cool dark \u00b7 for an owner who finds the warm dark too brown'],
+    ['contrast', 'contrast', 'high contrast \u00b7 pure ground, near-black ink, the accessibility theme']
+  ];
+
   // The theme. One attribute on the document element is the whole
   // switch — the alias tier re-points under it and every component token
   // follows — so there is one thing to set and nothing else to keep in
-  // step. Dark is the default; the choice is remembered.
+  // step. Console is the default; the choice is remembered.
   function themeNow() {
-    return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+    var now = document.documentElement.dataset.theme;
+    return THEMES.some(function (theme) { return theme[0] === now; }) ? now : 'console';
   }
 
   function setTheme(mode) {
     document.documentElement.dataset.theme = mode;
-    var light = mode === 'light';
-    el.themeToggle.setAttribute('aria-label',
-      light ? 'switch to the dark theme' : 'switch to the light theme');
-    el.themeToggle.title = light ? 'switch to the dark theme' : 'switch to the light theme';
-    el.themeToggle.dataset.state = light ? 'light' : 'dark';
+    el.themeToggle.dataset.theme = mode;
+    var named = THEMES.filter(function (theme) { return theme[0] === mode; })[0];
+    el.themeToggle.setAttribute('aria-label', 'choose a theme \u2014 now ' + (named ? named[1] : mode));
+    el.themeToggle.title = 'choose a theme \u2014 now ' + (named ? named[1] : mode);
     try { window.localStorage.setItem('fleet-theme', mode); } catch (error) { }
   }
 
   setTheme(themeNow());
-  el.themeToggle.addEventListener('click', function () {
-    setTheme(themeNow() === 'light' ? 'dark' : 'light');
-  });
+  // The toggle opens the picker rather than flipping: with four themes a
+  // blind cycle is a guess, and a one-click choice is not. The picker is
+  // the same shape the commands use, so one interaction pattern serves
+  // both.
+  el.themeToggle.addEventListener('click', function () { openThemes(); });
+
+  function openThemes() {
+    el.themes.textContent = '';
+    THEMES.forEach(function (theme) {
+      var row = node('button', 'theme-row');
+      row.type = 'button';
+      row.dataset.theme = theme[0];
+      row.appendChild(node('span', 'theme-row-name', theme[1]));
+      row.appendChild(node('span', 'theme-row-said', theme[2]));
+      if (themeNow() === theme[0]) row.setAttribute('aria-selected', 'true');
+      row.addEventListener('click', function () {
+        setTheme(theme[0]);
+        closeThemes();
+      });
+      el.themes.appendChild(row);
+    });
+    el.themes.hidden = false;
+  }
+
+  function closeThemes() { el.themes.hidden = true; }
 
   // The pane's controls. Its shortcut is cmd+backslash — the editor
   // convention for a side pane — and Esc from a pane with nothing open

@@ -1201,6 +1201,16 @@ fn describe(event: &UiEvent) -> Value {
         UiEvent::SkillsLoaded { loaded, skipped } => {
             json!({"type": "skills", "loaded": loaded, "skipped": skipped})
         }
+        UiEvent::Deck {
+            project,
+            nodes,
+            html,
+        } => json!({
+            "type": "deck",
+            "project": project,
+            "nodes": nodes,
+            "html": html,
+        }),
         UiEvent::Subagent {
             goal,
             session,
@@ -1917,6 +1927,48 @@ mod tests {
         // The dotenv is refused by name, with the reason the pane shows.
         let dotenv = bridge.file(".env").await;
         assert_eq!(dotenv["refused"][0], "a credential file is never served");
+    }
+
+    /// A deck rides the event log the way every other intelligence card
+    /// does: the agent emits it, `describe` shapes it, and the page
+    /// reduces it out of the one log. The fragment rides the event rather
+    /// than the tool result the model reads, so the two audiences get
+    /// what each asked for.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_deck_rides_the_event_log_with_its_fragment() {
+        let (bridge, sources, _door) = bridge().await;
+        sources
+            .ui
+            .send(UiEvent::Deck {
+                project: "presentation".to_string(),
+                nodes: 2,
+                html: "<section class=\"deck\" data-type=\"presentation\">x</section>".to_string(),
+            })
+            .expect("the deck lands");
+        // The fan-out is a task of the caller's, so the event needs a
+        // moment to cross it.
+        for _ in 0..50 {
+            let events = bridge.state()["events"]
+                .as_array()
+                .map(Vec::len)
+                .unwrap_or(0);
+            if events > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let document = bridge.state();
+        let events = document["events"].as_array().expect("the event log");
+        let deck = events
+            .iter()
+            .find(|event| event["type"] == "deck")
+            .expect("the deck event");
+        assert_eq!(deck["project"], "presentation");
+        assert_eq!(deck["nodes"], 2);
+        assert_eq!(
+            deck["html"],
+            "<section class=\"deck\" data-type=\"presentation\">x</section>"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

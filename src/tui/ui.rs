@@ -2136,6 +2136,37 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             }
             lines
         }
+        Entry::Deck(card) => {
+            // A deck is the same two-line family: a short settled line
+            // naming the verb and the kind, and the shape wrapped under
+            // it. A terminal cannot render the fragment — the browser
+            // face does — so the card says what was built and where to
+            // see it, and the fragment itself rides the log.
+            let mut lines = vec![Line::from(vec![
+                Span::styled(" \u{25c7} ", Style::new().fg(palette::ACCENT)),
+                Span::styled(
+                    "built",
+                    Style::new()
+                        .fg(palette::ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ", Style::new()),
+                Span::styled(
+                    format!("a {} of {} node(s)", card.project, card.nodes),
+                    Style::new().fg(palette::TEXT),
+                ),
+            ])];
+            for chunk in wrap(
+                "open the browser face to see it",
+                width.saturating_sub(4).max(8),
+            ) {
+                lines.push(Line::from(vec![
+                    Span::styled("   \u{2514} ", Style::new().fg(palette::DIM)),
+                    Span::styled(chunk, Style::new().fg(palette::DIM)),
+                ]));
+            }
+            lines
+        }
         Entry::Cron(card) => {
             // A scheduled fire is the same family again, in the same
             // two-line shape as the compaction card: a short settled

@@ -179,6 +179,91 @@ pub fn use_skill_spec() -> ToolSpec {
     )
 }
 
+/// The model-visible name of the deck tool.
+pub const DECK_TOOL: &str = "deck";
+
+/// The request declaration for `deck`: one structured deck, checked and
+/// rendered.
+///
+/// The description names the constraints as the tool's own contract,
+/// because a model that knows the checker refuses will build to it — and
+/// a refusal is a fixable answer rather than a failure. The argument is
+/// the deck itself, so the schema points at the interchange rather than
+/// repeating it.
+pub fn deck_spec() -> ToolSpec {
+    ToolSpec::function(
+        DECK_TOOL,
+        "Build a presentation, infographic or poster from structured content. The deck is validated against the consultant constraints before it renders — every node opens with its conclusion (the Pyramid Principle), sub-points must not overlap (MECE), bullets must mark their key takeaway with **bold**, and the bounds differ by type (an infographic is one frame, a presentation is paced). A refusal names the node and the rule, so fix that one thing and call again. The result is the rendered deck.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "deck": {
+                    "type": "object",
+                    "description": "The deck: project_type (presentation | infographic | poster), an optional theme, and its nodes. Each node carries an id, a layout, an optional eyebrow, a headline that states its conclusion, and its components.",
+                    "properties": {
+                        "project_type": { "type": "string", "enum": ["presentation", "infographic", "poster"] },
+                        "theme": { "type": "string" },
+                        "nodes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": { "type": "string" },
+                                    "layout": { "type": "string", "enum": ["split_two_column", "metric_callout", "metric_row", "timeline", "comparison", "quote", "chart", "full_bleed"] },
+                                    "eyebrow": { "type": "string" },
+                                    "headline": { "type": "string" },
+                                    "components": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "type": { "type": "string", "enum": ["bullet_list", "metric", "metrics", "steps", "contrast", "quote", "chart", "prose"] }
+                                            }
+                                        }
+                                    }
+                                },
+                                "required": ["id", "layout", "headline"]
+                            }
+                        }
+                    },
+                    "required": ["project_type", "nodes"]
+                }
+            },
+            "required": ["deck"],
+        }),
+    )
+}
+
+/// Run the deck tool: parse the deck, check it, and render it.
+///
+/// A refusal is a model-visible `error:` result naming every node and
+/// rule, the same shape every other failure in this crate takes — the
+/// house rule is that model-visible output is never a panic, and a deck
+/// that breaks a constraint is a fixable answer, not a crash. The
+/// rendered HTML rides the result so a surface can show it.
+pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+    let value = arguments
+        .get("deck")
+        .cloned()
+        .ok_or_else(|| "the `deck` argument is required: the deck object itself".to_string())?;
+    let deck: crate::deck::Deck = serde_json::from_value(value)
+        .map_err(|error| format!("the deck is not the schema this tool declares: {error}"))?;
+    let refusals = crate::deck::check(&deck);
+    if !refusals.is_empty() {
+        let named: Vec<String> = refusals.iter().map(|r| r.line()).collect();
+        return Ok(ToolOutcome {
+            output: format!("error: {}", named.join("; ")),
+            truncated: false,
+        });
+    }
+    let summary = crate::deck::summary(&deck);
+    let html = crate::deck::render(&deck);
+    Ok(ToolOutcome {
+        output: format!("{summary}\n\n{html}"),
+        truncated: false,
+    })
+}
+
 /// How long a concept may be before the lookup stops reading it. A
 /// concept is a name, not a sentence; the bound is what keeps a
 /// pasted paragraph from becoming a vocabulary scan key.
@@ -1732,6 +1817,78 @@ mod tests {
                 tool.name
             );
         }
+    }
+
+    #[test]
+    fn the_deck_tool_refuses_by_naming_the_node_and_the_rule() {
+        // A deck that breaks a constraint is a model-visible error, not a
+        // panic — the house rule, and the reason a refusal is a fixable
+        // answer the model can act on.
+        let bad = serde_json::json!({
+            "deck": {
+                "project_type": "presentation",
+                "nodes": [{
+                    "id": "slide_01",
+                    "layout": "split_two_column",
+                    "headline": "Market Analysis 2026",
+                    "components": [{"type": "bullet_list", "items": ["an unmarked point"]}]
+                }]
+            }
+        });
+        let outcome = run_deck(&bad).expect("a refusal is a result, not an error");
+        assert!(outcome.output.starts_with("error:"), "{}", outcome.output);
+        assert!(outcome.output.contains("slide_01"), "{}", outcome.output);
+        assert!(
+            outcome.output.contains("not a conclusion") || outcome.output.contains("no **bold**"),
+            "{}",
+            outcome.output
+        );
+        // A deck with no `deck` argument is an argument failure the agent
+        // relays verbatim.
+        let missing = run_deck(&serde_json::json!({}));
+        assert!(missing.is_err(), "{missing:?}");
+    }
+
+    #[test]
+    fn the_deck_tool_renders_a_valid_deck_with_its_summary() {
+        let good = serde_json::json!({
+            "deck": {
+                "project_type": "presentation",
+                "nodes": [
+                    {
+                        "id": "slide_01",
+                        "layout": "split_two_column",
+                        "eyebrow": "Market Analysis 2026",
+                        "headline": "Q3 growth came from regional expansion",
+                        "components": [
+                            {"type": "bullet_list", "items": ["**54% increase** in APAC sales"]},
+                            {"type": "metric", "value": "$4.2M", "label": "Net new ARR"}
+                        ]
+                    },
+                    {
+                        "id": "slide_02",
+                        "layout": "metric_row",
+                        "headline": "The reserve covers two quarters at current burn",
+                        "components": [
+                            {"type": "metrics", "items": [["18", "months of runway"]]}
+                        ]
+                    }
+                ]
+            }
+        });
+        let outcome = run_deck(&good).expect("the deck renders");
+        // The summary rides first, then the fragment past the blank line
+        // — the split the agent makes so the model reads one and the
+        // surface reads the other.
+        let at = outcome
+            .output
+            .find("\n\n")
+            .expect("a summary and a fragment");
+        let (summary, html) = (&outcome.output[..at], &outcome.output[at + 2..]);
+        assert!(summary.contains("ready to render"), "{summary}");
+        assert!(html.contains("class=\"deck\""), "{html}");
+        assert!(html.contains("<strong>54% increase</strong>"), "{html}");
+        assert!(!outcome.truncated);
     }
 
     #[test]

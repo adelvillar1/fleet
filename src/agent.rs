@@ -45,8 +45,18 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 /// best-of-both ruling (2026-10-16): claim-time verification and
 /// execution discipline from the Hermes comparison, outcome-first
 /// communication and end-turn discipline from the ZCode side.
+///
+/// The 2026-10-17 addition (the owner's ruling: "I cannot have this
+/// stoppage of work every time") names the failure mode explicitly,
+/// because the paragraph it extends — "a turn that ends in a promise of
+/// future work ended too early" — said what not to do without saying
+/// what to do instead, and a prohibition with no positive rule is the
+/// shape a model round-files into a clarifying question. The rule now
+/// states the decision test, names the handoff the owner objects to, and
+/// reserves the turn-ending question for the one case that genuinely
+/// cannot be resolved from the work in hand.
 /// `<FLEET_HOME>/SOUL.md` replaces this base when the owner writes one.
-pub const SYSTEM_PROMPT: &str = "You are Fleet, the owner's native Rust coding agent, working in the owner's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write — files and facts.\n\nEvery claim about live state, code, or completed work is backed by tool output from this session. Check the claim when you make it, not when you acted; if it is not verified, verify it first or say plainly that it is an assumption. Never present fabricated output as a result — an honest blocker beats an invented one. \"Done\" means every acceptance criterion is tool-verified.\n\nAct with your tools instead of describing action. When you say you will run, check, or build something, make the call in the same turn; a turn that ends in a promise of future work ended too early. Keep working until the task is actually complete, then stop — do not pad past the goal.\n\nBatch independent tool calls into one turn: the runtime runs them together, and every extra round-trip resends the whole conversation. Serialize only a call that genuinely depends on an earlier result.\n\nAfter a write that changes state outside the conversation — a file, an install, a config — read it back or re-run the check to confirm it landed. Reconcile counts before claiming completeness.\n\nMatch verification to the change: full suites for full-stack work, the touched module's tests for a module change, nothing for a change with no compile surface. Reflexive ceremony is not rigor.\n\nYour final message leads with the outcome: the first sentence answers what happened or what you found. Match its length to the weight of the ask. Finished work gets a recap — what changed, what is verified and how, what remains — never a replay of the process. Plain claims over adjectives; when unsure, say so plainly; agree because it is right, not because the user said it.";
+pub const SYSTEM_PROMPT: &str = "You are Fleet, the owner's native Rust coding agent, working in the owner's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write — files and facts.\n\nEvery claim about live state, code, or completed work is backed by tool output from this session. Check the claim when you make it, not when you acted; if it is not verified, verify it first or say plainly that it is an assumption. Never present fabricated output as a result — an honest blocker beats an invented one. \"Done\" means every acceptance criterion is tool-verified.\n\nAct with your tools instead of describing action. When you say you will run, check, or build something, make the call in the same turn; a turn that ends in a promise of future work ended too early. Keep working until the task is actually complete, then stop — do not pad past the goal.\n\nDecide, then act. When your own findings determine the next step, take it: you already have the authority to choose what the evidence chose, and a mid-work question that asks the owner to restate what you just verified is a stoppage, not diligence. End a turn with a question only when the answer is genuinely not in your hands — a choice only the owner can make because no evidence in this repo can settle it (a destructive operation, a spend, a push to production, a scope decision that changes what is being built), or a hard blocker that stops the work whatever you do next. Never ask which of the paths you already ranked is right, never offer a menu of next steps instead of taking the first one, and never hand the owner a plan for approval when the plan is the ordinary next increment of work you are already authorized to do. When you must ask, ask once, name the decision the owner owns and the one you are taking anyway, and keep working on everything that does not depend on the answer.\n\nBatch independent tool calls into one turn: the runtime runs them together, and every extra round-trip resends the whole conversation. Serialize only a call that genuinely depends on an earlier result.\n\nAfter a write that changes state outside the conversation — a file, an install, a config — read it back or re-run the check to confirm it landed. Reconcile counts before claiming completeness.\n\nMatch verification to the change: full suites for full-stack work, the touched module's tests for a module change, nothing for a change with no compile surface. Reflexive ceremony is not rigor.\n\nYour final message leads with the outcome: the first sentence answers what happened or what you found. Match its length to the weight of the ask. Finished work gets a recap — what changed, what is verified and how, what remains — never a replay of the process. Plain claims over adjectives; when unsure, say so plainly; agree because it is right, not because the user said it.";
 
 /// Turn cap when the caller does not choose one.
 pub const DEFAULT_MAX_TURNS: usize = 25;
@@ -303,6 +313,19 @@ pub enum UiEvent {
     /// something the model said, and it lands as its own card instead
     /// of bare stderr over the pane (KI-216).
     SkillsLoaded { loaded: usize, skipped: Vec<String> },
+    /// A deck was built and rendered. The fragment rides this event
+    /// rather than the tool result the model reads, because the two
+    /// audiences want different things: the model wants the summary and
+    /// the refusals, and the surface wants the deck itself. Emitted once
+    /// per successful `deck` call.
+    Deck {
+        /// The project type, so a card can say which kind it is.
+        project: String,
+        /// How many nodes it carries.
+        nodes: usize,
+        /// The rendered fragment.
+        html: String,
+    },
     /// Where a delegated child run stands, reported to the parent's
     /// live surface while the parent's turn waits for it.
     ///
@@ -878,6 +901,14 @@ impl<'a> Agent<'a> {
         // flags after a write, and this answers before one.
         if admitted(tools::CONVENTION_TOOL) {
             specs.push(tools::convention_spec());
+        }
+        // `deck` rides every run: it is pure computation over a value the
+        // model writes, it touches nothing outside itself, and the
+        // deliverable it produces — a presentation, an infographic, a
+        // poster — is the one thing a terminal cannot show and a browser
+        // face can.
+        if admitted(tools::DECK_TOOL) {
+            specs.push(tools::deck_spec());
         }
         // The live-source tool rides every run and every delegate by
         // default: a fact the model cannot check is a fact it will
@@ -1792,6 +1823,36 @@ impl<'a> Agent<'a> {
                 }),
             });
         }
+        if name == tools::DECK_TOOL {
+            // The deck is validated before anything is rendered, and the
+            // rendered fragment rides its own event so the surface shows
+            // the deck while the model reads the summary. A refusal is a
+            // model-visible error naming the node and the rule.
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => match tools::run_deck(&arguments) {
+                    Err(error) => settled(format!("error: {error}")),
+                    Ok(outcome) => {
+                        let bounded = tools::bound(outcome);
+                        // The HTML is everything past the summary line:
+                        // the model reads the summary, the surface reads
+                        // the deck.
+                        let (summary, html) = match bounded.output.find("\n\n") {
+                            Some(at) => (
+                                bounded.output[..at].to_string(),
+                                bounded.output[at + 2..].to_string(),
+                            ),
+                            None => (bounded.output.clone(), String::new()),
+                        };
+                        Prepared::Ready(Work::Deck {
+                            summary,
+                            html,
+                            ui_tx: self.ui_tx.clone(),
+                        })
+                    }
+                },
+            });
+        }
         if name == tools::REMEMBER_TOOL {
             // A durable write is a side effect, so it crosses the same
             // approval gate every other tool crosses — the summary
@@ -2255,6 +2316,15 @@ enum Work {
         root: std::path::PathBuf,
         arguments: serde_json::Value,
     },
+    /// One deck, checked and rendered. The summary rides back to the
+    /// model; the fragment rides the `Deck` event to the surface. The
+    /// sender rides the work because `run_work` is a free function — the
+    /// same reason `Remember` carries its `Arc<Memory>`.
+    Deck {
+        summary: String,
+        html: String,
+        ui_tx: Option<UnboundedSender<UiEvent>>,
+    },
     /// One supersession, already past its provenance gate.
     Supersede {
         memory: Arc<Memory>,
@@ -2321,6 +2391,36 @@ async fn run_work(work: Work) -> (String, bool) {
         } => {
             let outcome = tools::bound(ToolOutcome {
                 output: land_remember(&memory, &arguments, &derived),
+                truncated: false,
+            });
+            (outcome.output, outcome.truncated)
+        }
+        Work::Deck {
+            summary,
+            html,
+            ui_tx,
+        } => {
+            // The fragment rides the event log, where every surface
+            // already reads its cards from, so the deck appears beside
+            // the run that made it rather than inside a tool result.
+            if !html.is_empty() {
+                if let Some(tx) = ui_tx {
+                    let project = html
+                        .split("data-type=\"")
+                        .nth(1)
+                        .and_then(|rest| rest.split('"').next())
+                        .unwrap_or("presentation")
+                        .to_string();
+                    let nodes = html.matches("class=\"deck-node\"").count();
+                    let _ = tx.send(UiEvent::Deck {
+                        project,
+                        nodes,
+                        html,
+                    });
+                }
+            }
+            let outcome = tools::bound(ToolOutcome {
+                output: summary,
                 truncated: false,
             });
             (outcome.output, outcome.truncated)
@@ -2775,6 +2875,7 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
         Prepared::Ready(work) => match work {
             Work::Remember { .. } | Work::Supersede { .. } => Some("memory".to_string()),
             Work::Improve { .. } => Some("proposals".to_string()),
+            Work::Deck { .. } => Some("deck".to_string()),
             // A lookup reads the tree and writes nothing: no writer to
             // hold apart, so two of them in one batch run together.
             Work::Convention { .. } => None,
@@ -3105,13 +3206,23 @@ fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGu
         // fails on its own, with its own reason.
         return WriteGuard::Clean;
     };
+    // The candidates are read through the vocabulary's own channel
+    // rules, by the path being written: a code file's identifiers, a
+    // markdown file's code spans, and neither file's prose. KI-219 — a
+    // guard that tokenized every word in the content refused the
+    // project's own prose, because a heading's `Context` is a case
+    // variant of the established `context` the services carry, and
+    // prose is not an identifier. The rule is the derivation's, stated
+    // once and shared, so the guard cannot drift from what it reads.
+    let path = arguments
+        .get("path")
+        .and_then(|path| path.as_str())
+        .unwrap_or_default();
+    let candidates = crate::nomenclature::channel_tokens(path, content);
     let vocabulary = crate::nomenclature::vocabulary(root);
     let mut flagged: Vec<(String, String, String)> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    for token in identifier_tokens(content)
-        .into_iter()
-        .take(GUARD_CANDIDATES)
-    {
+    for token in candidates.into_iter().take(GUARD_CANDIDATES) {
         if seen.contains(&token) {
             continue;
         }
@@ -3123,7 +3234,7 @@ fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGu
         // `recall_Count`) beside the lowercased one, and a case or
         // separator variant has to find its term in one lookup rather
         // than a scan.
-        let parts = identifier_parts(&token);
+        let parts = crate::nomenclature::split_identifier(&token);
         let spellings = [
             parts.join("_"),
             parts
@@ -3189,80 +3300,6 @@ fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGu
         note.push_str(&format!("\n- \u{2026}and {more} more"));
     }
     WriteGuard::Flagged { note }
-}
-
-/// The identifier-shaped names one file's text carries, in order of
-/// first appearance: a maximal run of letters, digits, and underscores
-/// that starts with a letter or an underscore — the same definition of a
-/// word the vocabulary's own extractor uses. Sub-three-character names
-/// are dropped: the vocabulary carries none, so nothing that short can
-/// be an established term or a variant of one.
-fn identifier_tokens(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for character in text.chars() {
-        if character.is_alphanumeric() || character == '_' {
-            current.push(character);
-        } else if !current.is_empty() {
-            if current.chars().count() >= 3 {
-                out.push(std::mem::take(&mut current));
-            } else {
-                current.clear();
-            }
-        }
-    }
-    if current.chars().count() >= 3 {
-        out.push(current);
-    }
-    out
-}
-
-/// One identifier split on `_`, `-`, and camelCase boundaries, in order:
-/// `recall_count` -> recall, count; `recallCount` -> recall, count;
-/// `HTTPServer` -> http, server.
-///
-/// This mirrors the vocabulary's own splitter, which is private to the
-/// nomenclature module. The mirror is what lets the guard find a case or
-/// separator variant in one lookup — the vocabulary stores its terms in
-/// exactly this canonical form — instead of scanning every entry per
-/// candidate, which is the cost the module's own bounds exist to avoid.
-/// The verdict itself is the module's
-/// ([`crate::nomenclature::is_near_exact`]), so a divergence here costs
-/// a missed flag, never a wrong refusal.
-fn identifier_parts(identifier: &str) -> Vec<String> {
-    let mut parts: Vec<String> = Vec::new();
-    for segment in identifier.split(['_', '-']) {
-        if segment.is_empty() {
-            continue;
-        }
-        let chars: Vec<char> = segment.chars().collect();
-        let mut current = String::new();
-        for (index, character) in chars.iter().enumerate() {
-            let previous = if index == 0 {
-                None
-            } else {
-                Some(chars[index - 1])
-            };
-            let next = chars.get(index + 1).copied();
-            let boundary = match (previous, character.is_uppercase()) {
-                (Some(previous), true) => {
-                    previous.is_lowercase()
-                        || previous.is_ascii_digit()
-                        || (next.map(|n| n.is_lowercase()).unwrap_or(false)
-                            && previous.is_uppercase())
-                }
-                _ => false,
-            };
-            if boundary && !current.is_empty() {
-                parts.push(std::mem::take(&mut current));
-            }
-            current.push(*character);
-        }
-        if !current.is_empty() {
-            parts.push(current);
-        }
-    }
-    parts
 }
 
 /// Parse a call's arguments for display only.
@@ -4167,6 +4204,7 @@ mod tests {
                 "supersede",
                 "subagent",
                 "convention",
+                "deck",
                 "web",
                 "computer_use"
             ]
@@ -4204,7 +4242,10 @@ mod tests {
             &mut progress,
         )
         .unwrap();
-        assert_eq!(plain.declarations().len(), 8);
+        // The deck rides it too: pure computation over a value the model
+        // writes, with nothing outside itself, and the deliverable it
+        // produces is the one thing a terminal cannot show.
+        assert_eq!(plain.declarations().len(), 9);
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
@@ -6189,29 +6230,131 @@ You are auditing a change. Read the diff before you judge it.
             output.contains("judge_route"),
             "the canonical term is named: {output}"
         );
+        // And the same write, in markdown, lands: a prose heading whose
+        // word case-matches an established term is not an identifier.
+        // This is KI-219's whole point — the guard blocked the project's
+        // own docs, and now it does not.
+        let plan = files.join("plan.md");
+        let (output, _) = run_work(Work::Builtin {
+            tool: Tool::WriteFile,
+            arguments: serde_json::json!({
+                "path": plan.display().to_string(),
+                "content": "# The Plan\n\n## Context\n\nThe judge route is stable. Approach: reuse it.\n"
+            }),
+            root: root.clone(),
+        })
+        .await;
+        assert!(
+            output.starts_with("wrote "),
+            "the markdown write lands: {output}"
+        );
+        assert!(
+            std::fs::read_to_string(&plan)
+                .unwrap()
+                .contains("## Context"),
+            "the heading is on disk as written"
+        );
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&files);
     }
 
     #[test]
     fn the_guard_reads_the_vocabularys_canonical_form() {
-        // The lookup key mirrors the vocabulary's own: the same parts in
-        // the same order, however they are spelled.
-        assert_eq!(identifier_parts("recall_count"), vec!["recall", "count"]);
-        assert_eq!(identifier_parts("recallCount"), vec!["recall", "Count"]);
-        assert_eq!(identifier_parts("HTTPServer"), vec!["HTTP", "Server"]);
-        assert_eq!(identifier_parts("judge-route"), vec!["judge", "route"]);
-        // The tokens a file introduces are identifier-shaped, in order,
-        // and nothing that short can be an established term. A kebab
-        // spelling is two words to the tokenizer — the same definition
-        // the vocabulary's own extractor uses.
+        // The lookup key IS the vocabulary's own splitter, not a mirror:
+        // one function, one place, so the guard cannot drift from what
+        // it reads.
         assert_eq!(
-            identifier_tokens("let judge_route = routeJudge(); // done"),
-            vec!["let", "judge_route", "routeJudge", "done"]
+            crate::nomenclature::split_identifier("recall_count"),
+            vec!["recall", "count"]
         );
+        assert_eq!(
+            crate::nomenclature::split_identifier("recallCount"),
+            vec!["recall", "Count"]
+        );
+        assert_eq!(
+            crate::nomenclature::split_identifier("HTTPServer"),
+            vec!["HTTP", "Server"]
+        );
+        assert_eq!(
+            crate::nomenclature::split_identifier("judge-route"),
+            vec!["judge", "route"]
+        );
+    }
+
+    /// The guard reads the derivation's own channel rules, and the
+    /// derivation's own channels only: prose is not an identifier. This
+    /// is the KI-219 regression — a markdown heading whose word is a case
+    /// variant of an established term used to be refused, because the
+    /// guard tokenized every word in the content, `Context` matched the
+    /// established `context` the services carry, and the write never
+    /// landed.
+    #[test]
+    fn prose_in_a_markdown_write_is_not_an_identifier() {
+        let root = vocabulary_root("guard-md-prose");
+        let content = "# The Plan\n\n## Context\n\nThe judge route is stable. Approach: reuse the vocabulary.\n\nBatch one is the guard.\n";
+        assert_eq!(
+            write_guard(
+                &root,
+                &serde_json::json!({"path": "docs/plans/x.md", "content": content})
+            ),
+            WriteGuard::Clean,
+            "a heading's word is prose: it names nothing the vocabulary polices"
+        );
+        // A code file's prose is equally not an identifier: a comment
+        // naming the established term case-variant-wise is stripped
+        // before the tokenizer sees it.
+        let code =
+            "// judgeRoute is the drift this guard refuses\npub fn judge_route() -> u8 { 1 }\n";
+        assert_eq!(
+            write_guard(
+                &root,
+                &serde_json::json!({"path": "src/lib.rs", "content": code})
+            ),
+            WriteGuard::Clean,
+            "a comment is not an identifier"
+        );
+        // A string literal is: the identifier channel keeps strings,
+        // because a name the code carries in a string is a name the
+        // code uses.
         assert!(
-            identifier_tokens("ab cd ef").is_empty(),
-            "sub-three-character names are dropped"
+            matches!(
+                write_guard(
+                    &root,
+                    &serde_json::json!({"path": "src/lib.rs", "content": "pub fn x() { let _ = \"judgeRoute\"; }"})
+                ),
+                WriteGuard::Refused { .. }
+            ),
+            "a string literal still carries an identifier"
+        );
+    }
+
+    /// Markdown's code channels still refuse: a fenced block and an
+    /// inline backtick span are how a doc names a thing, and that
+    /// naming is exactly what the guard polices.
+    #[test]
+    fn markdown_code_spans_are_still_checked() {
+        let root = vocabulary_root("guard-md-code");
+        let fenced = "# The Plan\n\n```rust\nlet judgeRoute = 1;\n```\n";
+        assert!(
+            matches!(
+                write_guard(
+                    &root,
+                    &serde_json::json!({"path": "docs/plans/x.md", "content": fenced})
+                ),
+                WriteGuard::Refused { .. }
+            ),
+            "a fenced identifier in a doc is a doc naming a thing"
+        );
+        let inline = "# The Plan\n\nThe helper is `judgeRoute`, which drifts.\n";
+        assert!(
+            matches!(
+                write_guard(
+                    &root,
+                    &serde_json::json!({"path": "docs/plans/x.md", "content": inline})
+                ),
+                WriteGuard::Refused { .. }
+            ),
+            "a backticked identifier in a doc is a doc naming a thing"
         );
     }
 }
