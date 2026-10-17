@@ -475,6 +475,198 @@ pub fn summary(deck: &Deck) -> String {
     format!("refused: {} — {}", refusals.len(), named.join("; "))
 }
 
+/// Render one deck as an HTML fragment.
+///
+/// The fragment references the face's own alias tokens rather than its
+/// own palette, so a deck rendered inside the browser face inherits the
+/// theme switch for free — the same three-tier chain the rest of the
+/// surface uses, and the reason a deck never needs a second palette to
+/// keep in step. The classes are `deck-*` and the stylesheet owns them,
+/// so the renderer carries no CSS and the design lives in one place.
+///
+/// A deck is escaped on the way out. Everything the planner produced
+/// came from a model, and a deck is rendered into a page that also runs
+/// a conversation: the content is data, never markup.
+pub fn render(deck: &Deck) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "<section class=\"deck\" data-type=\"{}\" data-theme-name=\"{}\">",
+        deck.project_type.label(),
+        escape(&deck.theme)
+    ));
+    for node in &deck.nodes {
+        out.push_str(&render_node(node));
+    }
+    out.push_str("</section>");
+    out
+}
+
+/// One node: its eyebrow, its conclusion, and its components in the
+/// layout the planner chose.
+fn render_node(node: &Node) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "<article class=\"deck-node\" data-layout=\"{}\" id=\"{}\">",
+        node.layout.label(),
+        escape(&node.id)
+    ));
+    if !node.eyebrow.trim().is_empty() {
+        out.push_str(&format!(
+            "<p class=\"deck-eyebrow\">{}</p>",
+            escape(&node.eyebrow)
+        ));
+    }
+    out.push_str(&format!(
+        "<h3 class=\"deck-headline\">{}</h3>",
+        inline(&node.headline)
+    ));
+    if !node.components.is_empty() {
+        out.push_str("<div class=\"deck-components\">");
+        for component in &node.components {
+            out.push_str(&render_component(component));
+        }
+        out.push_str("</div>");
+    }
+    out.push_str("</article>");
+    out
+}
+
+/// One atomic component.
+fn render_component(component: &Component) -> String {
+    match component {
+        Component::BulletList { items } => {
+            let mut out = String::from("<ul class=\"deck-bullets\">");
+            for item in items {
+                out.push_str(&format!("<li>{}</li>", inline(item)));
+            }
+            out.push_str("</ul>");
+            out
+        }
+        Component::Metric { value, label } => format!(
+            "<div class=\"deck-metric\"><b class=\"deck-value\">{}</b><span class=\"deck-label\">{}</span></div>",
+            escape(value),
+            escape(label)
+        ),
+        Component::Metrics { items } => {
+            let mut out = String::from("<div class=\"deck-metrics\">");
+            for (value, label) in items {
+                out.push_str(&format!(
+                    "<div class=\"deck-metric\"><b class=\"deck-value\">{}</b><span class=\"deck-label\">{}</span></div>",
+                    escape(value),
+                    escape(label)
+                ));
+            }
+            out.push_str("</div>");
+            out
+        }
+        Component::Steps { items } => {
+            let mut out = String::from("<ol class=\"deck-steps\">");
+            for (index, item) in items.iter().enumerate() {
+                out.push_str(&format!(
+                    "<li><span class=\"deck-step-no\">{}</span>{}</li>",
+                    index + 1,
+                    inline(item)
+                ));
+            }
+            out.push_str("</ol>");
+            out
+        }
+        Component::Contrast { left, right } => format!(
+            "<div class=\"deck-contrast\"><div class=\"deck-side\">{}</div><div class=\"deck-side\">{}</div></div>",
+            inline(left),
+            inline(right)
+        ),
+        Component::Quote { text, attribution } => format!(
+            "<blockquote class=\"deck-quote\"><p>{}</p><cite>{}</cite></blockquote>",
+            inline(text),
+            escape(attribution)
+        ),
+        Component::Chart { caption, series } => {
+            let peak = series
+                .iter()
+                .map(|(_, value)| *value)
+                .fold(0.0f64, |peak, value| peak.max(value));
+            let mut out = String::from("<figure class=\"deck-chart\">");
+            out.push_str(&format!(
+                "<figcaption class=\"deck-caption\">{}</figcaption>",
+                escape(caption)
+            ));
+            out.push_str("<div class=\"deck-bars\">");
+            for (label, value) in series {
+                // A bar's height is its share of the peak, so the tallest
+                // series fills the track and the rest read against it. A
+                // zero peak draws nothing rather than a full bar.
+                let share = if peak > 0.0 { value / peak } else { 0.0 };
+                out.push_str(&format!(
+                    "<div class=\"deck-bar\"><span class=\"deck-bar-value\">{}</span><span class=\"deck-bar-track\"><span class=\"deck-bar-fill\" style=\"height:{:.0}%\"></span></span><span class=\"deck-bar-label\">{}</span></div>",
+                    escape(&format_number(*value)),
+                    share * 100.0,
+                    escape(label)
+                ));
+            }
+            out.push_str("</div></figure>");
+            out
+        }
+        Component::Prose { text } => {
+            format!("<p class=\"deck-prose\">{}</p>", inline(text))
+        }
+    }
+}
+
+/// One number as the deck carries it: whole when it is whole, one
+/// decimal when it is not, and never scientific notation on a slide.
+fn format_number(value: f64) -> String {
+    if (value - value.round()).abs() < 0.005 {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+/// Inline emphasis: `**bold**` becomes `<strong>`, and everything else
+/// is escaped text. The same rule the constraint checker enforces, so a
+/// bullet the checker accepted is a bullet the renderer marks.
+pub fn inline(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("**") {
+        if at > 0 {
+            out.push_str(&escape(&rest[..at]));
+        }
+        rest = &rest[at + 2..];
+        match rest.find("**") {
+            Some(end) => {
+                out.push_str(&format!("<strong>{}</strong>", escape(&rest[..end])));
+                rest = &rest[end + 2..];
+            }
+            // An unclosed marker is literal text, not a broken tag.
+            None => {
+                out.push_str("**");
+                break;
+            }
+        }
+    }
+    out.push_str(&escape(rest));
+    out
+}
+
+/// The five XML escapes. A deck is rendered into a page that also runs a
+/// conversation, so content that arrived from a model is data here.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(character),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,6 +910,118 @@ mod tests {
         assert_eq!(value["project_type"], "presentation");
         assert_eq!(value["nodes"][0]["layout"], "split_two_column");
         assert_eq!(value["nodes"][0]["components"][1]["type"], "chart");
+    }
+
+    #[test]
+    fn the_renderer_emits_the_faces_own_tokens_and_escapes_content() {
+        // A deck rendered inside the browser face inherits the theme
+        // switch, which is only true because the fragment references the
+        // alias tokens rather than its own palette.
+        let good = deck(vec![node(
+            "slide_01",
+            "Q3 growth came from regional expansion",
+            vec![Component::BulletList {
+                items: vec!["**54% increase** in APAC sales".to_string()],
+            }],
+        )]);
+        let html = render(&good);
+        assert!(html.contains("class=\"deck\""), "{html}");
+        assert!(html.contains("data-type=\"presentation\""), "{html}");
+        assert!(html.contains("data-layout=\"split_two_column\""), "{html}");
+        assert!(html.contains("<h3 class=\"deck-headline\">"), "{html}");
+        // The bolding rule the checker enforces is the bolding the
+        // renderer marks.
+        assert!(html.contains("<strong>54% increase</strong>"), "{html}");
+        assert!(html.contains("<ul class=\"deck-bullets\">"), "{html}");
+
+        // Content from a model is data, never markup: the page a deck is
+        // rendered into also runs a conversation.
+        let hostile = deck(vec![node(
+            "slide_01",
+            "A conclusion with <script>alert(1)</script> in it",
+            vec![Component::Prose {
+                text: "<img src=x onerror=alert(1)>".to_string(),
+            }],
+        )]);
+        let hostile_html = render(&hostile);
+        assert!(!hostile_html.contains("<script>"), "{hostile_html}");
+        assert!(!hostile_html.contains("<img"), "{hostile_html}");
+        assert!(hostile_html.contains("&lt;script&gt;"), "{hostile_html}");
+        assert!(hostile_html.contains("&lt;img"), "{hostile_html}");
+    }
+
+    #[test]
+    fn every_component_renders_its_own_markup() {
+        let all = deck(vec![node(
+            "slide_01",
+            "One node carrying every component the schema allows",
+            vec![
+                Component::BulletList {
+                    items: vec!["**one** point".to_string()],
+                },
+                Component::Metric {
+                    value: "$4.2M".to_string(),
+                    label: "Net new ARR".to_string(),
+                },
+                Component::Metrics {
+                    items: vec![("54%".to_string(), "APAC".to_string())],
+                },
+                Component::Steps {
+                    items: vec!["**first** step".to_string()],
+                },
+                Component::Contrast {
+                    left: "**plan** providers".to_string(),
+                    right: "pay-as-you-go".to_string(),
+                },
+                Component::Quote {
+                    text: "**constraints** liberate".to_string(),
+                    attribution: "the Rails doctrine".to_string(),
+                },
+                Component::Chart {
+                    caption: "ARR by quarter".to_string(),
+                    series: vec![("Q1".to_string(), 1.2), ("Q2".to_string(), 2.4)],
+                },
+                Component::Prose {
+                    text: "One paragraph of **prose**.".to_string(),
+                },
+            ],
+        )]);
+        let html = render(&all);
+        for mark in [
+            "deck-bullets",
+            "deck-metric",
+            "deck-metrics",
+            "deck-steps",
+            "deck-contrast",
+            "deck-quote",
+            "deck-chart",
+            "deck-prose",
+        ] {
+            assert!(html.contains(mark), "{mark} missing from {html}");
+        }
+        // A chart's bars are proportional to the peak, and the peak
+        // fills its track.
+        assert!(html.contains("height:100%"), "{html}");
+        assert!(html.contains("height:50%"), "{html}");
+        // An unclosed bold marker is literal, not a broken tag.
+        assert!(inline("a ** b").contains("**"), "{}", inline("a ** b"));
+        assert_eq!(inline("plain"), "plain");
+    }
+
+    #[test]
+    fn a_chart_with_no_series_draws_no_full_bar() {
+        // A zero peak must not read as every series being maximal.
+        let flat = deck(vec![node(
+            "slide_01",
+            "A chart with nothing measured yet in it",
+            vec![Component::Chart {
+                caption: "nothing yet".to_string(),
+                series: vec![("Q1".to_string(), 0.0)],
+            }],
+        )]);
+        let html = render(&flat);
+        assert!(html.contains("height:0%"), "{html}");
+        assert!(!html.contains("height:100%"), "{html}");
     }
 
     #[test]

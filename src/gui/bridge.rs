@@ -473,6 +473,50 @@ impl Bridge {
         }
     }
 
+    /// Rank `candidates` against `asked` by cosine, for the composer's
+    /// command type-ahead.
+    ///
+    /// The candidates are the browser's own command declarations — the
+    /// actions only the page can perform — and this ranks them, so the
+    /// command set lives in one place and the ranking is the
+    /// substrate's. A machine with no embedding backend answers with
+    /// every score zero rather than refusing: the type-ahead falls back
+    /// to its lexical ranking, which is the honest degradation and not an
+    /// error the owner has to know about.
+    pub async fn rank(&self, asked: &str, candidates: &[String]) -> Value {
+        let asked = asked.trim().to_string();
+        let candidates = candidates.to_vec();
+        let endpoint = crate::memory::embedding_endpoint();
+        let ranked = tokio::task::spawn_blocking(move || {
+            let embedder = crate::memory::probe(&endpoint).embedder();
+            let Some(query) = embedder.embed(&asked) else {
+                return Vec::new();
+            };
+            candidates
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    let score = embedder
+                        .embed(text)
+                        .map(|vector| crate::memory::cosine(&query, &vector))
+                        .unwrap_or(0.0);
+                    json!({"index": index, "score": score})
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default();
+        let mut ranked = ranked;
+        ranked.sort_by(|left, right| {
+            right["score"]
+                .as_f64()
+                .unwrap_or(0.0)
+                .partial_cmp(&left["score"].as_f64().unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        json!({"type": "rank", "ranked": ranked})
+    }
+
     /// The pane's tree read, off the working directory.
     pub async fn tree(&self, asked: &str) -> Value {
         let root = self.cwd.clone();

@@ -1264,7 +1264,7 @@ impl Score {
 /// Cosine similarity, in full f64 even though the vectors are f32. A
 /// length mismatch or a zero vector scores 0.0 — not similar, not an
 /// error.
-fn cosine(left: &[f32], right: &[f32]) -> f64 {
+pub(crate) fn cosine(left: &[f32], right: &[f32]) -> f64 {
     if left.len() != right.len() || left.is_empty() {
         return 0.0;
     }

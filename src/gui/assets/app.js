@@ -64,6 +64,29 @@
     ]]
   ];
 
+  // The composer's commands. Actions the page performs itself, which is
+  // what separates them from the palette's surfaces: a slash command
+  // changes the face or answers the seat, and everything else is a task
+  // for the agent. One declaration, ranked two ways — lexically for the
+  // instant answer and semantically against these descriptions when the
+  // machine's embedding backend is up.
+  var COMMANDS = [
+    ['theme', ['dark', 'light', 'mode'], 'switch between the light and dark themes',
+      function () { setTheme(themeNow() === 'light' ? 'dark' : 'light'); }],
+    ['pane', ['files', 'code', 'preview', 'explore'], 'open or close the files and deliverables pane',
+      function () { if (el.pane.hidden) openPane(); else closePane(); }],
+    ['go', ['jump', 'open'], 'jump to a surface by name',
+      function (rest) { if (rest) window.location.hash = '#/' + rest.trim().split(/\s+/)[0]; }],
+    ['compact', ['fold', 'summarise'], 'fold the conversation now, without waiting for the budget',
+      function () { face.compactNow = true; notice('the fold is armed', 'it lands at the next turn boundary'); }],
+    ['clear', ['new', 'reset'], 'clear the transcript and start a fresh session view',
+      function () { window.location.hash = '#/chat'; load(true); }],
+    ['approve', ['allow', 'yes'], 'answer the waiting approval: once, always, or deny',
+      function (rest) { answer(rest.trim() || 'once'); }],
+    ['help', ['commands', '?'], 'list every command and what it does',
+      function () { openDrawer('commands', commandHelp()); }]
+  ];
+
   // A short mark per destination, so the collapsed rail still reads at a
   // glance. The house rule for glyphs: a mark is always the surface's own
   // first letter rather than an icon set shipped beside the binary.
@@ -87,6 +110,7 @@
     paletteOpen: document.getElementById('palette-open'),
     pane: document.getElementById('pane'),
     paneOpen: document.getElementById('pane-open'),
+    commands: document.getElementById('commands'),
     paneClose: document.getElementById('pane-close'),
     paneTree: document.getElementById('pane-tree'),
     paneFile: document.getElementById('pane-file'),
@@ -202,7 +226,8 @@
   // fallback: it is always the tool's own.
   var GLYPHS = {
     bash: '>', read: '<', write: 'w', edit: 'e', search: '?',
-    recall: 'm', skill: 's', task: '*', delegate: '*', web: '@'
+    recall: 'm', skill: 's', task: '*', delegate: '*', web: '@',
+    deck: '\u25c7'
   };
 
   var OFFERS = [
@@ -447,6 +472,9 @@
         break;
       case 'skills':
         skillsRow(event);
+        break;
+      case 'deck':
+        deckRow(event);
         break;
       case 'delegation':
         applyDelegation(event);
@@ -2212,6 +2240,16 @@
     el.scrim.hidden = true;
   }
 
+  // The deck in the inspector: the rendered fragment, as the tool
+  // produced it. The fragment references the face's own tokens, so it
+  // inherits the theme switch — the same three-tier chain the rest of the
+  // surface uses.
+  function inspectDeck(event) {
+    openDrawer('a ' + event.project + ' of ' + event.nodes + ' nodes', [
+      ['the deck', node('div', 'deck-frame', event.html || '')]
+    ]);
+  }
+
   function inspect(event) {
     var raw = node('pre', 'raw', JSON.stringify(event, null, 2));
     var sections = [];
@@ -2346,13 +2384,55 @@
     send();
   });
 
-  el.task.addEventListener('input', grow);
+  el.task.addEventListener('input', function () {
+    grow();
+    typeAhead();
+  });
   el.task.addEventListener('keydown', function (event) {
+    // The type-ahead owns the keys while it is open, so a command is one
+    // keystroke from anywhere in the composer.
+    if (face.commandOpen) {
+      if (event.key === 'ArrowDown') { event.preventDefault(); moveCommand(1); return; }
+      if (event.key === 'ArrowUp') { event.preventDefault(); moveCommand(-1); return; }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        if (face.commands.length) {
+          runCommand(face.commands[face.commandAt], el.task.value.replace(/^\/[^\s]*\s*/, ''));
+        }
+        return;
+      }
+      if (event.key === 'Escape') { event.preventDefault(); closeCommands(); return; }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
+      // A slash line runs its command rather than reaching the agent.
+      var line = el.task.value.trim();
+      if (line.charAt(0) === '/') {
+        var parts = line.slice(1).split(/\s+/);
+        var name = (parts.shift() || '').toLowerCase();
+        var rest = parts.join(' ');
+        var at = -1;
+        COMMANDS.forEach(function (command, index) {
+          if (command[0] === name || command[1].indexOf(name) !== -1) at = index;
+        });
+        if (at !== -1) { runCommand(at, rest); return; }
+      }
       send();
     }
   });
+
+  // What the composer is showing, from what it holds. A leading slash
+  // opens the type-ahead; anything else closes it, and a backspace past
+  // the slash closes it too.
+  function typeAhead() {
+    var value = el.task.value;
+    if (value.charAt(0) !== '/') { closeCommands(); return; }
+    var asked = value.slice(1).split(/\s+/)[0].toLowerCase();
+    if (!asked) { openCommands(''); return; }
+    if (asked === face.commandAsk) return;
+    face.commandAsk = asked;
+    openCommands(asked);
+  }
 
   function grow() {
     el.task.style.height = 'auto';
@@ -2371,7 +2451,12 @@
     var opened = event.target.closest ? event.target.closest('.card-row') : null;
     if (!opened) return;
     var made = face.rows.filter(function (candidate) { return candidate.el === opened; })[0];
-    inspect(made ? made.event : null);
+    var event = made ? made.event : null;
+    // A deck's card opens the rendered deck rather than the raw event:
+    // the fragment is the deliverable, and the raw JSON is the thing
+    // nobody asked for.
+    if (event && event.type === 'deck') { inspectDeck(event); return; }
+    inspect(event);
   });
 
   // The log follows the tail until the owner reads backwards. A face
@@ -2690,6 +2775,138 @@
     if (n < 1024) return n + ' B';
     if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' kB';
     return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  // ------------------------------------------------- the type-ahead
+
+  // The lexical ranking, which paints in the same frame the key lands.
+  // An owner who knows the command types its first letters and expects
+  // it now, so this pass cannot wait on anything — not the network, not
+  // the embedding backend, not a debounce.
+  function rankLexical(asked) {
+    var query = asked.toLowerCase();
+    var scored = COMMANDS.map(function (command, index) {
+      var name = command[0], aliases = command[1], said = command[2];
+      var score = 0;
+      if (name === query) score = 100;
+      else if (name.indexOf(query) === 0) score = 80 - name.length;
+      else if (aliases.some(function (alias) { return alias.indexOf(query) === 0; })) score = 60;
+      else if (aliases.indexOf(query) !== -1) score = 55;
+      else if (said.toLowerCase().indexOf(query) !== -1) score = 30;
+      else if (subsequence(query, name)) score = 15;
+      return { index: index, score: score };
+    });
+    return scored
+      .filter(function (entry) { return entry.score > 0; })
+      .sort(function (left, right) { return right.score - left.score; })
+      .map(function (entry) { return entry.index; });
+  }
+
+  // Whether `query`'s characters appear in `text` in order, so "thm"
+  // finds "theme" the way a fuzzy finder does.
+  function subsequence(query, text) {
+    var at = 0;
+    for (var i = 0; i < text.length && at < query.length; i += 1) {
+      if (text[i] === query[at]) at += 1;
+    }
+    return at === query.length;
+  }
+
+  // The semantic pass, debounced and non-blocking. The candidates are
+  // this page's own command descriptions; the substrate ranks them
+  // against what the owner typed, which is what lets "make it dark"
+  // find /theme. A machine with no embedding backend answers with zero
+  // scores and the lexical ranking stands — the honest degradation, and
+  // not an error the owner has to know about.
+  function rankSemantic(intent) {
+    if (intent.length < 3) return Promise.resolve();
+    return post('/api/rank', {
+      asked: intent,
+      candidates: COMMANDS.map(function (command) {
+        return command[0] + ' ' + command[1].join(' ') + ' ' + command[2];
+      })
+    }).then(function (reply) {
+      if (reply.status !== 200 || !reply.body.ranked) return;
+      var best = reply.body.ranked.filter(function (entry) { return entry.score > 0.25; });
+      if (!best.length) return;
+      var order = best.map(function (entry) { return entry.index; });
+      var lexical = face.commands;
+      // The semantic order leads, and anything it did not rank keeps its
+      // lexical place behind it — so the refinement never loses a match
+      // the lexical pass found.
+      var merged = order.concat(lexical.filter(function (index) {
+        return order.indexOf(index) === -1;
+      }));
+      face.commands = merged;
+      // The lexical pass may have found nothing — an owner describing
+      // what they want rarely types a command name — so the semantic
+      // answer opens the popover rather than refining a closed one.
+      face.commandOpen = true;
+      face.commandAt = 0;
+      paintCommands();
+    }).catch(function () { });
+  }
+
+  function paintCommands() {
+    el.commands.textContent = '';
+    if (!face.commands.length) {
+      el.commands.hidden = true;
+      return;
+    }
+    el.commands.hidden = false;
+    face.commands.forEach(function (index, at) {
+      var command = COMMANDS[index];
+      var row = node('button', 'command');
+      row.type = 'button';
+      row.setAttribute('role', 'option');
+      row.dataset.index = String(index);
+      if (at === face.commandAt) row.setAttribute('aria-selected', 'true');
+      row.appendChild(node('span', 'command-name', '/' + command[0]));
+      row.appendChild(node('span', 'command-said', command[2]));
+      row.addEventListener('click', function () { runCommand(index); });
+      el.commands.appendChild(row);
+    });
+  }
+
+  function openCommands(asked) {
+    face.commandOpen = true;
+    face.commands = rankLexical(asked);
+    face.commandAt = 0;
+    paintCommands();
+    window.clearTimeout(face.commandTimer);
+    face.commandTimer = window.setTimeout(function () {
+      rankSemantic(el.task.value.slice(1).trim());
+    }, 180);
+  }
+
+  function closeCommands() {
+    face.commandOpen = false;
+    face.commands = [];
+    window.clearTimeout(face.commandTimer);
+    el.commands.hidden = true;
+  }
+
+  function moveCommand(step) {
+    if (!face.commands.length) return;
+    face.commandAt = (face.commandAt + step + face.commands.length) % face.commands.length;
+    paintCommands();
+  }
+
+  // Run one command: the popover closes, the composer clears, and the
+  // command's own action takes the rest of the line as its argument.
+  function runCommand(index, rest) {
+    var command = COMMANDS[index];
+    closeCommands();
+    el.task.value = '';
+    grow();
+    command[3](rest || '');
+  }
+
+  // Every command, as the help drawer's sections.
+  function commandHelp() {
+    return COMMANDS.map(function (command) {
+      return ['/' + command[0], command[2] + (command[1].length ? ' \u2014 also ' + command[1].join(', ') : '')];
+    });
   }
 
   // The pane's open and closed state, and which of its two views is in

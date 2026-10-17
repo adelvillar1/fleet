@@ -258,6 +258,43 @@ async fn serve_connection(
                 }
             }
         }
+        ("POST", "/api/rank") => {
+            // The composer's command type-ahead: the browser sends the
+            // command declarations it owns, and this ranks them against
+            // what the owner typed. Nothing here performs an action —
+            // the ranking is the substrate's, the command set is the
+            // page's.
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(parsed) => parsed,
+                Err(message) => {
+                    return write_reply(&mut stream, bad_request(&message.to_string())).await
+                }
+            };
+            let asked = parsed
+                .get("asked")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let candidates = parsed
+                .get("candidates")
+                .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            write_reply(
+                &mut stream,
+                api(200, bridge.rank(&asked, &candidates).await),
+            )
+            .await
+        }
         ("POST", "/api/fact") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -1603,6 +1640,45 @@ mod tests {
             None,
         );
         assert!(spaced.starts_with("HTTP/1.1 200"), "{spaced}");
+    }
+
+    /// The composer's command type-ahead: the browser sends the command
+    /// declarations it owns and this ranks them against what the owner
+    /// typed, which is what lets "make the screen darker" find /theme. A
+    /// machine with no embedding backend answers with zero scores rather
+    /// than refusing, so the lexical ranking stands.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_rank_route_orders_candidates_by_what_was_typed() {
+        let (token, port) = launch().await;
+        let body = r#"{"asked":"make the screen darker","candidates":["theme dark light mode switch between the light and dark themes","pane files code preview explore open or close the files and deliverables pane","compact fold summarise fold the conversation now"]}"#;
+        let reply = post(port, "/api/rank", &token, body);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let document: serde_json::Value = serde_json::from_str(
+            reply
+                .split("\r\n\r\n")
+                .nth(1)
+                .expect("a body past the head"),
+        )
+        .expect("a JSON document");
+        let ranked = document["ranked"].as_array().expect("the ranked list");
+        // Either the embedding backend answered and put the theme command
+        // first, or it is absent and every score is zero — the honest
+        // degradation, which the browser's lexical pass covers.
+        let first = ranked[0]["index"].as_u64().expect("an index");
+        let scores: Vec<f64> = ranked
+            .iter()
+            .map(|entry| entry["score"].as_f64().unwrap_or(0.0))
+            .collect();
+        if scores.iter().any(|score| *score > 0.0) {
+            assert_eq!(first, 0, "{document}");
+        } else {
+            assert!(scores.iter().all(|score| *score == 0.0), "{document}");
+        }
+        // The order is descending by score, either way.
+        assert!(
+            scores.windows(2).all(|pair| pair[0] >= pair[1]),
+            "{document}"
+        );
     }
 
     /// A home with no logs and no declared graph names both, rather than

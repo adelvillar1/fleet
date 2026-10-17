@@ -122,6 +122,11 @@
         <p class="seat-note" id="seat-note" hidden></p>
       </section>
 
+      <!-- The composer's type-ahead. A slash opens it; the lexical pass
+           answers instantly and the semantic pass refines it against
+           what the owner is trying to do. -->
+      <div class="commands" id="commands" hidden role="listbox" aria-label="commands"></div>
+
       <form class="composer" id="composer" autocomplete="off">
         <label class="sr-only" for="task">the task</label>
         <textarea id="task" rows="1" placeholder="Ask fleet for something&hellip;" spellcheck="false"></textarea>

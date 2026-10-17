@@ -763,6 +763,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .card-row[data-kind="skills"] .glyph { color: var(--dsw-alias-accent-lift); }
 .card-row[data-kind="delegation"] .glyph { color: var(--dsw-alias-accent-lift); }
 .card-row[data-kind="lane"] .glyph { color: var(--dsw-alias-accent-lift); }
+.card-row[data-kind="deck"] .glyph { color: var(--dsw-alias-accent-lift); }
 /* A note the client owes and the server never sent: not part of the
    intelligence family, and the warm colour says so. */
 .card-row[data-kind="notice"] .glyph { color: var(--dsw-alias-warn); }
@@ -1878,6 +1879,63 @@ pre.drawer-code {
   word-break: break-word;
 }
 
+/* ------------------------------------------------- the composer commands */
+
+/* The type-ahead. It sits above the composer and never over the log: the
+   owner is typing, so what they are choosing between belongs where their
+   eyes already are. */
+.commands {
+  display: grid;
+  gap: 1px;
+  max-height: 232px;
+  overflow-y: auto;
+  margin: 0 0 8px;
+  padding: 5px;
+  border: var(--card-hairline);
+  border-radius: var(--card-radius);
+  background: var(--dsw-alias-surface);
+  box-shadow: var(--shadow-lift);
+}
+
+.commands[hidden] { display: none; }
+
+.command {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--card-radius-inner);
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.command:hover, .command[aria-selected="true"] {
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink);
+}
+
+.command-name {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-accent-lift);
+}
+
+.command[aria-selected="true"] .command-name { color: var(--dsw-alias-ink); }
+
+.command-said {
+  min-width: 0;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11.5px;
+}
+
 /* ------------------------------------------------------------- the pane */
 
 /* The pane is layout, not an overlay: it takes its own column beside the
@@ -2101,6 +2159,158 @@ body[data-pane="open"] .face { grid-template-columns: minmax(0, 1fr) var(--pane-
 
 .md-strong { color: var(--dsw-alias-ink); font-weight: 600; }
 .md-link { color: var(--dsw-alias-accent-lift); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--dsw-alias-accent) 40%, transparent); }
+
+/* -------------------------------------------------------------- the deck */
+
+/* A deck rendered inside the face. The classes are the renderer's own
+   (`deck-*`) and the palette is the face's alias tier, so a deck
+   inherits the theme switch for free — the same three-tier chain the
+   rest of the surface uses, and the reason the renderer carries no CSS
+   of its own. */
+.deck-frame { max-width: 100%; overflow-x: auto; }
+
+.deck { display: grid; gap: 18px; }
+
+.deck-node {
+  padding: var(--card-pad);
+  border: var(--card-hairline);
+  border-radius: var(--card-radius);
+  background: var(--dsw-alias-page);
+}
+
+.deck-eyebrow {
+  margin: 0 0 6px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.deck-headline {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  color: var(--dsw-alias-ink);
+}
+
+.deck-components { display: grid; gap: 12px; }
+
+/* One conclusion beside its evidence. */
+.deck-node[data-layout="split_two_column"] .deck-components {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+/* One figure, large. */
+.deck-node[data-layout="metric_callout"] .deck-components { justify-items: start; }
+
+.deck-metric { display: grid; gap: 3px; }
+
+.deck-value {
+  font-size: var(--card-value);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--dsw-alias-accent-lift);
+}
+
+.deck-label {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+.deck-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 14px;
+}
+
+.deck-bullets { margin: 0; padding-left: 17px; display: grid; gap: 6px; }
+.deck-bullets li { font-size: 12.5px; line-height: 1.55; color: var(--dsw-alias-ink-secondary); }
+.deck-bullets strong { color: var(--dsw-alias-ink); font-weight: 600; }
+
+.deck-steps { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 8px; counter-reset: step; }
+.deck-steps li { display: flex; gap: 9px; font-size: 12.5px; line-height: 1.5; color: var(--dsw-alias-ink-secondary); }
+
+.deck-step-no {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.deck-contrast {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.deck-side {
+  padding: 10px 12px;
+  border: var(--card-hairline);
+  border-radius: var(--card-radius-inner);
+  background: var(--dsw-alias-surface);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--dsw-alias-ink-secondary);
+}
+
+.deck-side strong { color: var(--dsw-alias-ink); font-weight: 600; }
+
+.deck-quote { margin: 0; padding-left: 13px; border-left: 2px solid var(--dsw-alias-accent); }
+.deck-quote p { margin: 0 0 5px; font-size: 13px; line-height: 1.55; color: var(--dsw-alias-ink); }
+.deck-quote cite { color: var(--dsw-alias-ink-tertiary); font-size: 11px; font-style: normal; }
+
+.deck-chart { margin: 0; }
+
+.deck-caption {
+  margin-bottom: 9px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+.deck-bars { display: flex; align-items: flex-end; gap: 12px; min-height: 96px; }
+
+.deck-bar { display: grid; gap: 5px; justify-items: center; flex: 0 0 auto; }
+
+.deck-bar-value {
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.deck-bar-track {
+  display: flex;
+  align-items: flex-end;
+  width: 26px;
+  height: 72px;
+  border-radius: 4px;
+  background: var(--dsw-alias-surface-raised);
+  overflow: hidden;
+}
+
+.deck-bar-fill { width: 100%; border-radius: 4px; background: var(--dsw-alias-accent); }
+
+.deck-bar-label { color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
+
+.deck-prose { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--dsw-alias-ink-secondary); max-width: 68ch; }
+.deck-prose strong { color: var(--dsw-alias-ink); font-weight: 600; }
+
+/* An infographic is one frame: its node fills the width and its
+   components lay out against the whole of it rather than a column. */
+.deck[data-type="infographic"] .deck-node[data-layout="full_bleed"] { border-color: transparent; background: transparent; padding: 0; }
+.deck[data-type="infographic"] .deck-components { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
 
 /* ---------------------------------------------------------- narrow faces */
 
