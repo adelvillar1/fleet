@@ -416,7 +416,7 @@ impl Bridge {
     /// session gets, fixed at boot so a paired device's requests have a
     /// stable answer whatever the desktop is looking at.
     pub fn launch(&self) -> String {
-        lock(&self.state).launch.clone()
+        lock(&self.state).launch.clone().unwrap_or_default()
     }
 
     /// The home this face's sessions live under. A channel driver asks
@@ -445,20 +445,23 @@ impl Bridge {
     pub fn state(&self, session: &str) -> Value {
         let state = lock(&self.state);
         let rules = lock(&self.rules);
-        let session = state.session.clone();
         // The gate the verify step names: the same knob the failover's
         // decision reads, never a second interpretation of it. It is one
         // small config file and the page asks for state once per load,
         // so it is read here rather than kept as another copy of a fact
         // the route module owns.
         let gate = crate::route::calibration_config(&self.home);
+        // The map key the addressed session reads: the empty string is
+        // the face's own launch session, which is the pending log before
+        // the thread names it and the named one after.
+        let key = state.key(session);
         // A session nobody has opened reads as empty rather than as an
         // error, and it reads the same keys the attached document does:
         // a surface that asks about one gets an answer it can render
         // without branching on the shape.
         let Some(attached) = state.attached_if(session) else {
             return json!({
-                "session": session,
+                "session": key,
                 "model": self.model,
                 "workspace": self.cwd.display().to_string(),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
@@ -475,7 +478,7 @@ impl Bridge {
             });
         };
         json!({
-            "session": session,
+            "session": key,
             "model": self.model,
             "workspace": self.cwd.display().to_string(),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
@@ -3826,8 +3829,10 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         // thread's half is the prepared route: the
                         // judgment answered the conversation that is
                         // gone, and the next task is judged as its own.
-                        routes.insert(current_session.clone(), None);
-                        judge_tasks.remove(&current_session);
+                        if let Some(id) = &current_session {
+                            routes.insert(id.clone(), None);
+                            judge_tasks.remove(id);
+                        }
                     }
                     Command::Resume(id) => {
                         // The attach is the TUI's resume, one surface
@@ -4094,7 +4099,7 @@ mod tests {
         // The launch state: no session, because none exists yet.
         let (mut bridge, sources) =
             Bridge::detached(home.clone(), "deepseek-chat".to_string(), None);
-        assert_eq!(bridge.state()["session"], "", "{:?}", bridge.state());
+        assert_eq!(bridge.state("")["session"], "", "{:?}", bridge.state(""));
         let door = bridge.connect();
         let _thread = spawn_agent(AgentInputs {
             home: home.clone(),
@@ -4105,16 +4110,17 @@ mod tests {
             command_rx: door,
             base_url: "http://127.0.0.1:1".to_string(),
             memories_root: home.clone(),
+            state: Arc::clone(&bridge.state),
         });
-        bridge.run("go").expect("the run is accepted");
+        bridge.run("", "go").expect("the run is accepted");
         // The session event lands, and the state document names the id.
         for _ in 0..100 {
-            if !bridge.state()["session"].as_str().unwrap_or("").is_empty() {
+            if !bridge.state("")["session"].as_str().unwrap_or("").is_empty() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let state = bridge.state();
+        let state = bridge.state("");
         let id = state["session"].as_str().expect("a session id").to_string();
         assert!(
             session_id_is_shape(&id),
@@ -4658,7 +4664,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let document = bridge.access().await;
         assert_eq!(document["devices"].as_array().map(Vec::len), Some(1));
@@ -4699,7 +4705,7 @@ mod tests {
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            "session-one".to_string(),
+            Some("session-one".to_string()),
         );
         // The door stands open with no thread behind it, so the commands
         // are accepted and nothing runs: this test is about the state,

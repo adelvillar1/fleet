@@ -1300,7 +1300,7 @@ mod tests {
         let (mut bridge, _sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         bridge.point_at_memories(corpus);
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -1332,7 +1332,7 @@ mod tests {
         let (bridge, _sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -1529,7 +1529,7 @@ mod tests {
         let (bridge, _sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         Arc::new(bridge)
     }
@@ -2338,7 +2338,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn the_archive_lists_the_logs_newest_first_and_names_the_anchor() {
         let (home, ids) = archive_home();
-        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), ids[0].clone());
+        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), Some(ids[0].clone()));
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
             .expect("bind");
@@ -2424,7 +2424,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -2471,7 +2471,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_reseeds_the_face_and_names_its_refusals() {
         let (home, ids) = archive_home();
-        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), ids[0].clone());
+        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), Some(ids[0].clone()));
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
             .expect("bind");
@@ -2642,7 +2642,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -2763,7 +2763,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -2810,7 +2810,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -2978,7 +2978,7 @@ mod tests {
         let (mut bridge, _) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         bridge.point_at_cwd(tree);
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -3138,7 +3138,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await

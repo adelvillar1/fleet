@@ -922,7 +922,7 @@ mod tests {
     /// window holds — the same code the terminal would have printed.
     async fn live(home: std::path::PathBuf) -> (u16, String) {
         let (_window, code) = PairingWindow::mint(&home).expect("a window");
-        let (bridge, _) = Bridge::detached(home.clone(), "deepseek-chat".to_string(), "s".into());
+        let (bridge, _) = Bridge::detached(home.clone(), "deepseek-chat".to_string(), Some("s".to_string()));
         let remote = RemoteAddress {
             address: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             kind: crate::remote::AddressKind::Detected,

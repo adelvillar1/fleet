@@ -656,6 +656,7 @@ async fn gui_command(options: &cli::GuiOptions) -> ExitCode {
             host: options.remote_host.clone(),
         },
         channels: options.channels,
+        relay: options.relay.clone(),
     };
     match fleet::gui::serve(options).await {
         Ok(()) => ExitCode::SUCCESS,

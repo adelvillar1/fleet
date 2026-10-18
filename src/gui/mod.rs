@@ -105,13 +105,11 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         std::env::var("FLEET_HOME").ok().as_deref(),
         user_home.as_deref(),
     )?;
-    let session = crate::session::Session::create(&home, crate::api::DEFAULT_MODEL)
-        .map_err(|error| format!("could not create the session: {error}"))?;
     let base_url = format!("http://{}:{}", options.host, options.port);
     let bridge = Arc::new(bridge::Bridge::spawn(
         home.clone(),
         crate::api::DEFAULT_MODEL.to_string(),
-        session.id().to_string(),
+        None,
         base_url,
     ));
     let (server, _port) =

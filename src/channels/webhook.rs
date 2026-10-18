@@ -332,7 +332,7 @@ mod tests {
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let door = bridge.connect();
         let driver = Arc::new(Driver::new(Arc::new(bridge), Policy::new(home.clone())));

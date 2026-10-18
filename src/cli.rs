@@ -2204,6 +2204,7 @@ mod tests {
                 remote: false,
                 remote_host: None,
                 channels: false,
+                relay: None,
             })
         );
     }
