@@ -35,7 +35,7 @@ pub const ASK_TOOL: &str = "ask";
 /// answer beats a missed one ("if a problem takes 15/45 seconds, that's
 /// irrelevant"). Five minutes is the named budget; an ask that outlasts
 /// it is a named refusal and the walk advances.
-const ASK_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
+pub const ASK_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// One lane answer, mapped into the chat shape.
 #[derive(Debug, Clone, PartialEq)]

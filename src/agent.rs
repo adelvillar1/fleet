@@ -3964,6 +3964,10 @@ pub(crate) fn preview(text: &str, limit: usize) -> String {
 /// the rest of the run: later calls fail fast with the reason, and
 /// nothing respawns. No lane failure is ever fatal to the run; each one
 /// is a typed failure result the model can read and react to.
+/// The lanes whose tools do bulk work on first call, and whose child
+/// therefore carries the longer call bound (KI-148).
+const LONG_BOUND_LANES: &[&str] = &["blend1"];
+
 struct LaneRoster {
     /// Launch specs injected for this run, keyed by lane name. Empty on
     /// the production path, where a lane resolves through the vendored
@@ -4192,7 +4196,22 @@ impl LaneRoster {
     /// death.
     async fn join(&self, lane: &str) -> Result<(McpServer, Vec<ToolInfo>), String> {
         let spec = self.spec_for(lane)?;
-        let server = McpServer::spawn(&spec)
+        // KI-148: a lane whose tools do bulk work on first call gets a
+        // longer call bound than the MCP client's 60-second default. The
+        // corpus refresh's first build embeds the whole corpus, and the
+        // spawn's import cost is already paid once by the cached child,
+        // so the bound that matters is the tool's own. blend1's ask
+        // boundary holds five minutes by the owner's ruling; the
+        // roster's child matches it.
+        let timeouts = if LONG_BOUND_LANES.contains(&lane) {
+            crate::mcp::Timeouts {
+                call: crate::lane_client::ASK_BUDGET,
+                ..Default::default()
+            }
+        } else {
+            crate::mcp::Timeouts::default()
+        };
+        let server = McpServer::spawn_with(&spec, timeouts)
             .map_err(|error| format!("lane `{lane}` could not start: {error}"))?;
         if let Err(error) = server.initialize().await {
             let _ = server.close().await;
