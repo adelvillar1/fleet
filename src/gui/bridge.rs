@@ -1431,6 +1431,12 @@ impl Bridge {
         Ok(json!({"type": "rewind", "turn": turn, "restored": landed.0, "removed": landed.1}))
     }
 
+    /// Answer the seat in this session. First answer wins — the seat is
+    /// taken out of the session's state before anything else happens, so
+    /// a second answer finds no seat and is told so — and the answer is
+    /// broadcast with who gave it, so the surfaces that lost the race
+    /// render the resolution instead of a stale button.
+    ///
     /// The checkpoints this session's store holds, newest first: the
     /// rewind affordance reads it, and each entry names the turn and
     /// what the capture reached.
@@ -1538,7 +1544,12 @@ impl Bridge {
     /// fails still answers the prompt — the owner said yes to this call,
     /// and a settings failure is not a reason to strand the run — and the
     /// failure rides the reply so the page can say so.
-    pub fn answer(&self, session: &str, decision: &str) -> Result<Value, AnswerError> {
+    pub fn answer(
+        &self,
+        session: &str,
+        decision: &str,
+        by: &AnsweredBy,
+    ) -> Result<Value, AnswerError> {
         let approval = match decision {
             "once" => Approval::Once,
             "always" => Approval::Always,
@@ -1579,12 +1590,47 @@ impl Bridge {
             }
         }
         let _ = seat.responder.send(approval);
-        let _ = self.events.send(json!({"type": "seat_cleared"}));
+        // The resolution rides the same stream the seat did, naming the
+        // session, the decision, and who answered: every surface watching
+        // that session sees the seat close, rather than leaving a button
+        // standing for a seat that is gone.
+        let _ = self.events.send(json!({
+            "type": "answered",
+            "session": session,
+            "decision": decision,
+            "by": by.label(),
+        }));
         Ok(json!({
             "answered": decision,
             "rule": rule,
             "error": error,
         }))
+    }
+}
+
+/// Who answered a seat, so the broadcast that closes it can say where
+/// the answer came from. A seat may be answered from the desktop's
+/// browser, a paired device, or a channel peer; the rule is first answer
+/// wins, and the surfaces that lost the race deserve to know who won
+/// rather than to wonder whether their click landed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnsweredBy {
+    /// The desktop's own browser.
+    Desktop,
+    /// A paired device, by the name its owner gave it.
+    Device(String),
+    /// A channel peer, by the name it paired under.
+    Peer(String),
+}
+
+impl AnsweredBy {
+    /// How the broadcast names it.
+    fn label(&self) -> String {
+        match self {
+            AnsweredBy::Desktop => "this browser".to_string(),
+            AnsweredBy::Device(name) => format!("the device {name}"),
+            AnsweredBy::Peer(name) => format!("the channel peer {name}"),
+        }
     }
 }
 
@@ -4050,7 +4096,9 @@ mod tests {
         assert_eq!(seat["label"], "bash · cargo");
         assert_eq!(seat["allowlistable"], true);
         assert_eq!(seat["summary"], "run cargo test");
-        let answered = bridge.answer(&attached, "once").expect("the seat is answered");
+        let answered = bridge
+            .answer(&attached, "once", &AnsweredBy::Desktop)
+            .expect("the seat is answered");
         assert_eq!(answered["answered"], "once");
         assert!(bridge.state(&attached)["approval"].is_null());
     }
@@ -4059,7 +4107,7 @@ mod tests {
     async fn an_answer_with_no_seat_is_a_conflict_not_a_denial() {
         let (bridge, _sources, _door) = bridge().await;
         let attached = bridge.launch();
-        let answered = bridge.answer(&attached, "deny");
+        let answered = bridge.answer(&attached, "deny", &AnsweredBy::Desktop);
         assert!(answered.is_err(), "{answered:?}");
     }
 
@@ -4082,7 +4130,7 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let refused = bridge.answer(&attached, "sure");
+        let refused = bridge.answer(&attached, "sure", &AnsweredBy::Desktop);
         assert!(refused.is_err(), "{refused:?}");
         // A malformed answer is not the owner saying no: the seat stands.
         assert!(bridge.state(&attached)["approval"].is_object());
@@ -4109,7 +4157,9 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         let mut stream = bridge.subscribe();
-        let answered = bridge.answer(&attached, "remember").expect("the rule is remembered");
+        let answered = bridge
+            .answer(&attached, "remember", &AnsweredBy::Desktop)
+            .expect("the rule is remembered");
         assert_eq!(answered["answered"], "remember");
         assert_eq!(answered["rule"], "bash · cargo");
         let state = bridge.state(&attached);
@@ -4153,7 +4203,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         let answered = bridge
-            .answer(&attached, "remember")
+            .answer(&attached, "remember", &AnsweredBy::Desktop)
             .expect("the prompt is still answered");
         assert_eq!(
             answered["answered"], "remember",
@@ -4417,6 +4467,60 @@ mod tests {
             launch["events"].as_array().is_none_or(|events| events.is_empty()),
             "the launch session kept its own log: {launch}"
         );
+    }
+
+    /// Two surfaces race to answer one seat: the first answer lands, the
+    /// second finds no seat, and the resolution is broadcast naming who
+    /// answered — so the surface that lost does not leave a button
+    /// standing for a decision already made.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_first_answer_wins_and_the_resolution_names_who_answered() {
+        let (bridge, sources, _door) = bridge().await;
+        let attached = bridge.launch();
+        let shell = call("bash", r#"{"command":"cargo test"}"#);
+        let (responder, reply) = std::sync::mpsc::channel();
+        sources
+            .seat
+            .send(ApprovalRequest {
+                call: shell,
+                summary: "run cargo test".to_string(),
+                responder,
+            })
+            .expect("the seat arrives");
+        for _ in 0..50 {
+            if bridge.state(&attached)["approval"].is_object() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            bridge.state(&attached)["approval"].is_object(),
+            "the seat is standing"
+        );
+
+        // The desktop answers first.
+        let won = bridge
+            .answer(&attached, "once", &AnsweredBy::Desktop)
+            .expect("the first answer lands");
+        assert_eq!(won["answered"], "once");
+
+        // The phone answers second, and finds no seat.
+        let lost = bridge.answer(
+            &attached,
+            "deny",
+            &AnsweredBy::Device("Alejandro's iPhone".to_string()),
+        );
+        assert!(
+            matches!(lost, Err(AnswerError::NoSeat)),
+            "the second answer found a seat: {lost:?}"
+        );
+
+        // The agent's responder got the first decision, and only it.
+        let delivered = reply.recv().expect("a decision arrived");
+        assert_eq!(delivered, Approval::Once);
+
+        // The seat is gone from the session's state.
+        assert!(bridge.state(&attached)["approval"].is_null());
     }
 
     /// Two sessions attached to one bridge hold independent transcripts,

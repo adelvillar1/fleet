@@ -475,9 +475,14 @@ impl Driver {
     /// Answer a seat on a peer's behalf: the same door the browser's
     /// approve button uses, so an answer here and an answer there are
     /// the same answer.
-    pub fn answer(&self, session: &str, decision: &str) -> Result<(), String> {
+    pub fn answer(
+        &self,
+        session: &str,
+        decision: &str,
+        by: &crate::gui::bridge::AnsweredBy,
+    ) -> Result<(), String> {
         self.bridge
-            .answer(session, decision)
+            .answer(session, decision, by)
             .map(|_| ())
             .map_err(|error| error.to_string())
     }

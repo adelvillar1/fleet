@@ -777,6 +777,21 @@
       case 'seat_cleared':
         face.seat = null;
         break;
+      // The resolution of a seat this face did not answer: the seat is
+      // gone, and the page says who took it rather than leaving a button
+      // standing for a decision already made. A seat this face did answer
+      // arrives as `seat_cleared`, so the two are told apart.
+      case 'answered':
+        if (face.seat && (!event.session || event.session === face.session)) {
+          face.seat = null;
+          face.answeredElsewhere = event.by || 'another surface';
+          // The seat is gone and the owner should know whose decision it
+          // was: a button that vanishes without a word reads as a bug.
+          notice('the seat was answered elsewhere',
+            (event.by || 'another surface') + ' answered it ' +
+            (event.decision === 'deny' ? 'no' : 'yes') + '.');
+        }
+        break;
       case 'rules':
         face.rules = event.rules || [];
         break;

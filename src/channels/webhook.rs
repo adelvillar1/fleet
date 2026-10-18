@@ -243,7 +243,7 @@ async fn serve_connection(
                 .get("decision")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
-            match driver.answer(session, decision) {
+            match driver.answer(session, decision, &crate::gui::bridge::AnsweredBy::Peer(peer_name.clone())) {
                 Ok(()) => {
                     write_reply(
                         &mut stream,
@@ -336,8 +336,7 @@ mod tests {
         );
         let door = bridge.connect();
         let driver = Arc::new(Driver::new(Arc::new(bridge), Policy::new(home.clone())));
-        let channel = Webhook::new(0, home, Arc::clone(&driver));
-        let port = start(channel).await;
+        let port = start(home, Arc::clone(&driver)).await;
         (port, driver, door)
     }
 
@@ -345,32 +344,58 @@ mod tests {
     /// channel binds inside its own runtime, so the test asks the
     /// operating system which free port to take and the channel reports
     /// back through the file the listener wrote.
-    async fn start(channel: Webhook) -> u16 {
-        // The channel binds a fixed port; for the test, bind first and
-        // hand the channel the port the OS chose.
-        let probe = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("a free port");
-        let port = probe.local_addr().expect("an address").port();
-        drop(probe);
-        let channel = Webhook::new(port, channel.home.clone(), channel.driver.clone());
-        let answering = Arc::clone(&channel.driver);
-        tokio::spawn(async move {
-            let _ = channel
-                .serve(Arc::new(move |inbound| answering.deliver(&inbound)))
-                .await;
-        });
-        // Wait for the listener to be there.
-        for _ in 0..50 {
-            if tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+    async fn start(home: std::path::PathBuf, driver: Arc<Driver>) -> u16 {
+        // The channel binds a fixed port, so the test asks the operating
+        // system for a free one and hands it over. Two tests racing for
+        // the same freed port is real — they run in one process — so a
+        // port that will not take is retried with a fresh one rather
+        // than failing the run.
+        for _ in 0..8 {
+            let probe = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
                 .await
-                .is_ok()
-            {
-                break;
+                .expect("a free port");
+            let port = probe.local_addr().expect("an address").port();
+            drop(probe);
+            let channel = Webhook::new(port, home.clone(), Arc::clone(&driver));
+            let answering = Arc::clone(&driver);
+            tokio::spawn(async move {
+                let _ = channel
+                    .serve(Arc::new(move |inbound| answering.deliver(&inbound)))
+                    .await;
+            });
+            // The channel is ready when it answers something: a request
+            // it refuses is still an answer, and it leaves no malformed
+            // line in the log the way a bare connect does.
+            let ready = "POST /answer HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 2\r\n\r\n{}";
+            for _ in 0..50 {
+                if try_ask(port, ready).is_some_and(|reply| reply.starts_with("HTTP/1.1")) {
+                    return port;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        port
+        panic!("the channel would not start on any port");
+    }
+
+    /// One request that may not arrive yet: the channel binds on its own
+    /// schedule, and a readiness probe must not panic at a port that is
+    /// not listening yet.
+    fn try_ask(port: u16, raw: &str) -> Option<String> {
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .ok()?;
+        stream.write_all(raw.as_bytes()).ok()?;
+        let mut reply = String::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => reply.push_str(&String::from_utf8_lossy(&chunk[..read])),
+                Err(_) => break,
+            }
+        }
+        Some(reply)
     }
 
     fn ask(port: u16, raw: &str) -> String {
