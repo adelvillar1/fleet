@@ -108,13 +108,35 @@ src/calib.rs       the calibration stream: devdec-vocabulary rows, bounded write
 src/doctor.rs      the boot checks and the per-layer diagnosis
 src/net.rs         loopback probe used by doctor
 src/install.rs     fleet install: home layout, config scaffold, heavy-lane venvs
+src/lanes.rs       the vendored lane cores: home resolution, launch specs, health probe
+src/lane_client.rs the lane-kind candidate's boundary: a chat request in, a grounded answer out
+src/mcp.rs         the hand-rolled MCP stdio client (spawn, initialize, tools/list, tools/call)
+src/route_cache.rs the route-decision cache: one recorded judgment per task
+src/settings.rs    one writer over config.json / routing.json / fleet.env
+src/boards.rs      the read-only boards: routing state, second-brain derived state, git facts
+src/memory.rs      the git-tracked fact substrate: six-channel recall, assembly
+src/session_recall.rs the session archive as synthetic facts through the same ranker
+src/skills.rs      skills: SKILL.md loading, progressive disclosure, the self-authoring drafter
+src/subagents.rs   delegation: the child agent, its scope, the depth cap
+src/roles.rs       the named specializations a delegation runs under
+src/delegate.rs    the delegation judgment beat
+src/graph.rs       the dependency graph: scores, gates, critical path
+src/cron.rs        scheduled runs: the job store, the five-field parser, catch-up
+src/judge.rs       the routing judgment beat
+src/eval.rs        the eval corpus: fixed scenarios, graded headless against the mock
+src/improve.rs     self-maintenance: gated proposals, apply/undo
+src/explain.rs     the explanation beat over blend1
+src/checkpoints.rs the trust trio's floor: per-turn file-state capture, restore, and diff
+src/gui/           the browser face: server, bridge, themes, embedded assets
+src/tui/           the ratatui surface: app state, events, render, loop
 src/bin/mock-server.rs   the scripted mock API the integration tests drive
+src/bin/mock-mcp.rs      the scripted fake MCP stdio server the integration tests drive
 tests/integration.rs     end-to-end tests: parser, client, tool loop, log
 tests/install.rs         the install's acceptance: layout, lanes, the doctor gate
 ```
 
 ## Platform support
 
-macOS (arm64, x86_64), Linux (x86_64, arm64), and Windows (x86_64). The crate uses no platform-specific APIs beyond the per-OS shell probe (`sh -c true` / `cmd /C ver`) and compiles with the usual Rust targets.
+macOS (arm64, x86_64) and Linux (x86_64, arm64) are built and run in this repository's own workflow. Windows (x86_64) is a target the crate's code anticipates — the per-OS shell probe (`sh -c true` / `cmd /C ver`) is written for it and the crate uses no other platform-specific APIs — but no Windows build has run here, so the claim is scoped to what is verified until a cross-compile check (`cargo check --target x86_64-pc-windows-msvc`) lands (KI-011).
 
 The release path is `cargo build --release` — one binary at `target/release/fleet`, which is what the quick start above runs. Per-OS cross-built release artifacts are a release-process step, not built in this repository (CI is disarmed by owner decision): the cross-build commands and the install story live in [docs/features/install.md](docs/features/install.md).
