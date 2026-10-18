@@ -642,6 +642,15 @@ async fn client_chat_stream_assembles_the_same_response_chat_returns() {
     assert_eq!(streamed.usage.prompt_tokens, 10);
     assert_eq!(streamed.usage.completion_tokens, 5);
     assert_eq!(streamed.usage.total_tokens, 15);
+    // KI-019: the streamed response's finish_reason matches the
+    // non-streaming one's for the same shape. The provider carried the
+    // reason on the choice, not in the usage object, and the streamed
+    // path used to assemble `None`.
+    assert_eq!(
+        streamed.choices[0].finish_reason.as_deref(),
+        Some("tool_calls"),
+        "the assembled calls are the reason the stream closed"
+    );
 
     let body = mock.bodies().remove(0);
     assert_eq!(body["stream"], true);
@@ -669,6 +678,23 @@ async fn client_chat_stream_assembles_the_same_response_chat_returns() {
         total_tokens: 15,
         finish_reason: None,
     })));
+}
+
+#[tokio::test]
+async fn client_chat_stream_derives_stop_when_the_stream_closes_with_calls() {
+    // KI-019: the text shape. A stream that closes cleanly with no calls
+    // is `stop`, the reason the non-streaming fixture returns for the
+    // same answer, so a consumer reading one path is not told a
+    // different story by the other.
+    let mock = MockApi::start(vec![assistant_stream("All done.")]);
+    let client = Client::new(mock.url(), "test-key");
+    let request = ChatRequest {
+        model: "test-model",
+        messages: &[Message::text(Role::User, "hello")],
+        tools: Vec::new(),
+    };
+    let streamed = client.chat_stream(&request, |_| {}).await.unwrap();
+    assert_eq!(streamed.choices[0].finish_reason.as_deref(), Some("stop"));
 }
 
 // --- the agent loop --------------------------------------------------------

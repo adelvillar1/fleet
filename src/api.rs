@@ -673,6 +673,21 @@ impl Client {
             } else {
                 usage.total_tokens
             },
+            // KI-019: the streamed path's finish_reason arrived as `None`
+            // whenever the provider carried it on the choice rather than
+            // inside the usage object, so the assembled response disagreed
+            // with the non-streaming one. The API's own value wins when it
+            // is there; otherwise the message says which it was — calls
+            // assembled means `tool_calls`, and a clean close with none
+            // means `stop`. A provider that sends nothing else and a
+            // truncated stream are both decode failures before this point.
+            finish_reason: usage.finish_reason.or_else(|| {
+                Some(if tool_calls.is_empty() {
+                    "stop".to_string()
+                } else {
+                    "tool_calls".to_string()
+                })
+            }),
             ..usage
         };
         Ok(ChatResponse {
