@@ -2421,11 +2421,7 @@ mod tests {
         let draft_home = home.clone();
         let draft_path = crate::skills::proposals_dir(&draft_home).join("same-name.md");
         std::fs::create_dir_all(crate::skills::proposals_dir(&draft_home)).unwrap();
-        std::fs::write(
-            &draft_path,
-            std::fs::read_to_string(&general_path).unwrap(),
-        )
-        .unwrap();
+        std::fs::write(&draft_path, std::fs::read_to_string(&general_path).unwrap()).unwrap();
         // Parsed from the skills store directly: `load_one` answers the
         // general store first, which is exactly why the two stores'
         // pre-images must be keyed apart.
