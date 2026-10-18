@@ -150,21 +150,10 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             address.kind.label(),
             crate::remote::pairing::WINDOW_TTL_MINUTES
         );
-        // The QR. Direct, it is the pairing page with the code in the
-        // query, so a scan lands on the form with the code filled. Through
-        // a relay, it is the relay's entry point with the device session
-        // and its secret — the phone that scans it is the phone that can
-        // reach this face through the relay, which is the same shape
-        // ZCode's own remote control uses.
-        let url = match &options.relay {
-            Some(relay) => format!(
-                "{}/s/{}?hash={}",
-                relay.trim_end_matches('/'),
-                listener.device_session(),
-                listener.device_secret()
-            ),
-            None => crate::remote::pairing_url(address.address, port, &code),
-        };
+        // The QR: the same URL with the code in the query, so a scan
+        // lands on the pairing form with the code already filled.
+        let url = crate::remote::pairing_url(address.address, port, &code);
+
         match crate::remote::qr::encode(&url) {
             Ok(matrix) => {
                 println!();

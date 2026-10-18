@@ -475,6 +475,16 @@ fn pair_command() -> ExitCode {
     println!("  code:  {}", fleet::remote::pairing::display_code(&code));
     println!("  open:  http://{}:{port}/pair", format_address(address.address));
     println!("  from:  {kind}");
+    // The QR: the same URL with the code in the query, so a scan lands
+    // on the form with the code already filled.
+    let url = fleet::remote::pairing_url(address.address, port, &code);
+    match fleet::remote::qr::encode(&url) {
+        Ok(code_matrix) => {
+            println!();
+            print!("{}", code_matrix.to_ansi());
+        }
+        Err(error) => println!("  (no QR: {error}) — type the code instead"),
+    }
     println!(
         "  the code lives {} minutes and burns on use; `fleet devices` lists what paired",
         fleet::remote::pairing::WINDOW_TTL_MINUTES
