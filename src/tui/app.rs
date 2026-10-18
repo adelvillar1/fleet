@@ -264,6 +264,10 @@ pub struct Status {
     /// reports one.
     pub provider: Option<String>,
     pub route_how: Option<String>,
+    /// The turns whose file state the checkpoint store holds, newest
+    /// last. The TUI's rewind affordance reads it; the browser face
+    /// reads the store itself.
+    pub checkpoints: Vec<u64>,
     /// The routing mode at launch, before any run reports: `auto-router`,
     /// or `pinned to <pin>` when the home carries one. The bar names the
     /// mode, never the compiled-in default model — the default is the
@@ -380,6 +384,7 @@ impl App {
                 working: false,
                 provider: None,
                 route_how: None,
+                checkpoints: Vec::new(),
                 routing: None,
                 memory: None,
             },
@@ -687,6 +692,14 @@ impl App {
                 // is the browser face's to render; the bar reads two facts.
                 self.status.provider = Some(provider);
                 self.status.route_how = Some(how);
+            }
+            UiEvent::Checkpoint { turn, files, .. } => {
+                // A turn's file state landed in the store: the rewind
+                // affordance becomes real at this turn. The TUI names
+                // the turn in its own status line rather than carrying
+                // the store's counts, which the browser face renders.
+                self.status.checkpoints.push(turn);
+                let _ = files;
             }
             UiEvent::Compacted {
                 turns,
@@ -1393,6 +1406,10 @@ impl App {
 /// neither text nor calls are transport noise, not conversation.
 fn entry_of(record: &Record) -> Option<Entry> {
     match record {
+        // Bookkeeping: a rewind marks a cut the pane's own seed applies,
+        // and a plan rides the assistant message beside it.
+        Record::Rewind { .. } => None,
+        Record::Plan { .. } => None,
         Record::User { content } => Some(Entry::User(content.clone())),
         Record::Assistant {
             content,

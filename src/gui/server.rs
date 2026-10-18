@@ -350,6 +350,56 @@ async fn serve_connection(
         // The settings surface: the whole config as one document, and
         // every write through the writer the surface owns. The reply
         // names itself the way the writer's own refusal does.
+        // The trust trio: plan mode's door, the rewind, the checkpoint
+        // store's list, and the diff with its per-hunk reject.
+        ("POST", "/api/plan") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let task = match task_of(&body) {
+                Ok(task) => task,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.plan(&task) {
+                Ok(()) => {
+                    write_reply(&mut stream, api(200, json!({"type": "plan", "task": task}))).await
+                }
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/rewind") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let turn = match turn_of(&body) {
+                Ok(turn) => turn,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.rewind(turn).await {
+                Ok(rewound) => write_reply(&mut stream, api(200, rewound)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("GET", "/api/checkpoints") => {
+            write_reply(&mut stream, api(200, bridge.checkpoints().await)).await
+        }
+        ("GET", "/api/diff") => {
+            let asked = decode_query(&request.query, "turn");
+            let turn: u64 = asked.trim().parse().unwrap_or(0);
+            write_reply(&mut stream, api(200, bridge.diff(turn).await)).await
+        }
+        ("POST", "/api/diff/reject") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.diff_reject(&body).await {
+                Ok(rejected) => write_reply(&mut stream, api(200, rejected)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("GET", "/api/settings") => {
             write_reply(&mut stream, api(200, bridge.settings().await)).await
         }
@@ -488,6 +538,16 @@ fn session_of(body: &str) -> Result<String, String> {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "a resume's body is a JSON object with a session string".to_string())
+}
+
+/// The turn a rewind's body carries.
+fn turn_of(body: &str) -> Result<u64, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the rewind's body: {e}"))?;
+    parsed
+        .get("turn")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "a rewind's body is a JSON object with a turn number".to_string())
 }
 
 /// The decision an approval's body carries, in the seat's four words.
@@ -2431,6 +2491,178 @@ mod tests {
             unknown.contains("is not a write this surface performs"),
             "{unknown}"
         );
+    }
+
+    // ---------------------------------------------------- the trust trio (G9)
+
+    /// A home whose session has one checkpointed turn: a tree captured
+    /// at turn 1, then the turn's writes applied to the live tree. The
+    /// bridge's cwd is the launch directory, so the tree is the process's
+    /// own working directory — the test changes into the tree it built
+    /// and restores the cwd after, because the checkpoint root is read
+    /// from the process, never from a parameter.
+    fn trio_home() -> (std::path::PathBuf, std::path::PathBuf) {
+        let home = fresh_home();
+        let tree = home.join("tree");
+        std::fs::create_dir_all(&tree).expect("the tree");
+        std::fs::write(tree.join("kept.txt"), "before\n").expect("kept");
+        std::fs::write(tree.join("changed.txt"), "one\ntwo\nthree\nfour\n").expect("changed");
+        std::fs::write(tree.join("multi.txt"), "head\nA1\nA2\nmid\nB1\nB2\ntail\n").expect("multi");
+        let store = home.join("checkpoints");
+        let session = "session-test";
+        crate::checkpoints::capture(&tree, &store, session, 1).expect("the capture");
+        // The turn's writes: one file changed in two regions, one
+        // created.
+        std::fs::write(tree.join("changed.txt"), "one\nTWO\nthree\nFOUR\n").expect("the change");
+        std::fs::write(tree.join("created.txt"), "new\n").expect("the create");
+        // A log with one turn in it, so the rewind has a conversation to
+        // reseed.
+        let sessions = home.join("sessions");
+        std::fs::create_dir_all(&sessions).expect("the sessions directory");
+        std::fs::write(
+            sessions.join(format!("{session}.jsonl")),
+            format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "type": "start",
+                    "v": crate::session::SESSION_FORMAT_VERSION,
+                    "model": "deepseek-chat",
+                    "created": "2026-10-18T09:00:00Z",
+                }),
+                serde_json::json!({"type": "user", "content": "do the work"}),
+            ),
+        )
+        .expect("the session log");
+        (home, tree)
+    }
+
+    /// Stand the bridge up over `tree` as the process's working
+    /// directory: the checkpoint root and the diff's root are both read
+    /// from the process, which is the production rule, so the test
+    /// honours it rather than routing around it.
+    async fn trio_server(home: std::path::PathBuf, tree: std::path::PathBuf) -> (u16, String) {
+        // The trust trio's root rides the test's seam, not a change to
+        // the process's working directory: the cwd is a global every
+        // other test in this binary reads.
+        let (mut bridge, _) = Bridge::detached(
+            home,
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        bridge.point_at_cwd(tree);
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        let token = server.token().to_string();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        (port, token)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_diff_reviews_the_changes_and_a_reject_puts_one_hunk_back() {
+        let (home, tree) = trio_home();
+        let (port, token) = trio_server(home, tree.clone()).await;
+
+        // The checkpoint store lists the turn it holds.
+        let listed = get(port, "/api/checkpoints", &token);
+        assert!(listed.starts_with("HTTP/1.1 200"), "{listed}");
+        assert!(listed.contains("\"turn\":1"), "{listed}");
+
+        // The diff names both changes against turn 1. The turn and the
+        // token share the query string, so this one asks directly.
+        let diff = ask(
+            port,
+            &format!("GET /api/diff?turn=1&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+            None,
+        );
+        assert!(diff.starts_with("HTTP/1.1 200"), "{diff}");
+        assert!(diff.contains("changed.txt"), "{diff}");
+        assert!(diff.contains("created.txt"), "{diff}");
+        assert!(diff.contains("\"kind\":\"added\""), "{diff}");
+        // Two regions changed, so two hunks.
+        assert_eq!(diff.matches("\"new_at\":").count(), 2, "{diff}");
+
+        // Reject the second hunk only: its region goes back and the
+        // first region stays changed.
+        let rejected = post(
+            port,
+            "/api/diff/reject",
+            &token,
+            r#"{"turn":1,"path":"changed.txt","hunk":1}"#,
+        );
+        assert!(rejected.starts_with("HTTP/1.1 200"), "{rejected}");
+        let after = std::fs::read_to_string(tree.join("changed.txt")).expect("the file");
+        assert_eq!(
+            after,
+            "one\nTWO\nthree\nFOUR\n".replace("FOUR", "four"),
+            "{after}"
+        );
+
+        // Reject the whole added file: it goes.
+        let whole = post(
+            port,
+            "/api/diff/reject",
+            &token,
+            r#"{"turn":1,"path":"created.txt"}"#,
+        );
+        assert!(whole.starts_with("HTTP/1.1 200"), "{whole}");
+        assert!(!tree.join("created.txt").exists(), "the added file is gone");
+
+        // A whole-file reject of an unchanged file is the restore it
+        // says it is — the bytes are already the checkpoint's — and a
+        // reject of a file the diff does not carry is refused by name.
+        let none = post(
+            port,
+            "/api/diff/reject",
+            &token,
+            r#"{"turn":1,"path":"kept.txt"}"#,
+        );
+        assert!(none.starts_with("HTTP/1.1 200"), "{none}");
+        assert_eq!(
+            std::fs::read_to_string(tree.join("kept.txt")).unwrap(),
+            "before\n"
+        );
+        let absent = post(
+            port,
+            "/api/diff/reject",
+            &token,
+            r#"{"turn":1,"path":"never-existed.txt"}"#,
+        );
+        assert!(absent.starts_with("HTTP/1.1 409"), "{absent}");
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rewind_restores_the_tree_cuts_the_log_and_reseeds_the_face() {
+        let (home, tree) = trio_home();
+        let (port, token) = trio_server(home.clone(), tree.clone()).await;
+
+        let rewound = post(port, "/api/rewind", &token, r#"{"turn":1}"#);
+        assert!(rewound.starts_with("HTTP/1.1 200"), "{rewound}");
+        // The tree is the checkpoint's again.
+        assert_eq!(
+            std::fs::read_to_string(tree.join("changed.txt")).unwrap(),
+            "one\ntwo\nthree\nfour\n"
+        );
+        assert!(!tree.join("created.txt").exists());
+        // The log carries the rewind record.
+        let log =
+            std::fs::read_to_string(home.join("sessions").join("session-test.jsonl")).unwrap();
+        assert!(log.contains("\"type\":\"rewind\""), "{log}");
+        // The face reseeded from before the cut: the owner's message
+        // rides, and the rewind card is the newest event.
+        let state = get(port, "/api/state", &token);
+        assert!(state.contains("do the work"), "{state}");
+        assert!(state.contains("\"type\":\"rewound\""), "{state}");
+
+        // A rewind of a turn the store does not hold is refused by name.
+        let absent = post(port, "/api/rewind", &token, r#"{"turn":9}"#);
+        assert!(absent.starts_with("HTTP/1.1 409"), "{absent}");
+        assert!(absent.contains("no checkpoint at turn 9"), "{absent}");
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
     }
 
     #[tokio::test(flavor = "multi_thread")]

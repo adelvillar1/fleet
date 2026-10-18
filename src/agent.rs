@@ -143,6 +143,16 @@ pub struct AgentOptions {
     /// before. A forced fold on a conversation with nothing to replace
     /// is a named no-op, not a second summary.
     pub compact_now: bool,
+    /// The checkpoint store's root, when this run checkpoints its file
+    /// state per turn. `None` is the silent path — a test, or a
+    /// surface that does not offer the trust trio. The tree the store
+    /// captures is the process's own working directory, the same root
+    /// the tools write to.
+    pub checkpoints: Option<std::path::PathBuf>,
+    /// Plan mode: the run plans and does not write. The write-class
+    /// tools are refused by name at the gate, and the run's final
+    /// message records as a `plan` the owner can edit and build.
+    pub plan_mode: bool,
     /// Where live UI events go; `None` is the headless path, which keeps
     /// its progress-write behavior exactly as it was.
     pub ui_tx: Option<UnboundedSender<UiEvent>>,
@@ -221,6 +231,8 @@ impl Default for AgentOptions {
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         }
     }
 }
@@ -288,6 +300,10 @@ pub enum UiEvent {
         reason: String,
         order: Vec<(String, String)>,
     },
+    /// A turn's file state was checkpointed: the store holds the working
+    /// tree as this turn left it, so the run can be rewound to here. One
+    /// emission per turn that ran, after the turn's results landed.
+    Checkpoint { turn: u64, files: usize, bytes: u64 },
     /// The conversation outgrew the window and was compacted: `turns`
     /// turns became one summary, and the context went from
     /// `tokens_before` to `tokens_after`. Emitted once per crossing,
@@ -776,6 +792,12 @@ pub struct Agent<'a> {
     compaction_latch: bool,
     /// The forced-fold flag, read once per turn boundary.
     compact_now: bool,
+    /// The checkpoint store's root, when this run checkpoints.
+    checkpoints: Option<std::path::PathBuf>,
+    /// The session id the checkpoint store keys on, the log's own stem.
+    session_id: String,
+    /// Plan mode: the write-class tools are refused at the gate.
+    plan_mode: bool,
     /// The API-reported `prompt_tokens` of the last response, or `None`
     /// when it reported none — in which case the window check falls back
     /// to the chars/4 estimate of the assembled messages.
@@ -801,6 +823,25 @@ struct PendingHits {
     shape: Option<&'static str>,
 }
 
+/// Plan mode's refusal for one tool, or `None` when the call is
+/// allowed. The write-class tools are refused by name; the shell is
+/// allowed because planning reads through it (`ls`, `cat`, `git log`),
+/// and the plan-mode prompt tells the model to keep it that way — the
+/// gate is the floor, the instruction is the intent.
+pub fn plan_refusal(plan_mode: bool, name: &str) -> Option<String> {
+    if !plan_mode {
+        return None;
+    }
+    let write_class = [tools::Tool::WriteFile.name(), tools::COMPUTER_USE_TOOL];
+    write_class.contains(&name).then(|| {
+        format!(
+            "plan mode is read-only: `{name}` was refused. Plan the change \u{2014} the \
+             owner edits the plan and builds it, and the build is an \
+             ordinary run that may write."
+        )
+    })
+}
+
 impl<'a> Agent<'a> {
     /// An agent over `session`; an existing log's records seed the
     /// conversation so resumed runs continue in context.
@@ -812,6 +853,10 @@ impl<'a> Agent<'a> {
         progress: &'a mut dyn Write,
     ) -> Result<Agent<'a>, AgentError> {
         let records = crate::session::replay(session.path()).map_err(AgentError::Io)?;
+        // A rewind's cut: the records after the last rewind record are
+        // the future that did not happen, and a reseeded conversation
+        // must not carry them.
+        let records = crate::session::rewind_cut(&records).to_vec();
         let ui_tx = options.ui_tx.clone();
         let skills = options.skills.clone();
         let memory = options.memory.clone();
@@ -820,6 +865,15 @@ impl<'a> Agent<'a> {
         // Read before the options are consumed by the roster below: the
         // forced-fold flag is a copy, not a move.
         let compact_now = options.compact_now;
+        let checkpoints = options.checkpoints.clone();
+        let plan_mode = options.plan_mode;
+        // The log's own stem is the session id the checkpoint store keys
+        // on — one name for one conversation across every surface.
+        let session_id = session
+            .path()
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
         // An injected spec map wins for the lanes it names; every other
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
@@ -853,6 +907,9 @@ impl<'a> Agent<'a> {
             next_turn,
             compaction_latch: false,
             compact_now,
+            checkpoints,
+            session_id,
+            plan_mode,
             last_prompt_tokens: None,
             pending_hits: None,
             improve_home,
@@ -1379,6 +1436,15 @@ impl<'a> Agent<'a> {
                 let content = message.content.clone().unwrap_or_default();
                 self.push_message(message)?;
                 let turns = self.turns;
+                // A plan-mode run's answer is a plan: it rides its own
+                // record beside the assistant message, so the browser's
+                // plan card reads the log rather than a face-local
+                // copy of what the model said.
+                if self.plan_mode {
+                    self.record(&Record::Plan {
+                        text: content.clone(),
+                    })?;
+                }
                 self.record(&Record::End {
                     stop_reason: "completed".to_string(),
                     turns,
@@ -1404,6 +1470,13 @@ impl<'a> Agent<'a> {
             // `execute_calls`, the same indirection `api::chat_stream`
             // needed when the router called back into it.
             self.execute_calls(&tool_calls).await?;
+            // The turn's file state, captured before the next request:
+            // the checkpoint is the tree as this turn left it, so a
+            // rewind to this turn restores what the turn produced. A
+            // capture that fails is named and the run continues — the
+            // trust trio is a safety net, and a full disk must not stop
+            // the work the owner asked for.
+            self.checkpoint_turn();
             // Between turns: the window check. It runs after the last
             // response landed and before the next request is built, so
             // the message list it measures is the one the next request
@@ -1871,6 +1944,38 @@ impl<'a> Agent<'a> {
     /// same gate and the same result record a built-in does; it differs
     /// only in where the work happens — the lane's own child process,
     /// spawned on this call if the run has not met the lane yet.
+    /// Capture this turn's file state, when the run carries a store.
+    /// Best-effort by design: a capture that fails names itself on
+    /// stderr and the run continues, because the trust trio is a safety
+    /// net and a full disk must not stop the owner's work.
+    fn checkpoint_turn(&self) {
+        let Some(store) = self.checkpoints.clone() else {
+            return;
+        };
+        let root = std::env::current_dir().unwrap_or_default();
+        let session = self.session_id.clone();
+        let turn = self.turns;
+        match std::thread::spawn(move || crate::checkpoints::capture(&root, &store, &session, turn))
+            .join()
+        {
+            Ok(Ok(snapshot)) => self.emit(UiEvent::Checkpoint {
+                turn: snapshot.turn,
+                files: snapshot.files,
+                bytes: snapshot.bytes,
+            }),
+            Ok(Err(error)) => {
+                eprintln!("fleet: the turn {turn} checkpoint could not be captured: {error}")
+            }
+            Err(_) => eprintln!("fleet: the turn {turn} checkpoint thread failed"),
+        }
+    }
+
+    /// Plan mode's refusal for one tool, or `None` when the call is
+    /// allowed.
+    fn plan_mode_refusal(&self, name: &str) -> Option<String> {
+        plan_refusal(self.plan_mode, name)
+    }
+
     fn prepare_call(&mut self, call: &ToolCall) -> Result<Prepared, AgentError> {
         let approved = self.approver.approve(call);
         // The screening verdict, recorded after the decision: the gate's
@@ -1890,6 +1995,17 @@ impl<'a> Agent<'a> {
             return Ok(Prepared::Settled {
                 approved: false,
                 output,
+                truncated: false,
+            });
+        }
+        if let Some(refusal) = self.plan_mode_refusal(&call.function.name) {
+            // Plan mode: the write-class tools are refused by name, at
+            // the same seam a scope refusal meets, so the model reads
+            // the reason on the ordinary tool_result path and can plan
+            // around it rather than retrying.
+            return Ok(Prepared::Settled {
+                approved: true,
+                output: refusal,
                 truncated: false,
             });
         }
@@ -2258,6 +2374,7 @@ impl<'a> Agent<'a> {
             identity: self.options.identity.clone(),
             home,
             depth,
+            plan_mode: self.plan_mode,
         })
         .await;
         let outcome = crate::subagents::bound_result(&result);
@@ -4023,6 +4140,36 @@ mod tests {
         dir
     }
 
+    /// Plan mode's floor: the write-class tools are refused by name and
+    /// the read tools are not. The shell rides through, because planning
+    /// reads through it — the gate is the floor, the prompt is the intent.
+    #[test]
+    fn plan_mode_refuses_the_write_class_and_allows_the_reads() {
+        assert!(
+            plan_refusal(false, "write_file").is_none(),
+            "no mode, no refusal"
+        );
+        let refused = plan_refusal(true, "write_file").expect("write_file is refused");
+        assert!(refused.contains("plan mode is read-only"), "{refused}");
+        assert!(refused.contains("write_file"), "{refused}");
+        assert!(
+            plan_refusal(true, "computer_use").is_some(),
+            "the desktop writes"
+        );
+        assert!(
+            plan_refusal(true, "read_file").is_none(),
+            "a read is planning"
+        );
+        assert!(
+            plan_refusal(true, "bash").is_none(),
+            "the shell reads for a plan"
+        );
+        assert!(
+            plan_refusal(true, "list_dir").is_none(),
+            "a listing is planning"
+        );
+    }
+
     #[test]
     fn a_run_past_the_skills_soft_cap_still_declares_every_skill() {
         // The cap warns; it never hides. A run carrying more skills than
@@ -4055,6 +4202,8 @@ mod tests {
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -4350,6 +4499,8 @@ mod tests {
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         Agent::new(
             client,
@@ -4416,6 +4567,8 @@ mod tests {
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let mut progress = Vec::new();
         let plain = Agent::new(
@@ -4485,6 +4638,8 @@ mod tests {
                 improve_home: None,
                 gui_prompt: None,
                 compact_now: false,
+                checkpoints: None,
+                plan_mode: false,
             };
             Agent::new(
                 client,
@@ -4541,6 +4696,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -4571,6 +4728,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let mut progress = Vec::new();
         let plain = Agent::new(
@@ -4610,6 +4769,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: Some(line.clone()),
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -4642,6 +4803,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let mut progress = Vec::new();
         let plain = Agent::new(
@@ -4705,6 +4868,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent = Agent::new(
@@ -4836,6 +5001,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent = Agent::new(
@@ -5347,6 +5514,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: true,
+            checkpoints: None,
+            plan_mode: false,
         };
         let mut progress = Vec::new();
         let mut agent = Agent::new(
@@ -5415,6 +5584,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let mut progress = Vec::new();
         let mut agent = Agent::new(
@@ -5466,6 +5637,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let mut plain_session = crate::session::Session::create(&home, "m").unwrap();
         let mut plain_progress = Vec::new();
@@ -5621,6 +5794,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         Agent::new(client, options, session, Box::new(ApproveAll), progress).unwrap()
@@ -6011,6 +6186,8 @@ You are auditing a change. Read the diff before you judge it.
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         Agent::new(client, options, session, approver, progress).unwrap()
     }

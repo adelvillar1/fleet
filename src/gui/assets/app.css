@@ -2976,3 +2976,55 @@ body[data-pane="open"] .face { grid-template-columns: minmax(0, 1fr) var(--pane-
   padding: 8px 0;
   border-bottom: 1px solid var(--dsw-alias-surface-raised);
 }
+
+/* ------------------------------------------------------- the trust trio */
+
+/* The diff review: one file's hunks, the checkpoint's lines against
+   the run's, each with its own reject. */
+.send-plan { background: transparent; color: var(--dsw-alias-ink-secondary); }
+.send-plan[aria-pressed="true"] {
+  border-color: var(--dsw-alias-accent);
+  color: var(--dsw-alias-accent);
+}
+
+.diff-file {
+  display: grid;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--dsw-alias-surface-raised);
+}
+
+.diff-file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.diff-path {
+  font-family: var(--dsw-alias-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.diff-hunk {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+}
+
+.diff-old, .diff-new {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-family: var(--dsw-alias-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-old { background: color-mix(in srgb, var(--dsw-alias-down) 12%, transparent); }
+.diff-new { background: color-mix(in srgb, var(--dsw-alias-ok) 12%, transparent); }

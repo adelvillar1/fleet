@@ -375,6 +375,8 @@ async fn run_on(
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -403,6 +405,8 @@ async fn run_on_probe(
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let mut agent = Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
     agent.run(task).await
@@ -434,6 +438,8 @@ async fn run_with_lanes(
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await
@@ -1089,6 +1095,8 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1175,6 +1183,8 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1220,6 +1230,8 @@ async fn a_denied_call_reports_its_result_event() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -1289,6 +1301,8 @@ async fn a_failed_run_reports_a_failure_event() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
     let mut progress = Vec::new();
@@ -2335,6 +2349,8 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         };
         let report = {
             let mut agent = Agent::new(
@@ -2736,6 +2752,8 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let mut progress = Vec::new();
     let report = {
@@ -3146,6 +3164,8 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3270,6 +3290,8 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3417,6 +3439,8 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
         improve_home: Some(home.clone()),
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3493,6 +3517,8 @@ async fn an_unknown_role_is_refused_by_name_and_the_child_never_runs() {
         improve_home: Some(home.clone()),
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3610,6 +3636,8 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3678,6 +3706,8 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let outcome = {
         let mut progress = Vec::new();
@@ -3735,6 +3765,8 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -3788,6 +3820,8 @@ async fn a_run_without_a_stream_records_nothing() {
             improve_home: None,
             gui_prompt: None,
             compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
         },
         &mut session,
         Box::new(ApproveAll),
@@ -3938,6 +3972,8 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let report = {
         let mut progress = Vec::new();
@@ -4047,6 +4083,8 @@ async fn run_with_skills(
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(
@@ -4842,6 +4880,8 @@ async fn run_with_memory(
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -5332,6 +5372,8 @@ async fn run_with_improve(
         improve_home: Some(home.to_path_buf()),
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
@@ -5702,6 +5744,8 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let mut progress = Vec::new();
     let mut agent = Agent::new(
@@ -6183,6 +6227,8 @@ async fn run_capturing(
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
     agent.run(task).await

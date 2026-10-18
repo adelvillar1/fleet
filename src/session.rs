@@ -111,6 +111,25 @@ pub enum Record {
         /// protected tier, then ranked recall, then working memory.
         facts: Vec<String>,
     },
+    /// A rewind: the run was rewound to turn `turn`'s checkpoint, and
+    /// every record after this one describes a future that did not
+    /// happen. A log is append-only, so the abandoned records stay and
+    /// a reseed stops here — the conversation continues from the turn
+    /// the owner rewound to, and the record says where that was.
+    Rewind {
+        turn: u64,
+        /// How many entries the restore put back and how many stray
+        /// files it removed, named so the surface can say what a
+        /// rewind did to the tree.
+        restored: u64,
+        removed: u64,
+    },
+    /// A plan-mode run's final message: the plan the owner edits and
+    /// builds. Bookkeeping like `end` — it replays to no message of
+    /// its own, because the plan rides the assistant record beside it.
+    Plan {
+        text: String,
+    },
     /// An orderly stop; a log without it was interrupted.
     End {
         stop_reason: String,
@@ -289,6 +308,20 @@ pub fn replay(path: &Path) -> io::Result<Vec<Record>> {
     Ok(records)
 }
 
+/// The records a reseed seeds from: everything before the last
+/// [`Record::Rewind`], because the records after it are the future the
+/// rewind abandoned. A log with no rewind seeds whole, which is every
+/// log that was never rewound.
+pub fn rewind_cut(records: &[Record]) -> &[Record] {
+    match records
+        .iter()
+        .rposition(|record| matches!(record, Record::Rewind { .. }))
+    {
+        Some(at) => &records[..at],
+        None => records,
+    }
+}
+
 /// A summary row for `fleet sessions`.
 #[derive(Debug, Clone)]
 pub struct SessionSummary {
@@ -439,6 +472,9 @@ pub fn conversation(records: &[Record]) -> Conversation {
     let mut next_turn: u64 = 1;
     for record in records {
         match record {
+            // Bookkeeping: a rewind marks a cut the caller already
+            // applied, and a plan rides the assistant message beside it.
+            Record::Rewind { .. } | Record::Plan { .. } => {}
             Record::User { content } => {
                 messages.push(Message::text(Role::User, content.clone()));
                 turns.push(next_turn);

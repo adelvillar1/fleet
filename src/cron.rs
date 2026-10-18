@@ -1092,6 +1092,8 @@ pub async fn execute(
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
     };
     let gate = Gate::for_job(job);
     // The log's identity is read before the agent borrows the session

@@ -91,7 +91,9 @@
     ['approve', ['allow', 'yes'], 'answer the waiting approval: once, always, or deny',
       function (rest) { answer(rest.trim() || 'once'); }],
     ['help', ['commands', '?'], 'list every command and what it does',
-      function () { openDrawer('commands', commandHelp()); }]
+      function () { openDrawer('commands', commandHelp()); }],
+    ['review', ['diff', 'changes'], 'review this session’s file changes against a checkpoint',
+      function () { openReview(); }]
   ];
 
   // A short mark per destination, so the collapsed rail still reads at a
@@ -173,6 +175,7 @@
     composer: document.getElementById('composer'),
     task: document.getElementById('task'),
     send: document.getElementById('send'),
+    plan: document.getElementById('plan'),
     hint: document.getElementById('hint'),
     facts: document.getElementById('facts'),
     rules: document.getElementById('rules'),
@@ -213,6 +216,9 @@
     stick: true,
     buffer: '',
     flush: 0,
+    // Plan mode: the composer's second door, the browser's own state.
+    planMode: false,
+    planned: false,
     // Which keyed panel is showing, and the router board's last read. The
     // read is the board's document; the live decision is not in it, and
     // the panel keeps the two apart.
@@ -538,11 +544,26 @@
       case 'cron':
         cronRow(event);
         break;
+      case 'checkpoint':
+        checkpointRow(event);
+        break;
+      case 'rewound':
+        rewoundRow(event);
+        break;
+      case 'plan':
+        planRow(event);
+        break;
       case 'finished':
       case 'failed':
         face.assistant = null;
         face.stop = event;
         endRow(event);
+        // A plan-mode run's answer is a plan: the card it lands in is
+        // the editable one, so the owner edits and builds.
+        if (face.planned && event.type === 'finished') {
+          face.planned = false;
+          finishPlan();
+        }
         break;
       case 'seat':
         face.seat = event;
@@ -2231,6 +2252,7 @@
   }
 
   function send() {
+    if (face.planMode) { planSend(); return; }
     var task = el.task.value.trim();
     if (!task || face.running || face.seat) return;
     el.task.value = '';
@@ -3765,6 +3787,231 @@
     });
     form.appendChild(add);
     return form;
+  }
+
+  // -------------------------------------------------------- the trust trio
+
+  // Plan mode's toggle: the composer's second door. The state is the
+  // browser's own — the server has no session-scoped mode, because a
+  // mode that outlived the message that asked for it would be a mode
+  // nobody chose for the next task.
+  el.plan.addEventListener('click', function () {
+    face.planMode = !face.planMode;
+    el.plan.setAttribute('aria-pressed', face.planMode ? 'true' : 'false');
+    el.hint.textContent = face.planMode
+      ? 'Plan mode: the run plans and writes nothing \u00b7 Enter plans'
+      : 'Enter sends \u00b7 Shift+Enter is a newline';
+  });
+
+  // The plan door: the same task, the plan arm. A plan-mode run's final
+  // message records as a plan, and the card it lands in is editable —
+  // Build posts the edited text as an ordinary run.
+  function planSend() {
+    var task = el.task.value.trim();
+    if (!task || face.running || face.seat) return;
+    el.task.value = '';
+    grow();
+    face.planned = true;
+    post('/api/plan', { task: task }).then(function (reply) {
+      if (reply.status === 200) return;
+      face.planned = false;
+      notice('the plan did not start',
+        (reply.body && reply.body.error) || 'the face said no without a reason');
+    }).catch(function () { face.planned = false; });
+  }
+
+  // Enter in plan mode plans; the Send button still runs.
+  el.task.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && !event.shiftKey && face.planMode) {
+      event.preventDefault();
+      planSend();
+    }
+  });
+
+  // A turn's file state, checkpointed: the card names the turn and
+  // offers the rewind. The store's own counts ride along, because a
+  // checkpoint of nothing is a different fact from a checkpoint of the
+  // whole tree.
+  function checkpointRow(event) {
+    var el0 = card('checkpoint', '\u25c7', 'checkpoint \u00b7 turn ' + event.turn,
+      event.files + ' files \u00b7 ' + event.bytes + ' bytes held for a rewind',
+      null, null);
+    var rewind = node('button', 'replay-button');
+    rewind.type = 'button';
+    rewind.textContent = 'rewind to here';
+    rewind.addEventListener('click', function () { rewindTo(event.turn); });
+    el0.querySelector('.note').textContent = '';
+    el0.querySelector('.note').hidden = false;
+    el0.querySelector('.note').appendChild(rewind);
+    return row(el0, event);
+  }
+
+  // The rewind: the tree restored, the log cut, the face reseeded. The
+  // reply names what it did, and the conversation that follows is the
+  // one the next task seeds from.
+  function rewindTo(turn) {
+    if (!window.confirm('rewind the working tree to turn ' + turn +
+      '\u2019s checkpoint? The files the run changed after it go back, and the ' +
+      'conversation continues from that turn.')) {
+      return;
+    }
+    post('/api/rewind', { turn: turn }).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the rewind was refused',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+        return;
+      }
+      notice('rewound to turn ' + turn,
+        reply.body.restored + ' entries restored \u00b7 ' + reply.body.removed +
+        ' files the checkpoint never saw removed');
+      window.location.hash = '#/chat';
+      load(true);
+    }).catch(function () { });
+  }
+
+  // The rewind record, replayed: what the log says happened.
+  function rewoundRow(event) {
+    var el0 = card('rewound', '\u21a9', 'rewound to turn ' + event.turn,
+      event.restored + ' entries restored \u00b7 ' + event.removed + ' removed',
+      null, null);
+    return row(el0, event);
+  }
+
+  // A plan-mode run's answer: the plan itself, editable, with Build.
+  // The card is the log's own record, so a refresh replays the same
+  // plan and the same buttons.
+  function planRow(event) {
+    var el0 = card('plan', '\u25b8', 'the plan', 'plan mode wrote nothing \u00b7 edit it, then build',
+      null, null);
+    var box = node('textarea', 'soul-box');
+    box.value = event.text || '';
+    box.setAttribute('aria-label', 'the plan');
+    var build = node('button', 'replay-button replay-resume');
+    build.type = 'button';
+    build.textContent = 'build this plan';
+    build.addEventListener('click', function () {
+      var edited = box.value.trim();
+      if (!edited || face.running || face.seat) return;
+      face.planned = false;
+      post('/api/run', { task: edited }).then(function (reply) {
+        if (reply.status === 200) return;
+        notice('the build did not start',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+      }).catch(function () { });
+    });
+    var note = el0.querySelector('.note');
+    note.hidden = false;
+    note.appendChild(box);
+    note.appendChild(build);
+    return row(el0, event);
+  }
+
+  // The live half of a plan-mode run: the finished event's assistant
+  // message is the plan, and the card it lands in is the editable one.
+  function finishPlan() {
+    var said = '';
+    for (var i = face.events.length - 1; i >= 0; i -= 1) {
+      var event = face.events[i];
+      if (event.type === 'message' && event.role === 'assistant' && event.text) {
+        said = event.text;
+        break;
+      }
+    }
+    planRow({ type: 'plan', text: said });
+  }
+
+  // The diff review: the session's changes against a checkpoint. The
+  // turn is the newest the store holds, and each hunk's reject is the
+  // reverse of exactly that hunk.
+  function openReview() {
+    face.panel === 'chat' ? null : (window.location.hash = '#/chat');
+    fetch('/api/checkpoints', { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (doc) {
+        var snapshots = doc.snapshots || [];
+        if (!snapshots.length) {
+          notice('nothing to review',
+            'this session holds no checkpoint yet \u2014 a run checkpoints its file state ' +
+            'per turn, and the review measures the tree against one');
+          return;
+        }
+        var turn = snapshots[0].turn;
+        return fetch('/api/diff?turn=' + turn, { headers: { accept: 'application/json' } })
+          .then(function (reply) { return reply.json(); })
+          .then(function (diff) { paintDiff(diff, turn); });
+      })
+      .catch(function () { });
+  }
+
+  function paintDiff(diff, turn) {
+    var refused = diff.refused;
+    if (refused && refused.length) {
+      notice('the review did not land', refused.join(' \u00b7 '));
+      return;
+    }
+    var files = diff.files || [];
+    if (!files.length) {
+      notice('no changes against turn ' + turn,
+        'the working tree matches the checkpoint exactly');
+      return;
+    }
+    var el0 = card('diff', '\u00b1', 'the changes against turn ' + turn,
+      files.length + ' file' + (files.length === 1 ? '' : 's') +
+      ' \u00b7 a reject puts that hunk back', null, null);
+    var note = el0.querySelector('.note');
+    note.hidden = false;
+    files.forEach(function (file) {
+      note.appendChild(diffFile(file, turn));
+    });
+    face.stream.appendChild(el0);
+    settle();
+  }
+
+  function diffFile(file, turn) {
+    var wrap = node('div', 'diff-file');
+    var head = node('div', 'diff-file-head');
+    head.appendChild(node('span', 'diff-path', file.path));
+    head.appendChild(badge(file.kind, file.kind === 'added' ? 'ok'
+      : file.kind === 'removed' ? 'down' : null));
+    if (file.kind !== 'modified' || file.too_large) {
+      var whole = node('button', 'replay-button');
+      whole.type = 'button';
+      whole.textContent = file.too_large ? 'too large to diff \u00b7 reject the whole file'
+        : file.kind === 'added' ? 'remove the file' : 'restore the file';
+      whole.addEventListener('click', function () {
+        rejectHunk(turn, file.path, null);
+      });
+      head.appendChild(whole);
+    }
+    wrap.appendChild(head);
+    (file.hunks || []).forEach(function (hunk, index) {
+      var block = node('div', 'diff-hunk');
+      var old_ = node('pre', 'diff-old', hunk.old.join('\n'));
+      var new_ = node('pre', 'diff-new', hunk.new.join('\n'));
+      block.appendChild(old_);
+      block.appendChild(new_);
+      var reject = node('button', 'replay-button');
+      reject.type = 'button';
+      reject.textContent = 'reject this hunk';
+      reject.addEventListener('click', function () { rejectHunk(turn, file.path, index); });
+      block.appendChild(reject);
+      wrap.appendChild(block);
+    });
+    return wrap;
+  }
+
+  function rejectHunk(turn, path, hunk) {
+    var body = hunk === null ? { turn: turn, path: path } : { turn: turn, path: path, hunk: hunk };
+    post('/api/diff/reject', body).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the reject was refused',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+        return;
+      }
+      notice(hunk === null ? 'rejected the whole file' : 'rejected hunk ' + hunk,
+        path + ' \u00b7 the checkpoint\u2019s lines are back');
+      openReview();
+    }).catch(function () { });
   }
 
   // The keyed panels, by address. One registry, so showing one panel

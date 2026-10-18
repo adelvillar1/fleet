@@ -744,3 +744,25 @@ count; the feed names its build time; exit 0.
   the ones worth keeping. The second-brain panel rides the same
   six-file read, quieter. The scan names what it left unread, and the
   feed names its build time rather than pretending to be live.
+- **G8 landed 2026-10-18.** The settings surface reads the whole config
+  as one document — the knobs with their source named, the provider and
+  workload editors, the remembered rules as the third list, the cron
+  jobs, the SOUL.md slot, and the env-var counterparts by name only —
+  and every write rides the writer the CLI rides. The fleet.env defect
+  is closed, not disclosed: the endpoint resolver and the cua-driver
+  resolution now walk the fleet home's own `fleet.env` behind a pure
+  seam, with a round-trip test pinning write → read, so a GUI write
+  finally changes what a run uses.
+- **G9 landed 2026-10-18.** The trust trio on one new module and one
+  new log record: `checkpoints.rs` captures the working tree per turn
+  (bounded, ignores named, the cap's cut named) and a restore makes the
+  tree match the manifest exactly; the same module aligns a tree
+  against a checkpoint into per-file hunks, and a hunk's reject is the
+  reverse of exactly that hunk. The agent captures after each turn's
+  calls land, best-effort; a rewind restores the tree, appends the
+  `rewind` record the next reseed cuts at, reseeds the face, and drops
+  the prepared route; plan mode refuses the write-class tools by name,
+  the child delegations inherit the floor, and the final message
+  records as a `plan` the browser renders editable with Build. Every
+  face that drives the agent shares the store, so a run can be rewound
+  from the browser whichever surface started it.

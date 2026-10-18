@@ -73,10 +73,16 @@ const BROADCAST_DEPTH: usize = 256;
 pub(crate) enum Command {
     /// Run this task in the session this bridge currently anchors.
     Run(String),
+    /// Plan this task: the run plans and does not write, and its final
+    /// message records as a plan the owner edits and builds.
+    Plan(String),
     /// Re-anchor to this archived session's log. The next task replays
     /// it and continues it; the route is judged fresh, because the
     /// conversation the judgment serves is not the one that was judged.
     Resume(String),
+    /// The session was rewound to this turn: the thread's prepared route
+    /// is dropped, because the conversation it answered is gone.
+    Rewind(u64),
 }
 
 /// The agent thread's inputs, as one struct because the thread's own
@@ -220,6 +226,17 @@ impl Bridge {
     #[cfg(test)]
     pub(crate) fn point_at_memories(&mut self, root: PathBuf) {
         self.memories = root;
+    }
+
+    /// Point the trust trio's tree at a directory other than the one the
+    /// process was launched from. The production rule is the process's
+    /// own working directory — the same root the tools write to — and
+    /// a test that changed the process's cwd to honour it would be
+    /// mutating a global every other test in the binary reads. The seam
+    /// keeps the production rule out of the test's way instead.
+    #[cfg(test)]
+    pub(crate) fn point_at_cwd(&mut self, root: PathBuf) {
+        self.cwd = root;
     }
 
     /// A bridge with the agent thread behind it: the thread this module
@@ -731,10 +748,26 @@ impl Bridge {
         }
     }
 
+    /// Hand the browser's task to the agent thread as a plan-mode run:
+    /// the same door, the plan arm. The owner's message lands in the log
+    /// first, exactly as a run's does, so a refresh replays what was
+    /// asked.
+    pub fn plan(&self, task: &str) -> Result<(), String> {
+        self.dispatch(task, |task| Command::Plan(task.to_string()))
+    }
+
     /// Hand the browser's task to the agent thread. The owner's message
     /// lands in the log first, so a refresh replays what was asked and
     /// the header's running flag moves on the same event.
     pub fn run(&self, task: &str) -> Result<(), String> {
+        self.dispatch(task, |task| Command::Run(task.to_string()))
+    }
+
+    /// The shared door: the task validated, the flag set, the owner's
+    /// message logged, and the command handed to the thread. One body
+    /// for both arms, so a plan-mode run and an ordinary one cannot
+    /// disagree about what happens before the agent sees the task.
+    fn dispatch(&self, task: &str, command: impl FnOnce(&str) -> Command) -> Result<(), String> {
         let task = task.trim();
         if task.is_empty() {
             return Err("a run needs a task".to_string());
@@ -752,7 +785,7 @@ impl Bridge {
             json!({"type": "message", "role": "owner", "text": task}),
         );
         let delivered = match self.commands.as_ref() {
-            Some(commands) => commands.send(Command::Run(task.to_string())).is_ok(),
+            Some(commands) => commands.send(command(task)).is_ok(),
             None => false,
         };
         if !delivered {
@@ -826,6 +859,176 @@ impl Bridge {
             json!({"type": "resumed", "session": id, "agent": delivered}),
         );
         Ok(json!({"type": "resume", "session": id, "agent": delivered}))
+    }
+
+    /// Rewind the session to a turn's checkpoint: the tree is restored
+    /// to the state that turn left, the log gains the rewind record the
+    /// next reseed cuts at, the face reseeds from the log before it, and
+    /// the thread drops its prepared route. A run in flight refuses —
+    /// rewinding a tree the run is still writing would be a race, not a
+    /// rewind.
+    pub async fn rewind(&self, turn: u64) -> Result<Value, String> {
+        {
+            let state = lock(&self.state);
+            if state.running {
+                return Err("a run is in flight; let it finish before rewinding".to_string());
+            }
+        }
+        let home = self.home.clone();
+        let session = lock(&self.state).session.clone();
+        let root = self.cwd.clone();
+        let store = home.join("checkpoints");
+        let landed = tokio::task::spawn_blocking(move || {
+            let (restored, removed) = crate::checkpoints::restore(&root, &store, &session, turn)
+                .map_err(|error| format!("the rewind could not restore the tree: {error}"))?;
+            // The record rides the log the session already anchors, in
+            // append mode: a log is append-only, so the abandoned future
+            // stays and the reseed cuts at this record.
+            let path = session::session_path(&home, &session);
+            let mut log = Session::open(&path)
+                .map_err(|error| format!("the session log could not be opened: {error}"))?;
+            log.record(&session::Record::Rewind {
+                turn,
+                restored: restored as u64,
+                removed: removed as u64,
+            })
+            .map_err(|error| format!("the rewind could not be recorded: {error}"))?;
+            Ok::<(usize, usize), String>((restored, removed))
+        })
+        .await
+        .map_err(|_| "the rewind did not land".to_string())??;
+        // The face reseeds from the log before the cut, exactly as a
+        // resume reseeds: one translator, so what the browser shows is
+        // what the next task seeds from.
+        let home = self.home.clone();
+        let session = lock(&self.state).session.clone();
+        let cards = tokio::task::spawn_blocking(move || {
+            let path = session::session_path(&home, &session);
+            let records = session::replay(&path).map_err(|error| error.to_string())?;
+            let cut = session::rewind_cut(&records);
+            Ok::<Vec<Value>, String>(cards_from_records(cut).0)
+        })
+        .await
+        .map_err(|_| "the reseed did not land".to_string())??;
+        {
+            let mut state = lock(&self.state);
+            state.events = cards.into();
+            state.dropped = 0;
+            state.running = false;
+            state.seat = None;
+        }
+        if let Some(commands) = self.commands.as_ref() {
+            let _ = commands.send(Command::Rewind(turn));
+        }
+        record(
+            &self.state,
+            &self.events,
+            json!({
+                "type": "rewound",
+                "turn": turn,
+                "restored": landed.0,
+                "removed": landed.1,
+            }),
+        );
+        Ok(json!({"type": "rewind", "turn": turn, "restored": landed.0, "removed": landed.1}))
+    }
+
+    /// The checkpoints this session's store holds, newest first: the
+    /// rewind affordance reads it, and each entry names the turn and
+    /// what the capture reached.
+    pub async fn checkpoints(&self) -> Value {
+        let home = self.home.clone();
+        let session = lock(&self.state).session.clone();
+        let store = home.join("checkpoints");
+        match tokio::task::spawn_blocking(move || crate::checkpoints::list(&store, &session)).await
+        {
+            Ok(snapshots) => json!({
+                "type": "checkpoints",
+                "snapshots": snapshots.iter().map(|snapshot| json!({
+                    "turn": snapshot.turn,
+                    "at": snapshot.at,
+                    "files": snapshot.files,
+                    "bytes": snapshot.bytes,
+                    "unread": snapshot.unread,
+                })).collect::<Vec<_>>(),
+            }),
+            Err(_) => {
+                json!({"type": "checkpoints", "refused": ["the checkpoint read did not land"]})
+            }
+        }
+    }
+
+    /// The run's changes against a checkpoint's turn: the diff review's
+    /// document. The turn is the checkpoint to measure against; the
+    /// face offers the turns the store holds.
+    pub async fn diff(&self, turn: u64) -> Value {
+        let home = self.home.clone();
+        let session = lock(&self.state).session.clone();
+        let root = self.cwd.clone();
+        let store = home.join("checkpoints");
+        match tokio::task::spawn_blocking(move || {
+            crate::checkpoints::diff(&root, &store, &session, turn)
+        })
+        .await
+        {
+            Ok(Ok(files)) => json!({
+                "type": "diff",
+                "turn": turn,
+                "files": files.iter().map(diff_file_json).collect::<Vec<_>>(),
+            }),
+            Ok(Err(error)) => json!({
+                "type": "diff",
+                "refused": [format!("the diff could not be read: {error}")],
+            }),
+            Err(_) => json!({"type": "diff", "refused": ["the diff did not land"]}),
+        }
+    }
+
+    /// Reject one hunk, or a whole file when the hunk is the file's own:
+    /// the checkpoint's lines go back where the run's lines went. The
+    /// hunk's coordinate rides the request, so a reject is the reverse
+    /// of exactly what that hunk changed and nothing else.
+    pub async fn diff_reject(&self, body: &str) -> Result<Value, String> {
+        let arguments: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("the reject is not a JSON object: {error}"))?;
+        let turn = arguments
+            .get("turn")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| "a reject names the checkpoint's turn".to_string())?;
+        let path = arguments
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "a reject names the file".to_string())?
+            .to_string();
+        let hunk = arguments.get("hunk").and_then(serde_json::Value::as_u64);
+        let owned = path.clone();
+        let home = self.home.clone();
+        let session = lock(&self.state).session.clone();
+        let root = self.cwd.clone();
+        let store = home.join("checkpoints");
+        tokio::task::spawn_blocking(move || {
+            if let Some(index) = hunk {
+                let files = crate::checkpoints::diff(&root, &store, &session, turn)
+                    .map_err(|error| format!("the diff could not be read: {error}"))?;
+                let file = files
+                    .iter()
+                    .find(|file| file.path == owned)
+                    .ok_or_else(|| format!("`{owned}` carries no change against turn {turn}"))?;
+                let hunk = file
+                    .hunks
+                    .get(index as usize)
+                    .ok_or_else(|| format!("`{owned}` carries no hunk {index}"))?;
+                crate::checkpoints::reject_hunk(&root, file, hunk)
+                    .map_err(|error| format!("the hunk could not be rejected: {error}"))?;
+            } else {
+                crate::checkpoints::reject_file(&root, &store, &session, turn, &owned)
+                    .map_err(|error| format!("the file could not be rejected: {error}"))?;
+            }
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|_| "the reject did not land".to_string())??;
+        Ok(json!({"type": "diff_reject", "turn": turn, "path": path, "hunk": hunk}))
     }
 
     /// The browser's answer to the pending seat.
@@ -1272,6 +1475,21 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
     for record in records {
         match record {
             session::Record::Start { .. } | session::Record::End { .. } => {}
+            session::Record::Rewind {
+                turn,
+                restored,
+                removed,
+            } => {
+                cards.push(json!({
+                    "type": "rewound",
+                    "turn": turn,
+                    "restored": restored,
+                    "removed": removed,
+                }));
+            }
+            session::Record::Plan { text } => {
+                cards.push(json!({"type": "plan", "text": text}));
+            }
             session::Record::User { content } => {
                 cards.push(json!({"type": "message", "role": "owner", "text": content}));
             }
@@ -1854,6 +2072,26 @@ fn settings_apply(
     }
 }
 
+/// One file's change, shaped for the browser: the kind, the hunks with
+/// their coordinates, and the too-large flag so the panel can offer the
+/// whole-file reject honestly instead of a partial alignment.
+fn diff_file_json(file: &crate::checkpoints::FileDiff) -> Value {
+    json!({
+        "path": file.path,
+        "kind": match file.kind {
+            crate::checkpoints::DiffKind::Added => "added",
+            crate::checkpoints::DiffKind::Removed => "removed",
+            crate::checkpoints::DiffKind::Modified => "modified",
+        },
+        "too_large": file.too_large,
+        "hunks": file.hunks.iter().map(|hunk| json!({
+            "old": hunk.old,
+            "new": hunk.new,
+            "new_at": hunk.new_at,
+        })).collect::<Vec<_>>(),
+    })
+}
+
 /// The tower console's document. The git facts and the brain's
 /// aggregates are two reads that fail for different reasons — the
 /// projects root may not exist, the second-brain may not be installed —
@@ -2397,6 +2635,9 @@ fn describe(event: &UiEvent) -> Value {
                 .map(|(provider, model)| json!({"provider": provider, "model": model}))
                 .collect::<Vec<_>>(),
         }),
+        UiEvent::Checkpoint { turn, files, bytes } => {
+            json!({"type": "checkpoint", "turn": turn, "files": files, "bytes": bytes})
+        }
         UiEvent::Compacted {
             turns,
             tokens_before,
@@ -2665,8 +2906,12 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             let mut current_session = session_id;
             let mut commands = command_rx;
             while let Some(command) = commands.recv().await {
+                // Which arm this task arrived on, read before the match
+                // consumes it: the two share one body, and the flag is
+                // the only difference between a run and a plan.
+                let plan_mode = matches!(command, Command::Plan(_));
                 match command {
-                    Command::Run(task) => {
+                    Command::Run(task) | Command::Plan(task) => {
                         if prepared.is_none() {
                             match crate::route::prepare(
                                 &home,
@@ -2739,6 +2984,12 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             // flag: its owner is present, so the budget's
                             // own timing is the right one.
                             compact_now: false,
+                            // The trust trio's floor: this face's runs
+                            // checkpoint per turn, under the home's own
+                            // store, so a run can be rewound from the
+                            // browser and diffed against a turn.
+                            checkpoints: Some(home.join("checkpoints")),
+                            plan_mode,
                         };
                         let approver: Box<dyn Approver> =
                             Box::new(GuiApprover::new(approval_tx.clone(), Arc::clone(&rules)));
@@ -2755,6 +3006,15 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 }
                             };
                         let _ = agent.run(&task).await;
+                    }
+                    Command::Rewind(_turn) => {
+                        // The face already restored the tree, recorded
+                        // the rewind, and reseeded its own view. The
+                        // thread's half is the prepared route: the
+                        // judgment answered the conversation that is
+                        // gone, and the next task is judged as its own.
+                        prepared = None;
+                        judge_task = String::new();
                     }
                     Command::Resume(id) => {
                         // The re-anchor is the TUI's resume, one surface

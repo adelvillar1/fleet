@@ -187,6 +187,8 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         options.max_turns,
         options.yes,
         options.compact_now,
+        Some(home.join("checkpoints")),
+        false,
         &mut session,
         &options.task,
         skills,
@@ -298,6 +300,8 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
             prepared.decision.model.clone(),
             DEFAULT_MAX_TURNS,
             options.yes,
+            false,
+            Some(home.join("checkpoints")),
             false,
             &mut session,
             trimmed,
@@ -1240,6 +1244,8 @@ async fn drive(
     max_turns: usize,
     yes: bool,
     compact_now: bool,
+    checkpoints: Option<std::path::PathBuf>,
+    plan_mode: bool,
     session: &mut Session,
     task: &str,
     skills: Vec<fleet::skills::Skill>,
@@ -1278,6 +1284,8 @@ async fn drive(
         improve_home: Some(home.to_path_buf()),
         gui_prompt: None,
         compact_now,
+        checkpoints,
+        plan_mode,
     };
     // Every non-interactive mode rides the Gate, never `ApproveAll`:
     // the always-ask class (computer use) sits ABOVE the modes, and an

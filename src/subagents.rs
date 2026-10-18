@@ -1467,6 +1467,10 @@ pub struct Delegation<'a> {
     pub home: Option<PathBuf>,
     /// The child's delegation depth.
     pub depth: usize,
+    /// Plan mode rides the parent's floor down: a child of a planning
+    /// run plans too, because a delegation that could write would be a
+    /// hole in the read-only promise the parent made.
+    pub plan_mode: bool,
 }
 
 /// Run one delegated task to a stop and return what it produced.
@@ -1505,6 +1509,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         identity,
         home,
         depth,
+        plan_mode,
     } = delegation;
 
     // The brief, read back out of the message the caller composed. The
@@ -1652,6 +1657,11 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         improve_home: None,
         gui_prompt: None,
         compact_now: false,
+        // The child inherits the parent's floor: a planning parent's
+        // child plans, and the parent's checkpoint store keys the
+        // child's captures by the child's own session id.
+        checkpoints: None,
+        plan_mode,
     };
     let gate = InheritedApprover {
         inner: approver,

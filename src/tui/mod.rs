@@ -564,6 +564,12 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             // flag: its owner is present, so the budget's
                             // own timing is the right one.
                             compact_now: false,
+                            // The TUI shares the home's checkpoint store,
+                            // so a run driven from the pane can be
+                            // rewound from the browser face too — one
+                            // store, one conversation, two surfaces.
+                            checkpoints: Some(home.join("checkpoints")),
+                            plan_mode: false,
                         };
                         let approver: Box<dyn Approver> =
                             Box::new(TuiApprover::new(approval_tx.clone()));

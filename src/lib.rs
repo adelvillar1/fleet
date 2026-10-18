@@ -12,6 +12,7 @@ pub mod api;
 pub mod approvals;
 pub mod boards;
 pub mod calib;
+pub mod checkpoints;
 pub mod cli;
 pub mod compaction;
 pub mod cron;

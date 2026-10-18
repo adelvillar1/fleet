@@ -1211,6 +1211,8 @@ async fn drive_over(
         calib: None,
         skills: Vec::new(),
         compact_now: false,
+        checkpoints: None,
+        plan_mode: false,
         role_overlay: None,
         memory,
         scope: None,
