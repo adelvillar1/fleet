@@ -3497,6 +3497,41 @@ enum WriteGuard {
 /// nomenclature module, so this reads the cache rather than re-deriving
 /// per call, and a name the vocabulary already carries is skipped in one
 /// lookup instead of a scan.
+/// Python's own capitalized names, which a driver cannot avoid writing
+/// and the project does not declare: the builtin exception classes and
+/// the threading and queue primitives. Lowercase, because the check
+/// lowercases the token first.
+const PYTHON_BUILTINS: [&str; 12] = [
+    "exception",
+    "systemexit",
+    "timeouterror",
+    "valueerror",
+    "typeerror",
+    "keyerror",
+    "indexerror",
+    "attributeerror",
+    "runtimeerror",
+    "notimplementederror",
+    "thread",
+    "queue",
+];
+
+/// A name the guard does not police: a live roster model — the string
+/// the API takes, so `GLM-5.3-Flash` in a doc's backticks is naming a
+/// wire identifier, not drifting (KI-220) — and, in a Python file, the
+/// language's own capitalized builtins (KI-226).
+fn is_external_name(token: &str, path: &str) -> bool {
+    let lowered = token.to_lowercase();
+    let roster_model = crate::route::default_roster()
+        .iter()
+        .flat_map(|candidate| candidate.models.iter().cloned())
+        .any(|model| model.to_lowercase() == lowered);
+    if roster_model {
+        return true;
+    }
+    path.ends_with(".py") && PYTHON_BUILTINS.contains(&lowered.as_str())
+}
+
 fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGuard {
     let Some(content) = arguments
         .get("content")
@@ -3518,6 +3553,18 @@ fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGu
         .get("path")
         .and_then(|path| path.as_str())
         .unwrap_or_default();
+    // The guard's scope is this project's own naming. A path outside the
+    // tree the vocabulary was derived from is not project code — a
+    // scratch driver under /tmp policed against the repo's vocabulary is
+    // refused token by token for names the project never declared
+    // (KI-226). A relative path is written inside the working tree,
+    // which is the root; an absolute one must name the root.
+    let inside = path.is_empty()
+        || !std::path::Path::new(path).is_absolute()
+        || std::path::Path::new(path).starts_with(root);
+    if !inside {
+        return WriteGuard::Clean;
+    }
     let candidates = crate::nomenclature::channel_tokens(path, content);
     let vocabulary = crate::nomenclature::vocabulary(root);
     let mut flagged: Vec<(String, String, String)> = Vec::new();
@@ -3527,6 +3574,15 @@ fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGu
             continue;
         }
         seen.push(token.clone());
+        // A name that is not the project's to police: a live roster
+        // model — the string the API takes, which a doc names in
+        // backticks (KI-220) — and, in a Python file, the language's own
+        // capitalized builtins, which an ordinary driver cannot avoid
+        // (KI-226). Both are external names; the guard polices this
+        // project's drift.
+        if is_external_name(&token, path) {
+            continue;
+        }
         // The vocabulary's canonical form for this name, in both
         // spellings: the parts joined as written, and the parts
         // lowercased. The vocabulary keeps a compound's own case when
@@ -6544,7 +6600,7 @@ You are auditing a change. Read the diff before you judge it.
         let root = vocabulary_root("guard-refuse");
         let guard = write_guard(
             &root,
-            &serde_json::json!({"path":"/x","content":"let judgeRoute = judge_route();"}),
+            &serde_json::json!({"path":"src/x.rs","content":"let judgeRoute = judge_route();"}),
         );
         match guard {
             WriteGuard::Refused { reason } => {
@@ -6567,7 +6623,7 @@ You are auditing a change. Read the diff before you judge it.
         // same drift, and a case variant with the separator kept.
         let guard = write_guard(
             &root,
-            &serde_json::json!({"path":"/x","content":"let Judge_Route = judge_route();"}),
+            &serde_json::json!({"path":"src/x.rs","content":"let Judge_Route = judge_route();"}),
         );
         assert!(matches!(guard, WriteGuard::Refused { .. }), "{guard:?}");
         let _ = std::fs::remove_dir_all(&root);
@@ -6581,7 +6637,7 @@ You are auditing a change. Read the diff before you judge it.
         let root = vocabulary_root("guard-flag");
         let guard = write_guard(
             &root,
-            &serde_json::json!({"path":"/x","content":"let route_judge = judge_route();"}),
+            &serde_json::json!({"path":"src/x.rs","content":"let route_judge = judge_route();"}),
         );
         match guard {
             WriteGuard::Flagged { note } => {
@@ -6627,7 +6683,11 @@ You are auditing a change. Read the diff before you judge it.
         // write, a flag lets it land with the note on the result the
         // model already reads, and neither adds an approval gate.
         let root = vocabulary_root("guard-work");
-        let files = scratch("guard-work-files");
+        // The writes land inside the tree the vocabulary was derived
+        // from: the guard's scope is the project's own naming, and a
+        // path outside the root is not project code to police.
+        let files = root.join("src");
+        std::fs::create_dir_all(&files).unwrap();
         let refused = files.join("refused.rs");
         let (output, _) = run_work(Work::Builtin {
             tool: Tool::WriteFile,
@@ -6760,6 +6820,61 @@ You are auditing a change. Read the diff before you judge it.
             ),
             "a string literal still carries an identifier"
         );
+    }
+
+    /// KI-220: a live roster model is a name, not drift. The string the
+    /// API takes rides a doc's backticks, and the vocabulary holds the
+    /// lane's own lowercase spelling — refusing the roster's model
+    /// would block any doc that names Fleet's head model.
+    #[test]
+    fn a_live_roster_model_is_a_name_the_guard_does_not_police() {
+        let root = vocabulary_root("guard-model");
+        let model = crate::route::default_roster()
+            .into_iter()
+            .flat_map(|candidate| candidate.models)
+            .find(|model| model.contains('.'))
+            .expect("a dotted model in the compiled-in roster");
+        let shouted = model.to_uppercase();
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path": "docs/routing.md",
+                "content": format!("the head model is `{shouted}`\n"),
+            }),
+        );
+        assert!(
+            matches!(guard, WriteGuard::Clean),
+            "a wire identifier is a name, not a variant: {guard:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// KI-226: an ordinary Python driver is writable as written. The
+    /// language's own capitalized builtins are not project drift, and a
+    /// path outside the tree the vocabulary came from is not project
+    /// code to police at all.
+    #[test]
+    fn an_ordinary_python_driver_is_writable_as_written() {
+        let root = vocabulary_root("guard-python");
+        let driver = "import subprocess, threading, queue\n\n            def main():\n                thread = threading.Thread(target=work)\n                box = queue.Queue()\n                try:\n                    thread.start()\n                except TimeoutError:\n                    raise SystemExit(1)\n                except Exception:\n                    pass\n";
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path": "src/driver.py", "content": driver}),
+        );
+        assert!(
+            matches!(guard, WriteGuard::Clean),
+            "Python's own capitalized names are not this project's drift: {guard:?}"
+        );
+        let outside = std::env::temp_dir().join("fleet-scratch-driver.py");
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path": outside.display().to_string(), "content": driver}),
+        );
+        assert!(
+            matches!(guard, WriteGuard::Clean),
+            "a path outside the tree the vocabulary came from is not project code: {guard:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Markdown's code channels still refuse: a fenced block and an
