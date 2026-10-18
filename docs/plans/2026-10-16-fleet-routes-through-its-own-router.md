@@ -45,6 +45,12 @@ Three constraints the owner set explicitly, all still in force:
   router board.
 - **Do not remove the zcode-router-kit.** The kit deployment on the
   machine stays running. That is simply not Fleet's business to touch.
+  The lineage, for the record (KI-013): `agnostic-router-kit` is the
+  neutral core extracted from `zcode-router-kit` on 2026-10-04 — the
+  kit's own `CLAUDE.md` says so — and the ZCode edition is one of its
+  consumers, not its predecessor. The two names are not
+  interchangeable, and the extraction is why this repo's roster entry
+  for the kit is gone entirely rather than renamed.
 - **Fleet's router never reads a config file from a different harness.**
   The same ruling as `2026-10-16-own-home-credentials.md`, applied to the
   board's token-resolution leg.
