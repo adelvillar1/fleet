@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-18
 updated: 2026-10-18
 slug: remote-access-lanes
@@ -202,37 +202,75 @@ hypothesis with one data point.
 
 ## Acceptance Criteria
 
-- **The invariant.** With no channels configured and no paired
-  devices, every existing behavior is byte-for-byte unchanged, and none
-  of R1–R8's code is on the path. Verified by the full suite plus a
-  manual pass of `fleet gui`, `fleet chat`, and `fleet run`.
-- R0: a session created in directory X lists and replays with
-  workspace X; a pre-R0 log reads with the field absent; `fleet
-  sessions` shows the project.
-- R1: `fleet pair` prints a single-use code; redeeming it from a
-  browser on the LAN yields a working session; a second redemption
-  fails; `fleet devices` lists the device and revoke kills it; every
-  non-allowlisted route answers 403 with the reason named; the
-  loopback face still refuses a non-loopback `--host` by name.
+All nine landed, in order, each with its own gate and its own commit.
+The recorded evidence is what the commit messages and the tests say.
+
+- **The invariant.** With no channels configured and no paired devices,
+  every existing behavior is byte-for-byte unchanged, and none of R1–R8's
+  code is on the path. Held: the loopback face keeps its own listener,
+  its own per-launch token, and its refusal of a non-loopback `--host` by
+  name, and every remote piece is behind an opt-in flag or an
+  environment variable.
+- R0: a session created in directory X lists and replays with workspace
+  X; a pre-R0 log reads with the field absent; `fleet sessions` shows the
+  project. Landed in 952f56f, with the field's round trip and the
+  hand-written pre-field log both pinned.
+- R1: `fleet pair` prints a single-use code; redeeming it from a browser
+  on the LAN yields a working session; a second redemption fails;
+  `fleet devices` lists the device and revoke kills it; every
+  non-allowlisted route answers 403 with the reason named; the loopback
+  face still refuses a non-loopback `--host` by name. Landed in 59fbc8d,
+  verified live against the real binary.
 - R2: the full gate green with the desktop contract unchanged; two
   surfaces attached to two different sessions see independent
   transcripts and independent seats; the launch session remains the
-  default for a request with no `?session=`.
+  default for a request with no `?session=`. Landed in f676d0d. The
+  rebase onto master brought KI-022 in under the registry; the merge is
+  a82113a and the launch log stays lazily created.
 - R3: a phone-width viewport renders the inbox grouped by project;
   tapping a session attaches it without moving the desktop's chat; an
-  approval raised on one surface shows as answered on the other.
+  approval raised on one surface shows as answered on the other. Landed
+  in 0824b34, verified by the repo's own method — the real app.js in a
+  Node vm against stubbed documents in the bridge's shapes.
 - R4: a webhook delivery from an unpaired peer is refused by name; a
-  paired peer's delivery starts a run in its own session log; its
-  approval seat is answerable from the channel and from the GUI inbox;
-  an answer on one closes the seat on both.
-- R5: two surfaces race to answer one seat; the winner's decision
-  lands, the loser sees "answered elsewhere" with who answered.
+  paired peer's delivery starts a run in its own session; its approval
+  seat is answerable from the channel and from the GUI inbox; an answer
+  on one closes the seat on both. Landed in dfb73ff, verified live
+  through curl. The seat's state is single; the channel's notification
+  cannot be retracted, and the module says so.
+- R5: two surfaces race to answer one seat; the winner's decision lands,
+  the loser sees "answered elsewhere" with who answered. Landed in
+  db1a823.
 - R6: a reply sent from the GUI reaches the peer on the channel; a
-  device revoked in the GUI stops reaching the listener.
+  device revoked in the GUI stops reaching the listener. Landed in
+  4b54576 — the reply half needed nothing new, because the driver's
+  watcher already posts the outcome back; what was missing was the
+  ability to see that.
 - R7: with the relay up, a phone on cellular reaches the session; with
-  the relay down, the desktop face is unaffected and says why.
+  the relay down, the desktop face is unaffected and says why. Landed in
+  b16f5c8 with the reference relay in `relay/relay.py`, verified live: a
+  phone through the relay gets the page, the stylesheet, and the live
+  session state.
 - R8: the second plugin pairs, receives, and answers with no change to
-  the channel service's core.
+  the channel service's core. Landed in ca5e4d6, verified by the real
+  channel against a fake Telegram through the real driver.
+
+The QR (R1b) landed in ea35e1a: the encoder is byte mode, level M,
+versions 1 through 10, and its module matrices are compared against a
+real implementation for three payloads. Three bugs the verification
+caught — the alignment table indexed by version instead of
+version-minus-one, the finder separators placed on two sides, and
+reverse video in the terminal rendering — would each have produced a QR
+that looked fine and did not scan.
+
+## Deferred, named
+
+- End-to-end encryption on the relay (the HPKE-pinned key OpenMausBot's
+  scanner carries). The threat model is stated in `docs/features/remote-access.md`.
+- Streaming over the relay: `/events` answers with the session's tail and
+  the page polls, which is what a phone does well and a held-open
+  connection through a relay does badly.
+- A second relay implementation, and any deployment story for one.
 
 ## Files to be touched
 
