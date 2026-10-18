@@ -650,6 +650,10 @@ pub fn scan_usage(home: &Path, sessions: usize) -> UsageScan {
         return scan;
     };
     // `list` is oldest first; the window is the most recent `sessions`.
+    // KI-056: `list` reads each log's head and tail through
+    // `session::summarize` rather than materializing every record, so
+    // the summaries no longer pay a full replay of every log in the
+    // home — the window's replay below is the only one.
     for summary in summaries.iter().rev().take(sessions) {
         scan.sessions += 1;
         let Ok(records) = crate::session::replay(&summary.path) else {

@@ -332,6 +332,60 @@ pub fn rewind_cut(records: &[Record]) -> &[Record] {
     }
 }
 
+/// The summary a log's HEAD carries, read without replaying the whole
+/// file: the `start` record is the first line, and `ended` is the last
+/// record's kind. KI-056: `list` used to materialize every record of
+/// every log to build summaries the head and tail already answer, and
+/// `skills::scan_usage` then replayed the window's logs again — a home
+/// with many sessions paid the full replay of all of them on every
+/// `fleet skills`.
+///
+/// A log whose head is not a `start` record (empty, torn, or not ours)
+/// reads as `None`: the caller keeps its own rule for what to do with
+/// a log it cannot summarize, which is what `list` already does.
+pub fn summarize(path: &Path) -> Option<SessionSummary> {
+    use std::io::BufRead;
+    let file = fs::File::open(path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut first = String::new();
+    if reader.read_line(&mut first).ok()? == 0 {
+        return None;
+    }
+    let Record::Start {
+        model,
+        created,
+        kind,
+        ..
+    } = serde_json::from_str(first.trim()).ok()?
+    else {
+        return None;
+    };
+    let id = path.file_stem().and_then(|s| s.to_str())?.to_string();
+    // The tail: the last non-empty line's kind. Bounded by the file's
+    // own size the way `replay` is, but the last line only.
+    let text = fs::read_to_string(path).ok()?;
+    let last = text.lines().rev().find(|line| !line.trim().is_empty())?;
+    let ended = matches!(
+        serde_json::from_str::<Record>(last.trim()),
+        Ok(Record::End { .. })
+    );
+    let compacted = text.lines().any(|line| {
+        matches!(
+            serde_json::from_str::<Record>(line.trim()),
+            Ok(Record::Compaction { .. })
+        )
+    });
+    Some(SessionSummary {
+        id,
+        model,
+        created,
+        ended,
+        kind,
+        compacted,
+        path: path.to_path_buf(),
+    })
+}
+
 /// A summary row for `fleet sessions`.
 #[derive(Debug, Clone)]
 pub struct SessionSummary {
@@ -375,10 +429,13 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
             .and_then(|stem| stem.to_str())
             .unwrap_or("")
             .to_string();
-        let records = match replay(&path) {
-            Ok(records) if !records.is_empty() => records,
-            Ok(_) => continue,
-            Err(_) => {
+        // KI-056: the summary is a head-and-tail read, not a replay of
+        // every record — `skills::scan_usage` used to pay the full
+        // materialization of every log in the home just to learn these
+        // five fields.
+        match summarize(&path) {
+            Some(summary) => entries.push(summary),
+            None => {
                 entries.push(SessionSummary {
                     id,
                     model: "unreadable".to_string(),
@@ -388,30 +445,8 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     compacted: false,
                     path,
                 });
-                continue;
             }
-        };
-        let (model, created) = match &records[0] {
-            Record::Start { model, created, .. } => (model.clone(), created.clone()),
-            _ => (String::new(), String::new()),
-        };
-        let kind = match &records[0] {
-            Record::Start { kind, .. } => kind.clone(),
-            _ => None,
-        };
-        let ended = matches!(records.last(), Some(Record::End { .. }));
-        let compacted = records
-            .iter()
-            .any(|record| matches!(record, Record::Compaction { .. }));
-        entries.push(SessionSummary {
-            id,
-            model,
-            created,
-            ended,
-            kind,
-            compacted,
-            path,
-        });
+        }
     }
     entries.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(entries)
@@ -632,6 +667,42 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// KI-056: the summary is a head-and-tail read that answers the same
+    /// five fields the full replay did, without materializing every
+    /// record — and a log that cannot be summarized reads as `None`
+    /// rather than as a wrong summary.
+    #[test]
+    fn a_summary_is_a_head_and_tail_read() {
+        let home = temp_home("summarize");
+        let mut session = Session::create(&home, "m").unwrap();
+        session
+            .record(&Record::User {
+                content: "the task".into(),
+            })
+            .unwrap();
+        session
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 2,
+                served_model: None,
+            })
+            .unwrap();
+        let summary = summarize(session.path()).expect("the summary reads");
+        assert_eq!(summary.model, "m");
+        assert!(summary.created.ends_with('Z'), "{}", summary.created);
+        assert!(summary.ended);
+        // A log with no end record reads as open.
+        let open_home = temp_home("summarize-open");
+        let open = Session::create(&open_home, "m").unwrap();
+        assert!(!summarize(open.path()).unwrap().ended);
+        // A log that is not ours reads as nothing.
+        let stray = open_home.join("stray.jsonl");
+        std::fs::write(&stray, "not a session log\n").unwrap();
+        assert!(summarize(&stray).is_none());
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&open_home);
     }
 
     #[test]

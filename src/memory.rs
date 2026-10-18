@@ -909,6 +909,10 @@ const PROBE_TEXT: &str = "fleet recall probe";
 /// a peer implementation rather than a stub: both serve recall, and
 /// doctor names which one is live.
 pub trait Embedder: Send + Sync {
+    /// One clone of this backend behind its own box, so a cached
+    /// embedder can hand a copy to each load. KI-064.
+    fn box_clone(&self) -> Box<dyn Embedder>;
+
     /// The embedding for `text`, or `None` when this backend cannot
     /// serve one — the keyword-only backend's honest answer.
     fn embed(&self, text: &str) -> Option<Vec<f32>>;
@@ -932,6 +936,9 @@ pub trait Embedder: Send + Sync {
 
 /// The real local-model backend: a loopback HTTP call to the
 /// llama-server embeddings route, with the crate's existing ureq client.
+/// `Clone` so a cached probe answer can hand a copy to each load
+/// (KI-064).
+#[derive(Clone)]
 pub struct HttpEmbedder {
     endpoint: String,
     dims: usize,
@@ -960,6 +967,10 @@ impl HttpEmbedder {
 }
 
 impl Embedder for HttpEmbedder {
+    fn box_clone(&self) -> Box<dyn Embedder> {
+        Box::new((*self).clone())
+    }
+
     fn embed(&self, text: &str) -> Option<Vec<f32>> {
         let body = serde_json::json!({ "input": text }).to_string();
         let response = self
@@ -1000,6 +1011,10 @@ impl Embedder for HttpEmbedder {
 pub struct KeywordOnly;
 
 impl Embedder for KeywordOnly {
+    fn box_clone(&self) -> Box<dyn Embedder> {
+        Box::new(KeywordOnly)
+    }
+
     fn embed(&self, _text: &str) -> Option<Vec<f32>> {
         None
     }
@@ -1891,13 +1906,26 @@ impl std::fmt::Debug for Memory {
     }
 }
 
+/// The embedder the corpus loads with, from the probe's answer cached
+/// per process. KI-064: every load ran one real round trip, so a chat
+/// session paid it per message and a black-holed port would cost the
+/// probe's five-second budget every task. The endpoint's liveness
+/// rarely changes within a process's life, so the answer is taken once
+/// and the rest of the session reads it.
+pub fn probed_embedder() -> Box<dyn Embedder> {
+    static PROBED: std::sync::OnceLock<Box<dyn Embedder>> = std::sync::OnceLock::new();
+    PROBED
+        .get_or_init(|| probe(&embedding_endpoint()).embedder())
+        .box_clone()
+}
+
 impl Memory {
     /// Load the corpus under `root` with the vector path probed: the
     /// real local-model backend when it answers, keyword-only otherwise.
     /// The endpoint is `FLEET_EMBEDDING_ENDPOINT` when set, the loopback
     /// default otherwise.
     pub fn load(root: &Path) -> Memory {
-        Memory::load_with(root, probe(&embedding_endpoint()).embedder())
+        Memory::load_with(root, probed_embedder())
     }
 
     /// Load with an explicit embedder — the seam the tests and a future
@@ -5130,6 +5158,13 @@ mod tests {
     const SCRIPTED_TERMS: [&str; 5] = ["deploy", "railway", "render", "shader", "walnut"];
 
     impl Embedder for ScriptedEmbedder {
+        fn box_clone(&self) -> Box<dyn Embedder> {
+            Box::new(ScriptedEmbedder {
+                calls: Arc::clone(&self.calls),
+                dims: self.dims,
+            })
+        }
+
         fn embed(&self, text: &str) -> Option<Vec<f32>> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             let lower = text.to_lowercase();

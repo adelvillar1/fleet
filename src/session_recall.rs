@@ -918,6 +918,13 @@ mod tests {
     }
 
     impl memory::Embedder for ScriptedEmbedder {
+        fn box_clone(&self) -> Box<dyn memory::Embedder> {
+            Box::new(ScriptedEmbedder {
+                calls: Arc::clone(&self.calls),
+                dims: self.dims,
+            })
+        }
+
         fn embed(&self, text: &str) -> Option<Vec<f32>> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             let lower = text.to_lowercase();
