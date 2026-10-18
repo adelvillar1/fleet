@@ -72,11 +72,13 @@ const BROADCAST_DEPTH: usize = 256;
 /// TUI's picker always did. The view side reseeds before the command is
 /// sent, so a resumed face never shows the old conversation's tail.
 pub(crate) enum Command {
-    /// Run this task in the session this bridge currently anchors.
-    Run(String),
+    /// Run this task in this session. The session is part of the command
+    /// because the thread drives more than one: a phone and a desktop
+    /// may each be working in a different conversation.
+    Run(String, String),
     /// Plan this task: the run plans and does not write, and its final
     /// message records as a plan the owner edits and builds.
-    Plan(String),
+    Plan(String, String),
     /// Re-anchor to this archived session's log. The next task replays
     /// it and continues it; the route is judged fresh, because the
     /// conversation the judgment serves is not the one that was judged.
@@ -103,18 +105,17 @@ struct AgentInputs {
     /// The corpus root the consolidator walks — the same root the
     /// browser's memory panel reads, resolved once by the bridge.
     memories_root: PathBuf,
+    /// The shared face state, so the thread can name the session it is
+    /// driving: the events it emits have to land in that session's log,
+    /// and the thread is the only place that knows which one is running.
+    state: Arc<Mutex<GuiState>>,
 }
 
-/// The live face's shared truth: the session this face anchors, the
-/// ordered event log, whether a run is in flight, and the approval the
-/// browser owes an answer to. The session lives here rather than in a
-/// field of its own because G6's resume re-anchors it — the one mutable
-/// fact about the face, in the one mutex that already existed.
-struct GuiState {
-    /// The session id this face anchors: the launch session until a
-    /// resume swaps it, and what `/api/state` and the delegation read
-    /// name as *this* conversation.
-    session: String,
+/// One attached session's live face: its ordered event log, whether a
+/// run is in flight in it, and the approval it owes an answer to. A
+/// session that has never been attached has no record here — the reads
+/// that matter are the ones a surface has actually opened.
+struct SessionState {
     events: VecDeque<Value>,
     /// How many events the cap pushed out the front. The page says the
     /// earlier ones are gone rather than implying it holds everything.
@@ -123,6 +124,88 @@ struct GuiState {
     /// The pending approval, with the responder the agent is blocked on.
     /// `None` when no call is waiting.
     seat: Option<ApprovalRequest>,
+}
+
+impl SessionState {
+    fn new() -> SessionState {
+        SessionState {
+            events: VecDeque::new(),
+            dropped: 0,
+            running: false,
+            seat: None,
+        }
+    }
+}
+
+/// The live face's shared truth: every attached session, the launch
+/// session a request that names none gets, and the session the agent
+/// thread is driving right now.
+///
+/// A session is a row in a table rather than the one thing the face
+/// anchors, because a phone and a desktop are two surfaces over one
+/// core and each may be looking at a different conversation. The launch
+/// session is fixed at boot — it is the default a paired device gets
+/// when it names nothing, and it does not move when the desktop resumes
+/// somewhere else — and the driving session is the one whose events are
+/// crossing the wire, which is exact because the thread's command loop
+/// is serial.
+struct GuiState {
+    sessions: std::collections::HashMap<String, SessionState>,
+    /// The launch session's id, once the thread has named it. `None`
+    /// until then: the log is created on the first task (KI-022), so a
+    /// face that is opened and closed without a prompt leaves no empty
+    /// log behind.
+    launch: Option<String>,
+    driving: Option<String>,
+}
+
+impl GuiState {
+    /// The record for `id`, created empty on first sight: a surface that
+    /// opens a session has attached to it, and the events it then reads
+    /// are the ones that arrive from here on.
+    fn attached(&mut self, id: &str) -> &mut SessionState {
+        self.sessions
+            .entry(self.key(id))
+            .or_insert_with(SessionState::new)
+    }
+
+    /// The record for `id` when it exists, without creating one.
+    fn attached_if(&self, id: &str) -> Option<&SessionState> {
+        self.sessions.get(&self.key(id))
+    }
+
+    /// The map key an addressed session reads: the empty string is the
+    /// face's own launch session, which is the pending log before the
+    /// thread names it and the named one after.
+    fn key(&self, id: &str) -> String {
+        if id.is_empty() {
+            self.launch.clone().unwrap_or_default()
+        } else {
+            id.to_string()
+        }
+    }
+
+    /// Where an event belongs: the session being driven, or the launch
+    /// session when nothing is — which is where the core's own events
+    /// (a cron fire, a skills load) land. Before the launch session has
+    /// an id, that is the pending key: the log accumulates under it and
+    /// moves when the thread names it.
+    fn target(&self) -> String {
+        self.driving
+            .clone()
+            .or_else(|| self.launch.clone())
+            .unwrap_or_default()
+    }
+
+    /// The thread named the launch session's id: the pending log moves to
+    /// the real key, so a face that was reading the pending key reads the
+    /// same events under the id it will show.
+    fn name_launch(&mut self, id: &str) {
+        if let Some(pending) = self.sessions.remove("") {
+            self.sessions.insert(id.to_string(), pending);
+        }
+        self.launch = Some(id.to_string());
+    }
 }
 
 /// The channels a detached bridge exposes, so a test can drive the core
@@ -191,16 +274,18 @@ impl Bridge {
         let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel();
         let (seat_tx, seat_rx) = tokio::sync::mpsc::unbounded_channel();
         let (events, _) = broadcast::channel(BROADCAST_DEPTH);
+        // The launch session, when one already exists: a resumed face's
+        // log. A launch starts with none — the agent thread creates the
+        // log on the first task and names the id back through the event
+        // stream (KI-022) — so the face's log lives under a pending key
+        // that is not yet a session id, and moves when the id arrives.
+        let launch = session;
+        let mut sessions = std::collections::HashMap::new();
+        sessions.insert(String::new(), SessionState::new());
         let state = Arc::new(Mutex::new(GuiState {
-            // The anchored session, when one already exists: a resumed
-            // face's log. A launch starts with none — the agent thread
-            // creates the log on its first task and names the id back
-            // through the event stream (KI-022).
-            session: session.unwrap_or_default(),
-            events: VecDeque::new(),
-            dropped: 0,
-            running: false,
-            seat: None,
+            sessions,
+            launch,
+            driving: None,
         }));
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
         tokio::spawn(fan_out(ui_rx, seat_rx, Arc::clone(&state), events.clone()));
@@ -290,6 +375,7 @@ impl Bridge {
         // the browser's memory panel read the same corpus because they
         // are handed the same root, not because they each walked for one.
         let memories = bridge.memories.clone();
+        let state = Arc::clone(&bridge.state);
         let handle = thread::spawn(move || {
             let _ = spawn_agent(AgentInputs {
                 home,
@@ -300,6 +386,7 @@ impl Bridge {
                 command_rx,
                 base_url,
                 memories_root: memories,
+                state,
             });
         });
         Bridge {
@@ -315,12 +402,24 @@ impl Bridge {
         self.events.subscribe()
     }
 
-    /// The whole live face as one document: the session, the model, the
-    /// context budget the meter divides by, the ordered log, the seat,
-    /// and the remembered rules. Everything the header derives — spend,
-    /// context, route, turns, stop reason — the page reduces out of the
-    /// log, so there is one derivation and not two.
-    pub fn state(&self) -> Value {
+    /// The launch session's id: the default a request that names no
+    /// session gets, fixed at boot so a paired device's requests have a
+    /// stable answer whatever the desktop is looking at.
+    pub fn launch(&self) -> String {
+        lock(&self.state).launch.clone()
+    }
+
+    /// One session's live state as one document: the session, the model,
+    /// the context budget the meter divides by, the ordered log, the
+    /// seat, and the remembered rules. Everything the header derives —
+    /// spend, context, route, turns, stop reason — the page reduces out
+    /// of the log, so there is one derivation and not two.
+    ///
+    /// A session that has never been attached reads as empty rather than
+    /// as an error: the archive's other sessions are listed by
+    /// [`Bridge::sessions`], and this is the state of one the caller has
+    /// actually opened.
+    pub fn state(&self, session: &str) -> Value {
         let state = lock(&self.state);
         let rules = lock(&self.rules);
         let session = state.session.clone();
@@ -330,6 +429,28 @@ impl Bridge {
         // so it is read here rather than kept as another copy of a fact
         // the route module owns.
         let gate = crate::route::calibration_config(&self.home);
+        // A session nobody has opened reads as empty rather than as an
+        // error, and it reads the same keys the attached document does:
+        // a surface that asks about one gets an answer it can render
+        // without branching on the shape.
+        let Some(attached) = state.attached_if(session) else {
+            return json!({
+                "session": session,
+                "model": self.model,
+                "workspace": self.cwd.display().to_string(),
+                "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
+                "gate": {
+                    "name": "sys1",
+                    "informs_failover": gate.informs_failover,
+                },
+                "running": false,
+                "dropped": 0,
+                "events": [],
+                "approval": null,
+                "rules": rules.list().iter().map(rule_value).collect::<Vec<_>>(),
+                "attached": false,
+            });
+        };
         json!({
             "session": session,
             "model": self.model,
@@ -339,10 +460,10 @@ impl Bridge {
                 "name": "sys1",
                 "informs_failover": gate.informs_failover,
             },
-            "running": state.running,
-            "dropped": state.dropped,
-            "events": state.events,
-            "approval": state.seat.as_ref().map(|seat| {
+            "running": attached.running,
+            "dropped": attached.dropped,
+            "events": attached.events,
+            "approval": attached.seat.as_ref().map(|seat| {
                 json!({
                     "tool": seat.call.function.name,
                     "summary": seat.summary,
@@ -351,6 +472,7 @@ impl Bridge {
                 })
             }),
             "rules": rules.list().iter().map(rule_value).collect::<Vec<_>>(),
+            "attached": true,
         })
     }
 
@@ -550,9 +672,9 @@ impl Bridge {
     /// The live tree is rooted at this face's own session, so the panel
     /// shows the run the owner is watching rather than whichever run
     /// happens to be newest.
-    pub async fn delegation(&self) -> Value {
+    pub async fn delegation(&self, session: &str) -> Value {
         let home = self.home.clone();
-        let session = lock(&self.state).session.clone();
+        let session = session.to_string();
         match tokio::task::spawn_blocking(move || delegation_read(&home, &session)).await {
             Ok(document) => document,
             Err(_) => json!({
@@ -597,9 +719,9 @@ impl Bridge {
     /// The sessions panel's document: the archive as the summaries the
     /// log heads carry, newest first, with the session this face
     /// anchors named so the panel can say which row is live.
-    pub async fn sessions(&self) -> Value {
+    pub async fn sessions(&self, current: &str) -> Value {
         let home = self.home.clone();
-        let current = lock(&self.state).session.clone();
+        let current = current.to_string();
         match tokio::task::spawn_blocking(move || sessions_read(&home, &current)).await {
             Ok(document) => document,
             Err(_) => json!({
@@ -1032,15 +1154,19 @@ impl Bridge {
     /// the same door, the plan arm. The owner's message lands in the log
     /// first, exactly as a run's does, so a refresh replays what was
     /// asked.
-    pub fn plan(&self, task: &str) -> Result<(), String> {
-        self.dispatch(task, |task| Command::Plan(task.to_string()))
+    pub fn plan(&self, session: &str, task: &str) -> Result<(), String> {
+        self.dispatch(session, task, |session, task| {
+            Command::Plan(session.to_string(), task.to_string())
+        })
     }
 
     /// Hand the browser's task to the agent thread. The owner's message
     /// lands in the log first, so a refresh replays what was asked and
     /// the header's running flag moves on the same event.
-    pub fn run(&self, task: &str) -> Result<(), String> {
-        self.dispatch(task, |task| Command::Run(task.to_string()))
+    pub fn run(&self, session: &str, task: &str) -> Result<(), String> {
+        self.dispatch(session, task, |session, task| {
+            Command::Run(session.to_string(), task.to_string())
+        })
     }
 
     /// The owner's one instruction to the run in flight, through the
@@ -1093,25 +1219,32 @@ impl Bridge {
     /// message logged, and the command handed to the thread. One body
     /// for both arms, so a plan-mode run and an ordinary one cannot
     /// disagree about what happens before the agent sees the task.
-    fn dispatch(&self, task: &str, command: impl FnOnce(&str) -> Command) -> Result<(), String> {
+    fn dispatch(
+        &self,
+        session: &str,
+        task: &str,
+        command: impl FnOnce(&str, &str) -> Command,
+    ) -> Result<(), String> {
         let task = task.trim();
         if task.is_empty() {
             return Err("a run needs a task".to_string());
         }
         {
             let mut state = lock(&self.state);
-            if state.running {
+            let attached = state.attached(session);
+            if attached.running {
                 return Err("a run is already in flight; let it finish first".to_string());
             }
-            state.running = true;
+            attached.running = true;
         }
         record(
             &self.state,
             &self.events,
+            session,
             json!({"type": "message", "role": "owner", "text": task}),
         );
         let delivered = match self.commands.as_ref() {
-            Some(commands) => commands.send(command(task)).is_ok(),
+            Some(commands) => commands.send(command(session, task)).is_ok(),
             None => false,
         };
         if !delivered {
@@ -1119,12 +1252,14 @@ impl Bridge {
             // the flag comes back and the log says the run failed, which
             // is what the owner's browser must show rather than a face
             // that says "running" forever.
-            let mut state = lock(&self.state);
-            state.running = false;
-            drop(state);
+            {
+                let mut state = lock(&self.state);
+                state.attached(session).running = false;
+            }
             record(
                 &self.state,
                 &self.events,
+                session,
                 json!({"type": "failed", "reason": "this face has no agent behind it"}),
             );
             return Err("this face has no agent behind it".to_string());
@@ -1132,15 +1267,17 @@ impl Bridge {
         Ok(())
     }
 
-    /// Re-anchor this face to an archived session's log: the sessions
-    /// panel's resume. The view rebuilds from the log's own records —
-    /// the same cards a replay previews — and the agent thread is told
-    /// to continue that log on its next task, its route judgment
-    /// dropped so the resumed conversation is judged as its own. A run
-    /// in flight refuses, a name that is not a session id is refused
-    /// for its shape before the disk is touched, and a name that does
-    /// not open is refused by naming itself — a failed resume leaves
-    /// the conversation exactly as it was.
+    /// Attach this face to an archived session's log: the sessions
+    /// panel's resume. The session's record is built from the log's own
+    /// records — the same cards a replay previews — and the agent thread
+    /// is told to continue that log on its next task, its route judgment
+    /// dropped so the resumed conversation is judged as its own. Other
+    /// attached sessions are untouched: a phone looking at another
+    /// conversation keeps looking at it. A run in flight in THIS session
+    /// refuses, a name that is not a session id is refused for its shape
+    /// before the disk is touched, and a name that does not open is
+    /// refused by naming itself — a failed resume leaves the conversation
+    /// exactly as it was.
     pub async fn resume(&self, asked: &str) -> Result<Value, String> {
         let id = asked.trim();
         if !session_id_is_shape(id) {
@@ -1148,9 +1285,13 @@ impl Bridge {
         }
         {
             let state = lock(&self.state);
-            if state.running {
+            if state
+                .attached_if(id)
+                .map(|attached| attached.running)
+                .unwrap_or(false)
+            {
                 return Err(
-                    "a run is in flight; let it finish before resuming another session".to_string(),
+                    "a run is in flight in that session; let it finish before resuming".to_string(),
                 );
             }
         }
@@ -1163,15 +1304,15 @@ impl Bridge {
         };
         {
             let mut state = lock(&self.state);
-            state.session = id.to_string();
-            state.events = seeded.into();
-            state.dropped = 0;
-            state.running = false;
-            state.seat = None;
+            let attached = state.attached(id);
+            attached.events = seeded.into();
+            attached.dropped = 0;
+            attached.running = false;
+            attached.seat = None;
         }
-        // The thread learns the new anchor even when it has nothing to
-        // run yet: the reply says whether the command landed, because a
-        // face with no agent behind it still resumes as a viewer — the
+        // The thread learns the new attachment even when it has nothing
+        // to run yet: the reply says whether the command landed, because
+        // a face with no agent behind it still resumes as a viewer — the
         // reads are all view-side — but its next run would say so
         // anyway, and the reply saying it twice would be a lie.
         let delivered = self
@@ -1182,6 +1323,7 @@ impl Bridge {
         record(
             &self.state,
             &self.events,
+            id,
             json!({"type": "resumed", "session": id, "agent": delivered}),
         );
         Ok(json!({"type": "resume", "session": id, "agent": delivered}))
@@ -1193,24 +1335,29 @@ impl Bridge {
     /// the thread drops its prepared route. A run in flight refuses —
     /// rewinding a tree the run is still writing would be a race, not a
     /// rewind.
-    pub async fn rewind(&self, turn: u64) -> Result<Value, String> {
+    pub async fn rewind(&self, session: &str, turn: u64) -> Result<Value, String> {
         {
             let state = lock(&self.state);
-            if state.running {
+            if state
+                .attached_if(session)
+                .map(|attached| attached.running)
+                .unwrap_or(false)
+            {
                 return Err("a run is in flight; let it finish before rewinding".to_string());
             }
         }
         let home = self.home.clone();
-        let session = lock(&self.state).session.clone();
+        let session = session.to_string();
         let root = self.cwd.clone();
         let store = home.join("checkpoints");
+        let in_closure = session.clone();
         let landed = tokio::task::spawn_blocking(move || {
-            let (restored, removed) = crate::checkpoints::restore(&root, &store, &session, turn)
+            let (restored, removed) = crate::checkpoints::restore(&root, &store, &in_closure, turn)
                 .map_err(|error| format!("the rewind could not restore the tree: {error}"))?;
             // The record rides the log the session already anchors, in
             // append mode: a log is append-only, so the abandoned future
             // stays and the reseed cuts at this record.
-            let path = session::session_path(&home, &session);
+            let path = session::session_path(&home, &in_closure);
             let mut log = Session::open(&path)
                 .map_err(|error| format!("the session log could not be opened: {error}"))?;
             log.record(&session::Record::Rewind {
@@ -1227,9 +1374,9 @@ impl Bridge {
         // resume reseeds: one translator, so what the browser shows is
         // what the next task seeds from.
         let home = self.home.clone();
-        let session = lock(&self.state).session.clone();
+        let owned = session.clone();
         let cards = tokio::task::spawn_blocking(move || {
-            let path = session::session_path(&home, &session);
+            let path = session::session_path(&home, &owned);
             let records = session::replay(&path).map_err(|error| error.to_string())?;
             let cut = session::rewind_cut(&records);
             Ok::<Vec<Value>, String>(cards_from_records(cut).0)
@@ -1238,10 +1385,11 @@ impl Bridge {
         .map_err(|_| "the reseed did not land".to_string())??;
         {
             let mut state = lock(&self.state);
-            state.events = cards.into();
-            state.dropped = 0;
-            state.running = false;
-            state.seat = None;
+            let attached = state.attached(&session);
+            attached.events = cards.into();
+            attached.dropped = 0;
+            attached.running = false;
+            attached.seat = None;
         }
         if let Some(commands) = self.commands.as_ref() {
             let _ = commands.send(Command::Rewind(turn));
@@ -1249,6 +1397,7 @@ impl Bridge {
         record(
             &self.state,
             &self.events,
+            &session,
             json!({
                 "type": "rewound",
                 "turn": turn,
@@ -1262,9 +1411,9 @@ impl Bridge {
     /// The checkpoints this session's store holds, newest first: the
     /// rewind affordance reads it, and each entry names the turn and
     /// what the capture reached.
-    pub async fn checkpoints(&self) -> Value {
+    pub async fn checkpoints(&self, session: &str) -> Value {
         let home = self.home.clone();
-        let session = lock(&self.state).session.clone();
+        let session = session.to_string();
         let store = home.join("checkpoints");
         match tokio::task::spawn_blocking(move || crate::checkpoints::list(&store, &session)).await
         {
@@ -1287,9 +1436,9 @@ impl Bridge {
     /// The run's changes against a checkpoint's turn: the diff review's
     /// document. The turn is the checkpoint to measure against; the
     /// face offers the turns the store holds.
-    pub async fn diff(&self, turn: u64) -> Value {
+    pub async fn diff(&self, session: &str, turn: u64) -> Value {
         let home = self.home.clone();
-        let session = lock(&self.state).session.clone();
+        let session = session.to_string();
         let root = self.cwd.clone();
         let store = home.join("checkpoints");
         match tokio::task::spawn_blocking(move || {
@@ -1314,7 +1463,7 @@ impl Bridge {
     /// the checkpoint's lines go back where the run's lines went. The
     /// hunk's coordinate rides the request, so a reject is the reverse
     /// of exactly what that hunk changed and nothing else.
-    pub async fn diff_reject(&self, body: &str) -> Result<Value, String> {
+    pub async fn diff_reject(&self, session: &str, body: &str) -> Result<Value, String> {
         let arguments: serde_json::Value = serde_json::from_str(body)
             .map_err(|error| format!("the reject is not a JSON object: {error}"))?;
         let turn = arguments
@@ -1329,7 +1478,7 @@ impl Bridge {
         let hunk = arguments.get("hunk").and_then(serde_json::Value::as_u64);
         let owned = path.clone();
         let home = self.home.clone();
-        let session = lock(&self.state).session.clone();
+        let session = session.to_string();
         let root = self.cwd.clone();
         let store = home.join("checkpoints");
         tokio::task::spawn_blocking(move || {
@@ -1366,7 +1515,7 @@ impl Bridge {
     /// fails still answers the prompt — the owner said yes to this call,
     /// and a settings failure is not a reason to strand the run — and the
     /// failure rides the reply so the page can say so.
-    pub fn answer(&self, decision: &str) -> Result<Value, AnswerError> {
+    pub fn answer(&self, session: &str, decision: &str) -> Result<Value, AnswerError> {
         let approval = match decision {
             "once" => Approval::Once,
             "always" => Approval::Always,
@@ -1383,7 +1532,11 @@ impl Bridge {
         // every state read for as long as the disk takes.
         let seat = {
             let mut state = lock(&self.state);
-            state.seat.take().ok_or(AnswerError::NoSeat)?
+            state
+                .attached(session)
+                .seat
+                .take()
+                .ok_or(AnswerError::NoSeat)?
         };
         let mut rule = None;
         let mut error = None;
@@ -2910,10 +3063,16 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// One event into the ordered log and out to the stream. The log is what
 /// a refresh replays; the broadcast is what a live page reduces. The
 /// two are written from the same value, so they cannot disagree.
-fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, value: Value) {
+fn record(
+    state: &Mutex<GuiState>,
+    events: &broadcast::Sender<Value>,
+    session: &str,
+    value: Value,
+) {
     let mut notice = None;
     {
         let mut state = lock(state);
+        let attached = state.attached(session);
         // The run is over the moment the core says so, whichever word it
         // used: a header that kept counting after the loop stopped would
         // be lying about where the owner is.
@@ -2921,16 +3080,16 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, value: Val
             value.get("type").and_then(Value::as_str),
             Some("finished") | Some("failed")
         ) {
-            state.running = false;
+            attached.running = false;
         }
-        if state.events.len() >= MAX_EVENTS {
-            state.events.pop_front();
-            state.dropped += 1;
-            if state.dropped == 1 {
-                notice = Some(json!({"type": "dropped", "dropped": state.dropped}));
+        if attached.events.len() >= MAX_EVENTS {
+            attached.events.pop_front();
+            attached.dropped += 1;
+            if attached.dropped == 1 {
+                notice = Some(json!({"type": "dropped", "dropped": attached.dropped}));
             }
         }
-        state.events.push_back(value.clone());
+        attached.events.push_back(value.clone());
     }
     if let Some(notice) = notice {
         let _ = events.send(notice);
@@ -3124,21 +3283,27 @@ async fn fan_out(
             event = ui_rx.recv(), if !ui_done => match event {
                 Some(event) => {
                     // The log the agent thread created on its first task
-                    // becomes this face's anchored session: the state
-                    // document the page reads names the session runs are
-                    // logged in, and it is empty until one exists
-                    // (KI-022).
+                    // becomes this face's launch session: the pending log
+                    // moves to the id, so a face that was reading the
+                    // pending key reads the same events under the id it
+                    // shows (KI-022).
                     if let UiEvent::Session { id } = &event {
-                        lock(&state).session = id.clone();
+                        lock(&state).name_launch(id);
                     }
-                    record(&state, &events, describe(&event))
+                    // The event belongs to the session the thread is
+                    // driving, which is exact because the thread's
+                    // command loop is serial: the events for one task all
+                    // arrive before the next command is read.
+                    let session = lock(&state).target();
+                    record(&state, &events, &session, describe(&event));
                 }
                 None => ui_done = true,
             },
             request = seat_rx.recv(), if !seat_done => match request {
                 Some(request) => {
+                    let session = lock(&state).target();
                     let pending = describe_seat(&request.call, &request.summary);
-                    lock(&state).seat = Some(request);
+                    lock(&state).attached(&session).seat = Some(request);
                     let _ = events.send(pending);
                 }
                 None => seat_done = true,
@@ -3148,7 +3313,8 @@ async fn fan_out(
     // The thread is gone, so nothing is waiting on a responder any more:
     // a seat left standing would be a prompt the page can answer into a
     // channel nobody reads. Clearing it is the honest end of the run.
-    let standing = lock(&state).seat.take().is_some();
+    let session = lock(&state).target();
+    let standing = lock(&state).attached(&session).seat.take().is_some();
     if standing {
         let _ = events.send(json!({"type": "seat_cleared"}));
     }
@@ -3245,6 +3411,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             command_rx,
             base_url,
             memories_root,
+            state,
         } = inputs;
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
         // The scheduled consolidation cycle: one pass now, then one every
@@ -3291,48 +3458,64 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                     skipped: skill_skips.into_iter().map(|skip| skip.name).collect(),
                 });
             }
-            // The route is chosen once, on the first task, and the
-            // committed router is reused for the rest of the session —
-            // one sys1 judgment, not one per task.
-            let mut prepared: Option<crate::route::Prepared> = None;
-            let mut judge_task = String::new();
-            // The launch session does not exist yet: it is created on
-            // the first task, so a browser face that is opened and
-            // closed without a prompt leaves no empty log behind
-            // (KI-022), exactly as the TUI's thread does.
-            let mut current_session = session_id;
+            // The route is chosen once per session, on that session's
+            // first task, and the committed router is reused for the rest
+            // of it — one sys1 judgment, not one per task. A session this
+            // thread has never driven has no entry and is judged when its
+            // first task arrives.
+            let mut routes: std::collections::HashMap<String, Option<crate::route::Prepared>> =
+                std::collections::HashMap::new();
+            let mut judge_tasks: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            // The launch session does not exist yet: it is created on the
+            // first task, so a browser face that is opened and closed
+            // without a prompt leaves no empty log behind (KI-022),
+            // exactly as the TUI's thread does.
+            let mut current_session: Option<String> = session_id;
             let mut commands = command_rx;
             while let Some(command) = commands.recv().await {
                 // Which arm this task arrived on, read before the match
                 // consumes it: the two share one body, and the flag is
                 // the only difference between a run and a plan.
-                let plan_mode = matches!(command, Command::Plan(_));
+                let plan_mode = matches!(command, Command::Plan(_, _));
                 match command {
-                    Command::Run(task) | Command::Plan(task) => {
-                        // The first task creates the log it runs in: a
-                        // face that is opened and closed without a
-                        // prompt leaves no empty session behind, the
-                        // same rule the TUI's thread follows (KI-022).
-                        // The id rides back to the page on the event
-                        // stream, which shows the session it is logging
-                        // into and nothing before that.
-                        if current_session.is_none() {
-                            match Session::create(&home, &model) {
-                                Ok(fresh) => {
-                                    current_session = Some(fresh.id().to_string());
-                                    let _ = ui_tx.send(UiEvent::Session {
-                                        id: fresh.id().to_string(),
-                                    });
-                                }
-                                Err(error) => {
-                                    let _ = ui_tx.send(UiEvent::Failed(format!(
-                                        "could not create the session: {error}"
-                                    )));
-                                    continue;
-                                }
+                    Command::Run(driving, task) | Command::Plan(driving, task) => {
+                        // The session this task drives. An empty name is
+                        // the face's own launch session, which is created
+                        // on this first task: a face that is opened and
+                        // closed without a prompt leaves no empty session
+                        // behind (KI-022), the same rule the TUI's thread
+                        // follows. The id rides back on the event stream,
+                        // which shows the session the page is logging into
+                        // and nothing before that.
+                        let driving = if driving.is_empty() {
+                            match &current_session {
+                                Some(id) => id.clone(),
+                                None => match Session::create(&home, &model) {
+                                    Ok(fresh) => {
+                                        let id = fresh.id().to_string();
+                                        current_session = Some(id.clone());
+                                        let _ = ui_tx.send(UiEvent::Session { id: id.clone() });
+                                        id
+                                    }
+                                    Err(error) => {
+                                        let _ = ui_tx.send(UiEvent::Failed(format!(
+                                            "could not create the session: {error}"
+                                        )));
+                                        continue;
+                                    }
+                                },
                             }
-                        }
-                        if prepared.is_none() {
+                        } else {
+                            current_session = Some(driving.clone());
+                            driving
+                        };
+                        // The face's events belong to the session being
+                        // driven, which is exact because the thread's
+                        // command loop is serial.
+                        lock(&state).driving = Some(driving.clone());
+                        let slot = routes.entry(driving.clone()).or_insert(None);
+                        if slot.is_none() {
                             match crate::route::prepare(
                                 &home,
                                 &dotenv,
@@ -3342,8 +3525,8 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             .await
                             {
                                 Ok(fresh) => {
-                                    judge_task = task.clone();
-                                    prepared = Some(fresh);
+                                    judge_tasks.insert(driving.clone(), task.clone());
+                                    *slot = Some(fresh);
                                 }
                                 Err(error) => {
                                     // A stop can be written while the
@@ -3359,7 +3542,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 }
                             }
                         }
-                        let prepared = prepared.as_ref().expect("prepared on the first run");
+                        let prepared = slot.as_ref().expect("prepared on the first run");
                         let client = Client::routed(prepared.router.clone());
                         let path = session::session_path(
                             &home,
@@ -3451,27 +3634,32 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         // thread's half is the prepared route: the
                         // judgment answered the conversation that is
                         // gone, and the next task is judged as its own.
-                        prepared = None;
-                        judge_task = String::new();
+                        routes.insert(current_session.clone(), None);
+                        judge_tasks.remove(&current_session);
                     }
                     Command::Resume(id) => {
-                        // The re-anchor is the TUI's resume, one surface
-                        // over: the session id swaps, and the prepared
-                        // route decision with it — that judgment answered
-                        // the conversation the face came in on, and the
-                        // resumed one deserves its own. The view side
-                        // reseeded before this command was sent; only the
-                        // thread's own notion of "which log" was stale.
-                        current_session = Some(id);
-                        prepared = None;
-                        judge_task = String::new();
+                        // The attach is the TUI's resume, one surface
+                        // over: the session id becomes the one this loop
+                        // drives next, and the prepared route decision
+                        // goes with it — that judgment answered the
+                        // conversation the face came in on, and the
+                        // resumed one deserves its own. Other sessions'
+                        // routes stand: a phone working in another
+                        // conversation keeps its judgment.
+                        current_session = Some(id.clone());
+                        routes.insert(id.clone(), None);
+                        judge_tasks.remove(&id);
                     }
                 }
             }
-            // The session's routing decision is recorded once, when the
-            // agent thread ends — best-effort, never fatal.
-            if let Some(prepared) = &prepared {
-                prepared.record_route(&judge_task);
+            // Every session's routing decision is recorded once, when
+            // the agent thread ends — best-effort, never fatal. A thread
+            // that drove three conversations records three judgments.
+            for (session, prepared) in &routes {
+                if let Some(prepared) = prepared {
+                    let judged = judge_tasks.get(session).cloned().unwrap_or_default();
+                    prepared.record_route(&judged);
+                }
             }
             // And the self-authoring half runs once, on the session this
             // face drove: its lessons are drafted into proposals awaiting
@@ -3573,10 +3761,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn the_owner_message_lands_before_the_run_starts() {
         let (bridge, _sources, _door) = bridge().await;
+        let attached = bridge.launch();
         bridge
-            .run("  look at the router  ")
+            .run(&attached, "  look at the router  ")
             .expect("the run is accepted");
-        let state = bridge.state();
+        let state = bridge.state(&attached);
         let events = state["events"].as_array().expect("an event log");
         assert_eq!(events.len(), 1, "{events:?}");
         assert_eq!(events[0]["type"], "message");
@@ -3756,10 +3945,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_run_that_is_already_in_flight_is_refused() {
         let (bridge, _sources, _door) = bridge().await;
-        bridge.run("first").expect("the first run is accepted");
-        let second = bridge.run("second");
+        let attached = bridge.launch();
+        bridge.run(&attached, "first").expect("the first run is accepted");
+        let second = bridge.run(&attached, "second");
         assert!(second.is_err(), "{second:?}");
-        let state = bridge.state();
+        let state = bridge.state(&attached);
         assert_eq!(
             state["events"].as_array().map(Vec::len),
             Some(1),
@@ -3780,9 +3970,10 @@ mod tests {
             "deepseek-chat".to_string(),
             Some("session-test".to_string()),
         );
-        let refused = bridge.run("who is there");
+        let attached = bridge.launch();
+        let refused = bridge.run(&attached, "who is there");
         assert!(refused.is_err(), "{refused:?}");
-        let state = bridge.state();
+        let state = bridge.state(&attached);
         let events = state["events"].as_array().expect("an event log");
         assert_eq!(events.len(), 2, "{events:?}");
         assert_eq!(events[1]["type"], "failed");
@@ -3792,6 +3983,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_seat_crosses_the_approver_and_the_answer_clears_it() {
         let (bridge, sources, _door) = bridge().await;
+        let attached = bridge.launch();
         let shell = call("bash", r#"{"command":"cargo test"}"#);
         let (responder, reply) = std::sync::mpsc::channel();
         sources
@@ -3808,31 +4000,33 @@ mod tests {
         );
         // The fan-out is a task, so the seat needs a moment to land.
         for _ in 0..50 {
-            if bridge.state()["approval"].is_object() {
+            if bridge.state(&attached)["approval"].is_object() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let seat = &bridge.state()["approval"];
+        let seat = &bridge.state(&attached)["approval"];
         assert_eq!(seat["tool"], "bash");
         assert_eq!(seat["label"], "bash · cargo");
         assert_eq!(seat["allowlistable"], true);
         assert_eq!(seat["summary"], "run cargo test");
-        let answered = bridge.answer("once").expect("the seat is answered");
+        let answered = bridge.answer(&attached, "once").expect("the seat is answered");
         assert_eq!(answered["answered"], "once");
-        assert!(bridge.state()["approval"].is_null());
+        assert!(bridge.state(&attached)["approval"].is_null());
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn an_answer_with_no_seat_is_a_conflict_not_a_denial() {
         let (bridge, _sources, _door) = bridge().await;
-        let answered = bridge.answer("deny");
+        let attached = bridge.launch();
+        let answered = bridge.answer(&attached, "deny");
         assert!(answered.is_err(), "{answered:?}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_word_that_is_not_a_decision_is_refused_with_the_seat_standing() {
         let (bridge, sources, _door) = bridge().await;
+        let attached = bridge.launch();
         let (responder, decision) = std::sync::mpsc::channel();
         sources
             .seat
@@ -3843,21 +4037,22 @@ mod tests {
             })
             .expect("the seat arrives");
         for _ in 0..50 {
-            if bridge.state()["approval"].is_object() {
+            if bridge.state(&attached)["approval"].is_object() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let refused = bridge.answer("sure");
+        let refused = bridge.answer(&attached, "sure");
         assert!(refused.is_err(), "{refused:?}");
         // A malformed answer is not the owner saying no: the seat stands.
-        assert!(bridge.state()["approval"].is_object());
+        assert!(bridge.state(&attached)["approval"].is_object());
         assert!(decision.try_recv().is_err(), "nothing was sent back");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_remembered_rule_stops_the_prompt_and_rides_the_rules_event() {
         let (bridge, sources, _door) = bridge().await;
+        let attached = bridge.launch();
         let (responder, _decision) = std::sync::mpsc::channel();
         sources
             .seat
@@ -3868,16 +4063,16 @@ mod tests {
             })
             .expect("the seat arrives");
         for _ in 0..50 {
-            if bridge.state()["approval"].is_object() {
+            if bridge.state(&attached)["approval"].is_object() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         let mut stream = bridge.subscribe();
-        let answered = bridge.answer("remember").expect("the rule is remembered");
+        let answered = bridge.answer(&attached, "remember").expect("the rule is remembered");
         assert_eq!(answered["answered"], "remember");
         assert_eq!(answered["rule"], "bash · cargo");
-        let state = bridge.state();
+        let state = bridge.state(&attached);
         let rules = state["rules"].as_array().expect("a rules list");
         assert_eq!(rules.len(), 1, "{rules:?}");
         assert_eq!(rules[0]["label"], "bash · cargo");
@@ -3896,6 +4091,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_destructive_call_cannot_be_remembered_and_says_why() {
         let (bridge, sources, _door) = bridge().await;
+        let attached = bridge.launch();
         let (responder, _decision) = std::sync::mpsc::channel();
         sources
             .seat
@@ -3906,7 +4102,7 @@ mod tests {
             })
             .expect("the seat arrives");
         for _ in 0..50 {
-            let approval = bridge.state()["approval"].clone();
+            let approval = bridge.state(&attached)["approval"].clone();
             if approval.is_object() {
                 assert_eq!(
                     approval["allowlistable"], false,
@@ -3917,7 +4113,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         let answered = bridge
-            .answer("remember")
+            .answer(&attached, "remember")
             .expect("the prompt is still answered");
         assert_eq!(
             answered["answered"], "remember",
@@ -3931,17 +4127,18 @@ mod tests {
             "{answered}"
         );
         assert!(
-            bridge.state()["rules"]
+            bridge.state(&attached)["rules"]
                 .as_array()
                 .is_none_or(|rules| rules.is_empty()),
             "{}",
-            bridge.state()["rules"]
+            bridge.state(&attached)["rules"]
         );
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn the_core_events_land_ordered_and_the_state_replays_them() {
         let (bridge, sources, _door) = bridge().await;
+        let attached = bridge.launch();
         sources
             .ui
             .send(UiEvent::Routed {
@@ -3980,12 +4177,12 @@ mod tests {
             })
             .expect("the finish lands");
         for _ in 0..50 {
-            if bridge.state()["events"].as_array().map(Vec::len) == Some(4) {
+            if bridge.state(&attached)["events"].as_array().map(Vec::len) == Some(4) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let state = bridge.state();
+        let state = bridge.state(&attached);
         let events = state["events"].as_array().expect("an event log");
         assert_eq!(events.len(), 4, "{events:?}");
         assert_eq!(events[0]["type"], "routed");
@@ -4063,6 +4260,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_deck_rides_the_event_log_with_its_fragment() {
         let (bridge, sources, _door) = bridge().await;
+        let attached = bridge.launch();
         sources
             .ui
             .send(UiEvent::Deck {
@@ -4078,7 +4276,7 @@ mod tests {
         // The fan-out is a task of the caller's, so the event needs a
         // moment to cross it.
         for _ in 0..50 {
-            let events = bridge.state()["events"]
+            let events = bridge.state(&attached)["events"]
                 .as_array()
                 .map(Vec::len)
                 .unwrap_or(0);
@@ -4087,7 +4285,7 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let document = bridge.state();
+        let document = bridge.state(&attached);
         let events = document["events"].as_array().expect("the event log");
         let deck = events
             .iter()
@@ -4104,18 +4302,19 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_failed_run_ends_the_running_flag() {
         let (bridge, sources, _door) = bridge().await;
-        bridge.run("go").ok();
+        let attached = bridge.launch();
+        bridge.run(&attached, "go").ok();
         sources
             .ui
             .send(UiEvent::Failed("routing config: no roster".to_string()))
             .expect("the failure lands");
         for _ in 0..50 {
-            if !bridge.state()["running"].as_bool().unwrap_or(true) {
+            if !bridge.state(&attached)["running"].as_bool().unwrap_or(true) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let state = bridge.state();
+        let state = bridge.state(&attached);
         assert_eq!(state["running"], false);
         assert_eq!(state["events"][1]["type"], "failed");
     }
@@ -4141,12 +4340,16 @@ mod tests {
             "deepseek-chat".to_string(),
             Some("session-test".to_string()),
         );
+        let attached = bridge.launch();
         let mut door = bridge.connect();
-        // A run in flight refuses before anything on the face is touched.
-        lock(&bridge.state).running = true;
+        // A run in flight in the session being resumed refuses before
+        // anything on the face is touched. A run in some OTHER session
+        // does not: two surfaces may work in two conversations, and one
+        // running does not freeze the other.
+        lock(&bridge.state).attached(&id).running = true;
         let refused = bridge.resume(&id).await.unwrap_err();
         assert!(refused.contains("in flight"), "{refused}");
-        lock(&bridge.state).running = false;
+        lock(&bridge.state).attached(&id).running = false;
         // A shape that is not an id is refused for its shape, before the
         // disk is asked anything.
         assert!(bridge.resume("../escape").await.is_err());
@@ -4157,7 +4360,10 @@ mod tests {
             Command::Resume(delivered) => assert_eq!(delivered, id),
             _ => panic!("a resume delivered some other command"),
         }
-        let state = bridge.state();
+        // The resumed session's record holds the log's cards, and the
+        // launch session's record is untouched by the resume — the two
+        // are independent now, which is the whole point of the table.
+        let state = bridge.state(&id);
         assert_eq!(state["session"], id.as_str(), "{state}");
         let events = state["events"].as_array().expect("an event log");
         assert!(
@@ -4166,5 +4372,63 @@ mod tests {
                 .any(|event| event["type"] == "message" && event["text"] == "carry me over"),
             "the view reseeded from the log: {events:?}"
         );
+        let launch = bridge.state(&attached);
+        assert!(
+            launch["events"].as_array().is_none_or(|events| events.is_empty()),
+            "the launch session kept its own log: {launch}"
+        );
+    }
+
+    /// Two sessions attached to one bridge hold independent transcripts,
+    /// running flags, and seats: a phone and a desktop looking at two
+    /// conversations do not disturb each other.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_attached_sessions_are_independent() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-gui-bridge-two-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            "session-one".to_string(),
+        );
+        // The door stands open with no thread behind it, so the commands
+        // are accepted and nothing runs: this test is about the state,
+        // not the agent.
+        let _door = bridge.connect();
+        let one = bridge.launch();
+        let two = "session-two".to_string();
+
+        // A run starts in one; the other session's flag does not move.
+        bridge.run(&one, "work in one").expect("accepted");
+        assert_eq!(bridge.state(&one)["running"], true);
+        assert_eq!(bridge.state(&two)["running"], false, "{two} is not running");
+        assert_eq!(bridge.state(&two)["attached"], false, "{two} was never opened");
+
+        // The owner's message landed in one's log and not in two's.
+        let events = bridge.state(&one)["events"].as_array().expect("a log").len();
+        assert_eq!(events, 1, "one event in one's log");
+        assert_eq!(
+            bridge
+                .state(&two)["events"]
+                .as_array()
+                .map(Vec::len)
+                .unwrap_or(0),
+            0,
+            "two's log is empty"
+        );
+
+        // A second run in the other session is refused while the first is
+        // in flight in ITS session — the thread's loop is serial — but the
+        // two sessions' flags say so independently.
+        let second = bridge.run(&two, "work in two");
+        assert!(second.is_ok(), "the command is accepted; the thread is serial, not blocked: {second:?}");
+        assert_eq!(bridge.state(&one)["running"], true);
+        assert_eq!(bridge.state(&two)["running"], true);
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
