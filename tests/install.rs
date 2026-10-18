@@ -170,15 +170,42 @@ fn an_existing_config_is_named_and_never_rewritten() {
     let root = scratch("config");
     let home = root.join("home");
     fs::create_dir_all(&home).unwrap();
-    // A hand-edited config — here deliberately not even valid JSON —
-    // is the owner's: the install names it and leaves the bytes be.
-    fs::write(home.join("config.json"), "{ hand edited ").unwrap();
+    // A hand-edited but VALID config is the owner's: the install names
+    // it and leaves the bytes be. (A config too broken to parse is the
+    // roster check's failure, and KI-134 made that verdict reach the
+    // gate — asserted separately below.)
+    fs::write(home.join("config.json"), "{ \"pin\": \"stepfun\" }").unwrap();
     let probe = Probe::listen();
 
     let (stdout, stderr, code) = install(&home, &[], Some(&probe), None);
     assert_eq!(
         code, 0,
         "an existing config does not fail the install: {stdout}{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(home.join("config.json")).unwrap(),
+        "{ \"pin\": \"stepfun\" }"
+    );
+    assert!(stdout.contains("left untouched"), "{stdout}");
+}
+
+#[test]
+fn an_unparseable_config_fails_the_gate_by_name() {
+    // KI-134: a config too broken to load used to print a FAIL line and
+    // exit 0. The roster check's verdict now reaches the gate, so the
+    // install fails with it — while still leaving the owner's bytes
+    // untouched, which is the other half of the contract.
+    let root = scratch("config-broken");
+    let home = root.join("home");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("config.json"), "{ hand edited ").unwrap();
+    let probe = Probe::listen();
+
+    let (stdout, _, code) = install(&home, &[], Some(&probe), None);
+    assert_ne!(code, 0, "a broken roster is a red gate: {stdout}");
+    assert!(
+        stdout.contains("the roster did not load"),
+        "the failure is named: {stdout}"
     );
     assert_eq!(
         fs::read_to_string(home.join("config.json")).unwrap(),

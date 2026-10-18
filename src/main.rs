@@ -909,6 +909,15 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
         }
         ImproveAction::Apply { name, approve } => {
             let repo = std::env::current_dir().unwrap_or_default();
+            // KI-099: the gate runs against the working directory as the
+            // repository root, so an apply from outside the intended repo
+            // would gate and commit against the wrong tree with nothing
+            // saying which. The adopted root is named before the verdict,
+            // one line, beside the outcome that follows.
+            println!(
+                "fleet: improve: gating and committing against {}",
+                repo.display()
+            );
             let user_home = std::env::var("HOME").ok();
             let stream =
                 fleet::calib::Stream::open(fleet::calib::resolve_root(&home, user_home.as_deref()));
@@ -2041,14 +2050,19 @@ fn diagnose_command(session_id: &str, ledger: Option<&str>) -> ExitCode {
     };
     // The ledger target: the file `--ledger` names, or the repo's own
     // `docs/known-issues.md` resolved from the working directory (the
-    // improve gate's cwd convention, KI-099's family). It is named either
-    // way; only an explicit `--ledger` writes.
+    // improve gate's cwd convention, KI-099's family). KI-106: the
+    // adopted path is NAMED in the diagnosis output, so a `--diagnose`
+    // run from the wrong directory says which ledger it read rather
+    // than leaving the operator to infer it.
     let named = ledger.map(std::path::PathBuf::from).unwrap_or_else(|| {
         std::env::current_dir()
             .unwrap_or_default()
             .join("docs")
             .join("known-issues.md")
     });
+    if ledger.is_none() {
+        println!("fleet: doctor: the ledger read is {}", named.display());
+    }
     print!("{}", doctor::render_diagnosis(&diagnosis, &named));
     match ledger {
         Some(_) => {
