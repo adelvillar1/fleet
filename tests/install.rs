@@ -649,3 +649,49 @@ fn a_lane_whose_packages_fail_is_skipped_and_leaves_nothing_behind() {
     // "present" over a venv whose packages never landed.
     assert!(!home.join("venvs").join("sem1").exists());
 }
+
+/// KI-128: a stdout pipe closed by the reader is the ordinary case for a
+/// CLI, not a crash. Rust ignores SIGPIPE by default, which turns the
+/// closed pipe into an `io::Error` every `println!` unwraps — so
+/// `fleet install | head -12` used to kill the process with "failed
+/// printing to stdout: Broken pipe" and exit 101 after the report had
+/// already been read. The restore of the default disposition is one
+/// line at the top of `main`; this is the guard that keeps it there.
+#[cfg(unix)]
+#[test]
+fn a_closed_stdout_pipe_is_a_quiet_exit_not_a_panic() {
+    use std::io::{BufRead, BufReader};
+    // The install's report is the longest output in the crate, so it is
+    // the surface most likely to still be writing when the reader goes.
+    let home = scratch("pipe");
+    fs::create_dir_all(&home).unwrap();
+    let mut child = Command::new(FLEET)
+        .arg("install")
+        .env("FLEET_HOME", &home)
+        .env("DEEPSEEK_API_KEY", PLACEHOLDER_KEY)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("the install spawns");
+    // Read one line, then drop the reader: the pipe is closed with the
+    // child still holding it open for writing, which is exactly the
+    // shape `| head` produces.
+    {
+        let stdout = child.stdout.take().expect("a piped stdout");
+        let mut lines = BufReader::new(stdout).lines();
+        let _ = lines.next();
+    }
+    let status = child.wait().expect("the install ends");
+    // The conventional posture: the process dies of the signal the
+    // closed pipe delivers (or exits 0 if it finished first), and never
+    // with the panic's 101.
+    assert_ne!(
+        status.code(),
+        Some(101),
+        "a closed stdout pipe must not panic the process"
+    );
+    assert!(
+        status.code().is_none_or(|code| code <= 1),
+        "the exit is the signal or a success, not an error: {status}"
+    );
+    let _ = fs::remove_dir_all(&home);
+}
