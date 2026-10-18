@@ -733,3 +733,14 @@ count; the feed names its build time; exit 0.
   opinion about a fact it does not hold. Bounded reads name their
   bounds: a replay previews the newest 400 cards and says what it left
   out; the calibration read names its 512-row cap.
+- **G7 landed 2026-10-18.** The tower console reads the boards' own
+  reads — the projects root's git facts and the second-brain's derived
+  state — as one document with the plan's six zones, and the boards'
+  parses grew parse-only to carry the console's aggregates (the reports
+  section's doing count, coverage, per-day fold, feed, suppression and
+  malformed counts; the tower data's harness mix). A refused read keeps
+  the last good numbers with its reason beside them — the client's own
+  rule, not the server's, because the numbers the owner was reading are
+  the ones worth keeping. The second-brain panel rides the same
+  six-file read, quieter. The scan names what it left unread, and the
+  feed names its build time rather than pretending to be live.

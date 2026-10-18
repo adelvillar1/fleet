@@ -411,6 +411,38 @@ impl Bridge {
         }
     }
 
+    /// The tower console's document: the git facts per project from the
+    /// tower board's own read, and the second-brain's reports and tower
+    /// aggregates beside them. Two reads, one document, and every number
+    /// traces to one of them. A refused part lands as its named reason
+    /// while the rest still reports — the console keeps its last good
+    /// numbers and the reason rides along, so a read that did not land
+    /// is a banner, not a blank screen.
+    pub async fn tower(&self) -> Value {
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || tower_read(&home)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "tower",
+                "refused": ["the tower read did not land"],
+            }),
+        }
+    }
+
+    /// The second-brain panel's document: the six derived state files,
+    /// each section landed or named. The same read the TUI's brain board
+    /// rides, shaped for the browser.
+    pub async fn brain(&self) -> Value {
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || brain_read(&home)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "brain",
+                "refused": ["the second-brain read did not land"],
+            }),
+        }
+    }
+
     /// One in-place edit of a fact, through the substrate's own rewriter.
     ///
     /// The body is the arguments object the browser handed over. A
@@ -1556,6 +1588,346 @@ fn cell_json(cell: &crate::calib::CalibrationCell) -> Value {
         "spend_usd": cell.spend_usd,
         "cost_per_right": cell.cost_per_right,
     })
+}
+
+/// The tower console's document. The git facts and the brain's
+/// aggregates are two reads that fail for different reasons — the
+/// projects root may not exist, the second-brain may not be installed —
+/// and each names itself without silencing the other. The ranked list
+/// rides in the board's own dirtiest-first order; the console's bars
+/// are a rendering of it, not a second sort.
+fn tower_read(home: &std::path::Path) -> Value {
+    let dotenv = crate::home::read_dotenv(home);
+    let sources = crate::boards::resolve_sources(home, &dotenv);
+    let mut refused: Vec<String> = Vec::new();
+    let mut document = serde_json::Map::new();
+    document.insert("type".into(), json!("tower"));
+    document.insert("read_at".into(), json!(crate::boards::now_stamp()));
+    document.insert(
+        "root".into(),
+        json!(sources.tower_root.display().to_string()),
+    );
+    match crate::boards::read_tower(&sources.tower_root, &sources.bounds) {
+        Ok(snapshot) => {
+            document.insert(
+                "projects".into(),
+                json!(snapshot
+                    .projects
+                    .iter()
+                    .map(project_facts_json)
+                    .collect::<Vec<_>>()),
+            );
+            document.insert(
+                "skipped".into(),
+                json!(snapshot
+                    .skipped
+                    .iter()
+                    .map(|(name, reason)| json!({"name": name, "reason": reason}))
+                    .collect::<Vec<_>>()),
+            );
+            document.insert("beyond_bound".into(), json!(snapshot.beyond_bound));
+            document.insert("unread".into(), json!(snapshot.unread));
+        }
+        Err(reason) => {
+            document.insert("projects".into(), json!([]));
+            document.insert("skipped".into(), json!([]));
+            document.insert("beyond_bound".into(), json!(0));
+            document.insert("unread".into(), json!(0));
+            refused.push(reason);
+        }
+    }
+    let Some(brain) = sources.brain_home.clone() else {
+        refused.push("the second-brain board has no home on this machine".to_string());
+        document.insert("refused".into(), json!(refused));
+        return Value::Object(document);
+    };
+    let snapshot = match crate::boards::read_brain(&brain, &sources.bounds) {
+        Ok(snapshot) => snapshot,
+        Err(reason) => {
+            refused.push(reason);
+            document.insert("refused".into(), json!(refused));
+            return Value::Object(document);
+        }
+    };
+    if let Some(reports) = snapshot.reports.landed() {
+        document.insert(
+            "kpis".into(),
+            json!({
+                "doing": reports.doing_total,
+                "pending_verification": reports.pending_verification,
+                "open_conflicts": reports.open_conflicts,
+                "suppressed": reports.suppressed,
+                "malformed": reports.malformed,
+                "events_total": reports.events_total,
+            }),
+        );
+        document.insert(
+            "coverage".into(),
+            json!(reports.coverage.as_ref().map(|coverage| json!({
+                "window_days": coverage.window_days,
+                "with_reports": coverage.with_reports,
+                "commit_only": coverage.commit_only,
+                "ratio": coverage.ratio,
+            }))),
+        );
+        document.insert(
+            "report_daily".into(),
+            json!(reports
+                .report_daily
+                .iter()
+                .map(|(day, count)| json!({"day": day, "count": count}))
+                .collect::<Vec<_>>()),
+        );
+        document.insert(
+            "feed".into(),
+            json!(reports
+                .feed
+                .iter()
+                .map(|row| json!({
+                    "ts": row.ts,
+                    "kind": row.kind,
+                    "project": row.project,
+                    "harness": row.harness,
+                    "summary": row.summary,
+                    "task": row.task,
+                    "commit": row.commit,
+                }))
+                .collect::<Vec<_>>()),
+        );
+        document.insert(
+            "conflicts".into(),
+            json!(reports
+                .conflicts
+                .iter()
+                .map(|row| json!({
+                    "task": row.task,
+                    "class": row.class,
+                    "severity": row.severity,
+                    "claim": row.claim,
+                    "reality": row.reality,
+                }))
+                .collect::<Vec<_>>()),
+        );
+        document.insert(
+            "trust".into(),
+            json!(reports
+                .trust
+                .iter()
+                .map(|row| json!({
+                    "harness": row.harness,
+                    "claimed": row.claimed,
+                    "evidenced": row.evidenced,
+                    "precision": row.precision,
+                }))
+                .collect::<Vec<_>>()),
+        );
+        document.insert("reports_at".into(), json!(reports.generated_at));
+    } else if let Some(reason) = snapshot.reports.reason() {
+        refused.push(reason.to_string());
+    }
+    if let Some(tower) = snapshot.tower.landed() {
+        document.insert("brain_at".into(), json!(tower.generated_at));
+        document.insert(
+            "timeline".into(),
+            json!(tower
+                .timeline
+                .iter()
+                .map(|row| json!({
+                    "date": row.date,
+                    "subject": row.subject,
+                    "project": row.project,
+                }))
+                .collect::<Vec<_>>()),
+        );
+        document.insert(
+            "harness".into(),
+            json!(tower
+                .harness
+                .iter()
+                .map(|row| json!({
+                    "harness": row.harness,
+                    "total": row.total,
+                    "user": row.user,
+                }))
+                .collect::<Vec<_>>()),
+        );
+        document.insert(
+            "brain_projects".into(),
+            json!(tower
+                .projects
+                .iter()
+                .map(|project| json!({
+                    "name": project.name,
+                    "lifecycle": project.lifecycle,
+                    "branch": project.branch,
+                    "last_commit": project.last_commit,
+                    "commits_30d": project.commits_30d,
+                    "dirty": project.dirty,
+                    "plans": project.plans.iter().map(|(status, count)| json!({
+                        "status": status, "count": count,
+                    })).collect::<Vec<_>>(),
+                }))
+                .collect::<Vec<_>>()),
+        );
+    } else if let Some(reason) = snapshot.tower.reason() {
+        refused.push(reason.to_string());
+    }
+    document.insert("refused".into(), json!(refused));
+    Value::Object(document)
+}
+
+/// One project's git facts, shaped for the console's ranked list. A
+/// `None` stays `null`: git could not answer, and the console says so
+/// rather than rendering a zero nobody measured.
+fn project_facts_json(project: &crate::boards::ProjectFacts) -> Value {
+    json!({
+        "name": project.name,
+        "branch": project.branch,
+        "head": project.head,
+        "subject": project.subject,
+        "when": project.when,
+        "commits_30d": project.commits_30d,
+        "dirty": project.dirty,
+        "ahead": project.ahead,
+        "behind": project.behind,
+        "notes": project.notes,
+    })
+}
+
+/// The second-brain panel's document: the six sections, each landed or
+/// named, shaped for the browser.
+fn brain_read(home: &std::path::Path) -> Value {
+    let dotenv = crate::home::read_dotenv(home);
+    let sources = crate::boards::resolve_sources(home, &dotenv);
+    let mut refused: Vec<String> = Vec::new();
+    let mut document = serde_json::Map::new();
+    document.insert("type".into(), json!("brain"));
+    document.insert("read_at".into(), json!(crate::boards::now_stamp()));
+    let Some(brain) = sources.brain_home.clone() else {
+        refused.push("the second-brain board has no home on this machine".to_string());
+        document.insert("refused".into(), json!(refused));
+        return Value::Object(document);
+    };
+    let snapshot = match crate::boards::read_brain(&brain, &sources.bounds) {
+        Ok(snapshot) => snapshot,
+        Err(reason) => {
+            refused.push(reason);
+            document.insert("refused".into(), json!(refused));
+            return Value::Object(document);
+        }
+    };
+    document.insert("home".into(), json!(snapshot.home.display().to_string()));
+    if let Some(gates) = snapshot.gates.landed() {
+        document.insert(
+            "gates".into(),
+            json!({
+                "generated": gates.generated,
+                "board": gates.board.iter().map(|row| json!({
+                    "gate": row.gate,
+                    "verdicts": row.verdicts,
+                    "dispositions": row.dispositions,
+                    "graded_progress": row.graded_progress,
+                    "graded_rows": row.graded_rows,
+                    "fit_ready": row.fit_ready,
+                    "override_rate": row.override_rate,
+                })).collect::<Vec<_>>(),
+                "inbox": gates.inbox.iter().map(|row| json!({
+                    "op": row.op,
+                    "verdict": row.verdict,
+                    "ts": row.ts,
+                    "command": row.command,
+                })).collect::<Vec<_>>(),
+                "totals": {
+                    "events": gates.totals.events,
+                    "verdicts": gates.totals.verdicts,
+                    "dispositions": gates.totals.dispositions,
+                },
+                "daily": gates.daily.iter().map(|(day, count)| json!({
+                    "day": day, "count": count,
+                })).collect::<Vec<_>>(),
+            }),
+        );
+    } else if let Some(reason) = snapshot.gates.reason() {
+        refused.push(reason.to_string());
+    }
+    if let Some(harness) = snapshot.harness.landed() {
+        document.insert(
+            "harness".into(),
+            json!({
+                "generated": harness.generated,
+                "loops": harness.loops.iter().map(|row| json!({
+                    "name": row.name,
+                    "runs": row.runs,
+                    "converged": row.converged,
+                    "last_status": row.last_status,
+                })).collect::<Vec<_>>(),
+                "recent": harness.recent.iter().map(|row| json!({
+                    "ts": row.ts,
+                    "kind": row.kind,
+                    "label": row.label,
+                    "outcome": row.outcome,
+                })).collect::<Vec<_>>(),
+            }),
+        );
+    } else if let Some(reason) = snapshot.harness.reason() {
+        refused.push(reason.to_string());
+    }
+    if let Some(loops) = snapshot.loops.landed() {
+        document.insert(
+            "loops".into(),
+            json!({
+                "derived_at": loops.derived_at,
+                "loops": loops.loops.iter().map(|row| json!({
+                    "name": row.name,
+                    "family": row.family,
+                    "verdict": row.verdict,
+                    "iterations": row.iterations,
+                    "pending_review": row.pending_review,
+                })).collect::<Vec<_>>(),
+                "graded": loops.graded.iter().map(|(name, row)| json!({
+                    "name": name, "n": row.n, "confirmed": row.confirmed,
+                })).collect::<Vec<_>>(),
+                "findings": loops.findings,
+            }),
+        );
+    } else if let Some(reason) = snapshot.loops.reason() {
+        refused.push(reason.to_string());
+    }
+    if let Some(reports) = snapshot.reports.landed() {
+        document.insert(
+            "reports".into(),
+            json!({
+                "generated_at": reports.generated_at,
+                "doing_total": reports.doing_total,
+                "pending_verification": reports.pending_verification,
+                "open_conflicts": reports.open_conflicts,
+                "suppressed": reports.suppressed,
+                "malformed": reports.malformed,
+                "events_total": reports.events_total,
+            }),
+        );
+    } else if let Some(reason) = snapshot.reports.reason() {
+        refused.push(reason.to_string());
+    }
+    if let Some(maturity) = snapshot.maturity.landed() {
+        document.insert(
+            "maturity".into(),
+            json!({
+                "generated": maturity.generated,
+                "weeks": maturity.weeks,
+                "series": maturity.series.iter().map(|(name, points)| json!({
+                    "name": name, "points": points,
+                })).collect::<Vec<_>>(),
+                "milestones": maturity.milestones.iter().map(|(when, what)| json!({
+                    "when": when, "what": what,
+                })).collect::<Vec<_>>(),
+            }),
+        );
+    } else if let Some(reason) = snapshot.maturity.reason() {
+        refused.push(reason.to_string());
+    }
+    document.insert("refused".into(), json!(refused));
+    Value::Object(document)
 }
 
 /// The skills panel's document, hand-built from the read's snapshot for

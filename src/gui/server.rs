@@ -344,6 +344,13 @@ async fn serve_connection(
         ("GET", "/api/calibration") => {
             write_reply(&mut stream, api(200, bridge.calibration().await)).await
         }
+        // The tower console and the second-brain panel: the boards' own
+        // reads, shaped for the browser. Both name the parts that did
+        // not land rather than rendering a blank console.
+        ("GET", "/api/tower") => write_reply(&mut stream, api(200, bridge.tower().await)).await,
+        ("GET", "/api/second-brain") => {
+            write_reply(&mut stream, api(200, bridge.brain().await)).await
+        }
         ("POST", "/api/resume") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -2022,6 +2029,189 @@ mod tests {
         assert!(missing.contains("could not open session"), "{missing}");
         let malformed = post(port, "/api/resume", &token, "{\"word\":\"x\"}");
         assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+    }
+
+    // ------------------------------------------------ the tower console (G7)
+
+    /// A home whose own `.env` names its second-brain and projects root
+    /// — the two settings the tower board resolves, so the read is the
+    /// test’s own rather than the machine’s. The brain holds the
+    /// reports and tower aggregates the console’s six zones read, and
+    /// the projects root holds one real worktree and one plain
+    /// directory the scan must name rather than measure.
+    fn tower_home() -> std::path::PathBuf {
+        let home = fresh_home();
+        std::fs::write(
+            home.join(".env"),
+            format!(
+                "SECOND_BRAIN_HOME={}\nTOWER_LOG_PROJECTS_DIR={}\n",
+                home.join("brain").display(),
+                home.join("projects").display()
+            ),
+        )
+        .expect("the env names the board’s own roots");
+        let brain = home.join("brain");
+        std::fs::create_dir_all(&brain).expect("the second-brain home");
+        std::fs::write(
+            brain.join("reports_state.json"),
+            r#"{
+              "generated_at": "2026-10-18 07:00",
+              "doing": [
+                { "id": "t-1", "project": "fleet", "title": "ship the console",
+                  "harness": "zcode", "opened": "2026-10-17 09:00:00",
+                  "last": "2026-10-18 06:00:00" }
+              ],
+              "pending_verification": [ { "id": "t-2" }, { "id": "t-3" } ],
+              "conflicts": [
+                { "task": "t-9", "type": "commit", "severity": "defect",
+                  "claim": "done claiming commit deadbeef",
+                  "reality": "no such commit" }
+              ],
+              "open_conflict_count": 1,
+              "trust": [
+                { "harness": "zcode", "claimed": 10, "evidenced": 9, "precision": 0.9 }
+              ],
+              "suppressed": 2,
+              "malformed": 1,
+              "events_total": 42,
+              "coverage": {
+                "window_days": 30, "with_reports": 6, "commit_only": 11, "ratio": 0.35
+              },
+              "report_daily": { "fleet": { "2026-10-17": 3, "2026-10-18": 2 } },
+              "reports_recent": [
+                { "ts": "2026-10-18 06:59:00", "type": "done", "project": "fleet",
+                  "harness": "zcode", "summary": "ship the console", "task": "t-1",
+                  "commit": "409910d" }
+              ]
+            }"#,
+        )
+        .expect("the reports state");
+        std::fs::write(
+            brain.join("tower_data.json"),
+            r#"{
+              "generated_at": "2026-10-18 07:00",
+              "projects": [
+                { "name": "fleet", "lifecycle": "active", "branch": "master",
+                  "last_commit": "2026-10-18", "commits_30d": 12, "dirty": 0,
+                  "plans": { "done": 9, "in_progress": 1 } }
+              ],
+              "timeline": [ { "date": "2026-10-18", "subject": "slice 20", "project": "fleet" } ],
+              "harness": [ { "harness": "zcode", "total": 35, "user": 17 } ],
+              "reports": {}, "harness_runs": {}
+            }"#,
+        )
+        .expect("the tower data");
+        let projects = home.join("projects");
+        std::fs::create_dir_all(&projects).expect("the projects root");
+        // One real worktree, two commits on main.
+        let repo = projects.join("fleet-clone");
+        std::fs::create_dir_all(&repo).expect("the worktree");
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.email", "board@example.invalid"],
+            vec!["config", "user.name", "Board Test"],
+            vec!["checkout", "--quiet", "-b", "main"],
+        ] {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(&args)
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "{args:?}");
+        }
+        for (index, message) in ["first commit", "second commit"].into_iter().enumerate() {
+            std::fs::write(repo.join(format!("file-{index}.txt")), format!("{index}\n"))
+                .expect("the commit’s file");
+            for args in [vec!["add", "-A"], vec!["commit", "--quiet", "-m", message]] {
+                let status = std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(&args)
+                    .status()
+                    .expect("git runs");
+                assert!(status.success(), "{args:?}");
+            }
+        }
+        // A plain directory: the scan names it rather than measuring it.
+        std::fs::create_dir_all(projects.join("not-a-repo")).expect("the plain directory");
+        home
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_tower_console_reads_the_boards_and_names_what_did_not_land() {
+        let home = tower_home();
+        let (bridge, _) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        let token = server.token().to_string();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let reply = get(port, "/api/tower", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        // The KPI strip is the reads’ own counts.
+        assert!(reply.contains("\"doing\":1"), "{reply}");
+        assert!(reply.contains("\"pending_verification\":2"), "{reply}");
+        assert!(reply.contains("\"open_conflicts\":1"), "{reply}");
+        assert!(reply.contains("\"suppressed\":2"), "{reply}");
+        assert!(reply.contains("\"malformed\":1"), "{reply}");
+        assert!(reply.contains("\"events_total\":42"), "{reply}");
+        // The hero’s two series, folded per day.
+        assert!(
+            reply.contains("\"count\":3,\"day\":\"2026-10-17\""),
+            "{reply}"
+        );
+        assert!(
+            reply.contains("\"count\":2,\"day\":\"2026-10-18\""),
+            "{reply}"
+        );
+        // The feed, with its commit and its staleness named.
+        assert!(reply.contains("ship the console"), "{reply}");
+        assert!(reply.contains("409910d"), "{reply}");
+        assert!(
+            reply.contains("\"reports_at\":\"2026-10-18 07:00\""),
+            "{reply}"
+        );
+        // The claims against the evidence, and the trust lines.
+        assert!(reply.contains("done claiming commit deadbeef"), "{reply}");
+        assert!(reply.contains("no such commit"), "{reply}");
+        assert!(reply.contains("\"precision\":0.9"), "{reply}");
+        // The harness mix and the coverage line.
+        assert!(
+            reply.contains("\"harness\":\"zcode\",\"total\":35"),
+            "{reply}"
+        );
+        assert!(reply.contains("\"with_reports\":6"), "{reply}");
+        assert!(reply.contains("\"ratio\":0.35"), "{reply}");
+        // The git facts of the real worktree, and the plain directory
+        // named rather than measured.
+        assert!(reply.contains("\"name\":\"fleet-clone\""), "{reply}");
+        assert!(reply.contains("\"commits_30d\":2"), "{reply}");
+        assert!(reply.contains("not-a-repo"), "{reply}");
+        // The lifecycle join: the console’s health dots come from the
+        // brain’s own projects, not from git.
+        assert!(reply.contains("\"lifecycle\":\"active\""), "{reply}");
+        // Every read landed, so nothing is refused.
+        assert!(reply.contains("\"refused\":[]"), "{reply}");
+
+        // The second-brain panel rides the same home: the reports
+        // section lands, and the four absent state files name
+        // themselves instead of the panel pretending they are empty.
+        let brain = get(port, "/api/second-brain", &token);
+        assert!(brain.starts_with("HTTP/1.1 200"), "{brain}");
+        assert!(brain.contains("\"events_total\":42"), "{brain}");
+        assert!(brain.contains("gates_state.json does not exist"), "{brain}");
+        assert!(
+            brain.contains("maturity_state.json does not exist"),
+            "{brain}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

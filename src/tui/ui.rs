@@ -3118,11 +3118,21 @@ mod tests {
                     id: "t1".to_string(),
                     project: "fleet".to_string(),
                     title: "slice 14".to_string(),
+                    harness: "zcode".to_string(),
+                    opened: "2026-10-04 16:00:00".to_string(),
+                    last: "2026-10-04 16:18:56".to_string(),
                 }],
+                doing_total: 1,
                 pending_verification: 1,
                 conflicts: Vec::new(),
                 open_conflicts: 10,
                 trust: Vec::new(),
+                suppressed: 0,
+                malformed: 0,
+                events_total: 119,
+                coverage: None,
+                report_daily: Vec::new(),
+                feed: Vec::new(),
             }),
             maturity: Section::Landed(crate::boards::MaturityRead {
                 generated: "2026-10-04T11:13:42".to_string(),
@@ -3153,6 +3163,11 @@ mod tests {
                     },
                 ],
                 timeline: Vec::new(),
+                harness: vec![crate::boards::HarnessMixRow {
+                    harness: "zcode".to_string(),
+                    total: 23,
+                    user: 23,
+                }],
             }),
         }
     }

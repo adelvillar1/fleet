@@ -45,7 +45,7 @@
 //! second-brain and tower boards read files and git facts. Nothing here
 //! authenticates to anything, and nothing here carries a key value.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -1789,10 +1789,29 @@ pub struct MaturityRead {
 pub struct ReportsRead {
     pub generated_at: String,
     pub doing: Vec<DoingRow>,
+    /// The whole doing count, before the rows were capped: the console's
+    /// KPI names what is open, and a capped list is not a count.
+    pub doing_total: u64,
     pub pending_verification: u64,
     pub conflicts: Vec<ConflictRow>,
     pub open_conflicts: u64,
     pub trust: Vec<TrustRow>,
+    /// The rows the tower's own filters dropped, named so the feed's
+    /// quiet is a fact rather than a silence.
+    pub suppressed: u64,
+    /// The malformed lines the tower's parser skipped.
+    pub malformed: u64,
+    /// The events the ledger holds in total.
+    pub events_total: u64,
+    /// How much of the projects root the reports reach: the window, the
+    /// projects with reports, the commit-only ones, and the ratio.
+    pub coverage: Option<CoverageRead>,
+    /// Reports per day, summed across projects: the console's hero
+    /// chart's first series. The file carries it per project; the console
+    /// reads it per day.
+    pub report_daily: Vec<(String, u64)>,
+    /// The feed, newest first, capped: the console's live column.
+    pub feed: Vec<FeedRow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1800,6 +1819,9 @@ pub struct DoingRow {
     pub id: String,
     pub project: String,
     pub title: String,
+    pub harness: String,
+    pub opened: String,
+    pub last: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1819,12 +1841,40 @@ pub struct TrustRow {
     pub precision: f64,
 }
 
+/// How much of the projects root the report feed reaches.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoverageRead {
+    pub window_days: u64,
+    pub with_reports: u64,
+    pub commit_only: u64,
+    pub ratio: f64,
+}
+
+/// One filed report, as the console's feed reads it. The commit field is
+/// the claim's own: an empty one is a report that filed no commit, which
+/// is what a claims-vs-evidence row measures against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedRow {
+    pub ts: String,
+    pub kind: String,
+    pub project: String,
+    pub harness: String,
+    pub summary: String,
+    pub task: String,
+    pub commit: String,
+}
+
 /// The tower's built aggregates, as the second-brain board reads them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TowerDataRead {
     pub generated_at: String,
     pub projects: Vec<TowerProject>,
     pub timeline: Vec<TimelineRow>,
+    /// The harness mix: how many reports each harness filed, and how many
+    /// of those the owner's own session carried. The tower console's
+    /// donut reads it; parse-only, so the board's read contract is
+    /// untouched.
+    pub harness: Vec<HarnessMixRow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1844,6 +1894,16 @@ pub struct TimelineRow {
     pub date: String,
     pub subject: String,
     pub project: String,
+}
+
+/// One harness's share of the report feed. `total` is every report the
+/// harness filed and `user` is the subset the owner's own session
+/// carried, so the donut can say which harnesses do the filing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarnessMixRow {
+    pub harness: String,
+    pub total: u64,
+    pub user: u64,
 }
 
 /// Read the six derived state files under `home`. The home itself being
@@ -2158,20 +2218,24 @@ fn parse_maturity(section: Section<Value>) -> Section<MaturityRead> {
 
 fn parse_reports(section: Section<Value>) -> Section<ReportsRead> {
     validated(section, "reports_state", |value| {
+        let doing_rows: Vec<DoingRow> = rows(value.get("doing"))
+            .into_iter()
+            .flatten()
+            .filter_map(|row| {
+                Some(DoingRow {
+                    id: text(row, "id")?,
+                    project: text(row, "project").unwrap_or_default(),
+                    title: text(row, "title").unwrap_or_default(),
+                    harness: text(row, "harness").unwrap_or_default(),
+                    opened: text(row, "opened").unwrap_or_default(),
+                    last: text(row, "last").unwrap_or_default(),
+                })
+            })
+            .collect();
         Some(ReportsRead {
             generated_at: text(value, "generated_at").unwrap_or_default(),
-            doing: rows(value.get("doing"))
-                .into_iter()
-                .flatten()
-                .filter_map(|row| {
-                    Some(DoingRow {
-                        id: text(row, "id")?,
-                        project: text(row, "project").unwrap_or_default(),
-                        title: text(row, "title").unwrap_or_default(),
-                    })
-                })
-                .take(5)
-                .collect(),
+            doing_total: doing_rows.len() as u64,
+            doing: doing_rows.into_iter().take(5).collect(),
             pending_verification: rows(value.get("pending_verification"))
                 .map(|rows| rows.len() as u64)
                 .unwrap_or(0),
@@ -2200,6 +2264,46 @@ fn parse_reports(section: Section<Value>) -> Section<ReportsRead> {
                     })
                 })
                 .collect(),
+            suppressed: number(value, "suppressed").unwrap_or(0),
+            malformed: number(value, "malformed").unwrap_or(0),
+            events_total: number(value, "events_total").unwrap_or(0),
+            coverage: value.get("coverage").map(|coverage| CoverageRead {
+                window_days: number(coverage, "window_days").unwrap_or(0),
+                with_reports: number(coverage, "with_reports").unwrap_or(0),
+                commit_only: number(coverage, "commit_only").unwrap_or(0),
+                ratio: coverage.get("ratio").and_then(Value::as_f64).unwrap_or(0.0),
+            }),
+            // The file carries per-project-per-day counts; the hero
+            // chart's first series is per day, so the projects fold.
+            // Sorted oldest first, the way a time series reads.
+            report_daily: {
+                let mut per_day: BTreeMap<String, u64> = BTreeMap::new();
+                if let Some(per_project) = value.get("report_daily").and_then(Value::as_object) {
+                    for days in per_project.values() {
+                        if let Some(days) = days.as_object() {
+                            for (day, count) in days {
+                                *per_day.entry(day.clone()).or_insert(0) +=
+                                    count.as_u64().unwrap_or(0);
+                            }
+                        }
+                    }
+                }
+                per_day.into_iter().collect()
+            },
+            feed: rows(value.get("reports_recent"))
+                .into_iter()
+                .flatten()
+                .map(|row| FeedRow {
+                    ts: text(row, "ts").unwrap_or_default(),
+                    kind: text(row, "type").unwrap_or_default(),
+                    project: text(row, "project").unwrap_or_default(),
+                    harness: text(row, "harness").unwrap_or_default(),
+                    summary: text(row, "summary").unwrap_or_default(),
+                    task: text(row, "task").unwrap_or_default(),
+                    commit: text(row, "commit").unwrap_or_default(),
+                })
+                .take(30)
+                .collect(),
         })
     })
 }
@@ -2224,6 +2328,17 @@ fn parse_tower_data(section: Section<Value>) -> Section<TowerDataRead> {
                     })
                 })
                 .take(8)
+                .collect(),
+            harness: rows(value.get("harness"))
+                .into_iter()
+                .flatten()
+                .filter_map(|row| {
+                    Some(HarnessMixRow {
+                        harness: text(row, "harness")?,
+                        total: number(row, "total").unwrap_or(0),
+                        user: number(row, "user").unwrap_or(0),
+                    })
+                })
                 .collect(),
         })
     })

@@ -141,6 +141,8 @@
     panelSkills: document.getElementById('panel-skills'),
     panelSessions: document.getElementById('panel-sessions'),
     panelCalibration: document.getElementById('panel-calibration'),
+    panelTower: document.getElementById('panel-tower'),
+    panelSecondBrain: document.getElementById('panel-second-brain'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
@@ -150,6 +152,8 @@
     skillsBoard: document.getElementById('skills-board'),
     sessionsBoard: document.getElementById('sessions-board'),
     calibrationBoard: document.getElementById('calibration-board'),
+    towerBoard: document.getElementById('tower-board'),
+    brainBoard: document.getElementById('brain-board'),
     routePill: document.getElementById('route-pill'),
     statePill: document.getElementById('state-pill'),
     spend: document.getElementById('spend'),
@@ -236,6 +240,11 @@
     // The calibration panel's read and its clock.
     calibration: null,
     calibrationAt: 0,
+    // The tower console's and the second-brain panel's reads and clocks.
+    tower: null,
+    towerAt: 0,
+    brain: null,
+    brainAt: 0,
     // The pane's web tab: the page in front and the address it came
     // from. One read per address, so re-reading is a refresh and not a
     // second fetch of the same page.
@@ -2926,6 +2935,445 @@
     return line;
   }
 
+  // ------------------------------------------------------ the tower console
+
+  // The console is the one dense surface the plan names: the KPI strip,
+  // the hero two-series chart, the harness donut, the ranked projects,
+  // the claims-vs-evidence rows, and the feed. Every number traces to
+  // the board's own read — the git facts and the second-brain's
+  // aggregates — and a read that did not land keeps the last good
+  // numbers with its reason beside them.
+  function readTower(force) {
+    var now = Date.now();
+    if (!force && face.tower && now - face.towerAt < 4000) return Promise.resolve();
+    face.towerAt = now;
+    return fetch('/api/tower', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        // A read that did not land is a banner over the last good
+        // numbers, never a blank console: the reasons ride forward on
+        // the document that holds them.
+        var empty = !(doc.projects || []).length && !doc.kpis && !doc.feed;
+        if (empty && face.tower) {
+          face.tower = Object.assign({}, face.tower, { refused: doc.refused || [] });
+        } else {
+          face.tower = doc;
+        }
+        if (face.panel === 'tower') paintTower();
+      })
+      .catch(function () { });
+  }
+
+  function paintTower() {
+    var read = face.tower;
+    el.towerBoard.textContent = '';
+    if (!read) {
+      var waiting = boardCard(12, 'tower', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The tower read has not landed yet. It reads the projects root\u2019s git facts and ' +
+        'the second-brain\u2019s derived state, both of which are this machine\u2019s own.'));
+      el.towerBoard.appendChild(waiting);
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.towerBoard.appendChild(refusedCard(read.refused));
+    }
+    var projects = read.projects || [];
+    var kpis = read.kpis || {};
+    var feed = read.feed || [];
+    var conflicts = read.conflicts || [];
+    var trust = read.trust || [];
+    var coverage = read.coverage;
+    var daily = read.report_daily || [];
+    var timeline = read.timeline || [];
+    var harness = read.harness || [];
+    var brain = read.brain_projects || [];
+
+    // The KPI strip: five big numbers, each a read's own count.
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(projects.length, 'projects tracked'));
+    tiles.appendChild(tile(kpis.doing || 0, 'open tasks', kpis.doing ? 'warn' : null));
+    tiles.appendChild(tile(kpis.open_conflicts || 0, 'open conflicts',
+      kpis.open_conflicts ? 'down' : null));
+    tiles.appendChild(tile(reportsToday(feed), 'reports today'));
+    tiles.appendChild(tile(projects.filter(function (row) { return row.dirty > 0; }).length,
+      'dirty worktrees'));
+    var head = boardCard(12, 'tower', read.read_at,
+      'the projects root at ' + read.root + ' \u00b7 the derived state\u2019s last build ' +
+      (read.brain_at || '\u2014'));
+    head.appendChild(tiles);
+    el.towerBoard.appendChild(head);
+
+    // The hero: reports filed per day against commits shipped per day.
+    var hero = boardCard(12, 'activity', null,
+      'reports filed per day against the commits the shipped timeline names, over the last ' +
+      'fourteen days. The feed is as fresh as the derived state\u2019s last build and says so.');
+    hero.appendChild(twoSeries(daily, timeline));
+    el.towerBoard.appendChild(hero);
+
+    // The harness mix, beside the coverage line.
+    var mix = boardCard(5, 'who files the reports', null, 'each harness\u2019s share of the feed');
+    if (harness.length) {
+      mix.appendChild(donut(harness.map(function (row) {
+        return { model: row.harness, calls: row.total };
+      })));
+    } else {
+      mix.appendChild(node('p', 'board-empty', 'The derived state names no harness mix yet.'));
+    }
+    el.towerBoard.appendChild(mix);
+    var cover = boardCard(7, 'what the reports reach', null,
+      coverage
+        ? 'of ' + (coverage.with_reports + coverage.commit_only) + ' projects, ' +
+          coverage.with_reports + ' filed reports in the last ' + coverage.window_days +
+          ' days and ' + coverage.commit_only + ' have commits only'
+        : 'the derived state names no coverage yet');
+    cover.appendChild(node('p', 'board-empty',
+      coverage ? '' : 'the coverage line names itself when the next build lands'));
+    el.towerBoard.appendChild(cover);
+
+    // The ranked projects: trailing-30-day commits, bar, share, facts.
+    var ranked = projects.slice().sort(function (left, right) {
+      return right.commits_30d - left.commits_30d;
+    });
+    var top = ranked.reduce(function (max, row) { return Math.max(max, row.commits_30d); }, 0);
+    var rankCard = boardCard(12, 'the ranked projects', null,
+      'trailing thirty days of commits, the share of the whole, and the git facts as read. ' +
+      'The board\u2019s own read is dirtiest-first; this list ranks by the thirty-day count.');
+    ranked.forEach(function (row) {
+      var health = brain.filter(function (entry) { return entry.name === row.name; })[0];
+      rankCard.appendChild(projectRow(row, health, top));
+    });
+    el.towerBoard.appendChild(rankCard);
+
+    // The claims against the evidence, and the precision each harness
+    // earned.
+    var claims = boardCard(12, 'claims against the evidence', kpis.open_conflicts + ' open',
+      'a claim the evidence rejected, with the reality that rejected it. The trust lines are ' +
+      'each harness\u2019s own precision.');
+    if (conflicts.length) {
+      conflicts.forEach(function (row) {
+        var line = node('div', 'stream-line');
+        line.appendChild(node('span', 'stream-ts', row.task));
+        line.appendChild(node('span', 'stream-text',
+          row.claim + '  \u2014  ' + row.reality));
+        claims.appendChild(line);
+      });
+    } else {
+      claims.appendChild(node('p', 'board-empty', 'No claim conflicts with its evidence right now.'));
+    }
+    if (trust.length) {
+      trust.forEach(function (row) {
+        var line = node('div', 'stream-line');
+        line.appendChild(node('span', 'stream-ts', row.harness));
+        line.appendChild(node('span', 'stream-text',
+          row.evidenced + ' of ' + row.claimed + ' claims carried evidence \u00b7 precision ' +
+          fmtRate(row.precision)));
+        claims.appendChild(line);
+      });
+    }
+    el.towerBoard.appendChild(claims);
+
+    // The feed, newest first, with its own staleness named.
+    var feedCard = boardCard(12, 'the report feed', (read.reports_at || '\u2014') + ' built',
+      'every filed report, newest first. The feed is as fresh as the derived state\u2019s last ' +
+      'build and says so rather than pretending to be live.');
+    if (feed.length) {
+      feed.forEach(function (row) {
+        var line = node('div', 'stream-line');
+        line.appendChild(node('span', 'stream-ts', (row.ts || '').slice(5, 16)));
+        line.appendChild(node('span', 'stream-text',
+          row.kind + ' \u00b7 ' + row.project + ' \u00b7 ' + row.summary +
+          (row.commit ? ' \u00b7 ' + row.commit.slice(0, 12) : ' \u00b7 no commit filed')));
+        feedCard.appendChild(line);
+      });
+    } else {
+      feedCard.appendChild(node('p', 'board-empty',
+        'No reports are in the feed. The ledger at ~/.second-brain is where they are filed.'));
+    }
+    el.towerBoard.appendChild(feedCard);
+
+    // The status bar: the scan's honesty about what it left unread.
+    var status = boardCard(12, 'the scan', null,
+      (read.beyond_bound || read.unread
+        ? read.beyond_bound + ' directories were beyond the scan\u2019s bound and ' +
+          read.unread + ' were left unread by its budget'
+        : 'the scan read every directory it found'));
+    if ((read.skipped || []).length) {
+      read.skipped.forEach(function (row) {
+        var line = node('div', 'stream-line');
+        line.appendChild(node('span', 'stream-ts', row.name));
+        line.appendChild(node('span', 'stream-text', row.reason));
+        status.appendChild(line);
+      });
+    }
+    el.towerBoard.appendChild(status);
+  }
+
+  // Reports the feed carries for today, UTC — the KPI the tower's own
+  // ledger counts, derived from the feed rather than reported twice.
+  function reportsToday(feed) {
+    var today = new Date().toISOString().slice(0, 10);
+    return feed.filter(function (row) { return (row.ts || '').slice(0, 10) === today; }).length;
+  }
+
+  // The hero: two bars per day, reports filed against commits shipped.
+  // Hand-rolled SVG in the board's own chart language; the days are the
+  // union of both series' dates, so a day one series misses reads zero.
+  function twoSeries(daily, timeline) {
+    var reports = {};
+    var commits = {};
+    daily.forEach(function (row) { reports[row.day] = (reports[row.day] || 0) + row.count; });
+    timeline.forEach(function (row) {
+      var day = (row.date || '').slice(0, 10);
+      if (day) commits[day] = (commits[day] || 0) + 1;
+    });
+    var days = Object.keys(reports).concat(Object.keys(commits)).sort();
+    var last = days.slice(-14);
+    var max = 0;
+    last.forEach(function (day) {
+      max = Math.max(max, reports[day] || 0, commits[day] || 0);
+    });
+    if (!last.length || max === 0) {
+      return node('p', 'board-empty',
+        'No activity on either series yet. The chart appears when the first report or ' +
+        'commit lands in a day the derived state names.');
+    }
+    var plot = svgPlot(Math.max(240, last.length * 30), 120, 'reports filed against commits shipped');
+    var base = 104;
+    var scale = max ? 88 / max : 0;
+    last.forEach(function (day, index) {
+      var x = 14 + index * 30;
+      var reports_h = Math.round((reports[day] || 0) * scale);
+      var commits_h = Math.round((commits[day] || 0) * scale);
+      if (reports_h > 0) {
+        plot.appendChild(svg('rect', {
+          x: x, y: base - reports_h, width: 9, height: reports_h,
+          fill: 'var(--dsw-alias-accent)', rx: 2
+        }));
+      }
+      if (commits_h > 0) {
+        plot.appendChild(svg('rect', {
+          x: x + 10, y: base - commits_h, width: 9, height: commits_h,
+          fill: 'var(--dsw-alias-ink-tertiary)', rx: 2
+        }));
+      }
+      var label = svg('text', { x: x + 9, y: base + 11, 'text-anchor': 'middle',
+        fill: 'var(--dsw-alias-ink-tertiary)', 'font-size': 8 });
+      label.textContent = day.slice(5);
+      plot.appendChild(label);
+    });
+    plot.appendChild(svg('line', {
+      x1: 14, y1: base, x2: 14 + last.length * 30, y2: base,
+      stroke: 'var(--dsw-alias-ink-tertiary)', 'stroke-width': 0.5
+    }));
+    var wrap = node('div', 'hero-wrap');
+    wrap.appendChild(plot);
+    var legend = node('ul', 'legend');
+    [['reports filed', 'var(--dsw-alias-accent)'], ['commits shipped', 'var(--dsw-alias-ink-tertiary)']]
+      .forEach(function (entry) {
+        var item = node('li');
+        var swatch = node('span', 'swatch');
+        swatch.style.background = entry[1];
+        item.appendChild(swatch);
+        item.appendChild(node('span', 'legend-name', entry[0]));
+        legend.appendChild(item);
+      });
+    wrap.appendChild(legend);
+    return wrap;
+  }
+
+  // One ranked row: the bar and the share, then the facts as read. A
+  // `null` fact stays a dash — git could not answer, and a zero nobody
+  // measured would be a lie the bar graph tells.
+  function projectRow(row, health, top) {
+    var line = node('div', 'rank-row');
+    var dot = node('span', 'health-dot');
+    var lifecycle = health && health.lifecycle ? health.lifecycle : '';
+    dot.dataset.health = lifecycle === 'active' ? 'ok'
+      : lifecycle === 'dormant' ? 'warn' : lifecycle === 'archived' ? 'down' : 'unknown';
+    line.appendChild(dot);
+    line.appendChild(node('span', 'rank-name', row.name));
+    var share = top ? Math.round((row.commits_30d / top) * 100) : 0;
+    var track = node('span', 'rank-track');
+    var fill = node('span', 'rank-fill');
+    fill.style.width = share + '%';
+    track.appendChild(fill);
+    line.appendChild(track);
+    line.appendChild(node('span', 'rank-count', String(row.commits_30d)));
+    var facts = node('span', 'rank-facts');
+    facts.appendChild(node('span', 'rank-fact', (row.branch || '\u2014') +
+      ' @ ' + (row.head || '\u2014')));
+    if (row.dirty) facts.appendChild(badge(row.dirty + ' dirty', 'warn'));
+    if (row.ahead !== null && row.ahead !== undefined) {
+      facts.appendChild(badge('\u2191' + row.ahead + ' \u2193' + row.behind, null));
+    }
+    line.appendChild(facts);
+    if (health && health.plans && health.plans.length) {
+      var plans = node('span', 'rank-plans');
+      health.plans.forEach(function (plan) {
+        plans.appendChild(badge(plan.status + ' ' + plan.count, plan.status === 'done' ? 'ok' : null));
+      });
+      line.appendChild(plans);
+    }
+    return line;
+  }
+
+  // -------------------------------------------------- the second-brain panel
+
+  function readBrain(force) {
+    var now = Date.now();
+    if (!force && face.brain && now - face.brainAt < 4000) return Promise.resolve();
+    face.brainAt = now;
+    return fetch('/api/second-brain', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        // The same rule the console keeps: a read that did not land
+        // leaves the last good sections standing with the reasons
+        // beside them.
+        var empty = !doc.gates && !doc.harness && !doc.loops && !doc.maturity;
+        if (empty && face.brain) {
+          face.brain = Object.assign({}, face.brain, { refused: doc.refused || [] });
+        } else {
+          face.brain = doc;
+        }
+        if (face.panel === 'second-brain') paintBrain();
+      })
+      .catch(function () { });
+  }
+
+  function paintBrain() {
+    var read = face.brain;
+    el.brainBoard.textContent = '';
+    if (!read) {
+      var waiting = boardCard(12, 'second brain', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The derived-state read has not landed yet. It reads the six state files under the ' +
+        'second-brain home, which is this machine\u2019s own.'));
+      el.brainBoard.appendChild(waiting);
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.brainBoard.appendChild(refusedCard(read.refused));
+    }
+    var head = boardCard(12, 'second brain', read.read_at, 'the derived state at ' + read.home);
+    var tiles = node('div', 'tiles');
+    var reports = read.reports || {};
+    tiles.appendChild(tile(reports.doing_total || 0, 'open tasks'));
+    tiles.appendChild(tile(reports.pending_verification || 0, 'awaiting verification',
+      reports.pending_verification ? 'warn' : null));
+    tiles.appendChild(tile(reports.open_conflicts || 0, 'conflicts',
+      reports.open_conflicts ? 'down' : null));
+    tiles.appendChild(tile(reports.suppressed || 0, 'suppressed rows'));
+    head.appendChild(tiles);
+    el.brainBoard.appendChild(head);
+
+    // The earned-autonomy gates.
+    var gates = read.gates;
+    if (gates) {
+      var board = boardCard(12, 'the gates', gates.generated,
+        'verdicts and dispositions per gate, with the graded progress and the override rate. ' +
+        'A gate that is fit has earned its autonomy; the override rate is the human seam.');
+      (gates.board || []).forEach(function (row) {
+        var line = node('div', 'gate-row');
+        line.appendChild(node('span', 'gate-name', row.gate));
+        line.appendChild(badge(row.graded_progress, null));
+        line.appendChild(node('span', 'gate-counts',
+          row.verdicts + ' verdicts \u00b7 ' + row.dispositions + ' dispositions'));
+        line.appendChild(badge(row.fit_ready ? 'fit' : 'not yet fit', row.fit_ready ? 'ok' : 'warn'));
+        line.appendChild(node('span', 'gate-rate', 'override ' + fmtRate(row.override_rate)));
+        board.appendChild(line);
+      });
+      if ((gates.inbox || []).length) {
+        (gates.inbox || []).forEach(function (row) {
+          var line = node('div', 'stream-line');
+          line.appendChild(node('span', 'stream-ts', row.ts.slice(5, 16)));
+          line.appendChild(node('span', 'stream-text',
+            row.op + ' \u00b7 ' + row.verdict + ' \u00b7 ' + row.command));
+          board.appendChild(line);
+        });
+      }
+      el.brainBoard.appendChild(board);
+    }
+
+    // The quality loops.
+    var loops = read.loops;
+    if (loops) {
+      var loopCard = boardCard(12, 'the quality loops', loops.derived_at, null);
+      (loops.loops || []).forEach(function (row) {
+        var line = node('div', 'stream-line');
+        line.appendChild(node('span', 'stream-ts', row.name));
+        line.appendChild(node('span', 'stream-text',
+          row.verdict + ' \u00b7 ' + row.iterations + ' iterations' +
+          (row.pending_review ? ' \u00b7 ' + row.pending_review + ' pending review' : '')));
+        loopCard.appendChild(line);
+      });
+      el.brainBoard.appendChild(loopCard);
+    }
+
+    // The harness runs.
+    var harness = read.harness;
+    if (harness) {
+      var harnessCard = boardCard(12, 'the harness runs', harness.generated, null);
+      (harness.loops || []).forEach(function (row) {
+        var line = node('div', 'stream-line');
+        line.appendChild(node('span', 'stream-ts', row.name));
+        line.appendChild(node('span', 'stream-text',
+          row.runs + ' runs \u00b7 ' + row.converged + ' converged \u00b7 last ' + row.last_status));
+        harnessCard.appendChild(line);
+      });
+      (harness.recent || []).slice(0, 8).forEach(function (row) {
+        var line = node('div', 'stream-line');
+        line.appendChild(node('span', 'stream-ts', row.ts.slice(5, 16)));
+        line.appendChild(node('span', 'stream-text', row.kind + ' \u00b7 ' + row.label +
+          ' \u00b7 ' + row.outcome));
+        harnessCard.appendChild(line);
+      });
+      el.brainBoard.appendChild(harnessCard);
+    }
+
+    // The maturity week grid.
+    var maturity = read.maturity;
+    if (maturity) {
+      var weekCard = boardCard(12, 'the maturity signals', maturity.generated,
+        'one row per signal, one cell per week. A darker cell is a week with more of it.');
+      weekCard.appendChild(weekGrid(maturity.series || [], maturity.weeks || []));
+      (maturity.milestones || []).forEach(function (row) {
+        var line = node('div', 'stream-line');
+        line.appendChild(node('span', 'stream-ts', row.when));
+        line.appendChild(node('span', 'stream-text', row.what));
+        weekCard.appendChild(line);
+      });
+      el.brainBoard.appendChild(weekCard);
+    }
+  }
+
+  // The week grid: one row per series, one cell per week, the cell's
+  // intensity the week's value against the row's own maximum.
+  function weekGrid(series, weeks) {
+    var wrap = node('div', 'week-grid');
+    series.forEach(function (row) {
+      var line = node('div', 'week-row');
+      line.appendChild(node('span', 'week-name', row.name));
+      var cells = node('span', 'week-cells');
+      var max = row.points.reduce(function (m, v) { return Math.max(m, v); }, 0);
+      row.points.forEach(function (value, index) {
+        var cell = node('span', 'week-cell');
+        cell.dataset.level = max && value ? String(Math.ceil((value / max) * 4)) : '0';
+        cell.title = (weeks[index] || 'week ' + (index + 1)) + ': ' + value;
+        cells.appendChild(cell);
+      });
+      line.appendChild(cells);
+      wrap.appendChild(line);
+    });
+    return wrap;
+  }
+
   // The keyed panels, by address. One registry, so showing one panel
   // can never forget to hide another — the failure mode the explicit
   // hide-lists were one new surface away from.
@@ -2936,7 +3384,9 @@
     memory: el.panelMemory,
     skills: el.panelSkills,
     sessions: el.panelSessions,
-    calibration: el.panelCalibration
+    calibration: el.panelCalibration,
+    tower: el.panelTower,
+    'second-brain': el.panelSecondBrain
   };
 
   function showRoute() {
@@ -2964,7 +3414,9 @@
       memory: function () { paintMemory(); readMemory(true).then(paintMemory); },
       skills: function () { paintSkills(); readSkills(true).then(paintSkills); },
       sessions: function () { paintSessions(); readSessions(true).then(paintSessions); },
-      calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); }
+      calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
+      tower: function () { paintTower(); readTower(true).then(paintTower); },
+      'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); }
     };
     if (arrive[address]) arrive[address]();
   }
@@ -3490,7 +3942,8 @@
 
   // Which surfaces are live today, and which are a later increment — the
   // rail says so rather than pretending all ten are built.
-  var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration'];
+  var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration',
+    'tower', 'second-brain'];
 
   function markRail() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');
