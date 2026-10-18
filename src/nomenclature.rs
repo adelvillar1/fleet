@@ -815,6 +815,93 @@ fn extract_doc(file: &str, text: &str, days: Option<u64>, sink: &mut Sink) {
     }
 }
 
+// --- the shared channel rule -----------------------------------------------
+
+/// The identifier-shaped candidates one file's text carries, in order
+/// of first appearance, read through the same channel rules the
+/// derivation itself applies.
+///
+/// This is the rule the write-time guard reads by, and it is stated
+/// here beside the derivation for one reason: the guard polices
+/// identifiers, so it must read exactly what the vocabulary reads and
+/// nothing more. Two channels, and each is the derivation's own:
+///
+/// - a **markdown** file (`.md`) contributes its inline backtick spans,
+///   its path-like runs, and its fenced code lines, and its prose
+///   contributes nothing;
+/// - **every other file** contributes every identifier-shaped word
+///   outside its comments — a comment's prose is not an identifier.
+///
+/// A word survives when at least one of its split parts is a
+/// vocabulary token ([`is_token`]), which is what drops `let`, `done`,
+/// and every sub-three-character fragment — the same filter the
+/// derivation's own [`Sink::push_word`] applies, so a candidate the
+/// guard considers is a candidate the vocabulary could have
+/// established.
+///
+/// Markdown is the one doc channel, and it is keyed on the extension
+/// the derivation itself keys it on. **Everything else is code**,
+/// including a path with no extension at all: the guard's contract is to
+/// police identifiers, and an identifier is an identifier whatever file
+/// it lands in, so a file that is not a doc has its identifiers read
+/// like code's. The residual is stated rather than hidden — prose in an
+/// extensionless file is read as code, so a prose word that happens to
+/// be a case variant of an established term can be refused there. That
+/// is the narrower failure, and KI-219 is the wider one: the refusal
+/// that actually blocked work was markdown prose, which the `.md`
+/// extension now excludes.
+pub fn channel_tokens(path: &str, content: &str) -> Vec<String> {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default();
+    if extension != "md" {
+        // The derivation keys the Rust branch on the path's suffix
+        // rather than the extension, and this mirrors it exactly.
+        let stripped = if path.ends_with(".rs") {
+            strip_rust_comments(content)
+        } else {
+            content
+                .lines()
+                .map(|line| match line.find('#') {
+                    Some(at) => &line[..at],
+                    None => line,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        return kept(stripped.lines().flat_map(words).collect());
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut fenced = false;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            out.extend(kept(words(line)));
+            continue;
+        }
+        for span in backtick_spans(line) {
+            out.extend(kept(words(&span)));
+        }
+        for word in path_words(&strip_link_targets(line)) {
+            out.extend(kept(vec![word]));
+        }
+    }
+    out
+}
+
+/// The words carrying at least one vocabulary token, in order.
+fn kept(words: Vec<String>) -> Vec<String> {
+    words
+        .into_iter()
+        .filter(|word| split_identifier(word).iter().any(|part| is_token(part)))
+        .collect()
+}
+
 /// Markdown link and image targets removed, the link text kept. A
 /// doc's `[label](path)` becomes `[label]`, so the path never reaches
 /// the vocabulary as a doc token — but the backtick pass, which runs
@@ -931,7 +1018,12 @@ fn backtick_spans(line: &str) -> Vec<String> {
 /// An identifier split on `_`, `-`, and camelCase boundaries, in order.
 /// `recall_count` -> recall, count; `recallCount` -> recall, count;
 /// `HTTPServer` -> http, server.
-fn split_identifier(identifier: &str) -> Vec<String> {
+///
+/// Public because the write-time guard's lookup key is this split, and
+/// the one place it is stated is here: a guard that carried its own
+/// copy would be one refactor away from looking up a spelling the
+/// vocabulary never stored.
+pub fn split_identifier(identifier: &str) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
     for segment in identifier.split(['_', '-']) {
         if segment.is_empty() {
