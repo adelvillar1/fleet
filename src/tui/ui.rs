@@ -1435,7 +1435,37 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
             Style::new().fg(palette::ACCENT),
         ));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    // KI-077: a width budget for the bar. The segments used to run to
+    // whatever width they needed and the last one clipped mid-word
+    // unreadable; now the bar is trimmed to the area by priority: the
+    // state and the routing mode are what the bar is for, and the
+    // board, memory, tokens, turn, and session segments are what a
+    // narrow bar drops — in that order. The session id is the last to
+    // go, because it is already abbreviated and its tail is the part
+    // that identifies the log.
+    let width = area.width as usize;
+    // The boundaries: the spans are built in a fixed order, and the
+    // budget walks them by priority group rather than by position.
+    let total = spans.iter().map(|span| span.width()).sum::<usize>();
+    let line = if total <= width {
+        Line::from(spans)
+    } else {
+        // Drop whole segments from the end until it fits: the order the
+        // spans were pushed is the order they matter in, so the tail
+        // segments are the cheap ones.
+        let mut kept: Vec<Span> = Vec::new();
+        let mut used = 0usize;
+        for span in &spans {
+            let w = span.width();
+            if used + w > width {
+                break;
+            }
+            kept.push(span.clone());
+            used += w;
+        }
+        Line::from(kept)
+    };
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 /// The input box with its cursor.
@@ -1487,18 +1517,23 @@ fn render_approval(frame: &mut Frame<'_>, app: &App) {
         .border_style(Style::new().fg(palette::PENDING));
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    // KI-078: the summary rides its own line, not the name's. They used
+    // to share one, so a long tool name pushed the summary off the line
+    // entirely — and for a delegation the goal IS the summary, so the
+    // operator approved a task they could not read. On its own line the
+    // summary wraps at the box width like every other wrapped surface.
     let body = Text::from(vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                &prompt.name,
-                Style::new()
-                    .fg(palette::ACCENT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("  ", Style::new()),
-            Span::styled(&prompt.summary, Style::new().fg(palette::TEXT)),
-        ]),
+        Line::from(Span::styled(
+            &prompt.name,
+            Style::new()
+                .fg(palette::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            &prompt.summary,
+            Style::new().fg(palette::TEXT),
+        )),
         Line::from(""),
         Line::from(vec![
             Span::styled(
@@ -2009,6 +2044,17 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                 ToolStatus::Denied => (palette::DENIED, "denied"),
                 ToolStatus::Done => (palette::DONE, "done"),
             };
+            // KI-078: the goal is bounded before the state token rides
+            // the line. For a subagent the goal IS the content — an
+            // operator approving a delegation reads it — and an
+            // unbounded one pushed the state token off the line entirely.
+            // The budget is what the line has left after the name, the
+            // marker, and the state, so a short goal renders whole.
+            let state_w = state.chars().count() + 2;
+            let budget = width
+                .saturating_sub(card.name.chars().count() + 4 + state_w)
+                .max(12);
+            let goal = bound(&card.summary, budget);
             let mut lines = vec![Line::from(vec![
                 Span::styled(
                     format!(" {} ", dot_marker(card.status)),
@@ -2021,7 +2067,7 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("  ", Style::new()),
-                Span::styled(card.summary.clone(), Style::new().fg(palette::DIM)),
+                Span::styled(goal, Style::new().fg(palette::DIM)),
                 Span::styled(format!("  {state}"), Style::new().fg(dot)),
             ])];
             if !card.preview.is_empty() {
@@ -2104,14 +2150,18 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             // beside the boards, `6 turns \u{2192} 1 summary  done` loses
             // its state word.
             let mut lines = vec![Line::from(vec![
-                Span::styled(" \u{2713} ", Style::new().fg(palette::DONE)),
+                // KI-086: a system-level marker, so a first-time reader
+                // does not take a green check for a tool named
+                // "compacted". The doubled diamond reads as the harness’s own
+                // event rather than the tool grammar’s single check, and the
+                // system tag names it outright — the card is about the
+                // context, not a call.
+                Span::styled(" \u{25c6} ", Style::new().fg(palette::DIM)),
                 Span::styled(
                     "compacted",
-                    Style::new()
-                        .fg(palette::ACCENT)
-                        .add_modifier(Modifier::BOLD),
+                    Style::new().fg(palette::DIM).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("  ", Style::new()),
+                Span::styled("  system  ", Style::new().fg(palette::DIM)),
                 Span::styled(
                     format!(
                         "{} turn{}",
@@ -2252,6 +2302,23 @@ fn dot_marker(status: ToolStatus) -> &'static str {
 /// for every input character, and the cursor's row and column are found
 /// by walking them with the same rules. Exact line counts matter too —
 /// the conversation's scroll offset is computed from them.
+/// One line bounded to `most` characters, with the cut marked. KI-078:
+/// the tool card's goal rides the name's line, and an unbounded goal
+/// pushed the state token off the line — so the goal is bounded to
+/// what the line has left, and the mark says it was cut rather than
+/// pretending the whole goal was there.
+fn bound(text: &str, most: usize) -> String {
+    let count = text.chars().count();
+    if count <= most {
+        return text.to_string();
+    }
+    if most <= 1 {
+        return "\u{2026}".to_string();
+    }
+    let cut: String = text.chars().take(most - 1).collect();
+    format!("{cut}\u{2026}")
+}
+
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(8);
     let mut lines: Vec<String> = Vec::new();
@@ -2402,6 +2469,60 @@ mod tests {
     /// The settings pane renders as a scrolled list of rows, never a
     /// plain-text table, and the editor replaces the list while a value
     /// is being typed. The buffer is the truth.
+    /// KI-077: the status bar fits its width. The route segment — what
+    /// the bar is for — survives a narrow bar, and the segments that
+    /// follow are what get dropped rather than clipping the last one
+    /// mid-word.
+    #[test]
+    fn the_status_bar_fits_its_width_and_keeps_the_route() {
+        let mut routed = fresh();
+        routed.status.routing = Some("auto".to_string());
+        let chat = draw(&routed, 60, 24);
+        assert!(chat.contains("route auto"), "the route survives: {chat}");
+        // The bar fits its width: the route survives, and the line that
+        // carries it is not wider than the area — what used to happen
+        // is the last segment clipping mid-word off the edge.
+        let bar = chat
+            .lines()
+            .find(|line| line.contains("route auto"))
+            .expect("the route segment");
+        assert!(
+            bar.chars().count() <= 60,
+            "the bar fits its width: {bar} ({})",
+            bar.chars().count()
+        );
+    }
+
+    /// KI-078: the tool card's goal is bounded before the state token,
+    /// so a long delegation goal cannot push the state off the line.
+    #[test]
+    fn a_long_goal_cannot_push_the_state_token_off_the_line() {
+        let long = "g".repeat(200);
+        assert_eq!(bound(&long, 20).chars().count(), 20, "{}", bound(&long, 20));
+        assert!(
+            bound(&long, 20).ends_with('\u{2026}'),
+            "{}",
+            bound(&long, 20)
+        );
+        assert_eq!(bound("short", 20), "short");
+        assert_eq!(bound("", 20), "");
+    }
+
+    /// KI-086: a compaction card carries the system marker, so a
+    /// first-time reader does not take it for a tool named "compacted".
+    #[test]
+    fn a_compaction_card_carries_the_system_marker() {
+        let mut app = fresh();
+        app.apply_ui_event(crate::agent::UiEvent::Compacted {
+            turns: 6,
+            tokens_before: 91_234,
+            tokens_after: 21_003,
+        });
+        let chat = draw(&app, 80, 24);
+        assert!(chat.contains("system"), "{chat}");
+        assert!(chat.contains("compacted"), "{chat}");
+    }
+
     #[test]
     fn the_settings_pane_renders_its_rows_and_the_editor_replaces_them() {
         let home = std::env::temp_dir().join(format!("fleet-tui-render-{}", std::process::id()));
