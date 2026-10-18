@@ -96,6 +96,17 @@ const CHARS_PER_TOKEN: u64 = 4;
 /// carried one. The estimate counts the messages and not the system
 /// prompt or the tool declarations, so it reads slightly under the
 /// API's count; the budget has room for that.
+/// The fallback estimate with the system prompt counted beside the
+/// messages. KI-081: the API's own `prompt_tokens` counts the system
+/// prompt and the tool declarations — and the declarations ride inside
+/// the assembled prompt — so an estimate of the messages alone reads
+/// under the real count by exactly their size, which made the budget
+/// check optimistic. The prompt's own chars/4 is the same estimate's
+/// rule applied to the one string that carries both.
+pub fn estimate_with_prompt(messages: &[Message], system_prompt: &str) -> u64 {
+    estimate_tokens(messages) + (system_prompt.chars().count() as u64) / 4
+}
+
 pub fn estimate_tokens(messages: &[Message]) -> u64 {
     let chars: usize = messages
         .iter()
@@ -300,6 +311,29 @@ mod tests {
             answered,
             ("the output".chars().count() + "call-1".chars().count()) as u64 / 4
         );
+    }
+
+    /// KI-081: the estimate counts the system prompt and the tool
+    /// declarations beside the messages — the prompt they ride in is the
+    /// assembled one, so the declarations are in it. The API's own count
+    /// includes both, and an estimate that read under it made the budget
+    /// check optimistic by exactly their size.
+    #[test]
+    fn the_estimate_counts_the_prompt_and_the_declarations_it_carries() {
+        let messages = vec![text(Role::User, &"x".repeat(400))];
+        let bare = estimate_tokens(&messages);
+        // 400 characters of prompt reads as 100 tokens beside the
+        // message's own 100.
+        assert_eq!(
+            estimate_with_prompt(&messages, &"y".repeat(400)),
+            bare + 100
+        );
+        // An empty prompt changes nothing.
+        assert_eq!(estimate_with_prompt(&messages, ""), bare);
+        // The declarations ride inside the assembled prompt, so counting
+        // the prompt counts them.
+        let declarations = "z".repeat(800);
+        assert_eq!(estimate_with_prompt(&messages, &declarations), bare + 200);
     }
 
     #[test]

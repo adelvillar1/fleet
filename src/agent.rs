@@ -1532,9 +1532,14 @@ impl<'a> Agent<'a> {
     /// the budget, so a conversation whose tail is itself over the
     /// window is not folded every turn.
     async fn maybe_compact(&mut self, system_prompt: &str) -> Result<(), AgentError> {
+        // KI-081: the fallback estimate counts the system prompt and the
+        // tool declarations beside the messages — the prompt they ride
+        // in is the assembled one, so the declarations are in it. The
+        // API's own count includes both, and an estimate that read under
+        // it made the budget check optimistic by exactly their size.
         let measured = self
             .last_prompt_tokens
-            .unwrap_or_else(|| compaction::estimate_tokens(&self.messages));
+            .unwrap_or_else(|| compaction::estimate_with_prompt(&self.messages, system_prompt));
         let budget = compaction::budget_for(self.serving_window());
         // A forced fold ignores the budget but not the latch: the
         // owner asked for a checkpoint, not an unbounded chain of
@@ -1552,7 +1557,24 @@ impl<'a> Agent<'a> {
         // Over the budget. Nothing to replace means nothing to compact:
         // the whole conversation is the verbatim tail already.
         let tail_start = compaction::tail_start(&self.messages);
-        if self.compaction_latch || tail_start == 0 {
+        if tail_start == 0 {
+            if measured >= budget {
+                // KI-080: the verbatim tail alone is at or over the
+                // budget and no fold can shrink it. Continuing means the
+                // next request dies on length at the API with a
+                // transport error that names nothing about the window;
+                // the run fails here, naming the situation and both
+                // numbers. Under the budget there is simply nothing to
+                // fold, which is the named no-op a forced fold already
+                // documents.
+                return Err(AgentError::Api(crate::api::ClientError::Network(format!(
+                    "the recent context alone exceeds the window: {measured} tokens against a \
+                     {budget}-token budget, and nothing before the verbatim tail is left to fold"
+                ))));
+            }
+            return Ok(());
+        }
+        if self.compaction_latch {
             return Ok(());
         }
         self.compact(system_prompt, tail_start, measured).await
@@ -5607,6 +5629,55 @@ You are auditing a change. Read the diff before you judge it.
         // And the flag is one-shot: consumed at the boundary it fired
         // on, so a later turn's ordinary budget reading decides again.
         assert!(!agent.compact_now, "the forced fold is consumed once");
+    }
+
+    /// KI-080: a conversation whose verbatim tail alone is at or over the
+    /// budget gets a named failure instead of a request that dies on
+    /// length at the API. Nothing before the tail is left to fold, so the
+    /// run says so with both numbers rather than continuing into a
+    /// transport error that names nothing about the window.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_tail_that_alone_exceeds_the_window_fails_by_name() {
+        let home = scratch("compact-tail-over");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let options = AgentOptions {
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            plan_mode: false,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            progress,
+        )
+        .unwrap();
+        // One message, past the floor budget: the whole conversation is
+        // the verbatim tail already (400k characters reads as 100k
+        // tokens against the 100k floor).
+        agent.messages = vec![Message::text(Role::User, "x".repeat(400_000))];
+        let error = agent.maybe_compact("system").await.unwrap_err();
+        let said = error.to_string();
+        assert!(
+            said.contains("the recent context alone exceeds the window"),
+            "{said}"
+        );
+        assert!(said.contains("tokens against a"), "{said}");
         let _ = std::fs::remove_dir_all(&home);
     }
 
