@@ -2364,7 +2364,7 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
         outputs[0]
     );
     assert!(
-        outputs[1].starts_with("error: lane `sem1` is unavailable for the rest of this run:"),
+        outputs[1].starts_with("error: lane `sem1` is gone for the rest of this run"),
         "the second call fails fast, it does not respawn: {}",
         outputs[1]
     );
@@ -2744,7 +2744,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
         outputs[0]
     );
     assert!(
-        outputs[1].starts_with("error: lane `sem1` is unavailable for the rest of this run:"),
+        outputs[1].starts_with("error: lane `sem1` is gone for the rest of this run"),
         "the second call fails fast: {}",
         outputs[1]
     );

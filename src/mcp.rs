@@ -287,12 +287,16 @@ impl CallResult {
 
 /// The client's failures. Typed values, never panics: a crashed child is
 /// an error here, not a hang.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum McpError {
     /// The child could not be spawned (no `python3` on PATH, bad path).
-    Spawn(std::io::Error),
+    /// The error rides an `Arc` so the enum can derive `Clone` (KI-040):
+    /// the reader builds one error per pending waiter when it drains
+    /// them, and a cloneable error is one value shared rather than one
+    /// built per waiter.
+    Spawn(std::sync::Arc<std::io::Error>),
     /// The child's pipes failed (broken pipe on write, read error).
-    Io(std::io::Error),
+    Io(std::sync::Arc<std::io::Error>),
     /// The wait budget expired before the server answered.
     Timeout { method: String, budget: Duration },
     /// The child exited, or closed its pipes, before answering.
@@ -393,7 +397,9 @@ impl McpServer {
         command.stdin(std::process::Stdio::piped());
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
-        let mut child = command.spawn().map_err(McpError::Spawn)?;
+        let mut child = command
+            .spawn()
+            .map_err(|error| McpError::Spawn(std::sync::Arc::new(error)))?;
         let stdin = child
             .stdin
             .take()
@@ -499,12 +505,18 @@ impl McpServer {
         };
         match timeout(TEARDOWN_GRACE, child.wait()).await {
             Ok(Ok(_)) => Ok(()),
-            Ok(Err(error)) => Err(McpError::Io(error)),
+            Ok(Err(error)) => Err(McpError::Io(std::sync::Arc::new(error))),
             Err(_elapsed) => {
                 // The grace expired: kill, and report a failure only when
                 // even the kill goes wrong.
-                child.kill().await.map_err(McpError::Io)?;
-                child.wait().await.map_err(McpError::Io)?;
+                child
+                    .kill()
+                    .await
+                    .map_err(|error| McpError::Io(std::sync::Arc::new(error)))?;
+                child
+                    .wait()
+                    .await
+                    .map_err(|error| McpError::Io(std::sync::Arc::new(error)))?;
                 Ok(())
             }
         }
@@ -565,8 +577,11 @@ impl McpServer {
         stdin
             .write_all(line.as_bytes())
             .await
-            .map_err(McpError::Io)?;
-        stdin.flush().await.map_err(McpError::Io)
+            .map_err(|error| McpError::Io(std::sync::Arc::new(error)))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|error| McpError::Io(std::sync::Arc::new(error)))
     }
 }
 
@@ -736,8 +751,10 @@ fn annotated(error: McpError, tail: &str) -> McpError {
     }
     let suffix = format!("; its stderr said: {tail}");
     match error {
-        McpError::Spawn(error) => McpError::Spawn(annotated_io(&error, &suffix)),
-        McpError::Io(error) => McpError::Io(annotated_io(&error, &suffix)),
+        McpError::Spawn(error) => {
+            McpError::Spawn(std::sync::Arc::new(annotated_io(&error, &suffix)))
+        }
+        McpError::Io(error) => McpError::Io(std::sync::Arc::new(annotated_io(&error, &suffix))),
         McpError::Timeout { .. } => error,
         McpError::Closed(reason) => McpError::Closed(format!("{reason}{suffix}")),
         McpError::Rpc { code, message } => McpError::Rpc {
@@ -903,6 +920,21 @@ mod tests {
 
     fn pending() -> Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>> {
         Mutex::new(HashMap::new())
+    }
+
+    /// KI-040: the error is cloneable, so the reader builds one value
+    /// per pending waiter when it drains them rather than one error per
+    /// waiter — the row's own remedy.
+    #[test]
+    fn the_error_is_cloneable_for_the_drain() {
+        let error = McpError::Io(std::sync::Arc::new(std::io::Error::other("broken pipe")));
+        let cloned = error.clone();
+        assert_eq!(error.to_string(), cloned.to_string());
+        let timeout = McpError::Timeout {
+            method: "tools/call".to_string(),
+            budget: Duration::from_secs(60),
+        };
+        assert_eq!(timeout.clone().to_string(), timeout.to_string());
     }
 
     #[test]
@@ -1495,7 +1527,7 @@ mod tests {
         // An io::Error keeps its kind, so a caller matching on it still
         // matches after the annotation.
         let broken = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the pipe broke");
-        let annotated_io_error = annotated(McpError::Io(broken), "traceback");
+        let annotated_io_error = annotated(McpError::Io(std::sync::Arc::new(broken)), "traceback");
         match annotated_io_error {
             McpError::Io(error) => {
                 assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);

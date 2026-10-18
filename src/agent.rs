@@ -4170,9 +4170,18 @@ impl LaneRoster {
         };
         match child {
             // Dead: fail fast. No respawn, and the run carries on.
+            // KI-042: the text tells the model the lane is GONE, not
+            // merely that this call failed — its declarations stay in
+            // the tool set by design, and a model that keeps calling
+            // them needs to read, on the ordinary tool_result path, that
+            // there is nothing left to call.
             LaneChild::Dead { reason, .. } => LaneOutcome {
                 text: format!(
-                    "error: lane `{lane}` is unavailable for the rest of this run: {reason}"
+                    "error: lane `{lane}` is gone for the rest of this run (its child \
+                     died: {reason}). Its tools remain declared \u{2014} the log keeps \
+                     them reconstructable \u{2014} but every call to them fails the \
+                     same way. Do the work another way, or tell the user the \
+                     lane is down."
                 ),
                 truncated: false,
                 joined,
@@ -4559,10 +4568,14 @@ mod tests {
         assert!(
             second
                 .text
-                .starts_with("error: lane `sem1` is unavailable for the rest of this run:"),
+                .starts_with("error: lane `sem1` is gone for the rest of this run"),
             "{}",
             second.text
         );
+        // KI-042: the text tells the model the lane is gone and that its
+        // declarations stay — a model that keeps calling them needs to
+        // read why every call fails the same way.
+        assert!(second.text.contains("remain declared"), "{}", second.text);
         // A dead lane contributes no declarations: the model never saw a
         // tool that cannot run.
         assert_eq!(roster.declarations().len(), 4);
