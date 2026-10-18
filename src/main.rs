@@ -17,6 +17,19 @@ use fleet::route;
 use fleet::session::{self, Session};
 
 fn main() -> ExitCode {
+    // KI-128: restore the default SIGPIPE disposition. Rust sets it to
+    // ignore, which turns a closed stdout pipe into an `io::Error` that
+    // every `println!` unwraps — so `fleet sessions | head -5` killed
+    // the process with "failed printing to stdout: Broken pipe". A CLI
+    // piped into a pager is the ordinary case, not a crash.
+    #[cfg(unix)]
+    unsafe {
+        unsafe extern "C" {
+            fn signal(signum: i32, handler: usize) -> usize;
+        }
+        // SIGPIPE is 13 and SIG_DFL is 0 on every unix.
+        signal(13, 0);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     // No subcommand is the TUI, Fleet's daily-driver surface. KI-023: it
     // gets no runtime at all — the multi-thread runtime `#[tokio::main]`

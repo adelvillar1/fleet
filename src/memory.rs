@@ -2352,6 +2352,62 @@ pub struct ScoredFact {
 /// recall-count bump, the `superseded-by` stamp, the `valid-until`
 /// stamp — because a second rewrite path would drift from this one's
 /// bound and its atomicity. A line the fact does not carry is inserted
+/// An exclusive lock on one fact file's writes, released on drop.
+/// KI-062: the lock is what makes a fact's read-modify-write atomic
+/// across the consolidation cycle and a live run's recall-count bump.
+/// A sibling `.lock` beside the fact carries it; the lock BLOCKS, so a
+/// caller must not hold one across a call that rewrites the same file.
+struct FactLock {
+    file: Option<std::fs::File>,
+}
+
+impl FactLock {
+    /// Take the lock, or carry on without it: a lock that cannot be
+    /// created leaves the write running unprotected rather than
+    /// refusing it, because a lost recall-count bump is cheaper than a
+    /// refused supersession. The `Option` records whether the lock was
+    /// really held.
+    fn take(path: &Path) -> FactLock {
+        let mut lock = path.to_path_buf().into_os_string();
+        lock.push(".lock");
+        let lock = std::path::PathBuf::from(lock);
+        let Ok(file) = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock)
+        else {
+            return FactLock { file: None };
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe extern "C" {
+                fn flock(fd: i32, operation: i32) -> i32;
+            }
+            // LOCK_EX is 2 on every unix. A failure leaves the file
+            // open and unlocked, which the drop releases normally.
+            unsafe { flock(file.as_raw_fd(), 2) };
+        }
+        FactLock { file: Some(file) }
+    }
+}
+
+impl Drop for FactLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(file) = &self.file {
+            use std::os::unix::io::AsRawFd;
+            unsafe extern "C" {
+                fn flock(fd: i32, operation: i32) -> i32;
+            }
+            // LOCK_UN is 8 on every unix.
+            unsafe { flock(file.as_raw_fd(), 8) };
+        }
+    }
+}
+
 /// as the last frontmatter line rather than appended anywhere else.
 ///
 /// The failure is a typed error, not a swallowed `bool`: the
@@ -2361,6 +2417,15 @@ pub struct ScoredFact {
 /// the cycle's stamps) keep their own logging and their own
 /// consequence for a failed rewrite.
 fn rewrite_field(path: &Path, key: &str, value: &str) -> Result<(), WriteError> {
+    // KI-062: the whole read-modify-write runs under a per-fact lock.
+    // The consolidation cycle's bounded rewrites and a concurrent run's
+    // recall-count bump both re-read, edit one line, and rename over the
+    // file; without the lock one of the two updates is lost — the
+    // count is a rank signal rather than an audit record, so the
+    // honest first version left it, and this is the lock that closes
+    // it. The lock file is a sibling beside the fact, never inside the
+    // corpus a walk would read.
+    let _guard = FactLock::take(path);
     let Ok(text) = fs::read_to_string(path) else {
         let reason = format!(
             "could not re-read {} to rewrite its `{key}`",
