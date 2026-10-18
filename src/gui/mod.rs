@@ -200,6 +200,27 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             "fleet gui — the webhook channel is live on 127.0.0.1:{}",
             crate::channels::webhook::DEFAULT_PORT
         );
+        // The telegram channel, when its bot token is in the environment:
+        // the same masking rule every other credential holds, read once
+        // at start and never carried in a payload.
+        if let Some(token) = telegram_token() {
+            let telegram = crate::channels::telegram::Telegram::new(token);
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(telegram);
+            let served = Arc::clone(&channel);
+            let delivering = Arc::clone(&driver);
+            tokio::spawn(async move {
+                let sink: Arc<
+                    dyn Fn(crate::channels::Inbound)
+                        -> Result<String, crate::channels::Refusal>
+                        + Send
+                        + Sync,
+                > = Arc::new(move |inbound| delivering.deliver(&inbound));
+                let _ = served.serve(sink).await;
+            });
+            let watching = Arc::clone(&driver);
+            tokio::spawn(async move { watching.watch(channel).await });
+            println!("fleet gui — the telegram channel is live");
+        }
         Some(driver)
     } else {
         None
@@ -270,6 +291,21 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
     }
     println!("fleet gui — stopped.");
     Ok(())
+}
+
+/// The telegram bot token, from the environment or the home's `.env`.
+/// None when neither carries it, which is how the channel stays absent
+/// on a machine that never configured it.
+fn telegram_token() -> Option<String> {
+    let home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .ok()?;
+    crate::home::resolve_setting("FLEET_TELEGRAM_BOT_TOKEN", &crate::home::read_dotenv(&home))
+        .or_else(|| std::env::var("FLEET_TELEGRAM_BOT_TOKEN").ok())
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
 }
 
 /// An address as a URL authority: IPv6 bracketed, IPv4 bare.

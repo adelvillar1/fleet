@@ -486,6 +486,41 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
         println!("  the token is printed once and stored as its digest only");
         return ExitCode::SUCCESS;
     }
+    if let Some((chat_id, name)) = &options.allow_telegram {
+        // The peer is paired by the chat id, with no token to mint: the
+        // chat id IS the credential on this platform, and the bot only
+        // answers chats it has been told to answer.
+        let name = name
+            .clone()
+            .unwrap_or_else(|| format!("telegram {chat_id}"));
+        let mut store = match fleet::channels::PeerStore::load(&home, "telegram") {
+            Ok(store) => store,
+            Err(error) => {
+                eprintln!("fleet: channels: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        // A paired peer carries a token the platform never asks for; the
+        // store's shape is shared, so it gets one anyway — minted and
+        // discarded, since nothing will ever present it.
+        let token = match fleet::channels::mint_peer_token() {
+            Ok(token) => token,
+            Err(error) => {
+                eprintln!("fleet: channels: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let stamp = fleet::session::iso_utc_stamp(std::time::SystemTime::now())
+            .unwrap_or_else(|_| String::from("unknown"));
+        store.pair(chat_id, &name, &token, fleet::channels::Capability::Task, &stamp);
+        if let Err(error) = store.save(&home, "telegram") {
+            eprintln!("fleet: channels: {error}");
+            return ExitCode::FAILURE;
+        }
+        println!("fleet channels — telegram peer {name} ({chat_id}) may act");
+        println!("  the bot answers this chat's messages and posts outcomes back to it");
+        return ExitCode::SUCCESS;
+    }
     if let Some(id) = &options.revoke_webhook {
         let mut store = match fleet::channels::PeerStore::load(&home, "webhook") {
             Ok(store) => store,

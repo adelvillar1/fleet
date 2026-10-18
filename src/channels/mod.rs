@@ -45,6 +45,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod telegram;
 pub mod webhook;
 
 use crate::gui::bridge::Bridge;

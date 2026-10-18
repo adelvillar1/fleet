@@ -1815,6 +1815,8 @@ pub struct ChannelsOptions {
     pub pair_webhook: Option<(String, Option<String>)>,
     /// Forget a webhook peer by id.
     pub revoke_webhook: Option<String>,
+    /// Pair a telegram peer by the chat id a refusal named.
+    pub allow_telegram: Option<(String, Option<String>)>,
     /// The port the webhook channel listens on when the service runs.
     pub port: Option<u16>,
 }
@@ -1858,12 +1860,24 @@ fn parse_channels(args: &[String]) -> Result<Command, String> {
                 }
                 options.revoke_webhook = Some(take_value(args, &mut index, "revoke-webhook")?);
             }
+            "allow-telegram" => {
+                let chat_id = take_value(args, &mut index, "allow-telegram")?;
+                let mut name = None;
+                if matches!(args.get(index + 1).map(String::as_str), Some("--name")) {
+                    index += 1;
+                    name = Some(take_value(args, &mut index, "--name")?);
+                }
+                if options.allow_telegram.is_some() {
+                    return Err("allow-telegram takes one chat id".to_string());
+                }
+                options.allow_telegram = Some((chat_id, name));
+            }
             other if other.starts_with('-') && other != "-" => {
                 return Err(format!("unknown channels option `{other}`"));
             }
             other => {
                 return Err(format!(
-                    "`{other}` takes no value here; channels takes pair-webhook, revoke-webhook, and --port"
+                    "`{other}` takes no value here; channels takes pair-webhook, revoke-webhook, allow-telegram, and --port"
                 ));
             }
         }
@@ -2336,6 +2350,33 @@ mod tests {
         assert!(parse(&args(&["channels", "--port", "http"])).is_err());
         assert!(parse(&args(&["channels", "stray"])).is_err());
         assert!(parse(&args(&["channels", "--loud"])).is_err());
+    }
+
+    #[test]
+    fn channels_pairs_a_telegram_peer_by_chat_id() {
+        assert_eq!(
+            parse(&args(&["channels", "allow-telegram", "4242"])).unwrap(),
+            Command::Channels(ChannelsOptions {
+                allow_telegram: Some(("4242".to_string(), None)),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            parse(&args(&[
+                "channels",
+                "allow-telegram",
+                "4242",
+                "--name",
+                "Alejandro",
+            ]))
+            .unwrap(),
+            Command::Channels(ChannelsOptions {
+                allow_telegram: Some(("4242".to_string(), Some("Alejandro".to_string()))),
+                ..Default::default()
+            })
+        );
+        assert!(parse(&args(&["channels", "allow-telegram"])).is_err());
+        assert!(parse(&args(&["channels", "allow-telegram", "a", "b"])).is_err());
     }
 
     #[test]
