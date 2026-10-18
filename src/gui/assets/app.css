@@ -2897,3 +2897,82 @@ body[data-pane="open"] .face { grid-template-columns: minmax(0, 1fr) var(--pane-
 .week-cell[data-level="2"] { background: color-mix(in srgb, var(--dsw-alias-accent) 50%, var(--dsw-alias-surface-raised)); }
 .week-cell[data-level="3"] { background: color-mix(in srgb, var(--dsw-alias-accent) 75%, var(--dsw-alias-surface-raised)); }
 .week-cell[data-level="4"] { background: var(--dsw-alias-accent); }
+
+/* ----------------------------------------------------- the settings surface */
+
+/* The knobs, the list editors, and the job rows: the house card
+   language, with the editor rows the surface needs. */
+.knob-row, .list-editor {
+  display: grid;
+  gap: 7px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--dsw-alias-surface-raised);
+}
+
+.knob-head, .list-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.knob-key, .list-row-key {
+  font-family: var(--dsw-alias-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.knob-summary {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-ink-secondary);
+}
+
+.knob-editor { display: flex; gap: 8px; align-items: center; }
+
+.knob-box {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 9px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+  font: inherit;
+  font-size: 12.5px;
+  color: inherit;
+}
+
+.list-seed {
+  width: 100%;
+  min-height: 54px;
+  padding: 7px 9px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+  font-family: var(--dsw-alias-mono);
+  font-size: 11.5px;
+  color: inherit;
+  resize: vertical;
+}
+
+.soul-box {
+  width: 100%;
+  min-height: 140px;
+  padding: 10px 11px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  resize: vertical;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dsw-alias-surface-raised);
+}

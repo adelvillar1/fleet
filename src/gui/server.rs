@@ -347,6 +347,22 @@ async fn serve_connection(
         // The tower console and the second-brain panel: the boards' own
         // reads, shaped for the browser. Both name the parts that did
         // not land rather than rendering a blank console.
+        // The settings surface: the whole config as one document, and
+        // every write through the writer the surface owns. The reply
+        // names itself the way the writer's own refusal does.
+        ("GET", "/api/settings") => {
+            write_reply(&mut stream, api(200, bridge.settings().await)).await
+        }
+        ("POST", "/api/settings") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.settings_write(&body).await {
+                Ok(wrote) => write_reply(&mut stream, api(200, wrote)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("GET", "/api/tower") => write_reply(&mut stream, api(200, bridge.tower().await)).await,
         ("GET", "/api/second-brain") => {
             write_reply(&mut stream, api(200, bridge.brain().await)).await
@@ -2211,6 +2227,209 @@ mod tests {
         assert!(
             brain.contains("maturity_state.json does not exist"),
             "{brain}"
+        );
+    }
+
+    // ------------------------------------------------ the settings surface (G8)
+
+    /// A home that already holds configuration: one provider override
+    /// and one remembered rule in config.json, one workload in
+    /// routing.json, one cron job, the SOUL slot, and a fleet.env line.
+    /// The document the panel reads is the home's own answer.
+    fn settings_home() -> std::path::PathBuf {
+        let home = fresh_home();
+        std::fs::write(
+            home.join("config.json"),
+            r#"{
+              "pin": "stepfun",
+              "providers": [
+                { "id": "my-provider", "base_url": "https://example.invalid/v1",
+                  "key_env": "MY_PROVIDER_KEY" }
+              ],
+              "approval_rules": [ { "tool": "read" } ]
+            }"#,
+        )
+        .expect("the config");
+        std::fs::write(
+            home.join("routing.json"),
+            r#"{
+              "workloads": [
+                { "workload": "quick", "candidates": ["stepfun/step-5-preview"] }
+              ]
+            }"#,
+        )
+        .expect("the routing");
+        std::fs::write(
+            home.join("fleet.env"),
+            "FLEET_EMBEDDING_ENDPOINT=http://127.0.0.1:9999/v1\n",
+        )
+        .expect("the env file");
+        std::fs::write(home.join("SOUL.md"), "Be direct.\n").expect("the identity slot");
+        let mut store = crate::cron::Store::open(&home).expect("the cron store");
+        store
+            .add("daily-triage", "0 9 * * *", "triage the KI ledger", false)
+            .expect("the job");
+        home
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_settings_document_is_the_homes_own_answer() {
+        let home = settings_home();
+        let (bridge, _) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        let token = server.token().to_string();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let reply = get(port, "/api/settings", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        // The knobs, with the home's own values and sources.
+        assert!(reply.contains("\"key\":\"pin\""), "{reply}");
+        assert!(reply.contains("\"value\":\"stepfun\""), "{reply}");
+        assert!(reply.contains("\"source\":\"file\""), "{reply}");
+        // The two lists and the rules.
+        assert!(reply.contains("my-provider"), "{reply}");
+        assert!(reply.contains("https://example.invalid/v1"), "{reply}");
+        assert!(reply.contains("stepfun/step-5-preview"), "{reply}");
+        assert!(reply.contains("\"label\":\"read\""), "{reply}");
+        // The env names, by name only — the fleet.env line resolves.
+        assert!(
+            reply.contains("\"name\":\"FLEET_EMBEDDING_ENDPOINT\",\"present\":true"),
+            "{reply}"
+        );
+        assert!(
+            reply.contains("\"name\":\"FLEET_CUA_DRIVER\",\"present\":false"),
+            "{reply}"
+        );
+        // The env zone is by name only; the knob rows render their
+        // values the way `fleet settings` renders them.
+        // The cron jobs and the identity slot.
+        assert!(reply.contains("daily-triage"), "{reply}");
+        assert!(reply.contains("\"present\":true"), "{reply}");
+        assert!(reply.contains("Be direct."), "{reply}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_settings_write_rides_the_writer_and_names_its_refusals() {
+        let home = settings_home();
+        let (bridge, _) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        let token = server.token().to_string();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+
+        // A knob write lands in the home's own file, and the next read
+        // is the file's answer.
+        let wrote = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"set","key":"skills.retire_after_sessions","value":"7"}"#,
+        );
+        assert!(wrote.starts_with("HTTP/1.1 200"), "{wrote}");
+        let config = std::fs::read_to_string(home.join("config.json")).expect("the config");
+        assert!(config.contains("\"retire_after_sessions\": 7"), "{config}");
+        let reread = get(port, "/api/settings", &token);
+        assert!(reread.contains("\"value\":\"7\""), "{reread}");
+
+        // A rule rides allow_tool, so the class check is the seat's own.
+        let ruled = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"rule","tool":"bash","program":"cargo"}"#,
+        );
+        assert!(ruled.starts_with("HTTP/1.1 200"), "{ruled}");
+        let config = std::fs::read_to_string(home.join("config.json")).expect("the config");
+        assert!(
+            config.contains("\"tool\": \"bash\"") && config.contains("\"program\": \"cargo\""),
+            "{config}"
+        );
+        // The always-ask class is refused by name, exactly as the seat
+        // refuses it.
+        let refused = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"rule","tool":"computer_use"}"#,
+        );
+        assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
+        assert!(refused.contains("cannot be remembered"), "{refused}");
+        let forgot = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"rule-remove","tool":"bash","program":"cargo"}"#,
+        );
+        assert!(forgot.starts_with("HTTP/1.1 200"), "{forgot}");
+
+        // A provider entry validates through the roster's own schema: a
+        // misspelled field fails here, by name.
+        let bad = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"provider","entry":"{\"id\":\"x\",\"base_url\":\"https://x.invalid\",\"key_env\":\"K\",\"typo\":1}"}"#,
+        );
+        assert!(bad.starts_with("HTTP/1.1 409"), "{bad}");
+
+        // A cron job lands in the store, toggles, and removes.
+        let job = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"cron","name":"nightly","schedule":"0 3 * * *","task":"run the eval"}"#,
+        );
+        assert!(job.starts_with("HTTP/1.1 200"), "{job}");
+        let listed = get(port, "/api/settings", &token);
+        assert!(listed.contains("nightly"), "{listed}");
+        let disabled = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"cron-enabled","name":"nightly","enabled":false}"#,
+        );
+        assert!(disabled.starts_with("HTTP/1.1 200"), "{disabled}");
+        let removed = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"cron-remove","name":"nightly"}"#,
+        );
+        assert!(removed.starts_with("HTTP/1.1 200"), "{removed}");
+
+        // The identity slot writes through the home's own writer.
+        let soul = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"soul","text":"Prefer short answers."}"#,
+        );
+        assert!(soul.starts_with("HTTP/1.1 200"), "{soul}");
+        let written = std::fs::read_to_string(home.join("SOUL.md")).expect("the slot");
+        assert_eq!(written, "Prefer short answers.");
+
+        // An unknown op is refused by name.
+        let unknown = post(port, "/api/settings", &token, r#"{"op":"teleport"}"#);
+        assert!(unknown.starts_with("HTTP/1.1 409"), "{unknown}");
+        assert!(
+            unknown.contains("is not a write this surface performs"),
+            "{unknown}"
         );
     }
 

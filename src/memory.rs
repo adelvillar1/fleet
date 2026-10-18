@@ -809,8 +809,28 @@ pub const EMBEDDING_ENDPOINT_VAR: &str = "FLEET_EMBEDDING_ENDPOINT";
 
 /// The endpoint the probe uses: `FLEET_EMBEDDING_ENDPOINT` when it
 /// names one, the loopback default otherwise.
+///
+/// The env var wins and `<home>/fleet.env` is the fallback: the
+/// settings writer's env-var writes are a real configuration surface,
+/// so the runtime reads what it writes — the G8 defect's close, which
+/// had a GUI write land in a file nothing read.
 pub fn embedding_endpoint() -> String {
-    endpoint_from(|name| std::env::var(name).ok())
+    endpoint_from(|name| std::env::var(name).ok().or_else(|| fleet_env_value(name)))
+}
+
+/// The name's value in the fleet home's own `fleet.env`, when the home
+/// resolves and the file carries it. Pure behind its own seam so the
+/// fallback is testable without mutating the process environment.
+pub fn fleet_env_value(name: &str) -> Option<String> {
+    let home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .ok()?;
+    crate::home::read_fleet_env(&home)
+        .get(name)
+        .filter(|value| !value.is_empty())
+        .cloned()
 }
 
 /// The resolution itself, behind the lookup seam so the test proves the
@@ -4850,6 +4870,34 @@ fn dashes_for(left: &str, right: &str) -> String {
     "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
 }
 
+/// The G8 defect's close, pinned: a settings write to the env-var
+/// counterpart lands in `<home>/fleet.env`, and the endpoint
+/// resolver reads it back through the same fallback the runtime
+/// walks. The write had been landing in a file nothing read — this
+/// is the round-trip that makes the settings surface real, and it
+/// runs with no process environment involved.
+#[test]
+fn an_env_write_is_readable_by_the_runtime() {
+    let home = std::env::temp_dir().join(format!("fleet-env-rt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("a temp home");
+    crate::settings::set(
+        &home,
+        "FLEET_EMBEDDING_ENDPOINT",
+        "http://127.0.0.1:9999/v1/embeddings",
+    )
+    .expect("the write");
+    let read = crate::home::read_fleet_env(&home);
+    assert_eq!(
+        read.get(EMBEDDING_ENDPOINT_VAR).map(String::as_str),
+        Some("http://127.0.0.1:9999/v1/embeddings"),
+        "the runtime reads what the writer wrote"
+    );
+    let resolved =
+        endpoint_from(|name| std::env::var(name).ok().or_else(|| read.get(name).cloned()));
+    assert_eq!(resolved, "http://127.0.0.1:9999/v1/embeddings");
+    let _ = std::fs::remove_dir_all(&home);
+}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -148,6 +148,18 @@ pub const SETTINGS: &[Setting] = &[
     },
 ];
 
+/// The env-var counterpart keys the surface owns, in the table's own
+/// order: the names the settings surface's env file writes and the
+/// browser's env zone names. Values never ride this — a name is
+/// configuration, the value behind it is a secret.
+pub fn env_keys() -> Vec<&'static str> {
+    SETTINGS
+        .iter()
+        .filter(|setting| setting.file == File::Env)
+        .map(|setting| setting.key)
+        .collect()
+}
+
 /// The setting a key addresses, or `None` for a key the surface does
 /// not own. A caller that gets `None` says so by name rather than
 /// writing a key nothing reads.

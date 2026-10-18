@@ -143,6 +143,7 @@
     panelCalibration: document.getElementById('panel-calibration'),
     panelTower: document.getElementById('panel-tower'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
+    panelSettings: document.getElementById('panel-settings'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
@@ -154,6 +155,7 @@
     calibrationBoard: document.getElementById('calibration-board'),
     towerBoard: document.getElementById('tower-board'),
     brainBoard: document.getElementById('brain-board'),
+    settingsBoard: document.getElementById('settings-board'),
     routePill: document.getElementById('route-pill'),
     statePill: document.getElementById('state-pill'),
     spend: document.getElementById('spend'),
@@ -245,6 +247,9 @@
     towerAt: 0,
     brain: null,
     brainAt: 0,
+    // The settings surface's read and its clock.
+    settings: null,
+    settingsAt: 0,
     // The pane's web tab: the page in front and the address it came
     // from. One read per address, so re-reading is a refresh and not a
     // second fetch of the same page.
@@ -3374,6 +3379,394 @@
     return wrap;
   }
 
+  // ------------------------------------------------------- the settings surface
+
+  // The whole config as one document and every write through the writer
+  // the surface owns. The panel never holds a shadow copy of the
+  // home's state: a write posts, the reply says what landed, and the
+  // read that follows is the home's own answer.
+  function readSettings(force) {
+    var now = Date.now();
+    if (!force && face.settings && now - face.settingsAt < 4000) return Promise.resolve();
+    face.settingsAt = now;
+    return fetch('/api/settings', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.settings = doc;
+        if (face.panel === 'settings') paintSettings();
+      })
+      .catch(function () { });
+  }
+
+  // One write, then the read again: the panel paints what the writer
+  // confirmed, and a refusal names itself the way the writer did.
+  function writeSettings(op, fields, onDone) {
+    var body = Object.assign({ op: op }, fields || {});
+    post('/api/settings', body).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the write was refused',
+          (reply.body && reply.body.error) || 'the surface said no without a reason');
+        return;
+      }
+      return readSettings(true).then(onDone);
+    }).catch(function () { });
+  }
+
+  function paintSettings() {
+    var read = face.settings;
+    el.settingsBoard.textContent = '';
+    if (!read) {
+      var waiting = boardCard(12, 'settings', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The settings read has not landed yet. It reads this home\u2019s own config, routing, ' +
+        'and env files.'));
+      el.settingsBoard.appendChild(waiting);
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.settingsBoard.appendChild(refusedCard(read.refused));
+    }
+    var head = boardCard(12, 'settings', read.read_at,
+      'every knob this home carries, the two lists and the rules, the cron jobs, and the ' +
+      'identity slot. Every write rides the writer the CLI rides, so the two faces cannot ' +
+      'disagree about what the file holds.');
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(read.scalars.length, 'knobs'));
+    tiles.appendChild(tile(read.lists.filter(function (e) { return e.kind === 'provider'; }).length,
+      'provider overrides'));
+    tiles.appendChild(tile(read.lists.filter(function (e) { return e.kind === 'workload'; }).length,
+      'workload preferences'));
+    tiles.appendChild(tile(read.rules.length, 'remembered rules',
+      read.rules.length ? 'live' : null));
+    tiles.appendChild(tile(read.cron.length, 'cron jobs',
+      read.cron.filter(function (j) { return j.enabled; }).length + ' enabled'));
+    head.appendChild(tiles);
+    el.settingsBoard.appendChild(head);
+
+    // The knobs, each editable in place: the value box saves through
+    // the one writer, and the source badge says which file answers.
+    var knobs = boardCard(12, 'the knobs', null,
+      'the value in the box is what the home holds. A knob sourced from the environment says ' +
+      'so \u2014 a file write would not take effect until the env var is unset.');
+    (read.scalars || []).forEach(function (knob) {
+      knobs.appendChild(knobRow(knob));
+    });
+    el.settingsBoard.appendChild(knobs);
+
+    // The two list surfaces and the rules, as the third.
+    var providers = (read.lists || []).filter(function (e) { return e.kind === 'provider'; });
+    var providerCard = boardCard(12, 'the providers', null,
+      'config.json\u2019s provider overrides. Removing one that reverts to the compiled-in ' +
+      'roster is the ordinary edit; removing one the file added takes the provider out of ' +
+      'every walk that names it, and the card says which is which.');
+    if (providers.length) {
+      providers.forEach(function (entry) { providerCard.appendChild(listEditor(entry, 'provider')); });
+    } else {
+      providerCard.appendChild(node('p', 'board-empty',
+        'No provider overrides. The compiled-in roster carries every candidate.'));
+    }
+    providerCard.appendChild(addProviderForm());
+    el.settingsBoard.appendChild(providerCard);
+
+    var workloads = (read.lists || []).filter(function (e) { return e.kind === 'workload'; });
+    var workloadCard = boardCard(12, 'the workloads', null,
+      'routing.json\u2019s preference lists. The candidates are the walk order, and an empty ' +
+      'list is refused \u2014 a workload nothing can serve walks into its default.');
+    if (workloads.length) {
+      workloads.forEach(function (entry) { workloadCard.appendChild(listEditor(entry, 'workload')); });
+    } else {
+      workloadCard.appendChild(node('p', 'board-empty',
+        'No workload preferences. The compiled-in table carries every chain.'));
+    }
+    workloadCard.appendChild(addWorkloadForm());
+    el.settingsBoard.appendChild(workloadCard);
+
+    var ruleCard = boardCard(12, 'the remembered rules', null,
+      'the third list, and the one that makes prompts thin out over time. The always-ask and ' +
+      'destructive classes are refused by name \u2014 approval for those happens in the ' +
+      'current turn, and a rule cannot waive it.');
+    if (read.rules.length) {
+      read.rules.forEach(function (rule) {
+        var row = node('div', 'list-row');
+        row.appendChild(node('span', 'list-row-key', rule.label));
+        var forget = node('button', 'replay-button');
+        forget.type = 'button';
+        forget.textContent = 'forget';
+        forget.addEventListener('click', function () {
+          writeSettings('rule-remove', { tool: rule.tool, program: rule.program || null });
+        });
+        row.appendChild(forget);
+        ruleCard.appendChild(row);
+      });
+    } else {
+      ruleCard.appendChild(node('p', 'board-empty', 'No rule is remembered yet.'));
+    }
+    ruleCard.appendChild(addRuleForm());
+    el.settingsBoard.appendChild(ruleCard);
+
+    // The cron jobs: the surface they have never had.
+    var cronCard = boardCard(12, 'the cron jobs', null,
+      'the scheduled runs. A fire is an ordinary headless run in its own session log, and the ' +
+      'task is the instruction it is given.');
+    if (read.cron.length) {
+      read.cron.forEach(function (job) { cronCard.appendChild(cronRow(job)); });
+    } else {
+      cronCard.appendChild(node('p', 'board-empty',
+        'No jobs are scheduled. The five-field form is minute hour day-of-month month day-of-week.'));
+    }
+    cronCard.appendChild(addCronForm());
+    el.settingsBoard.appendChild(cronCard);
+
+    // The identity slot and the env names.
+    var soulCard = boardCard(12, 'the identity slot', read.soul.present ? 'SOUL.md is set' : 'absent',
+      'the file the model-visible base is read from per run. Absent, the compiled-in voice ' +
+      'stands. Writing one replaces the base; the skills and memory frames still append.');
+    var soul = node('textarea', 'soul-box');
+    soul.value = read.soul.text || '';
+    soul.setAttribute('aria-label', 'the SOUL.md identity slot');
+    soulCard.appendChild(soul);
+    var saveSoul = node('button', 'replay-button replay-resume');
+    saveSoul.type = 'button';
+    saveSoul.textContent = 'write SOUL.md';
+    saveSoul.addEventListener('click', function () {
+      writeSettings('soul', { text: soul.value });
+    });
+    soulCard.appendChild(saveSoul);
+    el.settingsBoard.appendChild(soulCard);
+
+    var envCard = boardCard(12, 'the env-var counterparts', null,
+      'by name only: whether each resolves right now, and from where. A value never rides ' +
+      'this document \u2014 the doctor\u2019s masking rule.');
+    (read.env || []).forEach(function (entry) {
+      var row = node('div', 'list-row');
+      row.appendChild(node('span', 'list-row-key', entry.name));
+      row.appendChild(badge(entry.present ? 'resolves' : 'unset', entry.present ? 'ok' : 'warn'));
+      envCard.appendChild(row);
+    });
+    el.settingsBoard.appendChild(envCard);
+  }
+
+  // One knob: its key, its source, and the box that saves. The source
+  // badge is the point — a knob sourced from the environment would not
+  // take a file write until the var is unset, and saying so is the
+  // difference between an edit that works and one that silently does not.
+  function knobRow(knob) {
+    var row = node('div', 'knob-row');
+    var head = node('div', 'knob-head');
+    head.appendChild(node('span', 'knob-key', knob.key));
+    head.appendChild(badge(knob.file, null));
+    head.appendChild(badge(knob.source, knob.source === 'env' ? 'warn' : null));
+    row.appendChild(head);
+    row.appendChild(node('p', 'knob-summary', knob.summary));
+    var editor = node('div', 'knob-editor');
+    var box = node('input', 'knob-box');
+    box.type = 'text';
+    box.value = knob.value === 'unset' ? '' : knob.value;
+    box.setAttribute('aria-label', knob.key);
+    var save = node('button', 'replay-button');
+    save.type = 'button';
+    save.textContent = 'save';
+    save.addEventListener('click', function () {
+      writeSettings('set', { key: knob.key, value: box.value });
+    });
+    editor.appendChild(box);
+    editor.appendChild(save);
+    row.appendChild(editor);
+    return row;
+  }
+
+  // One list entry with its editor: the seed the writer parses, a save
+  // that rides it, and a remove that names the class of what it removes.
+  function listEditor(entry, kind) {
+    var row = node('div', 'list-editor');
+    var head = node('div', 'list-editor-head');
+    head.appendChild(node('span', 'list-row-key', entry.key));
+    head.appendChild(badge(entry.reverts ? 'reverts to the compiled-in default' : 'added by the file',
+      entry.reverts ? null : 'warn'));
+    row.appendChild(head);
+    row.appendChild(node('p', 'knob-summary', entry.detail));
+    var box = node('textarea', 'list-seed');
+    box.value = entry.seed || '';
+    box.setAttribute('aria-label', entry.key);
+    row.appendChild(box);
+    var actions = node('div', 'replay-actions');
+    var save = node('button', 'replay-button');
+    save.type = 'button';
+    save.textContent = 'save';
+    save.addEventListener('click', function () {
+      if (kind === 'provider') {
+        writeSettings('provider', { entry: box.value });
+      } else {
+        var candidates = box.value.split(',').map(function (one) { return one.trim(); })
+          .filter(function (one) { return one.length > 0; });
+        writeSettings('workload', { workload: entry.key, candidates: candidates });
+      }
+    });
+    actions.appendChild(save);
+    var remove = node('button', 'replay-button');
+    remove.type = 'button';
+    remove.textContent = entry.reverts ? 'remove the override' : 'remove \u2014 takes it out of every walk';
+    remove.addEventListener('click', function () {
+      if (!entry.reverts && !window.confirm(
+        '`' + entry.key + '` was added by the file, not the compiled-in roster. Removing it ' +
+        'takes the ' + (kind === 'provider' ? 'provider' : 'workload') + ' out of every walk ' +
+        'that names it. Do it anyway?')) {
+        return;
+      }
+      writeSettings(kind === 'provider' ? 'provider-remove' : 'workload-remove',
+        kind === 'provider' ? { id: entry.key, force: !entry.reverts }
+                            : { workload: entry.key, force: !entry.reverts });
+    });
+    actions.appendChild(remove);
+    row.appendChild(actions);
+    return row;
+  }
+
+  function addProviderForm() {
+    var form = node('div', 'list-editor');
+    var head = node('div', 'list-editor-head');
+    head.appendChild(node('span', 'list-row-key', 'add a provider override'));
+    form.appendChild(head);
+    var box = node('textarea', 'list-seed');
+    box.value = '{"id":"my-provider","base_url":"https://example.invalid/v1","key_env":"MY_KEY"}';
+    box.setAttribute('aria-label', 'a new provider entry');
+    form.appendChild(box);
+    var add = node('button', 'replay-button replay-resume');
+    add.type = 'button';
+    add.textContent = 'add';
+    add.addEventListener('click', function () {
+      writeSettings('provider', { entry: box.value });
+    });
+    form.appendChild(add);
+    return form;
+  }
+
+  function addWorkloadForm() {
+    var form = node('div', 'list-editor');
+    var head = node('div', 'list-editor-head');
+    head.appendChild(node('span', 'list-row-key', 'add a workload preference'));
+    form.appendChild(head);
+    var name = node('input', 'knob-box');
+    name.type = 'text';
+    name.value = 'my-workload';
+    name.setAttribute('aria-label', 'the workload name');
+    var box = node('input', 'knob-box');
+    box.type = 'text';
+    box.value = 'provider/model, other-provider/model';
+    box.setAttribute('aria-label', 'the workload candidates');
+    form.appendChild(name);
+    form.appendChild(box);
+    var add = node('button', 'replay-button replay-resume');
+    add.type = 'button';
+    add.textContent = 'add';
+    add.addEventListener('click', function () {
+      writeSettings('workload', {
+        workload: name.value,
+        candidates: box.value.split(',').map(function (one) { return one.trim(); })
+          .filter(function (one) { return one.length > 0; })
+      });
+    });
+    form.appendChild(add);
+    return form;
+  }
+
+  function addRuleForm() {
+    var form = node('div', 'list-editor');
+    var head = node('div', 'list-editor-head');
+    head.appendChild(node('span', 'list-row-key', 'remember a rule'));
+    form.appendChild(head);
+    var tool = node('input', 'knob-box');
+    tool.type = 'text';
+    tool.value = 'bash';
+    tool.setAttribute('aria-label', 'the tool the rule covers');
+    var program = node('input', 'knob-box');
+    program.type = 'text';
+    program.value = 'cargo';
+    program.setAttribute('aria-label', 'the leading program, for the shell only');
+    form.appendChild(tool);
+    form.appendChild(program);
+    var add = node('button', 'replay-button replay-resume');
+    add.type = 'button';
+    add.textContent = 'remember';
+    add.addEventListener('click', function () {
+      writeSettings('rule', {
+        tool: tool.value,
+        program: program.value.trim() || null
+      });
+    });
+    form.appendChild(add);
+    return form;
+  }
+
+  function cronRow(job) {
+    var row = node('div', 'list-editor');
+    var head = node('div', 'list-editor-head');
+    head.appendChild(node('span', 'list-row-key', job.name));
+    head.appendChild(badge(job.enabled ? 'enabled' : 'disabled', job.enabled ? 'ok' : 'warn'));
+    if (job.auto_approve) head.appendChild(badge('auto-approve', 'warn'));
+    row.appendChild(head);
+    row.appendChild(node('p', 'knob-summary',
+      job.schedule + ' \u00b7 ' + job.task +
+      (job.last_run ? ' \u00b7 last ran ' + job.last_run +
+        (job.last_outcome ? ' (' + job.last_outcome + ')' : '') : ' \u00b7 never ran')));
+    var actions = node('div', 'replay-actions');
+    var toggle = node('button', 'replay-button');
+    toggle.type = 'button';
+    toggle.textContent = job.enabled ? 'disable' : 'enable';
+    toggle.addEventListener('click', function () {
+      writeSettings('cron-enabled', { name: job.name, enabled: !job.enabled });
+    });
+    actions.appendChild(toggle);
+    var remove = node('button', 'replay-button');
+    remove.type = 'button';
+    remove.textContent = 'remove';
+    remove.addEventListener('click', function () {
+      if (window.confirm('remove the job `' + job.name + '`?')) {
+        writeSettings('cron-remove', { name: job.name });
+      }
+    });
+    actions.appendChild(remove);
+    row.appendChild(actions);
+    return row;
+  }
+
+  function addCronForm() {
+    var form = node('div', 'list-editor');
+    var head = node('div', 'list-editor-head');
+    head.appendChild(node('span', 'list-row-key', 'schedule a job'));
+    form.appendChild(head);
+    var fields = [
+      ['name', 'a job name', 'daily-triage'],
+      ['schedule', 'minute hour day-of-month month day-of-week', '0 9 * * *'],
+      ['task', 'the instruction it is given', 'triage the KI ledger']
+    ];
+    var boxes = {};
+    fields.forEach(function (field) {
+      var box = node('input', 'knob-box');
+      box.type = 'text';
+      box.value = field[2];
+      box.setAttribute('aria-label', field[1]);
+      boxes[field[0]] = box;
+      form.appendChild(box);
+    });
+    var add = node('button', 'replay-button replay-resume');
+    add.type = 'button';
+    add.textContent = 'schedule';
+    add.addEventListener('click', function () {
+      writeSettings('cron', {
+        name: boxes.name.value,
+        schedule: boxes.schedule.value,
+        task: boxes.task.value,
+        auto_approve: false
+      });
+    });
+    form.appendChild(add);
+    return form;
+  }
+
   // The keyed panels, by address. One registry, so showing one panel
   // can never forget to hide another — the failure mode the explicit
   // hide-lists were one new surface away from.
@@ -3386,7 +3779,8 @@
     sessions: el.panelSessions,
     calibration: el.panelCalibration,
     tower: el.panelTower,
-    'second-brain': el.panelSecondBrain
+    'second-brain': el.panelSecondBrain,
+    settings: el.panelSettings
   };
 
   function showRoute() {
@@ -3416,7 +3810,8 @@
       sessions: function () { paintSessions(); readSessions(true).then(paintSessions); },
       calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
       tower: function () { paintTower(); readTower(true).then(paintTower); },
-      'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); }
+      'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); },
+      settings: function () { paintSettings(); readSettings(true).then(paintSettings); }
     };
     if (arrive[address]) arrive[address]();
   }
@@ -3943,7 +4338,7 @@
   // Which surfaces are live today, and which are a later increment — the
   // rail says so rather than pretending all ten are built.
   var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration',
-    'tower', 'second-brain'];
+    'tower', 'second-brain', 'settings'];
 
   function markRail() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');

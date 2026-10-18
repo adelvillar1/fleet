@@ -2885,12 +2885,17 @@ fn cua_driver_spec_from(
 /// all — a tool that appears in every run's declaration and then fails
 /// at call time is exactly the silent degradation that line prevents.
 pub fn cua_driver_spec() -> Result<crate::mcp::ServerSpec, String> {
-    cua_driver_spec_from(std::env::var("FLEET_CUA_DRIVER").ok(), |tools| {
-        Ok(std::fs::read_dir(tools)?
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .collect())
-    })
+    cua_driver_spec_from(
+        std::env::var("FLEET_CUA_DRIVER")
+            .ok()
+            .or_else(|| crate::memory::fleet_env_value("FLEET_CUA_DRIVER")),
+        |tools| {
+            Ok(std::fs::read_dir(tools)?
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .collect())
+        },
+    )
 }
 
 /// The action the model asked for, mapped to the driver tool that

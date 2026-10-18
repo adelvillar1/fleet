@@ -429,6 +429,46 @@ impl Bridge {
         }
     }
 
+    /// The settings panel's document: every knob with its source, the
+    /// two list surfaces and the rules as the third, the env status by
+    /// name, the cron jobs, and the SOUL.md slot. Every value rides the
+    /// readers the CLI reads, so the browser and `fleet settings`
+    /// cannot disagree about what the home holds.
+    pub async fn settings(&self) -> Value {
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || settings_read(&home)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "settings",
+                "refused": ["the settings read did not land"],
+            }),
+        }
+    }
+
+    /// One settings write, through the writer the surface owns, and the
+    /// refreshed document back: one round-trip, so the panel never
+    /// paints a state the writer did not confirm. A refusal names
+    /// itself the way the writer's own refusal does — the GUI is a
+    /// client of these functions, never a second opinion about them.
+    pub async fn settings_write(&self, body: &str) -> Result<Value, String> {
+        let arguments: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("the write is not a JSON object: {error}"))?;
+        let op = arguments
+            .get("op")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "a settings write names its op".to_string())?
+            .to_string();
+        let home = self.home.clone();
+        // The write runs off the async worker: every one of these is a
+        // file write, and a page request must not hold the runtime
+        // while the disk answers.
+        let op_for_reply = op.clone();
+        let landed = tokio::task::spawn_blocking(move || settings_apply(&home, &op, &arguments))
+            .await
+            .map_err(|_| "the settings write did not land".to_string())??;
+        Ok(json!({ "type": "settings_write", "op": op_for_reply, "wrote": landed }))
+    }
+
     /// The second-brain panel's document: the six derived state files,
     /// each section landed or named. The same read the TUI's brain board
     /// rides, shaped for the browser.
@@ -1588,6 +1628,230 @@ fn cell_json(cell: &crate::calib::CalibrationCell) -> Value {
         "spend_usd": cell.spend_usd,
         "cost_per_right": cell.cost_per_right,
     })
+}
+
+/// The settings panel's document. The knobs, the lists, the rules, the
+/// env names, the jobs, and the SOUL slot — each read through the
+/// surface's own reader, so this document is the CLI's answer in JSON
+/// rather than a parallel truth.
+fn settings_read(home: &std::path::Path) -> Value {
+    let scalars = crate::settings::states(home)
+        .into_iter()
+        .map(|state| {
+            json!({
+                "key": state.key,
+                "kind": match state.kind {
+                    crate::settings::Kind::Text => "text",
+                    crate::settings::Kind::Toggle => "toggle",
+                    crate::settings::Kind::Choice(_) => "choice",
+                    crate::settings::Kind::Ratio => "ratio",
+                    crate::settings::Kind::Count => "count",
+                },
+                "file": match state.file {
+                    crate::settings::File::Config => "config",
+                    crate::settings::File::Routing => "routing",
+                    crate::settings::File::Env => "fleet.env",
+                },
+                "summary": state.summary,
+                "value": state.rendered(),
+                "source": state.source(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let lists = crate::settings::list_states(home)
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "kind": match entry.kind {
+                    crate::settings::ListKind::Provider => "provider",
+                    crate::settings::ListKind::Workload => "workload",
+                },
+                "key": entry.key,
+                "detail": entry.detail,
+                "reverts": entry.reverts,
+                "seed": entry.seed,
+            })
+        })
+        .collect::<Vec<_>>();
+    let rules = crate::settings::approval_rules(home)
+        .list()
+        .iter()
+        .map(|rule| json!({"label": rule.label(), "tool": rule.tool, "program": rule.program}))
+        .collect::<Vec<_>>();
+    // The env status, by name only: whether each env-var counterpart
+    // the settings writer owns resolves right now, and from where. A
+    // VALUE never rides the document — the doctor's masking rule.
+    let dotenv = crate::home::read_dotenv(home);
+    let fleet_env = crate::home::read_fleet_env(home);
+    let env = crate::settings::env_keys()
+        .into_iter()
+        .map(|name| {
+            let present = std::env::var(name).is_ok_and(|value| !value.is_empty())
+                || dotenv.contains_key(name)
+                || fleet_env.contains_key(name);
+            json!({"name": name, "present": present})
+        })
+        .collect::<Vec<_>>();
+    let cron = match crate::cron::Store::open(home) {
+        Ok(store) => store
+            .jobs()
+            .iter()
+            .map(|job| {
+                json!({
+                    "name": job.name,
+                    "schedule": job.schedule,
+                    "task": job.task,
+                    "enabled": job.enabled,
+                    "auto_approve": job.auto_approve,
+                    "last_run": job.last_run,
+                    "last_outcome": job.last_outcome,
+                })
+            })
+            .collect::<Vec<_>>(),
+        Err(_) => Vec::new(),
+    };
+    let soul = crate::home::read_soul(home);
+    json!({
+        "type": "settings",
+        "read_at": crate::boards::now_stamp(),
+        "scalars": scalars,
+        "lists": lists,
+        "rules": rules,
+        "env": env,
+        "cron": cron,
+        "soul": {
+            "present": soul.is_some(),
+            "text": soul.unwrap_or_default(),
+        },
+    })
+}
+
+/// One settings write, dispatched to the writer the surface owns. The
+/// browser's rule form is the file's own shape — `{tool, program?}` —
+/// and it rides `allow_tool` through a synthesized call, so every class
+/// check (the always-ask and destructive classes, the empty-rule
+/// refusal) is the seat's own and not a second implementation of it.
+fn settings_apply(
+    home: &std::path::Path,
+    op: &str,
+    arguments: &serde_json::Value,
+) -> Result<String, String> {
+    let text = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("the write names its {key}"))
+    };
+    let flag = |key: &str| arguments.get(key).and_then(serde_json::Value::as_bool);
+    match op {
+        "set" => {
+            let key = text("key")?;
+            let value = text("value")?;
+            crate::settings::set(home, &key, &value)?;
+            Ok(key)
+        }
+        "provider" => {
+            let entry = text("entry")?;
+            crate::settings::set_provider(home, &entry)
+        }
+        "provider-remove" => {
+            let id = text("id")?;
+            crate::settings::remove_provider(home, &id, flag("force").unwrap_or(false))?;
+            Ok(id)
+        }
+        "workload" => {
+            let workload = text("workload")?;
+            let candidates = arguments
+                .get("candidates")
+                .and_then(serde_json::Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            crate::settings::set_workload(home, &workload, &candidates)?;
+            Ok(workload)
+        }
+        "workload-remove" => {
+            let workload = text("workload")?;
+            crate::settings::remove_workload(home, &workload, flag("force").unwrap_or(false))?;
+            Ok(workload)
+        }
+        "rule" => {
+            // The browser sends the file's own shape; the call is
+            // synthesized so `allow_tool` derives the rule the way the
+            // seat's remember does — one place a rule is built.
+            let tool = text("tool")?;
+            let program = arguments
+                .get("program")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let arguments_json = match &program {
+                Some(program) => serde_json::json!({ "command": program }).to_string(),
+                None => "{}".to_string(),
+            };
+            let call = crate::api::ToolCall {
+                id: "settings-rule".to_string(),
+                kind: "function".to_string(),
+                function: crate::api::FunctionCall {
+                    name: tool,
+                    arguments: arguments_json,
+                },
+            };
+            let rule = crate::settings::allow_tool(home, &call)?;
+            Ok(rule.label())
+        }
+        "rule-remove" => {
+            let tool = text("tool")?;
+            let program = arguments
+                .get("program")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let value = serde_json::json!({"tool": tool, "program": program});
+            let rule = crate::approvals::Rule::from_value(&value)
+                .ok_or_else(|| "that is not a rule the file can carry".to_string())?;
+            crate::settings::forget_tool(home, &rule)?;
+            Ok(rule.label())
+        }
+        "cron" => {
+            let mut store = crate::cron::Store::open(home).map_err(|error| error.to_string())?;
+            let name = text("name")?;
+            let schedule = text("schedule")?;
+            let task = text("task")?;
+            let job = store
+                .add(
+                    &name,
+                    &schedule,
+                    &task,
+                    flag("auto_approve").unwrap_or(false),
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(job.name)
+        }
+        "cron-enabled" => {
+            let mut store = crate::cron::Store::open(home).map_err(|error| error.to_string())?;
+            let name = text("name")?;
+            let job = store
+                .set_enabled(&name, flag("enabled").unwrap_or(true))
+                .map_err(|error| error.to_string())?;
+            Ok(job.name)
+        }
+        "cron-remove" => {
+            let mut store = crate::cron::Store::open(home).map_err(|error| error.to_string())?;
+            let name = text("name")?;
+            let job = store.remove(&name).map_err(|error| error.to_string())?;
+            Ok(job.name)
+        }
+        "soul" => {
+            crate::home::write_soul(home, &text("text")?)
+                .map_err(|error| format!("the SOUL slot could not be written: {error}"))?;
+            Ok("SOUL.md".to_string())
+        }
+        other => Err(format!("`{other}` is not a write this surface performs")),
+    }
 }
 
 /// The tower console's document. The git facts and the brain's

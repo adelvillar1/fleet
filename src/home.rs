@@ -60,6 +60,24 @@ pub fn read_soul(home: &Path) -> Option<String> {
     Some(cleaned)
 }
 
+/// Write the SOUL.md slot: the owner's own identity text, written
+/// through the one home the slot lives in. The read sanitizes and
+/// bounds whatever lands here, so the write stores what the owner
+/// typed and the read is the only filter — a write that pre-judged the
+/// text would be a second sanitizer to disagree with the first.
+pub fn write_soul(home: &Path, text: &str) -> std::io::Result<()> {
+    fs::write(home.join("SOUL.md"), text)
+}
+
+/// Read `<home>/fleet.env` into a map: the env-var counterparts the
+/// settings writer owns, beside `.env` rather than inside it. Same
+/// KEY=VALUE grammar as [`read_dotenv`], because the two files are the
+/// same grammar — one is hand-edited credentials, the other is the
+/// settings surface's env-var writes, and the runtime now reads both.
+pub fn read_fleet_env(home: &Path) -> HashMap<String, String> {
+    read_env_file(&home.join("fleet.env"))
+}
+
 /// Create `home` and its sessions directory when missing.
 /// @return the sessions directory path.
 pub fn ensure_sessions_dir(home: &Path) -> std::io::Result<PathBuf> {
@@ -73,8 +91,15 @@ pub fn ensure_sessions_dir(home: &Path) -> std::io::Result<PathBuf> {
 /// skipped rather than fatal because the file is a convenience, not a config
 /// contract.
 pub fn read_dotenv(home: &Path) -> HashMap<String, String> {
+    read_env_file(&home.join(".env"))
+}
+
+/// The KEY=VALUE grammar, over one file's own path. A missing file is
+/// an empty map; malformed lines are skipped rather than fatal because
+/// the file is a convenience, not a config contract.
+fn read_env_file(path: &Path) -> HashMap<String, String> {
     let mut values = HashMap::new();
-    let Ok(text) = fs::read_to_string(home.join(".env")) else {
+    let Ok(text) = fs::read_to_string(path) else {
         return values;
     };
     for line in text.lines() {
