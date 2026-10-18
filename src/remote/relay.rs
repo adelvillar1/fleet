@@ -45,14 +45,14 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// How long one poll is held before it is renewed. The relay drops a
-/// poll at its own ceiling, so this stays under it: a poll the relay
-/// dropped mid-wait is a poll that comes back empty and is retried.
+/// How long an HTTP call to the relay may take. A poll is held for
+/// [`POLL_SECS`], so the ceiling has to be comfortably past it: a
+/// timeout shorter than the hold is a client that abandons a poll the
+/// relay was about to answer.
 const POLL_SECS: u64 = 25;
 
-/// How long an HTTP call to the relay may take. A poll is held for
-/// [`POLL_SECS`], so the ceiling has to be past it.
-const CALL_TIMEOUT: Duration = Duration::from_secs(POLL_SECS + 10);
+/// How long an HTTP call to the relay may take.
+const CALL_TIMEOUT: Duration = Duration::from_secs(POLL_SECS + 15);
 
 /// What the relay is told at `join`: the device session and the secret
 /// that proves it. Both come from the pairing window, so a relay can
@@ -233,6 +233,11 @@ mod tests {
         frames: std::sync::Mutex<Vec<Frame>>,
         answers: std::sync::Mutex<Vec<Answer>>,
         joined: std::sync::atomic::AtomicUsize,
+        /// How many polls are in flight right now, and the most that
+        /// have ever been: the loop holds one at a time, and a loop that
+        /// does not wait for its poll leaks one per iteration.
+        in_flight: std::sync::atomic::AtomicUsize,
+        most_in_flight: std::sync::atomic::AtomicUsize,
     }
 
     impl FakeRelay {
@@ -241,6 +246,8 @@ mod tests {
                 frames: std::sync::Mutex::new(Vec::new()),
                 answers: std::sync::Mutex::new(Vec::new()),
                 joined: std::sync::atomic::AtomicUsize::new(0),
+                in_flight: std::sync::atomic::AtomicUsize::new(0),
+                most_in_flight: std::sync::atomic::AtomicUsize::new(0),
             })
         }
 
@@ -317,6 +324,12 @@ mod tests {
                         relay.joined.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         ("200 OK", "{}\n".to_string())
                     } else if text.starts_with("GET /poll") {
+                        let flight = relay.in_flight.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        relay.most_in_flight.fetch_max(flight, std::sync::atomic::Ordering::SeqCst);
+                        // Hold the poll the way the real relay does: the
+                        // client's own timeout is what ends it.
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        relay.in_flight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                         let frames = relay
                             .frames
                             .lock()
@@ -355,6 +368,38 @@ mod tests {
             }
         });
         format!("http://127.0.0.1:{port}")
+    }
+
+
+    /// The serve loop holds one poll at a time. A loop that does not
+    /// wait — a dropped shutdown sender answering `changed()` at once,
+    /// say — leaks a poll task per iteration: the blocking pool
+    /// saturates at 512 threads and the relay sees hundreds of
+    /// connections at once.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_serve_loop_holds_one_poll_at_a_time() {
+        let relay = FakeRelay::new();
+        let base = start(Arc::clone(&relay)).await;
+        let client = Arc::new(Client::new(&base, "sid-rate".to_string(), "hash".to_string()));
+        let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
+        let serving = tokio::spawn(serve(
+            Arc::clone(&client),
+            Arc::new(Echo),
+            shutdown_rx,
+        ));
+        // The sender stays alive for the loop's life: `let _ =` would
+        // drop it at once.
+        let _ = shutdown;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let most = relay.most_in_flight.load(std::sync::atomic::Ordering::SeqCst);
+        let seen = relay.joined.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(seen >= 1, "the loop never joined the relay: {seen}");
+        assert!(most >= 1, "no poll ever reached the relay: {most}");
+        assert!(
+            most <= 2,
+            "the loop leaked polls: {most} in flight at once (a dropped sender answers changed() at once)"
+        );
+        let _ = serving;
     }
 
     /// A poll returns the frames the relay is holding, and the answers go

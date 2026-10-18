@@ -209,6 +209,12 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
     // remote face with nothing installed on the network. The relay is a
     // transport, not a second implementation: the frames it forwards are
     // answered by the remote listener's own router.
+    //
+    // The shutdown sender is declared out here, not inside the block: a
+    // binding scoped to the block drops the moment the block ends, and
+    // the loop's `changed()` then answers at once — a poll task leaked
+    // per iteration, the blocking pool saturated at 512 threads.
+    let mut _relay_shutdown: Option<tokio::sync::watch::Sender<bool>> = None;
     if let Some(relay_url) = &options.relay {
         let Some(listener) = remote.as_ref() else {
             return Err(
@@ -231,6 +237,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             "a relayed phone".to_string(),
         ));
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
+        _relay_shutdown = Some(shutdown);
         let dialing = Arc::clone(&client);
         tokio::spawn(async move {
             crate::remote::relay::serve(dialing, handler, shutdown_rx).await
@@ -245,9 +252,9 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             listener.device_session(),
             listener.device_secret()
         );
-        // The shutdown handle is held for the process's life: a relay that
-        // stops when the face stops is the honest shape.
-        let _ = shutdown;
+        // The sender now lives in `_relay_shutdown`, held for the
+        // process's life: a relay that stops when the face stops is the
+        // honest shape.
     }
 
     match remote {
