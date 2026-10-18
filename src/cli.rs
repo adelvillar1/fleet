@@ -81,8 +81,20 @@ pub enum Command {
     /// `--dry-run` spends nothing.
     Explain(ExplainOptions),
     /// The browser face: a loopback server over the same agent core,
-    /// with the address printed to the terminal.
+    /// with the address printed to the terminal. `--remote` adds the
+    /// paired-device face beside it.
     Gui(GuiOptions),
+    /// Mint a pairing code a phone redeems for a device token. The
+    /// window lands in the home, so this is a plain command with no
+    /// IPC to a running face.
+    Pair,
+    /// The channel service: the configured channels and their paired
+    /// peers as cards, one peer paired or revoked by name.
+    Channels(ChannelsOptions),
+    /// The paired devices: listed as cards, or one revoked by id.
+    Devices {
+        revoke: Option<String>,
+    },
     /// Print the version.
     Version,
     /// Print help.
@@ -99,6 +111,22 @@ pub struct GuiOptions {
     /// Open the browser anyway? `true` means do not: the address is
     /// printed, and the owner opens the page themselves.
     pub no_open: bool,
+    /// Serve the paired-device face beside the loopback one? Off by
+    /// default: with nothing paired and no `--remote`, the remote face
+    /// does not exist and no address beyond loopback is bound.
+    pub remote: bool,
+    /// Serve the channel service beside the faces? Off by default: with
+    /// no channel configured, the service does not exist and no port is
+    /// bound. The chat path is untouched either way.
+    pub channels: bool,
+    /// Dial out to this relay so a phone on another network reaches the
+    /// remote face through it. Off by default, and it implies `--remote`:
+    /// a relay with no remote face has nothing to forward.
+    pub relay: Option<String>,
+    /// The address the remote face binds, overriding the detected one.
+    /// A hostname is resolved; anything unresolvable is an error at the
+    /// prompt rather than at bind time.
+    pub remote_host: Option<String>,
 }
 
 /// Options for `fleet run`.
@@ -427,6 +455,17 @@ usage:
                                 --no-open, and the run streams to the page.
                                 --host serves loopback only; a routable
                                 address is refused by name
+  fleet gui --remote [--remote-host <address>]
+                                adds the paired-device face beside the loopback
+                                one: a second listener on this machine's
+                                address, gated by device tokens and default-deny
+                                on its routes. A pairing code is printed; the
+                                phone redeems it once at /pair
+  fleet pair                   mint a pairing code a phone redeems for a
+                                device token; the window lands in the home, so
+                                this needs no running face
+  fleet devices [--revoke <id>]
+                                the paired devices as cards, or one forgotten
   fleet sessions [--recall \"<q>\"] [<id>]
                                 the archive as cards, ranked for an
                                 instruction, or one session opened
@@ -643,6 +682,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "eval" => parse_eval(rest),
         "explain" => parse_explain(rest),
         "gui" => parse_gui(rest),
+        "pair" => no_flags(rest, Command::Pair),
+        "channels" => parse_channels(rest),
+        "devices" => parse_devices(rest),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
         other => Err(format!("unknown command `{other}` — try `fleet help`")),
@@ -1661,21 +1703,40 @@ fn parse_explain(args: &[String]) -> Result<Command, String> {
     }
 }
 
-/// `fleet gui [--host <address>] [--port <number>] [--no-open]`. Both
-/// values are checked here rather than at bind time: a host that is not
-/// loopback is refused by name, and a port that is not a number never
-/// reaches a socket. A face that cannot come up is a usage error, not a
-/// run that starts and dies.
+/// `fleet gui [--host <address>] [--port <number>] [--no-open]
+/// [--remote [--remote-host <address>]]`. Both values are checked here
+/// rather than at bind time: a host that is not loopback is refused by
+/// name, and a port that is not a number never reaches a socket. A face
+/// that cannot come up is a usage error, not a run that starts and
+/// dies. The remote pair is checked too — `--remote-host` without
+/// `--remote` is an owner who meant the other thing — so the refusal is
+/// a usage error at the prompt rather than a silently ignored flag.
 fn parse_gui(args: &[String]) -> Result<Command, String> {
     let mut host = crate::gui::DEFAULT_HOST.to_string();
     let mut port = crate::gui::DEFAULT_PORT;
     let mut no_open = false;
+    let mut remote = false;
+    let mut channels = false;
+    let mut relay: Option<String> = None;
+    let mut remote_host: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
         match arg {
             "--help" | "-h" => return Ok(Command::Help),
             "--no-open" => no_open = true,
+            "--remote" => remote = true,
+            "--channels" => channels = true,
+            "--relay" => {
+                let value = take_value(args, &mut index, "--relay")?;
+                relay = Some(value);
+                // A relay with no remote face has nothing to forward.
+                remote = true;
+            }
+            "--remote-host" => {
+                let value = take_value(args, &mut index, "--remote-host")?;
+                remote_host = Some(value);
+            }
             "--host" => {
                 let value = take_value(args, &mut index, "--host")?;
                 crate::gui::server::loopback_address(&value)?;
@@ -1692,17 +1753,123 @@ fn parse_gui(args: &[String]) -> Result<Command, String> {
             }
             other => {
                 return Err(format!(
-                    "`{other}` takes no value here; gui takes --host, --port, and --no-open"
+                    "`{other}` takes no value here; gui takes --host, --port, --no-open, --remote, --remote-host, --channels, and --relay"
                 ));
             }
         }
         index += 1;
     }
+    if remote_host.is_some() && !remote {
+        return Err(
+            "`--remote-host` needs `--remote`: the remote face is opt-in, and an address for a face that is off is an owner who meant the other thing"
+                .to_string(),
+        );
+    }
     Ok(Command::Gui(GuiOptions {
         host,
         port,
         no_open,
+        remote,
+        remote_host,
+        channels,
+        relay,
     }))
+}
+
+/// `fleet devices [--revoke <id>]`: the paired devices as cards, or one
+/// forgotten. No positionals: an id arrives on the flag, so a typo is a
+/// usage error rather than a revocation of whatever the shell expanded.
+fn parse_devices(args: &[String]) -> Result<Command, String> {
+    let mut revoke: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--revoke" => {
+                let value = take_value(args, &mut index, "--revoke")?;
+                if revoke.is_some() {
+                    return Err("`--revoke` takes one id".to_string());
+                }
+                revoke = Some(value);
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown devices option `{other}`"));
+            }
+            other => {
+                return Err(format!(
+                    "`{other}` takes no value here; devices takes --revoke <id>"
+                ));
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Devices { revoke })
+}
+
+/// Options for `fleet channels`.
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct ChannelsOptions {
+    /// Pair a webhook peer: the name it is filed under and the callback
+    /// its outcomes are POSTed to.
+    pub pair_webhook: Option<(String, Option<String>)>,
+    /// Forget a webhook peer by id.
+    pub revoke_webhook: Option<String>,
+    /// The port the webhook channel listens on when the service runs.
+    pub port: Option<u16>,
+}
+
+/// `fleet channels [pair-webhook <name> [--callback <url>]]
+/// [revoke-webhook <id>] [--port <n>]`: no top-level positionals, and
+/// the two subcommands take one name or id each. A peer is paired with a
+/// minted token printed once, exactly as a device is.
+fn parse_channels(args: &[String]) -> Result<Command, String> {
+    let mut options = ChannelsOptions::default();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--port" => {
+                let value = take_value(args, &mut index, "--port")?;
+                let port = value.parse::<u16>().map_err(|_| {
+                    format!("`--port {value}` is not a port; pick a number between 0 and 65535")
+                })?;
+                if options.port.is_some() {
+                    return Err("`--port` takes one number".to_string());
+                }
+                options.port = Some(port);
+            }
+            "pair-webhook" => {
+                if options.pair_webhook.is_some() {
+                    return Err("pair-webhook takes one name".to_string());
+                }
+                let name = take_value(args, &mut index, "pair-webhook")?;
+                let mut callback = None;
+                if matches!(args.get(index + 1).map(String::as_str), Some("--callback")) {
+                    index += 1;
+                    callback = Some(take_value(args, &mut index, "--callback")?);
+                }
+                options.pair_webhook = Some((name, callback));
+            }
+            "revoke-webhook" => {
+                if options.revoke_webhook.is_some() {
+                    return Err("revoke-webhook takes one id".to_string());
+                }
+                options.revoke_webhook = Some(take_value(args, &mut index, "revoke-webhook")?);
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown channels option `{other}`"));
+            }
+            other => {
+                return Err(format!(
+                    "`{other}` takes no value here; channels takes pair-webhook, revoke-webhook, and --port"
+                ));
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Channels(options))
 }
 
 /// Options for `fleet convention`: the one concept to ask about.
@@ -2034,6 +2201,9 @@ mod tests {
                 host: crate::gui::DEFAULT_HOST.to_string(),
                 port: crate::gui::DEFAULT_PORT,
                 no_open: false,
+                remote: false,
+                remote_host: None,
+                channels: false,
             })
         );
     }
@@ -2046,12 +2216,49 @@ mod tests {
         };
         assert_eq!(options.port, 0);
         assert!(options.no_open);
+        // The remote face is off unless it is asked for: a plain `fleet
+        // gui` binds loopback and nothing else.
+        assert!(!options.remote);
+        assert_eq!(options.remote_host, None);
         // `localhost` is this machine, so it is a host the face may serve.
         let command = parse(&args(&["gui", "--host", "localhost"])).unwrap();
         let Command::Gui(options) = command else {
             panic!("not a gui")
         };
         assert_eq!(options.host, "localhost");
+    }
+
+    #[test]
+    fn gui_remote_takes_the_face_on_and_an_address_with_it() {
+        let command = parse(&args(&["gui", "--remote"])).unwrap();
+        let Command::Gui(options) = command else {
+            panic!("not a gui")
+        };
+        assert!(options.remote);
+        assert_eq!(options.remote_host, None);
+
+        let command = parse(&args(&[
+            "gui",
+            "--remote",
+            "--remote-host",
+            "100.101.102.103",
+        ]))
+        .unwrap();
+        let Command::Gui(options) = command else {
+            panic!("not a gui")
+        };
+        assert!(options.remote);
+        assert_eq!(options.remote_host.as_deref(), Some("100.101.102.103"));
+    }
+
+    #[test]
+    fn gui_refuses_a_remote_host_for_a_face_that_is_off() {
+        // An address for a face that is not being served is an owner who
+        // meant the other thing, and saying so is cheaper than a silently
+        // ignored flag.
+        let error = parse(&args(&["gui", "--remote-host", "192.168.1.50"])).unwrap_err();
+        assert!(error.contains("--remote"), "{error}");
+        assert!(error.contains("--remote-host"), "{error}");
     }
 
     #[test]
@@ -2070,6 +2277,99 @@ mod tests {
         assert!(parse(&args(&["gui", "--loud"])).is_err());
         assert!(parse(&args(&["gui", "extra"])).is_err());
         assert!(parse(&args(&["gui", "--host"])).is_err());
+        assert!(parse(&args(&["gui", "--remote-host"])).is_err());
+    }
+
+    #[test]
+    fn channels_parses_its_shapes() {
+        // The bare command lists.
+        assert_eq!(
+            parse(&args(&["channels"])).unwrap(),
+            Command::Channels(ChannelsOptions::default())
+        );
+        // A pairing takes a name and an optional callback.
+        assert_eq!(
+            parse(&args(&["channels", "pair-webhook", "the CI box"])).unwrap(),
+            Command::Channels(ChannelsOptions {
+                pair_webhook: Some(("the CI box".to_string(), None)),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            parse(&args(&[
+                "channels",
+                "pair-webhook",
+                "the CI box",
+                "--callback",
+                "http://127.0.0.1:8899/callback",
+            ]))
+            .unwrap(),
+            Command::Channels(ChannelsOptions {
+                pair_webhook: Some((
+                    "the CI box".to_string(),
+                    Some("http://127.0.0.1:8899/callback".to_string())
+                )),
+                ..Default::default()
+            })
+        );
+        // A revoke takes an id, and the port is a number.
+        assert_eq!(
+            parse(&args(&["channels", "revoke-webhook", "abc123"])).unwrap(),
+            Command::Channels(ChannelsOptions {
+                revoke_webhook: Some("abc123".to_string()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            parse(&args(&["channels", "--port", "3081"])).unwrap(),
+            Command::Channels(ChannelsOptions {
+                port: Some(3081),
+                ..Default::default()
+            })
+        );
+        // The refusals: a name that is not there, a second of a kind, a
+        // port that is not a number, a stray word.
+        assert!(parse(&args(&["channels", "pair-webhook"])).is_err());
+        assert!(parse(&args(&["channels", "pair-webhook", "a", "b"])).is_err());
+        assert!(parse(&args(&["channels", "revoke-webhook"])).is_err());
+        assert!(parse(&args(&["channels", "--port", "http"])).is_err());
+        assert!(parse(&args(&["channels", "stray"])).is_err());
+        assert!(parse(&args(&["channels", "--loud"])).is_err());
+    }
+
+    #[test]
+    fn gui_takes_the_channel_service_on() {
+        let command = parse(&args(&["gui", "--channels"])).unwrap();
+        let Command::Gui(options) = command else {
+            panic!("not a gui")
+        };
+        assert!(options.channels);
+        // The default is off: with no channel configured, the service
+        // does not exist and no port is bound.
+        let command = parse(&args(&["gui"])).unwrap();
+        let Command::Gui(options) = command else {
+            panic!("not a gui")
+        };
+        assert!(!options.channels);
+    }
+
+    #[test]
+    fn pair_and_devices_parse_their_shapes() {
+        assert_eq!(parse(&args(&["pair"])).unwrap(), Command::Pair);
+        assert_eq!(
+            parse(&args(&["devices"])).unwrap(),
+            Command::Devices { revoke: None }
+        );
+        assert_eq!(
+            parse(&args(&["devices", "--revoke", "abc123"])).unwrap(),
+            Command::Devices {
+                revoke: Some("abc123".to_string())
+            }
+        );
+        assert!(parse(&args(&["pair", "--loud"])).is_err());
+        assert!(parse(&args(&["devices", "--revoke"])).is_err());
+        assert!(parse(&args(&["devices", "--revoke", "a", "--revoke", "b"])).is_err());
+        assert!(parse(&args(&["devices", "stray"])).is_err());
     }
 
     #[test]

@@ -68,9 +68,9 @@ use crate::gui::bridge::Bridge;
 /// The page, its stylesheet, and its script, embedded in the binary:
 /// there is no asset directory to ship beside it and nothing served
 /// from disk.
-const INDEX: &str = include_str!("assets/index.html");
-const STYLES: &str = include_str!("assets/app.css");
-const SCRIPT: &str = include_str!("assets/app.js");
+pub(crate) const INDEX: &str = include_str!("assets/index.html");
+pub(crate) const STYLES: &str = include_str!("assets/app.css");
+pub(crate) const SCRIPT: &str = include_str!("assets/app.js");
 
 /// How often the stream says the server is still there. The page counts
 /// the beats, so a silent stream is a dead server the owner can see.
@@ -207,7 +207,8 @@ async fn serve_connection(
         ("GET", "/api/home") => write_reply(&mut stream, api(200, bridge.home().await)).await,
         ("GET", "/api/router") => write_reply(&mut stream, api(200, bridge.router().await)).await,
         ("GET", "/api/delegation") => {
-            write_reply(&mut stream, api(200, bridge.delegation().await)).await
+            let session = asked_session(bridge, &request);
+            write_reply(&mut stream, api(200, bridge.delegation(&session).await)).await
         }
         ("GET", "/api/memory") => write_reply(&mut stream, api(200, bridge.memory().await)).await,
         ("GET", "/api/skills") => write_reply(&mut stream, api(200, bridge.skills().await)).await,
@@ -289,7 +290,8 @@ async fn serve_connection(
                 Ok(task) => task,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
-            match bridge.run(&task) {
+            let session = asked_session(bridge, &request);
+            match bridge.run(&session, &task) {
                 Ok(()) => {
                     write_reply(
                         &mut stream,
@@ -332,7 +334,8 @@ async fn serve_connection(
                 Ok(decision) => decision,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
-            match bridge.answer(&decision) {
+            let session = asked_session(bridge, &request);
+            match bridge.answer(&session, &decision, &crate::gui::bridge::AnsweredBy::Desktop) {
                 Ok(answered) => write_reply(&mut stream, api(200, answered)).await,
                 Err(crate::gui::bridge::AnswerError::NoSeat) => {
                     write_reply(
@@ -466,7 +469,37 @@ async fn serve_connection(
         // The id rides the query like the pane's `path` and is refused
         // for its shape before the disk is touched, for the same reason.
         ("GET", "/api/sessions") => {
-            write_reply(&mut stream, api(200, bridge.sessions().await)).await
+            let session = asked_session(bridge, &request);
+            write_reply(&mut stream, api(200, bridge.sessions(&session).await)).await
+        }
+        // Who may reach this face, and the revocation that forgets one.
+        // A loopback read and write only: the remote face's allowlist
+        // keeps both closed, because a phone that could revoke devices is
+        // a phone that could lock its owner out.
+        ("GET", "/api/access") => {
+            write_reply(&mut stream, api(200, bridge.access().await)).await
+        }
+        ("POST", "/api/access/revoke") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(parsed) => parsed,
+                Err(message) => return write_reply(&mut stream, bad_request(&message.to_string())).await,
+            };
+            let kind = parsed
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let id = parsed
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            match bridge.access_revoke(kind, id).await {
+                Ok(revoked) => write_reply(&mut stream, api(200, revoked)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
         }
         ("GET", "/api/session") => {
             let asked = decode_query(&request.query, "id");
@@ -492,7 +525,8 @@ async fn serve_connection(
                 Ok(task) => task,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
-            match bridge.plan(&task) {
+            let session = asked_session(bridge, &request);
+            match bridge.plan(&session, &task) {
                 Ok(()) => {
                     write_reply(&mut stream, api(200, json!({"type": "plan", "task": task}))).await
                 }
@@ -508,25 +542,29 @@ async fn serve_connection(
                 Ok(turn) => turn,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
-            match bridge.rewind(turn).await {
+            let session = asked_session(bridge, &request);
+            match bridge.rewind(&session, turn).await {
                 Ok(rewound) => write_reply(&mut stream, api(200, rewound)).await,
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
         ("GET", "/api/checkpoints") => {
-            write_reply(&mut stream, api(200, bridge.checkpoints().await)).await
+            let session = asked_session(bridge, &request);
+            write_reply(&mut stream, api(200, bridge.checkpoints(&session).await)).await
         }
         ("GET", "/api/diff") => {
             let asked = decode_query(&request.query, "turn");
             let turn: u64 = asked.trim().parse().unwrap_or(0);
-            write_reply(&mut stream, api(200, bridge.diff(turn).await)).await
+            let session = asked_session(bridge, &request);
+            write_reply(&mut stream, api(200, bridge.diff(&session, turn).await)).await
         }
         ("POST", "/api/diff/reject") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
-            match bridge.diff_reject(&body).await {
+            let session = asked_session(bridge, &request);
+            match bridge.diff_reject(&session, &body).await {
                 Ok(rejected) => write_reply(&mut stream, api(200, rejected)).await,
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
@@ -572,7 +610,7 @@ async fn serve_connection(
 /// cannot hold a task forever. The second value is the body bytes that
 /// rode the same read — a browser sends a short POST in one packet, so
 /// discarding them would lose the task the owner just typed.
-async fn read_head(stream: &mut tokio::net::TcpStream) -> Result<(String, Vec<u8>), String> {
+pub(crate) async fn read_head(stream: &mut tokio::net::TcpStream) -> Result<(String, Vec<u8>), String> {
     let mut head: Vec<u8> = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     let end = loop {
@@ -610,8 +648,8 @@ async fn read_head(stream: &mut tokio::net::TcpStream) -> Result<(String, Vec<u8
 /// starting with the bytes that rode past the head's terminator. A body
 /// larger than the cap is refused rather than read, and a body that
 /// ends early is a malformed request — both are the caller's 400.
-async fn read_body(
-    stream: &mut tokio::net::TcpStream,
+pub(crate) async fn read_body(
+    stream: &mut (impl tokio::io::AsyncRead + Unpin),
     request: &Request,
     rest: Vec<u8>,
 ) -> Result<String, String> {
@@ -743,10 +781,10 @@ fn head_end(head: &[u8]) -> Option<usize> {
 
 /// A request head, parsed to what this surface routes on: the method,
 /// the path, the query, and the headers a token can arrive in.
-struct Request {
-    method: String,
-    path: String,
-    query: String,
+pub(crate) struct Request {
+    pub(crate) method: String,
+    pub(crate) path: String,
+    pub(crate) query: String,
     headers: Vec<(String, String)>,
 }
 
@@ -754,7 +792,7 @@ impl Request {
     /// Parses the head. A malformed line is an error the caller turns
     /// into a closed connection: this surface's inputs are a browser's,
     /// and there is nothing here worth a 400 page.
-    fn parse(head: &str) -> Result<Request, String> {
+    pub(crate) fn parse(head: &str) -> Result<Request, String> {
         let mut lines = head.split("\r\n");
         let request_line = lines.next().unwrap_or_default();
         let mut parts = request_line.split_whitespace();
@@ -783,7 +821,7 @@ impl Request {
         })
     }
 
-    fn header(&self, name: &str) -> Option<&str> {
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
             .find(|(header, _)| header == name)
@@ -803,7 +841,7 @@ impl Request {
 /// the exotic case the token never was: a file path carries spaces,
 /// hashes and non-ASCII, and the browser encodes all of them before they
 /// reach the wire, so they have to come back off it.
-fn decode_query(query: &str, name: &str) -> String {
+pub(crate) fn decode_query(query: &str, name: &str) -> String {
     let raw = query_value(query, name).unwrap_or_default();
     let bytes = raw.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -826,7 +864,7 @@ fn decode_query(query: &str, name: &str) -> String {
 /// One query parameter's value. The token is hex, so nothing needs
 /// decoding; anything exotic is the caller's problem, not this
 /// surface's.
-fn query_value<'a>(query: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn query_value<'a>(query: &'a str, name: &str) -> Option<&'a str> {
     query
         .split('&')
         .filter_map(|pair| pair.split_once('='))
@@ -836,15 +874,15 @@ fn query_value<'a>(query: &'a str, name: &str) -> Option<&'a str> {
 
 /// One reply, assembled as bytes before it touches the socket: the
 /// status line, the headers this surface always sends, and the body.
-struct Reply {
-    status: &'static str,
-    content_type: &'static str,
-    extra: Vec<(String, String)>,
-    body: String,
+pub(crate) struct Reply {
+    pub(crate) status: &'static str,
+    pub(crate) content_type: &'static str,
+    pub(crate) extra: Vec<(String, String)>,
+    pub(crate) body: String,
 }
 
 impl Reply {
-    fn bytes(&self) -> Vec<u8> {
+    pub(crate) fn bytes(&self) -> Vec<u8> {
         let mut head = format!(
             "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
             self.status,
@@ -907,7 +945,7 @@ fn not_found(path: &str) -> Reply {
 /// An action's answer, as JSON: the state document, the run's receipt,
 /// or the answer's outcome. One shape for every reply the browser
 /// parses, so the page reads one content type forever.
-fn api(status: u16, body: serde_json::Value) -> Reply {
+pub(crate) fn api(status: u16, body: serde_json::Value) -> Reply {
     Reply {
         status: status_line(status),
         content_type: "application/json; charset=utf-8",
@@ -925,13 +963,17 @@ fn bad_request(message: &str) -> Reply {
     }
 }
 
-/// The status line this surface writes. The set is small and fixed —
-/// five lines — and naming them is cheaper than a status-code crate for
-/// a surface that answers nothing else.
-fn status_line(status: u16) -> &'static str {
+/// The status line both faces write. The set is small and fixed — eight
+/// lines, the five this surface answers with plus the three the remote
+/// face's gate answers with — and naming them is cheaper than a
+/// status-code crate for surfaces that answer nothing else.
+pub(crate) fn status_line(status: u16) -> &'static str {
     match status {
         200 => "200 OK",
+        303 => "303 See Other",
         400 => "400 Bad Request",
+        401 => "401 Unauthorized",
+        403 => "403 Forbidden",
         404 => "404 Not Found",
         405 => "405 Method Not Allowed",
         409 => "409 Conflict",
@@ -950,7 +992,7 @@ fn method_not_allowed(method: &str) -> Reply {
     }
 }
 
-async fn write_reply(stream: &mut tokio::net::TcpStream, reply: Reply) -> Result<(), String> {
+pub(crate) async fn write_reply(stream: &mut tokio::net::TcpStream, reply: Reply) -> Result<(), String> {
     stream
         .write_all(&reply.bytes())
         .await
@@ -1258,7 +1300,7 @@ mod tests {
         let (mut bridge, _sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            Some("session-test".to_string()),
+            "session-test".to_string(),
         );
         bridge.point_at_memories(corpus);
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -1290,7 +1332,7 @@ mod tests {
         let (bridge, _sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            Some("session-test".to_string()),
+            "session-test".to_string(),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -1487,7 +1529,7 @@ mod tests {
         let (bridge, _sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            Some("session-test".to_string()),
+            "session-test".to_string(),
         );
         Arc::new(bridge)
     }
@@ -2296,7 +2338,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn the_archive_lists_the_logs_newest_first_and_names_the_anchor() {
         let (home, ids) = archive_home();
-        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), Some(ids[0].clone()));
+        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), ids[0].clone());
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
             .expect("bind");
@@ -2382,7 +2424,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            Some("session-test".to_string()),
+            "session-test".to_string(),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -2429,7 +2471,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_reseeds_the_face_and_names_its_refusals() {
         let (home, ids) = archive_home();
-        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), Some(ids[0].clone()));
+        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), ids[0].clone());
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
             .expect("bind");
@@ -2448,7 +2490,15 @@ mod tests {
             &format!("{{\"session\":\"{}\"}}", ids[1]),
         );
         assert!(resumed.starts_with("HTTP/1.1 200"), "{resumed}");
-        let state = get(port, "/api/state", &token);
+        // The resumed session's own state holds the log's cards.
+        let state = ask(
+            port,
+            &format!(
+                "GET /api/state?token={token}&session={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                ids[1]
+            ),
+            None,
+        );
         assert!(
             state.contains(&format!("\"session\":\"{}\"", ids[1])),
             "the anchor moved: {state}"
@@ -2461,6 +2511,13 @@ mod tests {
         assert!(
             state.contains("\"agent\":false"),
             "a face with no agent behind it says so: {state}"
+        );
+        // And the launch session is unmoved by the resume: a phone that
+        // names nothing still gets the session the face booted with.
+        let launch = get(port, "/api/state", &token);
+        assert!(
+            launch.contains(&format!("\"session\":\"{}\"", ids[0])),
+            "the launch session is the default: {launch}"
         );
         let refused = post(port, "/api/resume", &token, "{\"session\":\"../x\"}");
         assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
@@ -2585,7 +2642,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            Some("session-test".to_string()),
+            "session-test".to_string(),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -2706,7 +2763,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            Some("session-test".to_string()),
+            "session-test".to_string(),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -2753,7 +2810,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            Some("session-test".to_string()),
+            "session-test".to_string(),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
@@ -2921,7 +2978,7 @@ mod tests {
         let (mut bridge, _) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            Some("session-test".to_string()),
+            "session-test".to_string(),
         );
         bridge.point_at_cwd(tree);
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -3081,7 +3138,7 @@ mod tests {
         let (bridge, _) = Bridge::detached(
             home.clone(),
             "deepseek-chat".to_string(),
-            Some("session-test".to_string()),
+            "session-test".to_string(),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await

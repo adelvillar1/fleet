@@ -37,6 +37,7 @@ pub mod nomenclature;
 pub mod plan_graph;
 pub mod recall_graph;
 pub mod roles;
+pub mod remote;
 pub mod route;
 pub mod route_cache;
 pub mod session;

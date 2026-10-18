@@ -111,6 +111,11 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::SessionsView { recall, view }) => {
             sessions_command(recall.as_deref(), view.as_deref())
         }
+        // The remote surface's own commands: none of them awaits, so they
+        // live in the sync half with the rest.
+        Ok(Command::Pair) => pair_command(),
+        Ok(Command::Devices { revoke }) => devices_command(revoke.as_deref()),
+        Ok(Command::Channels(options)) => channels_command(&options),
         Ok(Command::Settings { set }) => settings_command(
             set.as_ref()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
@@ -430,6 +435,110 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `fleet pair`: mint a pairing code and print it with the address a
+/// phone opens. The window lands in the home, so this command needs no
+/// running face — the listener reads the window when a code arrives.
+fn pair_command() -> ExitCode {
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    // The address first, so a machine with nothing to print mints no
+    // window: a live code nobody was told about is worse than no code.
+    let remote = fleet::remote::RemoteOptions::default();
+    let address = match fleet::remote::resolve_address(&remote) {
+        Ok(found) => found,
+        Err(_) => {
+            eprintln!(
+                "fleet: pair: no address to print — pass the address to `fleet gui --remote --remote-host <address>` and pair from there"
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let (_window, code) = match fleet::remote::pairing::PairingWindow::mint(&home) {
+        Ok(minted) => minted,
+        Err(error) => {
+            eprintln!("fleet: pair: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let port = fleet::gui::DEFAULT_PORT;
+    let kind = match address.kind {
+        fleet::remote::AddressKind::Detected => "this machine's address",
+        fleet::remote::AddressKind::Named => "the address you named",
+        fleet::remote::AddressKind::Tailnet => "your tailnet address",
+    };
+    println!("fleet pair — one pairing code, single use");
+    println!("  code:  {}", fleet::remote::pairing::display_code(&code));
+    println!("  open:  http://{}:{port}/pair", format_address(address.address));
+    println!("  from:  {kind}");
+    println!(
+        "  the code lives {} minutes and burns on use; `fleet devices` lists what paired",
+        fleet::remote::pairing::WINDOW_TTL_MINUTES
+    );
+    ExitCode::SUCCESS
+}
+
+/// An address as a URL authority: IPv6 bracketed, IPv4 bare.
+fn format_address(address: std::net::IpAddr) -> String {
+    match address {
+        std::net::IpAddr::V6(address) => format!("[{address}]"),
+        std::net::IpAddr::V4(address) => address.to_string(),
+    }
+}
+
+/// `fleet devices`: the paired devices as cards, or one revoked by id.
+/// The store holds hashes, so this surface names devices and never a
+/// credential — a reader learns who is paired, not what would let them
+/// in.
+fn devices_command(revoke: Option<&str>) -> ExitCode {
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut store = match fleet::remote::pairing::DeviceStore::load(&home) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("fleet: devices: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Some(id) = revoke {
+        if store.revoke(id) {
+            if let Err(error) = store.save(&home) {
+                eprintln!("fleet: devices: {error}");
+                return ExitCode::FAILURE;
+            }
+            println!("fleet devices — `{id}` is forgotten; its token no longer works");
+            return ExitCode::SUCCESS;
+        }
+        eprintln!("fleet: devices: no paired device named `{id}`; `fleet devices` lists them");
+        return ExitCode::FAILURE;
+    }
+    if store.devices.is_empty() {
+        println!("fleet devices — nothing is paired");
+        println!("  `fleet pair` starts a pairing code, and `fleet gui --remote` serves the face it pairs to");
+        return ExitCode::SUCCESS;
+    }
+    println!("fleet devices — {} paired", store.devices.len());
+    for device in &store.devices {
+        println!("  {id}  {name}", id = device.id, name = device.name);
+        println!(
+            "    paired {created} · last seen {seen}",
+            created = device.created_at,
+            seen = device.last_seen_at
+        );
+    }
+    println!("  `fleet devices --revoke <id>` forgets one");
+    ExitCode::SUCCESS
+}
+
 /// `fleet gui`: the browser face. The parser has already checked the
 /// host and the port, so the one failure that reaches here is a bind the
 /// parser could not see coming — a port already taken — which is named
@@ -440,6 +549,10 @@ async fn gui_command(options: &cli::GuiOptions) -> ExitCode {
         host: options.host.clone(),
         port: options.port,
         no_open: options.no_open,
+        remote: fleet::remote::RemoteOptions {
+            enabled: options.remote,
+            host: options.remote_host.clone(),
+        },
     };
     match fleet::gui::serve(options).await {
         Ok(()) => ExitCode::SUCCESS,
