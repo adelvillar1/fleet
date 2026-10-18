@@ -312,6 +312,22 @@ pub fn default_roster() -> Vec<Candidate> {
             key_required: false,
             disabled_reason: None,
         },
+        // Ollama Cloud: a hosted multimodal reserve, declared for the
+        // vision workload. Declared only, like Liquid — the chain order
+        // above is the owner's standing directive, and this table does
+        // not reorder it. Its key resolves from fleet's own home
+        // (`OLLAMA_API_KEY`), never from another harness's config.
+        Candidate {
+            id: "ollama-cloud".into(),
+            base_url: "https://ollama.com/v1".into(),
+            key_env: "OLLAMA_API_KEY".into(),
+            models: vec!["gemma4:31b".into()],
+            billing: Billing::Plan,
+            kind: CandidateKind::Http,
+            enabled: true,
+            key_required: true,
+            disabled_reason: None,
+        },
     ]
 }
 
@@ -387,6 +403,7 @@ pub fn default_preferences() -> Vec<Preference> {
             candidates: vec![
                 ("zai-coding-plan", "GLM-5.3-Flash"),
                 ("stepfun", "step-5-preview"),
+                ("ollama-cloud", "gemma4:31b"),
             ],
         },
         Preference {
@@ -2492,14 +2509,52 @@ mod tests {
         // The vendored lane and the providers whose windows are not
         // declared: a lane's window is the grounding provider's, not
         // fleet's to state, and an undeclared one keeps the floor.
+        // gemma4's window is not declared by Ollama Cloud in a form
+        // verified here, so it keeps the floor rather than being given a
+        // number nobody has checked — and a vision model's compaction
+        // budget matters less than a text model's in any case.
         assert_eq!(
             undeclared,
             vec![
                 "liquid/lfm2.5-24b-a2b".to_string(),
-                "blend1/blend1".to_string()
+                "blend1/blend1".to_string(),
+                "ollama-cloud/gemma4:31b".to_string()
             ],
             "{undeclared:?}"
         );
+    }
+
+    #[test]
+    fn the_vision_workloads_chain_reaches_gemma4_on_ollama_cloud() {
+        let decision = workload_decision("vision").expect("the vision workload exists");
+        // The order is the chain: GLM first, stepfun second, gemma4 third
+        // as the hosted multimodal reserve.
+        assert_eq!(
+            decision.order,
+            vec![
+                ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
+                ("stepfun".to_string(), "step-5-preview".to_string()),
+                ("ollama-cloud".to_string(), "gemma4:31b".to_string()),
+            ],
+            "{decision:?}"
+        );
+        // And the candidate it names is declared with the endpoint and the
+        // key env-var NAME — never a value.
+        let resolved = resolve(&default_roster(), &HashMap::new());
+        let ollama = resolved
+            .iter()
+            .map(|entry| &entry.candidate)
+            .find(|candidate| candidate.id == "ollama-cloud")
+            .expect("the ollama candidate");
+        assert_eq!(ollama.base_url, "https://ollama.com/v1");
+        assert_eq!(ollama.key_env, "OLLAMA_API_KEY");
+        assert_eq!(ollama.models, vec!["gemma4:31b".to_string()]);
+        // A vision workload whose two ahead candidates carry no key still
+        // has a multimodal answer, which is the point of the reserve.
+        assert!(decision
+            .order
+            .iter()
+            .any(|(provider, _)| provider == "ollama-cloud"));
     }
 
     #[test]
@@ -2893,7 +2948,8 @@ mod tests {
                 "token-plan",
                 "deepseek",
                 "liquid",
-                "blend1"
+                "blend1",
+                "ollama-cloud"
             ]
         );
     }
@@ -3080,7 +3136,7 @@ mod tests {
         let home = std::env::temp_dir().join(format!("fleet-route-nocfg-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&home);
         let roster = load_roster(&home).unwrap();
-        assert_eq!(roster.candidates.len(), 7);
+        assert_eq!(roster.candidates.len(), 8);
         assert_eq!(roster.candidates[0].id, HEAD_ID);
         assert_eq!(roster.candidates[4].id, "deepseek");
         // Liquid is declared after DeepSeek and enters no declared
@@ -3088,6 +3144,9 @@ mod tests {
         // into the chain is that config's one-line change.
         assert_eq!(roster.candidates[5].id, "liquid");
         assert_eq!(roster.candidates[6].id, "blend1");
+        // Ollama Cloud rides beside blend1, declared for the vision
+        // workload and entering no other chain.
+        assert_eq!(roster.candidates[7].id, "ollama-cloud");
         assert_eq!(roster.pin, None);
         // The preference table and the gates are the compiled-in
         // defaults when no routing.json names any.
@@ -3721,7 +3780,7 @@ mod tests {
         // No keys are set in this process, so the remote plans read `no key`
         // and the vendored lane reads `absent (optional)`.
         let rendered = render(&resolved);
-        assert_eq!(rendered.matches('\u{250c}').count(), 7, "{rendered}");
+        assert_eq!(rendered.matches('\u{250c}').count(), 8, "{rendered}");
         // The head is marked and named.
         assert!(rendered.contains("head zai-coding-plan"), "{rendered}");
         // Key env-var NAMES appear; no value ever does.
@@ -3774,7 +3833,8 @@ mod tests {
                 "token-plan",
                 "deepseek",
                 "liquid",
-                "blend1"
+                "blend1",
+                "ollama-cloud"
             ]
         );
         // z.ai is the head and needs a key; DeepSeek is the declared
