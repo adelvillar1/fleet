@@ -1166,11 +1166,23 @@ fn render_proposal(lesson: &Lesson) -> String {
 /// The write lands in `<home>/skills/proposals/` and nowhere else — this
 /// is the only writer in the slice, and the live tree is never its
 /// target.
-fn file_proposal(home: &Path, lesson: &Lesson) -> Option<PathBuf> {
+fn file_proposal(home: &Path, lesson: &Lesson, source: &str) -> Option<PathBuf> {
     let dir = proposals_dir(home);
     let path = dir.join(format!("{}.md", lesson.name));
     if path.exists() {
-        return None;
+        // KI-053: a lesson already drafted is not skipped — the new
+        // session's evidence accumulates onto the waiting draft, named
+        // with its source, so a second session's evidence for the same
+        // lesson reaches the gate that disposes of it. The first
+        // draft's frontmatter stands; the later evidence rides a
+        // section a reviewer reads beside it.
+        let existing = fs::read_to_string(&path).ok()?;
+        let appended = format!(
+            "{existing}\n\n## Further evidence\n\n{evidence} (from {source})\n",
+            evidence = lesson.evidence,
+        );
+        fs::write(&path, appended).ok()?;
+        return Some(path);
     }
     fs::create_dir_all(&dir).ok()?;
     fs::write(&path, render_proposal(lesson)).ok()?;
@@ -1211,7 +1223,7 @@ pub fn draft_session(
             Some(existing) => lesson.into_update(existing),
             None => lesson,
         };
-        if let Some(path) = file_proposal(home, &lesson) {
+        if let Some(path) = file_proposal(home, &lesson, &session_id) {
             filed.push(path);
         }
     }
@@ -1260,7 +1272,8 @@ pub fn curate(
     }
     let mut filed: Vec<PathBuf> = Vec::new();
     for lesson in &lessons {
-        if let Some(path) = file_proposal(home, lesson) {
+        // The curation's source is the usage scan, not one session.
+        if let Some(path) = file_proposal(home, lesson, "a later usage scan") {
             filed.push(path);
         }
     }
@@ -1301,7 +1314,11 @@ fn merge_lesson(
     );
     Lesson {
         kind: ProposalKind::Merge,
-        name: survivor.name.clone(),
+        // KI-054: the draft is named by the PAIR, not the survivor — a
+        // retire draft for the survivor and a merge draft for it used to
+        // target one file, and first-filed won. The pair is the merge's
+        // own identity; the gate reads the body for which half absorbs.
+        name: format!("merge-{}-{}", absorbed.name, survivor.name),
         description,
         evidence,
         body,
@@ -2365,11 +2382,29 @@ mod tests {
             before,
             std::fs::read_to_string(canon(&home).join("unrelated/SKILL.md")).unwrap()
         );
-        // A second draft of the same lesson files nothing new: the gate
-        // disposes of what is already waiting.
+        // KI-053: a second session's evidence for the same lesson
+        // accumulates onto the waiting draft rather than being skipped,
+        // and the appended line names the session it came from.
+        let second_log = session_log(&home, &records);
+        let second_id = second_log
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let second = draft_session(&canon(&home), &home, &second_log, None);
+        assert_eq!(second.len(), 1, "{second:?}");
+        let draft = std::fs::read_to_string(filed[0].clone()).unwrap();
+        assert!(draft.contains("## Further evidence"), "{draft}");
         assert!(
-            draft_session(&canon(&home), &home, &session_log(&home, &records), None).is_empty()
+            draft.contains(&format!("(from {second_id})")),
+            "the appended line names its session: {draft}"
         );
+        // The first draft's frontmatter stands; the live tree is untouched.
+        assert!(
+            draft.starts_with("---\nname: read-file-recovery\n"),
+            "{draft}"
+        );
+        assert_eq!(entries, vec!["unrelated".to_string()]);
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -2426,11 +2461,14 @@ mod tests {
             .iter()
             .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
             .collect();
-        assert!(names.contains(&"alpha".to_string()), "{names:?}");
+        // KI-054: the merge draft is named by the PAIR, so a retire
+        // draft for the survivor and a merge draft for it no longer
+        // target one file.
+        assert!(names.contains(&"merge-beta-alpha".to_string()), "{names:?}");
         let proposals = load_proposals(&home);
         let merge = proposals
             .iter()
-            .find(|p| p.name == "alpha")
+            .find(|p| p.name == "merge-beta-alpha")
             .expect("the merge draft");
         assert_eq!(merge.kind, ProposalKind::Merge);
         assert!(merge.evidence.contains("0.86"), "{}", merge.evidence);
