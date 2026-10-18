@@ -1287,6 +1287,12 @@ pub struct SubagentResult {
     pub outcome: Outcome,
     /// The typed failure reason, on [`Outcome::Failed`].
     pub reason: Option<String>,
+    /// The goal the child was handed — the delegated task on its own.
+    /// KI-075: a resumed session replays this result as an ordinary tool
+    /// card, and the card's preview used to carry the outcome and the
+    /// turn count but not what the child was asked to do. The goal rides
+    /// the recorded preview the way the live card already shows it.
+    pub goal: String,
     /// What this run reports about the angle between the approach it was
     /// handed and the one it executed — its own delta, the deltas of the
     /// delegations it made, and whether there was anything to diff
@@ -1336,6 +1342,7 @@ impl SubagentResult {
             outcome: Outcome::Failed,
             reason: Some(reason),
             delta: DeltaReport::default(),
+            goal: String::new(),
         }
     }
 
@@ -1364,6 +1371,12 @@ impl SubagentResult {
             plural(self.turns),
             self.session
         );
+        // The goal, one line, bounded — the live card shows it, and the
+        // recorded preview now carries it too (KI-075).
+        if !self.goal.trim().is_empty() {
+            let goal = crate::agent::preview(self.goal.trim(), 72);
+            text.push_str(&format!(" \u{b7} goal: {goal}"));
+        }
         if !self.log.as_os_str().is_empty() {
             text.push_str(&format!(" \u{b7} log {}", self.log.display()));
         }
@@ -1610,15 +1623,23 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     let started = Instant::now();
 
     let child_route = child_route(&model, route.as_ref());
-    let mut child =
-        match Session::create_subagent(&sessions_dir, &child_route.model, &parent_session) {
-            Ok(child) => child,
-            Err(error) => {
-                return SubagentResult::refused(format!(
-                    "the child session could not be created: {error}"
-                ))
-            }
-        };
+    // KI-072: every constructor takes a home. A run with no home of its
+    // own still lands its child's log beside the parent's: the sessions
+    // directory's parent IS the home by the layout's own convention, so
+    // resolving it back puts the child exactly where it was.
+    let child_home = home
+        .clone()
+        .or_else(|| sessions_dir.parent().map(|parent| parent.to_path_buf()))
+        .unwrap_or_else(|| sessions_dir.clone());
+    let mut child = match Session::create_subagent(&child_home, &child_route.model, &parent_session)
+    {
+        Ok(child) => child,
+        Err(error) => {
+            return SubagentResult::refused(format!(
+                "the child session could not be created: {error}"
+            ))
+        }
+    };
     let session = child.id().to_string();
     let log = child.path().to_path_buf();
 
@@ -1678,6 +1699,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             Err(error) => {
                 let result = SubagentResult {
                     summary: String::new(),
+                    goal: goal.clone(),
                     session,
                     log,
                     turns: 0,
@@ -1733,6 +1755,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
                 crate::agent::StopReason::MaxTurns => Outcome::MaxTurns,
             },
             reason: None,
+            goal: goal.clone(),
             delta: DeltaReport {
                 own: None,
                 children: Vec::new(),
@@ -1748,6 +1771,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             turns: turns_completed(&records),
             outcome: Outcome::Failed,
             reason: Some(error.to_string()),
+            goal: goal.clone(),
             delta: DeltaReport {
                 own: None,
                 children: Vec::new(),
@@ -2010,6 +2034,36 @@ mod tests {
     use super::*;
     use crate::agent::AgentError;
 
+    /// KI-075: the recorded preview carries the goal — a resumed session
+    /// replays this result as an ordinary tool card, and the card must
+    /// name what the child was asked to do, the way the live card does.
+    #[test]
+    fn the_recorded_preview_carries_the_goal() {
+        let result = SubagentResult {
+            summary: "the child's words".to_string(),
+            session: "s-1".to_string(),
+            log: std::path::PathBuf::from("/tmp/s-1.jsonl"),
+            turns: 2,
+            outcome: Outcome::Completed,
+            reason: None,
+            goal: "triage the KI ledger".to_string(),
+            delta: DeltaReport::default(),
+        };
+        let text = result.render_report();
+        assert!(text.contains("goal: triage the KI ledger"), "{text}");
+        assert!(text.contains("session s-1"), "{text}");
+        // No goal — an older result — renders exactly as it did.
+        let plain = SubagentResult {
+            goal: String::new(),
+            ..result
+        };
+        assert!(
+            !plain.render_report().contains("goal:"),
+            "{}",
+            plain.render_report()
+        );
+    }
+
     #[test]
     fn the_default_scope_is_the_four_builtins_plus_use_skill() {
         let scope = Scope::child(None, 1);
@@ -2252,6 +2306,7 @@ mod tests {
             outcome: Outcome::Completed,
             reason: None,
             delta: DeltaReport::default(),
+            goal: String::new(),
         };
         let text = result.render();
         assert!(
@@ -2281,6 +2336,7 @@ mod tests {
             outcome: Outcome::Failed,
             reason: Some("API error 402: the account needs a balance top-up".to_string()),
             delta: DeltaReport::default(),
+            goal: String::new(),
         };
         let text = failed.render();
         assert!(text.contains("subagent failed (API error 402"), "{text}");
@@ -2368,6 +2424,7 @@ mod tests {
             Record::End {
                 stop_reason: "max-turns".to_string(),
                 turns: 3,
+                served_model: None,
             },
         ];
         assert_eq!(last_words(&records).as_deref(), Some("last words"));
@@ -2395,6 +2452,7 @@ mod tests {
             outcome: Outcome::Failed,
             reason: Some(error.to_string()),
             delta: DeltaReport::default(),
+            goal: String::new(),
         };
         assert!(
             result.reason.as_deref().unwrap().contains("402"),
@@ -2884,6 +2942,7 @@ mod tests {
             turns: 4,
             outcome: Outcome::Completed,
             reason: None,
+            goal: String::new(),
             delta: DeltaReport {
                 own: Some(middle),
                 children: vec![grandchild.clone()],
@@ -2928,6 +2987,7 @@ mod tests {
             turns: 2,
             outcome: Outcome::Completed,
             reason: None,
+            goal: String::new(),
             delta: DeltaReport {
                 own: Some(delta),
                 children: Vec::new(),
@@ -2949,6 +3009,7 @@ mod tests {
         // A result with no delta is bounded exactly as it always was.
         let plain = SubagentResult {
             delta: DeltaReport::default(),
+            goal: String::new(),
             ..result.clone()
         };
         let bounded = bound_result(&plain);
@@ -2970,6 +3031,7 @@ mod tests {
             turns: 1,
             outcome: Outcome::Completed,
             reason: None,
+            goal: String::new(),
             delta: DeltaReport {
                 own: None,
                 children: Vec::new(),
@@ -2985,6 +3047,7 @@ mod tests {
         // rendered result is exactly the one this module always sent.
         let plain = SubagentResult {
             delta: DeltaReport::default(),
+            goal: String::new(),
             ..offered.clone()
         };
         assert_eq!(plain.render(), "subagent completed \u{b7} 1 turn \u{b7} session child-1 \u{b7} log /tmp/child-1.jsonl\nI did the work");
@@ -3012,6 +3075,7 @@ mod tests {
             turns: 3,
             outcome: Outcome::Completed,
             reason: None,
+            goal: String::new(),
             delta: DeltaReport {
                 own: None,
                 children: Vec::new(),

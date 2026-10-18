@@ -553,7 +553,9 @@ pub fn read_evidence(row: &DelegationRow) -> LogEvidence {
                     }
                 }
             }
-            Record::End { stop_reason, turns } => {
+            Record::End {
+                stop_reason, turns, ..
+            } => {
                 evidence.ending = Some(stop_reason.clone());
                 evidence.turns = *turns;
             }

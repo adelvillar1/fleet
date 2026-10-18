@@ -134,6 +134,14 @@ pub enum Record {
     End {
         stop_reason: String,
         turns: u64,
+        /// The model that actually served, when the run was routed.
+        /// KI-073: the `start` record names the NOMINAL model — on a
+        /// routed run both the parent's and the child's say the CLI
+        /// default — so the record that ends the log carries the one
+        /// that answered. `None` on an unrouted run, whose nominal model
+        /// is its served model.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        served_model: Option<String>,
     },
     /// One compaction: the summary that stands in for a range of turns,
     /// the range it replaces, and what the context cost before and after.
@@ -180,16 +188,18 @@ impl Session {
         Session::open_new(&dir, model, None, None)
     }
 
-    /// Create a delegated child's log in `sessions_dir` — the sessions
-    /// directory itself, not a home to resolve one under — marked
+    /// Create a delegated child's log under `home` — the same convention
+    /// as [`Session::create`], so every constructor takes a home and
+    /// resolves the sessions directory the one way (KI-072) — marked
     /// `kind: subagent` and naming the session that delegated to it.
     ///
     /// A child's log lands beside its parent's, which is what makes the
     /// picker, `fleet sessions`, and replay treat it as an ordinary
     /// session with a marker: a child's work is real work in a real
     /// session, not a side channel.
-    pub fn create_subagent(sessions_dir: &Path, model: &str, parent: &str) -> io::Result<Session> {
-        Session::open_new(sessions_dir, model, Some(SUBAGENT_KIND), Some(parent))
+    pub fn create_subagent(home: &Path, model: &str, parent: &str) -> io::Result<Session> {
+        let dir = crate::home::ensure_sessions_dir(home)?;
+        Session::open_new(&dir, model, Some(SUBAGENT_KIND), Some(parent))
     }
 
     /// Create a scheduled run's log under `sessions_dir(home)`, marked
@@ -637,6 +647,7 @@ mod tests {
             .record(&Record::End {
                 stop_reason: "completed".into(),
                 turns: 1,
+                served_model: None,
             })
             .unwrap();
         let records = replay(session.path()).unwrap();
@@ -661,6 +672,7 @@ mod tests {
             .record(&Record::End {
                 stop_reason: "completed".into(),
                 turns: 1,
+                served_model: None,
             })
             .unwrap();
         // The interrupted last write: a partial record, no newline.
@@ -759,6 +771,7 @@ mod tests {
             Record::End {
                 stop_reason: "completed".into(),
                 turns: 1,
+                served_model: None,
             },
         ];
         let messages = messages(&records);
@@ -807,6 +820,7 @@ mod tests {
             Record::End {
                 stop_reason: "completed".into(),
                 turns: 1,
+                served_model: None,
             },
         ];
         let messages = messages(&records);
@@ -898,6 +912,7 @@ mod tests {
             Record::End {
                 stop_reason: "completed".into(),
                 turns: 1,
+                served_model: None,
             },
         ];
         let messages = messages(&records);
@@ -987,6 +1002,7 @@ mod tests {
             Record::End {
                 stop_reason: "completed".into(),
                 turns: 1,
+                served_model: None,
             },
         ];
         let messages = messages(&records);
@@ -1038,6 +1054,7 @@ mod tests {
             .record(&Record::End {
                 stop_reason: "completed".into(),
                 turns: 0,
+                served_model: None,
             })
             .unwrap();
         let _open = Session::create(&home, "m2").unwrap();
@@ -1072,8 +1089,9 @@ mod tests {
     #[test]
     fn a_child_logs_start_record_carries_its_kind_and_its_parent() {
         let home = temp_home("subagent-start");
-        let dir = crate::home::ensure_sessions_dir(&home).unwrap();
-        let mut child = Session::create_subagent(&dir, "test-model", "parent-session").unwrap();
+        // KI-072: the constructor takes a home and resolves the sessions
+        // directory itself — the test no longer resolves one to hand it.
+        let mut child = Session::create_subagent(&home, "test-model", "parent-session").unwrap();
         child
             .record(&Record::User {
                 content: "the delegated goal".into(),
@@ -1083,6 +1101,7 @@ mod tests {
             .record(&Record::End {
                 stop_reason: "completed".into(),
                 turns: 2,
+                served_model: None,
             })
             .unwrap();
 

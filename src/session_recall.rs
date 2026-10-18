@@ -972,6 +972,7 @@ mod tests {
         records.push(Record::End {
             stop_reason: "completed".to_string(),
             turns: 2,
+            served_model: None,
         });
         write_session(&dir, "20261015T000000Z-aaa", &records);
 
@@ -1037,6 +1038,7 @@ mod tests {
         long.push(Record::End {
             stop_reason: "completed".to_string(),
             turns: 200,
+            served_model: None,
         });
         write_session(&dir, "20261015T000001Z-bbb", &long);
         let facts = facts_from_sessions(&home);
@@ -1094,6 +1096,7 @@ mod tests {
                 records.push(Record::End {
                     stop_reason: stop.to_string(),
                     turns: 1,
+                    served_model: None,
                 });
             }
             write_session(&dir, &format!("s{index}"), &records);
@@ -1134,6 +1137,7 @@ mod tests {
         one.push(Record::End {
             stop_reason: "completed".to_string(),
             turns: 1,
+            served_model: None,
         });
         write_session(&dir, "s1", &one);
         let mut two = vec![
@@ -1151,6 +1155,7 @@ mod tests {
         two.push(Record::End {
             stop_reason: "completed".to_string(),
             turns: 1,
+            served_model: None,
         });
         write_session(&dir, "s2", &two);
 
@@ -1207,6 +1212,7 @@ mod tests {
         records.push(Record::End {
             stop_reason: "completed".to_string(),
             turns: 1,
+            served_model: None,
         });
         write_session(&dir, "s1", &records);
 
@@ -1245,6 +1251,7 @@ mod tests {
         records.push(Record::End {
             stop_reason: "completed".to_string(),
             turns: 1,
+            served_model: None,
         });
         write_session(&dir, "s1", &records);
         // The cache a crashed writer could leave: half a file, not a
@@ -1288,6 +1295,7 @@ mod tests {
         a.push(Record::End {
             stop_reason: "completed".to_string(),
             turns: 1,
+            served_model: None,
         });
         write_session(&dir, "a-session", &a);
         // Session B walked somewhere else entirely.
@@ -1306,6 +1314,7 @@ mod tests {
         b.push(Record::End {
             stop_reason: "completed".to_string(),
             turns: 1,
+            served_model: None,
         });
         write_session(&dir, "b-session", &b);
 
@@ -1352,6 +1361,7 @@ mod tests {
         records.push(Record::End {
             stop_reason: "completed".to_string(),
             turns: 1,
+            served_model: None,
         });
         write_session(dir, id, &records)
     }

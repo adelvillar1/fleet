@@ -1604,6 +1604,8 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
             session::Record::End {
                 stop_reason: s,
                 turns: t,
+                served_model: None,
+                ..
             } => {
                 ended = true;
                 stop_reason = s.clone();

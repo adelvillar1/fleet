@@ -740,7 +740,7 @@ async fn run_completes_a_two_turn_tool_loop() {
     ));
     assert!(matches!(
         &records[5],
-        Record::End { stop_reason, turns: 2 } if stop_reason == "completed"
+        Record::End { stop_reason, turns: 2, .. } if stop_reason == "completed"
     ));
 
     std::fs::remove_dir_all(&home).ok();
@@ -992,7 +992,7 @@ async fn max_turns_stops_the_loop_and_marks_the_log() {
     let records = session::replay(session.path()).unwrap();
     assert!(matches!(
         records.last(),
-        Some(Record::End { stop_reason, turns: 2 }) if stop_reason == "max-turns"
+        Some(Record::End { stop_reason, turns: 2, .. }) if stop_reason == "max-turns"
     ));
 
     std::fs::remove_dir_all(&home).ok();
@@ -2296,7 +2296,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     }
     assert!(matches!(
         &records[6],
-        Record::End { stop_reason, turns: 2 } if stop_reason == "completed"
+        Record::End { stop_reason, turns: 2, .. } if stop_reason == "completed"
     ));
 
     // And the headless surface said the lane joined.
@@ -6021,7 +6021,7 @@ async fn a_child_stops_at_its_turn_cap_with_its_partial_log_intact() {
     assert!(
         matches!(
             child_records.last(),
-            Some(Record::End { stop_reason, turns }) if stop_reason == "max-turns" && *turns == 2
+            Some(Record::End { stop_reason, turns, .. }) if stop_reason == "max-turns" && *turns == 2
         ),
         "{child_records:?}"
     );

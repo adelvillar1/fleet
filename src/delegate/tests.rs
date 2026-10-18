@@ -254,6 +254,7 @@ fn child_log(dir: &Path, session: &str) -> PathBuf {
             Record::End {
                 stop_reason: "completed".to_string(),
                 turns: 3,
+                served_model: None,
             },
         ],
     )
@@ -648,6 +649,7 @@ fn the_grade_is_wrong_when_the_childs_log_contradicts_the_claimed_outcome() {
             Record::End {
                 stop_reason: "max-turns".to_string(),
                 turns: 3,
+                served_model: None,
             },
         ],
     );
@@ -688,6 +690,7 @@ fn the_grade_is_wrong_when_the_row_claims_more_turns_than_the_log_holds() {
             Record::End {
                 stop_reason: "completed".to_string(),
                 turns: 3,
+                served_model: None,
             },
         ],
     );
@@ -725,6 +728,7 @@ fn the_grade_is_wrong_when_the_claimed_artifact_or_command_is_absent_from_the_ch
             Record::End {
                 stop_reason: "completed".to_string(),
                 turns: 3,
+                served_model: None,
             },
         ],
     );
@@ -761,6 +765,7 @@ fn the_grade_is_insufficient_when_the_child_stopped_at_max_turns_naming_the_comp
             Record::End {
                 stop_reason: "max-turns".to_string(),
                 turns: 12,
+                served_model: None,
             },
         ],
     );
@@ -803,6 +808,7 @@ fn the_grade_is_insufficient_when_the_run_failed_and_names_what_the_step_needed(
             Record::End {
                 stop_reason: "failed".to_string(),
                 turns: 3,
+                served_model: None,
             },
         ],
     );
@@ -905,6 +911,7 @@ fn a_wrong_claim_outranks_a_missing_companion() {
             Record::End {
                 stop_reason: "max-turns".to_string(),
                 turns: 3,
+                served_model: None,
             },
         ],
     );

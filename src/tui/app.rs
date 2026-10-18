@@ -2698,6 +2698,7 @@ mod tests {
             Record::End {
                 stop_reason: "completed".to_string(),
                 turns: 2,
+                served_model: None,
             },
         ];
         app.seed(&records);

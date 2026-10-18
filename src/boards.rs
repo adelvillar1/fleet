@@ -1288,8 +1288,9 @@ fn read_stop(path: &Path) -> (Option<String>, Option<u64>) {
     // for is the last one, not the first.
     let text = String::from_utf8_lossy(&bytes);
     for line in text.lines().rev() {
-        if let Ok(crate::session::Record::End { stop_reason, turns }) =
-            serde_json::from_str::<crate::session::Record>(line)
+        if let Ok(crate::session::Record::End {
+            stop_reason, turns, ..
+        }) = serde_json::from_str::<crate::session::Record>(line)
         {
             return (Some(stop_reason), Some(turns));
         }

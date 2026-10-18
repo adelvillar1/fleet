@@ -1466,6 +1466,9 @@ impl<'a> Agent<'a> {
                 self.record(&Record::End {
                     stop_reason: "completed".to_string(),
                     turns,
+                    // KI-073: the model that answered, when the run was
+                    // routed — the nominal one is on the start record.
+                    served_model: self.served_model(),
                 })?;
                 self.emit(UiEvent::Finished {
                     stop_reason: "completed".to_string(),
@@ -1508,6 +1511,7 @@ impl<'a> Agent<'a> {
         self.record(&Record::End {
             stop_reason: "max-turns".to_string(),
             turns,
+            served_model: self.served_model(),
         })?;
         self.emit(UiEvent::Finished {
             stop_reason: "max-turns".to_string(),
@@ -1599,6 +1603,15 @@ impl<'a> Agent<'a> {
     /// asked for. `None` when this run has no router — a plain client,
     /// whose behaviour is the floor either way — or when the roster
     /// declares no window for the model it is serving.
+    /// The model that actually served this run, when it was routed:
+    /// the committed decision's own. `None` on an unrouted run, whose
+    /// nominal model is the one that answered. KI-073.
+    fn served_model(&self) -> Option<String> {
+        self.client
+            .route_decision()
+            .map(|decision| decision.model.clone())
+    }
+
     fn serving_window(&self) -> Option<u64> {
         self.client
             .route_decision()
@@ -1830,6 +1843,7 @@ impl<'a> Agent<'a> {
         self.record(&Record::End {
             stop_reason: "stopped by the owner".to_string(),
             turns,
+            served_model: self.served_model(),
         })?;
         Err(AgentError::Stopped)
     }

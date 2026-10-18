@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 /// Fleet's home directory: `$FLEET_HOME` when set and non-empty, else
 /// `<user home>/.fleet`. `user_home` is the OS home (`HOME`/`USERPROFILE`),
 /// passed in so callers decide their own environment precedence.
-/// @return the absolute home path.
-/// @throws when neither `$FLEET_HOME` nor a user home is known.
+/// The absolute home path. An error when neither `$FLEET_HOME` nor a
+/// user home is known.
 pub fn fleet_home(
     fleet_home_env: Option<&str>,
     user_home: Option<&str>,
@@ -79,7 +79,7 @@ pub fn read_fleet_env(home: &Path) -> HashMap<String, String> {
 }
 
 /// Create `home` and its sessions directory when missing.
-/// @return the sessions directory path.
+/// The sessions directory path.
 pub fn ensure_sessions_dir(home: &Path) -> std::io::Result<PathBuf> {
     let dir = sessions_dir(home);
     fs::create_dir_all(&dir)?;
