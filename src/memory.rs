@@ -720,6 +720,17 @@ fn fact(
 /// write would create it (part 2). The fork's `resolveMemoryRoot`; the
 /// configured override waits for a slice that needs it — Fleet's corpus
 /// is the repo's own tree.
+/// Whether a corpus directory holds at least one fact file. The
+/// scaffold's emptiness is what distinguishes "the home has a corpus"
+/// from "the home has the directory a corpus would live in".
+fn holds_facts(dir: &std::path::Path) -> bool {
+    let Ok(read) = fs::read_dir(dir) else {
+        return false;
+    };
+    read.flatten()
+        .any(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
+}
+
 pub fn resolve_root(cwd: &Path) -> PathBuf {
     let home = crate::home::fleet_home(
         std::env::var("FLEET_HOME").ok().as_deref(),
@@ -741,7 +752,12 @@ pub fn resolve_root_from(cwd: &Path, home: Option<&Path>) -> PathBuf {
     // walk found further up the tree.
     if let Some(home) = home {
         let own = home.join(MEMORIES_DIR);
-        if own.is_dir() {
+        // It must HOLD facts, not merely exist: an empty `memories/`
+        // under the home is the install's scaffold, and a scaffold
+        // preferred over a real corpus found by the walk silently
+        // shadows it — the failure this rule itself introduced before
+        // the check was added.
+        if own.is_dir() && holds_facts(&own) {
             return own;
         }
     }
@@ -5197,6 +5213,33 @@ mod tests {
     /// KI-067: the confirmed-by gate's summary carries the target's own
     /// description beside the justification, so the approver decides
     /// with what the fact currently says in front of them.
+    /// An empty `memories/` under the home is the install's scaffold,
+    /// not a corpus: it must not shadow a real corpus the walk finds.
+    /// The regression this pins was introduced by the home-first rule
+    /// itself before the holds-facts check was added.
+    #[test]
+    fn an_empty_home_scaffold_does_not_shadow_the_walks_corpus() {
+        let home = scratch("scaffold-shadow");
+        let foreign = scratch("scaffold-foreign");
+        fs::create_dir_all(home.join(MEMORIES_DIR)).unwrap();
+        fs::create_dir_all(foreign.join("nested").join(MEMORIES_DIR)).unwrap();
+        std::fs::write(
+            foreign.join("nested").join(MEMORIES_DIR).join("real.md"),
+            "---\nname: real\n---\n",
+        )
+        .unwrap();
+        // The home's directory exists and holds nothing: the walk's
+        // corpus wins.
+        let resolved = resolve_root_from(&foreign.join("nested"), Some(&home));
+        assert_eq!(
+            resolved,
+            foreign.join("nested").join(MEMORIES_DIR),
+            "{resolved:?}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&foreign);
+    }
+
     #[test]
     fn a_supersede_summary_carries_the_targets_current_description() {
         let with_target = supersede_summary(
@@ -9197,6 +9240,11 @@ mod tests {
         let home = scratch("resolve-home");
         let foreign = scratch("resolve-foreign");
         fs::create_dir_all(home.join(MEMORIES_DIR)).unwrap();
+        std::fs::write(
+            home.join(MEMORIES_DIR).join("a-fact.md"),
+            "---\nname: a-fact\n---\n",
+        )
+        .unwrap();
         fs::create_dir_all(foreign.join("nested").join(MEMORIES_DIR)).unwrap();
         // From inside the foreign tree, the walk would find the foreign
         // corpus; the home's own wins.

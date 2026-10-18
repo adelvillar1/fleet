@@ -16,15 +16,77 @@ use fleet::net;
 use fleet::route;
 use fleet::session::{self, Session};
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // No subcommand is the TUI, Fleet's daily-driver surface; every
-    // subcommand path below is the headless one, unchanged.
+    // No subcommand is the TUI, Fleet's daily-driver surface. KI-023: it
+    // gets no runtime at all — the multi-thread runtime `#[tokio::main]`
+    // used to build for every launch parked ten worker threads for the
+    // TUI's whole life while the agent ran on its own dedicated thread.
+    // Now the TUI path builds nothing and the headless paths build what
+    // they need.
     if args.is_empty() {
         return tui_command();
     }
-    match cli::parse(&args) {
+    // The commands that await: each builds its own current-thread runtime
+    // here, for the life of the one call. A current-thread runtime is
+    // enough for a client that drives one run at a time, and it does not
+    // park a pool nobody asked for.
+    let needs_runtime = matches!(
+        cli::parse(&args),
+        Ok(Command::Run(_))
+            | Ok(Command::Chat(_))
+            | Ok(Command::Gui(_))
+            | Ok(Command::Compact { .. })
+            | Ok(Command::Lanes)
+            | Ok(Command::Judge(_))
+            | Ok(Command::Delegate(_))
+            | Ok(Command::Eval(_))
+            | Ok(Command::Explain(_))
+    );
+    if needs_runtime {
+        return match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime.block_on(dispatch(&args)),
+            Err(error) => {
+                eprintln!("fleet: the runtime could not start: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    futures_block_on_free(&args)
+}
+
+/// The sync commands' dispatch: everything that never awaits. Its own
+/// function so the runtime check above stays a list of names and the
+/// parse happens once per path.
+fn futures_block_on_free(args: &[String]) -> ExitCode {
+    dispatch_sync(args)
+}
+
+async fn dispatch(args: &[String]) -> ExitCode {
+    match cli::parse(args) {
+        Ok(Command::Run(options)) => run_command(&options).await,
+        Ok(Command::Chat(options)) => chat_command(&options).await,
+        Ok(Command::Gui(options)) => gui_command(&options).await,
+        Ok(Command::Compact { session, force }) => compact_command(session.as_deref(), force).await,
+        Ok(Command::Lanes) => lanes_command().await,
+        Ok(Command::Judge(options)) => judge_command(&options).await,
+        Ok(Command::Delegate(options)) => delegate_command(&options).await,
+        Ok(Command::Eval(options)) => eval_command(&options).await,
+        Ok(Command::Explain(options)) => explain_command(&options).await,
+        // The sync half owns every other command; the runtime check in
+        // `main` is what keeps them apart.
+        _ => dispatch_sync(args),
+    }
+}
+
+/// The sync half, mirroring `dispatch`: every command that never awaits,
+/// so the runtime question is answered by which half a command is in
+/// rather than by a second parse.
+fn dispatch_sync(args: &[String]) -> ExitCode {
+    match cli::parse(args) {
         Ok(Command::Help) => {
             print!("{}", cli::HELP);
             ExitCode::SUCCESS
@@ -33,22 +95,15 @@ async fn main() -> ExitCode {
             println!("fleet {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
-        Ok(Command::Run(options)) => run_command(&options).await,
-        Ok(Command::Chat(options)) => chat_command(&options).await,
-        Ok(Command::Gui(options)) => gui_command(&options).await,
         Ok(Command::SessionsView { recall, view }) => {
             sessions_command(recall.as_deref(), view.as_deref())
         }
-        Ok(Command::Compact { session, force }) => compact_command(session.as_deref(), force).await,
         Ok(Command::Settings { set }) => settings_command(
             set.as_ref()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
         ),
-        Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
-        Ok(Command::Judge(options)) => judge_command(&options).await,
-        Ok(Command::Delegate(options)) => delegate_command(&options).await,
         Ok(Command::Roles) => roles_command(),
         Ok(Command::Convention(options)) => convention_command(&options),
         Ok(Command::Graph(options)) => graph_command(&options),
@@ -60,12 +115,17 @@ async fn main() -> ExitCode {
         Ok(Command::Remember(options)) => remember_command(&options),
         Ok(Command::Doctor(options)) => doctor_command(&options),
         Ok(Command::Install(options)) => install_command(&options),
-        Ok(Command::Eval(options)) => eval_command(&options).await,
-        Ok(Command::Explain(options)) => explain_command(&options).await,
         Err(message) => {
             eprintln!("fleet: {message}");
             eprint!("{}", cli::HELP);
             ExitCode::from(2)
+        }
+        // The awaiting half is dispatch's; reaching it here means the
+        // runtime check above misrouted, which is a bug rather than a
+        // fallback to invent.
+        _ => {
+            eprintln!("fleet: internal: an async command reached the sync dispatch");
+            ExitCode::FAILURE
         }
     }
 }
