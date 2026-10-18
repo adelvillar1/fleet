@@ -1388,6 +1388,61 @@ pub struct Scheduler {
     eval: Option<EvalRunner>,
 }
 
+/// The claim directory beside the job store: one file per (job, minute),
+/// the cross-process latch KI-089 names. The file's creation is the
+/// claim — `create_new` is an atomic create, so the first scheduler to
+/// own a minute owns it and every other scheduler on the machine is
+/// refused by the operating system rather than by a race.
+fn claims_dir(home: &Path) -> PathBuf {
+    home.join("cron").join("claims")
+}
+
+/// Try to claim `job`'s fire for `minute`. True when this process owns
+/// the minute; false when another scheduler claimed it first. A claim
+/// from a process that died still suppresses its own minute — which has
+/// passed by the time anyone looks — and the next minute claims a fresh
+/// file, so a stale claim costs nothing and needs no liveness probe.
+fn claim_minute(home: &Path, job: &str, minute: Minute) -> bool {
+    let dir = claims_dir(home);
+    if std::fs::create_dir_all(&dir).is_err() {
+        // An uncreatable claims directory is not a reason to fire twice:
+        // the conservative answer is to let the in-process latch stand
+        // alone rather than to double-fire.
+        return true;
+    }
+    let path = dir.join(format!("{job}-{}", minute.stamp()));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .is_ok()
+}
+
+/// The claims for minutes that have passed, removed so the directory
+/// does not grow without bound. Best-effort: a claim that cannot be
+/// removed is a claim that suppressed one minute, which is over.
+fn sweep_claims(home: &Path, now: Minute) {
+    let dir = claims_dir(home);
+    let Ok(read) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in read.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // The stamp is the name's tail — its own shape carries
+        // hyphens, so a split would cut the date in half.
+        if name.len() <= MINUTE_STAMP_LEN {
+            continue;
+        }
+        let stamp = &name[name.len() - MINUTE_STAMP_LEN..];
+        let Some(minute) = Minute::parse(stamp) else {
+            continue;
+        };
+        if minute < now {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 impl Scheduler {
     /// A scheduler over `home`, firing through `runner`.
     pub fn new(home: PathBuf, runner: Runner) -> Scheduler {
@@ -1584,6 +1639,13 @@ impl Scheduler {
             if self.latch.get(&job.name) == Some(&now) {
                 continue;
             }
+            // KI-089: the cross-process claim beside the in-process
+            // latch. Two long-lived schedulers on one machine — a
+            // `fleet chat` and a TUI — each decide the same job is due
+            // in the same minute; the atomic create refuses the second.
+            if !claim_minute(&self.home, &job.name, now) {
+                continue;
+            }
             self.latch.insert(job.name.clone(), now);
             due.push(Due {
                 job: job.clone(),
@@ -1610,6 +1672,7 @@ impl Scheduler {
     /// `fleet cron add` created a moment ago is picked up within one
     /// tick.
     pub async fn tick(&mut self, now: Minute) -> Vec<String> {
+        sweep_claims(&self.home, now);
         let store = match self.open_store() {
             Ok(store) => store,
             Err(lines) => return lines,
@@ -2098,6 +2161,44 @@ mod tests {
     }
 
     // --- the parser ---------------------------------------------------------
+
+    /// KI-089: the claim is atomic and per-minute. The first claim owns
+    /// the minute; a second claim for the same minute is refused by the
+    /// operating system's create, which is what stops two schedulers on
+    /// one machine from both firing the same job. A different minute
+    /// claims a fresh file.
+    #[test]
+    fn a_minutes_claim_is_atomic_and_a_second_scheduler_is_refused() {
+        let home = temp_home("claim");
+        let minute = Minute::parse("2026-10-18T09:00Z").unwrap();
+        assert!(
+            claim_minute(&home, "daily", minute),
+            "the first claim owns the minute"
+        );
+        assert!(
+            !claim_minute(&home, "daily", minute),
+            "a second scheduler is refused by the create"
+        );
+        // A different minute, and a different job, claim fresh.
+        let later = Minute::parse("2026-10-18T09:01Z").unwrap();
+        assert!(
+            claim_minute(&home, "daily", later),
+            "the next minute is a fresh claim"
+        );
+        assert!(
+            claim_minute(&home, "other", minute),
+            "another job is a fresh claim"
+        );
+        // The sweep removes the past minute's claim and keeps the current.
+        sweep_claims(&home, later);
+        assert!(!claims_dir(&home)
+            .join(format!("daily-{}", minute.stamp()))
+            .exists());
+        assert!(claims_dir(&home)
+            .join(format!("daily-{}", later.stamp()))
+            .exists());
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     #[test]
     fn a_five_field_expression_parses_and_matches() {
