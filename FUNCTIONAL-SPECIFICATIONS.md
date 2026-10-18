@@ -45,6 +45,15 @@ aggregated here; when behavior changes, follow that file.
 | `fleet roles` | `docs/features/subagents.md` |
 | `fleet convention <concept>` | `docs/features/skills.md`; `docs/features/memory.md` |
 
+## The browser face
+
+`fleet gui [--port N] [--no-open] [--host H]` serves the app's own
+interface on loopback: the conversation first, the intelligence
+surfaces one flat level beneath four destinations, and the tower as the
+one console. A per-launch token gates every route and prints with the
+URL; a non-loopback host is refused by name. The surfaces and the trust
+trio are documented in `docs/features/gui.md`.
+
 ## Run behavior
 
 - A pinned provider routes every shape through that provider's own models.

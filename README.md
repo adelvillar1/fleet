@@ -63,6 +63,10 @@ Exit codes: `0` completed, `1` runtime failure, `2` usage or configuration, `3` 
 
 The same loop interactively: one session, many tasks, `you>` prompt, `/exit` or `/quit` to leave. API errors print and continue; only a local I/O failure ends the chat.
 
+### `fleet gui [--port N] [--no-open] [--host H]`
+
+Serve the app's browser face on loopback (default `127.0.0.1:3080`): the conversation first, the intelligence surfaces and the tower console beneath it, and the trust trio — per-turn checkpoints with rewind, plan mode, and the diff review — riding the conversation. The URL prints with a per-launch token; a non-loopback host is refused by name. See [`docs/features/gui.md`](docs/features/gui.md).
+
 ### `fleet sessions`
 
 List saved sessions: id, model, state (`completed`, `max-turns`, `interrupted`, `unreadable`), last activity, oldest first.
