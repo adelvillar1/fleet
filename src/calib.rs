@@ -1754,7 +1754,7 @@ fn read_days_recent(root: &Path, day: &str, days: usize) -> Vec<ReadRow> {
         // `day` itself is always read, even when it is not among the
         // newest files: the caller named it, and the caller's day is
         // the one the demotion is read for.
-        rows.extend(read_day(root, &day_of(&file), READ_CAP));
+        rows.extend(read_day(root, &day_of(file), READ_CAP));
     }
     if !files.iter().any(|file| day_of(file) == day) {
         rows.extend(read_day(root, day, READ_CAP));
