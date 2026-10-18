@@ -58,6 +58,14 @@ pub struct Lane {
     /// endpoint, a store root, a log root, an env file). Each entry below
     /// names the source line that reads it.
     pub passthrough: &'static [&'static str],
+    /// The tools this lane exposes that report PROVIDER-level
+    /// availability, called by the probe beside the handshake. KI-030:
+    /// the MCP-surface health (`initialize` + `tools/list`) says the
+    /// lane answers, not that its providers do — a lane reports `ok`
+    /// while its llama-server is down. sdm1 ships `sdm1_health` and
+    /// sem1 a `sem1_probe` that report exactly this; blend1's `doctor`
+    /// was the first.
+    pub health_tools: &'static [&'static str],
 }
 
 /// The six lanes, in launch order.
@@ -90,6 +98,7 @@ pub const LANES: &[Lane] = &[
             "SYS1_STATE_FILE",
             "SYS1_LOG_DIR",
         ],
+        health_tools: &[],
     },
     Lane {
         name: "sdm1",
@@ -110,6 +119,7 @@ pub const LANES: &[Lane] = &[
             "SDM1_MODELS_VENV",
             "SDM1_LOG_DIR",
         ],
+        health_tools: &["sdm1_health"],
     },
     Lane {
         name: "sem1",
@@ -123,6 +133,7 @@ pub const LANES: &[Lane] = &[
         // the llama-server endpoint is a compile-time default plus a tool
         // argument, so it needs no ambient name.
         passthrough: &["SEM1_ST_VENV", "SEM1_VECTORS_DIR", "SEM1_LOG_DIR"],
+        health_tools: &["sem1_probe"],
     },
     Lane {
         name: "gen1",
@@ -144,6 +155,7 @@ pub const LANES: &[Lane] = &[
             "GEN1_KOKORO_PYTHON",
             "GEN1_TELEMETRY_FILE",
         ],
+        health_tools: &[],
     },
     Lane {
         name: "browser",
@@ -157,6 +169,7 @@ pub const LANES: &[Lane] = &[
         // probe. A lane child never inherits the caller's environment
         // (KI-031), so this name is the whole of what crosses.
         passthrough: &["BROWSER_CHROME"],
+        health_tools: &[],
     },
     Lane {
         name: "blend1",
@@ -211,6 +224,9 @@ pub const LANES: &[Lane] = &[
             "BLEND1_VECTORS_DIR",
             "BLEND1_PROJECT",
         ],
+        // blend1's own report, and the two sub-lane health tools the
+        // blend's doctor already carries beside the five sub-lanes.
+        health_tools: &["doctor"],
     },
 ];
 
@@ -613,21 +629,30 @@ pub async fn probe_lane(lane: &Lane) -> LaneHealth {
     // fails — or a lane that exposes no such tool — is an empty report,
     // never a failed probe: the handshake already answered, and a
     // doctor that cannot answer is not a lane that broke.
-    let doctor = match &outcome {
-        Ok((_, tools)) if tools.iter().any(|tool| tool.name == DOCTOR_TOOL) => {
-            match server.call_tool(DOCTOR_TOOL, json!({})).await {
-                Ok(call) => {
-                    // The web leg rides the report beside the five
-                    // sub-lanes: the parse keeps the key, and the
-                    // card renders it as its own line.
-                    let report = parse_doctor(&call.text());
-                    report.lanes.into_iter().chain(report.web).collect()
-                }
-                Err(_) => Vec::new(),
+    // KI-030: every health tool the lane exposes gets called beside the
+    // handshake, and each report's per-lane availability rides the
+    // health's `doctor` list. A call that fails — or a lane that
+    // exposes no such tool — is an empty report, never a failed probe:
+    // the handshake already answered, and a health tool that cannot
+    // answer is not a lane that broke.
+    let mut doctor: Vec<LaneAvailability> = Vec::new();
+    if let Ok((_, tools)) = &outcome {
+        for tool_name in lane.health_tools {
+            if !tools.iter().any(|tool| tool.name == *tool_name) {
+                continue;
+            }
+            let Ok(call) = server.call_tool(tool_name, json!({})).await else {
+                continue;
+            };
+            let text = call.text();
+            if *tool_name == DOCTOR_TOOL {
+                let report = parse_doctor(&text);
+                doctor.extend(report.lanes.into_iter().chain(report.web));
+            } else {
+                doctor.extend(parse_health_map(&text));
             }
         }
-        _ => Vec::new(),
-    };
+    }
     let _ = server.close().await;
     match outcome {
         Ok((initialize, tools)) => LaneHealth {
@@ -660,6 +685,43 @@ pub async fn probe_lane(lane: &Lane) -> LaneHealth {
 /// The tool name a lane's own per-lane availability report answers on.
 /// A lane that lists it in `tools/list` gets it called by the probe.
 const DOCTOR_TOOL: &str = "doctor";
+
+/// A provider-map health report — sdm1's `sdm1_health` and sem1's
+/// `sem1_probe` shape: `{provider_id: {name, available, reason, …}}`.
+/// KI-030: these are the reports that say whether a lane's PROVIDERS
+/// answer, which the MCP-surface handshake cannot. Each entry rides the
+/// health's `doctor` list, so the CLI's card and the TUI's lanes pane
+/// render them beside blend1's own sub-lane report with no change.
+fn parse_health_map(text: &str) -> Vec<LaneAvailability> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Vec::new();
+    };
+    let Some(map) = value.as_object() else {
+        return Vec::new();
+    };
+    let mut out: Vec<LaneAvailability> = map
+        .iter()
+        .filter_map(|(provider, entry)| {
+            let available = entry.get("available").and_then(|a| a.as_bool())?;
+            Some(LaneAvailability {
+                lane: entry
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .unwrap_or(provider)
+                    .to_string(),
+                available,
+                reason: entry
+                    .get("reason")
+                    .and_then(|reason| reason.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                provider: provider.clone(),
+            })
+        })
+        .collect();
+    out.sort_by(|left, right| left.provider.cmp(&right.provider));
+    out
+}
 
 /// The sub-lanes a `doctor` report renders, in the blend's own order:
 /// the five lanes an `ask()` composes its answer from. The report also
@@ -983,6 +1045,55 @@ mod tests {
         assert_eq!(lane("browser").role, "render");
         assert_eq!(lane("browser").passthrough, &["BROWSER_CHROME"]);
         // Each lane's env names follow the fork's convention.
+        assert_eq!(lane("sem1").python_path_env, "SEM1_PYTHONPATH");
+        assert_eq!(lane("sem1").home_env, "FLEET_LANE_SEM1_HOME");
+        // blend1 is the fifth: the blended lane, its own path var and
+        // per-lane home override beside it.
+        assert_eq!(lane("blend1").python_path_env, "BLEND1_PYTHONPATH");
+        assert_eq!(lane("blend1").home_env, "FLEET_LANE_BLEND1_HOME");
+    }
+
+    /// KI-030: every lane that exposes a provider-level health tool names
+    /// it, so the probe calls it beside the handshake. The lanes with no
+    /// such tool name none — an empty list is not an omission the probe
+    /// has to guess at.
+    #[test]
+    fn every_lane_names_its_provider_health_tools() {
+        assert_eq!(lane("blend1").health_tools, &["doctor"]);
+        assert_eq!(lane("sdm1").health_tools, &["sdm1_health"]);
+        assert_eq!(lane("sem1").health_tools, &["sem1_probe"]);
+        for name in ["sys1", "gen1", "browser"] {
+            assert!(
+                lane(name).health_tools.is_empty(),
+                "{name} exposes no provider health tool"
+            );
+        }
+    }
+
+    /// A provider-map health report — sdm1's and sem1's shape — parses
+    /// into per-lane availability, sorted by provider, and a payload
+    /// that is not the shape reads as nothing rather than as a lane that
+    /// broke.
+    #[test]
+    fn a_provider_map_health_report_parses_into_availability() {
+        let report = r#"{
+            "tabpfn_v2": { "name": "TabPFN v2", "available": true, "reason": "ok" },
+            "nvidia_sdm": { "name": "NVIDIA SDM", "available": false,
+                            "reason": "not configured — set TABPFN_API_KEY" }
+        }"#;
+        let parsed = parse_health_map(report);
+        assert_eq!(parsed.len(), 2, "{parsed:?}");
+        assert_eq!(parsed[0].provider, "nvidia_sdm", "sorted by provider");
+        assert!(!parsed[0].available);
+        assert!(parsed[0].reason.contains("TABPFN_API_KEY"), "{parsed:?}");
+        assert!(parsed[1].available);
+        assert_eq!(parsed[1].lane, "TabPFN v2");
+        assert!(parse_health_map("not json").is_empty());
+        assert!(parse_health_map("[1, 2]").is_empty());
+    }
+
+    #[test]
+    fn the_registrys_env_names_follow_the_forks_convention() {
         assert_eq!(lane("sem1").python_path_env, "SEM1_PYTHONPATH");
         assert_eq!(lane("sem1").home_env, "FLEET_LANE_SEM1_HOME");
         // blend1 is the fifth: the blended lane, its own path var and
