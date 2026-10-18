@@ -6,6 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 use super::app::{App, Entry, Mode, SettingsRow, ToolStatus};
 use crate::boards::{self, BoardData, BoardKind, Section, Slot};
@@ -2329,14 +2330,18 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         }
         let mut current = String::new();
         for word in paragraph.split_inclusive(' ') {
-            let word_width = word.chars().count();
+            let word_width = word.width();
             // A word longer than the line is split hard; it has no choice.
-            if !current.is_empty() && current.chars().count() + word_width > width {
+            // KI-025: the widths are display CELLS, not characters — CJK,
+            // emoji, and combining marks occupy a different number of
+            // columns than of `char`s, and a character count wrapped them
+            // wrong.
+            if !current.is_empty() && current.width() + word_width > width {
                 lines.push(std::mem::take(&mut current));
             }
             for character in word.chars() {
                 current.push(character);
-                if current.chars().count() >= width {
+                if current.width() >= width {
                     lines.push(std::mem::take(&mut current));
                 }
             }
@@ -2371,10 +2376,15 @@ fn cursor_position(text: &str, index: usize, width: usize) -> (usize, usize) {
             let within = index - seen_input;
             let mut seen = 0usize;
             for (offset, line) in lines.iter().enumerate() {
+                // Characters find the line; the COLUMN is the line's
+                // display width up to the cursor's character. The two
+                // measures are different things, and a CJK line's
+                // column is not its character count (KI-025).
                 let len = line.chars().count();
                 let last_line = offset + 1 == lines.len();
                 if within < seen + len {
-                    return (row + offset, within - seen);
+                    let prefix: String = line.chars().take(within - seen).collect();
+                    return (row + offset, prefix.width());
                 }
                 if within == seen + len {
                     // A boundary shows on the next line when there is
@@ -2383,7 +2393,7 @@ fn cursor_position(text: &str, index: usize, width: usize) -> (usize, usize) {
                     if !last_line || !last_para {
                         return (row + offset + 1, 0);
                     }
-                    return (row + offset, len);
+                    return (row + offset, line.width());
                 }
                 seen += len;
             }
@@ -2473,6 +2483,36 @@ mod tests {
     /// the bar is for — survives a narrow bar, and the segments that
     /// follow are what get dropped rather than clipping the last one
     /// mid-word.
+    /// KI-025: the wrap and cursor math measures display CELLS, not
+    /// characters. A CJK line is two columns per character, so a width
+    /// of 10 holds five of them, not ten — and the cursor's column is
+    /// the display width of the prefix, not its character count.
+    #[test]
+    fn the_width_math_measures_display_cells() {
+        // Five CJK characters are ten cells: a width-10 line holds all
+        // five on one line, where a character count would have split.
+        let cjk = "\u{4f60}\u{597d}\u{4e16}\u{754c}\u{6d4b}\u{8bd5}";
+        assert_eq!(cjk.chars().count(), 6);
+        assert_eq!(cjk.width(), 12);
+        let lines = wrap(cjk, 12);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        // Below the whole line's width it wraps at the cell budget: four
+        // CJK characters are exactly eight cells, so a width-8 line holds
+        // them and the rest rides the next line.
+        let narrow = wrap(cjk, 8);
+        assert_eq!(
+            narrow,
+            vec!["\u{4f60}\u{597d}\u{4e16}\u{754c}", "\u{6d4b}\u{8bd5}"]
+        );
+        // The cursor at character 2 of a CJK line is at column 4.
+        let (row, col) = cursor_position(cjk, 2, 12);
+        assert_eq!(row, 0);
+        assert_eq!(col, 4, "two CJK characters are four columns");
+        // ASCII is unaffected: one character is one cell, and the
+        // word-aware break still keeps words whole where it can.
+        assert_eq!(wrap("hello world", 5), vec!["hello ", "world"]);
+    }
+
     #[test]
     fn the_status_bar_fits_its_width_and_keeps_the_route() {
         let mut routed = fresh();
