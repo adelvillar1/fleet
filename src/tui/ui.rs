@@ -1402,7 +1402,14 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     }
     spans.push(Span::styled("  session ", Style::new().fg(palette::DIM)));
     spans.push(Span::styled(
-        short_id(&status.session_id),
+        // A launch that has not run yet has no session: the log is
+        // created on the first task (KI-022), and naming an id that
+        // does not exist would be a lie about where runs are logged.
+        if status.session_id.is_empty() {
+            "\u{2014}".to_string()
+        } else {
+            short_id(&status.session_id)
+        },
         Style::new().fg(palette::TEXT),
     ));
     spans.push(Span::styled("  turn ", Style::new().fg(palette::DIM)));
@@ -4210,5 +4217,29 @@ mod tests {
         let rendered = draw(&failed, 120, 24);
         assert!(rendered.contains("failed"), "{rendered}");
         assert!(rendered.contains("the fire panicked: boom"), "{rendered}");
+    }
+
+    #[test]
+    fn a_launch_that_has_not_run_yet_names_no_session() {
+        // KI-022: the log is created on the first task, so a fresh launch
+        // has no session id to show. The bar says so with a dash rather
+        // than naming an id that does not exist, and the id the first run
+        // creates is what appears.
+        let mut app = App::new("deepseek-chat", "");
+        let bar = draw(&app, 120, 24);
+        assert!(
+            bar.contains("session \u{2014}"),
+            "an absent session reads as a dash: {bar}"
+        );
+
+        app.apply_ui_event(UiEvent::Session {
+            id: "20261017T090000Z-abcdef".to_string(),
+        });
+        assert_eq!(app.status.session_id, "20261017T090000Z-abcdef");
+        let named = draw(&app, 120, 24);
+        assert!(
+            named.contains("session 20261017T090000Z-abcdef"),
+            "the created session's id is named: {named}"
+        );
     }
 }

@@ -65,7 +65,10 @@ enum Command {
 struct AgentConfig {
     home: PathBuf,
     model: String,
-    session_id: String,
+    /// The session to log runs in, when one already exists — a resumed
+    /// session. `None` is the launch case, and the log is created on the
+    /// first run rather than at launch (KI-022).
+    session_id: Option<String>,
     ui_tx: UnboundedSender<UiEvent>,
     status_tx: UnboundedSender<StatusUpdate>,
     approval_tx: UnboundedSender<ApprovalRequest>,
@@ -110,7 +113,10 @@ pub fn run(config: Config) -> Result<(), String> {
     )
     .map_err(|error| format!("the terminal could not start: {error}"))?;
 
-    let session_id = create_session(&config.home, &config.model)?;
+    // No session is created here. The log used to be created at launch,
+    // which left an "open" session holding only a `start` record behind
+    // every quit before a single task was submitted (KI-022); the agent
+    // thread creates it on the first run instead and names the id back.
     let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
     let (status_tx, status_rx) = tokio::sync::mpsc::unbounded_channel::<StatusUpdate>();
     let (approval_tx, approval_rx) = tokio::sync::mpsc::unbounded_channel::<ApprovalRequest>();
@@ -119,14 +125,14 @@ pub fn run(config: Config) -> Result<(), String> {
     let agent = spawn_agent(AgentConfig {
         home: config.home.clone(),
         model: config.model.clone(),
-        session_id: session_id.clone(),
+        session_id: None,
         ui_tx,
         status_tx,
         approval_tx,
         command_rx,
     });
 
-    let mut app = App::new(&config.model, &session_id);
+    let mut app = App::new(&config.model, "");
     // The status bar names the routing mode, never the compiled-in
     // default: `deepseek-chat` is the fallback seed and the reserve, and
     // naming it as the model in use is the exact misdirection the route
@@ -171,13 +177,6 @@ pub fn run(config: Config) -> Result<(), String> {
     drop(command_tx);
     drop(agent);
     outcome
-}
-
-/// Create the launch session and return its id.
-fn create_session(home: &Path, model: &str) -> Result<String, String> {
-    let session = Session::create(home, model)
-        .map_err(|error| format!("could not create the session: {error}"))?;
-    Ok(session.id().to_string())
 }
 
 /// The event loop: drain the agent's channels, read the keyboard, render.
@@ -490,11 +489,41 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             // judgment, not one per task.
             let mut prepared: Option<route::Prepared> = None;
             let mut judge_task = String::new();
+            // The launch session does not exist yet: it is created
+            // here, on the first run, so a quit before any task leaves
+            // no empty log behind (KI-022). The id rides back to the
+            // interface on the same channel as every other fact about
+            // the run.
+            // The session this interface logs into: the resumed one when
+            // there is one, and otherwise none until the first run
+            // creates it. A launch that quits before a task therefore
+            // leaves no empty log behind (KI-022).
             let mut current_session = session_id;
             let mut commands = command_rx;
             while let Some(command) = commands.recv().await {
                 match command {
                     Command::Run(task) => {
+                        // The first run creates the log it runs in. The
+                        // creation is here rather than at launch because
+                        // a session that holds nothing but a `start`
+                        // record is a session that never happened, and it
+                        // used to be left behind by every quit.
+                        if current_session.is_none() {
+                            match Session::create(&home, &model) {
+                                Ok(fresh) => {
+                                    current_session = Some(fresh.id().to_string());
+                                    let _ = ui_tx.send(UiEvent::Session {
+                                        id: fresh.id().to_string(),
+                                    });
+                                }
+                                Err(error) => {
+                                    let _ = ui_tx.send(UiEvent::Failed(format!(
+                                        "could not create the session: {error}"
+                                    )));
+                                    continue;
+                                }
+                            }
+                        }
                         if prepared.is_none() {
                             match route::prepare(
                                 &home,
@@ -517,7 +546,10 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                         }
                         let prepared = prepared.as_ref().expect("prepared on the first run");
                         let client = Client::routed(prepared.router.clone());
-                        let path = session::session_path(&home, &current_session);
+                        let path = session::session_path(
+                            &home,
+                            current_session.as_deref().unwrap_or_default(),
+                        );
                         // The corpus is loaded per run, off the async
                         // worker: the files can change between runs, and
                         // a fact an earlier run of this session
@@ -590,7 +622,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             let _ = status_tx.send(StatusUpdate::Usage(report.usage));
                         }
                     }
-                    Command::Resume(id) => current_session = id,
+                    Command::Resume(id) => current_session = Some(id),
                 }
             }
             // The session's routing decision is recorded once, when the
@@ -600,18 +632,29 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             }
             // And the self-authoring half runs once, on the session the
             // TUI drove: its lessons are drafted into proposals awaiting
-            // the slice-12 gate, best-effort, never applied here.
+            // the slice-12 gate, best-effort, never applied here. A
+            // launch that never ran has no session to draft from, and
+            // the pass is skipped rather than reading a log that does
+            // not exist (KI-022).
             let user_home = std::env::var("HOME").ok();
-            let path = crate::session::session_path(&home, &current_session);
             let skills_override = std::env::var("FLEET_SKILLS_DIR").ok();
-            let filed = match crate::skills::resolve_skills_dir(
-                skills_override.as_deref(),
-                user_home.as_deref(),
-            ) {
-                Some(canonical) => {
-                    crate::skills::draft_session(&canonical, &home, &path, user_home.as_deref())
-                }
+            let filed = match current_session.as_deref() {
                 None => Vec::new(),
+                Some(id) => {
+                    let path = crate::session::session_path(&home, id);
+                    match crate::skills::resolve_skills_dir(
+                        skills_override.as_deref(),
+                        user_home.as_deref(),
+                    ) {
+                        Some(canonical) => crate::skills::draft_session(
+                            &canonical,
+                            &home,
+                            &path,
+                            user_home.as_deref(),
+                        ),
+                        None => Vec::new(),
+                    }
+                }
             };
             if !filed.is_empty() {
                 eprintln!(

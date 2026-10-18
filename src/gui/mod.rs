@@ -88,15 +88,12 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         std::env::var("FLEET_HOME").ok().as_deref(),
         user_home.as_deref(),
     )?;
-    let session = crate::session::Session::create(&home, crate::api::DEFAULT_MODEL)
-        .map_err(|error| format!("could not create the session: {error}"))?;
+    // No session is created here: the log is created on the first task
+    // the page submits, so opening the browser face and closing it
+    // leaves no empty session behind (KI-022) — the same rule the TUI's
+    // agent thread follows.
     let base_url = format!("http://{}:{}", options.host, options.port);
-    let bridge = bridge::Bridge::spawn(
-        home,
-        crate::api::DEFAULT_MODEL.to_string(),
-        session.id().to_string(),
-        base_url,
-    );
+    let bridge = bridge::Bridge::spawn(home, crate::api::DEFAULT_MODEL.to_string(), None, base_url);
     let (server, _port) =
         server::Server::bind(&options.host, options.port, Arc::new(bridge)).await?;
     let url = format!("{}?token={}", server.base_url(), server.token());

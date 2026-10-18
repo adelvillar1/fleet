@@ -4652,6 +4652,15 @@ fn the_skills_command_lists_cards_proposals_and_a_draft() {
 /// malformed file the loader must skip by name. Returns the directory
 /// the binary runs from — `fleet memories` resolves the nearest
 /// `memories/` at or above the working directory.
+///
+/// The returned root is a FLEET_HOME: every child the tests spawn is
+/// given it as `FLEET_HOME`, so the resolution's home-first rule lands
+/// on this corpus and nothing else. Without that, the rule prefers the
+/// ambient `~/.fleet/memories` the moment it holds any `.md` — a
+/// consolidator's summary, a `remember` write, the owner's own fleet
+/// process — and the test silently reads that corpus instead of its
+/// fixture (KI-227: three of these tests read 0 facts that way under
+/// the full suite's parallel load, and passed in isolation).
 fn memories_corpus(tag: &str) -> PathBuf {
     let root = temp_home(tag);
     let memories = root.join("memories");
@@ -4703,10 +4712,50 @@ fn memories_corpus(tag: &str) -> PathBuf {
 /// `fleet memories` end to end against the real binary: the facts as
 /// cards, the protected and retired tallies, and the backend the probe
 /// found — named either way, never silent.
+/// KI-227: the resolution's home-first rule prefers the fleet home's
+/// own corpus the moment it holds any `.md`, so a test that reads its
+/// fixture through the ambient home silently reads whatever else is
+/// there — a consolidator's summary, a `remember` write, the owner's
+/// own fleet process. The fixture pins FLEET_HOME to its own home, so
+/// a competing ambient corpus cannot shadow it: this test writes one
+/// into a scratch `~/.fleet` and the fixture still reads its own.
+#[test]
+fn a_competing_home_corpus_does_not_shadow_the_fixture() {
+    let root = memories_corpus("memories-shadow");
+    // The ambient home, with a corpus of its own that would win the
+    // home-first rule if the child did not carry FLEET_HOME: the home
+    // is this directory, so its corpus is `<home>/.fleet/memories`.
+    let ambient = temp_home("memories-ambient");
+    let corpus = ambient.join(".fleet").join("memories");
+    std::fs::create_dir_all(&corpus).unwrap();
+    std::fs::write(
+        corpus.join("an-ambient-fact.md"),
+        "---\nname: an-ambient-fact\ndescription: \"the ambient corpus\"\ntype: project\ndate: 2026-10-13\nbasis: inferred\nshape: []\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe ambient corpus's fact.\n",
+    )
+    .unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .env("FLEET_HOME", &root)
+        .env("HOME", &ambient)
+        .arg("memories")
+        .current_dir(&root)
+        .output()
+        .expect("run the fleet binary");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("6 facts \u{b7} 2 protected \u{b7} 0 retired"),
+        "the fixture's own corpus is read, not the ambient one: {stdout}"
+    );
+    assert!(!stdout.contains("an-ambient-fact"), "{stdout}");
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&ambient);
+}
+
 #[test]
 fn the_memories_command_cards_the_facts_and_names_the_backend() {
     let root = memories_corpus("memories-cmd");
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .env("FLEET_HOME", &root)
         .arg("memories")
         .current_dir(&root)
         .output()
@@ -4761,6 +4810,7 @@ fn the_memories_recall_flag_prints_the_ranked_assembly() {
             .collect()
     };
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .env("FLEET_HOME", &root)
         .args(["memories", "--recall", "the railway deploy is failing"])
         .current_dir(&root)
         .output()
@@ -4804,6 +4854,7 @@ fn the_memories_recall_flag_prints_the_ranked_assembly() {
 fn the_memories_recall_flag_names_the_unclassified_fallback() {
     let root = memories_corpus("memories-fallback");
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .env("FLEET_HOME", &root)
         .args(["memories", "--recall", "tell me about the walnut table"])
         .current_dir(&root)
         .output()
@@ -4824,6 +4875,7 @@ fn the_memories_recall_flag_names_the_unclassified_fallback() {
 fn the_memories_shape_flag_filters_the_cards() {
     let root = memories_corpus("memories-shape");
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .env("FLEET_HOME", &root)
         .args(["memories", "--shape", "deploy"])
         .current_dir(&root)
         .output()
@@ -4833,6 +4885,7 @@ fn the_memories_shape_flag_filters_the_cards() {
     assert!(stdout.contains("filtered by shape: deploy"), "{stdout}");
     assert_eq!(stdout.matches('\u{250c}').count(), 3, "{stdout}");
     let empty = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .env("FLEET_HOME", &root)
         .args(["memories", "--shape", "telemetry"])
         .current_dir(&root)
         .output()
@@ -4878,6 +4931,7 @@ fn the_memories_shape_flag_filters_the_cards() {
 fn the_doctor_recall_line_names_the_live_path() {
     let root = memories_corpus("memories-doctor");
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .env("FLEET_HOME", &root)
         .arg("doctor")
         .current_dir(&root)
         .output()

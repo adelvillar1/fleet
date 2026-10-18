@@ -91,7 +91,10 @@ pub(crate) enum Command {
 struct AgentInputs {
     home: PathBuf,
     model: String,
-    session_id: String,
+    /// The session to log runs in, when one already exists — a resumed
+    /// session. `None` is the launch case, and the log is created on the
+    /// first run rather than at launch (KI-022).
+    session_id: Option<String>,
     ui_tx: UnboundedSender<UiEvent>,
     approval_tx: UnboundedSender<ApprovalRequest>,
     command_rx: UnboundedReceiver<Command>,
@@ -170,12 +173,16 @@ impl Bridge {
     /// Must be called from inside a tokio runtime: the fan-out that turns
     /// core events into JSON is a task of the caller's, so a browser face
     /// and a test drive it identically.
-    pub fn detached(home: PathBuf, model: String, session: String) -> (Bridge, Sources) {
+    pub fn detached(home: PathBuf, model: String, session: Option<String>) -> (Bridge, Sources) {
         let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel();
         let (seat_tx, seat_rx) = tokio::sync::mpsc::unbounded_channel();
         let (events, _) = broadcast::channel(BROADCAST_DEPTH);
         let state = Arc::new(Mutex::new(GuiState {
-            session,
+            // The anchored session, when one already exists: a resumed
+            // face's log. A launch starts with none — the agent thread
+            // creates the log on its first task and names the id back
+            // through the event stream (KI-022).
+            session: session.unwrap_or_default(),
             events: VecDeque::new(),
             dropped: 0,
             running: false,
@@ -242,7 +249,12 @@ impl Bridge {
     /// A bridge with the agent thread behind it: the thread this module
     /// spawns is the same shape `tui::spawn_agent` spawns, with the
     /// browser's prompt line and the seat's approver.
-    pub fn spawn(home: PathBuf, model: String, session: String, base_url: String) -> Bridge {
+    pub fn spawn(
+        home: PathBuf,
+        model: String,
+        session: Option<String>,
+        base_url: String,
+    ) -> Bridge {
         let (mut bridge, sources) = Bridge::detached(home.clone(), model.clone(), session.clone());
         let command_rx = bridge.connect();
         // One resolution, shared: the consolidator the thread starts and
@@ -2589,6 +2601,11 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, value: Val
 fn describe(event: &UiEvent) -> Value {
     match event {
         UiEvent::Token(text) => json!({"type": "token", "text": text}),
+        // The browser face drives its own agent thread, which creates
+        // the log on the first run exactly as the TUI's does (KI-022):
+        // the page's session line reads the id it is given, and nothing
+        // before that.
+        UiEvent::Session { id } => json!({"type": "session", "id": id}),
         UiEvent::Turn(turn) => json!({"type": "turn", "turn": turn}),
         UiEvent::Usage {
             prompt_tokens,
@@ -2750,7 +2767,17 @@ async fn fan_out(
     while !(ui_done && seat_done) {
         tokio::select! {
             event = ui_rx.recv(), if !ui_done => match event {
-                Some(event) => record(&state, &events, describe(&event)),
+                Some(event) => {
+                    // The log the agent thread created on its first task
+                    // becomes this face's anchored session: the state
+                    // document the page reads names the session runs are
+                    // logged in, and it is empty until one exists
+                    // (KI-022).
+                    if let UiEvent::Session { id } = &event {
+                        lock(&state).session = id.clone();
+                    }
+                    record(&state, &events, describe(&event))
+                }
                 None => ui_done = true,
             },
             request = seat_rx.recv(), if !seat_done => match request {
@@ -2905,6 +2932,10 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             // one sys1 judgment, not one per task.
             let mut prepared: Option<crate::route::Prepared> = None;
             let mut judge_task = String::new();
+            // The launch session does not exist yet: it is created on
+            // the first task, so a browser face that is opened and
+            // closed without a prompt leaves no empty log behind
+            // (KI-022), exactly as the TUI's thread does.
             let mut current_session = session_id;
             let mut commands = command_rx;
             while let Some(command) = commands.recv().await {
@@ -2914,6 +2945,29 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                 let plan_mode = matches!(command, Command::Plan(_));
                 match command {
                     Command::Run(task) | Command::Plan(task) => {
+                        // The first task creates the log it runs in: a
+                        // face that is opened and closed without a
+                        // prompt leaves no empty session behind, the
+                        // same rule the TUI's thread follows (KI-022).
+                        // The id rides back to the page on the event
+                        // stream, which shows the session it is logging
+                        // into and nothing before that.
+                        if current_session.is_none() {
+                            match Session::create(&home, &model) {
+                                Ok(fresh) => {
+                                    current_session = Some(fresh.id().to_string());
+                                    let _ = ui_tx.send(UiEvent::Session {
+                                        id: fresh.id().to_string(),
+                                    });
+                                }
+                                Err(error) => {
+                                    let _ = ui_tx.send(UiEvent::Failed(format!(
+                                        "could not create the session: {error}"
+                                    )));
+                                    continue;
+                                }
+                            }
+                        }
                         if prepared.is_none() {
                             match crate::route::prepare(
                                 &home,
@@ -2936,7 +2990,10 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         }
                         let prepared = prepared.as_ref().expect("prepared on the first run");
                         let client = Client::routed(prepared.router.clone());
-                        let path = session::session_path(&home, &current_session);
+                        let path = session::session_path(
+                            &home,
+                            current_session.as_deref().unwrap_or_default(),
+                        );
                         // The corpus is loaded per task, off the async
                         // worker: the files can change between runs, and a
                         // fact an earlier run of this session remembered is
@@ -3026,7 +3083,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         // resumed one deserves its own. The view side
                         // reseeded before this command was sent; only the
                         // thread's own notion of "which log" was stale.
-                        current_session = id;
+                        current_session = Some(id);
                         prepared = None;
                         judge_task = String::new();
                     }
@@ -3041,7 +3098,15 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             // face drove: its lessons are drafted into proposals awaiting
             // the slice-12 gate, best-effort, never applied here.
             let user_home = std::env::var("HOME").ok();
-            let path = crate::session::session_path(&home, &current_session);
+            let path = match current_session.as_deref() {
+                Some(id) => crate::session::session_path(&home, id),
+                // A face that never ran has no session to draft from;
+                // the pass is skipped rather than reading a log that
+                // does not exist (KI-022).
+                None => {
+                    return;
+                }
+            };
             let skills_override = std::env::var("FLEET_SKILLS_DIR").ok();
             let filed = match crate::skills::resolve_skills_dir(
                 skills_override.as_deref(),
@@ -3098,7 +3163,7 @@ mod tests {
         let (mut bridge, sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let door = bridge.connect();
         (bridge, sources, door)
@@ -3117,6 +3182,67 @@ mod tests {
         assert_eq!(events[0]["role"], "owner");
         assert_eq!(events[0]["text"], "look at the router");
         assert_eq!(state["running"], true);
+    }
+
+    /// KI-022: the launch face has no session until the first task
+    /// creates the log it runs in. The test drives the real agent thread
+    /// against a home with no roster, so the run fails at routing — but
+    /// the log is created before the route is judged, the id rides back
+    /// on the event stream, and the state document names it. A face that
+    /// is opened and closed without a prompt leaves no log at all.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_first_task_creates_the_log_the_run_is_logged_in() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-gui-lazy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        // The launch state: no session, because none exists yet.
+        let (mut bridge, sources) =
+            Bridge::detached(home.clone(), "deepseek-chat".to_string(), None);
+        assert_eq!(bridge.state()["session"], "", "{:?}", bridge.state());
+        let door = bridge.connect();
+        let _thread = spawn_agent(AgentInputs {
+            home: home.clone(),
+            model: "deepseek-chat".to_string(),
+            session_id: None,
+            ui_tx: sources.ui,
+            approval_tx: sources.seat,
+            command_rx: door,
+            base_url: "http://127.0.0.1:1".to_string(),
+            memories_root: home.clone(),
+        });
+        bridge.run("go").expect("the run is accepted");
+        // The session event lands, and the state document names the id.
+        for _ in 0..100 {
+            if !bridge.state()["session"].as_str().unwrap_or("").is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let state = bridge.state();
+        let id = state["session"].as_str().expect("a session id").to_string();
+        assert!(
+            session_id_is_shape(&id),
+            "the created log's id is the shape Session::create mints: {id}"
+        );
+        assert!(
+            home.join("sessions").join(format!("{id}.jsonl")).is_file(),
+            "the log the run created exists on disk"
+        );
+        let events = state["events"].as_array().expect("an event log");
+        assert!(
+            events.iter().any(
+                |event| event["type"] == "session" && event["id"].as_str() == Some(id.as_str())
+            ),
+            "the id rode the event stream: {events:?}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3144,7 +3270,7 @@ mod tests {
         let (bridge, _sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let refused = bridge.run("who is there");
         assert!(refused.is_err(), "{refused:?}");
@@ -3495,7 +3621,7 @@ mod tests {
         let (mut bridge, _sources) = Bridge::detached(
             home,
             "deepseek-chat".to_string(),
-            "session-test".to_string(),
+            Some("session-test".to_string()),
         );
         let mut door = bridge.connect();
         // A run in flight refuses before anything on the face is touched.

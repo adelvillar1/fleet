@@ -667,7 +667,10 @@
 
   function paintFacts() {
     var rows = [
-      ['session', face.session],
+      // A face that has not run yet has no session: the log is created
+      // on the first task (KI-022), so the row reads a dash until one
+      // exists rather than naming an id that does not.
+      ['session', face.session || '\u2014'],
       ['model', face.model],
       ['spend', tokens(face.spend) + ' tokens'],
       ['context', face.context ? tokens(face.context) + ' of ' + tokens(face.budget) : '\u2014'],

@@ -686,6 +686,13 @@ impl App {
                 self.entries
                     .push(Entry::Skills(SkillsCard { loaded, skipped }));
             }
+            UiEvent::Session { id } => {
+                // The log this run created, named once (KI-022): the
+                // status bar shows the session it is logging into, and
+                // nothing before this arrives — a launch that has not
+                // run yet has no session to name.
+                self.status.session_id = id;
+            }
             UiEvent::Routed { provider, how, .. } => {
                 // The route this run takes: the status bar shows the active
                 // provider and how it was chosen. The rest of the decision

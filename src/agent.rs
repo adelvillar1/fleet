@@ -329,6 +329,14 @@ pub enum UiEvent {
     /// something the model said, and it lands as its own card instead
     /// of bare stderr over the pane (KI-216).
     SkillsLoaded { loaded: usize, skipped: Vec<String> },
+    /// The session this run is logged in, named once when the log is
+    /// created. Emitted by a surface that creates the log lazily — the
+    /// TUI's agent thread, which used to create it at launch and so
+    /// left an "open" session holding only a `start` record behind
+    /// every quit (KI-022). The interface shows the id it is given and
+    /// nothing before that: a session that does not exist yet is not
+    /// named as though it did.
+    Session { id: String },
     /// A deck was built and rendered. The fragment rides this event
     /// rather than the tool result the model reads, because the two
     /// audiences want different things: the model wants the summary and
