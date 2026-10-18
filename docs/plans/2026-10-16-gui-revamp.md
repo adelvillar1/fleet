@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-10-16
-updated: 2026-10-17
+updated: 2026-10-18
 slug: gui-revamp
 ---
 
@@ -766,3 +766,11 @@ count; the feed names its build time; exit 0.
   records as a `plan` the browser renders editable with Build. Every
   face that drives the agent shares the store, so a run can be rewound
   from the browser whichever surface started it.
+- **G10 landed 2026-10-18.** The docs: `docs/features/gui.md` carries the
+  seam, the ten surfaces, the trust trio, and the reading rules; the
+  module reference gains the `gui/`, `checkpoints.rs`, `deck.rs`, and
+  `vault.rs` rows; the functional spec and the README name the `fleet
+  gui` command; and boards.md's deferred-browser-face paragraph is
+  superseded with its reason stated. All ten increments are landed and
+  gated; the plan's remaining criterion is the owner's own open of every
+  shipped surface (C8), which is the owner's to make.

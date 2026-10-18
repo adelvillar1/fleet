@@ -161,9 +161,15 @@ sources before and after a full read of all three boards.
 
 ## What is not built
 
-- **The browser face.** `dsh-board-seam`'s guarded HTTP route and the
+- **The browser face.** ~~`dsh-board-seam`'s guarded HTTP route and the
   fork's React board pages are not ported; the TUI pane is this slice's
-  surface, and the reads are the part a later web surface would reuse.
+  surface, and the reads are the part a later web surface would reuse.~~
+  **Superseded 2026-10-18:** the browser face shipped as `fleet gui`
+  (`docs/features/gui.md`) on the hand-rolled server the revamp plan
+  built, and the tower and second-brain panels read these same board
+  reads. The deferral's reason — "a server needs dependencies this crate
+  does not carry" — no longer holds: tokio is already carried and the
+  server is ours.
 - **Workflow runs and agents.** The fork's router board also reads the
   precursor's `/api/workflow-runs`; Fleet's own router has no such surface,
   because it is this crate's own `route::select` rather than a service.
