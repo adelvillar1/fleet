@@ -738,6 +738,90 @@ pub const JOBS_FILE: &str = "jobs.json";
 /// The eval cadence's persisted minute, beside the job store.
 pub const EVAL_MINUTE_FILE: &str = "eval-minute.txt";
 
+/// The repo-side cron manifest. KI-161: the per-project corpus-refresh
+/// jobs are machine state — no repo file pins them, so a fresh
+/// `FLEET_HOME` has no refresh jobs at all and the schedule the owner
+/// built by hand exists nowhere. The manifest is the declaration;
+/// [`seed_missing`] is what a fresh home re-creates from it.
+///
+/// Each entry is (name, schedule, task). The task names the route the
+/// driver session can actually execute, not the lane tool it cannot
+/// call (KI-221/KI-224): the vendored blend1 lane child spawned with
+/// fleet's own launch spec and its stdio JSON-RPC driven by hand, which
+/// is the route the machine's own runs proved works.
+pub const SEED_MANIFEST: &[(&str, &str, &str)] = &[
+    ("corpus-refresh-fleet", "10 0 * * *", "fleet"),
+    ("corpus-refresh-sys1", "15 0 * * *", "sys1"),
+    ("corpus-refresh-sdm1", "20 0 * * *", "sdm1"),
+    ("corpus-refresh-sem1", "25 0 * * *", "sem1"),
+    ("corpus-refresh-gen1", "30 0 * * *", "gen1"),
+    ("corpus-refresh-blend1", "35 0 * * *", "blend1"),
+    (
+        "corpus-refresh-agnostic-router-kit",
+        "40 0 * * *",
+        "agnostic-router-kit",
+    ),
+    ("corpus-refresh-second-brain", "45 0 * * *", "second-brain"),
+    (
+        "corpus-refresh-dev-decisions",
+        "50 0 * * *",
+        "dev-decisions",
+    ),
+    (
+        "corpus-refresh-deepseek-harness",
+        "55 0 * * *",
+        "deepseek-harness",
+    ),
+    ("corpus-refresh-dnd-vtt", "0 1 * * *", "dnd-vtt"),
+    ("corpus-refresh-mahjong-vtt", "5 1 * * *", "mahjong-vtt"),
+    ("corpus-refresh-pmocockpit", "10 1 * * *", "pmocockpit"),
+    (
+        "corpus-refresh-cruiserintelligence",
+        "15 1 * * *",
+        "cruiserintelligence",
+    ),
+];
+
+/// One manifest entry's task string. KI-221/KI-224: the lane tool
+/// `mcp__blend1__refresh` is not in a scheduled session's toolset — a
+/// lane's MCP tools are exposed to a model run inside the agent loop,
+/// not to the driver session a cron job runs in — so a task naming it
+/// fails every time. The task names the spawn route instead: the
+/// vendored lane child launched with fleet's own launch spec and its
+/// stdio JSON-RPC driven by hand, which is the route this machine's own
+/// runs proved reaches the same capability.
+pub fn seed_task(project: &str) -> String {
+    format!(
+        "Refresh the {project} project's fact corpus from its docs. The lane tool is not in \
+         your toolset; use the spawn route: run the vendored blend1 lane child \
+         (python3 -u <fleet repo>/services/blend1/service/mcp_server.py, cwd <fleet repo>/services/blend1, \
+         env BLEND1_PYTHONPATH plus the four sibling *_PYTHONPATH vars — the launch spec \
+         src/lanes.rs produces) and drive its stdio JSON-RPC by hand: initialize \
+         (protocolVersion 2024-11-05), notifications/initialized, then tools/call with \
+         name \"refresh\" with the project {project}. It replies with project, \
+         source_files, items, changed, action, and store."
+    )
+}
+
+/// Seed the manifest's jobs into a home whose store lacks them. An
+/// existing job is never rewritten: the owner's edits — a changed
+/// schedule, a disabled job, a task they reworded — win over the
+/// declaration, which is what makes the manifest safe to re-run. The
+/// store is created when it does not exist. Returns the names added.
+pub fn seed_missing(home: &Path) -> Result<Vec<String>, CronError> {
+    let mut store = Store::open(home)?;
+    let existing: Vec<String> = store.jobs().iter().map(|job| job.name.clone()).collect();
+    let mut added = Vec::new();
+    for (name, schedule, project) in SEED_MANIFEST {
+        if existing.iter().any(|have| have == name) {
+            continue;
+        }
+        store.add(name, schedule, &seed_task(project), true)?;
+        added.push((*name).to_string());
+    }
+    Ok(added)
+}
+
 /// `<home>/cron/jobs.json`.
 pub fn jobs_path(home: &Path) -> PathBuf {
     home.join("cron").join(JOBS_FILE)
@@ -2261,6 +2345,43 @@ mod tests {
     /// KI-093: a `last_run` in the future — a hand-edited or restored
     /// store — used to silence a job forever. The clamp treats it as
     /// "ran just now", so the next window is served.
+    /// KI-161: the manifest seeds a fresh home and never rewrites what
+    /// the owner already has. A re-run is a no-op; a changed job stays
+    /// changed.
+    #[test]
+    fn the_manifest_seeds_a_fresh_home_and_never_rewrites() {
+        let home = temp_home("seed-manifest");
+        let added = seed_missing(&home).expect("the seed lands");
+        assert_eq!(added.len(), SEED_MANIFEST.len(), "{added:?}");
+        let store = Store::open(&home).unwrap();
+        assert_eq!(store.jobs().len(), SEED_MANIFEST.len());
+        // Every seeded job parses and is enabled with auto-approve.
+        for job in store.jobs() {
+            assert!(job.enabled, "{}", job.name);
+            assert!(job.auto_approve, "{}", job.name);
+            assert!(job.last_run.is_none(), "{}", job.name);
+        }
+        // The owner's edit wins: a re-seed adds nothing and changes
+        // nothing.
+        let before = store.jobs().to_vec();
+        let again = seed_missing(&home).expect("the re-seed lands");
+        assert!(again.is_empty(), "{again:?}");
+        let after = Store::open(&home).unwrap().jobs().to_vec();
+        assert_eq!(before, after);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// KI-221/224: the manifest's task names the spawn route, not the
+    /// lane tool the driver session does not carry.
+    #[test]
+    fn the_manifest_task_names_the_route_the_driver_has() {
+        let task = seed_task("fleet");
+        assert!(!task.contains("mcp__blend1__refresh"), "{task}");
+        assert!(task.contains("mcp_server.py"), "{task}");
+        assert!(task.contains("refresh"), "{task}");
+        assert!(task.contains("fleet"), "{task}");
+    }
+
     #[test]
     fn a_future_last_run_does_not_silence_the_job() {
         let home = temp_home("future-last");

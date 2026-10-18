@@ -1988,6 +1988,23 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // KI-161: the repo-side cron manifest, seeded into a home that lacks
+    // its jobs. An existing job is never rewritten, so an owner's
+    // edits win and a re-run is a no-op; a fresh home gets the schedule
+    // the owner built by hand, declared where it cannot be lost.
+    match fleet::cron::seed_missing(&home) {
+        Ok(added) if !added.is_empty() => {
+            println!(
+                "fleet: install: cron: seeded {} manifest job(s)",
+                added.len()
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!("fleet: install: cron: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
     print!(
         "{}",
         fleet::install::render_head(&home, &layout, (config_step, &config_path), options.lanes)
