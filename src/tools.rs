@@ -1200,6 +1200,54 @@ mod tests {
         file.set_modified(stamp).unwrap();
     }
 
+    /// KI-071: the measured per-turn cost of the `subagent` declaration,
+    /// against the roster's context budgets. The row asked for the
+    /// measurement before any shortening; this is that measurement,
+    /// pinned so a future edit to the description cannot quietly change
+    /// the number.
+    #[test]
+    fn the_subagent_declarations_cost_is_measured() {
+        // The declaration measured is `subagent_spec`, which the agent
+        // pushes on every unscoped run — the built-in four do not
+        // carry it.
+        let bytes = serde_json::to_string(&subagent_spec())
+            .expect("the declaration serializes")
+            .len();
+        // The measured size: 4081 bytes at the 2026-10-18 pass, about
+        // 1020 tokens at four characters each. The row's own estimate
+        // (~1.7 KB, ~450 tokens) was low by half — which is exactly
+        // why the row asked for the measurement before any shortening.
+        // The bound absorbs honest prose edits and catches a doubling.
+        assert!(
+            bytes < 6_000,
+            "the subagent declaration is {bytes} bytes; measured ~4081"
+        );
+        // Every declaration together is the per-turn floor the roster's
+        // smallest budget has to carry.
+        let total: usize = declarations(&[])
+            .iter()
+            .map(|tool| serde_json::to_string(tool).expect("serializes").len())
+            .sum::<usize>()
+            + bytes;
+        assert!(total < 20_000, "all declarations total {total} bytes");
+        // Against the budgets: ~1020 tokens is 0.1% of step-5-preview's
+        // 1M window and ~1.1% of the roster's smallest budget
+        // (deepseek-chat's 128k window, edge-held at 96k). The
+        // measurement says the cost is real but not the dominant one,
+        // which is the answer the row asked for.
+        let cost = (bytes / 4) as f64;
+        let big_share = cost / 1_000_000.0;
+        let small_share = cost / 96_000.0;
+        assert!(
+            big_share < 0.002,
+            "the declaration is {big_share} of the 1M window"
+        );
+        assert!(
+            small_share < 0.02,
+            "the declaration is {small_share} of the smallest budget"
+        );
+    }
+
     #[test]
     fn names_round_trip() {
         for tool in ALL_TOOLS {
