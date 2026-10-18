@@ -1821,6 +1821,11 @@ fn doctor_checks() -> ExitCode {
         },
         None => doctor::evaluate_roster(0, 0),
     };
+    // KI-134: the roster check's failure sets the gate's verdict. An
+    // invalid `<FLEET_HOME>/config.json` printed a FAIL line and the
+    // process still exited 0 — a broken roster is a broken layer, and
+    // the exit code is what a caller reads.
+    failed |= !roster_check.ok;
     println!("{}", doctor::render(&roster_check));
 
     // The ledger layer: the calibration stream's root and whether it is
