@@ -1005,6 +1005,22 @@ impl fmt::Debug for Stream {
 }
 
 impl Stream {
+    /// Wait until the queue holds nothing the writer has not finished,
+    /// bounded by [`DRAIN_BUDGET`]. KI-063: the consolidator's handle
+    /// lives for the process's life, so the drop-drain never runs for
+    /// its rows — this is the same drain, called on the thread that
+    /// cares. A budget exhausted names itself in the counters; the wait
+    /// never holds the caller open.
+    pub fn flush(&self) {
+        let deadline = Instant::now() + DRAIN_BUDGET;
+        while self.inner.counters.pending.load(Ordering::SeqCst) > 0 {
+            if Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// A writer under `root`. The directory is created lazily, by the
     /// writer thread, one day at a time: opening a stream never touches
     /// the disk, and a root that cannot be created surfaces as a counted
@@ -3091,6 +3107,26 @@ mod tests {
     }
 
     // --- the vocabulary ---
+
+    /// KI-063: a flush waits for the queued rows to finish. The
+    /// consolidator's handle lives for the process's life, so the
+    /// drop-drain never runs for its rows — this is that drain, called
+    /// on the thread that cares.
+    #[test]
+    fn a_flush_waits_for_the_queued_rows_to_finish() {
+        let root = std::env::temp_dir().join(format!("fleet-calib-flush-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let stream = Stream::open(&root);
+        stream.record(route_row(&[]));
+        stream.flush();
+        assert!(
+            stream.written() >= 1,
+            "the row finished: {} written",
+            stream.written()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn the_hash_matches_devdecisions_sha16() {

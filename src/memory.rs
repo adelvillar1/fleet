@@ -164,6 +164,19 @@ pub const INDEX_FILE: &str = ".recall-index.json";
 /// protected tier the injection budget can never evict.
 pub const PROTECTED_TYPES: [&str; 2] = ["user", "feedback"];
 
+/// The fork's documented synonyms for the two protected types, mapped
+/// onto them. KI-059: the fork documents `type` as free-form and its
+/// own corpus writes `preference` and `identity` where Fleet's two
+/// protected types would not match, so a fact the fork meant to
+/// protect rides the ordinary tiers here. A documented synonym set is
+/// the loader's mapping; a writer-side enum waits for the owner.
+pub const PROTECTED_SYNONYMS: [(&str, &str); 4] = [
+    ("identity", "user"),
+    ("owner", "user"),
+    ("preference", "feedback"),
+    ("standing-preference", "feedback"),
+];
+
 /// How many ancestors above the working directory are searched for the
 /// `memories/` directory. Covers any real clone depth.
 const ANCESTOR_LIMIT: usize = 12;
@@ -297,7 +310,12 @@ impl Fact {
     /// same as `user`.
     pub fn protected(&self) -> bool {
         let kind = self.fact_type.trim().to_ascii_lowercase();
-        PROTECTED_TYPES.iter().any(|protected| *protected == kind)
+        let canonical = PROTECTED_SYNONYMS
+            .iter()
+            .find(|(synonym, _)| *synonym == kind)
+            .map(|(_, protected)| *protected)
+            .unwrap_or(kind.as_str());
+        PROTECTED_TYPES.contains(&canonical)
     }
 
     /// Whether the fact's own markers retire it: a non-empty
@@ -651,7 +669,12 @@ fn fact(
             "frontmatter name `{name}` does not match the file `{stem}.md`"
         ));
     }
-    let description = document.required("description")?;
+    // KI-061: the writer's bound, applied at load. The corpus is
+    // hand-editable by design, so a description edited by hand rides
+    // whatever it was given — the loader applies the same sanitize and
+    // cut the writer applies, with the cut marked, rather than trusting
+    // every writer to have been the harness's own.
+    let description = sanitize_line(&document.required("description")?, MAX_DESCRIPTION_CHARS);
     let basis = match document.get("basis") {
         Some(text) => Basis::parse(text)
             .ok_or_else(|| format!("unknown basis `{text}` (expected confirmed-by or inferred)"))?,
@@ -698,6 +721,30 @@ fn fact(
 /// configured override waits for a slice that needs it — Fleet's corpus
 /// is the repo's own tree.
 pub fn resolve_root(cwd: &Path) -> PathBuf {
+    let home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .ok();
+    resolve_root_from(cwd, home.as_deref())
+}
+
+/// The resolution behind its own seam, so the home-first rule is
+/// testable without mutating the process environment every other test
+/// in the binary reads.
+pub fn resolve_root_from(cwd: &Path, home: Option<&Path>) -> PathBuf {
+    // KI-087 (and KI-074's root cause): the fleet home's own corpus is
+    // the one this process's runs belong to, so it is checked BEFORE
+    // the working directory's ancestor walk. A run started outside any
+    // intended corpus — a scheduled job from a scratch directory, a
+    // smoke from an empty dir — silently adopted a foreign corpus the
+    // walk found further up the tree.
+    if let Some(home) = home {
+        let own = home.join(MEMORIES_DIR);
+        if own.is_dir() {
+            return own;
+        }
+    }
     let mut dir = cwd.to_path_buf();
     for _ in 0..ANCESTOR_LIMIT {
         let candidate = dir.join(MEMORIES_DIR);
@@ -4307,6 +4354,12 @@ pub fn spawn_consolidator(root: PathBuf, stream: calib::Stream) {
                 if result.actions.len() == 1 { "" } else { "s" },
             );
         }
+        // KI-063: the pass's rows are flushed before the sleep. The
+        // stream drains when its last handle drops, and this thread's
+        // handle never drops — so a process that exits mid-pass used to
+        // lose the rows still queued. A bounded wait per pass: the cycle
+        // is hourly, and a wedged disk costs the wait, not the cycle.
+        stream.flush();
         std::thread::sleep(CONSOLIDATE_INTERVAL);
     });
 }
@@ -9005,6 +9058,78 @@ mod tests {
             "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {}\nbasis: inferred\ntier: durable\nshape: []\nphrases: []\nmissing: []\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nThe body.\n",
             crate::calib::today()
         )
+    }
+
+    /// KI-059: the fork's documented synonyms for the two protected
+    /// types map onto them — a hand-written `preference` protects the
+    /// same as `feedback`, because the fork documents `type` as
+    /// free-form and its own corpus writes the synonym.
+    #[test]
+    fn a_documented_synonym_protects_the_same_as_its_type() {
+        let root = scratch("protected-synonym");
+        write_fact(
+            &root,
+            "a-pref",
+            &a_fact("a-pref", "a standing preference").replace("type: project", "type: preference"),
+        );
+        let facts = load_facts(&root);
+        let fact = facts
+            .iter()
+            .find(|fact| fact.name == "a-pref")
+            .expect("loaded");
+        assert!(fact.protected(), "{fact:?}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// KI-061: the writer's bound, applied at load. The corpus is
+    /// hand-editable by design, so a description edited by hand rides
+    /// whatever it was given — the loader applies the same sanitize and
+    /// marked cut rather than trusting every writer to be the harness.
+    #[test]
+    fn a_hand_edited_description_is_bounded_at_load() {
+        let root = scratch("description-bound");
+        let long = "x".repeat(MAX_DESCRIPTION_CHARS + 40);
+        write_fact(&root, "a-long", &a_fact("a-long", &long));
+        let facts = load_facts(&root);
+        let fact = facts
+            .iter()
+            .find(|fact| fact.name == "a-long")
+            .expect("loaded");
+        assert!(
+            fact.description.ends_with('\u{2026}'),
+            "the cut is marked: {}",
+            fact.description.len()
+        );
+        assert!(
+            fact.description.chars().count() <= MAX_DESCRIPTION_CHARS + 1,
+            "{}",
+            fact.description.chars().count()
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// KI-087: the fleet home's own corpus is checked BEFORE the working
+    /// directory's ancestor walk, so a run started outside any intended
+    /// corpus cannot adopt a foreign one the walk found further up.
+    #[test]
+    fn the_homes_own_corpus_wins_over_a_walked_up_foreign_one() {
+        let home = scratch("resolve-home");
+        let foreign = scratch("resolve-foreign");
+        fs::create_dir_all(home.join(MEMORIES_DIR)).unwrap();
+        fs::create_dir_all(foreign.join("nested").join(MEMORIES_DIR)).unwrap();
+        // From inside the foreign tree, the walk would find the foreign
+        // corpus; the home's own wins.
+        let resolved = resolve_root_from(&foreign.join("nested"), Some(&home));
+        assert_eq!(resolved, home.join(MEMORIES_DIR), "{resolved:?}");
+        // With no home, the walk stands as it was.
+        let walked = resolve_root_from(&foreign.join("nested"), None);
+        assert_eq!(
+            walked,
+            foreign.join("nested").join(MEMORIES_DIR),
+            "{walked:?}"
+        );
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&foreign);
     }
 
     #[test]

@@ -1164,9 +1164,17 @@ impl<'a> Agent<'a> {
         } else {
             format!("shape {shape}")
         };
+        // The adopted root rides the line (KI-074): a run that resolved
+        // its corpus from the working directory alone could adopt a
+        // foreign one silently, and the root is the fact that says which.
+        let root = self
+            .memory
+            .as_ref()
+            .map(|memory| memory.root().display().to_string())
+            .unwrap_or_default();
         let _ = writeln!(
             self.progress,
-            "\u{2014} memory: {named} \u{b7} {} fact{}",
+            "\u{2014} memory: {named} \u{b7} {} fact{} \u{b7} {root}",
             facts.len(),
             if facts.len() == 1 { "" } else { "s" },
         );
