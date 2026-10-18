@@ -827,6 +827,119 @@ pub fn jobs_path(home: &Path) -> PathBuf {
     home.join("cron").join(JOBS_FILE)
 }
 
+/// The lock file beside the job store. KI-092: an exclusive lock on
+/// this file is what makes the store's read-modify-write atomic across
+/// processes — a `fleet cron` command in one shell and a scheduler's
+/// `record_run` in another no longer interleave. The file is created
+/// when absent and never removed: its existence is not a claim, the
+/// lock on it is.
+fn lock_path(home: &Path) -> std::path::PathBuf {
+    home.join("cron").join("jobs.lock")
+}
+
+/// An exclusive lock on the store's lock file, released on drop. A
+/// process that cannot take it is refused by name rather than writing
+/// blind — the lost update the lock exists to prevent is exactly what
+/// a blind write would cause.
+///
+/// The lock BLOCKS. A caller must never hold one across a call that
+/// mutates the store (`add`, `record_run`, `set_enabled`, `remove`),
+/// because those take the lock themselves and the second take would
+/// wait on the first — the lock is per file descriptor, so even the
+/// same process deadlocks against itself. `save` is the only taker,
+/// and nothing calls it under the lock.
+struct StoreLock {
+    file: std::fs::File,
+}
+
+impl StoreLock {
+    fn take(home: &Path) -> Result<StoreLock, CronError> {
+        let path = lock_path(home);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                CronError::Io(format!("could not create {}: {error}", parent.display()))
+            })?;
+        }
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| {
+                CronError::Io(format!("could not open {}: {error}", path.display()))
+            })?;
+        // `flock` is the POSIX advisory lock: it is released when the
+        // last handle closes, so a process that dies mid-write cannot
+        // leave the store locked for everyone else.
+        flock_exclusive(&file).map_err(|error| {
+            CronError::Io(format!("could not lock {}: {error}", path.display()))
+        })?;
+        Ok(StoreLock { file })
+    }
+}
+
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        let _ = flock_unlock(&self.file);
+    }
+}
+
+/// The advisory lock, one call into the platform. `fcntl`-based
+/// `F_SETLKW` on unix; a no-op elsewhere, where the single-user shape
+/// makes the lock advisory only.
+#[cfg(unix)]
+fn flock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    // SAFETY: a well-formed flock on a live descriptor, whose only
+    // effect is the advisory lock the caller asked for.
+    let result = unsafe { libc_flock(file.as_raw_fd(), LOCK_EX) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(unix)]
+fn flock_unlock(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    let result = unsafe { libc_flock(file.as_raw_fd(), LOCK_UN) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// The two lock operations, named once. `LOCK_EX` is 2 and `LOCK_UN` is
+/// 8 on every unix this crate builds for.
+#[cfg(unix)]
+const LOCK_EX: i32 = 2;
+#[cfg(unix)]
+const LOCK_UN: i32 = 8;
+
+#[cfg(unix)]
+unsafe fn libc_flock(fd: i32, operation: i32) -> i32 {
+    // The one foreign call this crate makes: `flock(2)`. Declared here
+    // rather than through a dependency, because one syscall is not a
+    // crate.
+    unsafe extern "C" {
+        fn flock(fd: i32, operation: i32) -> i32;
+    }
+    unsafe { flock(fd, operation) }
+}
+
+#[cfg(not(unix))]
+fn flock_exclusive(_file: &std::fs::File) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn flock_unlock(_file: &std::fs::File) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// A per-write serial for the store's temp name, so two fleet processes
 /// — or two writes in one process — never share a temp file.
 static STORE_WRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
@@ -1000,6 +1113,16 @@ impl Store {
     /// rename. A reader therefore sees either the whole previous
     /// document or the whole new one, never a half-written store.
     fn save(&self) -> Result<(), CronError> {
+        // KI-092: the whole read-modify-write runs under the store lock.
+        // The re-read in `fire_one` narrowed the lost-update window to
+        // microseconds; this closes it — a `fleet cron disable` that
+        // read the store before a fire's read and writes after it used
+        // to be silently reverted, bringing a mid-run job back enabled
+        // with a `last_run` it did not earn. The lock is a sibling file
+        // beside the store, held for the caller's whole mutation, and a
+        // caller that cannot take it is refused rather than writing
+        // blind.
+        let _guard = StoreLock::take(&self.home)?;
         let dir = self.home.join("cron");
         fs::create_dir_all(&dir).map_err(|error| {
             CronError::Io(format!("could not create {}: {error}", dir.display()))
@@ -2050,13 +2173,11 @@ async fn fire_one(
     // and the loop carries on, never a dead tick loop.
     let settled = settle(CatchUnwind::new(run).await);
     // The outcome is recorded against a freshly loaded store: a job
-    // removed while its run was in flight is not resurrected. The
-    // re-read narrows the lost-update window to the microseconds
-    // between this read and the rename inside `save` — it does not
-    // close it: a `fleet cron disable` that read the store before this
-    // read and writes after it is silently reverted, which brings a
-    // mid-run job back enabled with a `last_run` it did not earn. The
-    // fix is a lock beside `jobs.json`, deferred as KI-092.
+    // removed while its run was in flight is not resurrected. The whole
+    // mutation runs under the store lock (KI-092), so a `fleet cron
+    // disable` that read the store before this read and writes after it
+    // no longer loses the update — it waits for this one to finish,
+    // and the job it disabled stays disabled.
     let recorded = match Store::open(&home) {
         Ok(mut store) => store.record_run(&name, due.minute, settled.outcome),
         Err(error) => Err(error),
@@ -2348,6 +2469,29 @@ mod tests {
     /// KI-161: the manifest seeds a fresh home and never rewrites what
     /// the owner already has. A re-run is a no-op; a changed job stays
     /// changed.
+    /// KI-092: the store's read-modify-write runs under the lock. The
+    /// lock file is created beside the store, the guard releases on
+    /// drop, and a mutation takes the lock itself — a caller must not
+    /// hold it across a mutation, because the lock is per descriptor
+    /// and the mutation would wait on itself.
+    #[test]
+    fn the_stores_mutations_run_under_the_lock() {
+        let home = temp_home("store-lock");
+        {
+            let _guard = StoreLock::take(&home).expect("the first lock");
+            assert!(lock_path(&home).exists(), "the lock file exists");
+        }
+        // Released on drop: a second take succeeds.
+        let _second = StoreLock::take(&home).expect("the lock released");
+        drop(_second);
+        // A store mutation takes the lock itself and lands whole.
+        let mut store = Store::open(&home).unwrap();
+        store.add("a-job", "* * * * *", "do it", false).unwrap();
+        let again = Store::open(&home).unwrap();
+        assert_eq!(again.jobs().len(), 1);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn the_manifest_seeds_a_fresh_home_and_never_rewrites() {
         let home = temp_home("seed-manifest");
