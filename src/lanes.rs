@@ -970,20 +970,14 @@ fn dashes_for(left: &str, right: &str) -> String {
 /// Hard-wrap `text` into `width`-character chunks. The details here are
 /// paths and command lines with no natural break points, so the break is
 /// a split, never a truncation.
+/// KI-055: one word-aware wrapper for the card family. `skills` and
+/// `cron` already broke prose at word boundaries; this hard-split
+/// mid-character instead, so the same detail line read two ways on two
+/// cards. The shared wrapper keeps words whole and hard-splits only the
+/// word that cannot fit a line of its own — which is the one case a
+/// word-aware break cannot serve.
 fn wrap_detail(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(16);
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    for character in text.chars() {
-        current.push(character);
-        if current.chars().count() >= width {
-            chunks.push(std::mem::take(&mut current));
-        }
-    }
-    if !current.is_empty() || chunks.is_empty() {
-        chunks.push(current);
-    }
-    chunks
+    crate::skills::wrap_detail(text, width)
 }
 
 fn plural(count: usize) -> &'static str {

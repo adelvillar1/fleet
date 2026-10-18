@@ -557,6 +557,26 @@ pub fn preimages_dir(home: &Path) -> PathBuf {
     proposals_dir(home).join(PREIMAGES_DIR)
 }
 
+/// One proposal's pre-image path, keyed by name AND store. KI-100: the
+/// two stores shared one namespace, so a name filed in both — the
+/// general store's `foo` and the skills draft's `foo` — overwrote each
+/// other's pre-image, and an undo restored the wrong bytes. The store's
+/// own word rides the file name, so the two cannot collide.
+fn store_word(store: Store) -> &'static str {
+    match store {
+        Store::General => "general",
+        Store::SkillsDraft => "skills",
+    }
+}
+
+fn preimage_path(home: &Path, proposal: &Proposal) -> PathBuf {
+    preimages_dir(home).join(format!(
+        "{}-{}.md",
+        store_word(proposal.store),
+        proposal.name
+    ))
+}
+
 /// One body section's text: everything between its `## <title>` header
 /// and the next `## ` header, trimmed.
 fn section(body: &str, title: &str) -> String {
@@ -1587,7 +1607,7 @@ fn stage_write_skill(proposal: &Proposal, content: &str, ctx: &Apply<'_>) -> Res
     }
     let target = ctx.skills_dir.join(name).join(skills::SKILL_FILE);
     let pre = fs::read_to_string(&target).ok();
-    let stash = preimages_dir(ctx.home).join(format!("{}.md", proposal.name));
+    let stash = preimage_path(ctx.home, proposal);
     if let Some(text) = &pre {
         stash_bytes(&stash, text.as_bytes())?;
     }
@@ -1623,7 +1643,11 @@ fn stage_retire_skill(proposal: &Proposal, name: &str, ctx: &Apply<'_>) -> Resul
             ctx.skills_dir.display()
         )));
     }
-    let stash = preimages_dir(ctx.home).join(format!("{}.retired", proposal.name));
+    let stash = preimages_dir(ctx.home).join(format!(
+        "{store}-{name}.retired",
+        store = store_word(proposal.store),
+        name = proposal.name
+    ));
     fs::create_dir_all(preimages_dir(ctx.home))
         .map_err(|error| Hold::Refused(format!("could not create the pre-image store: {error}")))?;
     if stash.exists() {
@@ -1762,7 +1786,11 @@ fn stage_config(
         &serde_json::to_string_pretty(&document).unwrap_or_default(),
     )
     .map_err(Hold::Refused)?;
-    let stash = preimages_dir(ctx.home).join(format!("{}.config.json", proposal.name));
+    let stash = preimages_dir(ctx.home).join(format!(
+        "{store}-{name}.config.json",
+        store = store_word(proposal.store),
+        name = proposal.name
+    ));
     if let Some(text) = &pre {
         stash_bytes(&stash, text.as_bytes())?;
     }
@@ -1818,7 +1846,11 @@ fn stage_config_remove(proposal: &Proposal, id: &str, ctx: &Apply<'_>) -> Result
         &serde_json::to_string_pretty(&document).unwrap_or_default(),
     )
     .map_err(Hold::Refused)?;
-    let stash = preimages_dir(ctx.home).join(format!("{}.config.json", proposal.name));
+    let stash = preimages_dir(ctx.home).join(format!(
+        "{store}-{name}.config.json",
+        store = store_word(proposal.store),
+        name = proposal.name
+    ));
     stash_bytes(&stash, pre.as_bytes())?;
     Ok(Landed {
         repo_paths: Vec::new(),
@@ -2000,10 +2032,11 @@ pub fn undo(name: &str, home: &Path, repo: &Path, skills_dir: &Path) -> Result<S
 /// `None` for a repo-side target, whose undo is the commit's revert.
 fn undo_restore(home: &Path, skills_dir: &Path, proposal: &Proposal) -> Option<Restore> {
     let store = preimages_dir(home);
+    let word = store_word(proposal.store);
     match proposal.target {
         Target::Skill => {
             let skill = skills_dir.join(&proposal.target_name);
-            let moved = store.join(format!("{}.retired", proposal.name));
+            let moved = store.join(format!("{word}-{}.retired", proposal.name));
             if moved.exists() {
                 return Some(Restore {
                     stash: moved,
@@ -2011,7 +2044,7 @@ fn undo_restore(home: &Path, skills_dir: &Path, proposal: &Proposal) -> Option<R
                     kind: RestoreKind::Moved,
                 });
             }
-            let file = store.join(format!("{}.md", proposal.name));
+            let file = store.join(format!("{word}-{}.md", proposal.name));
             let target = skill.join(skills::SKILL_FILE);
             if file.exists() {
                 Some(Restore {
@@ -2030,7 +2063,7 @@ fn undo_restore(home: &Path, skills_dir: &Path, proposal: &Proposal) -> Option<R
             }
         }
         Target::Config => {
-            let file = store.join(format!("{}.config.json", proposal.name));
+            let file = store.join(format!("{word}-{}.config.json", proposal.name));
             let target = home.join(CONFIG_FILE);
             if file.exists() {
                 Some(Restore {
@@ -2376,6 +2409,43 @@ mod tests {
     }
 
     // --- the proposal shape ---
+
+    #[test]
+    fn the_two_stores_pre_images_are_keyed_apart() {
+        let home = scratch("preimage-keys");
+        let change = r#"{"op": "write-skill", "content": "---\nname: demo\ndescription: a demo skill\n---\n\nbody\n"}"#;
+        let general_path = skill_proposal(&home, "same-name", "demo", change);
+        let general = load_one(&home, "same-name").expect("the general proposal loads");
+        assert_eq!(general.store, Store::General);
+        // The same name in the skills store, through its own writer.
+        let draft_home = home.clone();
+        let draft_path = crate::skills::proposals_dir(&draft_home).join("same-name.md");
+        std::fs::create_dir_all(crate::skills::proposals_dir(&draft_home)).unwrap();
+        std::fs::write(
+            &draft_path,
+            std::fs::read_to_string(&general_path).unwrap(),
+        )
+        .unwrap();
+        // Parsed from the skills store directly: `load_one` answers the
+        // general store first, which is exactly why the two stores'
+        // pre-images must be keyed apart.
+        let draft_text = std::fs::read_to_string(&draft_path).unwrap();
+        let draft =
+            parse_proposal(&draft_text, &draft_path, Store::SkillsDraft).expect("the draft parses");
+        assert_eq!(draft.store, Store::SkillsDraft);
+        let general_stash = preimage_path(&home, &general);
+        let draft_stash = preimage_path(&home, &draft);
+        assert_ne!(general_stash, draft_stash, "{general_stash:?}");
+        assert!(
+            general_stash.ends_with("general-same-name.md"),
+            "{general_stash:?}"
+        );
+        assert!(
+            draft_stash.ends_with("skills-same-name.md"),
+            "{draft_stash:?}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     #[test]
     fn a_proposal_round_trips_through_its_file() {

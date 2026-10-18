@@ -1597,6 +1597,11 @@ pub(crate) fn wrap_detail(text: &str, width: usize) -> Vec<String> {
     if !current.is_empty() {
         chunks.push(current);
     }
+    // An empty detail renders one empty line, not none: the card's body
+    // keeps its line count whatever the detail held.
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
     chunks
 }
 
