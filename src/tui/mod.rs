@@ -268,8 +268,9 @@ fn dispatch_key(
     let Some(action) = action_for(app, key) else {
         return;
     };
-    // The cycle asks for a read now: the cadence already covers every
-    // board, and the one the user just turned to should not wait for it.
+    // The cycle names the board it turned to: KI-118 — the cadence
+    // reads only the active board, so the refresher learns which one
+    // that is and reads it immediately rather than waiting a period.
     let cycling = matches!(action, Action::CycleBoard);
     // The picker's rows are filesystem reads, so the loop loads them and
     // hands them to the state machine.
@@ -303,7 +304,7 @@ fn dispatch_key(
         apply_effect(home, app, effect, command_tx, pending);
     }
     if cycling {
-        let _ = boards_tx.send(boards::BoardCommand::Refresh);
+        let _ = boards_tx.send(boards::BoardCommand::Active(app.boards.active));
     }
 }
 

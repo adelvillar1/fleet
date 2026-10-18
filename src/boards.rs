@@ -2604,6 +2604,10 @@ fn git(directory: &Path, bin: &str, args: &[&str], timeout: Duration) -> Option<
 pub enum BoardCommand {
     /// Read all three boards now, whatever the cadence says.
     Refresh,
+    /// The active board changed to this one. KI-118: the cadence reads
+    /// only the active board, so the board the owner just cycled to is
+    /// read immediately rather than waiting a period.
+    Active(BoardKind),
 }
 
 /// One finished read, on its way to the interface.
@@ -2650,6 +2654,17 @@ pub fn spawn_refresher(
         };
         runtime.block_on(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(BOARD_REFRESH_SECS));
+            // KI-118: the cadence reads only the ACTIVE board. The tower
+            // is five bounded git calls per repository over up to
+            // sixty-four repos, and paying it every thirty seconds
+            // whether or not anyone is looking is two seconds of child
+            // processes for nothing. The opening read is all three —
+            // the interface starts with three loading slots — and the
+            // cycle tells this thread which board became active, which
+            // is read immediately.
+            let mut active = BoardKind::Router;
+            let mut opening = true;
+            let mut full = false;
             loop {
                 // The cadence or a refresh command, whichever comes
                 // first. No missed-tick behavior is set, because the
@@ -2660,12 +2675,30 @@ pub fn spawn_refresher(
                     _ = ticker.tick() => {}
                     command = command_rx.recv() => {
                         // The sender is gone: the interface has ended.
-                        if command.is_none() {
+                        let Some(command) = command else {
                             return;
+                        };
+                        match command {
+                            // A full refresh reads all three, whatever
+                            // the cadence would have read.
+                            BoardCommand::Refresh => full = true,
+                            BoardCommand::Active(kind) => {
+                                if kind == active {
+                                    continue;
+                                }
+                                active = kind;
+                            }
                         }
                     }
                 }
-                for update in read_all(&sources).await {
+                let updates = if opening || full {
+                    read_all(&sources).await
+                } else {
+                    read_one(&sources, active).await
+                };
+                opening = false;
+                full = false;
+                for update in updates {
                     if update_tx.send(update).is_err() {
                         return;
                     }
@@ -2733,6 +2766,45 @@ async fn read_all(sources: &Sources) -> Vec<BoardUpdate> {
             ),
         },
     ]
+}
+
+/// One board's read, alone. KI-118: the cadence's read, so a period
+/// spent on the router board costs nothing of the tower's scan. The
+/// shape is `read_all`'s own — a panic on the blocking pool is named,
+/// never swallowed — with one arm chosen.
+async fn read_one(sources: &Sources, kind: BoardKind) -> Vec<BoardUpdate> {
+    let outcome = match kind {
+        BoardKind::Router => {
+            let router = sources.router.clone();
+            let day = crate::calib::today();
+            match tokio::task::spawn_blocking(move || read_router(&router, &day)).await {
+                Ok(snapshot) => Ok(BoardData::Router(Box::new(snapshot))),
+                Err(error) => Err(format!("the router board read could not run: {error}")),
+            }
+        }
+        BoardKind::Brain => {
+            let brain_home = sources.brain_home.clone();
+            let brain_bounds = sources.bounds.clone();
+            match tokio::task::spawn_blocking(move || read_brain_source(&brain_home, &brain_bounds))
+                .await
+            {
+                Ok(inner) => inner.map(|snapshot| BoardData::Brain(Box::new(snapshot))),
+                Err(error) => Err(format!(
+                    "the second-brain board read could not run: {error}"
+                )),
+            }
+        }
+        BoardKind::Tower => {
+            let tower_root = sources.tower_root.clone();
+            let tower_bounds = sources.bounds.clone();
+            match tokio::task::spawn_blocking(move || read_tower(&tower_root, &tower_bounds)).await
+            {
+                Ok(inner) => inner.map(|snapshot| BoardData::Tower(Box::new(snapshot))),
+                Err(error) => Err(format!("the tower read could not run: {error}")),
+            }
+        }
+    };
+    vec![BoardUpdate { kind, outcome }]
 }
 
 /// The second-brain read as the refresher drives it: a home that does not
@@ -3013,6 +3085,46 @@ mod tests {
                 744,
             ),
         ]
+    }
+
+    /// KI-118: the cadence reads only the ACTIVE board. The tower's scan
+    /// is the expensive read, and a period spent on the router board
+    /// costs nothing of it — one update arrives, and it is the active
+    /// board's.
+    #[test]
+    fn the_cadence_reads_only_the_active_board() {
+        let scratch = Scratch::new("refresher-active");
+        let brain = scratch.path().join("brain");
+        std::fs::create_dir_all(&brain).expect("the brain home");
+        write_state(&brain, "gates_state", GATES_FIXTURE);
+        scratch_repo(scratch.path(), "alpha");
+        let sources = Sources {
+            router: state(&scratch),
+            brain_home: Some(brain),
+            tower_root: scratch.path().to_path_buf(),
+            bounds: Bounds::default(),
+        };
+        let (tx, rx) = spawn_refresher(sources);
+        let bridged = bridge(rx);
+        // The opening read is all three.
+        let mut opening = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while opening.len() < 3 && std::time::Instant::now() < deadline {
+            let Ok(update) = bridged.recv() else { break };
+            opening.push(update.kind);
+        }
+        assert_eq!(opening.len(), 3, "{opening:?}");
+
+        // The cycle names the tower: the read that follows is the
+        // tower's alone, not all three again.
+        let _ = tx.send(BoardCommand::Active(BoardKind::Tower));
+        let mut cycled = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while cycled.is_empty() && std::time::Instant::now() < deadline {
+            let Ok(update) = bridged.recv() else { break };
+            cycled.push(update.kind);
+        }
+        assert_eq!(cycled, vec![BoardKind::Tower], "{cycled:?}");
     }
 
     #[test]
