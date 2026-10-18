@@ -735,6 +735,9 @@ fn name_complaint(name: &str) -> String {
 /// The store file's name, under the home's `cron` directory.
 pub const JOBS_FILE: &str = "jobs.json";
 
+/// The eval cadence's persisted minute, beside the job store.
+pub const EVAL_MINUTE_FILE: &str = "eval-minute.txt";
+
 /// `<home>/cron/jobs.json`.
 pub fn jobs_path(home: &Path) -> PathBuf {
     home.join("cron").join(JOBS_FILE)
@@ -1209,6 +1212,41 @@ pub fn eval_due(last: Option<Minute>, now: Minute) -> bool {
     }
 }
 
+/// The file the eval cadence's minute is persisted in, beside the job
+/// store. KI-105: the latch was in-memory only, so a process restarted
+/// inside the 04:00 matching minute re-fired the daily corpus for that
+/// minute — idempotent, but a second full run nobody asked for. The
+/// persisted minute is read at construction and written when the
+/// cadence fires; an unreadable or malformed file is an absent latch,
+/// which is the old behavior rather than a refusal.
+pub fn eval_minute_path(home: &Path) -> PathBuf {
+    home.join("cron").join(EVAL_MINUTE_FILE)
+}
+
+/// The persisted eval minute, or `None` when there is none.
+pub fn read_eval_minute(home: &Path) -> Option<Minute> {
+    let text = fs::read_to_string(eval_minute_path(home)).ok()?;
+    Minute::parse(text.trim())
+}
+
+/// Write the eval minute. Best-effort: a write that fails leaves the
+/// in-memory latch standing, which is the behavior before the file
+/// existed.
+fn write_eval_minute(home: &Path, minute: Minute) {
+    let path = eval_minute_path(home);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(
+        &path,
+        format!(
+            "{}
+",
+            minute.stamp()
+        ),
+    );
+}
+
 /// What the eval cadence does when it fires: the production
 /// implementation runs the corpus headless and lands its row, and a test
 /// supplies its own, the way the cron [`Runner`] seam works.
@@ -1386,6 +1424,12 @@ pub struct Scheduler {
     /// test that does not wire one gets (its cron-job behavior is
     /// unchanged). [`Scheduler::spawn`] wires the real corpus run.
     eval: Option<EvalRunner>,
+    /// The last minute this scheduler saw. KI-094: a clock that steps
+    /// BACKWARD re-presents minutes the latch already holds, and the
+    /// tick would fire them again — two runs, two logs, two outcomes
+    /// for one window. A tick whose minute is older than the last one
+    /// seen is refused rather than served.
+    last_seen: Option<Minute>,
 }
 
 /// The claim directory beside the job store: one file per (job, minute),
@@ -1446,6 +1490,9 @@ fn sweep_claims(home: &Path, now: Minute) {
 impl Scheduler {
     /// A scheduler over `home`, firing through `runner`.
     pub fn new(home: PathBuf, runner: Runner) -> Scheduler {
+        // Read before the move: the persisted eval minute is the
+        // constructor's own read of the home it is about to own.
+        let eval_last = read_eval_minute(&home);
         Scheduler {
             home,
             latch: HashMap::new(),
@@ -1453,8 +1500,9 @@ impl Scheduler {
             store_complaint: None,
             ui_tx: None,
             runner,
-            eval_last: None,
+            eval_last,
             eval: None,
+            last_seen: None,
         }
     }
 
@@ -1491,6 +1539,9 @@ impl Scheduler {
             return Vec::new();
         }
         self.eval_last = Some(now);
+        // KI-105: the minute rides disk beside the store, so a restart
+        // inside the matching minute reads the latch that was claimed.
+        write_eval_minute(&self.home, now);
         let eval = self.eval.as_mut().expect("checked Some above");
         match caught(CatchUnwind::new(eval()).await) {
             Ok(Ok(detail)) => vec![format!("fleet: cron: eval corpus {detail}")],
@@ -1604,6 +1655,18 @@ impl Scheduler {
             let Some(last) = job.last_run.as_deref().and_then(Minute::parse) else {
                 continue;
             };
+            // KI-093: a `last_run` in the FUTURE — a hand-edited or
+            // restored store — used to make `missed > last` permanently
+            // false and silence the job forever. The clamp treats it as
+            // "ran just now", so the next window is served normally.
+            let last = if last > now {
+                // A future stamp reads as "ran before this window": the
+                // clamp sits one minute before the missed window, so the
+                // window is served exactly once and the next one is not.
+                missed.previous_minute()
+            } else {
+                last
+            };
             // The latch, the same one the tick claims: a startup pass
             // that runs twice — or a tick inside the missed minute —
             // does not serve the window again.
@@ -1672,6 +1735,21 @@ impl Scheduler {
     /// `fleet cron add` created a moment ago is picked up within one
     /// tick.
     pub async fn tick(&mut self, now: Minute) -> Vec<String> {
+        // KI-094: a backward clock jump would re-present a minute the
+        // latch already holds and double-fire the job. Refuse the tick
+        // rather than serve it; the machine is single-user and
+        // NTP-corrected, so the refusal names an anomaly rather than
+        // suppressing real work.
+        if let Some(last) = self.last_seen {
+            if now < last {
+                return vec![format!(
+                    "cron: the clock moved backward ({} after {}); the tick is refused",
+                    now.stamp(),
+                    last.stamp()
+                )];
+            }
+        }
+        self.last_seen = Some(now);
         sweep_claims(&self.home, now);
         let store = match self.open_store() {
             Ok(store) => store,
@@ -1898,6 +1976,19 @@ async fn fire_one(
     let recorded = match Store::open(&home) {
         Ok(mut store) => store.record_run(&name, due.minute, settled.outcome),
         Err(error) => Err(error),
+    };
+    // KI-095: a failed `record_run` is retried once, from a fresh
+    // store. The latch stays claimed for the minute — a retry inside
+    // the same minute could spend a window whose run may already have
+    // spent — but the outcome no longer dies with the write that was
+    // supposed to record it: a full disk at 04:00 used to leave
+    // `last_run` stale while the run had genuinely completed.
+    let recorded = match recorded {
+        Ok(()) => Ok(()),
+        Err(first) => match Store::open(&home) {
+            Ok(mut store) => store.record_run(&name, due.minute, settled.outcome),
+            Err(_) => Err(first),
+        },
     };
     let tail = match recorded {
         Ok(()) => String::new(),
@@ -2167,6 +2258,68 @@ mod tests {
     /// operating system's create, which is what stops two schedulers on
     /// one machine from both firing the same job. A different minute
     /// claims a fresh file.
+    /// KI-093: a `last_run` in the future — a hand-edited or restored
+    /// store — used to silence a job forever. The clamp treats it as
+    /// "ran just now", so the next window is served.
+    #[test]
+    fn a_future_last_run_does_not_silence_the_job() {
+        let home = temp_home("future-last");
+        let mut store = Store::open(&home).unwrap();
+        store.add("a-job", "* * * * *", "do it", false).unwrap();
+        let now = minute(2026, 10, 14, 7, 0);
+        store
+            .record_run("a-job", minute(2026, 10, 15, 7, 0), Outcome::Completed)
+            .unwrap();
+        let jobs = store.jobs().to_vec();
+        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("nothing"));
+        // The clamp: the future stamp reads as "ran just now", so the
+        // catch-up's `missed > last` is true for the current window and
+        // the job is served rather than skipped. The scheduler has to
+        // have seen the job enabled for the window to be eligible.
+        scheduler.note_jobs(&jobs, now);
+        let due = scheduler.catch_up_due(&jobs, now);
+        // The clamp reads the future stamp as "ran just now", so the
+        // window at `now` is newer than the floor and the job serves.
+        assert_eq!(due.len(), 1, "{due:?}");
+        assert_eq!(due[0].minute, now, "{due:?}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// KI-094: a clock that steps backward is refused, not served: a
+    /// tick whose minute is older than the last one seen would re-fire
+    /// minutes the latch already holds.
+    #[tokio::test]
+    async fn a_backward_clock_is_refused_not_served() {
+        let home = temp_home("clock-back");
+        let mut scheduler = Scheduler::new(home.clone(), scripted_runner("nothing"));
+        let later = minute(2026, 10, 14, 8, 0);
+        let earlier = minute(2026, 10, 14, 7, 0);
+        let _ = scheduler.tick(later).await;
+        let lines = scheduler.tick(earlier).await;
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("clock moved backward")),
+            "{lines:?}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// KI-105: the eval cadence's minute rides disk, so a restarted
+    /// process does not re-run a corpus that already ran for it.
+    #[test]
+    fn the_eval_minute_survives_a_restart() {
+        let home = temp_home("eval-minute");
+        let when = minute(2026, 10, 14, 4, 0);
+        write_eval_minute(&home, when);
+        let scheduler = Scheduler::new(home.clone(), scripted_runner("nothing"));
+        assert_eq!(scheduler.eval_last, Some(when));
+        // A second scheduler over the same home reads the same floor.
+        let second = Scheduler::new(home.clone(), scripted_runner("nothing"));
+        assert_eq!(second.eval_last, Some(when));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn a_minutes_claim_is_atomic_and_a_second_scheduler_is_refused() {
         let home = temp_home("claim");
