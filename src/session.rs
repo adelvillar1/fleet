@@ -91,6 +91,16 @@ pub enum Record {
         lane: String,
         tools: Vec<crate::tools::LaneTool>,
     },
+    /// The channel this session's peer arrived on, and the peer's name —
+    /// recorded once, when the channel driver creates the session. What
+    /// makes an inbox able to say "via webhook · the CI box" beside a
+    /// conversation, and what tells the owner that a reply here goes to
+    /// that peer rather than into the void. Bookkeeping, like
+    /// `lane_tools`: it replays to no message.
+    Channel {
+        channel: String,
+        peer: String,
+    },
     /// The skills one run declared, recorded once at run start. The
     /// skills list is dynamic the way a lane's tools are — the files
     /// change between runs — and the system prompt carries it as a
@@ -397,6 +407,14 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
             Ok(Record::Compaction { .. })
         )
     });
+    // The channel record, when the log carries one: the peer's
+    // conversation says so beside its first line.
+    let channel = text.lines().find_map(|line| {
+        match serde_json::from_str::<Record>(line.trim()) {
+            Ok(Record::Channel { channel, peer }) => Some((channel, peer)),
+            _ => None,
+        }
+    });
     Some(SessionSummary {
         id,
         model,
@@ -404,6 +422,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         ended,
         kind,
         workspace,
+        channel,
         compacted,
         served_model,
         path: path.to_path_buf(),
@@ -426,6 +445,9 @@ pub struct SessionSummary {
     /// The working directory this session was born in, or `None` on a log
     /// written before the field existed. The archive groups by it.
     pub workspace: Option<String>,
+    /// The channel this session's peer arrived on and the peer's name,
+    /// or `None` for an ordinary session the owner started themselves.
+    pub channel: Option<(String, String)>,
     /// True when the log carries a `compaction` record: the conversation
     /// outgrew the window and was folded at least once. The picker and
     /// `fleet sessions` mark it, because a compacted session's replay is
@@ -493,6 +515,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     ended: false,
                     kind: None,
                     workspace: None,
+                    channel: None,
                     compacted: false,
                     served_model: None,
                     path,
@@ -572,6 +595,9 @@ pub fn conversation(records: &[Record]) -> Conversation {
             // Bookkeeping: a rewind marks a cut the caller already
             // applied, and a plan rides the assistant message beside it.
             Record::Rewind { .. } | Record::Plan { .. } => {}
+            // Bookkeeping: which channel the peer arrived on replays to
+            // no message.
+            Record::Channel { .. } => {}
             Record::User { content } => {
                 messages.push(Message::text(Role::User, content.clone()));
                 turns.push(next_turn);

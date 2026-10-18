@@ -2804,6 +2804,9 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // and a plan rides the assistant message beside it.
         Record::Rewind { .. } => None,
         Record::Plan { .. } => None,
+        // Bookkeeping: the channel a peer arrived on is not a
+        // conversation block.
+        Record::Channel { .. } => None,
         Record::User { content } => Some(Entry::User(content.clone())),
         Record::Assistant {
             content,
@@ -4125,6 +4128,7 @@ mod tests {
             ended: false,
             kind: None,
             workspace: None,
+            channel: None,
             compacted: false,
             served_model: None,
             path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),

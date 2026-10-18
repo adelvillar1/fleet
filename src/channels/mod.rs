@@ -49,20 +49,25 @@ pub mod webhook;
 
 use crate::gui::bridge::Bridge;
 
-/// Who is on the far end of a channel: the channel's name and the peer's
-/// own id on it. A peer is identified by the pair, because the same
-/// human on Telegram and on a webhook is two peers with one owner.
+/// Who is on the far end of a channel: the channel's name, the peer's own
+/// id on it, and the name the peer paired under. A peer is identified by
+/// the channel and the id, because the same human on Telegram and on a
+/// webhook is two peers with one owner — and the name rides along
+/// because every surface that shows a peer shows the name, not the
+/// digest.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Peer {
     pub channel: String,
     pub id: String,
+    pub name: String,
 }
 
 impl Peer {
-    pub fn new(channel: &str, id: &str) -> Peer {
+    pub fn new(channel: &str, id: &str, name: &str) -> Peer {
         Peer {
             channel: channel.to_string(),
             id: id.to_string(),
+            name: name.to_string(),
         }
     }
 
@@ -355,8 +360,18 @@ impl Driver {
         // A fresh log for this peer's first task: the same convention
         // every other surface creates one with.
         let home = self.bridge.home();
-        let session = crate::session::Session::create(&home, &self.bridge.model())
+        let mut session = crate::session::Session::create(&home, &self.bridge.model())
             .map_err(|error| format!("could not create the session: {error}"))?;
+        // The log says which channel this conversation arrived on and
+        // who the peer is: an inbox that cannot name them is a list of
+        // stamps, and the owner cannot tell a reply here from a message
+        // into the void.
+        if let Err(error) = session.record(&crate::session::Record::Channel {
+            channel: peer.channel.clone(),
+            peer: peer.name.clone(),
+        }) {
+            return Err(format!("could not record the channel: {error}"));
+        }
         let id = session.id().to_string();
         let reply = self.replies.lock().unwrap_or_else(|poison| poison.into_inner())
             .get(&peer.key())
@@ -549,10 +564,10 @@ mod tests {
         store.save(&home, "webhook").unwrap();
 
         let policy = Policy::new(home.clone());
-        let actor_peer = Peer::new("webhook", "actor");
-        let watcher_peer = Peer::new("webhook", "watcher");
-        let stranger = Peer::new("webhook", "stranger");
-        let other_channel = Peer::new("telegram", "actor");
+        let actor_peer = Peer::new("webhook", "actor", "the actor");
+        let watcher_peer = Peer::new("webhook", "watcher", "the watcher");
+        let stranger = Peer::new("webhook", "stranger", "a stranger");
+        let other_channel = Peer::new("telegram", "actor", "the actor");
 
         assert_eq!(policy.authorize(&actor_peer), Ok(Capability::Task));
         assert_eq!(
@@ -639,7 +654,7 @@ mod tests {
         // A delivery that names a callback: the seat and the outcome both
         // have somewhere to go.
         let inbound = Inbound {
-            peer: Peer::new("webhook", "abc"),
+            peer: Peer::new("webhook", "abc", "the CI box"),
             session: None,
             task: "run the tests".to_string(),
             reply: Reply::Url("http://127.0.0.1:9/callback".to_string()),
@@ -741,7 +756,7 @@ mod tests {
         assert!(store.peers.is_empty());
         let policy = Policy::new(home);
         assert_eq!(
-            policy.authorize(&Peer::new("webhook", "anyone")),
+            policy.authorize(&Peer::new("webhook", "anyone", "anyone")),
             Err(Refusal::Unknown)
         );
     }
@@ -756,7 +771,7 @@ mod tests {
         );
         let _door = bridge.connect();
         let driver = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
-        let peer = Peer::new("webhook", "abc");
+        let peer = Peer::new("webhook", "abc", "the CI box");
 
         // A named session is followed when its shape is an id's.
         let asked = "20261018T101010Z-abcdef";
@@ -786,7 +801,7 @@ mod tests {
         let _door = bridge.connect();
         let driver = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
         let inbound = Inbound {
-            peer: Peer::new("webhook", "stranger"),
+            peer: Peer::new("webhook", "stranger", "a stranger"),
             session: None,
             task: "do the thing".to_string(),
             reply: Reply::None,
@@ -816,7 +831,7 @@ mod tests {
         );
         let _door = bridge.connect();
         let driver = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
-        let peer = Peer::new("webhook", "abc");
+        let peer = Peer::new("webhook", "abc", "the CI box");
         let inbound = Inbound {
             peer: peer.clone(),
             session: None,
@@ -856,7 +871,7 @@ mod tests {
         let _door = bridge.connect();
         let driver = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
         let inbound = Inbound {
-            peer: Peer::new("webhook", "watcher"),
+            peer: Peer::new("webhook", "watcher", "the watcher"),
             session: None,
             task: "do the thing".to_string(),
             reply: Reply::None,

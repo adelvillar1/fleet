@@ -739,6 +739,59 @@ impl Bridge {
         }
     }
 
+    /// Who may reach this face: the paired devices and the channel
+    /// peers, as one document. The store holds digests, so this names
+    /// who is paired and never what would let them in — the same masking
+    /// rule the rest of the surface holds.
+    ///
+    /// A loopback-face read only: the remote face's allowlist keeps this
+    /// closed, because a phone that could revoke devices is a phone that
+    /// could lock its owner out.
+    pub async fn access(&self) -> Value {
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || access_read(&home)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "access",
+                "refused": ["the access read did not land"],
+            }),
+        }
+    }
+
+    /// Forget a paired device or a channel peer by kind and id. The
+    /// store's own save is the writer, so the revocation is the same one
+    /// the CLI performs — there is no second path to the file.
+    pub async fn access_revoke(&self, kind: &str, id: &str) -> Result<Value, String> {
+        let home = self.home.clone();
+        let kind = kind.trim().to_string();
+        let id = id.trim().to_string();
+        tokio::task::spawn_blocking(move || match kind.as_str() {
+            "device" => {
+                let mut store = crate::remote::pairing::DeviceStore::load(&home)
+                    .map_err(|error| error.to_string())?;
+                if store.revoke(&id) {
+                    store.save(&home).map_err(|error| error.to_string())?;
+                    Ok(json!({"type": "revoked", "kind": "device", "id": id}))
+                } else {
+                    Err(format!("no paired device named `{id}`"))
+                }
+            }
+            "peer" => {
+                let mut store = crate::channels::PeerStore::load(&home, "webhook")
+                    .map_err(|error| error.to_string())?;
+                if store.revoke(&id) {
+                    store.save(&home, "webhook").map_err(|error| error.to_string())?;
+                    Ok(json!({"type": "revoked", "kind": "peer", "id": id}))
+                } else {
+                    Err(format!("no channel peer named `{id}`"))
+                }
+            }
+            other => Err(format!("`{other}` is not a thing that can be revoked")),
+        })
+        .await
+        .map_err(|_| "the revocation did not land".to_string())?
+    }
+
     /// The sessions panel's document: the archive as the summaries the
     /// log heads carry, newest first, with the session this face
     /// anchors named so the panel can say which row is live.
@@ -2027,6 +2080,12 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
     for record in records {
         match record {
             session::Record::Start { .. } | session::Record::End { .. } => {}
+            // Bookkeeping, like start and end — it replays to no message
+            // — but it carries the facts the inbox shows, so the replay
+            // surfaces it rather than dropping it.
+            session::Record::Channel { channel, peer } => {
+                cards.push(json!({"type": "channel", "channel": channel, "peer": peer}));
+            }
             session::Record::Rewind {
                 turn,
                 restored,
@@ -2197,6 +2256,52 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
 /// log that fails to parse stays in the list as `unreadable` — the
 /// picker's own rule, and hiding a log the owner knows exists would be
 /// the archive pretending to be more complete than it is.
+/// The access document: the paired devices and the channel peers, with
+/// names and stamps and never a token.
+fn access_read(home: &std::path::Path) -> Value {
+    let devices = crate::remote::pairing::DeviceStore::load(home)
+        .map(|store| {
+            store
+                .devices
+                .iter()
+                .map(|device| {
+                    json!({
+                        "id": device.id,
+                        "name": device.name,
+                        "paired": device.created_at,
+                        "seen": device.last_seen_at,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let peers = crate::channels::PeerStore::load(home, "webhook")
+        .map(|store| {
+            store
+                .peers
+                .iter()
+                .map(|peer| {
+                    json!({
+                        "id": peer.id,
+                        "name": peer.name,
+                        "capability": match peer.capability {
+                            crate::channels::Capability::Task => "may act",
+                            crate::channels::Capability::Observe => "may only listen",
+                        },
+                        "paired": peer.created_at,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "type": "access",
+        "read_at": crate::boards::now_stamp(),
+        "devices": devices,
+        "peers": peers,
+    })
+}
+
 fn sessions_read(home: &std::path::Path, current: &str) -> Value {
     let entries = match session::list(home) {
         Ok(entries) => entries,
@@ -2222,6 +2327,7 @@ fn sessions_read(home: &std::path::Path, current: &str) -> Value {
                 "ended": entry.ended,
                 "kind": entry.kind,
                 "workspace": entry.workspace,
+                "channel": entry.channel,
                 "compacted": entry.compacted,
                 "current": entry.id == current,
             })
@@ -4521,6 +4627,62 @@ mod tests {
 
         // The seat is gone from the session's state.
         assert!(bridge.state(&attached)["approval"].is_null());
+    }
+
+    /// The access document names who may reach this face and never what
+    /// would let them, and the revocation forgets one through the store's
+    /// own save — the same one the CLI performs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_access_document_names_the_paired_and_the_revocation_forgets_one() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-gui-bridge-access-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        // A paired device and a paired channel peer.
+        let mut devices = crate::remote::pairing::DeviceStore::default();
+        let device_token = "device-token-abc".to_string();
+        devices.add("Alejandro's iPhone", &device_token, "2026-10-18T10:00:00Z");
+        devices.save(&home).unwrap();
+        let mut peers = crate::channels::PeerStore::default();
+        peers.pair(
+            "abc",
+            "the CI box",
+            "peer-token-xyz",
+            crate::channels::Capability::Task,
+            "2026-10-18T11:00:00Z",
+        );
+        peers.save(&home, "webhook").unwrap();
+
+        let (bridge, _) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        let document = bridge.access().await;
+        assert_eq!(document["devices"].as_array().map(Vec::len), Some(1));
+        assert_eq!(document["peers"].as_array().map(Vec::len), Some(1));
+        assert_eq!(document["devices"][0]["name"], "Alejandro's iPhone");
+        assert_eq!(document["peers"][0]["name"], "the CI box");
+        // The masking rule: names and stamps, never a credential.
+        let text = document.to_string();
+        assert!(!text.contains(&device_token), "the device token rode: {text}");
+        assert!(!text.contains("peer-token-xyz"), "the peer token rode: {text}");
+        assert!(!text.contains("token_hash"), "a digest rode: {text}");
+
+        // The revocation goes through the store's own save, and the
+        // device's token stops working.
+        let id = document["devices"][0]["id"].as_str().unwrap().to_string();
+        let revoked = bridge.access_revoke("device", &id).await.expect("revoked");
+        assert_eq!(revoked["kind"], "device");
+        let reloaded = crate::remote::pairing::DeviceStore::load(&home).unwrap();
+        assert!(reloaded.device_for_token(&device_token).is_none());
+        // A name that is not there is refused by naming itself.
+        assert!(bridge.access_revoke("device", "nobody").await.is_err());
+        // And a kind that is not a thing is refused for its shape.
+        assert!(bridge.access_revoke("settings", "x").await.is_err());
+        std::fs::remove_dir_all(&home).ok();
     }
 
     /// Two sessions attached to one bridge hold independent transcripts,

@@ -203,7 +203,7 @@ async fn serve_connection(
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string);
             let inbound = Inbound {
-                peer: Peer::new("webhook", &peer_id),
+                peer: Peer::new("webhook", &peer_id, &peer_name),
                 session,
                 task,
                 reply: match callback {
