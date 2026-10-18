@@ -435,6 +435,98 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `fleet channels`: the channel service's surface. The bare command
+/// lists the configured channels and their paired peers as cards; a
+/// pairing mints a peer token printed once, exactly as a device's is;
+/// a revoke forgets one. The store holds digests, so this surface names
+/// who may act and never what would let them.
+fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Some((name, callback)) = &options.pair_webhook {
+        let token = match fleet::channels::mint_peer_token() {
+            Ok(token) => token,
+            Err(error) => {
+                eprintln!("fleet: channels: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        // The id is the digest's prefix, which is unique without a
+        // second random draw and is not the token itself.
+        let id = fleet::remote::pairing::hash_hex(token.as_bytes())[..12].to_string();
+        let mut store = match fleet::channels::PeerStore::load(&home, "webhook") {
+            Ok(store) => store,
+            Err(error) => {
+                eprintln!("fleet: channels: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let stamp = fleet::session::iso_utc_stamp(std::time::SystemTime::now())
+            .unwrap_or_else(|_| String::from("unknown"));
+        store.pair(&id, name, &token, fleet::channels::Capability::Task, &stamp);
+        if let Err(error) = store.save(&home, "webhook") {
+            eprintln!("fleet: channels: {error}");
+            return ExitCode::FAILURE;
+        }
+        println!("fleet channels — one webhook peer paired");
+        println!("  peer:  {name}  ({id})");
+        println!("  token: {token}");
+        println!("  hook:  POST http://127.0.0.1:{port}/hook", port = fleet::channels::webhook::DEFAULT_PORT);
+        println!("         with the header x-fleet-peer: {token}");
+        if let Some(callback) = callback {
+            println!("  callback: {callback}");
+        } else {
+            println!("  no callback named — outcomes and seats go nowhere; re-pair with --callback");
+        }
+        println!("  the token is printed once and stored as its digest only");
+        return ExitCode::SUCCESS;
+    }
+    if let Some(id) = &options.revoke_webhook {
+        let mut store = match fleet::channels::PeerStore::load(&home, "webhook") {
+            Ok(store) => store,
+            Err(error) => {
+                eprintln!("fleet: channels: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        if store.revoke(id) {
+            if let Err(error) = store.save(&home, "webhook") {
+                eprintln!("fleet: channels: {error}");
+                return ExitCode::FAILURE;
+            }
+            println!("fleet channels — `{id}` is forgotten; its token no longer works");
+            return ExitCode::SUCCESS;
+        }
+        eprintln!("fleet: channels: no webhook peer named `{id}`; `fleet channels` lists them");
+        return ExitCode::FAILURE;
+    }
+    // The bare command: what is configured, and who may act.
+    println!("fleet channels — the channel service");
+    let webhook = fleet::channels::PeerStore::load(&home, "webhook").unwrap_or_default();
+    println!(
+        "  webhook  {} paired · port {}",
+        webhook.peers.len(),
+        fleet::channels::webhook::DEFAULT_PORT
+    );
+    for peer in &webhook.peers {
+        let capability = match peer.capability {
+            fleet::channels::Capability::Task => "may act",
+            fleet::channels::Capability::Observe => "may only listen",
+        };
+        println!("    {id}  {name} · {capability}", id = peer.id, name = peer.name);
+    }
+    if webhook.peers.is_empty() {
+        println!("    `fleet channels pair-webhook <name> --callback <url>` pairs one");
+    }
+    println!("  `fleet gui --channels` serves the face these peers reach");
+    ExitCode::SUCCESS
+}
+
 /// `fleet pair`: mint a pairing code and print it with the address a
 /// phone opens. The window lands in the home, so this command needs no
 /// running face — the listener reads the window when a code arrives.
@@ -563,6 +655,7 @@ async fn gui_command(options: &cli::GuiOptions) -> ExitCode {
             enabled: options.remote,
             host: options.remote_host.clone(),
         },
+        channels: options.channels,
     };
     match fleet::gui::serve(options).await {
         Ok(()) => ExitCode::SUCCESS,

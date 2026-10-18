@@ -344,6 +344,16 @@ impl Bridge {
         self.memories = root;
     }
 
+    /// Name the session being driven, exactly as the agent thread does
+    /// before each run. The seam exists so a test can stand in for the
+    /// thread — the seat a run raises belongs to the session the thread
+    /// is driving, and a test with no thread has to say which one that
+    /// is.
+    #[cfg(test)]
+    pub(crate) fn drive(&self, session: &str) {
+        lock(&self.state).driving = Some(session.to_string());
+    }
+
     /// Point the trust trio's tree at a directory other than the one the
     /// process was launched from. The production rule is the process's
     /// own working directory — the same root the tools write to — and
@@ -407,6 +417,19 @@ impl Bridge {
     /// stable answer whatever the desktop is looking at.
     pub fn launch(&self) -> String {
         lock(&self.state).launch.clone()
+    }
+
+    /// The home this face's sessions live under. A channel driver asks
+    /// for it to create a peer's first log; nothing else outside this
+    /// module has any business writing there.
+    pub fn home(&self) -> PathBuf {
+        self.home.clone()
+    }
+
+    /// The model this face runs. A channel driver's peer sessions run
+    /// the same model the face does, because it is the same core.
+    pub fn model(&self) -> String {
+        self.model.clone()
     }
 
     /// One session's live state as one document: the session, the model,
@@ -1922,7 +1945,7 @@ fn file_read(root: &std::path::Path, asked: &str) -> Value {
 /// lexical and first, because the id names a file under the home: a
 /// traversal-shaped id is refused for its shape, whether or not a file
 /// with that name could exist.
-fn session_id_is_shape(id: &str) -> bool {
+pub fn session_id_is_shape(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
         && id
@@ -3295,14 +3318,31 @@ async fn fan_out(
                     // command loop is serial: the events for one task all
                     // arrive before the next command is read.
                     let session = lock(&state).target();
-                    record(&state, &events, &session, describe(&event));
+                    let mut described = describe(&event);
+                    // The events that close a run or raise a seat name
+                    // their session, for the reason the seat does.
+                    if let Some(object) = described.as_object_mut() {
+                        if matches!(
+                            object.get("type").and_then(Value::as_str),
+                            Some("finished") | Some("failed")
+                        ) {
+                            object.insert("session".to_string(), json!(session));
+                        }
+                    }
+                    record(&state, &events, &session, described);
                 }
                 None => ui_done = true,
             },
             request = seat_rx.recv(), if !seat_done => match request {
                 Some(request) => {
                     let session = lock(&state).target();
-                    let pending = describe_seat(&request.call, &request.summary);
+                    let mut pending = describe_seat(&request.call, &request.summary);
+                    // The seat names its session: seats are per-session,
+                    // and a surface watching another conversation must
+                    // not be shown one that is not theirs.
+                    if let Some(object) = pending.as_object_mut() {
+                        object.insert("session".to_string(), json!(session));
+                    }
                     lock(&state).attached(&session).seat = Some(request);
                     let _ = events.send(pending);
                 }

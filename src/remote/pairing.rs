@@ -152,6 +152,20 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     digest
 }
 
+/// The lowercase hex of a digest, which is the form the stores keep and
+/// the form a reader compares. Public because the channel service's peer
+/// store keeps its tokens the same way the device store does, and a
+/// second copy of a hash function is a second thing to get wrong.
+pub fn hash_hex(bytes: &[u8]) -> String {
+    hex(&sha256(bytes))
+}
+
+/// The constant-time comparison two stored digests are checked with,
+/// public for the same reason.
+pub fn digest_eq(left: &[u8], right: &[u8]) -> bool {
+    constant_time_eq(left, right)
+}
+
 /// The lowercase hex of a digest, which is the form the store keeps and
 /// the form a reader compares.
 fn hex(digest: &[u8; 32]) -> String {
@@ -213,8 +227,10 @@ fn entropy(bytes: &mut [u8]) -> io::Result<()> {
     file.read_exact(bytes)
 }
 
-/// A fresh device token: 32 random bytes, base64url, 43 characters.
-fn mint_token() -> io::Result<String> {
+/// A fresh token: 32 random bytes, base64url, 43 characters. The device
+/// store's and the channel peers' tokens are the same shape and the same
+/// entropy, because they are the same kind of credential.
+pub fn mint_token() -> io::Result<String> {
     let mut bytes = [0u8; TOKEN_BYTES];
     entropy(&mut bytes)?;
     Ok(base64url(&bytes))
