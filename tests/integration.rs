@@ -103,15 +103,21 @@ impl MockApi {
         std::fs::write(&script_path, script).unwrap();
         let requests_path = scratch.join("requests.jsonl");
         let port_path = scratch.join("port");
+        // KI-027: the child's stderr rides a file, not null. A mock that
+        // exits under load — the flake this suite carries — leaves its
+        // reason where the panic can read it, instead of a child that
+        // died silently and a test that names nothing.
+        let stderr_path = scratch.join("mock-stderr.log");
+        let stderr_file = std::fs::File::create(&stderr_path).unwrap();
         let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_mock-server"))
             .arg(&script_path)
             .arg(&requests_path)
             .arg(&port_path)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::from(stderr_file))
             .spawn()
             .expect("spawn the mock-server child");
-        let port = wait_for_port(&port_path, &mut child);
+        let port = wait_for_port(&port_path, &mut child, &stderr_path);
         MockApi {
             child,
             port,
@@ -146,7 +152,7 @@ impl Drop for MockApi {
 }
 
 /// Poll for the child's port file; a child that exits first fails the test.
-fn wait_for_port(port_path: &Path, child: &mut std::process::Child) -> u16 {
+fn wait_for_port(port_path: &Path, child: &mut std::process::Child, stderr_path: &Path) -> u16 {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         if let Ok(text) = std::fs::read_to_string(port_path) {
@@ -155,7 +161,14 @@ fn wait_for_port(port_path: &Path, child: &mut std::process::Child) -> u16 {
             }
         }
         if child.try_wait().unwrap().is_some() {
-            panic!("the mock-server child exited before writing its port");
+            // KI-027: the child's own stderr rides the panic. A dead mock
+            // is a fact about the mock, and the reason it died is the one
+            // thing the test could not see before.
+            let said = std::fs::read_to_string(stderr_path).unwrap_or_default();
+            panic!(
+                "the mock-server child exited before writing its port; its stderr: {}",
+                said.trim()
+            );
         }
         assert!(
             std::time::Instant::now() < deadline,
@@ -1739,6 +1752,31 @@ async fn concurrent_requests_correlate_when_replies_land_out_of_order() {
 
 /// `fleet lanes` end to end against the real vendored lanes: cards, one
 /// per lane, every one ok.
+/// KI-018: a connection that carries no request — a bare TCP probe,
+/// a health check, a scanner — is closed and the mock keeps
+/// serving. The loop used to `break` on it, so one empty connection
+/// took the mock down mid-suite and failed whichever tests were
+/// still to spawn against it.
+#[test]
+fn a_connection_with_no_request_does_not_take_the_mock_down() {
+    let mock = MockApi::start(vec![ok(chat_response(serde_json::json!({
+        "role": "assistant",
+        "content": "hi"
+    })))]);
+    // A bare connection: connect, say nothing, drop.
+    {
+        let _probe = std::net::TcpStream::connect(("127.0.0.1", mock.port)).unwrap();
+    }
+    // The mock still answers a real request.
+    let client = Client::new(mock.url(), "test-key");
+    let reply = client.chat(&ChatRequest {
+        model: "test-model",
+        messages: &[Message::text(Role::User, "hello")],
+        tools: Vec::new(),
+    });
+    assert!(reply.is_ok(), "{reply:?}");
+}
+
 #[test]
 fn the_lanes_command_reports_every_real_lane() {
     if !python3_available() {
@@ -4397,7 +4435,8 @@ async fn the_usage_scan_curation_merges_and_retires_nothing_from_the_canonical_l
         .iter()
         .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
         .collect();
-    assert!(names.contains(&"alpha".to_string()), "{names:?}");
+    // KI-054: the merge draft is named by the pair, not the survivor.
+    assert!(names.contains(&"merge-beta-alpha".to_string()), "{names:?}");
     // The retirement rule is a no-op against the canonical library (the
     // usage scan reads fleet's sessions only, KI-215): gamma was never
     // selected and nothing is filed against it. beta is the absorbed
@@ -4409,7 +4448,7 @@ async fn the_usage_scan_curation_merges_and_retires_nothing_from_the_canonical_l
     let proposals = fleet::skills::load_proposals(&home);
     let merge = proposals
         .iter()
-        .find(|proposal| proposal.name == "alpha")
+        .find(|proposal| proposal.name == "merge-beta-alpha")
         .expect("the merge");
     assert_eq!(merge.kind, fleet::skills::ProposalKind::Merge);
     assert!(merge.evidence.contains("0.86"), "{}", merge.evidence);
@@ -6454,12 +6493,18 @@ async fn the_measure_is_the_apis_own_count_when_it_reports_one() {
 async fn the_measure_falls_back_to_the_estimate_when_usage_is_absent() {
     // The same shape with the usage frames removed: the estimate is what
     // crosses, and the fold happens. Five uncounted turns carry enough
-    // characters for the estimate to pass the budget on its own, and five
-    // assistant turns is the first point a fold has anything to replace —
-    // so the tail is four turns and the fold replaces turn 1.
+    // characters for the estimate — the messages plus the assembled
+    // system prompt, KI-081's correction — to pass the budget on its
+    // own, and five assistant turns is the first point a fold has
+    // something to replace: the tail is four turns and the fold replaces
+    // turn 1. The payload is sized on both sides — turns 1-4 stay under
+    // the floor so the crossing lands at turn 5 with a foldable range,
+    // and the tail plus the prompt still fits after the fold. A
+    // conversation past either bound is KI-080's named failure, not a
+    // fold, which is what a larger payload here correctly hits.
     let home = temp_home("compaction-estimate-measure");
     let mut session = Session::create(&home, "test-model").unwrap();
-    let big = "x".repeat(400_000);
+    let big = "x".repeat(48_000);
     let mut script: Vec<ScriptedResponse> = (1..=5)
         .map(|index| {
             tool_call_stream_uncounted(

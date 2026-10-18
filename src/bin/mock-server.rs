@@ -51,7 +51,12 @@ fn main() {
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { break };
         let Some((head, body)) = read_request_and_body(&mut stream) else {
-            break;
+            // KI-018: a connection that carries no request — a bare TCP
+            // probe, a health check, a scanner — is closed and the loop
+            // continues. `break` here let one empty connection take the
+            // mock down mid-suite, failing whichever tests were still to
+            // spawn against it.
+            continue;
         };
         record_request(Path::new(&requests_path), &head, &body);
         match responses.pop_front() {

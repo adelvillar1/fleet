@@ -417,6 +417,11 @@ pub struct RunReport {
     pub usage: Usage,
     /// The final assistant text, when the stop produced one.
     pub final_message: Option<String>,
+    /// How many compactions this run performed. KI-079: the compaction
+    /// request's own cost is counted in `usage` but was not separated
+    /// out, so a run's spend could not be decomposed into the turns and
+    /// the folds. The count is the fold side of that decomposition.
+    pub compactions: u64,
 }
 
 /// The loop's fatal failures. Tool failures are not fatal: they are recorded
@@ -784,6 +789,10 @@ pub struct Agent<'a> {
     /// so a compacted session's later turns number from where its earlier
     /// ones stopped.
     next_turn: u64,
+    /// How many compactions this run has performed. KI-079: the fold's
+    /// own request cost rides `usage` like every turn's, and the count
+    /// is what lets a spend line decompose into turns and folds.
+    compactions: u64,
     /// True from a compaction (or a failed or skipped one) until a
     /// measurement comes in under the budget. The latch is what makes
     /// one compaction per crossing rather than one per turn, and it is
@@ -906,6 +915,7 @@ impl<'a> Agent<'a> {
             message_turns: turns,
             next_turn,
             compaction_latch: false,
+            compactions: 0,
             compact_now,
             checkpoints,
             session_id,
@@ -1465,6 +1475,7 @@ impl<'a> Agent<'a> {
                     turns,
                     usage: self.usage.clone(),
                     final_message: Some(content),
+                    compactions: self.compactions,
                 });
             }
 
@@ -1506,6 +1517,7 @@ impl<'a> Agent<'a> {
             turns,
             usage: self.usage.clone(),
             final_message: None,
+            compactions: self.compactions,
         })
     }
 
@@ -1630,6 +1642,16 @@ impl<'a> Agent<'a> {
             .unwrap_or(first_turn);
         let turns = compaction::turns_in_range(first_turn, last_turn);
 
+        // KI-082: a slow fold is otherwise silent — the request streams
+        // its answer with the deltas discarded, which is correct, but a
+        // fold that takes thirty seconds looks like a hung run. One line
+        // before the request names what is happening.
+        let _ = writeln!(
+            self.progress,
+            "\u{2014} summarizing {turns} turn{} into one summary\u{2026}",
+            if turns == 1 { "" } else { "s" },
+        );
+        let _ = self.progress.flush();
         let mut request_messages = Vec::with_capacity(tail_start + 2);
         request_messages.push(Message::text(Role::System, system_prompt));
         request_messages.extend(self.messages[..tail_start].iter().cloned());
@@ -1704,6 +1726,7 @@ impl<'a> Agent<'a> {
             .chain(self.message_turns[tail_start..].iter().copied())
             .collect();
 
+        self.compactions += 1;
         self.record(&Record::Compaction {
             summary: summary.clone(),
             first_turn,
