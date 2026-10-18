@@ -8,7 +8,7 @@ tier: durable
 shape: [change, deps]
 phrases: [mcp__blend1__refresh, python3 -u service/mcp_server.py, BLEND1_PYTHONPATH, tools/call refresh, services/blend1, launch_spec]
 missing: []
-recall-count: 26
+recall-count: 27
 superseded-by:
 valid-until:
 ---
