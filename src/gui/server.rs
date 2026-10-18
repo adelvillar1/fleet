@@ -330,6 +330,34 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        // The sessions surface: the archive, one archived session's
+        // replay, and the resume that re-anchors this face to that log.
+        // The id rides the query like the pane's `path` and is refused
+        // for its shape before the disk is touched, for the same reason.
+        ("GET", "/api/sessions") => {
+            write_reply(&mut stream, api(200, bridge.sessions().await)).await
+        }
+        ("GET", "/api/session") => {
+            let asked = decode_query(&request.query, "id");
+            write_reply(&mut stream, api(200, bridge.replay(&asked).await)).await
+        }
+        ("GET", "/api/calibration") => {
+            write_reply(&mut stream, api(200, bridge.calibration().await)).await
+        }
+        ("POST", "/api/resume") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let id = match session_of(&body) {
+                Ok(id) => id,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.resume(&id).await {
+                Ok(resumed) => write_reply(&mut stream, api(200, resumed)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("GET", _) => write_reply(&mut stream, not_found(&request.path)).await,
         _ => write_reply(&mut stream, method_not_allowed(&request.method)).await,
     }
@@ -425,6 +453,18 @@ fn task_of(body: &str) -> Result<String, String> {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "a run's body is a JSON object with a task string".to_string())
+}
+
+/// The session id a resume's body carries. The shape itself is the
+/// bridge's rule — this only parses the one string the body holds.
+fn session_of(body: &str) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the resume's body: {e}"))?;
+    parsed
+        .get("session")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "a resume's body is a JSON object with a session string".to_string())
 }
 
 /// The decision an approval's body carries, in the seat's four words.
@@ -1772,5 +1812,291 @@ mod tests {
         let (head, body) = page.split_once("\r\n\r\n").expect("a head and a body");
         assert!(head.contains(&format!("fleet_gui={token}")), "{head}");
         assert!(!body.contains(&token), "{body}");
+    }
+
+    // -------------------------------------------------- the sessions surface (G6)
+
+    /// A fresh home holding two real session logs: the older carries a
+    /// message and an end record, the newer a message and no end. The
+    /// ids are the shape `Session::create` mints, written directly —
+    /// the delegation test's precedent — because the archive reads the
+    /// files, not the writer.
+    fn archive_home() -> (std::path::PathBuf, Vec<String>) {
+        let home = fresh_home();
+        let sessions = home.join("sessions");
+        std::fs::create_dir_all(&sessions).expect("the sessions directory");
+        let ids = vec![
+            "20261017T090000Z-olderlog".to_string(),
+            "20261017T090100Z-newerlog".to_string(),
+        ];
+        let start = |model: &str| {
+            serde_json::json!({
+                "type": "start",
+                "v": crate::session::SESSION_FORMAT_VERSION,
+                "model": model,
+                "created": "2026-10-17T09:00:00Z",
+            })
+        };
+        for (id, lines) in [
+            (
+                ids[0].as_str(),
+                vec![
+                    start("deepseek-chat"),
+                    serde_json::json!({"type": "user", "content": "the older conversation"}),
+                    serde_json::json!({"type": "end", "stop_reason": "done", "turns": 1}),
+                ],
+            ),
+            (
+                ids[1].as_str(),
+                vec![
+                    start("step-5-preview"),
+                    serde_json::json!({"type": "user", "content": "the newer conversation"}),
+                ],
+            ),
+        ] {
+            std::fs::write(
+                sessions.join(format!("{id}.jsonl")),
+                format!(
+                    "{}\n",
+                    lines
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+            )
+            .expect("a session log");
+        }
+        (home, ids)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_archive_lists_the_logs_newest_first_and_names_the_anchor() {
+        let (home, ids) = archive_home();
+        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), ids[0].clone());
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        let token = server.token().to_string();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let reply = get(port, "/api/sessions", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(
+            reply.contains(&format!("\"current\":\"{}\"", ids[0])),
+            "the anchor is named: {reply}"
+        );
+        let newer_row = reply
+            .find(&format!("\"id\":\"{}\"", ids[1]))
+            .expect("the newer log is listed");
+        let older_row = reply
+            .find(&format!("\"id\":\"{}\"", ids[0]))
+            .filter(|at| *at > newer_row)
+            .expect("the anchor is listed after it");
+        assert!(
+            newer_row < older_row,
+            "the archive reads newest first: {reply}"
+        );
+        assert!(
+            reply.contains("\"ended\":true"),
+            "the ended log says so: {reply}"
+        );
+        assert!(
+            reply.contains("\"ended\":false"),
+            "the open log says so: {reply}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_replay_shapes_the_records_and_refuses_a_shape_that_is_not_an_id() {
+        let home = fresh_home();
+        let sessions = home.join("sessions");
+        std::fs::create_dir_all(&sessions).expect("the sessions directory");
+        std::fs::write(
+            sessions.join("20261017T091000Z-replayit.jsonl"),
+            format!(
+                "{}\n{}\n{}\n{}\n",
+                serde_json::json!({
+                    "type": "start",
+                    "v": crate::session::SESSION_FORMAT_VERSION,
+                    "model": "deepseek-chat",
+                    "created": "2026-10-17T09:10:00Z",
+                }),
+                serde_json::json!({"type": "user", "content": "hello"}),
+                serde_json::json!({
+                    "type": "tool_result",
+                    "call_id": "c1",
+                    "name": "bash",
+                    "output": "ok\nsecond line",
+                    "truncated": false,
+                    "approved": true,
+                }),
+                serde_json::json!({"type": "end", "stop_reason": "done", "turns": 2}),
+            ),
+        )
+        .expect("the session log");
+        let (bridge, _) = Bridge::detached(
+            home,
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        let token = server.token().to_string();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let id = "20261017T091000Z-replayit";
+        // The id and the token share the query string, so this one skips
+        // the `get` helper's own `?token=` append and asks directly.
+        let reply = ask(
+            port,
+            &format!("GET /api/session?id={id}&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+            None,
+        );
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("\"type\":\"replay\""), "{reply}");
+        assert!(reply.contains("hello"), "the owner's words ride: {reply}");
+        assert!(
+            reply.contains("\"preview\":\"ok\""),
+            "the preview is the live cap's first line: {reply}"
+        );
+        assert!(
+            !reply.contains("second line"),
+            "the preview is first-line only, exactly what a live card showed: {reply}"
+        );
+        assert!(reply.contains("\"ended\":true"), "{reply}");
+        assert!(reply.contains("\"turns\":2"), "{reply}");
+        let refused = ask(
+            port,
+            &format!(
+                "GET /api/session?id=../etc&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+            ),
+            None,
+        );
+        assert!(refused.contains("is not a session id"), "{refused}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_reseeds_the_face_and_names_its_refusals() {
+        let (home, ids) = archive_home();
+        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), ids[0].clone());
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        let token = server.token().to_string();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let resumed = post(
+            port,
+            "/api/resume",
+            &token,
+            &format!("{{\"session\":\"{}\"}}", ids[1]),
+        );
+        assert!(resumed.starts_with("HTTP/1.1 200"), "{resumed}");
+        let state = get(port, "/api/state", &token);
+        assert!(
+            state.contains(&format!("\"session\":\"{}\"", ids[1])),
+            "the anchor moved: {state}"
+        );
+        assert!(
+            state.contains("the newer conversation"),
+            "the view reseeded: {state}"
+        );
+        assert!(state.contains("\"type\":\"resumed\""), "{state}");
+        assert!(
+            state.contains("\"agent\":false"),
+            "a face with no agent behind it says so: {state}"
+        );
+        let refused = post(port, "/api/resume", &token, "{\"session\":\"../x\"}");
+        assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
+        assert!(refused.contains("not a session id"), "{refused}");
+        let missing = post(port, "/api/resume", &token, "{\"session\":\"no-such-log\"}");
+        assert!(missing.starts_with("HTTP/1.1 409"), "{missing}");
+        assert!(missing.contains("could not open session"), "{missing}");
+        let malformed = post(port, "/api/resume", &token, "{\"word\":\"x\"}");
+        assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_calibration_read_names_the_gate_the_cells_and_the_cap() {
+        let home = router_home();
+        let day = crate::calib::today();
+        let logs = home
+            .join("logs")
+            .join(&day[..4])
+            .join(&day[5..7])
+            .join(&day[8..10]);
+        std::fs::create_dir_all(&logs).expect("the day's log directory");
+        std::fs::write(
+            logs.join("events.jsonl"),
+            format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "op": "route",
+                    "ts": "2026-10-17T09:00:00Z",
+                    "provider": "stepfun",
+                    "model": "step-5-preview",
+                    "workload": "hard",
+                    "how": "judged",
+                    "judged_from": "fresh",
+                }),
+                serde_json::json!({
+                    "op": "route_judged",
+                    "ts": "2026-10-17T09:00:01Z",
+                    "route_key": "k1",
+                    "workload": "hard",
+                    "verdict": "step-5-preview",
+                    "confidence": 0.9,
+                    "disposition": "agreed",
+                    "lane": "sys1",
+                }),
+            ),
+        )
+        .expect("the day's rows");
+        let (bridge, _) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        let token = server.token().to_string();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let reply = get(port, "/api/calibration", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("\"type\":\"calibration\""), "{reply}");
+        assert!(
+            reply.contains("\"provider\":\"stepfun\""),
+            "the fit cell rode through: {reply}"
+        );
+        assert!(
+            reply.contains("\"judged\":1"),
+            "the cell counts the one judged row: {reply}"
+        );
+        assert!(
+            reply.contains("\"fit\":\"unfit\""),
+            "one judged row is not a fit sample: {reply}"
+        );
+        assert!(
+            reply.contains("\"cap\":512"),
+            "the read names its bound: {reply}"
+        );
+        assert!(reply.contains("\"rows_read\":2"), "{reply}");
+        let expected_gate = crate::route::calibration_config(&home).informs_failover;
+        assert!(
+            reply.contains(&format!("\"informs_failover\":{expected_gate}")),
+            "the gate flag matches the config read, whatever it is: {reply}"
+        );
     }
 }

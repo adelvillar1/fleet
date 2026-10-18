@@ -719,3 +719,17 @@ count; the feed names its build time; exit 0.
 - Increments G1+ follow this document; each lands gated and committed
   with explicit paths, and this file's `updated` field moves with the
   work.
+- **G6 landed 2026-10-17.** The sessions panel (the archive newest
+  first, a row opens its replay inline, and the replay's resume
+  re-anchors the face to that log) and the calibration panel (the day's
+  stream rows grouped by op, the fit cells riding the calibration
+  surface's own computation, the failover gate named) are live, with
+  the resume as the plan's one real architecture amendment: the
+  browser's `Command` grew the second arm the TUI always had, and the
+  anchored session id moved into the face's shared state because the
+  face can now change it. The route card is deliberately absent from a
+  replay — the route decision rides the calibration stream, not the
+  session log, and a replay that invented one would be a second
+  opinion about a fact it does not hold. Bounded reads name their
+  bounds: a replay previews the newest 400 cards and says what it left
+  out; the calibration read names its 512-row cap.

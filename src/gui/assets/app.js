@@ -139,6 +139,8 @@
     panelDelegation: document.getElementById('panel-delegation'),
     panelMemory: document.getElementById('panel-memory'),
     panelSkills: document.getElementById('panel-skills'),
+    panelSessions: document.getElementById('panel-sessions'),
+    panelCalibration: document.getElementById('panel-calibration'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
@@ -146,6 +148,8 @@
     delegationBoard: document.getElementById('delegation-board'),
     memoryBoard: document.getElementById('memory-board'),
     skillsBoard: document.getElementById('skills-board'),
+    sessionsBoard: document.getElementById('sessions-board'),
+    calibrationBoard: document.getElementById('calibration-board'),
     routePill: document.getElementById('route-pill'),
     statePill: document.getElementById('state-pill'),
     spend: document.getElementById('spend'),
@@ -222,6 +226,16 @@
     // The skills panel's read and its clock.
     skills: null,
     skillsAt: 0,
+    // The sessions panel: the archive's read and its clock, and the one
+    // replay the panel has open. The replay is one read per id, so
+    // reopening a row is the cached document and not a second read.
+    sessions: null,
+    sessionsAt: 0,
+    replay: null,
+    replayId: null,
+    // The calibration panel's read and its clock.
+    calibration: null,
+    calibrationAt: 0,
     // The pane's web tab: the page in front and the address it came
     // from. One read per address, so re-reading is a refresh and not a
     // second fetch of the same page.
@@ -2505,75 +2519,454 @@
 
   // ------------------------------------------------- the hash addresses
 
+  // -------------------------------------------------------- the sessions panel
+
+  // The archive read: the log heads as summaries, newest first, with
+  // the session this face anchors named.
+  function readSessions(force) {
+    var now = Date.now();
+    if (!force && face.sessions && now - face.sessionsAt < 4000) return Promise.resolve();
+    face.sessionsAt = now;
+    return fetch('/api/sessions', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.sessions = doc;
+        if (face.panel === 'sessions') paintSessions();
+      })
+      .catch(function () { });
+  }
+
+  // One session's replay. One read per id, so reopening a row is the
+  // cached document and opening a different row is the only fetch.
+  function readReplay(id, force) {
+    if (!force && face.replayId === id && face.replay) return Promise.resolve();
+    return fetch('/api/session?id=' + encodeURIComponent(id), {
+      headers: { accept: 'application/json' }
+    })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.replayId = id;
+        face.replay = doc;
+        if (face.panel === 'sessions') paintSessions();
+      })
+      .catch(function () { });
+  }
+
+  function paintSessions() {
+    var read = face.sessions;
+    el.sessionsBoard.textContent = '';
+    if (!read) {
+      var waiting = boardCard(12, 'sessions', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The archive read has not landed yet. It reads the session logs under this home, ' +
+        'which are this machine\u2019s own.'));
+      el.sessionsBoard.appendChild(waiting);
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.sessionsBoard.appendChild(refusedCard(read.refused));
+      return;
+    }
+    var sessions = read.sessions || [];
+    var children = sessions.filter(function (row) { return row.kind === 'subagent'; }).length;
+    var compacted = sessions.filter(function (row) { return row.compacted; }).length;
+    var open = sessions.filter(function (row) { return !row.ended; }).length;
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(sessions.length, 'logs in the archive'));
+    tiles.appendChild(tile(open, 'without an end record', open ? 'warn' : null));
+    tiles.appendChild(tile(children, 'delegated children'));
+    tiles.appendChild(tile(compacted, 'compacted at least once', compacted ? 'warn' : null));
+    var head = boardCard(12, 'sessions', read.read_at,
+      'the archive under this home \u00b7 the row this face anchors is marked');
+    head.appendChild(tiles);
+    el.sessionsBoard.appendChild(head);
+
+    if (sessions.length) {
+      var list = boardCard(12, 'the archive', null, 'a row opens its replay beside the list');
+      sessions.forEach(function (row) { list.appendChild(sessionRow(row)); });
+      el.sessionsBoard.appendChild(list);
+    } else {
+      var none = boardCard(12, 'the archive', null, null);
+      none.appendChild(node('p', 'board-empty',
+        'This home holds no session logs yet. A run writes one log per session, whether it ' +
+        'starts here, in the TUI, or headless.'));
+      el.sessionsBoard.appendChild(none);
+    }
+    if (face.replayId) paintReplayInto(el.sessionsBoard, face.replay, read.current);
+  }
+
+  // One archive row: the id, the model, the markers the summary
+  // carries, and a badge when it is the session this face anchors. A
+  // click opens the replay; a double purpose needs no second button.
+  function sessionRow(row) {
+    var line = node('button', 'session-row');
+    line.type = 'button';
+    line.dataset.id = row.id;
+    var name = node('span', 'session-row-id', row.id);
+    if (row.current) name.appendChild(badge('this face', 'accent'));
+    line.appendChild(name);
+    line.appendChild(node('span', 'session-row-model', row.model || 'unreadable'));
+    var marks = node('span', 'session-row-marks');
+    if (row.kind) marks.appendChild(badge(row.kind, null));
+    if (row.compacted) marks.appendChild(badge('compacted', 'warn'));
+    marks.appendChild(badge(row.ended ? 'ended' : 'open', row.ended ? null : 'live'));
+    line.appendChild(marks);
+    line.appendChild(node('span', 'session-row-created', row.created || '\u2014'));
+    line.addEventListener('click', function () { readReplay(row.id, true); });
+    return line;
+  }
+
+  // The replay card: the head the start record pinned, the summary the
+  // end record and the compaction marks carry, the resume that
+  // re-anchors this face, and the cards themselves.
+  function paintReplayInto(board, replay, current) {
+    if (!replay) return;
+    if (replay.refused && replay.refused.length) {
+      board.appendChild(refusedCard(replay.refused));
+      return;
+    }
+    var summary = replay.model + (replay.kind ? ' \u00b7 ' + replay.kind : '') +
+      ' \u00b7 ' + (replay.ended
+        ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
+        : 'no end record \u2014 the run was interrupted');
+    var card = boardCard(12, 'replay \u00b7 ' + replay.id, replay.created, summary);
+    var actions = node('div', 'replay-actions');
+    var back = node('button', 'replay-button');
+    back.type = 'button';
+    back.textContent = 'close the replay';
+    back.addEventListener('click', function () {
+      face.replayId = null;
+      face.replay = null;
+      paintSessions();
+    });
+    actions.appendChild(back);
+    var resume = node('button', 'replay-button replay-resume');
+    resume.type = 'button';
+    if (replay.id === current) {
+      resume.disabled = true;
+      resume.textContent = 'this face anchors this session';
+    } else if (face.running) {
+      resume.disabled = true;
+      resume.textContent = 'a run is in flight';
+    } else {
+      resume.textContent = 'resume this session here';
+      resume.addEventListener('click', function () { resumeSession(replay.id); });
+    }
+    actions.appendChild(resume);
+    card.appendChild(actions);
+    if (replay.omitted) {
+      card.appendChild(node('p', 'board-empty',
+        replay.omitted + ' earlier card' + (replay.omitted === 1 ? ' is' : 's are') +
+        ' left out of this preview. The log holds them; the preview shows the newest ' +
+        'and the resume reseeds from the whole log.'));
+    }
+    var lines = node('div', 'replay-lines');
+    (replay.cards || []).forEach(function (entry) { lines.appendChild(replayLine(entry)); });
+    if (!(replay.cards || []).length) {
+      lines.appendChild(node('p', 'board-empty', 'This log carries no messages yet.'));
+    }
+    card.appendChild(lines);
+    board.appendChild(card);
+  }
+
+  // One replayed record, as a line. The vocabulary is the live
+  // transcript's, narrowed to what a log can reconstruct.
+  function replayLine(entry) {
+    var line = node('div', 'replay-line');
+    line.dataset.kind = entry.type;
+    if (entry.type === 'message') {
+      line.dataset.role = entry.role;
+      line.appendChild(node('span', 'replay-who', entry.role === 'owner' ? 'you' : 'fleet'));
+      line.appendChild(node('span', 'replay-text', clip(entry.text || '', 400)));
+    } else if (entry.type === 'tool_result') {
+      line.appendChild(node('span', 'replay-who', 'tool \u00b7 ' + entry.tool));
+      line.appendChild(node('span', 'replay-text', entry.preview || ''));
+      line.appendChild(badge(entry.approved ? 'approved' : 'denied',
+        entry.approved ? null : 'down'));
+    } else if (entry.type === 'lane') {
+      line.appendChild(node('span', 'replay-who', 'lane \u00b7 ' + entry.lane));
+      line.appendChild(node('span', 'replay-text', entry.tools + ' tools joined the run'));
+    } else if (entry.type === 'skills') {
+      line.appendChild(node('span', 'replay-who', 'skills'));
+      line.appendChild(node('span', 'replay-text', entry.loaded + ' declared on the run'));
+    } else if (entry.type === 'memory') {
+      line.appendChild(node('span', 'replay-who', 'memory'));
+      line.appendChild(node('span', 'replay-text',
+        entry.facts + ' facts rode the turn\u2019s context' +
+        (entry.shape ? ' \u00b7 shape ' + entry.shape : ' \u00b7 unclassified')));
+    } else if (entry.type === 'compacted') {
+      line.appendChild(node('span', 'replay-who', 'compacted'));
+      line.appendChild(node('span', 'replay-text',
+        entry.turns + ' turns became one summary \u00b7 ' +
+        entry.before + ' \u2192 ' + entry.after + ' tokens'));
+    } else {
+      line.appendChild(node('span', 'replay-who', entry.type));
+    }
+    return line;
+  }
+
+  // The resume: re-anchor this face to the replayed log. The reply says
+  // whether an agent took the anchor, because a face without one still
+  // resumes as a viewer, and saying nothing would leave the owner
+  // guessing which of the two happened.
+  function resumeSession(id) {
+    post('/api/resume', { session: id }).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the resume was refused',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+        return;
+      }
+      face.sessions = null;
+      face.replay = null;
+      face.replayId = null;
+      notice('resumed ' + id, reply.body.agent === false
+        ? 'this face has no agent behind it; the conversation is here to read'
+        : 'the next message continues that conversation');
+      window.location.hash = '#/chat';
+      load(true);
+    }).catch(function () { });
+  }
+
+  // ---------------------------------------------------- the calibration panel
+
+  function readCalibration(force) {
+    var now = Date.now();
+    if (!force && face.calibration && now - face.calibrationAt < 4000) return Promise.resolve();
+    face.calibrationAt = now;
+    return fetch('/api/calibration', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.calibration = doc;
+        if (face.panel === 'calibration') paintCalibration();
+      })
+      .catch(function () { });
+  }
+
+  function paintCalibration() {
+    var read = face.calibration;
+    el.calibrationBoard.textContent = '';
+    if (!read) {
+      var waiting = boardCard(12, 'calibration', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The stream read has not landed yet. It reads today\u2019s calibration rows, which ' +
+        'this machine\u2019s own runs wrote.'));
+      el.calibrationBoard.appendChild(waiting);
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.calibrationBoard.appendChild(refusedCard(read.refused));
+      return;
+    }
+    var cells = read.cells || [];
+    var judged = cells.reduce(function (sum, cell) { return sum + cell.judged; }, 0);
+    var fit = cells.filter(function (cell) { return cell.fit === 'fit'; }).length;
+    var informing = cells.filter(function (cell) { return cell.informs_failover; }).length;
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(read.rows_read, 'rows, the day\u2019s last ' + read.cap));
+    tiles.appendChild(tile(judged, 'judged rows'));
+    tiles.appendChild(tile(cells.length, 'fit cells'));
+    tiles.appendChild(tile(fit, 'fit', fit ? 'live' : null));
+    tiles.appendChild(tile(informing, 'informing the failover'));
+    tiles.appendChild(tile(read.gate && read.gate.informs_failover ? 'on' : 'off',
+      'failover gate'));
+    var head = boardCard(12, 'calibration', read.day,
+      'the stream at ' + read.root + ' \u00b7 the gate is ' +
+      (read.gate && read.gate.informs_failover ? 'open' : 'shut') +
+      ' (' + read.gate.name + ')');
+    head.appendChild(tiles);
+    el.calibrationBoard.appendChild(head);
+
+    if (cells.length) {
+      var cellCard = boardCard(12, 'the judged quality, per provider and shape', null,
+        'a cell is fit when its sample is big enough and wide enough \u2014 ' +
+        read.fit_rule.rows + ' graded rows, a ' + read.fit_rule.span + ' confidence span');
+      cells.forEach(function (cell) { cellCard.appendChild(calibrationCell(cell)); });
+      el.calibrationBoard.appendChild(cellCard);
+    } else {
+      var none = boardCard(12, 'the judged quality', null, null);
+      none.appendChild(node('p', 'board-empty',
+        'No judged routes for ' + read.day + ' yet. `fleet judge` grades a day\u2019s route ' +
+        'rows through the sys1 lane, and a cell appears when a judgment lands.'));
+      el.calibrationBoard.appendChild(none);
+    }
+
+    var stream = read.stream || {};
+    ['route', 'route_judged', 'turn', 'propose', 'eval_corpus', 'recall_hit', 'consolidate',
+      'tool_screen', 'explain'].forEach(function (op) {
+      var rows = stream[op];
+      if (rows && rows.length) el.calibrationBoard.appendChild(streamCard(op, rows));
+    });
+  }
+
+  // One fit cell as a card: the counts, the weighted rates, the fit
+  // state with what it still needs, and the spend. The numbers are the
+  // surface's own computation riding through — the panel re-derives
+  // nothing.
+  function calibrationCell(cell) {
+    var card = node('article', 'cal-cell');
+    card.dataset.fit = cell.fit;
+    var title = node('h3', 'cal-cell-title',
+      cell.provider + (cell.workload ? ' \u00b7 ' + cell.workload : ' \u00b7 no shape judged'));
+    title.appendChild(badge(cell.fit, cell.fit === 'fit' ? 'live' : 'warn'));
+    card.appendChild(title);
+    var counts = node('p', 'cal-cell-counts',
+      cell.judged + ' judged \u00b7 ' + cell.right + ' right \u00b7 ' + cell.wrong + ' wrong \u00b7 ' +
+      cell.insufficient + ' insufficient' +
+      (cell.waived ? ' \u00b7 ' + cell.waived + ' waived' : '') +
+      (cell.overridden ? ' \u00b7 ' + cell.overridden + ' overridden' : ''));
+    card.appendChild(counts);
+    var rates = node('p', 'cal-cell-rates',
+      'weighted wrong ' + fmtRate(cell.weighted_wrong_rate) + ' \u00b7 insufficient ' +
+      fmtRate(cell.weighted_insufficient_rate) + ' \u00b7 span ' +
+      fmtRate(cell.confidence_span) +
+      (cell.zero_confidence ? ' \u00b7 ' + cell.zero_confidence + ' rows without confidence' : ''));
+    card.appendChild(rates);
+    var wants = [];
+    if (cell.fit !== 'fit') {
+      if (cell.needs_rows) wants.push(cell.needs_rows + ' more graded row' +
+        (cell.needs_rows === 1 ? '' : 's'));
+      if (cell.needs_span > 0) wants.push('a wider confidence span');
+    }
+    if (cell.fit === 'fit' && !cell.informs_failover) {
+      wants.push('fit, and short of the wrong-rate floor that moves the failover');
+    }
+    card.appendChild(node('p', 'cal-cell-wants',
+      wants.length ? wants.join(' \u00b7 ') : 'this cell informs the failover'));
+    var spend = node('p', 'cal-cell-spend',
+      'spend ' + cell.spend_usd.toFixed(4) +
+      (cell.cost_per_right === null || cell.cost_per_right === undefined
+        ? ''
+        : ' \u00b7 ' + cell.cost_per_right.toFixed(4) + ' per right'));
+    card.appendChild(spend);
+    return card;
+  }
+
+  function fmtRate(rate) {
+    return (rate * 100).toFixed(1) + '%';
+  }
+
+  // One op's rows as a card, newest last. The rows ride as the reader
+  // parsed them; the panel formats, it does not re-decide.
+  function streamCard(op, rows) {
+    var names = {
+      route: 'routes', route_judged: 'judgments', turn: 'turns',
+      propose: 'proposals', eval_corpus: 'eval runs', recall_hit: 'recall hits',
+      consolidate: 'consolidations', tool_screen: 'tool screens', explain: 'explains'
+    };
+    var card = boardCard(12, names[op] || op, rows.length + ' row' + (rows.length === 1 ? '' : 's'),
+      null);
+    var recent = rows.slice(-20);
+    if (rows.length > recent.length) {
+      card.appendChild(node('p', 'board-empty',
+        'showing the last ' + recent.length + ' of ' + rows.length));
+    }
+    recent.forEach(function (row) { card.appendChild(streamLine(op, row)); });
+    return card;
+  }
+
+  function streamLine(op, row) {
+    var line = node('div', 'stream-line');
+    line.appendChild(node('span', 'stream-ts', (row.ts || '').slice(11, 19) || '\u2014'));
+    var text = {
+      route: function () {
+        return (row.provider || '?') + ' \u2192 ' + (row.model || '?') +
+          (row.workload ? ' \u00b7 ' + row.workload : '') +
+          (row.how ? ' \u00b7 ' + row.how +
+            (row.judged_from ? ' (' + row.judged_from + ')' : '') : '');
+      },
+      route_judged: function () {
+        return (row.workload || '?') + ' \u00b7 ' + (row.verdict || '?') +
+          ' \u00b7 confidence ' + fmtRate(row.confidence) +
+          (row.disposition ? ' \u00b7 ' + row.disposition : '');
+      },
+      turn: function () {
+        return (row.outcome || '?') +
+          (row.stop_reason ? ' \u00b7 ' + row.stop_reason : '') +
+          ' \u00b7 ' + row.turns + ' turn' + (row.turns === 1 ? '' : 's') +
+          (row.reason ? ' \u00b7 ' + clip(row.reason, 80) : '');
+      },
+      propose: function () {
+        return (row.proposal || '?') + ' \u00b7 ' + (row.target || '?') +
+          (row.target_name ? ' \u2192 ' + row.target_name : '') +
+          ' \u00b7 ' + (row.verdict || '?') +
+          (row.gate && row.gate.length
+            ? ' \u00b7 gate ' + row.gate.filter(function (step) { return step.ok; }).length +
+              '/' + row.gate.length
+            : '');
+      },
+      eval_corpus: function () {
+        return row.passed + '/' + (row.passed + row.failed) + ' scenarios \u00b7 score ' +
+          fmtRate(row.score);
+      },
+      recall_hit: function () {
+        return (row.fact || '?') + (row.shape ? ' \u00b7 ' + row.shape : '') +
+          ' \u00b7 ' + fmtRate(row.score);
+      },
+      consolidate: function () {
+        return (row.action || '?') + (row.reason ? ' \u00b7 ' + clip(row.reason, 80) : '');
+      },
+      tool_screen: function () {
+        return (row.tool || '?') + ' \u00b7 ' + (row.outcome || '?');
+      },
+      explain: function () {
+        return (row.explained_op || '?') + ' \u00b7 ' + (row.selector || '?') +
+          (row.eval_only ? ' \u00b7 eval-only' : '');
+      }
+    }[op];
+    line.appendChild(node('span', 'stream-text', text ? text() : op));
+    return line;
+  }
+
+  // The keyed panels, by address. One registry, so showing one panel
+  // can never forget to hide another — the failure mode the explicit
+  // hide-lists were one new surface away from.
+  var PANEL_EL = {
+    chat: el.panelChat,
+    router: el.panelRouter,
+    delegation: el.panelDelegation,
+    memory: el.panelMemory,
+    skills: el.panelSkills,
+    sessions: el.panelSessions,
+    calibration: el.panelCalibration
+  };
+
   function showRoute() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');
     var known = ROUTES.filter(function (route) { return route[0] === which; })[0];
     var address = which === 'chat' || !known ? 'chat' : which;
     face.panel = address;
     markRail();
-    if (address === 'chat') {
-      el.panelChat.hidden = false;
-      el.panelRouter.hidden = true;
-      el.panelDelegation.hidden = true;
-      el.panelMemory.hidden = true;
-      el.panelSkills.hidden = true;
-      el.panelLater.hidden = true;
+    Object.keys(PANEL_EL).forEach(function (key) {
+      PANEL_EL[key].hidden = key !== address;
+    });
+    el.panelLater.hidden = Boolean(PANEL_EL[address]);
+    if (!PANEL_EL[address]) {
+      var named = known || [which, which];
+      el.laterTitle.textContent = named[1];
+      el.laterNote.textContent = named[1] + ' is a later increment of the same plan. ' +
+        'The conversation is live now, and every surface reads the one event log this face already holds.';
       return;
     }
-    if (address === 'router') {
-      el.panelChat.hidden = true;
-      el.panelLater.hidden = true;
-      el.panelRouter.hidden = false;
-      // The board's read, fetched on arrival and then on the panel's own
-      // clock. The live decision is already in the log, so it paints now
-      // and again with the stream.
-      paintRouter();
-      readRouter(true).then(paintRouter);
-      return;
-    }
-    if (address === 'delegation') {
-      el.panelChat.hidden = true;
-      el.panelLater.hidden = true;
-      el.panelRouter.hidden = true;
-      el.panelMemory.hidden = true;
-      el.panelSkills.hidden = true;
-      el.panelDelegation.hidden = false;
-      paintDelegation();
-      readDelegation(true).then(paintDelegation);
-      return;
-    }
-    if (address === 'memory') {
-      el.panelChat.hidden = true;
-      el.panelLater.hidden = true;
-      el.panelRouter.hidden = true;
-      el.panelDelegation.hidden = true;
-      el.panelSkills.hidden = true;
-      el.panelMemory.hidden = false;
-      paintMemory();
-      readMemory(true).then(paintMemory);
-      return;
-    }
-    if (address === 'skills') {
-      el.panelChat.hidden = true;
-      el.panelLater.hidden = true;
-      el.panelRouter.hidden = true;
-      el.panelDelegation.hidden = true;
-      el.panelMemory.hidden = true;
-      el.panelSkills.hidden = false;
-      paintSkills();
-      readSkills(true).then(paintSkills);
-      return;
-    }
-    var named = known || [which, which];
-    el.laterTitle.textContent = named[1];
-    el.laterNote.textContent = named[1] + ' is a later increment of the same plan. ' +
-      'The conversation is live now, and every surface reads the one event log this face already holds.';
-    el.panelChat.hidden = true;
-    el.panelRouter.hidden = true;
-    el.panelDelegation.hidden = true;
-    el.panelMemory.hidden = true;
-    el.panelSkills.hidden = true;
-    el.panelLater.hidden = false;
+    // The conversation is live from the log; every board paints now and
+    // again when its own read lands.
+    var arrive = {
+      router: function () { paintRouter(); readRouter(true).then(paintRouter); },
+      delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
+      memory: function () { paintMemory(); readMemory(true).then(paintMemory); },
+      skills: function () { paintSkills(); readSkills(true).then(paintSkills); },
+      sessions: function () { paintSessions(); readSessions(true).then(paintSessions); },
+      calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); }
+    };
+    if (arrive[address]) arrive[address]();
   }
 
   // ------------------------------------------------------------ the pane
@@ -3097,7 +3490,7 @@
 
   // Which surfaces are live today, and which are a later increment — the
   // rail says so rather than pretending all ten are built.
-  var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills'];
+  var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration'];
 
   function markRail() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');

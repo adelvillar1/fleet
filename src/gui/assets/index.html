@@ -208,6 +208,21 @@
     <div class="board" id="skills-board"></div>
   </main>
 
+  <!-- The sessions. The archive as cards; a row opens that session's
+       replay inline, and the replay's resume re-anchors the face to that
+       log — the same seed the TUI's picker performs, one surface over. -->
+  <main class="stage stage-board" id="panel-sessions" hidden>
+    <div class="board" id="sessions-board"></div>
+  </main>
+
+  <!-- The calibration. The day's stream rows and the judged quality's
+       fit cells, with the failover gate's state named rather than left
+       to be inferred — the same cells `fleet calib --calibration`
+       computes, not a second opinion about them. -->
+  <main class="stage stage-board" id="panel-calibration" hidden>
+    <div class="board" id="calibration-board"></div>
+  </main>
+
   <!-- The other addresses of the plan's route table. They are keyed
        panels, not routes: the browser never asks the server for a page,
        and a surface that is not built yet says so instead of pretending. -->

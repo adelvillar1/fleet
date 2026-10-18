@@ -2621,3 +2621,169 @@ body[data-pane="open"] .face { grid-template-columns: minmax(0, 1fr) var(--pane-
   .recall-body { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .fact-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ---------------------------------------------------- the sessions panel */
+
+/* One archive row: the id, the model, its markers, and the stamp. A
+   button, because the row's single action is opening the replay. */
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: var(--card-hairline);
+  border-radius: 10px;
+  background: var(--dsw-alias-page);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: border-color 180ms ease-out, background 180ms ease-out;
+}
+
+.session-row:hover { border-color: var(--dsw-alias-accent); background: var(--dsw-alias-surface-raised); }
+.session-row:active { transform: scale(0.99); }
+
+.session-row-id {
+  font-family: var(--dsw-alias-mono);
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row-model {
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12.5px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row-marks { display: inline-flex; gap: 5px; flex: 0 0 auto; }
+
+.session-row-created {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+/* The replay card: the summary line, the resume, and the records as
+   lines in the live transcript's own vocabulary. */
+.replay-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.replay-button {
+  padding: 6px 12px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface);
+  font: inherit;
+  font-size: 12.5px;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 180ms ease-out, background 180ms ease-out;
+}
+
+.replay-button:hover:not(:disabled) { border-color: var(--dsw-alias-accent); }
+.replay-button:disabled { opacity: 0.55; cursor: default; }
+
+.replay-resume { border-color: var(--dsw-alias-accent); }
+
+.replay-lines {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.replay-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: var(--dsw-alias-page);
+}
+
+.replay-line[data-kind="compacted"] { background: var(--dsw-alias-surface-raised); }
+
+.replay-who {
+  flex: 0 0 auto;
+  min-width: 88px;
+  font-family: var(--dsw-alias-mono);
+  font-size: 11.5px;
+  color: var(--dsw-alias-ink-secondary);
+}
+
+.replay-line[data-kind="message"][data-role] .replay-who { color: var(--dsw-alias-ink); }
+
+.replay-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--dsw-alias-ink);
+  white-space: pre-wrap;
+}
+
+/* ------------------------------------------------- the calibration panel */
+
+.cal-cell {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 12px 13px;
+  border: var(--card-hairline);
+  border-radius: 10px;
+  background: var(--dsw-alias-page);
+}
+
+.cal-cell[data-fit="fit"] { border-color: var(--dsw-alias-ok); }
+
+.cal-cell-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cal-cell-counts, .cal-cell-rates, .cal-cell-wants, .cal-cell-spend {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--dsw-alias-ink-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-cell-wants { color: var(--dsw-alias-ink); }
+
+.stream-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid transparent;
+}
+
+.stream-ts {
+  flex: 0 0 auto;
+  font-family: var(--dsw-alias-mono);
+  font-size: 11.5px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.stream-text {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--dsw-alias-ink);
+  overflow-wrap: anywhere;
+}

@@ -65,12 +65,18 @@ const MAX_EVENTS: usize = 4096;
 /// than holding the run — and it says so with a `dropped` event.
 const BROADCAST_DEPTH: usize = 256;
 
-/// One instruction from the browser to the agent thread. A browser
-/// session picks its session at launch and never switches, so this is
-/// one arm where the TUI's is two: there is no resume to post.
+/// One instruction from the browser to the agent thread. Two arms since
+/// G6, where the TUI's two became this face's two as well: the sessions
+/// panel can re-anchor the face to an archived log, which is what the
+/// TUI's picker always did. The view side reseeds before the command is
+/// sent, so a resumed face never shows the old conversation's tail.
 pub(crate) enum Command {
-    /// Run this task in the session this bridge was built for.
+    /// Run this task in the session this bridge currently anchors.
     Run(String),
+    /// Re-anchor to this archived session's log. The next task replays
+    /// it and continues it; the route is judged fresh, because the
+    /// conversation the judgment serves is not the one that was judged.
+    Resume(String),
 }
 
 /// The agent thread's inputs, as one struct because the thread's own
@@ -89,9 +95,16 @@ struct AgentInputs {
     memories_root: PathBuf,
 }
 
-/// The live face's shared truth: the ordered event log, whether a run is
-/// in flight, and the approval the browser owes an answer to.
+/// The live face's shared truth: the session this face anchors, the
+/// ordered event log, whether a run is in flight, and the approval the
+/// browser owes an answer to. The session lives here rather than in a
+/// field of its own because G6's resume re-anchors it — the one mutable
+/// fact about the face, in the one mutex that already existed.
 struct GuiState {
+    /// The session id this face anchors: the launch session until a
+    /// resume swaps it, and what `/api/state` and the delegation read
+    /// name as *this* conversation.
+    session: String,
     events: VecDeque<Value>,
     /// How many events the cap pushed out the front. The page says the
     /// earlier ones are gone rather than implying it holds everything.
@@ -116,7 +129,6 @@ pub struct Sources {
 pub struct Bridge {
     home: PathBuf,
     model: String,
-    session: String,
     /// The corpus root the browser's memory panel reads and the agent
     /// thread's consolidator walks, resolved once so the two cannot
     /// disagree about which corpus this face is looking at. The rule is
@@ -157,6 +169,7 @@ impl Bridge {
         let (seat_tx, seat_rx) = tokio::sync::mpsc::unbounded_channel();
         let (events, _) = broadcast::channel(BROADCAST_DEPTH);
         let state = Arc::new(Mutex::new(GuiState {
+            session,
             events: VecDeque::new(),
             dropped: 0,
             running: false,
@@ -167,7 +180,6 @@ impl Bridge {
         let bridge = Bridge {
             home,
             model,
-            session,
             memories: crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default()),
             cwd: std::env::current_dir().unwrap_or_default(),
             state,
@@ -253,8 +265,9 @@ impl Bridge {
     pub fn state(&self) -> Value {
         let state = lock(&self.state);
         let rules = lock(&self.rules);
+        let session = state.session.clone();
         json!({
-            "session": self.session,
+            "session": session,
             "model": self.model,
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "running": state.running,
@@ -310,7 +323,7 @@ impl Bridge {
     /// happens to be newest.
     pub async fn delegation(&self) -> Value {
         let home = self.home.clone();
-        let session = self.session.clone();
+        let session = lock(&self.state).session.clone();
         match tokio::task::spawn_blocking(move || delegation_read(&home, &session)).await {
             Ok(document) => document,
             Err(_) => json!({
@@ -348,6 +361,52 @@ impl Bridge {
             Err(_) => json!({
                 "type": "skills",
                 "refused": ["the skills read did not land"],
+            }),
+        }
+    }
+
+    /// The sessions panel's document: the archive as the summaries the
+    /// log heads carry, newest first, with the session this face
+    /// anchors named so the panel can say which row is live.
+    pub async fn sessions(&self) -> Value {
+        let home = self.home.clone();
+        let current = lock(&self.state).session.clone();
+        match tokio::task::spawn_blocking(move || sessions_read(&home, &current)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "sessions",
+                "refused": ["the archive read did not land"],
+            }),
+        }
+    }
+
+    /// One archived session's replay, as the cards its records shape
+    /// into — the same builder the resume reseeds from, so what the
+    /// panel previews is byte-for-byte what a resumed conversation
+    /// starts from.
+    pub async fn replay(&self, asked: &str) -> Value {
+        let home = self.home.clone();
+        let asked = asked.to_string();
+        match tokio::task::spawn_blocking(move || replay_read(&home, &asked)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "replay",
+                "refused": ["the replay read did not land"],
+            }),
+        }
+    }
+
+    /// The calibration panel's document: the day's stream rows grouped
+    /// by op, the judged quality's fit cells with the readiness the fit
+    /// rule computes, and the failover gate's state named rather than
+    /// left to be inferred.
+    pub async fn calibration(&self) -> Value {
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || calibration_read(&home)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "calibration",
+                "refused": ["the calibration read did not land"],
             }),
         }
     }
@@ -640,6 +699,61 @@ impl Bridge {
             return Err("this face has no agent behind it".to_string());
         }
         Ok(())
+    }
+
+    /// Re-anchor this face to an archived session's log: the sessions
+    /// panel's resume. The view rebuilds from the log's own records —
+    /// the same cards a replay previews — and the agent thread is told
+    /// to continue that log on its next task, its route judgment
+    /// dropped so the resumed conversation is judged as its own. A run
+    /// in flight refuses, a name that is not a session id is refused
+    /// for its shape before the disk is touched, and a name that does
+    /// not open is refused by naming itself — a failed resume leaves
+    /// the conversation exactly as it was.
+    pub async fn resume(&self, asked: &str) -> Result<Value, String> {
+        let id = asked.trim();
+        if !session_id_is_shape(id) {
+            return Err(format!("`{id}` is not a session id"));
+        }
+        {
+            let state = lock(&self.state);
+            if state.running {
+                return Err(
+                    "a run is in flight; let it finish before resuming another session".to_string(),
+                );
+            }
+        }
+        let home = self.home.clone();
+        let owned = id.to_string();
+        let seeded = match tokio::task::spawn_blocking(move || replay_cards(&home, &owned)).await {
+            Ok(Ok(seeded)) => seeded,
+            Ok(Err(reason)) => return Err(reason),
+            Err(_) => return Err("the replay did not land".to_string()),
+        };
+        {
+            let mut state = lock(&self.state);
+            state.session = id.to_string();
+            state.events = seeded.into();
+            state.dropped = 0;
+            state.running = false;
+            state.seat = None;
+        }
+        // The thread learns the new anchor even when it has nothing to
+        // run yet: the reply says whether the command landed, because a
+        // face with no agent behind it still resumes as a viewer — the
+        // reads are all view-side — but its next run would say so
+        // anyway, and the reply saying it twice would be a lie.
+        let delivered = self
+            .commands
+            .as_ref()
+            .map(|commands| commands.send(Command::Resume(id.to_string())).is_ok())
+            .unwrap_or(false);
+        record(
+            &self.state,
+            &self.events,
+            json!({"type": "resumed", "session": id, "agent": delivered}),
+        );
+        Ok(json!({"type": "resume", "session": id, "agent": delivered}))
     }
 
     /// The browser's answer to the pending seat.
@@ -1042,6 +1156,405 @@ fn file_read(root: &std::path::Path, asked: &str) -> Value {
         "bytes": bytes.len(),
         "truncated": truncated,
         "text": text,
+    })
+}
+
+/// A session id this face will open: the shape `Session::create` mints —
+/// a UTC stamp, a dash, a short suffix — and nothing else. The check is
+/// lexical and first, because the id names a file under the home: a
+/// traversal-shaped id is refused for its shape, whether or not a file
+/// with that name could exist.
+fn session_id_is_shape(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// How many cards a replay carries. A long session's log is the model's
+/// whole history with it, and a document that shipped all of it would
+/// make the panel pay for a conversation the owner has not opened yet;
+/// the newest cards win, and the count left out is named beside the
+/// cut — a bounded read says what it left unread.
+const REPLAY_CARD_CAP: usize = 400;
+
+/// The tool-result preview cap, the live path's own (`agent::preview`
+/// at 80): a replayed card shows what a live card showed, so a
+/// conversation cannot grow more detailed by being replayed.
+const REPLAY_PREVIEW: usize = 80;
+
+/// The cards a log's records shape into, oldest first, with the count
+/// the cap left out. This is the one translator from records to the
+/// card vocabulary the live fan-out emits, and both readers share it —
+/// the replay panel previews exactly what a resume reseeds, so the two
+/// cannot disagree about what a session says.
+///
+/// The route card is deliberately absent: the route decision rides the
+/// calibration stream, not the session log, and a replay that invented
+/// one would be a second opinion about a fact it does not hold. The
+/// bookkeeping records (`start`, `end`) shape the replay's header
+/// instead of cards, which is where a conversation's facts belong.
+fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
+    let mut cards: Vec<Value> = Vec::new();
+    for record in records {
+        match record {
+            session::Record::Start { .. } | session::Record::End { .. } => {}
+            session::Record::User { content } => {
+                cards.push(json!({"type": "message", "role": "owner", "text": content}));
+            }
+            session::Record::Assistant { content, .. } => {
+                if let Some(text) = content {
+                    cards.push(json!({"type": "message", "role": "assistant", "text": text}));
+                }
+            }
+            session::Record::ToolResult {
+                name,
+                output,
+                approved,
+                ..
+            } => {
+                cards.push(json!({
+                    "type": "tool_result",
+                    "tool": name,
+                    "preview": crate::agent::preview(output, REPLAY_PREVIEW),
+                    "approved": approved,
+                }));
+            }
+            session::Record::LaneTools { lane, tools } => {
+                cards.push(json!({"type": "lane", "lane": lane, "tools": tools.len()}));
+            }
+            session::Record::Skills { skills } => {
+                // The log pins what the run declared, not what the loader
+                // skipped — a skipped name lives in the loader's own
+                // report — so a replayed card says what the record says
+                // and is silent about what it does not hold.
+                cards.push(json!({"type": "skills", "loaded": skills.len()}));
+            }
+            session::Record::Memory { shape, facts } => {
+                cards.push(json!({"type": "memory", "shape": shape, "facts": facts.len()}));
+            }
+            session::Record::Compaction {
+                first_turn,
+                last_turn,
+                tokens_before,
+                tokens_after,
+                ..
+            } => {
+                let turns = last_turn.saturating_sub(*first_turn) + 1;
+                cards.push(json!({
+                    "type": "compacted",
+                    "turns": turns,
+                    "before": tokens_before,
+                    "after": tokens_after,
+                }));
+            }
+        }
+    }
+    let omitted = cards.len().saturating_sub(REPLAY_CARD_CAP);
+    if omitted > 0 {
+        cards.drain(..omitted);
+    }
+    (cards, omitted)
+}
+
+/// The replay as a reseed: the cards alone, or the named reason it
+/// could not happen. This is [`Bridge::resume`]'s read half.
+fn replay_cards(home: &std::path::Path, id: &str) -> Result<Vec<Value>, String> {
+    if !session_id_is_shape(id) {
+        return Err(format!("`{id}` is not a session id"));
+    }
+    let path = session::session_path(home, id);
+    let records = session::replay(&path)
+        .map_err(|error| format!("could not open session `{id}`: {error}"))?;
+    Ok(cards_from_records(&records).0)
+}
+
+/// One archived session's replay document: the head the `start` record
+/// pins, the summary the `end` record and the compaction marks carry,
+/// and the cards.
+fn replay_read(home: &std::path::Path, asked: &str) -> Value {
+    let id = asked.trim();
+    if !session_id_is_shape(id) {
+        return json!({
+            "type": "replay",
+            "refused": [format!("`{id}` is not a session id")],
+        });
+    }
+    let path = session::session_path(home, id);
+    let records = match session::replay(&path) {
+        Ok(records) => records,
+        Err(error) => {
+            return json!({
+                "type": "replay",
+                "refused": [format!("could not open session `{id}`: {error}")],
+            })
+        }
+    };
+    let (cards, omitted) = cards_from_records(&records);
+    let (mut model, mut created, mut kind, mut parent) = (String::new(), String::new(), None, None);
+    let mut ended = false;
+    let mut stop_reason = String::new();
+    let mut turns = 0u64;
+    let mut compacted = false;
+    for record in &records {
+        match record {
+            session::Record::Start {
+                model: m,
+                created: c,
+                kind: k,
+                parent: p,
+                ..
+            } => {
+                model = m.clone();
+                created = c.clone();
+                kind = k.clone();
+                parent = p.clone();
+            }
+            session::Record::End {
+                stop_reason: s,
+                turns: t,
+            } => {
+                ended = true;
+                stop_reason = s.clone();
+                turns = *t;
+            }
+            session::Record::Compaction { .. } => compacted = true,
+            _ => {}
+        }
+    }
+    json!({
+        "type": "replay",
+        "id": id,
+        "model": model,
+        "created": created,
+        "kind": kind,
+        "parent": parent,
+        "ended": ended,
+        "stop_reason": stop_reason,
+        "turns": turns,
+        "compacted": compacted,
+        "omitted": omitted,
+        "cards": cards,
+    })
+}
+
+/// The archive as the sessions panel reads it: newest first, because
+/// the archive reads backward, with this face's own session named. A
+/// log that fails to parse stays in the list as `unreadable` — the
+/// picker's own rule, and hiding a log the owner knows exists would be
+/// the archive pretending to be more complete than it is.
+fn sessions_read(home: &std::path::Path, current: &str) -> Value {
+    let entries = match session::list(home) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return json!({
+                "type": "sessions",
+                "refused": [format!("the archive could not be read: {error}")],
+            })
+        }
+    };
+    let sessions = entries
+        .iter()
+        .rev()
+        .map(|entry| {
+            json!({
+                "id": entry.id,
+                "model": entry.model,
+                "created": entry.created,
+                "ended": entry.ended,
+                "kind": entry.kind,
+                "compacted": entry.compacted,
+                "current": entry.id == current,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "type": "sessions",
+        "read_at": crate::boards::now_stamp(),
+        "current": current,
+        "sessions": sessions,
+    })
+}
+
+/// The calibration panel's document. The rows come through the reader's
+/// own cap (the last [`crate::calib::READ_CAP`] of the day, named in
+/// the document), grouped by op for the stream view; the fit cells are
+/// the calibration surface's own computation, not a re-derivation, so
+/// this panel and `fleet calib --calibration` cannot disagree about
+/// whether a provider's sample is fit.
+fn calibration_read(home: &std::path::Path) -> Value {
+    let user_home = std::env::var("HOME").ok();
+    let root = crate::calib::resolve_root(home, user_home.as_deref());
+    let day = crate::calib::today();
+    let rows = crate::calib::read_day(&root, &day, crate::calib::READ_CAP);
+    let gate = crate::route::calibration_config(home).informs_failover;
+    let cells = crate::calib::calibration(&rows);
+    let mut stream: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
+    for row in &rows {
+        stream
+            .entry(row.op.as_str())
+            .or_default()
+            .push(row_json(row));
+    }
+    json!({
+        "type": "calibration",
+        "read_at": crate::boards::now_stamp(),
+        "day": day,
+        "root": root.display().to_string(),
+        "cap": crate::calib::READ_CAP,
+        "rows_read": rows.len(),
+        "gate": {
+            "informs_failover": gate,
+            "name": "calibration.informs_failover",
+        },
+        "fit_rule": {
+            "rows": crate::calib::FIT_MIN_ROWS,
+            "span": crate::calib::FIT_MIN_SPAN,
+        },
+        "cells": cells.iter().map(cell_json).collect::<Vec<_>>(),
+        "stream": stream,
+    })
+}
+
+/// One stream row, shaped for the browser: the fields its op carries,
+/// and none of the fields it does not — a `turn` row has no confidence
+/// and a `propose` row has no provider, and a document that shipped
+/// zeros for both would be inventing structure the row never had.
+fn row_json(row: &crate::calib::ReadRow) -> Value {
+    let mut out = serde_json::Map::new();
+    out.insert("op".into(), json!(row.op));
+    out.insert("ts".into(), json!(row.ts));
+    let mut put = |key: &str, value: Value| {
+        out.insert(key.into(), value);
+    };
+    match row.op.as_str() {
+        "route" => {
+            put("provider", json!(row.provider));
+            put("model", json!(row.model));
+            put("workload", json!(row.workload));
+            put("how", json!(row.how));
+            put("judged_from", json!(row.judged_from));
+            put("providers_used", json!(row.providers_used));
+            put(
+                "attempts",
+                json!(row
+                    .attempts
+                    .iter()
+                    .map(|attempt| json!({
+                        "provider": attempt.provider,
+                        "outcome": attempt.outcome,
+                        "class": attempt.class,
+                    }))
+                    .collect::<Vec<_>>()),
+            );
+            put("input_chars", json!(row.input_chars));
+        }
+        "route_judged" => {
+            put("route_key", json!(row.route_key));
+            put("workload", json!(row.workload));
+            put("verdict", json!(row.verdict));
+            put("confidence", json!(row.confidence));
+            put("disposition", json!(row.disposition));
+            put("lane", json!(row.lane));
+        }
+        "turn" => {
+            put("outcome", json!(row.outcome));
+            put("stop_reason", json!(row.stop_reason));
+            put("turns", json!(row.turns));
+            put("reason", json!(row.reason));
+            put("input_chars", json!(row.input_chars));
+            put("input_hash", json!(row.input_hash));
+        }
+        "tool_screen" => {
+            put("tool", json!(row.tool));
+            put("outcome", json!(row.outcome));
+        }
+        "recall_hit" => {
+            put("fact", json!(row.fact));
+            put("shape", json!(row.shape));
+            put("score", json!(row.score));
+        }
+        "consolidate" => {
+            put("action", json!(row.action));
+            put("reason", json!(row.reason));
+        }
+        "propose" => {
+            put("proposal", json!(row.proposal));
+            put("target", json!(row.target));
+            put("target_name", json!(row.target_name));
+            put("basis", json!(row.basis));
+            put("verdict", json!(row.verdict));
+            put("input_sha256", json!(row.input_sha256));
+            put(
+                "gate",
+                json!(row
+                    .gate
+                    .iter()
+                    .map(|step| json!({"step": step.step, "ok": step.ok, "detail": step.detail}))
+                    .collect::<Vec<_>>()),
+            );
+        }
+        "eval_corpus" => {
+            put("passed", json!(row.passed));
+            put("failed", json!(row.failed));
+            put("score", json!(row.score));
+            put("input_sha256", json!(row.input_sha256));
+            put(
+                "scenarios",
+                json!(row
+                    .scenarios
+                    .iter()
+                    .map(|scenario| json!({
+                        "scenario": scenario.scenario,
+                        "family": scenario.family,
+                        "passed": scenario.passed,
+                        "failure": scenario.failure,
+                    }))
+                    .collect::<Vec<_>>()),
+            );
+        }
+        "explain" => {
+            put("explained_op", json!(row.explained_op));
+            put("selector", json!(row.selector));
+            put("cost_usd", json!(row.cost_usd));
+            put("latency_ms", json!(row.latency_ms));
+            put("eval_only", json!(row.eval_only));
+        }
+        // A future slice's op crosses whole, its fields the reader
+        // already parsed: an op this match does not name still rides,
+        // because dropping a row the stream holds would make the panel
+        // quieter than the day was.
+        _ => {
+            put("verdict", json!(row.verdict));
+            put("outcome", json!(row.outcome));
+        }
+    }
+    Value::Object(out)
+}
+
+/// One fit cell, shaped for the browser: the counts, the weighted
+/// rates, the fit state with what it still needs, and the spend.
+fn cell_json(cell: &crate::calib::CalibrationCell) -> Value {
+    json!({
+        "provider": cell.provider,
+        "workload": cell.workload,
+        "judged": cell.judged,
+        "right": cell.right,
+        "wrong": cell.wrong,
+        "insufficient": cell.insufficient,
+        "waived": cell.waived,
+        "overridden": cell.overridden,
+        "weighted_wrong_rate": cell.weighted_wrong_rate,
+        "weighted_insufficient_rate": cell.weighted_insufficient_rate,
+        "confidence_span": cell.confidence_span,
+        "zero_confidence": cell.zero_confidence,
+        "fit": cell.fit.label(),
+        "needs_rows": cell.needs_rows(),
+        "needs_span": cell.needs_span(),
+        "informs_failover": cell.informs_failover(),
+        "spend_usd": cell.spend_usd,
+        "cost_per_right": cell.cost_per_right,
     })
 }
 
@@ -1513,7 +2026,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             // one sys1 judgment, not one per task.
             let mut prepared: Option<crate::route::Prepared> = None;
             let mut judge_task = String::new();
-            let current_session = session_id;
+            let mut current_session = session_id;
             let mut commands = command_rx;
             while let Some(command) = commands.recv().await {
                 match command {
@@ -1606,6 +2119,18 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 }
                             };
                         let _ = agent.run(&task).await;
+                    }
+                    Command::Resume(id) => {
+                        // The re-anchor is the TUI's resume, one surface
+                        // over: the session id swaps, and the prepared
+                        // route decision with it — that judgment answered
+                        // the conversation the face came in on, and the
+                        // resumed one deserves its own. The view side
+                        // reseeded before this command was sent; only the
+                        // thread's own notion of "which log" was stale.
+                        current_session = id;
+                        prepared = None;
+                        judge_task = String::new();
                     }
                 }
             }
@@ -2051,5 +2576,53 @@ mod tests {
         let state = bridge.state();
         assert_eq!(state["running"], false);
         assert_eq!(state["events"][1]["type"], "failed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_reseeds_the_view_and_hands_the_thread_the_anchor() {
+        // A home with one real log, unique per call: the resume reads it,
+        // and the door receives what the view already showed.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let home =
+            std::env::temp_dir().join(format!("fleet-gui-resume-{}-{serial}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let mut log = Session::create(&home, "deepseek-chat").expect("the log");
+        let id = log.id().to_string();
+        log.record(&session::Record::User {
+            content: "carry me over".to_string(),
+        })
+        .expect("the record");
+        let (mut bridge, _sources) = Bridge::detached(
+            home,
+            "deepseek-chat".to_string(),
+            "session-test".to_string(),
+        );
+        let mut door = bridge.connect();
+        // A run in flight refuses before anything on the face is touched.
+        lock(&bridge.state).running = true;
+        let refused = bridge.resume(&id).await.unwrap_err();
+        assert!(refused.contains("in flight"), "{refused}");
+        lock(&bridge.state).running = false;
+        // A shape that is not an id is refused for its shape, before the
+        // disk is asked anything.
+        assert!(bridge.resume("../escape").await.is_err());
+        let resumed = bridge.resume(&id).await.expect("resumed");
+        assert_eq!(resumed["session"], id.as_str());
+        assert_eq!(resumed["agent"], true, "the door took the command");
+        match door.recv().await.expect("the command") {
+            Command::Resume(delivered) => assert_eq!(delivered, id),
+            _ => panic!("a resume delivered some other command"),
+        }
+        let state = bridge.state();
+        assert_eq!(state["session"], id.as_str(), "{state}");
+        let events = state["events"].as_array().expect("an event log");
+        assert!(
+            events
+                .iter()
+                .any(|event| event["type"] == "message" && event["text"] == "carry me over"),
+            "the view reseeded from the log: {events:?}"
+        );
     }
 }
