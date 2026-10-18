@@ -206,6 +206,7 @@ fn child_start(parent: &str) -> Record {
         created: "2026-10-14T12:00:00Z".to_string(),
         kind: Some(session::SUBAGENT_KIND.to_string()),
         parent: Some(parent.to_string()),
+        workspace: None,
     }
 }
 
@@ -217,6 +218,7 @@ fn parent_start() -> Record {
         created: "2026-10-14T11:59:00Z".to_string(),
         kind: None,
         parent: None,
+        workspace: None,
     }
 }
 

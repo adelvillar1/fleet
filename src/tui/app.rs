@@ -3773,6 +3773,7 @@ mod tests {
                 created: "c".to_string(),
                 kind: None,
                 parent: None,
+                workspace: None,
             },
             Record::Skills {
                 skills: vec![crate::skills::SkillRef {
@@ -4076,6 +4077,7 @@ mod tests {
                 created: "c".to_string(),
                 kind: None,
                 parent: None,
+                workspace: None,
             },
             Record::User {
                 content: "resumed task".to_string(),
@@ -4122,6 +4124,7 @@ mod tests {
             created: "2026-10-13T00:00:00Z".to_string(),
             ended: false,
             kind: None,
+            workspace: None,
             compacted: false,
             served_model: None,
             path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),

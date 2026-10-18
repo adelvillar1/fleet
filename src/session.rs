@@ -54,6 +54,14 @@ pub enum Record {
         /// rather than only from the parent's `tool_result`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent: Option<String>,
+        /// The working directory this session was born in — the project
+        /// the archive groups it under, which is what a remote face needs
+        /// to show "sessions by project" without guessing from the id.
+        /// Absent on a log written before the field existed: a
+        /// same-version addition, so a tolerant reader takes it as "no
+        /// project recorded" rather than as corruption.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<String>,
     },
     User {
         content: String,
@@ -235,12 +243,23 @@ impl Session {
             .open(&path)?;
         let mut session = Session { path, log };
         let created = iso_utc_stamp(SystemTime::now())?;
+        // The project this session belongs to, recorded at the one moment
+        // it is unambiguous: the process's own working directory when the
+        // log is created. A resumed session keeps the project it was born
+        // in, which is what makes the archive groupable by project rather
+        // than by wherever the owner happened to resume from. A process
+        // whose directory has been deleted records none — an absent field
+        // reads as "no project recorded", never as a corrupt log.
+        let workspace = std::env::current_dir()
+            .ok()
+            .map(|dir| dir.display().to_string());
         session.record(&Record::Start {
             v: SESSION_FORMAT_VERSION,
             model: model.to_string(),
             created,
             kind: kind.map(str::to_string),
             parent: parent.map(str::to_string),
+            workspace,
         })?;
         Ok(session)
     }
@@ -355,6 +374,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         model,
         created,
         kind,
+        workspace,
         ..
     } = serde_json::from_str(first.trim()).ok()?
     else {
@@ -383,6 +403,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         created,
         ended,
         kind,
+        workspace,
         compacted,
         served_model,
         path: path.to_path_buf(),
@@ -402,6 +423,9 @@ pub struct SessionSummary {
     /// marker beside the row — a child is an ordinary session with a
     /// parent, not a second class of thing.
     pub kind: Option<String>,
+    /// The working directory this session was born in, or `None` on a log
+    /// written before the field existed. The archive groups by it.
+    pub workspace: Option<String>,
     /// True when the log carries a `compaction` record: the conversation
     /// outgrew the window and was folded at least once. The picker and
     /// `fleet sessions` mark it, because a compacted session's replay is
@@ -468,6 +492,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     created: String::new(),
                     ended: false,
                     kind: None,
+                    workspace: None,
                     compacted: false,
                     served_model: None,
                     path,
@@ -758,6 +783,61 @@ mod tests {
     }
 
     #[test]
+    fn a_new_log_records_the_workspace_it_was_born_in() {
+        let home = temp_home("workspace");
+        let mut session = Session::create(&home, "deepseek-chat").unwrap();
+        session
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 0,
+                served_model: None,
+            })
+            .unwrap();
+        // The process's own working directory, recorded at the one moment
+        // it is unambiguous. The test runner's cwd is whatever it is; the
+        // point is the field is present and equals it.
+        let expected = std::env::current_dir().unwrap().display().to_string();
+        let records = replay(session.path()).unwrap();
+        assert!(
+            matches!(&records[0], Record::Start { workspace: Some(w), .. } if *w == expected),
+            "{records:?}"
+        );
+        let listed = list(&home).unwrap();
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].workspace.as_deref(), Some(expected.as_str()));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_log_written_before_the_field_reads_as_no_project() {
+        // The tolerant-reader promise: a same-version addition means a log
+        // without the field is a log from before it, not a corrupt one.
+        // Hand-written here because the writer can no longer produce one.
+        let home = temp_home("no-workspace");
+        let dir = crate::home::ensure_sessions_dir(&home).unwrap();
+        let path = dir.join("20261013T101010Z-abcdef.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                r#"{"type":"start","v":1,"model":"deepseek-chat","created":"2026-10-13T10:10:10Z"}"#,
+                "\n",
+                r#"{"type":"end","stop_reason":"completed","turns":1}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let listed = list(&home).unwrap();
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].workspace, None);
+        assert!(listed[0].ended);
+        // And the records still replay: the missing field costs the
+        // grouping, never the conversation.
+        let records = replay(&path).unwrap();
+        assert_eq!(records.len(), 2, "{records:?}");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
     fn a_torn_trailing_record_is_tolerated_and_the_session_survives() {
         let home = temp_home("torn-tail");
         let mut session = Session::create(&home, "deepseek-chat").unwrap();
@@ -851,6 +931,7 @@ mod tests {
                 created: "c".into(),
                 kind: None,
                 parent: None,
+                workspace: None,
             },
             Record::User {
                 content: "hi".into(),
@@ -906,6 +987,7 @@ mod tests {
                 created: "c".into(),
                 kind: None,
                 parent: None,
+                workspace: None,
             },
             Record::User {
                 content: "probe it".into(),
@@ -998,6 +1080,7 @@ mod tests {
                 created: "c".into(),
                 kind: None,
                 parent: None,
+                workspace: None,
             },
             skills_record(),
             Record::User {
@@ -1088,6 +1171,7 @@ mod tests {
                 created: "c".into(),
                 kind: None,
                 parent: None,
+                workspace: None,
             },
             memory_record(),
             Record::User {
@@ -1181,6 +1265,7 @@ mod tests {
             created: "2026-10-14T00:00:00Z".to_string(),
             kind: Some(SUBAGENT_KIND.to_string()),
             parent: Some("20261013T000000Z-abcdef".to_string()),
+            workspace: None,
         }
     }
 

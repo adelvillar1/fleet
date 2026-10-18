@@ -1999,6 +1999,7 @@ fn sessions_read(home: &std::path::Path, current: &str) -> Value {
                 "created": entry.created,
                 "ended": entry.ended,
                 "kind": entry.kind,
+                "workspace": entry.workspace,
                 "compacted": entry.compacted,
                 "current": entry.id == current,
             })

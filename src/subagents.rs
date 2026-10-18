@@ -1062,6 +1062,7 @@ fn parent_of(sessions_dir: &std::path::Path, session: &str) -> Option<String> {
     records.first().and_then(|record| match record {
         Record::Start {
             parent: Some(parent),
+            workspace: None,
             ..
         } if !parent.is_empty() => Some(parent.clone()),
         _ => None,
@@ -2444,6 +2445,7 @@ mod tests {
                 created: "c".to_string(),
                 kind: Some(crate::session::SUBAGENT_KIND.to_string()),
                 parent: Some("p".to_string()),
+                workspace: None,
             },
             Record::User {
                 content: "the goal".to_string(),
@@ -2713,6 +2715,7 @@ mod tests {
             created: "2026-10-15T00:00:00Z".to_string(),
             kind: kind.map(str::to_string),
             parent: parent.map(str::to_string),
+            workspace: None,
         })
         .unwrap();
         text.push('\n');

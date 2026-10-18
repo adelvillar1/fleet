@@ -2160,6 +2160,7 @@ mod tests {
                 created: "c".into(),
                 kind: None,
                 parent: None,
+                workspace: None,
             },
             Record::User {
                 content: "run it".into(),

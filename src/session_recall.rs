@@ -900,6 +900,7 @@ mod tests {
             created: "2026-10-15T00:00:00Z".to_string(),
             kind: None,
             parent: None,
+            workspace: None,
         }
     }
 
@@ -1611,6 +1612,45 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&dir);
     }
+
+    /// One summary row for the archive card tests.
+    fn row(id: &str, workspace: Option<&str>) -> crate::session::SessionSummary {
+        crate::session::SessionSummary {
+            id: id.to_string(),
+            model: "deepseek-chat".to_string(),
+            created: "2026-10-15T00:00:00Z".to_string(),
+            ended: true,
+            kind: None,
+            workspace: workspace.map(str::to_string),
+            compacted: false,
+            path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),
+        }
+    }
+
+    #[test]
+    fn the_archive_names_the_project_a_session_was_born_in() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let project = format!("{home}/projects/fleet");
+        let rendered = render_list(&[
+            row("20261015T000000Z-aaa", Some(&project)),
+            row("20261015T000001Z-bbb", None),
+        ]);
+        // The home prefix folds to `~`: every row would otherwise start
+        // with the same six characters.
+        assert!(rendered.contains("~/projects/fleet"), "{rendered}");
+        // A log without the field simply carries no project line — the
+        // grouping is absent, the row is not.
+        assert!(rendered.contains("20261015T000001Z-bbb"), "{rendered}");
+        let after = rendered.split("20261015T000001Z-bbb").nth(1).unwrap();
+        let row_text = after.split('\u{250c}').next().unwrap();
+        assert!(!row_text.contains("projects/fleet"), "{row_text}");
+    }
+
+    #[test]
+    fn a_project_outside_the_home_is_shown_whole() {
+        let rendered = render_list(&[row("20261015T000000Z-aaa", Some("/srv/elsewhere/app"))]);
+        assert!(rendered.contains("/srv/elsewhere/app"), "{rendered}");
+    }
 }
 
 // --- the surfaces ----------------------------------------------------------
@@ -1736,6 +1776,17 @@ pub fn render_list(summaries: &[crate::session::SessionSummary]) -> String {
             model = summary.model,
             markers = markers,
         ));
+        // The project, when the log records one: the archive groups by
+        // it, and a reader scanning for "the fleet work" should not have
+        // to open a session to learn where it ran. The home prefix folds
+        // to `~`, because every row would otherwise start with the same
+        // six characters.
+        if let Some(workspace) = &summary.workspace {
+            out.push_str(&format!(
+                "{DIM}\u{2502}{RESET} {DIM}{workspace}{RESET}\n",
+                workspace = shorten_home(workspace),
+            ));
+        }
         out.push_str(&format!(
             "{DIM}\u{2514}{}\u{2518}{RESET}\n",
             "\u{2500}".repeat(CARD_WIDTH - 2)
@@ -1753,6 +1804,19 @@ pub fn render_list(summaries: &[crate::session::SessionSummary]) -> String {
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
     "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+}
+
+/// A workspace path with the home prefix folded to `~`. A path outside
+/// the home is shown whole: the reader's own projects all live under it,
+/// and a path that is not theirs is information, not noise.
+fn shorten_home(workspace: &str) -> String {
+    let home = std::env::var("HOME").ok().filter(|home| !home.is_empty());
+    match home {
+        Some(home) if workspace.starts_with(&format!("{home}/")) => {
+            format!("~{}", &workspace[home.len()..])
+        }
+        _ => workspace.to_string(),
+    }
 }
 
 /// `fleet sessions <id>`: one session's log as cards — the task, the
