@@ -1698,12 +1698,85 @@ pub fn demoted_providers(rows: &[ReadRow], threshold: usize) -> Vec<String> {
 /// rows demote to the end of the failover walk. Bounded — today's file,
 /// the last [`READ_CAP`] rows — and a no-op when the stream is unreadable
 /// or absent.
+///
+/// KI-050: the read spans [`DEMOTION_WINDOW_DAYS`] days, not one. A
+/// candidate that fails three times a day, every day, used to start
+/// fresh each day with no accumulated penalty; the window lets a
+/// chronic failure escalate across days while the streak still resets
+/// on a serve. The days are the newest ones that exist under the root,
+/// read in chronological order, so a machine that has been idle for a
+/// week reads its last active days rather than a week of empty files.
 pub fn demotions(root: &Path, day: &str, candidates: &[&str]) -> Vec<String> {
-    let rows = read_day(root, day, READ_CAP);
+    let rows = read_days_recent(root, day, DEMOTION_WINDOW_DAYS);
     demoted_providers(&rows, DEMOTION_THRESHOLD)
         .into_iter()
         .filter(|provider| candidates.contains(&provider.as_str()))
         .collect()
+}
+
+/// How many days the demotion's streak accumulates across. KI-050: the
+/// constant was a per-day threshold with no memory, so a candidate that
+/// failed three times daily was never worse than one that failed three
+/// times once. Three days is the honest first window — long enough for
+/// a chronic failure to show, short enough that a provider that
+/// recovered last week is not still paying for it.
+pub const DEMOTION_WINDOW_DAYS: usize = 3;
+
+/// The route rows of the newest `days` day-files under `root`, oldest
+/// first. The day directories are `<root>/<YYYY>/<MM>/<DD>/events.jsonl`,
+/// whose path order IS chronological order, so the read is a sorted
+/// listing rather than date arithmetic — and a day that does not
+/// exist is simply not in the list.
+fn read_days_recent(root: &Path, day: &str, days: usize) -> Vec<ReadRow> {
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(years) = std::fs::read_dir(root) {
+        for year in years.flatten() {
+            let Ok(months) = std::fs::read_dir(year.path()) else {
+                continue;
+            };
+            for month in months.flatten() {
+                let Ok(days_dir) = std::fs::read_dir(month.path()) else {
+                    continue;
+                };
+                for day_dir in days_dir.flatten() {
+                    let file = day_dir.path().join("events.jsonl");
+                    if file.is_file() {
+                        files.push(file);
+                    }
+                }
+            }
+        }
+    }
+    files.sort();
+    let window = files.iter().rev().take(days).rev();
+    let mut rows: Vec<ReadRow> = Vec::new();
+    for file in window {
+        // `day` itself is always read, even when it is not among the
+        // newest files: the caller named it, and the caller's day is
+        // the one the demotion is read for.
+        rows.extend(read_day(root, &day_of(&file), READ_CAP));
+    }
+    if !files.iter().any(|file| day_of(file) == day) {
+        rows.extend(read_day(root, day, READ_CAP));
+    }
+    rows.sort_by_key(|row| row.ts.clone());
+    rows
+}
+
+/// The `YYYY-MM-DD` a day-file's path carries, read back out of its
+/// `<YYYY>/<MM>/<DD>` layout. A path that is not that shape reads as
+/// the empty string, which no day file's read will match.
+fn day_of(file: &std::path::Path) -> String {
+    let parts: Vec<String> = file
+        .iter()
+        .filter_map(|part| part.to_str())
+        .map(str::to_string)
+        .collect();
+    let n = parts.len();
+    if n >= 4 {
+        return format!("{}-{}-{}", parts[n - 4], parts[n - 3], parts[n - 2]);
+    }
+    String::new()
 }
 
 // --- the judgment's join key and the calibration read ----------------------
@@ -3460,6 +3533,45 @@ mod tests {
             ],
         );
         assert_eq!(demotions(&root, day, &["a", "b"]), vec!["a".to_string()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_chronic_failure_escalates_across_days() {
+        // KI-050: two failures a day, every day, never reached the
+        // threshold within a single day's read — so a chronically sick
+        // provider started fresh each day and paid nothing. The streak
+        // now accumulates across the window's days.
+        let root = scratch("ki-050");
+        let (d1, d2, d3) = ("2026-10-11", "2026-10-12", "2026-10-13");
+        for day in [d1, d2] {
+            write_rows(
+                &root,
+                day,
+                &vec![route_row(&[("a", "failed")]), route_row(&[("a", "failed")])],
+            );
+        }
+        write_rows(&root, d3, &[route_row(&[("a", "failed")])]);
+        assert_eq!(demotions(&root, d3, &["a", "b"]), vec!["a".to_string()]);
+
+        // The window is bounded: a recovery three days back is outside
+        // it, and the day named by the caller is still the day read.
+        let stale = "2026-10-10";
+        write_rows(
+            &root,
+            stale,
+            &vec![
+                route_row(&[("b", "failed")]),
+                route_row(&[("b", "failed")]),
+                route_row(&[("b", "failed")]),
+            ],
+        );
+        assert!(demotions(&root, d3, &["b"]).is_empty());
+
+        // And a serve inside the window still resets the whole streak,
+        // across days as it does within one.
+        write_rows(&root, d2, &[route_row(&[("a", "served")])]);
+        assert!(demotions(&root, d3, &["a"]).is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 
