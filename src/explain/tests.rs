@@ -520,6 +520,67 @@ fn no_synchronous_path_references_the_explanation_beat() {
 }
 
 #[test]
+fn the_card_reads_the_verdict_as_of_the_explanations_own_ts() {
+    // KI-168: the card reads the verdict AS OF the explanation's own ts,
+    // not the freshest one. A second apply after the explanation lands a
+    // newer verdict row, and the card must keep pairing the prose with
+    // the verdict it explained.
+    let root = scratch("as-of");
+    let home = scratch("as-of-home");
+    refused_proposal_row(&root, "older-proposal", "sha-older");
+    // The explanation's own row, written between the two verdicts.
+    let stream = calib::Stream::open(&root);
+    stream.record(Row::Explain(crate::explain::ExplainRow {
+        ts: calib::stamp(),
+        lane: "sys1".to_string(),
+        explained_op: calib::OP_PROPOSE.to_string(),
+        selector: "older-proposal".to_string(),
+        input_sha256: "sha-older".to_string(),
+        explanation_sha256: "expl-sha".to_string(),
+        explanation_chars: 10,
+        eval_only: false,
+        cost_usd: None,
+        latency_ms: None,
+        route: calib::ExplainRouteRow {
+            needs_generation: None,
+            path: "direct".to_string(),
+            answer_shape: "prose".to_string(),
+        },
+        validation: calib::ExplainValidationRow {
+            outcome: "ok".to_string(),
+            answers_the_question: Some(true),
+            contradicts_facts: Some(false),
+            number_check: "ok".to_string(),
+        },
+    }));
+    drop(stream);
+    std::fs::create_dir_all(crate::explain::explanations_dir(&home)).unwrap();
+    // The file is keyed by the VERDICT's sha — the join key — with the
+    // explanation's own sha riding the row.
+    std::fs::write(
+        crate::explain::explanation_path(&home, "sha-older"),
+        "the explanation prose",
+    )
+    .unwrap();
+    // The second apply: a NEWER verdict row for the same selector.
+    refused_proposal_row(&root, "older-proposal", "sha-newer");
+
+    let card = latest_card(&root, &home).expect("the card reads back");
+    // The verdict it shows is the one the prose explained — the older
+    // sha — not the fresh one.
+    assert!(
+        card.contains("sha-older"),
+        "the card pairs the prose with the verdict it explained: {card}"
+    );
+    assert!(
+        !card.contains("sha-newer"),
+        "the fresh verdict is not paired with the older prose: {card}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
 fn an_explain_row_changes_no_verdict() {
     // The functional half of eval-only: an `explain` row in the stream
     // is invisible to every verdict reader. A day that carries one

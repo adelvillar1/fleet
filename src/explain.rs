@@ -291,9 +291,8 @@ fn sidecar_spend(home: &Path, day: &str) -> f64 {
 /// rows and the home-side spend ledger. A stream that cannot be read
 /// spends nothing, which is the honest reading: no rows, no spend.
 pub fn day_spend(root: &Path, home: &Path, day: &str) -> f64 {
-    let stream_spend: f64 = read_day(root, day)
+    let stream_spend: f64 = read_explain_rows(root, day)
         .iter()
-        .filter(|row| row.op == calib::OP_EXPLAIN)
         .map(|row| row.cost_usd)
         .sum();
     // The ledger reads `+0.0` when absent, which also folds the
@@ -304,6 +303,47 @@ pub fn day_spend(root: &Path, home: &Path, day: &str) -> f64 {
 /// Today's rows of the stream, bounded by the reader's own cap.
 fn read_day(root: &Path, day: &str) -> Vec<ReadRow> {
     calib::read_day(root, day, calib::READ_CAP)
+}
+
+/// The spend read's cap for the explain op. KI-167: the day's spend is
+/// a SUM over the day's explain rows, and the reader's 512-row tail
+/// drops the earlier ones on a heavy day — a day past 512 rows would
+/// undercount and the daily cap could be exceeded silently. The op's
+/// own read is bounded apart from the tail at a cap a day does not
+/// plausibly reach; a dedicated cost counter is the named alternative.
+const EXPLAIN_SPEND_CAP: usize = 8_192;
+
+/// Today's explain rows for the spend sum, read by op rather than as
+/// the day's tail.
+fn read_explain_rows(root: &Path, day: &str) -> Vec<ReadRow> {
+    calib::read_op_day(root, day, calib::OP_EXPLAIN, EXPLAIN_SPEND_CAP)
+}
+
+/// The verdict as of one moment: the last row for the selector whose ts
+/// is at or before `at`. KI-168 — the card re-resolved the FRESHEST
+/// verdict, which after a second apply is newer than the explanation the
+/// row indexes, so the card paired a fresh verdict with older prose. The
+/// explanation's own ts is the moment it explained, and the verdict as
+/// of that moment is the one it explained.
+fn recorded_verdict_as_of(root: &Path, selector: &Selector, at: &str) -> Option<VerdictView> {
+    let rows = read_day(root, &calib::today());
+    let mut found: Option<&ReadRow> = None;
+    for row in &rows {
+        let matches = match selector {
+            Selector::Proposal(name) => row.op == calib::OP_PROPOSE && row.proposal == *name,
+            Selector::Scenario(name) => {
+                row.op == calib::OP_EVAL_CORPUS
+                    && row
+                        .scenarios
+                        .iter()
+                        .any(|scenario| scenario.scenario == *name && !scenario.passed)
+            }
+        };
+        if matches && row.ts.as_str() <= at {
+            found = Some(row);
+        }
+    }
+    found.map(|row| verdict_view(row, selector))
 }
 
 /// The verdict as the stream records it right now, for a caller that
@@ -821,20 +861,37 @@ pub async fn explain(request: ExplainRequest<'_>) -> ExplainOutcome {
             };
         }
     };
-    if let Some(recorded) = &verdict.input_sha256 {
-        if !sha_matches(recorded, &artifact_sha) {
-            let reason = format!(
-                "the artifact hashes to {artifact_sha}, the verdict row hashes to {recorded} — refusing to explain a drifted artifact"
-            );
-            return ExplainOutcome {
-                card: refusal_card(&verdict, &reason),
-                verdict,
-                row: None,
-                explanation_path: None,
-                refusal: Some(reason),
-                dry_run_prompt: None,
-            };
-        }
+    // KI-169: a verdict row that carries no sha at all is refused, not
+    // waved through. The rows written before the field existed hit this,
+    // and the old path adopted the artifact's own sha as the key — which
+    // explained a drifted artifact as if it matched. A row with nothing
+    // to check against is a row this beat cannot honestly explain.
+    let Some(recorded) = &verdict.input_sha256 else {
+        let reason = format!(
+            "the verdict row for `{}` carries no `input_sha256` — refusing to explain a verdict whose artifact was never pinned",
+            selector.name()
+        );
+        return ExplainOutcome {
+            card: refusal_card(&verdict, &reason),
+            verdict,
+            row: None,
+            explanation_path: None,
+            refusal: Some(reason),
+            dry_run_prompt: None,
+        };
+    };
+    if !sha_matches(recorded, &artifact_sha) {
+        let reason = format!(
+            "the artifact hashes to {artifact_sha}, the verdict row hashes to {recorded} — refusing to explain a drifted artifact"
+        );
+        return ExplainOutcome {
+            card: refusal_card(&verdict, &reason),
+            verdict,
+            row: None,
+            explanation_path: None,
+            refusal: Some(reason),
+            dry_run_prompt: None,
+        };
     }
     let input_sha256 = verdict.input_sha256.clone().unwrap_or(artifact_sha);
     let prompt = compose_prompt(&verdict, &artifact_text);
@@ -1000,7 +1057,9 @@ pub fn latest_card(root: &Path, home: &Path) -> Option<String> {
         calib::OP_EVAL_CORPUS => Selector::Scenario(row.selector.clone()),
         _ => Selector::Proposal(row.selector.clone()),
     };
-    let verdict = recorded_verdict(root, &selector).unwrap_or_else(|| VerdictView {
+    // KI-168: the verdict as of the explanation's own ts, not the
+    // freshest one the stream holds.
+    let verdict = recorded_verdict_as_of(root, &selector, &row.ts).unwrap_or_else(|| VerdictView {
         op: row.explained_op.clone(),
         selector: row.selector.clone(),
         verdict: "explained".to_string(),
