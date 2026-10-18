@@ -1349,6 +1349,56 @@ fn fallback(
 ///
 /// The second element says which happened, because a cached judgment
 /// is still a judgment the row must attribute honestly.
+/// The sys1 lane's decision providers' key env names. The lane's own
+/// chain draws on these; when none of them resolves, sys1's classify
+/// fails open with `error` and the route falls back to the declared
+/// HEAD, so the spawn is a cost paid for a decision the keys already
+/// made (KI-044).
+const SYS1_DECISION_KEYS: &[&str] = &[
+    "FASTINO_API_KEY",
+    "TYPESAFE_API_KEY",
+    "DREX_API_KEY",
+    "SUPERSONIC_API_KEY",
+    "LIQUID_API_KEY",
+    "CLM_API_KEY",
+    "OPENJEV_API_KEY",
+    "KEV_API_KEY",
+    "TOGETHER_API_KEY",
+    "LAYA_API_KEY",
+];
+
+/// Whether any of `names` resolves through `lookup` — the rule the
+/// fleet-home resolution uses: present and non-empty.
+fn any_key_resolves(names: &[&str], lookup: impl Fn(&str) -> Option<String>) -> bool {
+    names
+        .iter()
+        .any(|name| lookup(name).is_some_and(|value| !value.is_empty()))
+}
+
+/// Whether sys1 can judge at all, resolved once per process. A machine
+/// whose sys1 decision providers are unconfigured paid the spawn plus
+/// the failed classify on every session's first judgment — about 1.2
+/// seconds for a fallback the absent keys had already decided
+/// (KI-044). The answer rarely changes within a process's life, so it
+/// is taken once.
+fn sys1_judges() -> bool {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let home = crate::home::fleet_home(
+            std::env::var("FLEET_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        );
+        let dotenv = home
+            .map(|home| crate::home::read_dotenv(&home))
+            .unwrap_or_default();
+        any_key_resolves(SYS1_DECISION_KEYS, |name| {
+            std::env::var(name)
+                .ok()
+                .or_else(|| dotenv.get(name).cloned())
+        })
+    })
+}
+
 async fn judge(
     task: &str,
     specs: &HashMap<String, ServerSpec>,
@@ -1361,6 +1411,13 @@ async fn judge(
             Err(_) => return (None, JudgedFrom::None),
         },
     };
+    // KI-044: no decision provider resolves, so sys1's classify would
+    // fail open — the spawn is skipped rather than paid for. The cache
+    // above still answers first: a recorded verdict is a judgment that
+    // was made, on whatever machine made it.
+    if !sys1_judges() {
+        return (None, JudgedFrom::None);
+    }
     let hash = calib::hash16(task);
     // The cache is consulted only when it belongs to the lane that
     // would judge now: a key mismatch discards the whole file rather
@@ -2484,6 +2541,30 @@ mod tests {
     use super::*;
 
     // --- the context windows ---
+
+    /// KI-044: a machine whose sys1 decision providers are all
+    /// unconfigured resolves as "sys1 cannot judge", so the route skips
+    /// the spawn; one configured key resolves as "it can".
+    #[test]
+    fn sys1s_availability_is_the_keys_resolution() {
+        let none: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        assert!(!any_key_resolves(SYS1_DECISION_KEYS, |name| none
+            .get(name)
+            .cloned()));
+        let one = std::collections::HashMap::from([(
+            "TYPESAFE_API_KEY".to_string(),
+            "sk-live".to_string(),
+        )]);
+        assert!(any_key_resolves(SYS1_DECISION_KEYS, |name| one
+            .get(name)
+            .cloned()));
+        // An empty value is an unset key, the fleet-home rule.
+        let empty =
+            std::collections::HashMap::from([("FASTINO_API_KEY".to_string(), String::new())]);
+        assert!(!any_key_resolves(SYS1_DECISION_KEYS, |name| empty
+            .get(name)
+            .cloned()));
+    }
 
     #[test]
     fn every_model_the_roster_serves_has_its_window_declared_or_named_absent() {
