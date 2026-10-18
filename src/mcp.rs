@@ -143,6 +143,37 @@ pub fn child_env(
         if spec.env.iter().any(|(declared, _)| declared == name) {
             continue;
         }
+        // A declared name ending in `_` is a NAMESPACE, not a name:
+        // every ambient name under it crosses. KI-039 — sys1 reads its
+        // whole `SYS1_` namespace (`SYS1_PROVIDERS__JEV_MODEL`,
+        // `SYS1_CLASSIFY__LOG_DIR`, any section and key), and a
+        // name-based allowlist can only carry the names someone
+        // remembered to declare. A namespace declaration carries them
+        // all, and the section/key shape is the lane's own.
+        if let Some(prefix) = name.strip_suffix('_') {
+            for (ambient, value) in parent {
+                let Some(ambient) = ambient.to_str() else {
+                    continue;
+                };
+                // Strictly under the namespace — the bare prefix is not
+                // a name — and not already carried, by an exact entry
+                // earlier in the list or the spec's own declaration.
+                if !ambient.starts_with(prefix) || ambient.len() <= prefix.len() {
+                    continue;
+                }
+                if env
+                    .iter()
+                    .any(|(carried, _)| carried == OsStr::new(ambient))
+                {
+                    continue;
+                }
+                if spec.env.iter().any(|(declared, _)| declared == ambient) {
+                    continue;
+                }
+                env.push((OsString::from(ambient), value.clone()));
+            }
+            continue;
+        }
         if let Some(value) = parent.get(OsStr::new(name)) {
             env.push((OsString::from(name), value.clone()));
         }
@@ -1295,6 +1326,57 @@ mod tests {
             lookup(&env, "SEM1_ST_VENV"),
             Some(OsStr::new("/lane/declared"))
         );
+    }
+
+    /// KI-039: a declared name ending in `_` is a namespace — every
+    /// ambient name strictly under it crosses, once. An exact entry
+    /// earlier in the list is not duplicated, and a name the spec
+    /// declares itself never crosses.
+    #[test]
+    fn a_namespace_declaration_carries_every_name_under_it_once() {
+        let spec = ServerSpec {
+            program: "python3".to_string(),
+            args: Vec::new(),
+            env: vec![(
+                "SYS1_CLASSIFY__LOG_DIR".to_string(),
+                "/lane/own".to_string(),
+            )],
+            passthrough: vec!["SYS1_ENV_FILE".to_string(), "SYS1_".to_string()],
+            cwd: None,
+        };
+        let parent = parent_env(&[
+            ("SYS1_ENV_FILE", "/ambient/env"),
+            ("SYS1_PROVIDERS__JEV_MODEL", "jevgemma"),
+            ("SYS1_CLASSIFY__LOG_DIR", "/ambient/logs"),
+            ("SYS2_OTHER", "not-this-namespace"),
+            ("DEEPSEEK_API_KEY", "sk-never"),
+        ]);
+        let env = child_env(&spec, &parent);
+        assert_eq!(
+            lookup(&env, "SYS1_ENV_FILE"),
+            Some(OsStr::new("/ambient/env"))
+        );
+        assert_eq!(
+            lookup(&env, "SYS1_PROVIDERS__JEV_MODEL"),
+            Some(OsStr::new("jevgemma"))
+        );
+        // The spec's own declaration wins, and the namespace does not
+        // duplicate the exact entry.
+        assert_eq!(
+            lookup(&env, "SYS1_CLASSIFY__LOG_DIR"),
+            Some(OsStr::new("/lane/own"))
+        );
+        let carried: Vec<&OsStr> = env.iter().map(|(name, _)| name.as_os_str()).collect();
+        assert_eq!(
+            carried
+                .iter()
+                .filter(|name| **name == OsStr::new("SYS1_ENV_FILE"))
+                .count(),
+            1,
+            "the exact entry is not duplicated by the namespace: {carried:?}"
+        );
+        assert_eq!(lookup(&env, "SYS2_OTHER"), None);
+        assert_eq!(lookup(&env, "DEEPSEEK_API_KEY"), None);
     }
 
     #[test]

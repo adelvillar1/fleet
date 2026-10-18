@@ -3917,11 +3917,24 @@ pub fn supersede_summary(arguments: &str, basis: Option<Basis>) -> String {
             .unwrap_or_default(),
         MAX_JUSTIFICATION_CHARS,
     );
+    // KI-067: what the fact currently says, when the caller carried it
+    // — the confirmed-by gate's synthetic call does, so the approver
+    // decides with the target's own description in front of them.
+    let target = sanitize_line(
+        value
+            .get("target_description")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default(),
+        MAX_JUSTIFICATION_CHARS,
+    );
     let basis = basis.map(Basis::label);
     let mut summary = match basis {
         Some(basis) => format!("supersede {name} ({basis})"),
         None => format!("supersede {name}"),
     };
+    if !target.is_empty() {
+        summary.push_str(&format!(" \u{2014} replaces: {target}"));
+    }
     if !justification.is_empty() {
         summary.push_str(&format!(" \u{2014} {justification}"));
     }
@@ -5145,6 +5158,39 @@ mod tests {
     }
 
     // --- the frontmatter subset ---
+
+    /// KI-067: the confirmed-by gate's summary carries the target's own
+    /// description beside the justification, so the approver decides
+    /// with what the fact currently says in front of them.
+    #[test]
+    fn a_supersede_summary_carries_the_targets_current_description() {
+        let with_target = supersede_summary(
+            &serde_json::json!({
+                "name": "a-fact",
+                "justification": "the measurement moved",
+                "target_description": "the old sentence the corpus carries",
+            })
+            .to_string(),
+            Some(Basis::ConfirmedBy),
+        );
+        assert!(
+            with_target.contains("replaces: the old sentence the corpus carries"),
+            "{with_target}"
+        );
+        assert!(
+            with_target.contains("the measurement moved"),
+            "{with_target}"
+        );
+        assert!(with_target.contains("confirmed-by"), "{with_target}");
+        // Without a target description — the ordinary supersede — the
+        // summary is exactly what it was.
+        let plain = supersede_summary(
+            &serde_json::json!({"name": "a-fact", "justification": "why"}).to_string(),
+            None,
+        );
+        assert!(!plain.contains("replaces:"), "{plain}");
+        assert!(plain.contains("why"), "{plain}");
+    }
 
     #[test]
     fn the_parser_accepts_the_fork_corpus_shapes() {

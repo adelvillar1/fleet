@@ -2310,15 +2310,30 @@ impl<'a> Agent<'a> {
                     fact.name
                 );
                 let _ = self.progress.flush();
-                // The prompt names the fact and its confirmed-by basis:
-                // the synthetic call's name carries the basis, and its
-                // summary carries the fact and the justification.
+                // The prompt names the fact, its confirmed-by basis,
+                // AND what the fact currently says: KI-067 — the
+                // approver used to see the target's basis and the
+                // justification for replacing it, but not the
+                // description it was being asked to replace, which is
+                // the half that makes the decision. The target's own
+                // bounded description rides the synthetic call's
+                // arguments beside the request's, so the summary the
+                // approver reads carries both.
+                let mut request_value: serde_json::Value =
+                    serde_json::from_str(&call.function.arguments)
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                if let Some(object) = request_value.as_object_mut() {
+                    object.insert(
+                        "target_description".to_string(),
+                        serde_json::Value::String(fact.description.clone()),
+                    );
+                }
                 let provenance = ToolCall {
                     id: format!("{}-provenance", call.id),
                     kind: "function".to_string(),
                     function: crate::api::FunctionCall {
                         name: format!("{} (confirmed-by)", tools::SUPERSEDE_TOOL),
-                        arguments: call.function.arguments.clone(),
+                        arguments: request_value.to_string(),
                     },
                 };
                 approved = self.approver.approve(&provenance);

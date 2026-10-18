@@ -97,6 +97,11 @@ pub const LANES: &[Lane] = &[
             "SYS1_ENV_FILE",
             "SYS1_STATE_FILE",
             "SYS1_LOG_DIR",
+            // KI-039: sys1 reads its whole `SYS1_` namespace — any
+            // `SYS1_<SECTION>__<KEY>` override, plus the `SYS1_LOG_DIR`
+            // alias — so the allowlist declares the namespace and the
+            // child's own config loader picks the names out.
+            "SYS1_",
         ],
         health_tools: &[],
     },

@@ -1777,6 +1777,46 @@ fn a_connection_with_no_request_does_not_take_the_mock_down() {
     assert!(reply.is_ok(), "{reply:?}");
 }
 
+/// KI-069: `fleet remember` end to end — the flags, the arguments
+/// object, the writer, and the file on disk — driven through the real
+/// binary against a scratch corpus, the way the owner runs it.
+#[test]
+fn the_remember_command_writes_the_fact_end_to_end() {
+    let home = temp_home("remember-e2e");
+    // The corpus root the run adopts: FLEET_HOME's own `memories/`, which
+    // is where `resolve_root` looks first.
+    let corpus = home.join("memories");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+        .args([
+            "remember",
+            "--name",
+            "an-end-to-end-fact",
+            "--description",
+            "the CLI writes the file the writer would write",
+            "--basis",
+            "inferred",
+            "--shape",
+            "docs,deps",
+        ])
+        .env("FLEET_HOME", &home)
+        .current_dir(&home)
+        .output()
+        .expect("run the fleet binary");
+    assert!(output.status.success(), "{output:?}");
+    let written = std::fs::read_to_string(corpus.join("an-end-to-end-fact.md"))
+        .expect("the fact file on disk");
+    assert!(written.contains("name: an-end-to-end-fact"), "{written}");
+    assert!(
+        written.contains("description: \"the CLI writes the file the writer would write\""),
+        "{written}"
+    );
+    assert!(written.contains("basis: inferred"), "{written}");
+    assert!(written.contains("docs"), "{written}");
+    assert!(written.contains("deps"), "{written}");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 #[test]
 fn the_lanes_command_reports_every_real_lane() {
     if !python3_available() {
