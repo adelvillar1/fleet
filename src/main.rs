@@ -214,6 +214,27 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         }
     };
     let dotenv = read_dotenv();
+    // KI-045: the pre-flight, named. Slice 1 required `DEEPSEEK_API_KEY`
+    // and exited 2 with the doctor's credentials render; routing
+    // replaced that with per-candidate key resolution, so a machine
+    // with no usable candidate at all now learns it from the first
+    // failed run instead of before it. The pre-flight names the missing
+    // key env vars when no candidate is usable — a keyless machine is
+    // the layer a routed run cannot cross, and the run says so before
+    // it starts rather than after.
+    match route::preflight(&home, &dotenv) {
+        Ok(()) => {}
+        Err(missing) => {
+            eprintln!(
+                "fleet: no routing candidate is usable — the missing key env vars are: {}",
+                missing.join(", ")
+            );
+            eprintln!(
+                "fleet: set one of them (in the environment or <FLEET_HOME>/.env), or run `fleet doctor`"
+            );
+            return ExitCode::from(2);
+        }
+    }
     // The route is prepared before the session exists: the session's
     // first record and the first line the owner reads name the route
     // that will actually serve, not the CLI's requested default — and

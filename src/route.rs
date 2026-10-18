@@ -922,6 +922,41 @@ fn resolve_key(name: &str, dotenv: &HashMap<String, String>) -> Option<String> {
 
 /// Resolve every candidate's key for this run. `dotenv` is the
 /// `<home>/.env` map the caller already read.
+/// The pre-flight: the key env vars a machine would still need for any
+/// roster candidate to serve. KI-045 — routing replaced slice 1's
+/// `DEEPSEEK_API_KEY` requirement with per-candidate resolution, and a
+/// machine with no usable candidate learned it from the first failed
+/// run instead of before it. `Ok(())` when at least one candidate
+/// resolves a key; `Err(names)` otherwise, naming every key the roster
+/// would accept so the owner sees the whole set rather than the first
+/// missing one.
+pub fn preflight(home: &Path, dotenv: &HashMap<String, String>) -> Result<(), Vec<String>> {
+    let roster = load_roster(home).map_err(|_| {
+        // A roster too broken to load has no candidate list to name;
+        // the run's own prepare will name the parse failure, and the
+        // pre-flight declining to guess keeps that the one reason.
+        Vec::new()
+    })?;
+    let resolved = resolve(&roster.candidates, dotenv);
+    if resolved
+        .iter()
+        .any(|entry| provider_state(entry) == ProviderState::Ready)
+    {
+        return Ok(());
+    }
+    // Every candidate's key, not only the enabled ones': a machine with
+    // everything disabled has no enabled candidate to name, and the
+    // owner's real choice is which one to re-enable.
+    let mut names: Vec<String> = roster
+        .candidates
+        .iter()
+        .map(|candidate| candidate.key_env.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    Err(names)
+}
+
 pub fn resolve(candidates: &[Candidate], dotenv: &HashMap<String, String>) -> Vec<Resolved> {
     candidates
         .iter()
@@ -2541,6 +2576,52 @@ mod tests {
     use super::*;
 
     // --- the context windows ---
+
+    /// KI-045: the pre-flight names every key a keyless machine would
+    /// need, and passes when one candidate resolves. The names are the
+    /// roster's own, sorted and deduped, so the owner sees the whole
+    /// set rather than the first missing one.
+    #[test]
+    fn the_preflight_names_the_keys_a_keyless_machine_needs() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-route-preflight-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        // A config that disables every compiled-in candidate: the
+        // machine is keyless whatever the process environment carries,
+        // because a disabled candidate is never dialed.
+        let ids: Vec<String> = default_roster()
+            .iter()
+            .map(|candidate| candidate.id.clone())
+            .collect();
+        let entries: Vec<serde_json::Value> = ids
+            .iter()
+            .map(|id| serde_json::json!({"id": id, "enabled": false}))
+            .collect();
+        std::fs::write(
+            home.join("config.json"),
+            serde_json::json!({"providers": entries}).to_string(),
+        )
+        .unwrap();
+        let dotenv = HashMap::new();
+        let missing = preflight(&home, &dotenv).expect_err("no keys, no candidate");
+        assert!(missing.len() > 1, "{missing:?}");
+        let mut sorted = missing.clone();
+        sorted.sort();
+        assert_eq!(missing, sorted, "the names are sorted: {missing:?}");
+        // The pre-flight names keys, not one key: the whole disabled
+        // roster's key set is what the owner would have to choose from.
+        assert!(missing.len() > 1, "{missing:?}");
+        // A candidate re-enabled with a key present is a usable machine.
+        let mut with_one = dotenv.clone();
+        with_one.insert(missing[0].clone(), "sk-test".to_string());
+        let reenabled = serde_json::json!({"providers": [
+            {"id": ids[0], "enabled": true}
+        ]});
+        std::fs::write(home.join("config.json"), reenabled.to_string()).unwrap();
+        assert!(preflight(&home, &with_one).is_ok());
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     /// KI-044: a machine whose sys1 decision providers are all
     /// unconfigured resolves as "sys1 cannot judge", so the route skips
