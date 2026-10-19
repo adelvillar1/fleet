@@ -257,22 +257,59 @@ body {
    cannot disagree about where a surface lives. Collapsed, it keeps the
    group marks and drops the words — the mode for when a run owns the
    screen. */
-/* A row in the topbar, unlike the stage's right-hand `.rail` which is a
-   column of cards. The two were one class name until the destinations
-   moved into the topbar; a column here would stack four destinations
-   inside a 52px bar. */
+/* The surfaces rail: the plan's left column, full height. The mark at its
+   head, each destination as a heading and a row with the group's surfaces
+   flat beneath, and the jump-to-anything and collapse switch pinned to the
+   foot. Built from the same declaration the palette searches, so the two
+   cannot disagree about where a surface lives. Collapsed, it keeps the
+   group marks and drops the words — the mode for when a run owns the
+   screen. The chat panel's card column keeps the name `.rail`; this one is
+   the surfaces. */
 .surfaces {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 2px;
+  flex-direction: column;
+  gap: 1px;
   min-width: 0;
-  padding: 0;
-  overflow-x: auto;
+  padding: 12px 8px;
+  border-right: var(--card-hairline);
+  overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-width: none;
 }
 
 .surfaces::-webkit-scrollbar { display: none; }
+
+.surfaces .mark { padding: 2px 8px 12px; }
+.surfaces .mark-name { font-size: 13px; }
+
+.surfaces-tree { display: flex; flex-direction: column; gap: 1px; }
+
+.surfaces-foot {
+  margin-top: auto;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.surfaces-foot kbd {
+  margin-left: auto;
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.surfaces-foot .surfaces-palette { margin-top: 0; }
+
+.surfaces-foot .surfaces-toggle {
+  display: flex;
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  font-weight: 400;
+}
 
 .surfaces-group {
   padding: 0 8px 0 2px;
@@ -365,10 +402,13 @@ body {
 
 body[data-rail="icons"] .surfaces-name,
 body[data-rail="icons"] .surfaces-sub,
-body[data-rail="icons"] .surfaces-group { display: none; }
+body[data-rail="icons"] .surfaces-group,
+body[data-rail="icons"] .surfaces-toggle-name,
+body[data-rail="icons"] .surfaces-foot kbd { display: none; }
 
-body[data-rail="icons"] .surfaces { width: 44px; }
+body[data-rail="icons"] .surfaces { padding: 12px 6px; }
 body[data-rail="icons"] .surfaces-dest, body[data-rail="icons"] .surfaces-palette { justify-content: center; padding: 8px 0; }
+body[data-rail="icons"] .surfaces-foot .surfaces-toggle { justify-content: center; }
 body[data-rail="icons"] .surfaces-group { text-align: center; }
 body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
@@ -2056,11 +2096,19 @@ pre.drawer-code {
    stage so a preview and the run in flight are readable together, which
    is the whole point of putting the working directory next to the
    surface instead of inside it. */
-:root { --pane-width: 420px; }
+:root { --pane-width: 420px; --rail-width: 208px; --rail-width-icons: 56px; }
 
-.face > .topbar, .face > .meter { grid-column: 1 / -1; }
-.face { grid-template-columns: minmax(0, 1fr); }
-body[data-pane="open"] .face { grid-template-columns: minmax(0, 1fr) var(--pane-width); }
+/* The rail owns the face's first column and spans every row — the plan's
+   left column, full height — and the working surfaces live beside it. */
+.face { grid-template-columns: var(--rail-width) minmax(0, 1fr); }
+.face > .surfaces { grid-column: 1; grid-row: 1 / -1; }
+.face > .topbar, .face > .meter { grid-column: 2; }
+.face > .stage { grid-column: 2; grid-row: 3; }
+body[data-rail="icons"] .face { grid-template-columns: var(--rail-width-icons) minmax(0, 1fr); }
+body[data-pane="open"] .face { grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--pane-width); }
+body[data-rail="icons"][data-pane="open"] .face {
+  grid-template-columns: var(--rail-width-icons) minmax(0, 1fr) var(--pane-width);
+}
 
 .pane-open {
   display: grid;
@@ -2607,10 +2655,14 @@ body[data-pane="open"] .face { grid-template-columns: minmax(0, 1fr) var(--pane-
   .topbar { gap: 10px; }
   /* The rail folds to its marks and the palette carries the words, so a
      narrow face loses nothing it can reach another way. */
+  body[data-rail="full"] .face { grid-template-columns: var(--rail-width-icons) minmax(0, 1fr); }
   body[data-rail="full"] .surfaces-name,
   body[data-rail="full"] .surfaces-sub,
-  body[data-rail="full"] .surfaces-group { display: none; }
-  body[data-rail="full"] .surfaces { width: 44px; }
+  body[data-rail="full"] .surfaces-group,
+  body[data-rail="full"] .surfaces-toggle-name,
+  body[data-rail="full"] .surfaces-foot kbd { display: none; }
+  body[data-rail="full"] .surfaces-foot .surfaces-toggle,
+  body[data-rail="full"] .surfaces-foot .surfaces-palette { justify-content: center; }
   .stat:nth-child(2) { display: none; }
   .palette { top: 8vh; }
   .drawer { width: 100vw; }

@@ -110,7 +110,10 @@
 
   var el = {
     rail: document.getElementById('rail'),
+    railTree: document.getElementById('rail-tree'),
     railToggle: document.getElementById('rail-toggle'),
+    railToggleName: document.getElementById('rail-toggle-name'),
+    railJump: document.getElementById('rail-jump'),
     palette: document.getElementById('palette'),
     paletteScrim: document.getElementById('palette-scrim'),
     paletteInput: document.getElementById('palette-input'),
@@ -4563,25 +4566,54 @@
 
   // ------------------------------------------------- the rail and the palette
 
-  // The rail: four destinations, one flat level beneath each. Built from
-  // GROUPS, the same declaration the palette searches, so the two can
-  // never disagree about where a surface lives.
+  // The rail: the plan's left column. Each destination is a heading and a
+  // row that opens the surface an owner means first, with the group's own
+  // surfaces flat beneath it — built from GROUPS, the same declaration the
+  // palette searches, so the two can never disagree about where a surface
+  // lives. The merged row names are the approved mockup's own words.
+  var DEST_LABELS = {
+    work: 'conversation',
+    intelligence: 'router & delegation',
+    knowledge: 'memory & skills',
+    system: 'settings & telemetry'
+  };
+
+  // Display-only words for the flat level beneath a destination. The
+  // addresses stay GROUPS' own — the palette and the routing never see
+  // these.
+  var SUB_LABELS = { chat: 'the run in flight' };
+
   function buildRail() {
-    el.rail.textContent = '';
+    el.railTree.textContent = '';
     GROUPS.forEach(function (group) {
       var id = group[0], label = group[1], items = group[2];
+      var head = node('span', 'surfaces-group', label);
+      el.railTree.appendChild(head);
       var button = node('button', 'surfaces-dest');
       button.type = 'button';
       button.dataset.group = id;
       button.appendChild(node('span', 'surfaces-mark', GROUP_MARKS[id] || label.slice(0, 1)));
-      button.appendChild(node('span', 'surfaces-name', label));
+      button.appendChild(node('span', 'surfaces-name', DEST_LABELS[id] || label));
       // The destination itself opens its first surface — the one an owner
       // opening the group almost always wants — so a group is one click
       // rather than two.
       button.addEventListener('click', function () {
         window.location.hash = '#/' + items[0][0];
       });
-      el.rail.appendChild(button);
+      el.railTree.appendChild(button);
+      var sub = node('div', 'surfaces-sub');
+      items.forEach(function (item) {
+        var address = item[0], name = item[1];
+        var link = node('button', 'surfaces-link');
+        link.type = 'button';
+        link.dataset.address = address;
+        link.textContent = SUB_LABELS[address] || name;
+        link.addEventListener('click', function () {
+          window.location.hash = '#/' + address;
+        });
+        sub.appendChild(link);
+      });
+      el.railTree.appendChild(sub);
     });
   }
 
@@ -4592,6 +4624,13 @@
 
   function markRail() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');
+    Array.prototype.forEach.call(el.rail.querySelectorAll('.surfaces-link'), function (link) {
+      if (link.dataset.address === which) {
+        link.setAttribute('aria-current', 'page');
+      } else {
+        link.removeAttribute('aria-current');
+      }
+    });
     Array.prototype.forEach.call(el.rail.querySelectorAll('.surfaces-dest'), function (button) {
       var here = WHERE[which] && WHERE[which][0] === button.dataset.group;
       if (here) {
@@ -4614,6 +4653,9 @@
     el.railToggle.setAttribute('aria-expanded', mode === 'icons' ? 'false' : 'true');
     el.railToggle.setAttribute('aria-label',
       mode === 'icons' ? 'expand the surfaces rail' : 'collapse the surfaces rail');
+    if (el.railToggleName) {
+      el.railToggleName.textContent = mode === 'icons' ? 'expand the rail' : 'collapse the rail';
+    }
     try { window.localStorage.setItem('fleet-rail', mode); } catch (error) { }
   }
 
@@ -4848,6 +4890,7 @@
     setRail(railCollapsed() ? 'full' : 'icons');
   });
   el.paletteOpen.addEventListener('click', openPalette);
+  el.railJump.addEventListener('click', openPalette);
   el.paletteScrim.addEventListener('click', closePalette);
   el.paletteInput.addEventListener('input', paintPalette);
   el.paletteInput.addEventListener('keydown', function (event) {

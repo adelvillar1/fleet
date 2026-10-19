@@ -22,26 +22,34 @@
 <body>
 <div class="face">
 
-  <header class="topbar">
+  <!-- The surfaces rail: the plan's left column, full height. One
+       declaration in app.js builds this tree and the command palette, so
+       there is one structure and not two to keep in sync. The rail orients
+       — where am I and what is here; the palette reaches any surface by
+       name. The mark, the jump row and the collapse switch are static;
+       the tree between them is built from GROUPS. -->
+  <nav class="surfaces" id="rail" aria-label="surfaces">
     <a class="mark" href="#/chat">
       <span class="mark-glyph" aria-hidden="true"></span>
       <span class="mark-name">fleet</span>
     </a>
+    <div class="surfaces-tree" id="rail-tree"></div>
+    <div class="surfaces-foot">
+      <button class="surfaces-palette" id="rail-jump" type="button"
+              aria-label="jump to any surface" title="jump to any surface">
+        <span class="surfaces-mark" aria-hidden="true">⌘</span>
+        <span class="surfaces-name">jump to anything</span>
+        <kbd>⌘K</kbd>
+      </button>
+      <button class="surfaces-toggle" id="rail-toggle" type="button"
+              aria-label="collapse the surfaces rail" aria-expanded="true">
+        <span class="surfaces-toggle-mark" aria-hidden="true">‹</span>
+        <span class="surfaces-toggle-name" id="rail-toggle-name">collapse the rail</span>
+      </button>
+    </div>
+  </nav>
 
-    <!-- The plan's route table as hash addresses. Panels are keyed by
-         the address, not routed: the browser never asks the server for
-         a page. Only the conversation exists in this increment; the
-         rest say so rather than pretend. -->
-    <!-- The surfaces, grouped. One declaration in app.js builds both this
-         rail and the command palette, so there is one structure and not
-         two to keep in sync. The rail orients; the palette reaches any
-         surface by name. -->
-    <nav class="surfaces" id="rail" aria-label="surfaces"></nav>
-    <button class="rail-toggle" id="rail-toggle" type="button"
-            aria-label="collapse the surfaces rail" aria-expanded="true">
-      <span class="rail-toggle-mark" aria-hidden="true">‹</span>
-    </button>
-
+  <header class="topbar">
     <div class="topbar-right">
       <span class="pill" id="route-pill" data-state="idle" title="where this run's work went">no route yet</span>
       <dl class="stats">
