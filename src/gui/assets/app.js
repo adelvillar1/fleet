@@ -2518,6 +2518,15 @@
   function typeAhead() {
     var value = el.task.value;
     if (value.charAt(0) !== '/') { closeCommands(); return; }
+    // The semantic pass re-arms on every keystroke: the owner is typing a
+    // sentence of intent, and the rank owes the finished sentence an
+    // answer, not the fragment that happened to be in the box when the
+    // first word settled. The debounce is what keeps a keystroke burst
+    // from ranking every prefix; each keystroke resets it.
+    window.clearTimeout(face.commandTimer);
+    face.commandTimer = window.setTimeout(function () {
+      rankSemantic(value.slice(1).trim());
+    }, 180);
     var asked = value.slice(1).split(/\s+/)[0].toLowerCase();
     if (!asked) { openCommands(''); return; }
     if (asked === face.commandAsk) return;
@@ -4490,10 +4499,6 @@
     face.commands = rankLexical(asked);
     face.commandAt = 0;
     paintCommands();
-    window.clearTimeout(face.commandTimer);
-    face.commandTimer = window.setTimeout(function () {
-      rankSemantic(el.task.value.slice(1).trim());
-    }, 180);
   }
 
   function closeCommands() {

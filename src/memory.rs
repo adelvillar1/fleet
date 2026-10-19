@@ -989,23 +989,34 @@ impl Embedder for HttpEmbedder {
 
     fn embed(&self, text: &str) -> Option<Vec<f32>> {
         let body = serde_json::json!({ "input": text }).to_string();
-        let response = self
-            .agent
-            .post(&self.endpoint)
-            .set("Content-Type", "application/json")
-            .send_string(&body)
-            .ok()?;
-        if response.status() != 200 {
-            return None;
-        }
-        let text = response.into_string().ok()?;
-        let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-        let embedding = value.get("data")?.get(0)?.get("embedding")?.as_array()?;
-        let vector: Vec<f32> = embedding
-            .iter()
-            .map(|number| number.as_f64().map(|number| number as f32))
-            .collect::<Option<Vec<_>>>()?;
-        (!vector.is_empty()).then_some(vector)
+        // The embed server closes an idle keep-alive connection after
+        // five seconds (`Keep-Alive: timeout=5`), and a pooled connection
+        // that died while idle fails the request in milliseconds — one
+        // silent `None` that turns a whole ranking into zeros and a
+        // corpus load into keyword-only. The retry absorbs exactly that
+        // race: the failed attempt burned the dead connection, and the
+        // second rides a fresh one. A backend that is genuinely down
+        // pays one extra failed attempt per embed and answers the same.
+        let attempt = || {
+            let response = self
+                .agent
+                .post(&self.endpoint)
+                .set("Content-Type", "application/json")
+                .send_string(&body)
+                .ok()?;
+            if response.status() != 200 {
+                return None;
+            }
+            let text = response.into_string().ok()?;
+            let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+            let embedding = value.get("data")?.get(0)?.get("embedding")?.as_array()?;
+            let vector: Vec<f32> = embedding
+                .iter()
+                .map(|number| number.as_f64().map(|number| number as f32))
+                .collect::<Option<Vec<_>>>()?;
+            (!vector.is_empty()).then_some(vector)
+        };
+        attempt().or_else(attempt)
     }
 
     fn name(&self) -> &'static str {
