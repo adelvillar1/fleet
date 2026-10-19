@@ -182,7 +182,7 @@ async fn serve_connection(
 ) -> Result<(), String> {
     let (head, rest) = read_head(&mut stream).await?;
     let request = Request::parse(&head)?;
-    if request.presented_token() != Some(token) {
+    if !request.presents(token) {
         return write_reply(&mut stream, unauthorized()).await;
     }
     match (request.method.as_str(), request.path.as_str()) {
@@ -628,23 +628,32 @@ impl Request {
             .map(|(_, value)| value.as_str())
     }
 
-    /// The token this request carries, from the three places a browser
-    /// can put one: the header a fetch would send, the query the page
+    /// Whether one of the places a browser can put the token actually
+    /// carries it: the header a fetch would send, the query the page
     /// load and the EventSource send, and the cookie the open page
-    /// sends once the first reply has set it.
-    fn presented_token(&self) -> Option<&str> {
-        if let Some(value) = self.header("x-fleet-token") {
-            return Some(value);
+    /// sends once the first reply has set it. The check is any-of
+    /// rather than first-of on purpose — the page strips the token from
+    /// its own address bar the moment it boots, so a reload arrives
+    /// with no query token at all and must ride the cookie, and a
+    /// bookmarked query from a previous launch must not shadow the
+    /// fresh cookie a relaunch set.
+    fn presents(&self, token: &str) -> bool {
+        if self.header("x-fleet-token").map(|value| value == token).unwrap_or(false) {
+            return true;
         }
-        if let Some(value) = query_value(&self.query, "token") {
-            return Some(value);
+        if query_value(&self.query, "token").map(|value| value == token).unwrap_or(false) {
+            return true;
         }
-        let cookie = self.header("cookie")?;
+        let cookie = match self.header("cookie") {
+            Some(cookie) => cookie,
+            None => return false,
+        };
         cookie
             .split(';')
             .filter_map(|pair| pair.trim().split_once('='))
             .find(|(name, _)| *name == COOKIE_NAME)
-            .map(|(_, value)| value)
+            .map(|(_, value)| value == token)
+            .unwrap_or(false)
     }
 }
 

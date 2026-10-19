@@ -2430,7 +2430,9 @@
   // subscribe would otherwise be missed, and a reconnect starts clean
   // rather than appending to a log the server has moved past.
   function listen() {
-    var source = new EventSource('/events?token=' + encodeURIComponent(token));
+    // The query token rides only when the bar had one to give; a
+    // token-less reload authenticates the stream with the cookie.
+    var source = new EventSource('/events' + (token ? '?token=' + encodeURIComponent(token) : ''));
     source.onopen = function () {
       load().then(function () { paint(); }).catch(function () { });
     };
@@ -2450,17 +2452,16 @@
 
   // ------------------------------------------------------------- the boot
 
-  if (!token) {
-    el.empty.hidden = false;
-    el.log.hidden = true;
-    el.empty.querySelector('h1').textContent = 'This page was opened without its token.';
-    el.empty.querySelector('p').textContent =
-      'Use the URL fleet printed \u2014 it carries the launch token \u2014 then reload.';
-    return;
-  }
-  // The token leaves the address bar, so a copied URL or a screenshot
-  // carries no credential. The hash stays: it is the panel the owner
-  // opened, and the plan's route table is keyed on it.
+  // The boot does not ask the address bar whether it may run. The token
+  // leaves the bar the moment the face boots — so a copied URL or a
+  // screenshot carries no credential — which used to make the face's own
+  // reload a dead end: the shell rendered, the refusal said reload with
+  // the printed URL, and the printed URL was gone. The launch cookie is
+  // the credential that survives a reload, the server accepts it on
+  // every route, and load() answers 401 only when this browser holds no
+  // seat — that refusal is the one worth showing. The hash stays: it is
+  // the panel the owner opened, and the plan's route table is keyed on
+  // it.
   window.history.replaceState(null, '', window.location.pathname + window.location.hash);
 
   el.offers.textContent = '';
