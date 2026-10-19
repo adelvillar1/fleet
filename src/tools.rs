@@ -303,19 +303,41 @@ pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
         });
     }
     // The layout review, after the constraints pass: the checker is the
-    // floor and this is the ceiling, so a deck that renders badly is
-    // refused here rather than shipped and seen to be bad.
+    // floor and this is the ceiling. What the grader refuses, the
+    // auto-fit repairs in place — text compressed to the measured
+    // budgets, headlines trimmed, heaviest columns balanced, and a
+    // roomier layout where compression would cut the content away — and
+    // only what the repair cannot clear comes back to the agent as a
+    // named refusal. This is the blueprint's step 4b, run without a
+    // model call: the same arithmetic that found the fault fixes it.
     let faults = crate::deck::review(&deck);
-    if !faults.is_empty() {
-        let named: Vec<String> = faults.iter().map(|fault| fault.line()).collect();
+    let (deck, actions, residual) = if faults.is_empty() {
+        (deck, Vec::new(), Vec::new())
+    } else {
+        let fitted = crate::deck::auto_fit(&deck);
+        (fitted.deck, fitted.actions, fitted.residual)
+    };
+    if !residual.is_empty() {
+        let named: Vec<String> = residual.iter().map(|fault| fault.line()).collect();
+        let holds = crate::deck::layout_holds();
         return Ok(ToolOutcome {
-            output: format!("error: {}", named.join("; ")),
+            output: format!(
+                "error: {}\nthe budgets that did not close: every component holds {} lines at {} characters a line — compress to those numbers and call again",
+                named.join("; "),
+                holds,
+                crate::deck::CHARS_PER_LINE
+            ),
             truncated: false,
         });
     }
     let html = crate::deck::render(&deck);
+    let mut output = crate::deck::review_line(&deck);
+    if !actions.is_empty() {
+        output.push_str(&format!("\n{}", actions.join("\n")));
+    }
+    output.push_str(&format!("\n\n{}", html));
     Ok(ToolOutcome {
-        output: format!("{}\n\n{}", crate::deck::review_line(&deck), html),
+        output,
         truncated: false,
     })
 }
@@ -2179,6 +2201,40 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn the_deck_tool_auto_fits_an_overfull_deck_and_renders_it() {
+        // A deck the grader refuses for overflow is repaired in place —
+        // the text compressed to the measured budget, the bolded
+        // takeaway kept — and rendered, with the repairs named beside
+        // the verdict. The refusal is now only for what the repair
+        // cannot clear.
+        let long = "x".repeat(800);
+        let overfull = serde_json::json!({
+            "deck": {
+                "project_type": "presentation",
+                "nodes": [{
+                    "id": "slide_01",
+                    "layout": "split_two_column",
+                    "headline": "Q3 margins grew by fourteen percent on regional strength",
+                    "components": [{"type": "bullet_list", "items": [format!("**Margins grew 14%**{long}")]}]
+                }, {
+                    "id": "slide_02",
+                    "layout": "metric_callout",
+                    "headline": "The reserve covers two quarters at current burn",
+                    "components": [{"type": "bullet_list", "items": ["**18 months** of runway"]}]
+                }]
+            }
+        });
+        let outcome = run_deck(&overfull).expect("a result, not an error");
+        assert!(
+            !outcome.output.starts_with("error:"),
+            "an overfull deck is auto-fit, not refused: {}",
+            &outcome.output[..200.min(outcome.output.len())]
+        );
+        assert!(outcome.output.contains("compressed"), "{}", &outcome.output[..300.min(outcome.output.len())]);
+        assert!(outcome.output.contains("<section class=\"deck\""));
+    }
+
     fn the_deck_tool_refuses_by_naming_the_node_and_the_rule() {
         // A deck that breaks a constraint is a model-visible error, not a
         // panic — the house rule, and the reason a refusal is a fixable

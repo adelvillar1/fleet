@@ -220,6 +220,19 @@ pub enum Refusal {
 }
 
 impl Refusal {
+    /// Whether this refusal names the node with this id. Deck-level
+    /// refusals (the type bounds) name no node, and a node-scope repair
+    /// is not answerable for them.
+    pub fn names_node(&self, id: &str) -> bool {
+        match self {
+            Refusal::Pyramid { node, .. }
+            | Refusal::Overlap { node, .. }
+            | Refusal::Unemphasised { node, .. }
+            | Refusal::Bound { node, .. } => node == id,
+            Refusal::Identity { .. } => false,
+        }
+    }
+
     /// The refusal as one line, the way every other model-visible
     /// failure in this crate reads.
     pub fn line(&self) -> String {
@@ -682,7 +695,17 @@ const BOX_PX: f64 = 264.0;
 /// face is narrower than the sans, but a deck's prose is the sans, and an
 /// estimate that is one character pessimistic is an estimate that refuses
 /// nothing it should have caught.
-const CHARS_PER_LINE: usize = 52;
+/// How many characters one line holds at the component size — public
+/// because the tool's refusal carries the numbers an owner repairs
+/// against, and a constant the caller has to guess is a bound that
+/// reads as arbitrary.
+pub const CHARS_PER_LINE: usize = 52;
+
+/// The lines one component's box holds: the body height at the line
+/// height, floored. The other half of the repair budget.
+pub fn layout_holds() -> usize {
+    (BOX_PX / LINE_PX).floor() as usize
+}
 
 /// One layout fault the grader found: the deck is structurally valid —
 /// [`check`] passed — and it will still render badly.
@@ -851,6 +874,265 @@ pub fn review_line(deck: &Deck) -> String {
     }
     let named: Vec<String> = faults.iter().map(LayoutFault::line).collect();
     format!("refused: {} \u{2014} {}", faults.len(), named.join("; "))
+}
+
+// --- the auto-fit ----------------------------------------------------------
+
+impl LayoutFault {
+    /// The node the fault belongs to, so the auto-fit can find and repair
+    /// it without matching on every variant twice.
+    fn node_id(&self) -> &str {
+        match self {
+            LayoutFault::Overfull { node, .. }
+            | LayoutFault::Unbalanced { node, .. }
+            | LayoutFault::HeadlineOverflow { node, .. } => node,
+        }
+    }
+}
+
+impl Layout {
+    /// The roomier layout a node swaps to when compression would have to
+    /// cut away more of the text than the node can lose: the wide frames
+    /// give every column more width, and `full_bleed` gives the whole
+    /// slide to one node. A layout that is already the roomiest has
+    /// nowhere to go, and the compression is what remains.
+    pub fn roomier(self) -> Option<Layout> {
+        match self {
+            Layout::SplitTwoColumn
+            | Layout::Comparison
+            | Layout::Timeline
+            | Layout::MetricRow
+            | Layout::Chart => Some(Layout::FullBleed),
+            Layout::MetricCallout | Layout::Quote | Layout::FullBleed => None,
+        }
+    }
+}
+
+/// One text clipped to a character budget, keeping what a skim reads.
+/// A bolded span — the takeaway the bolding rule requires — survives the
+/// clip whole when it fits, and survives as a clipped bold span when it
+/// does not, because a truncated bullet that lost its emphasis would
+/// also lose the rule that made it scannable.
+fn compress_text(text: &str, budget: usize) -> String {
+    if text.chars().count() <= budget {
+        return text.to_string();
+    }
+    let open = text.find("**");
+    let span = match open.and_then(|start| text[start + 2..].find("**").map(|end| (start, start + 2 + end + 2))) {
+        Some((start, end)) => Some((start, end)),
+        None => None,
+    };
+    if let Some((start, end)) = span {
+        if end - start <= budget.saturating_sub(1) {
+            let mut out = String::new();
+            out.push_str(&text[start..end]);
+            out.push('\u{2026}');
+            return out;
+        }
+        let inner = &text[start + 2..end - 2];
+        let inner_budget = budget.saturating_sub(5).max(4);
+        return format!("**{}\u{2026}**", clip(inner, inner_budget));
+    }
+    clip(text, budget)
+}
+
+/// Compress one component's texts to the line budget the grader
+/// measured against — the deterministic half of the self-correction
+/// loop, and the half that never needs a model: the same arithmetic the
+/// grader used to refuse is the arithmetic the repair uses to fit.
+/// Returns whether anything changed.
+fn fit_component(component: &mut Component, holds: usize) -> bool {
+    let before = crate::deck::component_lines(component);
+    let total_budget = holds.saturating_mul(CHARS_PER_LINE);
+    let pad = if matches!(component, Component::Steps { .. }) { 3 } else { 2 };
+    match component {
+        Component::BulletList { items } | Component::Steps { items } => {
+            let per_item = (total_budget / items.len().max(1)).saturating_sub(pad).max(12);
+            for item in items.iter_mut() {
+                *item = compress_text(item, per_item);
+            }
+        }
+        Component::Contrast { left, right } => {
+            let per_side = total_budget.max(16);
+            *left = compress_text(left, per_side);
+            *right = compress_text(right, per_side);
+        }
+        Component::Metrics { items } => {
+            let per_label = (total_budget / items.len().max(1)).saturating_sub(6).max(8);
+            for (value, label) in items.iter_mut() {
+                let value_len = value.chars().count();
+                *label = compress_text(label, per_label.max(value_len + 4));
+            }
+        }
+        Component::Metric { value, label } => {
+            let value_len = value.chars().count();
+            *label = compress_text(label, total_budget.saturating_sub(value_len + 2).max(8));
+        }
+        Component::Quote { text, attribution } => {
+            let text_budget = total_budget
+                .saturating_sub(attribution.chars().count() + 4)
+                .max(24);
+            *text = compress_text(text, text_budget);
+        }
+        Component::Chart { caption, series } => {
+            let series_chars: usize = series.iter().map(|(label, _)| label.chars().count() + 8).sum();
+            *caption = compress_text(caption, total_budget.saturating_sub(series_chars).max(16));
+        }
+        Component::Prose { text } => {
+            *text = compress_text(text, total_budget);
+        }
+    }
+    crate::deck::component_lines(component) != before
+}
+
+/// The deterministic half of the self-correction loop: a deck the
+/// consultant checks passed and the layout grader refused comes back
+/// repaired — text compressed to the measured budgets, headlines trimmed
+/// to their box, heaviest columns balanced toward their lightest — and
+/// whatever the repair could not clear comes back named. The consultant
+/// constraints outrank the fit: a pass whose trim would break the
+/// pyramid, the MECE split, or the bolding reverts wholesale, because a
+/// deck that fits and lies is worse than a deck that overflows and says
+/// so.
+pub struct AutoFit {
+    /// The deck after the repair.
+    pub deck: Deck,
+    /// What changed, in the order it changed — the render's answer names
+    /// these beside the verdict.
+    pub actions: Vec<String>,
+    /// The faults the repair could not clear. Empty means the returned
+    /// deck renders clean.
+    pub residual: Vec<LayoutFault>,
+}
+
+/// The number of repair passes before whatever remains is named as
+/// residual. Compression converges in one pass by arithmetic; the extra
+/// passes absorb the knock-on effects of a balance trim.
+const AUTO_FIT_PASSES: usize = 3;
+
+pub fn auto_fit(deck: &Deck) -> AutoFit {
+    let mut deck = deck.clone();
+    let mut actions: Vec<String> = Vec::new();
+    // The consultant verdict the deck arrived with is the baseline: the
+    // repair may not change it. A deck that arrived with a deck-level
+    // refusal (a bounds bound, say) keeps it — the auto-fit repairs
+    // layout, and reverting on a refusal the input already had would
+    // make every repair of an imperfect deck impossible.
+    let baseline = check(&deck);
+    for _pass in 0..AUTO_FIT_PASSES {
+        let faults = review(&deck);
+        if faults.is_empty() {
+            return AutoFit { deck, actions, residual: Vec::new() };
+        }
+        let snapshot = deck.clone();
+        let faults = faults.clone();
+        let mut changed = false;
+        for fault in &faults {
+            let Some(node) = deck.nodes.iter_mut().find(|node| node.id == fault.node_id()) else {
+                continue;
+            };
+            match fault {
+                LayoutFault::Overfull { component, holds, .. } => {
+                    let index = *component;
+                    let holds = *holds;
+                    if let Some(component) = node.components.get_mut(index) {
+                        if fit_component(component, holds) {
+                            changed = true;
+                            actions.push(format!(
+                                "`{}`: component {} compressed to fit {} lines",
+                                node.id, index, holds
+                            ));
+                        }
+                    }
+                }
+                LayoutFault::HeadlineOverflow { .. } => {
+                    let budget = HEADLINE_HOLDS * CHARS_PER_LINE * 2;
+                    let trimmed = compress_text(&node.headline, budget);
+                    if trimmed != node.headline {
+                        let candidate = Node { headline: trimmed, ..node.clone() };
+                        if headline_lines(&candidate) <= HEADLINE_HOLDS && is_conclusion(&candidate.headline) {
+                            actions.push(format!("`{}`: headline trimmed to its box", node.id));
+                            *node = candidate;
+                            changed = true;
+                        }
+                    }
+                }
+                LayoutFault::Unbalanced { columns, .. } => {
+                    // The heaviest column compresses toward the lightest
+                    // one's lines, so the node reads as peers again.
+                    let heaviest = columns.first().copied().unwrap_or(0);
+                    let lightest = columns.iter().copied().min().unwrap_or(1).max(1);
+                    let heaviest_at = node
+                        .components
+                        .iter()
+                        .position(|component| crate::deck::component_lines(component) == heaviest);
+                    if let Some(index) = heaviest_at {
+                        if let Some(component) = node.components.get_mut(index) {
+                            if fit_component(component, lightest) {
+                                changed = true;
+                                actions.push(format!(
+                                    "`{}`: the heaviest column balanced toward {} lines",
+                                    node.id, lightest
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // The consultant constraints outrank the fit: a pass that added
+        // a refusal the input did not have reverts wholesale.
+        let now = check(&deck);
+        if now.iter().any(|refusal| !baseline.contains(refusal)) {
+            deck = snapshot;
+            break;
+        }
+        if !changed {
+            break;
+        }
+    }
+    // Whatever still overflows gets the roomier layout, when there is
+    // one — the upgrade the blueprint calls for before any text is cut
+    // deeper than half.
+    for node in &mut deck.nodes {
+        let faults = review_of_node(node);
+        let overfull = faults.iter().any(|fault| matches!(fault, LayoutFault::Overfull { .. }));
+        if !overfull {
+            continue;
+        }
+        if let Some(roomier) = node.layout.roomier() {
+            let swapped = Node { layout: roomier.clone(), ..node.clone() };
+            if review_of_node(&swapped).is_empty() && check_of_node(&swapped) {
+                actions.push(format!(
+                    "`{}`: the layout upgraded to {} — the text was not mine to cut",
+                    node.id, roomier.label()
+                ));
+                *node = swapped;
+            }
+        }
+    }
+    let residual = review(&deck);
+    AutoFit { deck, actions, residual }
+}
+
+/// The grader, over one node: the same arithmetic `review` runs, at the
+/// node scope the auto-fit repairs at.
+fn review_of_node(node: &Node) -> Vec<LayoutFault> {
+    let single = Deck { project_type: crate::deck::ProjectType::Infographic, theme: String::new(), nodes: vec![node.clone()] };
+    review(&single)
+        .into_iter()
+        .filter(|fault| fault.node_id() == node.id)
+        .collect()
+}
+
+/// The consultant checks, over one node — the auto-fit's roomier gate.
+/// Deck-level refusals (the type bounds) name no node and are not this
+/// repair's to answer.
+fn check_of_node(node: &Node) -> bool {
+    let single = Deck { project_type: crate::deck::ProjectType::Infographic, theme: String::new(), nodes: vec![node.clone()] };
+    check(&single)
+        .iter()
+        .all(|refusal| !refusal.names_node(node.id.as_str()))
 }
 
 // --- the PPTX export -------------------------------------------------------
@@ -1256,6 +1538,79 @@ fn crc32(bytes: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+
+    #[test]
+    fn auto_fit_compresses_an_overfull_component_and_keeps_the_takeaway() {
+        let long_tail = " across three regions by a wide margin, with commentary".repeat(13);
+        let deck = deck(
+            vec![node(
+                "slide_01",
+                "Q3 margins grew by fourteen percent on regional strength",
+                vec![Component::BulletList {
+                    items: vec![format!("**Margins grew 14%**{long_tail}")],
+                }],
+            )],
+        );
+        assert!(!review(&deck).is_empty(), "the fixture must overflow");
+        let fitted = auto_fit(&deck);
+        assert!(
+            review(&fitted.deck).is_empty(),
+            "residual: {:?}",
+            fitted.residual
+        );
+        let item = match &fitted.deck.nodes[0].components[0] {
+            Component::BulletList { items } => items[0].clone(),
+            other => panic!("unexpected component: {other:?}"),
+        };
+        assert!(item.contains("**"), "the bolding rule survives: {item}");
+        assert!(fitted.actions.iter().any(|a| a.contains("compressed")));
+        // the consultant verdict is the input's own: the fixture is a
+        // one-node presentation, so its bounds refusal rides along —
+        // what the repair may never do is add or change one
+        assert_eq!(check(&fitted.deck), check(&deck));
+    }
+
+    #[test]
+    fn auto_fit_upgrades_the_layout_when_compression_would_cut_the_content_away() {
+        // Enough text that holding it in a split column would clip past
+        // half of it: the roomier layout is the honest repair.
+        let heavy = "one ".repeat(120);
+        let deck = deck(
+            vec![node(
+                "slide_01",
+                "The landscape report names four forces and their directions",
+                vec![
+                    Component::Prose { text: format!("{heavy}with detail") },
+                    Component::BulletList { items: vec!["**Force one** named".to_string()] },
+                ],
+            )],
+        );
+        assert!(!review(&deck).is_empty(), "the fixture must overflow");
+        let fitted = auto_fit(&deck);
+        assert!(
+            review(&fitted.deck).is_empty(),
+            "residual: {:?}",
+            fitted.residual
+        );
+    }
+
+    #[test]
+    fn auto_fit_leaves_a_clean_deck_untouched() {
+        let deck = deck(
+            vec![node(
+                "slide_01",
+                "Q3 margins grew by fourteen percent on regional strength",
+                vec![Component::BulletList {
+                    items: vec!["**Margins grew 14%** regionally".to_string()],
+                }],
+            )],
+        );
+        let fitted = auto_fit(&deck);
+        assert_eq!(fitted.deck, deck, "a clean deck is not edited");
+        assert!(fitted.actions.is_empty());
+        assert!(fitted.residual.is_empty());
+    }
     use super::*;
 
     fn node(id: &str, headline: &str, components: Vec<Component>) -> Node {
