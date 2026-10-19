@@ -226,6 +226,11 @@
     // read is the board's document; the live decision is not in it, and
     // the panel keeps the two apart.
     panel: 'chat',
+    // Bumped whenever the type-ahead closes, whether by a command run or
+    // by the owner's hand: an in-flight semantic reply from before the
+    // bump is a reply to a question the owner stopped asking, and it must
+    // not reopen the popover.
+    commandEpoch: 0,
     router: null,
     routerAt: 0,
     // The delegation panel's read, and when it last landed. It is the
@@ -2481,11 +2486,14 @@
   });
   el.task.addEventListener('keydown', function (event) {
     // The type-ahead owns the keys while it is open, so a command is one
-    // keystroke from anywhere in the composer.
+    // keystroke from anywhere in the composer. Enter runs the option the
+    // screen is highlighting — the owner's ruling on KI-245: the selected
+    // row is what Enter sends, whether the owner typed a command's name
+    // or the intent that ranked it. Shift+Enter stays a newline.
     if (face.commandOpen) {
       if (event.key === 'ArrowDown') { event.preventDefault(); moveCommand(1); return; }
       if (event.key === 'ArrowUp') { event.preventDefault(); moveCommand(-1); return; }
-      if (event.key === 'Tab') {
+      if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
         event.preventDefault();
         if (face.commands.length) {
           runCommand(face.commands[face.commandAt], el.task.value.replace(/^\/[^\s]*\s*/, ''));
@@ -2524,8 +2532,9 @@
     // first word settled. The debounce is what keeps a keystroke burst
     // from ranking every prefix; each keystroke resets it.
     window.clearTimeout(face.commandTimer);
+    var epoch = face.commandEpoch;
     face.commandTimer = window.setTimeout(function () {
-      rankSemantic(value.slice(1).trim());
+      rankSemantic(value.slice(1).trim(), epoch);
     }, 180);
     var asked = value.slice(1).split(/\s+/)[0].toLowerCase();
     if (!asked) { openCommands(''); return; }
@@ -4444,7 +4453,7 @@
   // find /theme. A machine with no embedding backend answers with zero
   // scores and the lexical ranking stands — the honest degradation, and
   // not an error the owner has to know about.
-  function rankSemantic(intent) {
+  function rankSemantic(intent, epoch) {
     if (intent.length < 3) return Promise.resolve();
     return post('/api/rank', {
       asked: intent,
@@ -4452,6 +4461,7 @@
         return command[0] + ' ' + command[1].join(' ') + ' ' + command[2];
       })
     }).then(function (reply) {
+      if (epoch !== undefined && epoch !== face.commandEpoch) return;
       if (reply.status !== 200 || !reply.body.ranked) return;
       var best = reply.body.ranked.filter(function (entry) { return entry.score > 0.25; });
       if (!best.length) return;
@@ -4504,6 +4514,7 @@
   function closeCommands() {
     face.commandOpen = false;
     face.commands = [];
+    face.commandEpoch += 1;
     window.clearTimeout(face.commandTimer);
     el.commands.hidden = true;
   }
