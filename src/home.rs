@@ -69,6 +69,35 @@ pub fn write_soul(home: &Path, text: &str) -> std::io::Result<()> {
     fs::write(home.join("SOUL.md"), text)
 }
 
+/// The dotenv map with the vault's entries laid over it: a name sealed
+/// in the vault answers with its sealed value even while the plaintext
+/// line is still in the file, which is what makes `fleet vault init`'s
+/// leave-the-lines migration honest — the sealed copy is the one that
+/// answers, and deleting the plaintext line is housekeeping, not the
+/// step that switches anything on. The passphrase comes in rather than
+/// being read here, so the tests never touch the process environment.
+/// Without a passphrase, or with none that opens the vault, the map is
+/// the plain dotenv and resolution answers as it always has.
+pub fn read_dotenv_with_vault(home: &Path, passphrase: Option<&str>) -> HashMap<String, String> {
+    let mut map = read_dotenv(home);
+    let passphrase = match passphrase.filter(|passphrase| !passphrase.is_empty()) {
+        Some(passphrase) => passphrase,
+        None => return map,
+    };
+    let Ok(text) = std::fs::read_to_string(home.join(crate::vault::VAULT_FILE)) else {
+        return map;
+    };
+    let Ok(vault) = crate::vault::Vault::from_json(&text) else {
+        return map;
+    };
+    for (name, value) in vault.open_all(passphrase) {
+        if !value.is_empty() {
+            map.insert(name, value);
+        }
+    }
+    map
+}
+
 /// Read `<home>/fleet.env` into a map: the env-var counterparts the
 /// settings writer owns, beside `.env` rather than inside it. Same
 /// KEY=VALUE grammar as [`read_dotenv`], because the two files are the
@@ -126,6 +155,48 @@ pub fn resolve_setting(name: &str, dotenv: &HashMap<String, String>) -> Option<S
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_vault_lays_over_the_dotenv_and_a_missing_passphrase_leaves_it_plain() {
+        use crate::vault::Vault;
+        let dir = std::env::temp_dir().join(format!("fleet-vault-overlay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // The dotenv carries a stale value for a name the vault also
+        // holds, and a name the vault does not.
+        std::fs::write(
+            dir.join(".env"),
+            "STEPTEST_API_KEY=plaintext-stale\nOTHER_NAME=other-value\n",
+        )
+        .unwrap();
+        let mut vault = Vault::init();
+        vault.set("passphrase", "STEPTEST_API_KEY", "sealed-fresh");
+        std::fs::write(dir.join(crate::vault::VAULT_FILE), vault.to_json()).unwrap();
+
+        // The sealed value answers over the stale plaintext line.
+        let overlaid = read_dotenv_with_vault(&dir, Some("passphrase"));
+        assert_eq!(
+            overlaid.get("STEPTEST_API_KEY").map(String::as_str),
+            Some("sealed-fresh")
+        );
+        assert_eq!(overlaid.get("OTHER_NAME").map(String::as_str), Some("other-value"));
+
+        // Without the passphrase the map is the plain dotenv: the stale
+        // plaintext answers, and nothing fails.
+        let plain = read_dotenv_with_vault(&dir, None);
+        assert_eq!(
+            plain.get("STEPTEST_API_KEY").map(String::as_str),
+            Some("plaintext-stale")
+        );
+
+        // A wrong passphrase opens nothing: the plain dotenv answers.
+        let wrong = read_dotenv_with_vault(&dir, Some("not the passphrase"));
+        assert_eq!(
+            wrong.get("STEPTEST_API_KEY").map(String::as_str),
+            Some("plaintext-stale")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use super::*;
 
     #[test]

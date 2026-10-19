@@ -1151,7 +1151,11 @@ fn rule_value(rule: &approvals::Rule) -> Value {
 /// names what the board read, so the panel's cards are the board's own
 /// facts rather than a second opinion about them.
 fn router_read(home: &std::path::Path) -> Value {
-    let dotenv = crate::home::read_dotenv(home);
+    // The vault laid over the dotenv: a sealed key answers here exactly
+    // where a plaintext key would have, so the router and the agent see
+    // the same credentials either way.
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let sources = crate::boards::resolve_sources(home, &dotenv);
     let snapshot = crate::boards::read_router(&sources.router, &crate::calib::today());
     // The cache's counts, and whether the file on disk belongs to the
@@ -1927,7 +1931,11 @@ fn settings_read(home: &std::path::Path) -> Value {
     // The env status, by name only: whether each env-var counterpart
     // the settings writer owns resolves right now, and from where. A
     // VALUE never rides the document — the doctor's masking rule.
-    let dotenv = crate::home::read_dotenv(home);
+    // The vault laid over the dotenv: a sealed key answers here exactly
+    // where a plaintext key would have, so the router and the agent see
+    // the same credentials either way.
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let fleet_env = crate::home::read_fleet_env(home);
     let env = crate::settings::env_keys()
         .into_iter()
@@ -2127,7 +2135,11 @@ fn diff_file_json(file: &crate::checkpoints::FileDiff) -> Value {
 /// rides in the board's own dirtiest-first order; the console's bars
 /// are a rendering of it, not a second sort.
 fn tower_read(home: &std::path::Path) -> Value {
-    let dotenv = crate::home::read_dotenv(home);
+    // The vault laid over the dotenv: a sealed key answers here exactly
+    // where a plaintext key would have, so the router and the agent see
+    // the same credentials either way.
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let sources = crate::boards::resolve_sources(home, &dotenv);
     let mut refused: Vec<String> = Vec::new();
     let mut document = serde_json::Map::new();
@@ -2327,7 +2339,11 @@ fn project_facts_json(project: &crate::boards::ProjectFacts) -> Value {
 /// The second-brain panel's document: the six sections, each landed or
 /// named, shaped for the browser.
 fn brain_read(home: &std::path::Path) -> Value {
-    let dotenv = crate::home::read_dotenv(home);
+    // The vault laid over the dotenv: a sealed key answers here exactly
+    // where a plaintext key would have, so the router and the agent see
+    // the same credentials either way.
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let sources = crate::boards::resolve_sources(home, &dotenv);
     let mut refused: Vec<String> = Vec::new();
     let mut document = serde_json::Map::new();

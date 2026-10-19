@@ -612,6 +612,18 @@ impl Vault {
         self.entries.is_empty()
     }
 
+    /// Open every entry with one derivation of the passphrase's key. A
+    /// wrong passphrase opens nothing — every open fails the tag and the
+    /// map comes back empty, not half-open — and the caller's fallback
+    /// (the plaintext leg) answers as it always has.
+    pub fn open_all(&self, passphrase: &str) -> std::collections::HashMap<String, String> {
+        let key = self.key(passphrase);
+        self.entries
+            .iter()
+            .filter_map(|(name, entry)| entry.open(&key).map(|value| (name.clone(), value)))
+            .collect()
+    }
+
     /// The entry names, in the file's order.
     pub fn names(&self) -> Vec<String> {
         self.entries.keys().cloned().collect()
@@ -831,6 +843,21 @@ fn fill_from_urandom(bytes: &mut [u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn open_all_opens_everything_with_one_derivation_and_nothing_with_a_wrong_one() {
+        let mut vault = Vault::init();
+        vault.set("correct horse", "STEPTEST_API_KEY", "stepfun-live-key");
+        vault.set("correct horse", "OTHRTEST_API_KEY", "other-key");
+        let opened = vault.open_all("correct horse");
+        assert_eq!(opened.len(), 2);
+        assert_eq!(opened.get("STEPTEST_API_KEY").map(String::as_str), Some("stepfun-live-key"));
+        // A wrong passphrase opens nothing: the tags fail, and the map
+        // comes back empty rather than half-open — the caller's
+        // plaintext leg answers instead of a partial vault.
+        let wrong = vault.open_all("wrong horse");
+        assert!(wrong.is_empty(), "{wrong:?}");
+    }
     use super::*;
 
     // --- the published vectors ---

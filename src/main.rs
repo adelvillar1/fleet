@@ -200,12 +200,18 @@ fn vault_get(name: &str) -> Option<String> {
     vault.get(&passphrase, name).ok()
 }
 
-/// The `~/.fleet/.env` map, empty when no home is known.
+/// The `~/.fleet/.env` map with the vault laid over it, empty when no
+/// home is known. Every key the run resolves — the router's roster keys
+/// as much as the base URL — reads this map, so a sealed name answers
+/// everywhere a plaintext name would have.
 fn read_dotenv() -> std::collections::HashMap<String, String> {
     fleet_home()
         .ok()
         .as_deref()
-        .map(home::read_dotenv)
+        .map(|home| {
+            let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+            home::read_dotenv_with_vault(home, passphrase.as_deref())
+        })
         .unwrap_or_default()
 }
 
@@ -1744,7 +1750,9 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
     // compaction request is judged like any other: it is a real call
     // with a real cost, and pretending it is free would put a lie in
     // the decision row.
-    let dotenv = fleet::home::read_dotenv(&home);
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let dotenv =
+        fleet::home::read_dotenv_with_vault(&home, passphrase.as_deref());
     let prepared =
         match fleet::route::prepare(&home, &dotenv, "compact a session", &HashMap::new()).await {
             Ok(prepared) => prepared,
