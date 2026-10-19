@@ -2877,6 +2877,38 @@ async fn run_work(work: Work) -> (String, bool) {
             // cannot launch, fails the handshake, or names a missing
             // extra is a value the model reads and reacts to — never a
             // blocked run.
+            //
+            // Before the lane, the cache: an identical call within the
+            // TTL is answered from the home's web cache, so a
+            // development loop does not pay TinyFish twice for the same
+            // question (KI-253). Only answers are cached — a lane that
+            // failed is exactly the one worth retrying — and a hit is
+            // named as what it is, with its age.
+            let home = std::env::var("FLEET_HOME")
+                .ok()
+                .map(std::path::PathBuf::from)
+                .or_else(|| {
+                    std::env::var("HOME")
+                        .ok()
+                        .map(|user| crate::home::fleet_home(None, Some(&user)).ok())
+                        .flatten()
+                });
+            let mut cache = match &home {
+                Some(home) => crate::web_cache::WebCache::load(home),
+                None => crate::web_cache::WebCache::disabled(),
+            };
+            let key = crate::web_cache::key_for("blend1", &arguments.to_string());
+            if cache.enabled() {
+                if let Some((answer, age)) = cache.get(&key) {
+                    let outcome = tools::bound(ToolOutcome {
+                        output: format!(
+                            "(fleet's web cache, {age}s old)\n{answer}"
+                        ),
+                        truncated: false,
+                    });
+                    return (outcome.output, outcome.truncated);
+                }
+            }
             let answer = match crate::mcp::McpServer::spawn(&spec) {
                 Err(error) => format!("error: the web lane cannot launch: {error}"),
                 Ok(server) => {
@@ -2888,6 +2920,10 @@ async fn run_work(work: Work) -> (String, bool) {
                     text
                 }
             };
+            if !answer.starts_with("error:") {
+                cache.put(key, answer.clone());
+                cache.flush();
+            }
             let outcome = tools::bound(ToolOutcome {
                 output: answer,
                 truncated: false,

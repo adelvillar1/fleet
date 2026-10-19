@@ -39,6 +39,7 @@ pub mod recall_graph;
 pub mod roles;
 pub mod route;
 pub mod route_cache;
+pub mod web_cache;
 pub mod session;
 pub mod session_recall;
 pub mod settings;
