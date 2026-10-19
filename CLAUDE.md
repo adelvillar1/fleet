@@ -59,7 +59,9 @@ src/net.rs              loopback probe used by doctor
 src/route.rs            multi-provider routing: roster, sys1-judged selection, failover, decision rows
 src/route_cache.rs      the route-decision cache: one recorded judgment per task, keyed to the judging lane
 src/calib.rs            the calibration stream: devdec-vocabulary rows, bounded writer, demotion reader, `fleet calib`
-src/memory.rs           the git-tracked fact substrate: six-channel recall, assembly, the recall-count feedback loop
+src/memory.rs           the git-tracked fact substrate: six-channel recall, assembly, the recall-count feedback loop, the digest-keyed recall index
+src/recall_graph.rs     one bounded hop over the frontmatter's own edges (superseded-by, missing)
+src/filelock.rs         the shared per-file flock behind every read-modify-write
 src/session_recall.rs   the session archive as synthetic facts through the same ranker
 src/skills.rs           skills: SKILL.md loading, progressive disclosure via `use_skill`, the self-authoring drafter, usage-scan curation, `fleet skills`
 src/nomenclature/       the canonical identifier vocabulary and the `convention` lookup
@@ -77,7 +79,7 @@ src/install.rs          `fleet install`: the home layout, config scaffold, lane 
 src/tui/                the ratatui surface: app.rs state, events.rs keys, ui.rs render, mod.rs loop
 src/bin/mock-server.rs  the scripted mock API the integration tests drive
 src/bin/mock-mcp.rs     the scripted fake MCP stdio server the integration tests drive
-memories/               the repo's own fact corpus: one markdown file per fact; the recall-count bump is its only runtime edit
+memories/               the repo's own fact corpus: one markdown file per fact; the recall-count bump and the lifecycle stamps are its runtime edits
 services/               the five vendored Python lane cores with VENDOR.json; services/README.md documents the launch
 tests/integration.rs    end-to-end tests: parser, client, tool loop, log, real sem1 lane via MCP
 docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice records + dashboards record inherited from the fork)

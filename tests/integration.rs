@@ -2220,6 +2220,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "list_dir",
             "subagent",
             "convention",
+            "plan",
             "deck",
             "vision",
             "web",
@@ -2227,7 +2228,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         ]
     );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 14, "{second:?}");
+    assert_eq!(second.len(), 15, "{second:?}");
     assert_eq!(
         &second[..4],
         &["bash", "read_file", "write_file", "list_dir"]
@@ -2248,6 +2249,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         &[
             "subagent",
             "convention",
+            "plan",
             "deck",
             "vision",
             "web",
@@ -2406,8 +2408,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     // model can still see them, and calling one is a typed failure.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 11);
-    assert_eq!(declared_tools(&bodies[2]).len(), 11);
+    assert_eq!(declared_tools(&bodies[1]).len(), 12);
+    assert_eq!(declared_tools(&bodies[2]).len(), 12);
     assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
 
     std::fs::remove_dir_all(&home).ok();
@@ -2712,7 +2714,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     // No lane joined, so the second request still declares only the
     // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 10);
+    assert_eq!(declared_tools(&bodies[1]).len(), 11);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -2779,7 +2781,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert!(records
         .iter()
         .all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 10);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 11);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -4259,7 +4261,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 11, "{declared:?}");
+    assert_eq!(declared.len(), 12, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
     assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
@@ -5123,6 +5125,7 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
             "supersede",
             "subagent",
             "convention",
+            "plan",
             "deck",
             "vision",
             "web",
@@ -5259,6 +5262,7 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "list_dir",
             "subagent",
             "convention",
+            "plan",
             "deck",
             "vision",
             "web",
@@ -5309,6 +5313,7 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "supersede",
             "subagent",
             "convention",
+            "plan",
             "deck",
             "vision",
             "web",
@@ -5590,6 +5595,7 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "subagent",
             "improve",
             "convention",
+            "plan",
             "deck",
             "vision",
             "web",
@@ -5650,6 +5656,7 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
             "list_dir",
             "subagent",
             "convention",
+            "plan",
             "deck",
             "vision",
             "web",

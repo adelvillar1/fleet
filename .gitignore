@@ -12,6 +12,14 @@ __pycache__/
 # mid-write can leave one behind. A leftover temp is never a fact.
 /memories/*.tmp
 
+# KI-062's per-fact write locks: a sibling `.lock` beside each fact,
+# opened for the whole read-modify-write so a consolidation pass and a
+# live recall-count bump cannot lose an update. It is deliberately left
+# on disk — unlinking a flocked file another process holds is a race —
+# so it is ignored rather than cleaned up. The loader reads `*.md` only,
+# so a lock never enters recall.
+/memories/*.lock
+
 # Claude local env reference — env var names and URLs only, not credential values
 CLAUDE.local.md
 
@@ -20,3 +28,8 @@ CLAUDE.local.md
 docs/.DS_Store
 .v2c/
 .video_agent/
+
+# A plan's generated graph, beside the plan document it executes — the
+# execution record, rebuilt from the declaration whenever the plan
+# changes. The plan is git-tracked; its runtime state is not.
+docs/plans/*.graph.json

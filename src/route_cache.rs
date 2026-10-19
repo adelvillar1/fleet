@@ -107,6 +107,26 @@ impl Cache {
         !key.is_empty() && self.key == key
     }
 
+    /// Re-key this cache to `key`, discarding every entry when the
+    /// stored key belongs to a different producer.
+    ///
+    /// Suppressing the `get` is only half of the promise above (KI-229):
+    /// without the clear, the next fresh verdict's `put` and `flush`
+    /// rewrite the other lane's entries under this lane's key, and they
+    /// are served as this lane's from then on. A relocated service or a
+    /// swapped model therefore re-labels every verdict it inherited
+    /// rather than discarding it. Clearing here makes the promise true
+    /// of the file as well as of the read.
+    ///
+    /// The key itself is left for `flush` to set, so a run that judges
+    /// nothing writes nothing and a foreign file survives intact for
+    /// the lane that wrote it.
+    pub fn rekey(&mut self, key: &str) {
+        if !self.keyed_for(key) {
+            self.entries.clear();
+        }
+    }
+
     /// The recorded verdict for `task_hash`, when this cache is the
     /// loading lane's.
     pub fn get(&self, task_hash: &str) -> Option<&Verdict> {
@@ -240,6 +260,55 @@ mod tests {
         assert!(
             reloaded.keyed_for(&Cache::key_for(&spec("python3", "/lane-a"))),
             "the same launch identity still matches"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// KI-229: the discard has to be real, not just a suppressed read.
+    /// Suppressing the `get` is only half of the promise — without the
+    /// clear, the next fresh verdict's `put` and `flush` rewrite the
+    /// other lane's entries under this lane's key and serve them as
+    /// this lane's from then on.
+    #[test]
+    fn a_foreign_key_clears_the_entries_it_refuses_to_serve() {
+        let home = scratch("route-cache-rekey");
+        let mut cache = Cache::load(&home);
+        cache.put("abc123".to_string(), verdict());
+        cache.put("def456".to_string(), verdict());
+        cache.flush(&Cache::key_for(&spec("python3", "/lane-a")));
+
+        let mut reloaded = Cache::load(&home);
+        let lane_b = Cache::key_for(&spec("python3", "/lane-b"));
+        assert!(
+            !reloaded.keyed_for(&lane_b),
+            "the foreign key does not match"
+        );
+        reloaded.rekey(&lane_b);
+        assert_eq!(
+            reloaded.stats().entries,
+            0,
+            "rekeying to another lane's key discards the entries it refuses to serve"
+        );
+
+        // The same key is a no-op: this lane's own entries survive.
+        let mut own = Cache::load(&home);
+        let lane_a = Cache::key_for(&spec("python3", "/lane-a"));
+        own.rekey(&lane_a);
+        assert_eq!(
+            own.stats().entries,
+            2,
+            "rekeying to the stored key keeps this lane's entries"
+        );
+
+        // And what lands on disk after the rekey is only this lane's.
+        reloaded.put("ghi789".to_string(), verdict());
+        reloaded.flush(&lane_b);
+        let after = Cache::load(&home);
+        assert!(after.keyed_for(&lane_b));
+        assert_eq!(
+            after.stats().entries,
+            1,
+            "only the entry this lane recorded"
         );
         let _ = std::fs::remove_dir_all(&home);
     }

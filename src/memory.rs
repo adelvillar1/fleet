@@ -1091,10 +1091,10 @@ pub fn probe(endpoint: &str) -> Probe {
 // --- the index -------------------------------------------------------------
 
 /// The generated cache under `memories/`: one entry per fact, keyed by
-/// name, carrying the stamp the vector was computed at — plus the
-/// embedder identity and dimensionality the vectors were computed
-/// **at**. A cache never errors — an absent or malformed index reads
-/// as empty and costs a recompute — and an index keyed to another
+/// name, carrying the digest of the text the vector was computed from —
+/// plus the embedder identity and dimensionality the vectors were
+/// computed **at**. A cache never errors — an absent or malformed index
+/// reads as empty and costs a recompute — and an index keyed to another
 /// embedder is not this embedder's cache: a model swap leaves
 /// stale-dimension vectors that cosine's length guard scores 0.0,
 /// which would silently kill the vector channel while `doctor` names
@@ -1112,11 +1112,29 @@ struct Index {
     facts: HashMap<String, IndexEntry>,
 }
 
-/// One cached vector with the file stamp it was computed at.
+/// One cached vector with the digest of the text it was computed from.
+///
+/// The digest, not the file's stamp (KI-228): the recall-count bump
+/// rewrites a fact's file in place, which moves its mtime and so its
+/// `secs:nanos:len` stamp, and a stamp-keyed entry therefore re-embeds a
+/// fact whose *content* never changed. The corpus's three most-recalled
+/// facts had been re-embedded on essentially every load. The digest is
+/// over `Fact::indexed_text()` — the description, the shape tags, and
+/// the phrases, which is exactly what the embedder saw — so a bump
+/// changes nothing and an edit to any of them re-embeds that one fact.
+/// `recall-count` is deliberately outside the digest for the same
+/// reason: it is a rank signal, not part of the fact's direction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IndexEntry {
-    stamp: String,
+    digest: String,
     vector: Vec<f32>,
+}
+
+/// The digest an index entry is keyed by: the first 16 hex characters of
+/// a SHA-256 over the text the vector was computed from, the same hash
+/// the route-decision cache joins on.
+fn indexed_digest(fact: &Fact) -> String {
+    calib::hash16(&fact.indexed_text())
 }
 
 /// `<root>/.recall-index.json`.
@@ -1233,8 +1251,39 @@ pub const PROVENANCE_CONFIRMED: f64 = 1.0;
 pub const PROVENANCE_INFERRED: f64 = 0.5;
 
 /// Recalls at which the history channel reaches its ceiling — the
-/// fork's `recallWindow`, ported.
-pub const RECALL_CEILING: u64 = 8;
+/// fork's `recallWindow`, ported, and then re-derived against the corpus
+/// that outgrew it.
+///
+/// The fork's window was 8, and at 8 the channel fell off a cliff: 16 of
+/// this corpus's 24 facts sit at or above it (the median recall-count is
+/// 56), so the channel contributed a constant 0.250 to two-thirds of the
+/// facts and discriminated only among the remaining third — a saturated
+/// channel is a dead channel, and it handed every never-recalled fact a
+/// 0.25 deficit the word channels, measured at 0.04–0.15 in practice,
+/// could not overcome.
+///
+/// 128 spans the observed range instead of clamping it, and the curve is
+/// logarithmic rather than linear, so the channel keeps discriminating
+/// across the whole span rather than re-saturating partway up.
+pub const RECALL_CEILING: u64 = 128;
+
+/// The history channel's curve: recall-count over the ceiling, on a
+/// logarithmic scale.
+///
+/// Linear-to-the-ceiling was the fork's own shape and it is what
+/// saturated: `min(count, 8) / 8` maps 8, 27, 56 and 103 all to 1.0. The
+/// logarithm keeps 0 at 0.0 and the ceiling at 1.0 — so the endpoints,
+/// the weight, and the direction-outranks-proximity ruling are all
+/// unchanged — while spreading the middle: 1 recall is 0.145, 8 is 0.452,
+/// 27 is 0.686, 56 is 0.832, and 103 is 0.955.
+///
+/// Monotonic in count, which is what keeps the calibration stream's
+/// meaning intact: a `recall_hit` row's score is still the score the
+/// fact entered the turn at, and more recalls still means more history.
+pub fn history_term(recall_count: u64) -> f64 {
+    let capped = recall_count.min(RECALL_CEILING);
+    ((1 + capped) as f64).ln() / ((1 + RECALL_CEILING) as f64).ln()
+}
 
 /// The decay half-life in days: a fact's freshness halves every 90
 /// days. Exponential rather than the fork's linear window, so an old
@@ -1319,7 +1368,7 @@ impl Score {
         date: &str,
         today_days: Option<i64>,
     ) -> Score {
-        let history = recall_count.min(RECALL_CEILING) as f64 / RECALL_CEILING as f64;
+        let history = history_term(recall_count);
         let freshness = decay_factor(date, today_days);
         let provenance = match basis {
             Basis::ConfirmedBy => PROVENANCE_CONFIRMED,
@@ -1384,7 +1433,7 @@ pub(crate) fn cosine(left: &[f32], right: &[f32]) -> f64 {
 /// The normalized token set of `text`: lowercased, split on every
 /// non-alphanumeric run, deduplicated — the skills module's tokenizer,
 /// so the two surfaces measure words the same way.
-fn tokens(text: &str) -> Vec<String> {
+pub(crate) fn tokens(text: &str) -> Vec<String> {
     let mut tokens: Vec<String> = Vec::new();
     for token in text
         .to_lowercase()
@@ -1398,9 +1447,70 @@ fn tokens(text: &str) -> Vec<String> {
     tokens
 }
 
+/// The English inflection suffixes the stemmer strips, longest first so
+/// the longest match wins. Deliberately short: this is not Porter, and
+/// it does not need to be. The corpus is code-shaped prose and the gap
+/// it closes is the documented one — "the trajectory channel measures
+/// literal token overlap with no stemming" — measured at 6 of 99 query
+/// tokens (`facts`→`fact`, `fixed`→`fix`, `derived`→`deriv`,
+/// `resolved`→`resolv`, `served`→`serv`).
+///
+/// The `-ies`/`-ied` rules map to `y` rather than stripping to nothing,
+/// because `carries`→`carry` is the match and `carri` is not a word any
+/// corpus writes.
+const SUFFIXES: [(&str, &str); 15] = [
+    ("ations", "ate"),
+    ("ation", "ate"),
+    ("ments", "ment"),
+    ("ment", "ment"),
+    ("nesses", "ness"),
+    ("ness", "ness"),
+    ("ings", ""),
+    ("ing", ""),
+    ("ies", "y"),
+    ("ied", "y"),
+    ("ers", "er"),
+    ("ed", ""),
+    ("es", ""),
+    ("s", ""),
+    ("ly", ""),
+];
+
+/// The shortest stem worth returning: a suffix is only stripped when
+/// what remains is at least this long, so `is` and `as` do not collapse
+/// to the empty string and `es` does not eat a two-letter word whole.
+const MIN_STEM: usize = 3;
+
+/// The light stem the lexical channels compare on: lowercase, one
+/// inflection suffix stripped, longest match first.
+///
+/// Both sides of every comparison are stemmed, so the channel stays
+/// symmetric — a fact's `phrases` and the instruction's tokens are
+/// reduced the same way, and neither gains an advantage from the rule.
+/// This is the lexical channels' own business: the skills module shares
+/// [`tokens`] and keeps its own behaviour, because a guard that polices
+/// `judgment` against a vocabulary carrying `judgement` must not start
+/// accepting both.
+pub(crate) fn stem(word: &str) -> String {
+    for (suffix, replacement) in SUFFIXES {
+        if let Some(head) = word.strip_suffix(suffix) {
+            if head.len() + replacement.len() >= MIN_STEM {
+                return format!("{head}{replacement}");
+            }
+        }
+    }
+    word.to_string()
+}
+
+/// The stemmed token set of `text`: [`tokens`], each stemmed, order
+/// preserved. This is what the keyword and trajectory channels compare.
+pub(crate) fn stems(text: &str) -> Vec<String> {
+    tokens(text).iter().map(|token| stem(token)).collect()
+}
+
 /// How much of the instruction the fact answers: the instruction's
-/// tokens the fact's topic text carries, over the instruction's
-/// tokens. An instruction with no tokens covers nothing.
+/// stems the fact's topic text carries, over the instruction's stems. An
+/// instruction with no tokens covers nothing.
 fn keyword_coverage(query: &[String], fact: &[String]) -> f64 {
     if query.is_empty() {
         return 0.0;
@@ -1413,8 +1523,8 @@ fn keyword_coverage(query: &[String], fact: &[String]) -> f64 {
 }
 
 /// How much of the instruction's trajectory the fact's recorded
-/// phrases answer: the instruction's tokens the phrases carry, over
-/// the instruction's tokens. A fact with no recorded phrases has no
+/// phrases answer: the instruction's stems the phrases carry, over the
+/// instruction's stems. A fact with no recorded phrases has no
 /// direction, so it scores 0.0 — the same shape as the keyword
 /// channel, measured over the trajectory's own text so the two
 /// dimensions cannot double-count each other.
@@ -1422,7 +1532,7 @@ fn trajectory_coverage(query: &[String], phrases: &[String]) -> f64 {
     if query.is_empty() || phrases.is_empty() {
         return 0.0;
     }
-    let carried: Vec<String> = phrases.iter().flat_map(|phrase| tokens(phrase)).collect();
+    let carried: Vec<String> = phrases.iter().flat_map(|phrase| stems(phrase)).collect();
     let covered = query
         .iter()
         .filter(|token| carried.iter().any(|seen| seen == *token))
@@ -1896,6 +2006,9 @@ pub struct Memory {
     embedder: Box<dyn Embedder>,
     facts: Mutex<Vec<Fact>>,
     vectors: HashMap<String, Vec<f32>>,
+    /// The adjacency map over the frontmatter's own edges, derived at
+    /// load. See [`crate::recall_graph`].
+    graph: crate::recall_graph::Graph,
 }
 
 /// The mutex, recovered from poison: the only critical sections are
@@ -1965,13 +2078,19 @@ impl Memory {
             let mut fresh: HashMap<String, IndexEntry> = HashMap::new();
             let mut changed = false;
             for fact in &facts {
-                let cached = fact.stamp.as_ref().and_then(|stamp| {
-                    index
-                        .facts
-                        .get(&fact.name)
-                        .filter(|entry| &entry.stamp == stamp)
-                        .map(|entry| entry.vector.clone())
-                });
+                // KI-228: the entry is keyed by the digest of the text
+                // the vector was computed from, not by the file's stamp.
+                // A recall-count bump rewrites the file in place and so
+                // moves its mtime, and a stamp-keyed entry re-embeds a
+                // fact whose content never changed — which is how the
+                // corpus's three most-recalled facts came to be
+                // re-embedded on essentially every load.
+                let digest = indexed_digest(fact);
+                let cached = index
+                    .facts
+                    .get(&fact.name)
+                    .filter(|entry| entry.digest == digest)
+                    .map(|entry| entry.vector.clone());
                 let vector = match cached {
                     Some(vector) => vector,
                     None => match embedder.embed(&fact.indexed_text()) {
@@ -1991,26 +2110,42 @@ impl Memory {
                         }
                     },
                 };
-                if let Some(stamp) = &fact.stamp {
-                    fresh.insert(
-                        fact.name.clone(),
-                        IndexEntry {
-                            stamp: stamp.clone(),
-                            vector: vector.clone(),
-                        },
-                    );
-                }
+                fresh.insert(
+                    fact.name.clone(),
+                    IndexEntry {
+                        digest,
+                        vector: vector.clone(),
+                    },
+                );
                 vectors.insert(fact.name.clone(), vector);
             }
-            if changed || fresh.len() != index.facts.len() {
+            // KI-231: rewrite only for a reason that is not a retry. A
+            // fact whose embed failed is absent from `fresh`, and the
+            // old `fresh.len() != index.facts.len()` condition read
+            // that as a change and rewrote the pruned map — so a fact
+            // whose text changed while the embedding server was down
+            // was re-attempted, re-failed, and re-written on every
+            // load, forever. A failed embed costs a retry next load and
+            // no write; an entry for a fact that no longer exists is
+            // the one thing that must still be pruned. A fact that is
+            // still here is never an orphan, however its embed went —
+            // its old entry keeps its slot and can never be served,
+            // because the entry is keyed by digest.
+            let orphaned = index
+                .facts
+                .keys()
+                .any(|name| !facts.iter().any(|fact| &fact.name == name));
+            if changed || orphaned {
                 Index::write(root, key.as_ref(), &fresh);
             }
         }
+        let graph = crate::recall_graph::Graph::build(&facts);
         Memory {
             root: root.to_path_buf(),
             embedder,
             facts: Mutex::new(facts),
             vectors,
+            graph,
         }
     }
 
@@ -2045,11 +2180,13 @@ impl Memory {
         vectors: HashMap<String, Vec<f32>>,
         embedder: Box<dyn Embedder>,
     ) -> Memory {
+        let graph = crate::recall_graph::Graph::build(&facts);
         Memory {
             root: PathBuf::new(),
             embedder,
             facts: Mutex::new(facts),
             vectors,
+            graph,
         }
     }
 
@@ -2094,6 +2231,7 @@ impl Memory {
                 fact: fact.clone(),
                 score: Score::unranked(),
                 off_shape: false,
+                via: None,
             })
             .collect();
         hits.sort_by(|left, right| left.fact.name.cmp(&right.fact.name));
@@ -2116,7 +2254,10 @@ impl Memory {
     pub fn partition(&self, instruction: &str) -> Partition {
         let shape = classify_shape(instruction);
         let query_vector = self.embedder.embed(instruction);
-        let query_tokens = tokens(instruction);
+        // Stemmed, like the fact side: both halves of every lexical
+        // comparison are reduced the same way, so the channel stays
+        // symmetric and neither side gains from the rule (R3).
+        let query_tokens = stems(instruction);
         let today = calib::today();
         let today_days = parse_day(&today);
         let facts = lock_facts(&self.facts);
@@ -2137,6 +2278,7 @@ impl Memory {
                 fact: fact.clone(),
                 score,
                 off_shape: !in_pool,
+                via: None,
             };
             if in_pool {
                 primary.push(hit);
@@ -2146,11 +2288,101 @@ impl Memory {
         }
         by_rank(&mut primary);
         by_rank(&mut spillover);
+        let query = Query {
+            vector: &query_vector,
+            tokens: &query_tokens,
+            today_days,
+        };
+        let graph = self.graph_hits(&facts, &primary, &spillover, &query, &today);
         Partition {
             shape,
             primary,
             spillover,
+            graph,
         }
+    }
+
+    /// One bounded hop over the frontmatter's own edges. See
+    /// [`crate::recall_graph`] for why this exists, what it deliberately
+    /// does not walk, and why a retired fact is a source rather than a
+    /// hit.
+    ///
+    /// A neighbour enters on its source's authority rather than its own
+    /// score — that is the whole point, since a fact that cleared the
+    /// floor on its own would already be in a pool — so the bar is the
+    /// source's own total against [`MIN_RECALL_SCORE`], the same floor
+    /// every other fact faces, and the neighbour's score rides along
+    /// unchanged and honest. Every neighbour is marked with the edge that
+    /// reached it, so the assembly never mixes one silently into the
+    /// shape's answer.
+    fn graph_hits(
+        &self,
+        facts: &[Fact],
+        primary: &[ScoredFact],
+        spillover: &[ScoredFact],
+        query: &Query<'_>,
+        today: &str,
+    ) -> Vec<ScoredFact> {
+        use crate::recall_graph::{GRAPH_HOPS, GRAPH_SOURCES};
+        let mut out: Vec<ScoredFact> = Vec::new();
+        // Only the hop count gates this. The retired-source path is
+        // independent of the pools — a corpus whose only match is a
+        // fact the cycle folded away has an EMPTY primary pool, and that
+        // is precisely the case where the replacement must still surface.
+        if GRAPH_HOPS == 0 {
+            return out;
+        }
+        let mut expand = |edge_owner: &str| {
+            for neighbour in self.graph.neighbours(edge_owner) {
+                // Already in a pool, or already pulled in by an earlier
+                // source: no fact enters a turn twice.
+                let taken = primary.iter().any(|hit| hit.fact.name == neighbour.name)
+                    || spillover.iter().any(|hit| hit.fact.name == neighbour.name)
+                    || out.iter().any(|hit| hit.fact.name == neighbour.name);
+                if taken {
+                    continue;
+                }
+                let Some(fact) = facts.iter().find(|fact| fact.name == neighbour.name) else {
+                    continue;
+                };
+                // The same exclusions the pools run on: a protected fact
+                // enters through the protected tier and a working one
+                // through the working tier. A retired fact is not a hit —
+                // it is out of recall by design, and it only ever vouches.
+                if fact.protected() || fact.tier == Tier::Working || fact.forgotten(today) {
+                    continue;
+                }
+                let score = self.score(fact, query.vector, query.tokens, query.today_days);
+                out.push(ScoredFact {
+                    fact: fact.clone(),
+                    score,
+                    off_shape: false,
+                    via: Some(neighbour.edge.label()),
+                });
+            }
+        };
+        // The primary pool's head first: the shape's own strongest
+        // answers are the sources that earned the authority.
+        for source in primary.iter().take(GRAPH_SOURCES) {
+            expand(&source.fact.name);
+        }
+        // Then the retired facts that vouch. A fact the corpus folded
+        // away never enters a pool, so without this its replacement is
+        // unreachable for any instruction worded like the old fact.
+        for name in self.graph.sources() {
+            let Some(fact) = facts.iter().find(|fact| &fact.name == name) else {
+                continue;
+            };
+            if !fact.forgotten(today) {
+                continue;
+            }
+            let score = self.score(fact, query.vector, query.tokens, query.today_days);
+            if score.total < MIN_RECALL_SCORE {
+                continue;
+            }
+            expand(name);
+        }
+        out
     }
 
     /// Ranked recall for one instruction: the shape-partitioned
@@ -2168,6 +2400,9 @@ impl Memory {
         let partition = self.partition(instruction);
         let mut hits = partition.primary;
         hits.extend(partition.spillover);
+        // The graph's neighbours ride last: they did not compete, so
+        // they never displace a fact that did.
+        hits.extend(partition.graph);
         hits
     }
 
@@ -2265,7 +2500,7 @@ impl Memory {
             (Some(query), Some(fact_vector)) => cosine(query, fact_vector).max(0.0),
             _ => 0.0,
         };
-        let keyword = keyword_coverage(query_tokens, &tokens(&fact.topic_text()));
+        let keyword = keyword_coverage(query_tokens, &stems(&fact.topic_text()));
         let trajectory = trajectory_coverage(query_tokens, &fact.phrases);
         Score::compute(
             vector,
@@ -2309,6 +2544,10 @@ pub struct Partition {
     /// The facts outside the shape, strongest first, each marked
     /// `off_shape`.
     pub spillover: Vec<ScoredFact>,
+    /// The facts one bounded graph hop reached, each marked with the
+    /// edge that reached it. Ordered by the source that vouched for
+    /// them, then by name — they did not compete, so they do not rank.
+    pub graph: Vec<ScoredFact>,
 }
 
 impl Partition {
@@ -2319,20 +2558,45 @@ impl Partition {
     }
 }
 
-/// Strongest first, name as the deterministic tie-break — the one
-/// ordering every pool in this module ranks by.
+/// Strongest first, trajectory as the second key, name as the last —
+/// the one ordering every pool in this module ranks by.
+///
+/// The trajectory term is the second key because the name alone decided
+/// exact ties arbitrarily: `own-home-credentials-ruling` and
+/// `router-enforcement-ruling` scored identically (kw 0.060, traj 0.120,
+/// hist 0.250, fresh 0.098, prov 0.050) and the alphabet picked the
+/// wrong one. Within a tie, the fact that drove is the better answer —
+/// the same direction-outranks-proximity ruling, applied to the
+/// tie-break. The name stays last so the ordering is still fully
+/// deterministic, which is what the surface's reproducibility needs.
 fn by_rank(hits: &mut [ScoredFact]) {
     hits.sort_by(|left, right| {
         right
             .score
             .total
             .total_cmp(&left.score.total)
+            .then_with(|| right.score.trajectory.total_cmp(&left.score.trajectory))
             .then_with(|| left.fact.name.cmp(&right.fact.name))
     });
 }
 
+/// One instruction's ranking context, derived once per recall and shared
+/// by the pools and the graph hop so neither re-derives it — and so the
+/// hop takes the query as one value rather than as four loose
+/// arguments.
+struct Query<'a> {
+    /// The instruction's own embedding, or `None` when the backend
+    /// serves no vectors.
+    vector: &'a Option<Vec<f32>>,
+    /// The instruction's stems, the same reduction the fact side takes.
+    tokens: &'a [String],
+    /// Days since the epoch for today, or `None` when the clock is
+    /// unreadable.
+    today_days: Option<i64>,
+}
+
 /// One fact ranked for one instruction: the fact, the score that
-/// ordered it, and which pool it came from.
+/// ordered it, and how it entered.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoredFact {
     pub fact: Fact,
@@ -2341,6 +2605,11 @@ pub struct ScoredFact {
     /// shape's own pool — the weaker context the assembly marks
     /// `off-shape` in its line.
     pub off_shape: bool,
+    /// The graph edge that reached this fact, when it entered on another
+    /// fact's authority rather than its own score — the assembly marks
+    /// the line with it, so a graph-sourced fact is never silently mixed
+    /// into the shape's own answer.
+    pub via: Option<&'static str>,
 }
 
 /// The bounded, frontmatter-preserving field rewrite: the one line the
@@ -2352,60 +2621,18 @@ pub struct ScoredFact {
 /// recall-count bump, the `superseded-by` stamp, the `valid-until`
 /// stamp — because a second rewrite path would drift from this one's
 /// bound and its atomicity. A line the fact does not carry is inserted
-/// An exclusive lock on one fact file's writes, released on drop.
-/// KI-062: the lock is what makes a fact's read-modify-write atomic
-/// across the consolidation cycle and a live run's recall-count bump.
-/// A sibling `.lock` beside the fact carries it; the lock BLOCKS, so a
-/// caller must not hold one across a call that rewrites the same file.
-struct FactLock {
-    file: Option<std::fs::File>,
-}
-
-impl FactLock {
-    /// Take the lock, or carry on without it: a lock that cannot be
-    /// created leaves the write running unprotected rather than
-    /// refusing it, because a lost recall-count bump is cheaper than a
-    /// refused supersession. The `Option` records whether the lock was
-    /// really held.
-    fn take(path: &Path) -> FactLock {
-        let mut lock = path.to_path_buf().into_os_string();
-        lock.push(".lock");
-        let lock = std::path::PathBuf::from(lock);
-        let Ok(file) = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock)
-        else {
-            return FactLock { file: None };
-        };
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            unsafe extern "C" {
-                fn flock(fd: i32, operation: i32) -> i32;
-            }
-            // LOCK_EX is 2 on every unix. A failure leaves the file
-            // open and unlocked, which the drop releases normally.
-            unsafe { flock(file.as_raw_fd(), 2) };
-        }
-        FactLock { file: Some(file) }
-    }
-}
-
-impl Drop for FactLock {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        if let Some(file) = &self.file {
-            use std::os::unix::io::AsRawFd;
-            unsafe extern "C" {
-                fn flock(fd: i32, operation: i32) -> i32;
-            }
-            // LOCK_UN is 8 on every unix.
-            unsafe { flock(file.as_raw_fd(), 8) };
-        }
-    }
+/// Take the lock on one fact file's writes, released on drop. KI-062:
+/// the lock is what makes a fact's read-modify-write atomic across the
+/// consolidation cycle and a live run's recall-count bump. A sibling
+/// `.lock` beside the fact carries it; the lock BLOCKS, so a caller must
+/// not hold one across a call that rewrites the same file.
+///
+/// The mechanism is [`crate::filelock::FileLock`], shared with the
+/// session archive's count store rather than copied: two `unsafe
+/// extern "C"` blocks declaring `flock` in two modules is two places for
+/// the same primitive to drift.
+fn lock_fact(path: &Path) -> crate::filelock::FileLock {
+    crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(path))
 }
 
 /// as the last frontmatter line rather than appended anywhere else.
@@ -2425,7 +2652,7 @@ fn rewrite_field(path: &Path, key: &str, value: &str) -> Result<(), WriteError> 
     // honest first version left it, and this is the lock that closes
     // it. The lock file is a sibling beside the fact, never inside the
     // corpus a walk would read.
-    let _guard = FactLock::take(path);
+    let _guard = lock_fact(path);
     let Ok(text) = fs::read_to_string(path) else {
         let reason = format!(
             "could not re-read {} to rewrite its `{key}`",
@@ -2588,6 +2815,11 @@ pub struct Assembly {
     /// The off-shape facts that entered, in rank order — the marked
     /// half of `recalled`.
     pub spillover: Vec<ScoredFact>,
+    /// The graph's neighbours that entered, in the order the sources
+    /// vouched for them — each marked with the edge that reached it.
+    /// Not part of `recalled`: a graph-sourced fact never records a
+    /// recall hit, because it did not rank.
+    pub graph: Vec<ScoredFact>,
     /// Which of the spillover's three routes admitted them, when any
     /// entered — the named reason the surface prints.
     pub spillover_route: Option<String>,
@@ -2704,6 +2936,21 @@ impl Memory {
                 dropped.push(fact.name.clone());
             }
         }
+        // The graph's neighbours last, and strictly budget-bounded like
+        // everything that did not compete for its place. Their strongest
+        // enters under pressure — the fork's `renderBlock` rule applied
+        // here too, because a companion the trajectory needed is worth a
+        // line even in a tight turn — and the rest enter while they fit.
+        let mut kept_graph: Vec<ScoredFact> = Vec::new();
+        for (index, hit) in partition.graph.iter().enumerate() {
+            let cost = estimate_tokens(recalled_line(hit).chars().count());
+            if index == 0 || used + cost <= budget {
+                used += cost;
+                kept_graph.push(hit.clone());
+            } else {
+                dropped.push(hit.fact.name.clone());
+            }
+        }
         Assembly {
             shape,
             ranked,
@@ -2711,6 +2958,7 @@ impl Memory {
             recalled,
             primary,
             spillover,
+            graph: kept_graph,
             spillover_route,
             working: kept_working,
             dropped,
@@ -2720,7 +2968,9 @@ impl Memory {
     }
 
     /// The partition flattened: primary pool first, then the spillover,
-    /// each strongest first — the full ranking the surface cards.
+    /// each strongest first — the full ranking the surface cards. The
+    /// graph's neighbours are not part of the ranking: they did not
+    /// compete, so the surface cards them apart.
     fn ranked_of(&self, partition: &Partition) -> Vec<ScoredFact> {
         let mut ranked = partition.primary.clone();
         ranked.extend(partition.spillover.iter().cloned());
@@ -2795,6 +3045,12 @@ fn recalled_line(hit: &ScoredFact) -> String {
     );
     if let Some(missing) = missing_note(&hit.fact) {
         line.push_str(&format!(" \u{b7} missing: {missing}"));
+    }
+    // The edge that reached a graph-sourced fact rides the same line, so
+    // a fact that entered on another fact's authority is never read as
+    // one that ranked.
+    if let Some(edge) = hit.via {
+        line.push_str(&format!(" \u{b7} via: {edge}"));
     }
     line
 }
@@ -2871,6 +3127,15 @@ pub fn render_assembly(assembly: &Assembly) -> String {
             out.push_str(SIGN_LEGEND);
         }
         for hit in &assembly.recalled {
+            out.push_str(&recalled_line(hit));
+            out.push('\n');
+        }
+    }
+    if !assembly.graph.is_empty() {
+        out.push_str(
+            "Adjacent memory (reached through an edge the matched facts declare — the current truth a superseded fact points at, or a companion a trajectory was missing — propose only, verify before relying):\n",
+        );
+        for hit in &assembly.graph {
             out.push_str(&recalled_line(hit));
             out.push('\n');
         }
@@ -3178,6 +3443,18 @@ impl Remember {
             return Err(WriteError::Body(format!(
                 "the `body` argument is {} bytes, past the {MAX_BODY_BYTES}-byte bound",
                 body.len()
+            )));
+        }
+        // R4b: the third sign is only real if the companions are named.
+        // `missing` was optional and unpopulated — 15 corpus facts carry
+        // the field and all 15 carry it empty — so an `incomplete` fact
+        // rendered `incomplete:` with nothing to finish the trajectory
+        // with, and the graph had no edge to walk. The tag now has to
+        // earn its marker: a fact that says it stalled must say what it
+        // was missing.
+        if shape.iter().any(|tag| tag == INCOMPLETE_TAG) && missing.is_empty() {
+            return Err(WriteError::Missing(format!(
+                "an `{INCOMPLETE_TAG}` fact must name what it was missing: `missing` is the third sign's whole content, and the companions are the fact's reason to exist"
             )));
         }
         Ok(Remember {
@@ -5238,6 +5515,51 @@ mod tests {
     /// The scripted vocabulary, in dimension order.
     const SCRIPTED_TERMS: [&str; 5] = ["deploy", "railway", "render", "shader", "walnut"];
 
+    /// An embedder that fails for one text and serves the scripted
+    /// vocabulary for the rest — the embedding server that is down for
+    /// one request, or a fact whose embed times out. It writes the same
+    /// index key the scripted embedder does, so a load with one reads
+    /// the cache the other wrote.
+    struct PartialEmbedder {
+        calls: Arc<AtomicUsize>,
+        fails_on: String,
+    }
+
+    impl Embedder for PartialEmbedder {
+        fn box_clone(&self) -> Box<dyn Embedder> {
+            Box::new(PartialEmbedder {
+                calls: Arc::clone(&self.calls),
+                fails_on: self.fails_on.clone(),
+            })
+        }
+
+        fn embed(&self, text: &str) -> Option<Vec<f32>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            if text.to_lowercase().contains(&self.fails_on) {
+                return None;
+            }
+            let lower = text.to_lowercase();
+            Some(
+                SCRIPTED_TERMS
+                    .iter()
+                    .map(|term| if lower.contains(term) { 1.0 } else { 0.0 })
+                    .collect(),
+            )
+        }
+
+        fn name(&self) -> &'static str {
+            "scripted"
+        }
+
+        fn serves_vectors(&self) -> bool {
+            true
+        }
+
+        fn vector_info(&self) -> Option<(String, usize)> {
+            Some(("scripted".to_string(), SCRIPTED_TERMS.len()))
+        }
+    }
+
     impl Embedder for ScriptedEmbedder {
         fn box_clone(&self) -> Box<dyn Embedder> {
             Box::new(ScriptedEmbedder {
@@ -5723,8 +6045,12 @@ mod tests {
         // neighborhood cannot outrank driving toward the minima.
         let topical = W_VECTOR + W_KEYWORD;
         assert!(topical < 1.0 - topical, "the topical pair is {topical}");
-        // History saturates: eight recalls and eighty score the same.
-        let saturated = Score::compute(0.0, 0.0, 0.0, 80, Basis::Inferred, &calib::today(), today);
+        // History saturates: past the ceiling, more recalls score the
+        // same. The ceiling is 128 and the curve is logarithmic, so the
+        // saturation is a clamp at the ceiling rather than a cliff
+        // partway up — which is what kept 16 of 24 corpus facts (median
+        // recall-count 56) pinned at the same 0.250 term.
+        let saturated = Score::compute(0.0, 0.0, 0.0, 200, Basis::Inferred, &calib::today(), today);
         let at_ceiling = Score::compute(
             0.0,
             0.0,
@@ -5735,6 +6061,13 @@ mod tests {
             today,
         );
         assert_eq!(saturated.history, at_ceiling.history);
+        // And it still discriminates across the observed range instead
+        // of clamping two-thirds of the corpus to the same term.
+        let spread = history_term(0) < history_term(1)
+            && history_term(1) < history_term(8)
+            && history_term(8) < history_term(56)
+            && history_term(56) < history_term(RECALL_CEILING);
+        assert!(spread, "the curve must separate the observed range");
         // A confirmed-by vector outweighs an inferred one, and neither
         // is erased: provenance is magnitude, not a gate.
         let confirmed =
@@ -5791,11 +6124,11 @@ mod tests {
         // recalls' history, confirmed-by, and a weak 0.2 cosine.
         let direction_strong = W_VECTOR * 0.2
             + W_TRAJECTORY * 0.8
-            + W_HISTORY * (4.0 / RECALL_CEILING as f64)
+            + W_HISTORY * history_term(4)
             + W_FRESHNESS * 1.0
             + W_PROVENANCE * PROVENANCE_CONFIRMED;
         assert!(
-            (direction_strong - 0.545).abs() < 1e-12,
+            (direction_strong - 0.5028).abs() < 1e-3,
             "{direction_strong}"
         );
         // Direction outranks proximity WITH MARGIN, not by a hair.
@@ -5803,8 +6136,16 @@ mod tests {
             direction_strong > proximity_max,
             "{direction_strong} must beat {proximity_max}"
         );
+        // The margin is 0.053. It was 0.095 under the linear curve,
+        // where four recalls already scored history 0.5 — and that
+        // narrower margin is the honest consequence of R1: the
+        // direction-strong fact no longer buys a quarter of its score
+        // from being recalled four times. What is left is still
+        // direction's own 0.24 of trajectory against the proximity
+        // pair's 0.30, so the ruling holds; it just holds by the
+        // weights' arithmetic rather than by a history subsidy.
         assert!(
-            (direction_strong - proximity_max - 0.095).abs() < 1e-12,
+            (direction_strong - proximity_max - 0.0528).abs() < 1e-3,
             "the margin is {}",
             direction_strong - proximity_max
         );
@@ -5833,7 +6174,7 @@ mod tests {
         let corroborated = proximity_max + W_TRAJECTORY * 0.2;
         assert!(corroborated > SPILLOVER_FLOOR, "{corroborated}");
         assert!((corroborated - 0.51).abs() < 1e-12, "{corroborated}");
-        assert!(proximity_max + W_HISTORY * (2.0 / RECALL_CEILING as f64) > SPILLOVER_FLOOR);
+        assert!(proximity_max + W_HISTORY * history_term(2) > SPILLOVER_FLOOR);
         // The direction-strong fact clears it with room to spare.
         assert!(
             direction_strong - SPILLOVER_FLOOR > 0.0,
@@ -6003,18 +6344,23 @@ mod tests {
                 "{tag} has no keywords"
             );
         }
-        // The write path accepts them inside the three-tag cap.
+        // The write path accepts them inside the three-tag cap. The
+        // `incomplete` tag carries its companions, which R4b now requires
+        // of it — a third sign with nothing named to finish the
+        // trajectory is not a sign.
         let request = Remember::parse(&serde_json::json!({
             "name": "the-bootstrap-stalled",
             "description": "the bootstrap was correct but the torch stack was missing",
             "shape": "build, incomplete",
             "basis": "inferred",
+            "missing": ["the-torch-stack"],
         }))
         .unwrap();
         assert_eq!(
             request.shape,
             vec!["build".to_string(), "incomplete".to_string()]
         );
+        assert_eq!(request.missing, vec!["the-torch-stack".to_string()]);
         // A tag outside all three axes is refused with all three named.
         let error = Remember::parse(&serde_json::json!({
             "name": "typo",
@@ -6170,24 +6516,23 @@ mod tests {
         let drove = &hits[0].score;
         let talked = &hits[1].score;
         // B's evidence is multidimensional: a 0.8 trajectory match and
-        // half the history ceiling, over weak topical overlap.
+        // four recalls of history, over weak topical overlap.
         assert!((drove.keyword - 0.2).abs() < 1e-12, "{drove:?}");
         assert!((drove.trajectory - 0.8).abs() < 1e-12, "{drove:?}");
-        assert!((drove.history - 0.5).abs() < 1e-12, "{drove:?}");
-        assert!((drove.total - 0.545).abs() < 1e-12, "{drove:?}");
+        assert!((drove.history - history_term(4)).abs() < 1e-12, "{drove:?}");
+        assert!((drove.total - 0.5028).abs() < 1e-3, "{drove:?}");
         // A's evidence is topical and nothing else: full coverage, no
         // direction, no history.
         assert!((talked.keyword - 1.0).abs() < 1e-12, "{talked:?}");
         assert!((talked.trajectory - 0.0).abs() < 1e-12, "{talked:?}");
         assert!((talked.total - 0.30).abs() < 1e-12, "{talked:?}");
-        // The rebalanced weights keep the ordering and widen the gap:
+        // The rebalanced weights keep the ordering and hold the gap:
         // under the first reweighting (0.20 each, 0.40 together) this
         // same corpus put A at 0.35 and B at 0.49 — a 0.14 margin that
         // shrank to nothing the moment the vector channel served a
-        // maximum-proximity fact. The direction channels now carry
-        // 0.60 against the proximity pair's 0.30, and the margin is
-        // 0.245.
-        assert!(drove.total - talked.total > 0.2, "{drove:?} vs {talked:?}");
+        // maximum-proximity fact. The direction channels carry 0.60
+        // against the proximity pair's 0.30, and the margin is 0.203.
+        assert!(drove.total - talked.total > 0.15, "{drove:?} vs {talked:?}");
         // THIS TEST FAILS UNDER THE OLD WEIGHTING, where the topical
         // pair was 0.80 and there was no trajectory channel at all:
         //   topical-only: 0.25*1.0 + 0.10*0.0 + 0.10*1.0 + 0.15 = 0.50
@@ -6250,21 +6595,28 @@ mod tests {
         // into the embedding as well as into the trajectory channel.
         assert!((drove.keyword - 0.0).abs() < 1e-12, "{drove:?}");
         assert!((drove.trajectory - 0.8).abs() < 1e-12, "{drove:?}");
-        assert!((drove.history - 0.5).abs() < 1e-12, "{drove:?}");
+        assert!((drove.history - history_term(4)).abs() < 1e-12, "{drove:?}");
         assert!((drove.vector - 1.0).abs() < 1e-12, "{drove:?}");
-        assert!((drove.total - 0.665).abs() < 1e-12, "{drove:?}");
+        assert!((drove.total - 0.6228).abs() < 1e-3, "{drove:?}");
         // The loser's whole case is proximity: every word matched, and
         // it has no direction at all.
         assert!((near.keyword - 1.0).abs() < 1e-12, "{near:?}");
         assert!((near.trajectory - 0.0).abs() < 1e-12, "{near:?}");
         assert!((near.vector - 1.0).abs() < 1e-12, "{near:?}");
         assert!((near.total - 0.45).abs() < 1e-12, "{near:?}");
-        // Maximum proximity loses to direction by 0.215, and the
+        // Maximum proximity loses to direction by 0.173, and the
         // arithmetic is the weights' own, hand-checked:
         //   proximity-max: 0.15*1.0 + 0.15*1.0 + 0.10 + 0.05 = 0.45
-        //   drove-here:    0.15*1.0 + 0.00    + 0.30*0.8 + 0.25*0.5
-        //                  + 0.10 + 0.05 = 0.665
-        assert!(drove.total > near.total + 0.2, "{drove:?} vs {near:?}");
+        //   drove-here:    0.15*1.0 + 0.00    + 0.30*0.8
+        //                  + 0.25*ln(5)/ln(129) + 0.10 + 0.05 = 0.6228
+        //
+        // The margin was 0.215 under the linear curve, where four
+        // recalls already scored history 0.5. The logarithmic curve
+        // reads the same four recalls as 0.331, so the margin narrows —
+        // and it narrows in the direction the ruling wants: history is
+        // magnitude, not direction, and a fact that never drove should
+        // not be able to buy its way past one that did.
+        assert!(drove.total > near.total + 0.15, "{drove:?} vs {near:?}");
         // The phrases are the resolution's own vocabulary — "shim the
         // walnut table legs until it is level" — not the question's
         // words restated: the question says "wobbly", the resolution
@@ -6317,18 +6669,30 @@ mod tests {
         );
         let memory = Memory::load_with(&root, Box::new(KeywordOnly));
         let hits = memory.recall("the webpack bundle fails to compile");
-        // The candidate, then the divergence beside it — marked, never
-        // merged into the candidate ranking.
-        assert_eq!(hit_names(&hits), vec!["what-worked", "what-diverged"]);
-        assert_eq!(hits[0].fact.sign(), Sign::Resolution);
-        assert_eq!(hits[1].fact.sign(), Sign::Divergence);
+        // The divergence now leads, and this is the R1 curve's own
+        // consequence rather than a regression. Both facts carry the
+        // same shape and the same words; the divergence's phrases match
+        // the instruction's trajectory perfectly (1.0 against 0.667),
+        // and under the linear curve the resolution's four recalls
+        // scored history 0.5 — enough to outrank a better direction
+        // match. The logarithmic curve reads those same four recalls as
+        // 0.331, so direction decides, which is the ruling.
+        //
+        // The order is safe because the sign is on the line and the
+        // legend names it: the model reads `diverged:` as an
+        // anti-vector to avoid, not a candidate to adopt. That is
+        // exactly what the three signs exist for, and it is why an
+        // anti-vector may rank as prominently as a resolution.
+        assert_eq!(hit_names(&hits), vec!["what-diverged", "what-worked"]);
+        assert_eq!(hits[0].fact.sign(), Sign::Divergence);
+        assert_eq!(hits[1].fact.sign(), Sign::Resolution);
         assert!(
-            (hits[0].score.total - 0.525).abs() < 1e-3,
+            (hits[0].score.total - 0.5).abs() < 1e-3,
             "{:?}",
             hits[0].score
         );
         assert!(
-            (hits[1].score.total - 0.45).abs() < 1e-3,
+            (hits[1].score.total - 0.4828).abs() < 1e-3,
             "{:?}",
             hits[1].score
         );
@@ -6353,9 +6717,10 @@ mod tests {
             hit_names(&partition.spillover)
         );
         // The sign is derived from the tags, not stored: a failure-shape
-        // tag is what makes a fact an anti-vector.
+        // tag is what makes a fact an anti-vector. It is hits[0] now —
+        // the divergence leads, and it is the fact carrying both tags.
         assert_eq!(
-            hits[1].fact.shape,
+            hits[0].fact.shape,
             vec!["build".to_string(), "bound-exceeded".to_string()]
         );
         // The assembly names which is which, and the model can never
@@ -6428,7 +6793,7 @@ mod tests {
         assert_eq!(hits[0].score.trajectory, hits[1].score.trajectory);
         assert_eq!(hits[0].score.history, hits[1].score.history);
         assert!(
-            (hits[0].score.total - 0.475).abs() < 1e-12,
+            (hits[0].score.total - 0.4328).abs() < 1e-3,
             "{:?}",
             hits[0].score
         );
@@ -6964,19 +7329,25 @@ mod tests {
         assert_eq!(memory.backend(), "scripted");
         drop(memory);
 
-        // Second load: every stamp matches, nothing is embedded.
+        // Second load: every digest matches, nothing is embedded.
         let (calls, embedder) = ScriptedEmbedder::new();
         let _ = Memory::load_with(&root, embedder);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
 
-        // One changed fact: only it is re-embedded.
+        // One changed fact: only it is re-embedded. The change is to the
+        // indexed text — the description — which is what the digest
+        // covers.
         let path = root.join("alpha.md");
         let text = fs::read_to_string(&path).unwrap();
-        fs::write(
-            &path,
-            format!("{text}\nAn appended line changes the size.\n"),
-        )
-        .unwrap();
+        let edited = text.replace(
+            "description: \"railway deploy per branch\"",
+            "description: \"railway deploy per branch, now with a rollback\"",
+        );
+        assert_ne!(
+            edited, text,
+            "the fixture's description line is what this edits"
+        );
+        fs::write(&path, edited).unwrap();
         let (calls, embedder) = ScriptedEmbedder::new();
         let _ = Memory::load_with(&root, embedder);
         assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -6987,6 +7358,383 @@ mod tests {
         let keyword_only = Memory::load_with(&root, Box::new(KeywordOnly));
         assert_eq!(keyword_only.backend(), "keyword-only");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// KI-228's own test, and the reason the entry is keyed by a digest
+    /// rather than the file's stamp: a recall-count bump rewrites the
+    /// file in place, which moves its mtime and so its
+    /// `secs:nanos:len` stamp. A stamp-keyed entry re-embeds a fact
+    /// whose content never changed — and the corpus's most-recalled
+    /// facts are bumped on essentially every recall, so they were
+    /// re-embedded on essentially every load.
+    #[test]
+    fn a_recall_count_bump_re_embeds_nothing() {
+        let root = scratch("index-bump");
+        order_corpus(&root);
+
+        let (calls, embedder) = ScriptedEmbedder::new();
+        let memory = Memory::load_with(&root, embedder);
+        let first = calls.load(Ordering::Relaxed);
+        assert!(first > 0, "the first load embeds the corpus");
+        let before = fs::read_to_string(index_path(&root)).unwrap();
+        drop(memory);
+
+        // One recall, which bumps one fact's recall-count in place.
+        let (calls, embedder) = ScriptedEmbedder::new();
+        let bumped = Memory::load_with(&root, embedder);
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            0,
+            "the load before the bump is fully cached"
+        );
+        let hits = bumped.recall("the railway deploy is failing");
+        assert!(!hits.is_empty(), "the fixture answers this instruction");
+        bumped.record_hits(&hits, None, None);
+        drop(bumped);
+
+        // The next load embeds nothing and does not even rewrite the
+        // index: the bump moved the file's mtime but not its indexed
+        // text, and the digest is over the indexed text.
+        let (calls, embedder) = ScriptedEmbedder::new();
+        let _ = Memory::load_with(&root, embedder);
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            0,
+            "a recall-count bump must not invalidate a fact's cached vector"
+        );
+        assert_eq!(
+            fs::read_to_string(index_path(&root)).unwrap(),
+            before,
+            "and it must not even rewrite the index"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// KI-231: a fact whose embed fails is absent from the rebuilt map,
+    /// and the old write condition (`fresh.len() != index.facts.len()`)
+    /// read that absence as a change and rewrote the pruned index — so a
+    /// fact whose text changed while the embedding server was down was
+    /// re-attempted, re-failed, and re-written on every load, forever.
+    /// The rewrite now needs a new vector or a genuinely orphaned entry.
+    #[test]
+    fn a_failed_embed_rewrites_nothing() {
+        let root = scratch("index-failed-embed");
+        order_corpus(&root);
+
+        let (calls, embedder) = ScriptedEmbedder::new();
+        let _ = Memory::load_with(&root, embedder);
+        assert_eq!(calls.load(Ordering::Relaxed), 4);
+        let before = fs::read_to_string(index_path(&root)).unwrap();
+
+        // One fact's indexed text changes, and the embedding server is
+        // down for exactly that fact.
+        let path = root.join("alpha.md");
+        let text = fs::read_to_string(&path).unwrap();
+        let edited = text.replace(
+            "description: \"railway deploy per branch\"",
+            "description: \"railway deploy per branch, blackholed\"",
+        );
+        assert_ne!(
+            edited, text,
+            "the fixture's description line is what this edits"
+        );
+        fs::write(&path, edited).unwrap();
+
+        for pass in 0..2 {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let failing = Box::new(PartialEmbedder {
+                calls: Arc::clone(&calls),
+                fails_on: "blackholed".to_string(),
+            });
+            let _ = Memory::load_with(&root, failing);
+            assert_eq!(
+                calls.load(Ordering::Relaxed),
+                1,
+                "pass {pass}: the changed fact is still attempted — the retry is not the bug"
+            );
+            assert_eq!(
+                fs::read_to_string(index_path(&root)).unwrap(),
+                before,
+                "pass {pass}: a failed embed must not rewrite the index"
+            );
+        }
+
+        // The server comes back: the changed fact embeds and the index
+        // lands with it.
+        let (calls, embedder) = ScriptedEmbedder::new();
+        let _ = Memory::load_with(&root, embedder);
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "only the changed fact re-embeds"
+        );
+        assert_ne!(
+            fs::read_to_string(index_path(&root)).unwrap(),
+            before,
+            "and the new vector lands"
+        );
+
+        // A deleted fact's entry is still pruned — the one rewrite the
+        // failed-embed rule must not have swallowed.
+        fs::remove_file(root.join("zeta.md")).unwrap();
+        let (calls, embedder) = ScriptedEmbedder::new();
+        let _ = Memory::load_with(&root, embedder);
+        assert_eq!(calls.load(Ordering::Relaxed), 0, "nothing to re-embed");
+        let after = fs::read_to_string(index_path(&root)).unwrap();
+        assert_ne!(after, before, "the deleted fact's entry is pruned");
+        assert!(!after.contains("\"zeta\""), "and only that one");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // --- the recall graph ----------------------------------------------------
+
+    /// A fact with `superseded-by` and `missing` set, so a fixture can
+    /// declare the edges the frontmatter carries.
+    fn edge_fact(name: &str, description: &str, superseded_by: &str, missing: &[&str]) -> String {
+        format!(
+            "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {today}\nbasis: confirmed-by\nshape: [deploy]\nphrases: []\nmissing: [{}]\nrecall-count: 0\nsuperseded-by: {superseded_by}\nvalid-until:\n---\n\nThe body of {name}.\n",
+            missing.join(", "),
+            today = calib::today()
+        )
+    }
+
+    /// R4a: a fact reachable only through a `superseded-by` edge is
+    /// surfaced, and marked with the edge that reached it.
+    ///
+    /// The neighbour's own description shares no stem with the
+    /// instruction and it carries no phrases, so on its own it scores
+    /// standing alone (0.15) — under the floor, in no pool. The edge is
+    /// the only thing that reaches it.
+    #[test]
+    fn a_superseded_fact_surfaces_the_fact_that_replaced_it() {
+        let root = scratch("graph-supersede");
+        // The old fact matches the instruction on its own words; the
+        // fact that replaced it says something entirely different.
+        write_fact(
+            &root,
+            "old-rule",
+            &edge_fact("old-rule", "the railway deploy rule", "new-rule", &[]),
+        );
+        write_fact(
+            &root,
+            "new-rule",
+            &edge_fact("new-rule", "walnut table texture", "", &[]),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let hits = memory.recall("the railway deploy rule");
+        // The retired source is out of recall by design, so the only hit
+        // is the fact that replaced it.
+        assert_eq!(
+            hit_names(&hits),
+            vec!["new-rule"],
+            "the fact that replaced the match must surface, and it alone"
+        );
+        assert_eq!(hits[0].via, Some("superseded-by"));
+        assert!(
+            !hits[0].off_shape,
+            "a neighbour is not off-shape: it did not compete at all"
+        );
+        // And the assembled line names the edge, so it is never read as
+        // a fact that ranked.
+        let assembly = memory.assemble("the railway deploy rule", &[]);
+        let block = render_assembly(&assembly);
+        assert!(block.contains("via: superseded-by"), "{block}");
+        assert!(block.contains("Adjacent memory"), "{block}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// R4a: a fact reachable only through a `missing` edge is surfaced —
+    /// the companion an incomplete trajectory needed, which nothing
+    /// fetched before because `missing` is deliberately excluded from
+    /// the indexed text.
+    #[test]
+    fn a_missing_companion_is_fetched_not_just_named() {
+        let root = scratch("graph-missing");
+        write_fact(
+            &root,
+            "stalled",
+            &edge_fact(
+                "stalled",
+                "the railway deploy stalled halfway",
+                "",
+                &["the-rollback-flag"],
+            ),
+        );
+        write_fact(
+            &root,
+            "the-rollback-flag",
+            &edge_fact("the-rollback-flag", "walnut table texture", "", &[]),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let hits = memory.recall("the railway deploy stalled halfway");
+        let reached = hits
+            .iter()
+            .find(|hit| hit.fact.name == "the-rollback-flag")
+            .expect("the named companion must be fetched");
+        assert_eq!(reached.via, Some("missing"));
+        // The stalled fact still leads: it matched, and a neighbour never
+        // displaces a fact that competed.
+        assert_eq!(hits[0].fact.name, "stalled");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// R4a: the hop is bounded. A source that scored too little pulls in
+    /// nothing, and a fact already in a pool is never pulled twice.
+    #[test]
+    fn a_weak_source_pulls_in_nothing_and_no_fact_enters_twice() {
+        let root = scratch("graph-bound");
+        // A retired source whose own vocabulary shares nothing with the
+        // instruction: it scores standing alone, under the floor, so its
+        // authority admits nobody.
+        write_fact(
+            &root,
+            "weak-source",
+            &edge_fact("weak-source", "walnut table texture", "target", &[]),
+        );
+        write_fact(
+            &root,
+            "target",
+            &edge_fact("target", "shader compile failed", "", &[]),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let hits = memory.recall("the railway rollout is failing");
+        assert!(
+            hits.iter().all(|hit| hit.fact.name != "target"),
+            "a source below the floor must pull in nothing: {:?}",
+            hit_names(&hits)
+        );
+        assert!(
+            hits.is_empty(),
+            "and neither fact clears the floor on its own: {:?}",
+            hit_names(&hits)
+        );
+
+        // A fact already ranked in a pool is not duplicated by an edge
+        // pointing at it.
+        let both = scratch("graph-dup");
+        write_fact(
+            &both,
+            "source",
+            &edge_fact(
+                "source",
+                "the railway rollout is failing",
+                "already-ranked",
+                &[],
+            ),
+        );
+        write_fact(
+            &both,
+            "already-ranked",
+            &edge_fact("already-ranked", "the railway rollout is failing", "", &[]),
+        );
+        let memory = Memory::load_with(&both, Box::new(KeywordOnly));
+        let hits = memory.recall("the railway rollout is failing");
+        assert_eq!(
+            hits.iter()
+                .filter(|hit| hit.fact.name == "already-ranked")
+                .count(),
+            1,
+            "a fact already in a pool is not pulled in a second time"
+        );
+        assert!(
+            hits.iter()
+                .filter(|hit| hit.fact.name == "already-ranked")
+                .all(|hit| hit.via.is_none()),
+            "and it enters as the fact that ranked, not as a neighbour"
+        );
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&both);
+    }
+
+    /// R4a: a dangling edge name is dropped silently, because the corpus
+    /// is hand-editable and a `missing` name that resolves to nothing is
+    /// not an error the recall has to answer for.
+    #[test]
+    fn a_dangling_edge_name_is_dropped_silently() {
+        let root = scratch("graph-dangling");
+        // Live, so it is a hit in its own right; the dangling `missing`
+        // names are simply not edges to anything.
+        write_fact(
+            &root,
+            "points-at-nothing",
+            &edge_fact(
+                "points-at-nothing",
+                "the railway rollout is failing",
+                "",
+                &["an-absent-companion"],
+            ),
+        );
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let hits = memory.recall("the railway rollout is failing");
+        assert_eq!(
+            hit_names(&hits),
+            vec!["points-at-nothing"],
+            "an edge to a fact the corpus does not hold is not an error"
+        );
+        assert!(
+            hits.iter().all(|hit| hit.via.is_none()),
+            "and nothing was pulled in"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A fact with only the fields the graph reads set, for the edge
+    /// extraction's own tests.
+    fn graph_fact(name: &str, superseded_by: &str, missing: &[&str]) -> Fact {
+        Fact {
+            name: name.to_string(),
+            description: format!("the {name} rule"),
+            fact_type: "project".to_string(),
+            date: calib::today(),
+            basis: Basis::Inferred,
+            tier: Tier::Durable,
+            shape: vec!["deploy".to_string()],
+            phrases: Vec::new(),
+            missing: missing.iter().map(|m| m.to_string()).collect(),
+            recall_count: 0,
+            superseded_by: superseded_by.to_string(),
+            valid_until: String::new(),
+            body: String::new(),
+            path: std::path::PathBuf::from(format!("{name}.md")),
+            stamp: None,
+        }
+    }
+
+    /// R4a: the edges the substrate declares, and the ones it deliberately
+    /// does not. The mechanism's bounds (`GRAPH_HOPS`, `GRAPH_SOURCES`) are
+    /// named constants rather than assertions here — the seam they zero is
+    /// documented at `crate::recall_graph`, and a test asserting a constant
+    /// asserts nothing.
+    #[test]
+    fn the_graph_reads_the_edges_the_substrate_declares() {
+        // A retired fact vouches for its replacement without entering
+        // recall itself, and a shared shape tag is deliberately not an
+        // edge — the partition already reads it.
+        let old = graph_fact("old", "new", &[]);
+        assert!(
+            old.forgotten(&calib::today()),
+            "a stamped fact is retired, so it is never a hit"
+        );
+        let graph = crate::recall_graph::Graph::build(&[old, graph_fact("new", "", &[])]);
+        assert_eq!(
+            graph.neighbours("old"),
+            &[crate::recall_graph::Neighbour {
+                name: "new".into(),
+                edge: crate::recall_graph::Edge::SupersededBy,
+            }],
+            "the retired fact points at its replacement"
+        );
+        assert!(
+            graph.neighbours("new").is_empty(),
+            "and the replacement points nowhere — the shape tag is not an edge"
+        );
+        // A dangling name is dropped rather than erroring.
+        let dangling = crate::recall_graph::Graph::build(&[graph_fact("a", "gone", &["absent"])]);
+        assert!(
+            dangling.neighbours("a").is_empty(),
+            "an edge to a fact the corpus does not hold is dropped"
+        );
     }
 
     #[test]
@@ -7730,6 +8478,201 @@ mod tests {
         )
     }
 
+    /// R4b: the third sign is only real if the companions are named. The
+    /// tag was accepted with an empty `missing` — 15 corpus facts carry
+    /// the field and all 15 carry it empty — so an `incomplete` fact
+    /// rendered `incomplete:` with nothing to finish the trajectory
+    /// with, and the graph had no edge to walk.
+    #[test]
+    fn an_incomplete_fact_must_name_what_it_was_missing() {
+        // The tag with no companions is refused, with the reason named.
+        let error = Remember::parse(&serde_json::json!({
+            "name": "stalled-halfway",
+            "description": "the trajectory drove partway and stalled",
+            "basis": "inferred",
+            "shape": "build, incomplete",
+            "phrases": ["the rollback flag was never wired"],
+        }))
+        .unwrap_err();
+        assert!(
+            matches!(&error, WriteError::Missing(reason) if reason.contains("third sign")),
+            "{error}"
+        );
+        // The same fact with the companions named is accepted, and the
+        // written document carries them where the loader reads them back.
+        let root = scratch("incomplete-missing");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Remember::parse(&serde_json::json!({
+            "name": "stalled-halfway",
+            "description": "the trajectory drove partway and stalled",
+            "basis": "inferred",
+            "shape": "build, incomplete",
+            "phrases": ["the rollback flag was never wired"],
+            "missing": ["the-rollback-flag"],
+        }))
+        .unwrap();
+        assert_eq!(request.missing, vec!["the-rollback-flag".to_string()]);
+        let written = memory.remember(&request).unwrap();
+        assert_eq!(written.sign(), Sign::Incomplete);
+        let text = fs::read_to_string(&written.path).unwrap();
+        assert!(text.contains("missing: [the-rollback-flag]\n"), "{text}");
+        // A fact with no `incomplete` tag is untouched by the rule: an
+        // empty `missing` is fine when the fact is not claiming to have
+        // stalled.
+        let plain = Remember::parse(&serde_json::json!({
+            "name": "a-plain-fact",
+            "description": "a fact that finished",
+            "basis": "inferred",
+            "shape": "build",
+        }))
+        .unwrap();
+        assert!(plain.missing.is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // --- the measurement over this repository's own corpus -----------------
+    //
+    // R4c: the recall fixes are measured here, against the tree this
+    // module ships in, so the numbers are the gate's own rather than a
+    // script's. The assertions are structural, not exact: the corpus is
+    // git-tracked and grows, and a test pinned to today's fact count
+    // would fail the moment a fact is added.
+
+    /// The twelve instructions the deep dive measured, each naming the
+    /// fact in this corpus that answers it.
+    const MEASURED: [(&str, &str); 12] = [
+        (
+            "where does fleet load its skills from",
+            "canonical-skills-library-is-agents-skills",
+        ),
+        (
+            "does the CLI remember command write phrases",
+            "cli-remember-speaks-the-writers-whole-shape",
+        ),
+        (
+            "what endpoint serves the embedding vectors",
+            "vector-path-live-on-loopback-8901",
+        ),
+        (
+            "what cosine did the unrelated fact pairs measure",
+            "embeddinggemma-cosines-confirm-ki-058",
+        ),
+        (
+            "which workload does the orchestrator walk",
+            "orchestrator-walks-the-hard-chain",
+        ),
+        (
+            "where do credentials resolve from",
+            "own-home-credentials-ruling",
+        ),
+        (
+            "what is the harness voice",
+            "the-harness-voice-is-best-of-both",
+        ),
+        (
+            "why is a slow lane answer better than a missed one",
+            "lane-budget-a-slow-answer-beats-a-missed-one",
+        ),
+        (
+            "where does the harness orientation doc live",
+            "harness-orientation-lives-in-docs",
+        ),
+        (
+            "is delegation whole at slice 20",
+            "slice-20-delegation-is-whole",
+        ),
+        (
+            "what is the substrate one file per fact",
+            "fleet-memories-substrate-is-one-markdown-file-per-fact",
+        ),
+        (
+            "which router enforces the ruling",
+            "router-enforcement-ruling",
+        ),
+    ];
+
+    /// R1 and R2 measured over this repository's own corpus, on the
+    /// keyword-only machine so the vector channel is zero and the
+    /// lexical channels carry the whole ranking.
+    ///
+    /// Before: the history channel clamped at a ceiling of 8, 16 of 24
+    /// facts sat at or above it, and the correct fact ranked first in 7
+    /// of 12 — with two of the five failures decided by the alphabet on
+    /// an exact tie. After: the ceiling is 128 on a logarithmic curve,
+    /// the tie-break is the trajectory term, and the same set measures
+    /// 8 of 12. The assertion is the floor, not the exact number, so the
+    /// corpus can grow without reddening the gate.
+    #[test]
+    fn the_measured_set_holds_the_floor_the_reweighting_bought() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(MEMORIES_DIR);
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let facts = memory.facts();
+        assert!(
+            facts.len() >= 12,
+            "this corpus is the measurement's subject"
+        );
+        let mut first = 0;
+        let mut top_three = 0;
+        for (instruction, answer) in MEASURED {
+            let hits = memory.recall(instruction);
+            let rank = hits
+                .iter()
+                .position(|hit| hit.fact.name == answer)
+                .map(|position| position + 1);
+            match rank {
+                Some(1) => first += 1,
+                Some(2..=3) => top_three += 1,
+                _ => {}
+            }
+        }
+        assert!(
+            first >= 8,
+            "the correct fact ranked first in {first} of {} — R1 and R2 measured 8 before this assertion",
+            MEASURED.len()
+        );
+        assert!(
+            first + top_three >= 10,
+            "and in the top three in {total} of {len}",
+            total = first + top_three,
+            len = MEASURED.len()
+        );
+    }
+
+    /// R1: the history channel discriminates across the range this
+    /// corpus actually occupies, instead of clamping two-thirds of it to
+    /// the same term. The measured distribution is the evidence: the
+    /// ceiling is 128, the median recall-count is far above the old 8,
+    /// and no two of the measured counts share a history term.
+    #[test]
+    fn the_history_channel_separates_the_corpus_that_saturated_it() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(MEMORIES_DIR);
+        let facts = load_facts(&root);
+        let counts: Vec<u64> = facts.iter().map(|fact| fact.recall_count).collect();
+        let saturated = counts.iter().filter(|count| **count >= 8).count();
+        assert!(
+            saturated * 2 > facts.len(),
+            "the corpus that motivated R1: {saturated} of {} facts sit above the old ceiling of 8",
+            facts.len()
+        );
+        // The curve is strictly increasing across the observed range, so
+        // no two counts in the corpus collapse to one term.
+        let mut sorted = counts.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let terms: Vec<u64> = sorted
+            .iter()
+            .map(|count| (history_term(*count) * 1e9) as u64)
+            .collect();
+        let mut deduped = terms.clone();
+        deduped.sort_unstable();
+        deduped.dedup();
+        assert_eq!(
+            terms.len(),
+            deduped.len(),
+            "every distinct recall-count in the corpus must map to a distinct history term"
+        );
+    }
+
     #[test]
     fn the_write_path_accepts_the_failure_shapes_and_records_the_phrases() {
         let root = scratch("write-signs");
@@ -7874,7 +8817,10 @@ mod tests {
             "{:?}",
             hit.score
         );
-        assert!((hit.score.keyword - 0.125).abs() < 1e-12, "{:?}", hit.score);
+        // 0.25, not the 0.125 the unstemmed tokenizer read: the
+        // instruction's `credentials` and the phrase's `credential`
+        // are one stem now (R3).
+        assert!((hit.score.keyword - 0.25).abs() < 1e-12, "{:?}", hit.score);
         assert!(!hit.off_shape, "the fact carries the instruction's shape");
         // The phrases round-trip through the file: the loader reads back
         // exactly what the write path recorded.

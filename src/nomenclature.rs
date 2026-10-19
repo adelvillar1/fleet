@@ -252,8 +252,23 @@ pub struct Vocabulary {
     index: HashMap<String, Vec<usize>>,
     /// How many files the walk read.
     pub sources: usize,
-    /// Whether any bound truncated the derivation.
+    /// Whether a CONTENT bound truncated the derivation: the tree carries
+    /// more sources than [`MAX_SOURCES`] or more terms than
+    /// [`MAX_TERMS`]. This is a fact about the tree and it is stable
+    /// across runs and machines.
+    ///
+    /// It deliberately does NOT include the wall-clock budget. Those are
+    /// different facts — "the tree does not fit" versus "the machine was
+    /// busy" — and conflating them made a loaded machine report that this
+    /// repository does not fit inside its bounds, which is false. The
+    /// budget's own outcome rides [`Vocabulary::budget_exhausted`], and
+    /// the elapsed time rides [`Vocabulary::elapsed`] for a caller that
+    /// wants to measure.
     pub truncated: bool,
+    /// Whether the derivation stopped because it ran out of
+    /// [`DERIVE_BUDGET`] rather than because a content bound stopped it.
+    /// A fact about the machine's load at the time, not about the tree.
+    pub budget_exhausted: bool,
     /// The youngest age the walk saw, in days — the recency
     /// multiplier's input.
     pub newest_mtime_days: Option<u64>,
@@ -562,15 +577,20 @@ pub fn derive(root: &Path) -> Vocabulary {
     let mut sink = Sink::new();
     let mut sources = 0usize;
     let mut truncated = false;
+    let mut budget_exhausted = false;
     let mut newest_days: Option<u64> = None;
     let mut newest_secs: Option<u64> = None;
 
     let mut paths = walk(root);
     for path in paths.by_ref() {
-        if sources >= MAX_SOURCES
-            || sink.per_term.len() >= MAX_TERMS
-            || started.elapsed() > DERIVE_BUDGET
-        {
+        // The budget is checked on its own, because its outcome is a
+        // different fact from a content bound's: one says the machine was
+        // busy, the other says the tree does not fit.
+        if started.elapsed() > DERIVE_BUDGET {
+            budget_exhausted = true;
+            break;
+        }
+        if sources >= MAX_SOURCES || sink.per_term.len() >= MAX_TERMS {
             truncated = true;
             break;
         }
@@ -609,6 +629,7 @@ pub fn derive(root: &Path) -> Vocabulary {
         index,
         sources,
         truncated,
+        budget_exhausted,
         newest_mtime_days: newest_days,
         newest_mtime_secs: newest_secs,
         elapsed: started.elapsed(),
@@ -1421,6 +1442,25 @@ pub fn vocabulary(root: &Path) -> Vocabulary {
         })
         .vocabulary
         .clone()
+}
+
+/// Drop the cached vocabulary for `root`, so the next
+/// [`vocabulary`] call re-derives it from the tree as it stands.
+///
+/// KI-232: the cache is never invalidated for the process's life, and
+/// [`fresh`] is the only rule that can notice a change — but its only
+/// caller was its own test. The write-time guard is the one caller that
+/// *knows* it just changed the tree, so it is the one caller that can
+/// invalidate without a walk: a term introduced after the derivation is
+/// otherwise reported as novel (or a drift as clean) for the rest of
+/// the process. A root that was never derived is a no-op.
+pub fn invalidate(root: &Path) {
+    let key = root.to_path_buf();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.remove(&key);
 }
 
 /// Whether the cached vocabulary for `root` still describes the tree:

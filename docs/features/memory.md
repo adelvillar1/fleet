@@ -117,9 +117,9 @@ Recall therefore runs in two movements:
 | Channel | Weight | Meaning |
 |---|---|---|
 | `W_VECTOR` | 0.15 | cosine to the instruction (the embedded direction) |
-| `W_KEYWORD` | 0.15 | the instruction's tokens the fact's topic text covers |
-| `W_TRAJECTORY` | 0.30 | the instruction's tokens the recorded **phrases** cover — the fact's direction |
-| `W_HISTORY` | 0.25 | `recall-count` over `RECALL_CEILING` (8), earned by use |
+| `W_KEYWORD` | 0.15 | the instruction's stems the fact's topic text covers |
+| `W_TRAJECTORY` | 0.30 | the instruction's stems the recorded **phrases** cover — the fact's direction |
+| `W_HISTORY` | 0.25 | `recall-count` on a logarithmic curve over `RECALL_CEILING` (128), earned by use |
 | `W_FRESHNESS` | 0.10 | exponential freshness, half-life `DECAY_HALFLIFE_DAYS` (90) |
 | `W_PROVENANCE` | 0.05 | the basis: confirmed-by 1.0, inferred 0.5 |
 
@@ -135,8 +135,12 @@ The maximum a fact with NO direction evidence can score is full topical
 coverage plus standing — vector 0.15 + keyword 0.15 + freshness 0.10 +
 provenance 0.05 = **0.45**. A direction-strong fact (a 0.8 trajectory
 match, four recalls' history, confirmed-by, and a weak 0.2 cosine)
-scores 0.15 × 0.2 + 0.30 × 0.8 + 0.25 × 0.5 + 0.10 + 0.05 = **0.545**
-and wins by **0.095**. The first slice-19 reweighting (0.20 each, 0.40
+scores 0.15 × 0.2 + 0.30 × 0.8 + 0.25 × 0.331 + 0.10 + 0.05 = **0.5028**
+and wins by **0.053**. The margin was 0.095 under the linear curve, where
+four recalls already scored history 0.5; the log curve reads the same four
+recalls as 0.331, and the narrower margin is the honest consequence — history
+is magnitude, not direction, so a fact no longer buys a quarter of its score
+from being recalled four times. The first slice-19 reweighting (0.20 each, 0.40
 together) did NOT hold that line: it left a maximum-proximity,
 zero-direction fact at 0.55 against the direction-strong fact's 0.49,
 so proximity won the moment the vector channel served a fact whose
@@ -259,8 +263,8 @@ coverage (vector 0.15 + keyword 0.15) with freshness and provenance
 (0.15) — 0.45 — so the neighborhood alone can no longer stand alone as
 the shape's answer. A same-shape fact clears it with a 0.2 trajectory
 match on top of full topical coverage (0.51), or two recalls' history
-(0.5125); the direction-strong fact scores 0.545 and clears it with
-0.045 to spare. Every off-shape fact that enters is MARKED `off-shape`
+(0.5065); the direction-strong fact scores 0.5028 and clears it with
+0.0028 to spare — thin, because the history curve no longer pads it. Every off-shape fact that enters is MARKED `off-shape`
 in its assembly line and on its card, and the surface names the route
 that admitted it. Never silently mixed into the shape's answers.
 
@@ -345,9 +349,10 @@ named where the fact is ranked rather than lost.
 
 `Memory::recall_hits` is the feedback entry point. Every hit updates
 the fact's `recall-count` in its file — a bounded, frontmatter-
-preserving rewrite: the one line it owns is re-rendered, every other
-byte including the body is preserved, and the write lands through a
-unique temp file and a rename — then re-ranks on the next recall (the
+preserving rewrite under a per-fact flock on a sibling `.lock` (KI-062), so a
+consolidation pass and a live bump cannot lose an update: the one line it owns
+is re-rendered, every other byte including the body is preserved, and the write
+lands through a unique temp file and a rename — then re-ranks on the next recall (the
 importance channel rose), and appends one `recall_hit` calibration row
 naming the fact, the shape, and the score. The row is
 `{"op":"recall_hit","fact":…,"shape":…,"score":…}` in devdec's stream,
@@ -374,7 +379,9 @@ remember(
                 the key every surface uses (required)
   description:  the fact as one sentence (required)
   type:         free-form kind; user and feedback are the protected
-                tier (default project)
+                tier, with the fork's synonyms mapped onto them
+                (identity/owner → user, preference/standing-preference →
+                feedback — KI-059); default project
   shape:        comma-separated tags from the structure shapes
                 (rendering, state-sync, deploy, build, change, deps,
                 docs), the failure shapes (fail-open, drops-the-row,
@@ -444,6 +451,51 @@ field bare, the fork writer's own "unset" rendering, through a unique
 temp file and a rename. The file is the record: a written fact loads
 with every field, which is what makes a bad fact a revert.
 
+## The recall graph: one bounded hop over the frontmatter's own edges
+
+The frontmatter carries relations between facts, and until the 2026-10-18
+plan the ranker read none of them for retrieval:
+
+- **`missing`** — the companions an incomplete trajectory needed and did
+  not have. The field names them, and it is deliberately excluded from
+  `Fact::indexed_text` because an absent companion is not the fact's
+  direction — but nothing ever *fetched* the named fact either, so the
+  corpus declared an edge and the retriever rendered it as prose. Since
+  R4b an `incomplete` fact must name its companions: a third sign with
+  nothing to finish the trajectory with is not a sign.
+- **`superseded-by`** — this fact was folded into another, so the other
+  is the current truth. The substrate *retires* the fact that carries the
+  stamp (`Fact::forgotten` reads a non-empty value as retired), so it
+  never enters a pool and there is no forward source to expand from.
+  What it can still do is **vouch**: a retired fact whose own vocabulary
+  matches an instruction points at the fact that replaced it, and that
+  replacement is what the turn actually needs. A corpus whose only match
+  is a fact the cycle folded away has an EMPTY primary pool, and that is
+  exactly when the replacement must still surface.
+- **a shared `shape` tag** — deliberately NOT an edge. The partition
+  already reads it, so a shape hop would re-admit facts the ranking has
+  already ordered: noise, not expansion.
+
+`src/recall_graph.rs` builds the adjacency map at load and the ranker
+takes **one hop** from a bounded number of the primary pool's strongest
+hits, plus every retired fact that vouches. A neighbour enters on its
+source's authority rather than its own score — the bar is the source's
+own total against `MIN_RECALL_SCORE`, the same floor every other fact
+faces — and the neighbour's own score rides along unchanged and honest.
+Every neighbour is MARKED `via: <edge>` in its assembled line, the same
+discipline the spillover's `off-shape` marker runs on, so a fact that
+entered on another fact's authority is never silently mixed into the
+shape's own answer. `GRAPH_HOPS` and `GRAPH_SOURCES` zero the whole
+mechanism without removing it.
+
+The graph does nothing on this repo's corpus yet — 0 `superseded-by`
+edges and 15 empty `missing` fields at the 2026-10-18 dive — and that is
+expected: R4b makes the writer populate the companions, and the
+consolidation cycle already stamps `superseded-by` when it folds, so the
+edges arrive as the corpus is used. The measured twelve-instruction set
+(`the_measured_set_holds_the_floor_the_reweighting_bought`) is the gate
+that watches whether they help.
+
 ## Three speeds
 
 The `tier` field is how long a fact lives:
@@ -467,9 +519,12 @@ protected tier. No fact enters a turn twice.
 
 ## The protected tier and assembled context
 
-Facts whose `type` marks identity or standing preferences — `user` and
-`feedback` in the fork's taxonomy — are the **protected tier**. The
-injection budget can never evict them. This is the deviation from both
+Facts whose `type` marks identity or standing preferences are the
+**protected tier**. The injection budget can never evict them. The tier is
+`user` and `feedback` in the fork's taxonomy, and the loader maps the fork's
+documented synonyms onto them — `identity`/`owner` → `user`,
+`preference`/`standing-preference` → `feedback` (KI-059) — because a fact the
+fork meant to protect would otherwise ride the ordinary tiers here. This is the deviation from both
 current designs, and the fix for the live system's mis-tiered cap, where
 the most load-bearing facts contended with task facts in the smallest
 space.
@@ -639,8 +694,9 @@ not:
 
 An assembly with nothing in it adds no block, no record, and no rows: a
 memory-less turn is byte-for-byte the run this crate has always had.
-The corpus is loaded per run (one probe round trip plus the cached
-index), so a fact an earlier run remembered is on disk by the time the
+The corpus is loaded per task, and the probe's answer is cached per process
+in a `OnceLock` (KI-064), so a chat session pays one round trip rather than
+one per message — a fact an earlier run remembered is on disk by the time the
 next one assembles. The headless path prints one progress line naming
 the shape and the fact count; the TUI's status bar carries the same
 fact.
@@ -705,9 +761,11 @@ terminal surface, so it is not bounded to a column count. The flags do not
 combine where they answer different questions: `--recall` and `--shape`
 are two questions, `--archive` is its own surface, and `--consolidate`
 runs the cycle and then cards the corpus (optionally filtered by
-`--shape`). The corpus is the nearest `memories/` at or above the
-working directory (the fork's `resolveMemoryRoot` rule); in everyday
-use that is the repo root. The exit code is always success — this is a
+`--shape`). The corpus resolves home-first (KI-087, closing KI-074's root cause): the
+fleet home's own `memories/` wins the moment it HOLDS facts, and only then does
+the ancestor walk from the working directory apply — so a run started outside
+any intended corpus cannot silently adopt a foreign one. In everyday use that
+is the repo root. The exit code is always success — this is a
 read surface over Fleet's own files, like `fleet calib` and `fleet
 skills` — except `fleet remember`, which exits 1 on a typed refusal (a
 taken name, a missing basis, a working fact with no `valid-until`).

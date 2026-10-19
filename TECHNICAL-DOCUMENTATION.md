@@ -111,7 +111,8 @@ pinned.
 
 #### `route_cache.rs`
 One recorded judgment per task, keyed to the judging lane. The cache prevents
-redundant sys1 judgments across identical tasks within a session.
+redundant sys1 judgments across identical tasks, across sessions — it is a
+persistent file beside the roster it describes, not a per-session one.
 
 #### `lane_client.rs`
 The lane-kind candidate boundary: a chat request in, blend1's grounded answer

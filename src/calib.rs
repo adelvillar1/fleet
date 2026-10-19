@@ -146,6 +146,25 @@ pub struct RecallHitRow {
     pub score: f64,
 }
 
+/// One node's fact-gate verdict: the gates that ran, whether every one
+/// passed, and what each found. The audit trail for "is X done" — the
+/// plan already owns the question, and this is the evidence the graph
+/// answered it with.
+#[derive(Debug, Clone, Serialize)]
+pub struct VerifyRow {
+    pub ts: String,
+    /// The node's id.
+    pub node: String,
+    /// The gates that ran, as `name=passed` pairs — `functional=true`,
+    /// `unit-tests=false`, `nomenclature=true`.
+    pub gates: Vec<String>,
+    /// Whether every gate that ran passed.
+    pub verified: bool,
+    /// What each gate found, joined. Named even on a pass: a gate that
+    /// passed silently is a gate nobody can audit.
+    pub evidence: String,
+}
+
 /// One consolidation action: what the memory lifecycle did to one
 /// fact, and why. Four actions — `compact` folds one session's stored
 /// context into a summary record, `compress` folds old working memory
@@ -524,6 +543,7 @@ pub enum Row {
     ToolScreen(ToolScreenRow),
     Turn(TurnRow),
     RecallHit(RecallHitRow),
+    Verify(VerifyRow),
     Consolidate(ConsolidateRow),
     Propose(ProposeRow),
     EvalCorpus(EvalCorpusRow),
@@ -540,6 +560,7 @@ impl Row {
             Row::ToolScreen(_) => OP_TOOL_SCREEN,
             Row::Turn(_) => OP_TURN,
             Row::RecallHit(_) => OP_RECALL_HIT,
+            Row::Verify(_) => OP_VERIFY,
             Row::Consolidate(_) => OP_CONSOLIDATE,
             Row::Propose(_) => OP_PROPOSE,
             Row::EvalCorpus(_) => OP_EVAL_CORPUS,
@@ -556,6 +577,7 @@ impl Row {
             Row::ToolScreen(row) => &row.ts,
             Row::Turn(row) => &row.ts,
             Row::RecallHit(row) => &row.ts,
+            Row::Verify(row) => &row.ts,
             Row::Consolidate(row) => &row.ts,
             Row::Propose(row) => &row.ts,
             Row::EvalCorpus(row) => &row.ts,
@@ -574,6 +596,9 @@ pub const OP_TOOL_SCREEN: &str = "tool_screen";
 pub const OP_TURN: &str = "turn";
 /// The memory-recall op: one hit per fact a recall surfaced.
 pub const OP_RECALL_HIT: &str = "recall_hit";
+
+/// One node's fact-gate verdict. The audit trail for "is X done".
+pub const OP_VERIFY: &str = "verify";
 /// The memory-lifecycle op: one compress, supersede, or forget action.
 pub const OP_CONSOLIDATE: &str = "consolidate";
 /// The self-maintenance op: one proposal's verdict under the slice-12

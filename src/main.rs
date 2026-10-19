@@ -120,6 +120,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Roles) => roles_command(),
         Ok(Command::Convention(options)) => convention_command(&options),
         Ok(Command::Graph(options)) => graph_command(&options),
+        Ok(Command::Plan(options)) => plan_command(&options),
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
@@ -1165,6 +1166,31 @@ fn convention_command(options: &cli::ConventionOptions) -> ExitCode {
 /// status dots, readiness bars, named edges, the critical path, and
 /// what is holding each node.
 fn graph_command(options: &cli::GraphOptions) -> ExitCode {
+    // A plan document reads the plan's own runtime file: the plan is the
+    // contract, so its graph is the one beside it — and that is what makes
+    // a completed plan's graph traceable after the fact rather than
+    // overwritten by the next run's.
+    if let Some(plan) = &options.plan {
+        let path = std::path::PathBuf::from(plan);
+        if options.file.is_some() {
+            eprintln!("fleet: `--file` and a plan are two graphs; name one");
+            return ExitCode::from(2);
+        }
+        return match fleet::plan_graph::PlanGraph::load(&path) {
+            Ok(plan_graph) => {
+                print!("{}", fleet::graph::render(&plan_graph.graph));
+                // The criteria roll-up rides the same output: the plan's
+                // own acceptance table, read off the graph.
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                print!("{}", render_criteria(&plan_graph, &text));
+                ExitCode::SUCCESS
+            }
+            Err(reason) => {
+                eprintln!("fleet: {reason}");
+                ExitCode::from(2)
+            }
+        };
+    }
     let path = match &options.file {
         Some(file) => std::path::PathBuf::from(file),
         None => {
@@ -1185,6 +1211,193 @@ fn graph_command(options: &cli::GraphOptions) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// The plan's acceptance criteria as the graph reports them: each
+/// criterion, the nodes serving it, and whether every one has verified.
+///
+/// This is the join that makes the plan's own table the progress surface.
+/// The plan already owns "is X done" — `docs/plans/README.md` says so —
+/// and this reads it off the graph rather than off a human's memory.
+fn render_criteria(plan_graph: &fleet::plan_graph::PlanGraph, plan_text: &str) -> String {
+    let mut out = String::new();
+    let criteria = plan_graph.criteria();
+    if criteria.is_empty() {
+        return out;
+    }
+    out.push_str("\nAcceptance criteria, off the graph\n\n");
+    for criterion in &criteria {
+        let marker = if criterion.met { "met" } else { "unmet" };
+        out.push_str(&format!(
+            "  {marker:<5} {name}  \u{b7} served by {nodes}\n",
+            name = criterion.name,
+            nodes = criterion.nodes.join(", ")
+        ));
+    }
+    // A criterion the plan declares but no node serves is named as
+    // unserved rather than left to read as unmet: a criterion nobody is
+    // working on is a plan that says one thing and executes another. The
+    // list comes from the document's own convention, so a criterion
+    // written some other way is simply not checked.
+    let declared = fleet::plan_graph::criteria_in(plan_text);
+    let unserved = plan_graph.unserved(&declared);
+    if !unserved.is_empty() {
+        out.push_str(&format!(
+            "\n  unserved {}  \u{b7} no node declares it\n",
+            unserved.join(", ")
+        ));
+    }
+    out
+}
+
+/// `fleet plan <plan.md | slug>`: the plan's own surface.
+///
+/// It renders the graph the plan generated and the acceptance criteria
+/// read off it — the plan already owns "is X done" (`docs/plans/README.md`
+/// says so), and this reads it off the graph rather than off a human's
+/// memory.
+///
+/// It also generates the graph when an approved plan has none yet, or
+/// when the plan's declaration has drifted from the one the runtime file
+/// was built from. Drift is the normal case — the repo's rule is "update
+/// the plan's acceptance criteria first, then build" — so regenerating
+/// here is self-healing rather than surprising, and every regeneration
+/// says it happened.
+fn plan_command(options: &cli::PlanOptions) -> ExitCode {
+    let path = resolve_plan(&options.plan);
+    let meta = match fleet::plan_graph::read_meta(&path) {
+        Ok(meta) => meta,
+        Err(reason) => {
+            eprintln!("fleet: {reason}");
+            return ExitCode::from(2);
+        }
+    };
+    // Only an approved plan executes, so only an approved plan has a graph
+    // to read or generate.
+    if !meta.status.generates_a_graph() {
+        eprintln!(
+            "fleet: {}: a `{}` plan does not generate a graph — only an approved one does",
+            path.display(),
+            meta.status.as_str()
+        );
+        return ExitCode::from(2);
+    }
+    let mut plan_graph = match fleet::plan_graph::PlanGraph::load(&path) {
+        Ok(loaded) => loaded,
+        Err(_) => match fleet::plan_graph::PlanGraph::generate(&path) {
+            Ok(generated) => generated,
+            Err(reason) => {
+                eprintln!("fleet: {reason}");
+                return ExitCode::from(2);
+            }
+        },
+    };
+    // Drift: the declaration changed since the runtime file was built, so
+    // regenerate rather than read a graph that mismaps nodes onto
+    // criteria that moved.
+    if plan_graph.drift(&path).is_some() {
+        match fleet::plan_graph::PlanGraph::generate(&path) {
+            Ok(fresh) => plan_graph = fresh,
+            Err(reason) => {
+                eprintln!("fleet: {reason}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    // P6 C5: demote a node whose work did not integrate, before the
+    // render, so the surface shows the graph as it now stands.
+    if let Some((node, reason)) = &options.demote {
+        match plan_graph.graph.demote(node, reason) {
+            Ok(()) => {
+                if let Err(reason) = plan_graph.save(&path) {
+                    eprintln!("fleet: {reason}");
+                    return ExitCode::from(2);
+                }
+                eprintln!("fleet: `{node}` demoted: {reason}");
+            }
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    // P7: the registry of other plans, so this plan's cross-plan edges
+    // resolve rather than reading as typos, a cross-plan cycle is refused
+    // rather than deadlocking silently, and a dependency that can never
+    // clear is named.
+    let plans_dir = path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    let registry = fleet::plan_graph::PlanRegistry::scan_for(&plans_dir, &meta.slug);
+
+    if let Some(cycle) = fleet::plan_graph::cross_plan_cycle(&plan_graph.graph, &registry) {
+        eprintln!(
+            "fleet: {}: the cross-plan edges close a cycle: {}",
+            path.display(),
+            cycle.join(" \u{2192} ")
+        );
+        return ExitCode::from(2);
+    }
+    let unresolvable = fleet::plan_graph::unresolvable_edges(&plan_graph.graph, &registry);
+    let mut cross_plan: Vec<String> = Vec::new();
+    for node in plan_graph.graph.nodes() {
+        if let Some(unlock) = plan_graph.graph.unlock_with(&node.id, Some(&registry)) {
+            for named in unlock.cross_plan {
+                cross_plan.push(format!("`{}` \u{b7} {named}", node.id));
+            }
+        }
+    }
+
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    print!(
+        "{}",
+        fleet::graph::render_with(&plan_graph.graph, Some(&registry))
+    );
+    print!("{}", render_criteria(&plan_graph, &text));
+    if !cross_plan.is_empty() {
+        println!("\nCross-plan dependencies\n");
+        for line in &cross_plan {
+            println!("  {line}");
+        }
+    }
+    if !unresolvable.is_empty() {
+        println!("\nUnresolvable cross-plan dependencies\n");
+        for line in &unresolvable {
+            println!("  {line}");
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Resolve a plan argument: a path that exists is used as given, and
+/// anything else is resolved as a slug under `docs/plans/` — the plan
+/// format's own naming, so `fleet plan gui-revamp` finds the document.
+fn resolve_plan(arg: &str) -> std::path::PathBuf {
+    let direct = std::path::PathBuf::from(arg);
+    if direct.is_file() {
+        return direct;
+    }
+    let root = std::env::current_dir().unwrap_or_default();
+    let plans = root.join("docs").join("plans");
+    if let Ok(entries) = std::fs::read_dir(&plans) {
+        let mut matches: Vec<std::path::PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension().and_then(|ext| ext.to_str()) == Some("md")
+                    && path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .is_some_and(|stem| stem.ends_with(&format!("-{arg}")))
+            })
+            .collect();
+        matches.sort();
+        if let Some(found) = matches.into_iter().next() {
+            return found;
+        }
+    }
+    direct
 }
 
 /// `fleet judge`: the day's route rows, judged against their outcome

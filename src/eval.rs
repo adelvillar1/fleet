@@ -2381,8 +2381,13 @@ async fn memory_phrases_round_trip(_bin: PathBuf) -> ScenarioOutcome {
                 (trajectory - 0.625).abs() < 1e-9,
             ),
             (
+                // 0.25, not the 0.125 the unstemmed tokenizer read: the
+                // question's `credentials` and the fact's `credential`
+                // are one stem now (R3). Still barely — two of the
+                // question's eight stems, and neither is the fact's
+                // direction, which is the point the scenario makes.
                 "the topical channels barely did",
-                (keyword - 0.125).abs() < 1e-9,
+                (keyword - 0.25).abs() < 1e-9,
             ),
             ("it is the shape's own pool", primary),
             (
@@ -4472,10 +4477,16 @@ async fn dependency_graph(_mock_bin: PathBuf) -> ScenarioOutcome {
         ready == vec!["base".to_string()],
     ));
 
-    // 2 — the arithmetic, pinned: the score is the closure's remaining
-    // work, and in a diamond the shared base's cost enters the head's
-    // score through both branches — ship carries (left + base) plus
-    // (right + base).
+    // 2 — the arithmetic, pinned: two numbers, both from the same walk.
+    // Remaining work is a sum over the SET of unfinished nodes in the
+    // closure, so a shared base counts once — ship carries left(3) +
+    // right(4) + base(2) = 9. Time to completion is the longest chain
+    // below it — max(3+2, 4+2) = 6.
+    //
+    // P2: the score used to sum over PATHS, reading (3+2)+(4+2) = 11,
+    // which was neither the work left nor the time left, and
+    // `critical_path` picked its head by it — so a convergence node
+    // outranked a genuinely longer single chain.
     let scores = graph.scores();
     let score_of = |id: &str| {
         scores
@@ -4486,7 +4497,11 @@ async fn dependency_graph(_mock_bin: PathBuf) -> ScenarioOutcome {
     };
     checks.push((
         "the dependency score counts the closure's remaining work",
-        score_of("base") == 0 && score_of("left") == 2 && score_of("ship") == 11,
+        score_of("base") == 0 && score_of("left") == 2 && score_of("ship") == 9,
+    ));
+    checks.push((
+        "time to completion is the longest chain below, not the pile of work",
+        graph.time_to_completion("ship") == Some(6) && graph.time_to_completion("left") == Some(2),
     ));
 
     // 3 — the later nodes dispatch the moment their prerequisite's
@@ -4624,6 +4639,7 @@ async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
         instead: instead.to_string(),
         forced,
         children: Vec::new(),
+        declares: Vec::new(),
         contradiction: None,
     };
 
@@ -4640,6 +4656,7 @@ async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
                 instead: String::new(),
                 forced: false,
                 children: Vec::new(),
+                declares: Vec::new(),
                 contradiction: None,
             },
         )

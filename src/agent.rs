@@ -1068,6 +1068,9 @@ impl<'a> Agent<'a> {
         if admitted(tools::CONVENTION_TOOL) {
             specs.push(tools::convention_spec());
         }
+        if admitted(tools::PLAN_TOOL) {
+            specs.push(tools::plan_spec());
+        }
         // `deck` rides every run: it is pure computation over a value the
         // model writes, it touches nothing outside itself, and the
         // deliverable it produces — a presentation, an infographic, a
@@ -2259,6 +2262,17 @@ impl<'a> Agent<'a> {
             });
         }
 
+        if name == tools::PLAN_TOOL {
+            // Drafting a plan's declaration is a write, so it crosses the
+            // same gate every write crosses and rides the same bounded
+            // tool_result path. The plan document is the contract, so the
+            // tool drafts for approval and never changes the plan's
+            // status — only the owner approves.
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => Prepared::Ready(Work::Plan { arguments }),
+            });
+        }
         if name == tools::CONVENTION_TOOL {
             // The nomenclature lookup: a read of the tree's own
             // vocabulary, so it crosses the same gate every call
@@ -2644,6 +2658,8 @@ enum Work {
         root: std::path::PathBuf,
         arguments: serde_json::Value,
     },
+    /// One plan document's declaration, drafted.
+    Plan { arguments: serde_json::Value },
     /// One deck, checked and rendered. The summary rides back to the
     /// model; the fragment rides the `Deck` event to the surface. The
     /// sender rides the work because `run_work` is a free function — the
@@ -2697,7 +2713,7 @@ async fn run_work(work: Work) -> (String, bool) {
                         Ok(guard) => guard,
                     }
                 };
-                match guard {
+                let note = match guard {
                     // A near-exact variant of an established term is
                     // drift with no other explanation: the write does
                     // not happen, and the refusal names both names.
@@ -2705,12 +2721,24 @@ async fn run_work(work: Work) -> (String, bool) {
                     // A novel name with a canonical near-neighbour: the
                     // write happens, and the flag rides the result the
                     // model already reads.
-                    WriteGuard::Flagged { note } => {
-                        let (output, truncated) = run_builtin(tool, arguments).await;
-                        return (format!("{output}\n{note}"), truncated);
-                    }
-                    WriteGuard::Clean => {}
-                }
+                    WriteGuard::Flagged { note } => Some(note),
+                    WriteGuard::Clean => None,
+                };
+                // The write lands now, and the vocabulary the guard
+                // checked it against was derived before this content
+                // existed. The cache is never invalidated on its own and
+                // `fresh` has no production caller, so without this the
+                // next guard check reads a vocabulary that cannot see
+                // the file just written — a term introduced here is
+                // reported as novel, or a drift as clean, for the rest
+                // of the process (KI-232). The guard is the one caller
+                // that knows the tree changed.
+                crate::nomenclature::invalidate(&root);
+                let (output, truncated) = run_builtin(tool, arguments).await;
+                return match note {
+                    Some(note) => (format!("{output}\n{note}"), truncated),
+                    None => (output, truncated),
+                };
             }
             run_builtin(tool, arguments).await
         }
@@ -2864,6 +2892,23 @@ async fn run_work(work: Work) -> (String, bool) {
                 output: answer,
                 truncated: false,
             });
+            (outcome.output, outcome.truncated)
+        }
+        Work::Plan { arguments, .. } => {
+            // The declaration is validated against the graph it would
+            // build before the write lands, so a refused draft never
+            // reaches the document.
+            let drafted = tokio::task::spawn_blocking(move || tools::run_plan(&arguments))
+                .await
+                .unwrap_or_else(|error| Err(format!("the plan draft failed: {error}")));
+            let outcome = match drafted {
+                Ok(outcome) => outcome,
+                Err(reason) => ToolOutcome {
+                    output: format!("error: {reason}\n"),
+                    truncated: false,
+                },
+            };
+            let outcome = tools::bound(outcome);
             (outcome.output, outcome.truncated)
         }
         Work::Convention { root, arguments } => {
@@ -3269,6 +3314,11 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
             // A lookup reads the tree and writes nothing: no writer to
             // hold apart, so two of them in one batch run together.
             Work::Convention { .. } => None,
+            // A plan draft WRITES the plan document, so it takes the
+            // document's own writer slot: two drafts to one plan in one
+            // batch would race, and the wave plan is the structural half
+            // of the one-writer discipline.
+            Work::Plan { .. } => Some("plan".to_string()),
             // A live-source ask is a read of the outside world: it
             // writes nothing here either, so two of them in one batch
             // run together — the lane's own bounds are the clamp, not
@@ -4716,6 +4766,10 @@ mod tests {
                 "supersede",
                 "subagent",
                 "convention",
+                // `plan` rides beside `convention`: both read the repo's
+                // own state, and a subagent's admissible set carries
+                // neither, so a child cannot rewrite its parent's plan.
+                "plan",
                 "deck",
                 "vision",
                 "web",
@@ -4762,8 +4816,9 @@ mod tests {
         // produces is the one thing a terminal cannot show.
         // The deck and the vision tool ride it too: both are pure
         // computation over a value the model writes, and neither touches
-        // anything outside itself.
-        assert_eq!(plain.declarations().len(), 10);
+        // anything outside itself. So does `plan`: it drafts a plan
+        // document's declaration, which is the repo's own state.
+        assert_eq!(plain.declarations().len(), 11);
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);

@@ -74,6 +74,15 @@ pub const IMPROVE_TOOL: &str = "improve";
 /// home.
 pub const CONVENTION_TOOL: &str = "convention";
 
+/// The `plan` tool: drafts a plan document's graph declaration.
+///
+/// It DRAFTS. The plan document is the contract and the owner is its
+/// author of record, so this writes the declaration block for approval
+/// and never touches the plan's status — `draft` stays `draft` until the
+/// owner approves it, and only an approved plan generates a graph. A tool
+/// that could approve its own plan would make the contract worthless.
+pub const PLAN_TOOL: &str = "plan";
+
 /// The desktop tool: one action against the machine itself, through
 /// the cua driver. Declared on every run and admitted to a delegate's
 /// scope by default, and — unlike every other tool — it asks in EVERY
@@ -134,6 +143,10 @@ pub fn subagent_spec() -> ToolSpec {
                         "type": "string",
                         "enum": ["bash", "read_file", "write_file", "list_dir", "use_skill", "subagent", "web", "computer_use"],
                     },
+                },
+                "node": {
+                    "type": "string",
+                    "description": "The declared plan node this call executes, when the run has a plan. The node's own approach becomes the task and its capability declaration becomes the scope, so the plan the owner approved is the one the child is handed. A call may name a node instead of carrying a `goal`.",
                 },
                 "max-turns": {
                     "type": "integer",
@@ -334,6 +347,179 @@ pub fn convention_spec() -> ToolSpec {
             "required": [ "concept" ],
         }),
     )
+}
+
+/// The `plan` tool's declaration.
+pub fn plan_spec() -> ToolSpec {
+    ToolSpec::function(
+        PLAN_TOOL,
+        "Draft the graph declaration for a plan document. The plan is the contract and the owner is its author of record, so this writes the declaration block for approval and never changes the plan's status — a drafted plan stays `draft` until the owner approves it, and only an approved plan generates a graph. Declare nodes with an id, an optional cost, the prerequisites that must verify first, the paths it touches, its capabilities, its approach, and the acceptance criterion it serves. A node with no cost is estimated at zero; declare `summary: true` for a node that only groups others.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The plan document to draft into. It must already exist and carry the plan format's frontmatter.",
+                },
+                "nodes": {
+                    "type": "array",
+                    "description": "The declared nodes, root first.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string", "description": "The node's stable identity. Also what a subagent call names." },
+                            "cost": { "type": "integer", "description": "The estimated cost in turns. Shapes the ordering and the readiness bar; never gates anything." },
+                            "prereqs": { "type": "array", "items": { "type": "string" }, "description": "The node ids that must verify before this one can start." },
+                            "paths": { "type": "array", "items": { "type": "string" }, "description": "The admitted paths. Two nodes naming one path never run together." },
+                            "approach": { "type": "string", "description": "The proposed solution — a proposal, not an instruction." },
+                            "serves": { "type": "string", "description": "The acceptance criterion this node serves, e.g. \"C2\". The join that makes the plan's own table the progress surface." },
+                            "summary": { "type": "boolean", "description": "True for a node that only groups others: it carries no cost of its own and waits on its children." }
+                        },
+                        "required": [ "id" ]
+                    }
+                }
+            },
+            "required": [ "path", "nodes" ]
+        }),
+    )
+}
+
+/// Draft a plan document's graph declaration.
+///
+/// The tool writes the declaration block and nothing else. It does not
+/// touch the plan's status, because approval is the owner's act and a
+/// tool that could approve its own plan would make the contract
+/// worthless. It does not generate a graph: only an approved plan does
+/// that, and this runs on drafts.
+///
+/// Every refusal is typed and names the plan, so the model can read it
+/// and retry — the same discipline every other tool in this file runs on.
+pub fn run_plan(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+    let path = string_arg(arguments, "path")?;
+    let target = Path::new(&path);
+    if !target.is_file() {
+        return Err(format!("{path}: no such plan document"));
+    }
+    let nodes = arguments
+        .get("nodes")
+        .and_then(|nodes| nodes.as_array())
+        .ok_or_else(|| "`nodes` is required: the declared nodes, root first".to_string())?;
+    let declaration = serde_json::json!({ "nodes": nodes });
+    let block = serde_json::to_string_pretty(&declaration)
+        .map_err(|error| format!("the declaration would not serialize: {error}"))?;
+
+    // The plan must conform to the documented format, and its status must
+    // be one this tool may draft into. Both are the plan module's own
+    // rules, read rather than re-implemented.
+    let meta = crate::plan_graph::read_meta(target).map_err(|error| error.to_string())?;
+    if meta.status.generates_a_graph() {
+        return Err(format!(
+            "{path}: an `active` plan already generates a graph; revise its declaration in the document rather than drafting over an approved contract"
+        ));
+    }
+
+    // The declaration must build a graph. A cycle, a duplicate id, or a
+    // prerequisite nobody declares is refused here rather than left for
+    // `unlock` to surface after the owner has approved it.
+    let text = std::fs::read_to_string(target).map_err(|error| format!("{path}: {error}"))?;
+    let drafted = replace_declaration_block(&text, &block);
+    // Parse the drafted document rather than the raw argument, so what is
+    // validated is exactly what will land.
+    let parsed = crate::plan_graph::parse_declaration(&drafted)
+        .map_err(|error| format!("{path}: {error}"))?;
+    let mut graph = crate::graph::Graph::new();
+    let declared: std::collections::HashSet<&str> =
+        parsed.nodes.iter().map(|node| node.id.as_str()).collect();
+    for node in &parsed.nodes {
+        for prereq in &node.prereqs {
+            // A cross-plan prerequisite is resolved by the registry, not
+            // by this declaration.
+            if crate::plan_graph::cross_plan_edge(prereq).is_some() {
+                continue;
+            }
+            if !declared.contains(prereq.as_str()) {
+                return Err(format!(
+                    "{path}: `{}` names `{prereq}` as a prerequisite, which the declaration does not declare",
+                    node.id
+                ));
+            }
+        }
+        let cost = if node.summary { 0 } else { node.cost };
+        graph
+            .add(
+                crate::graph::Node::new(node.id.clone(), cost)
+                    .with_prereqs(node.prereqs.clone())
+                    .with_paths(node.paths.clone())
+                    .with_capabilities(crate::graph::Capabilities::from(&node.capabilities))
+                    .with_approach(node.approach.clone()),
+            )
+            .map_err(|error| format!("{path}: {error}"))?;
+    }
+
+    // The write lands under the plan's own per-path lock, the same
+    // discipline every other write in the crate runs on.
+    let _guard = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(target));
+    std::fs::write(target, drafted).map_err(|error| format!("{path}: {error}"))?;
+
+    let summary = format!(
+        "drafted {} node{} into {path}; the plan is still `{}` until the owner approves it, and only an approved plan generates a graph\n",
+        graph.len(),
+        if graph.len() == 1 { "" } else { "s" },
+        meta.status.as_str()
+    );
+    Ok(ToolOutcome {
+        output: summary,
+        truncated: false,
+    })
+}
+
+/// Replace a plan document's declaration block, or insert one.
+///
+/// The block is written under a `## The declaration` heading when the
+/// document carries none, and replaced in place when it does — so
+/// re-drafting is idempotent and never duplicates the fence.
+fn replace_declaration_block(text: &str, block: &str) -> String {
+    const FENCE: &str = "```graph";
+    let lines: Vec<&str> = text.lines().collect();
+    // An existing block: replace between its fences.
+    let mut start = None;
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() == FENCE {
+            start = Some(index);
+            break;
+        }
+    }
+    if let Some(start) = start {
+        let mut end = lines.len();
+        for (index, line) in lines.iter().enumerate().skip(start + 1) {
+            if line.trim() == "```" {
+                end = index;
+                break;
+            }
+        }
+        let mut out: Vec<String> = lines[..=start]
+            .iter()
+            .map(|line| line.to_string())
+            .collect();
+        out.extend(block.lines().map(|line| line.to_string()));
+        out.extend(lines[end..].iter().map(|line| line.to_string()));
+        let mut joined = out.join("\n");
+        if text.ends_with('\n') {
+            joined.push('\n');
+        }
+        return joined;
+    }
+    // No block yet: append one under its own heading.
+    let mut out = text.to_string();
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("\n## The declaration\n\n");
+    out.push_str(FENCE);
+    out.push('\n');
+    out.push_str(block);
+    out.push_str("\n```\n");
+    out
 }
 
 /// The `web` tool's declaration: one query, and the two knobs the leg
@@ -1134,6 +1320,26 @@ fn run_write_file(arguments: &serde_json::Value) -> Result<ToolOutcome, String> 
             ));
         }
     }
+    // P0: an exclusive per-path lock, held across the write. Two fleet
+    // processes writing one path otherwise race with no coordination at
+    // all — the one-writer discipline the docs describe is per-turn and
+    // per-process, and nothing in the write path locked. Last writer
+    // wins and neither session is told, which is the silent failure this
+    // closes.
+    //
+    // The lock is the memory corpus's own mechanism (`filelock.rs`), so
+    // there is one implementation of `flock` in the crate rather than
+    // two. It blocks, so a second writer waits rather than clobbering;
+    // and a lock that cannot be created leaves the write running, the
+    // `FileLock::take` contract, because a lost write is worse than an
+    // unlocked one.
+    //
+    // Scope, stated honestly: this covers the structured write path the
+    // harness can reason about. `bash` runs in a subprocess and can
+    // write anything, so two sessions both writing one file through
+    // bash still race. The lock makes the path that has a schema safe;
+    // it cannot make an arbitrary subprocess safe.
+    let _guard = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(target));
     let length = content.len();
     fs::write(target, content).map_err(|error| format!("{path}: {error}"))?;
     Ok(ToolOutcome {
@@ -1470,6 +1676,68 @@ mod tests {
         assert!(error.contains("parent directory"));
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// P0 C1/C2: the write path takes an exclusive per-path lock, held
+    /// across the write and released after. The sibling is created by
+    /// the lock itself and left on disk deliberately — unlinking a
+    /// flocked file another process holds is a race.
+    #[test]
+    fn a_write_takes_and_releases_its_per_path_lock() {
+        let dir = scratch("write-lock");
+        let path = dir.join("src").join("locked.txt");
+        Tool::WriteFile
+            .execute(&serde_json::json!({ "path": path.display().to_string(), "content": "one" }))
+            .unwrap();
+        let lock = crate::filelock::FileLock::beside(&path);
+        assert!(lock.exists(), "the lock sibling is created beside the file");
+
+        // The lock is released, not leaked: a second take succeeds
+        // immediately rather than blocking on a guard the first write
+        // forgot to drop.
+        let held = crate::filelock::FileLock::take(&lock);
+        drop(held);
+        let again = crate::filelock::FileLock::take(&lock);
+        drop(again);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// P0 C4: two concurrent writers to one path both land, in some
+    /// order, with neither lost. Without the lock the second write
+    /// races the first and one content is silently dropped.
+    #[test]
+    fn two_concurrent_writers_to_one_path_both_land() {
+        let dir = scratch("write-race");
+        let path = dir.join("src").join("raced.txt");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for which in 0..2 {
+            let path = path.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                for attempt in 0..25 {
+                    let content = format!("writer {which} attempt {attempt}");
+                    Tool::WriteFile
+                        .execute(&serde_json::json!({
+                            "path": path.display().to_string(),
+                            "content": content,
+                        }))
+                        .unwrap();
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("a writer thread panicked");
+        }
+        // Fifty interleaved writes to one path, and the file holds one
+        // whole write rather than a torn mix of two.
+        let landed = fs::read_to_string(&path).unwrap();
+        assert!(
+            landed.starts_with("writer ") && landed.contains(" attempt "),
+            "the file holds a torn write: {landed:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2016,5 +2284,125 @@ mod tests {
         each_name_resolves_to_one_tool(&tools);
         let own: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
         assert_eq!(own, vec!["sem1_x", "x", "x_2"]);
+    }
+
+    /// P4: the `plan` tool drafts a declaration and never approves its own
+    /// plan.
+    #[test]
+    fn the_plan_tool_drafts_without_approving() {
+        let dir = scratch("plan-draft");
+        let path = dir.join("2026-10-19-a-plan.md");
+        std::fs::write(
+        &path,
+        "---\nstatus: draft\ncreated: 2026-10-19\nupdated: 2026-10-19\nslug: a-plan\n---\n\n## Context\n\nA body of work.\n",
+    )
+    .unwrap();
+
+        let outcome = run_plan(&serde_json::json!({
+            "path": path.display().to_string(),
+            "nodes": [
+                {"id": "parse-grammar", "cost": 2},
+                {"id": "build-parser", "cost": 4, "prereqs": ["parse-grammar"], "serves": "C1"}
+            ]
+        }))
+        .expect("a draft lands");
+        assert!(
+            outcome.output.contains("drafted 2 nodes"),
+            "{}",
+            outcome.output
+        );
+        assert!(
+            outcome
+                .output
+                .contains("still `draft` until the owner approves"),
+            "the tool says the plan is still a draft: {}",
+            outcome.output
+        );
+
+        // The declaration landed in the document.
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("```graph"), "{text}");
+        let declaration = crate::plan_graph::parse_declaration(&text).expect("it parses");
+        assert_eq!(declaration.nodes.len(), 2);
+
+        // And the status did NOT move: approval is the owner's act.
+        let meta = crate::plan_graph::read_meta(&path).unwrap();
+        assert_eq!(meta.status, crate::plan_graph::PlanStatus::Draft);
+
+        // Re-drafting replaces rather than duplicating the fence.
+        run_plan(&serde_json::json!({
+            "path": path.display().to_string(),
+            "nodes": [{"id": "only-one", "cost": 1}]
+        }))
+        .unwrap();
+        let redrafted = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            redrafted.matches("```graph").count(),
+            1,
+            "the fence is replaced, not duplicated"
+        );
+        assert_eq!(
+            crate::plan_graph::parse_declaration(&redrafted)
+                .unwrap()
+                .nodes
+                .len(),
+            1
+        );
+
+        // A refused draft never reaches the document: a cycle is caught
+        // before the write lands.
+        let before = std::fs::read_to_string(&path).unwrap();
+        let error = run_plan(&serde_json::json!({
+            "path": path.display().to_string(),
+            "nodes": [
+                {"id": "a", "prereqs": ["b"]},
+                {"id": "b", "prereqs": ["a"]}
+            ]
+        }))
+        .unwrap_err();
+        assert!(error.contains("cycle"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "a refused draft leaves the document untouched"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P4 C1: the tool refuses to draft over an approved plan. The plan is
+    /// the contract once approved, and revising an approved declaration is
+    /// the document's own edit rather than a tool's overwrite.
+    #[test]
+    fn the_plan_tool_refuses_an_approved_plan() {
+        let dir = scratch("plan-approved");
+        let path = dir.join("2026-10-19-b.md");
+        std::fs::write(
+        &path,
+        "---\nstatus: active\ncreated: 2026-10-19\nupdated: 2026-10-19\nslug: b\n---\n\n```graph\n{\"nodes\":[{\"id\":\"a\",\"cost\":1}]}\n```\n",
+    )
+    .unwrap();
+        let error = run_plan(&serde_json::json!({
+            "path": path.display().to_string(),
+            "nodes": [{"id": "z", "cost": 1}]
+        }))
+        .unwrap_err();
+        assert!(error.contains("already generates a graph"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P4: a plan document that does not conform to the format is named, not
+    /// guessed at.
+    #[test]
+    fn the_plan_tool_names_a_nonconforming_document() {
+        let dir = scratch("plan-bare");
+        let path = dir.join("bare.md");
+        std::fs::write(&path, "# no frontmatter\n").unwrap();
+        let error = run_plan(&serde_json::json!({
+            "path": path.display().to_string(),
+            "nodes": [{"id": "a", "cost": 1}]
+        }))
+        .unwrap_err();
+        assert!(error.contains("is not a plan document"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -48,6 +48,7 @@ pub enum Command {
     /// bars, the named edges, the critical path, and what is holding
     /// each node — the home's `graph.json`, or `--file`'s.
     Graph(GraphOptions),
+    Plan(PlanOptions),
     /// The skills surface: the live skills, the drafts awaiting the
     /// slice-12 gate, and the usage-scan curation.
     Skills(SkillsOptions),
@@ -619,6 +620,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "roles" => no_flags(rest, Command::Roles),
         "convention" => parse_convention(rest),
         "graph" => parse_graph(rest),
+        "plan" => parse_plan(rest),
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
@@ -1690,12 +1692,77 @@ pub struct GraphOptions {
     /// A graph file beside the home's, for a graph declared somewhere
     /// else — a scratch tree, a proposal's own declaration.
     pub file: Option<String>,
+    /// A plan document to read the graph of. The plan is the contract, so
+    /// `fleet graph <plan>` reads the plan's own runtime file rather than
+    /// the home's — which is what makes a completed plan's graph
+    /// traceable after the fact.
+    pub plan: Option<String>,
 }
 
-/// `fleet graph [--file <path>]`: no positionals, one optional flag. A
-/// second positional is refused rather than read as a path.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PlanOptions {
+    /// The plan document, or a slug to resolve under `docs/plans/`.
+    pub plan: String,
+    /// Demote a node whose delivered work does not integrate, with the
+    /// reason. The node returns to pending, the reason lands as a
+    /// revision, and every dependent's score rises again.
+    pub demote: Option<(String, String)>,
+}
+
+/// `fleet plan <plan.md | slug>`: one positional, required. The plan is
+/// the contract, so this is its surface — it renders the graph the plan
+/// generated and the acceptance criteria read off it, and generates the
+/// graph when an approved plan has none yet or its declaration has
+/// drifted.
+fn parse_plan(args: &[String]) -> Result<Command, String> {
+    let mut plan: Option<String> = None;
+    let mut demote: Option<(String, String)> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--demote" => {
+                // The two values are one flag's: a node id and the reason
+                // its work did not integrate.
+                let node = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| "`--demote` needs a node id".to_string())?;
+                let reason = args
+                    .get(index + 2)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| {
+                        "`--demote` needs a reason after the node: `fleet plan <plan> --demote <node> <reason>`".to_string()
+                    })?;
+                demote = Some((node.clone(), reason.clone()));
+                index += 2;
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown plan option `{other}`"));
+            }
+            other => {
+                if plan.is_some() {
+                    return Err(format!(
+                        "`{other}` is a second plan; name one: `fleet plan <plan.md | slug>`"
+                    ));
+                }
+                plan = Some(other.to_string());
+            }
+        }
+        index += 1;
+    }
+    let plan =
+        plan.ok_or_else(|| "`fleet plan` needs a plan: `fleet plan <plan.md | slug>`".to_string())?;
+    Ok(Command::Plan(PlanOptions { plan, demote }))
+}
+
+/// `fleet graph [--file <path>] [<plan.md>]`: one optional flag and one
+/// optional plan document. A second positional is refused rather than read
+/// as a path.
 fn parse_graph(args: &[String]) -> Result<Command, String> {
     let mut file: Option<String> = None;
+    let mut plan: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -1718,15 +1785,20 @@ fn parse_graph(args: &[String]) -> Result<Command, String> {
                 return Err(format!("unknown graph option `{other}`"));
             }
             other => {
-                return Err(format!(
-                    "`{other}` takes no value here; graph reads a declared graph: \
-                     `fleet graph [--file <path>]`"
-                ));
+                // One positional, read as a plan document: the plan is the
+                // contract, so naming one reads the graph it generated.
+                if plan.is_some() {
+                    return Err(format!(
+                        "`{other}` is a second plan; graph reads one graph: \
+                         `fleet graph [--file <path>] [<plan.md>]`"
+                    ));
+                }
+                plan = Some(other.to_string());
             }
         }
         index += 1;
     }
-    Ok(Command::Graph(GraphOptions { file }))
+    Ok(Command::Graph(GraphOptions { file, plan }))
 }
 
 /// `fleet convention <concept>`: one positional, required. A second
@@ -1846,7 +1918,14 @@ mod tests {
         assert_eq!(options.file, Some("/tmp/g.json".to_string()));
         // A positional, a repeated flag, and an unknown flag are each
         // refused rather than silently read.
-        assert!(parse(&args(&["graph", "extra"])).is_err());
+        // P3 C6: one positional is a plan document, read as the plan's
+        // own graph rather than the home's. A second is refused.
+        let Command::Graph(options) = parse(&args(&["graph", "a-plan.md"])).unwrap() else {
+            panic!("not a graph")
+        };
+        assert_eq!(options.plan.as_deref(), Some("a-plan.md"));
+        assert!(parse(&args(&["graph", "a.md", "b.md"])).is_err());
+        assert!(parse(&args(&["graph", "extra", "--loud"])).is_err());
         assert!(parse(&args(&["graph", "--file", "a", "--file", "b"])).is_err());
         assert!(parse(&args(&["graph", "--loud"])).is_err());
     }

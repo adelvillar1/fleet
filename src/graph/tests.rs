@@ -179,6 +179,7 @@ fn followed() -> Delta {
         instead: String::new(),
         forced: false,
         children: Vec::new(),
+        declares: Vec::new(),
         contradiction: None,
     }
 }
@@ -193,6 +194,7 @@ fn deviated(reason: DeltaReason, forced: bool, instead: &str) -> Delta {
         instead: instead.to_string(),
         forced,
         children: Vec::new(),
+        declares: Vec::new(),
         contradiction: None,
     }
 }
@@ -464,7 +466,21 @@ fn a_diamonds_score_carries_a_shared_dependency_once_per_path() {
     assert_eq!(graph.score("base"), Some(0));
     assert_eq!(graph.score("left"), Some(2));
     assert_eq!(graph.score("right"), Some(2));
-    assert_eq!(graph.score("ship"), Some(11));
+    // P2: the two numbers the plan splits the score into. Remaining work
+    // is a sum over the SET of unfinished nodes in the closure — the
+    // diamond's 3+4+2 = 9. Time to completion is the longest chain below
+    // it — max(3+2, 4+2) = 6. The path sum this replaces read 11, which
+    // was neither: it counted `base` once per path that reached it.
+    assert_eq!(
+        graph.score("ship"),
+        Some(9),
+        "remaining work counts the closure once"
+    );
+    assert_eq!(
+        graph.time_to_completion("ship"),
+        Some(6),
+        "time to completion is the longest chain below"
+    );
 
     // The trajectory: the base's completion drops the head by its cost
     // times the two paths, then each branch by its own cost, then zero.
@@ -1259,4 +1275,390 @@ fn the_render_is_bounded_at_the_house_width_and_prints_for_the_capture() {
     if std::env::var_os("FLEET_GRAPH_CAPTURE").is_some() {
         print!("{card}");
     }
+}
+
+// --- P1: the defects, fixed before anything is wired ------------------------
+
+#[test]
+fn dispatching_a_verified_node_is_refused_rather_than_demoting_it() {
+    // P1 C2: `dispatch` used to have no status guard at all, so it set a
+    // verified node back to Running, made its cost count again, and
+    // raised every dependent's score — breaking the module's
+    // structural-monotonicity claim. `fail` had refused exactly this
+    // since it was written; `dispatch` was the asymmetric half.
+    let facts = facts();
+    let mut graph = gated(&facts);
+    graph.add(Node::new("base", 2)).unwrap();
+    graph
+        .add(Node::new("ship", 3).with_prereqs(["base"]))
+        .unwrap();
+    land(&facts, "base");
+    land(&facts, "ship");
+    assert_eq!(graph.settle(), ids(&["base", "ship"]));
+
+    let before = graph.score("ship");
+    assert_eq!(before, Some(0), "a verified closure scores zero");
+    assert!(
+        matches!(
+            graph.dispatch("ship"),
+            Err(GraphError::AlreadyVerified(id)) if id == "ship"
+        ),
+        "dispatch must refuse a verified node by name"
+    );
+    assert_eq!(
+        graph.score("ship"),
+        before,
+        "and the refused dispatch must not have raised the score"
+    );
+}
+
+#[test]
+fn a_demotion_returns_a_node_to_pending_and_records_why() {
+    // P1 C1: the deliberate form of the transition `dispatch` performed
+    // by accident. The node goes back to pending so `ready` offers it
+    // again, the reason lands as an append-only revision, and every
+    // dependent's score rises on the next read because the node is
+    // unfinished again — no notification, because the score is derived.
+    let facts = facts();
+    let mut graph = gated(&facts);
+    graph.add(Node::new("base", 2)).unwrap();
+    graph
+        .add(Node::new("ship", 3).with_prereqs(["base"]))
+        .unwrap();
+    land(&facts, "base");
+    graph.settle();
+    assert!(graph.ready().contains(&"ship".to_string()));
+
+    // Its work lands but does not integrate.
+    land(&facts, "ship");
+    assert_eq!(graph.settle(), ids(&["ship"]));
+    assert_eq!(graph.score("ship"), Some(0));
+
+    // Demote the dependency: the dependent's score rises because base is
+    // unfinished again, with no notification — the score is derived on
+    // read, so the next read already reflects it.
+    graph
+        .demote("base", "the artifact does not compile")
+        .unwrap();
+    assert_eq!(
+        graph.node("base").map(|node| node.status),
+        Some(Status::Pending),
+        "a demoted node returns to pending, not Running: it needs re-dispatching"
+    );
+    assert_eq!(
+        graph.score("ship"),
+        Some(2),
+        "the dependent's score rises again — base is unfinished once more"
+    );
+    assert!(graph.ready().contains(&"base".to_string()));
+    let revisions = graph.revisions();
+    assert_eq!(revisions.len(), 1);
+    assert!(
+        revisions[0].cause.contains("demoted `base`")
+            && revisions[0].cause.contains("does not compile"),
+        "the revision names the node and the reason: {}",
+        revisions[0].cause
+    );
+    // A demotion of a node the graph does not carry is named.
+    assert!(matches!(
+        graph.demote("ghost", "nowhere"),
+        Err(GraphError::UnknownNode(id)) if id == "ghost"
+    ));
+}
+
+#[test]
+fn a_second_delta_for_one_node_is_refused_so_the_score_stays_monotone() {
+    // P1 C5: `record_delta` was an unconditional overwrite, so a second
+    // report could LOWER `diff_score` and un-fire a replan the doc
+    // claimed was monotone by construction.
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1)).unwrap();
+    graph
+        .record_delta(
+            "a",
+            deviated(DeltaReason::Infeasible, false, "the other way"),
+        )
+        .unwrap();
+    let landed = graph.diff_score();
+    assert!(landed > 0, "the infeasible report weighs something");
+
+    let second = deviated(DeltaReason::RightAndFollowed, false, "");
+    assert!(
+        matches!(
+            graph.record_delta("a", second),
+            Err(GraphError::DeltaAlreadyLanded(id)) if id == "a"
+        ),
+        "a re-report is refused by name rather than silently replacing the first"
+    );
+    assert_eq!(
+        graph.diff_score(),
+        landed,
+        "and the score did not fall back — it is monotone as documented"
+    );
+}
+
+#[test]
+fn a_contradicted_report_cannot_rewrite_the_plan() {
+    // P1 C4: `CONTRADICTED_WEIGHT` is the highest severity precisely
+    // because a contradicted report is the one the log does not support.
+    // The old replan filter keyed on `reason == Infeasible` and a
+    // non-empty `instead` only, so the one category that means "don't
+    // trust this" was trusted to replace a real approach with the
+    // child's unverifiable claim.
+    let mut graph = Graph::new();
+    graph
+        .add(Node::new("a", 1).with_approach("the honest approach"))
+        .unwrap();
+    let mut lying = deviated(DeltaReason::Infeasible, true, "the child's invention");
+    lying.contradiction = Some("the log shows no failed step".to_string());
+    graph.record_delta("a", lying).unwrap();
+
+    assert!(
+        graph.should_replan(),
+        "a contradiction still fires the per-node trigger — it is the heaviest report"
+    );
+    assert!(
+        graph.replan().is_none(),
+        "but it falsifies nothing: a false report revises no approach"
+    );
+    assert_eq!(
+        graph.node("a").map(|node| node.approach.as_str()),
+        Some("the honest approach"),
+        "the real approach stands"
+    );
+    assert!(
+        graph.revisions().is_empty(),
+        "and no revision claims one landed"
+    );
+}
+
+#[test]
+fn the_revision_cap_is_enforced_on_load_too() {
+    // P1 C6: the cap was enforced only in `replan`, so a hand-edited or
+    // long-lived file carrying three revisions loaded fine — after which
+    // the graph could never replan again, deadening the mechanism
+    // silently rather than refusing.
+    let path = scratch("cap-on-load");
+    let mut graph = Graph::new();
+    graph.add(Node::new("a", 1)).unwrap();
+    graph.demote("a", "one").unwrap();
+    graph.demote("a", "two").unwrap();
+    graph.demote("a", "three").unwrap();
+    assert_eq!(graph.revisions().len(), 3);
+    graph.save(&path).unwrap();
+
+    let loaded = Graph::load(&path).expect("the file is a declared graph");
+    assert_eq!(
+        loaded.revisions().len(),
+        REPLAN_CAP,
+        "a load past the cap keeps only the most recent {REPLAN_CAP}"
+    );
+    // And the graph can still replan: the cap is not deadened.
+    let mut loaded = loaded;
+    loaded
+        .record_delta("a", deviated(DeltaReason::Infeasible, true, "instead"))
+        .unwrap();
+    assert!(
+        loaded.replan().is_none(),
+        "the cap still holds after the load — it is not merely reset"
+    );
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn a_peak_revised_up_and_back_down_survives_the_file() {
+    // P1 C7: `peak` was not serialized, so it was rebuilt by `load`'s
+    // all-Pending adds. A cost revised up to 50 and back down to 1
+    // before saving read back as `peak = 1`, shrinking the readiness
+    // bar's denominator and misreporting readiness.
+    let path = scratch("peak-round-trip");
+    let mut graph = Graph::new();
+    graph.add(Node::new("base", 1)).unwrap();
+    graph
+        .add(Node::new("ship", 1).with_prereqs(["base"]))
+        .unwrap();
+    // Raise the closure's score high, then lower it again. `ship`'s score
+    // is base's cost plus base's own score — ship's own cost is not in it.
+    graph.revise_cost("base", 50).unwrap();
+    assert_eq!(graph.node("ship").map(|node| node.peak()), Some(50));
+    graph.revise_cost("base", 1).unwrap();
+
+    graph.save(&path).unwrap();
+    let loaded = Graph::load(&path).expect("the file is a declared graph");
+    assert_eq!(
+        loaded.node("ship").map(|node| node.peak()),
+        Some(50),
+        "the historical high rides the file rather than being rebuilt from the final costs"
+    );
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn a_terminally_blocked_graph_is_named_rather_than_silent() {
+    // P1 C8: without this, a blocked graph and a finished one look
+    // identical from the outside — `ready()` returns empty either way.
+    // One means "all the work landed"; the other means "the run is
+    // stuck and nothing is telling anyone."
+    let mut graph = Graph::new();
+    graph.add(Node::new("never", 1)).unwrap();
+    graph
+        .add(Node::new("waiting", 2).with_prereqs(["never"]))
+        .unwrap();
+    graph.fail("never").unwrap();
+
+    assert!(graph.ready().is_empty(), "nothing is ready");
+    // A failed prerequisite IS a terminal block by the plan's own
+    // definition — "every remaining node is blocked by failed or
+    // unresolved prerequisites." The subtlety is that a failed node can
+    // still be promoted by a later artifact, which is why the block is
+    // NAMED rather than acted on: the surface says the graph is stuck and
+    // what it is stuck on, so the operator can release it or land the
+    // artifact.
+    assert!(graph.is_terminally_blocked());
+    let named = graph.terminal_block().expect("the block is named");
+    assert_eq!(named.len(), 1, "one pending node is stranded");
+    let (id, reason) = &named[0];
+    assert_eq!(id, "waiting");
+    assert!(
+        reason.contains("never"),
+        "the reason names what it is waiting on: {reason}"
+    );
+
+    // A running node means an artifact could still land.
+    graph.dispatch("waiting").ok();
+    assert!(
+        !graph.is_terminally_blocked(),
+        "something in flight can still change the situation"
+    );
+}
+
+#[test]
+fn a_finished_graph_is_not_terminally_blocked() {
+    // The other half of C8: an empty `ready()` on a graph whose work all
+    // landed is completion, not a standstill, and must not be named as
+    // blocked.
+    let facts = facts();
+    let mut graph = gated(&facts);
+    graph.add(Node::new("a", 1)).unwrap();
+    graph.add(Node::new("b", 2).with_prereqs(["a"])).unwrap();
+    land(&facts, "a");
+    land(&facts, "b");
+    graph.settle();
+    assert!(graph.ready().is_empty(), "everything verified");
+    assert!(
+        !graph.is_terminally_blocked(),
+        "a finished graph is not stuck"
+    );
+    assert!(graph.terminal_block().is_none());
+}
+
+// --- P2: the score split ----------------------------------------------------
+
+#[test]
+fn a_convergence_node_no_longer_outranks_a_longer_single_chain() {
+    // P2 C4: the case the split exists for. The diamond's two branches
+    // share a base, so the path sum counted the base twice and read the
+    // head as far more critical than a genuinely longer chain.
+    //
+    //   diamond: base 2, left 6 on base, right 6 on base, head 1 on both
+    //            path sum        (6+2)+(6+2) = 16
+    //            remaining work  6+6+2        = 14
+    //            longest chain   max(6+2,6+2) = 8
+    //   chain:   c1 2, c2 3 on c1, c3 4 on c2, c4 5 on c3
+    //            path sum        4+(3+(2+0))  = 9
+    //            remaining work  4+3+2        = 9
+    //            longest chain   4+3+2        = 9
+    //
+    // The path sum put the diamond's head (16) far above the chain's c4
+    // (9) and `critical_path` chose it. The real longest chain is c4's 9
+    // against the diamond's 8 — close, but the chain is genuinely the
+    // longer one, and it is the one that must be named. The diamond still
+    // carries more remaining WORK (14 against 9); it is simply not the
+    // longer PATH, which is exactly why the two are separate numbers.
+    let mut graph = Graph::new();
+    graph.add(Node::new("base", 2)).unwrap();
+    graph
+        .add(Node::new("left", 6).with_prereqs(["base"]))
+        .unwrap();
+    graph
+        .add(Node::new("right", 6).with_prereqs(["base"]))
+        .unwrap();
+    graph
+        .add(Node::new("head", 1).with_prereqs(["left", "right"]))
+        .unwrap();
+    graph.add(Node::new("c1", 2)).unwrap();
+    graph.add(Node::new("c2", 3).with_prereqs(["c1"])).unwrap();
+    graph.add(Node::new("c3", 4).with_prereqs(["c2"])).unwrap();
+    graph.add(Node::new("c4", 5).with_prereqs(["c3"])).unwrap();
+
+    assert_eq!(
+        graph.score("head"),
+        Some(14),
+        "remaining work: the closure, counted once"
+    );
+    assert_eq!(graph.time_to_completion("head"), Some(8));
+    assert_eq!(graph.score("c4"), Some(9));
+    assert_eq!(graph.time_to_completion("c4"), Some(9));
+    assert_eq!(
+        graph.critical_path(),
+        ids(&["c4", "c3", "c2", "c1"]),
+        "the longest chain wins the head, not the widest pile"
+    );
+    // The two numbers genuinely disagree here, which is the point.
+    assert!(
+        graph.score("head") > graph.score("c4"),
+        "the diamond carries more work"
+    );
+    assert!(
+        graph.time_to_completion("c4") > graph.time_to_completion("head"),
+        "but the chain is the longer path"
+    );
+}
+
+#[test]
+fn the_readiness_bars_denominator_is_remaining_work() {
+    // P2 C5: `peak` tracks the remaining-work number, so the rendered
+    // fraction is the fraction of the closure's work left rather than a
+    // path-summed figure that inflated as the graph widened.
+    let mut graph = Graph::new();
+    graph.add(Node::new("base", 2)).unwrap();
+    graph
+        .add(Node::new("left", 3).with_prereqs(["base"]))
+        .unwrap();
+    graph
+        .add(Node::new("right", 4).with_prereqs(["base"]))
+        .unwrap();
+    graph
+        .add(Node::new("ship", 6).with_prereqs(["left", "right"]))
+        .unwrap();
+
+    assert_eq!(
+        graph.node("ship").map(|node| node.peak()),
+        Some(9),
+        "the peak is the set sum, not the path sum's 11"
+    );
+    assert_eq!(graph.score("ship"), Some(9));
+    assert_eq!(graph.time_to_completion("ship"), Some(6));
+}
+
+#[test]
+fn a_zero_cost_dependency_still_holds_its_dependent() {
+    // P2 C2 restated under the split: a zero-cost unfinished dependency
+    // contributes nothing to either number, so `score_zero` reads true
+    // while `deps_verified` reads false — the two conditions are checked
+    // beside each other precisely for this shape, and the split must not
+    // have collapsed them.
+    let mut graph = Graph::new();
+    graph.add(Node::new("free", 0)).unwrap();
+    graph
+        .add(Node::new("waiting", 3).with_prereqs(["free"]))
+        .unwrap();
+    let unlock = graph.unlock("waiting").expect("declared");
+    assert!(unlock.score_zero, "a zero-cost closure scores zero");
+    assert!(
+        !unlock.deps_verified,
+        "but its dependency has not verified, so the node is still held"
+    );
+    assert!(!unlock.is_unlocked());
+    assert!(unlock.waiting.contains(&"free".to_string()));
 }

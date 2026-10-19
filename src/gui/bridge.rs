@@ -646,20 +646,34 @@ impl Bridge {
     pub async fn rank(&self, asked: &str, candidates: &[String]) -> Value {
         let asked = asked.trim().to_string();
         let candidates = candidates.to_vec();
-        let endpoint = crate::memory::embedding_endpoint();
         let ranked = tokio::task::spawn_blocking(move || {
-            let embedder = crate::memory::probe(&endpoint).embedder();
-            let Some(query) = embedder.embed(&asked) else {
-                return Vec::new();
-            };
+            // KI-233: the probed answer, not a fresh probe. `probe` is a
+            // real round trip on its own budget, so calling it here paid
+            // the probe's five-second connect budget per request on a
+            // machine with no embedding backend — exactly the cost
+            // KI-064 removed from the corpus path, reintroduced in the
+            // browser path. `probed_embedder` is the same answer the
+            // corpus loads take, once per process, and a keyword-only
+            // answer still degrades to the lexical ranking exactly as
+            // before.
+            let embedder = crate::memory::probed_embedder();
+            let query = embedder.embed(&asked);
+            // A machine with no embedding backend answers with every
+            // score zero rather than refusing. An empty list would be a
+            // refusal by another name — the browser would have nothing
+            // to order — so the candidates all ride through at zero and
+            // the type-ahead's own lexical pass decides.
             candidates
                 .iter()
                 .enumerate()
                 .map(|(index, text)| {
-                    let score = embedder
-                        .embed(text)
-                        .map(|vector| crate::memory::cosine(&query, &vector))
-                        .unwrap_or(0.0);
+                    let score = match &query {
+                        Some(query) => embedder
+                            .embed(text)
+                            .map(|vector| crate::memory::cosine(query, &vector))
+                            .unwrap_or(0.0),
+                        None => 0.0,
+                    };
                     json!({"index": index, "score": score})
                 })
                 .collect::<Vec<_>>()

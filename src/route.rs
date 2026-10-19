@@ -1437,7 +1437,7 @@ fn sys1_judges() -> bool {
 async fn judge(
     task: &str,
     specs: &HashMap<String, ServerSpec>,
-    cache: Option<&mut crate::route_cache::Cache>,
+    mut cache: Option<&mut crate::route_cache::Cache>,
 ) -> (Option<(String, f64, String)>, JudgedFrom) {
     let spec = match specs.get(JUDGE_LANE) {
         Some(spec) => spec.clone(),
@@ -1448,17 +1448,25 @@ async fn judge(
     };
     // KI-044: no decision provider resolves, so sys1's classify would
     // fail open — the spawn is skipped rather than paid for. The cache
-    // above still answers first: a recorded verdict is a judgment that
-    // was made, on whatever machine made it.
-    if !sys1_judges() {
-        return (None, JudgedFrom::None);
-    }
+    // answers BEFORE that check (KI-230): a recorded verdict is a
+    // judgment that was made, on whatever machine made it, and refusing
+    // to serve it because THIS machine has no key would make the cache
+    // a per-machine artifact rather than a portable one. A miss on a
+    // keyless machine still returns here and pays no spawn.
     let hash = calib::hash16(task);
+    let key = crate::route_cache::Cache::key_for(&spec);
+    if let Some(cache) = cache.as_deref_mut() {
+        // KI-229: the discard has to be real, not just a suppressed
+        // read. Without the clear, the next fresh verdict's flush
+        // rewrites the other lane's entries under this lane's key and
+        // serves them as this lane's.
+        cache.rekey(&key);
+    }
     // The cache is consulted only when it belongs to the lane that
     // would judge now: a key mismatch discards the whole file rather
     // than serving another lane's verdicts.
     if let Some(cache) = cache.as_ref() {
-        if cache.keyed_for(&crate::route_cache::Cache::key_for(&spec)) {
+        if cache.keyed_for(&key) {
             if let Some(recorded) = cache.get(&hash) {
                 return (
                     Some((
@@ -1470,6 +1478,9 @@ async fn judge(
                 );
             }
         }
+    }
+    if !sys1_judges() {
+        return (None, JudgedFrom::None);
     }
     let server = match McpServer::spawn(&spec) {
         Ok(server) => server,
@@ -2970,6 +2981,47 @@ mod tests {
         );
         // Not JSON at all.
         assert_eq!(parse_workload("not json"), None);
+    }
+
+    /// KI-230: the cache answers BEFORE the `sys1_judges` check. The
+    /// comment above the check has always claimed the cache answers
+    /// first, but the early return executed ahead of the lookup, so on a
+    /// machine with no resolvable decision key a recorded verdict was
+    /// never served. A cached verdict is a judgment that was already
+    /// made, on whatever machine made it — refusing to serve it because
+    /// THIS machine has no key makes the cache a per-machine artifact
+    /// rather than a portable one.
+    #[tokio::test]
+    async fn a_cached_verdict_answers_before_the_key_check() {
+        let home = std::env::temp_dir().join(format!("fleet-route-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut cache = crate::route_cache::Cache::load(&home);
+        cache.put(
+            calib::hash16("a task"),
+            crate::route_cache::Verdict {
+                workload: "deep_research".to_string(),
+                confidence: 0.9,
+                verdict: "pass".to_string(),
+            },
+        );
+        // The judge lane's spec, so the cache's key matches the lane
+        // that would judge now. Flush after the put, or the stored key
+        // is still empty and `rekey` rightly treats the file as
+        // another producer's.
+        let judge_spec = lanes::spec_for(JUDGE_LANE).expect("the vendored sys1 lane resolves");
+        cache.flush(&crate::route_cache::Cache::key_for(&judge_spec));
+        let mut specs = HashMap::new();
+        specs.insert(JUDGE_LANE.to_string(), judge_spec);
+
+        let (verdict, from) = judge("a task", &specs, Some(&mut cache)).await;
+        assert_eq!(
+            verdict.map(|(workload, _, _)| workload),
+            Some("deep_research".to_string()),
+            "the recorded verdict is served"
+        );
+        assert_eq!(from, JudgedFrom::Cached);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test]

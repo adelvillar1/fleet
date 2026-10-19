@@ -73,8 +73,65 @@
 //! the parent's to keep.
 
 use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use serde::{Deserialize, Serialize};
 
 use crate::skills::wrap_detail;
+
+/// One node as the declaration block states it.
+///
+/// Every field but `id` is optional, so a declaration can be as terse as
+/// a list of ids — a graph with no declared costs orders by id, which is
+/// the honest answer when nobody has estimated anything.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclaredNode {
+    pub id: String,
+    #[serde(default)]
+    pub cost: u64,
+    #[serde(default)]
+    pub prereqs: Vec<String>,
+    #[serde(default)]
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub capabilities: DeclaredCapabilities,
+    #[serde(default)]
+    pub approach: String,
+    /// The acceptance criterion this node serves — the join that makes
+    /// the plan's own criteria table the progress surface.
+    #[serde(default)]
+    pub serves: String,
+    /// A summary node has children and no work of its own: its cost is
+    /// forced to zero and it cannot start until they verify. P6 builds
+    /// the expansion that produces them; P3 parses and honours the flag.
+    #[serde(default)]
+    pub summary: bool,
+}
+
+/// The capability declaration, as the plan states it. Four lists, the
+/// same four the graph's `Capabilities` carries.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclaredCapabilities {
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub workflows: Vec<String>,
+    #[serde(default)]
+    pub loops: Vec<String>,
+}
+
+impl From<&DeclaredCapabilities> for Capabilities {
+    fn from(declared: &DeclaredCapabilities) -> Capabilities {
+        Capabilities {
+            tools: declared.tools.clone(),
+            skills: declared.skills.clone(),
+            workflows: declared.workflows.clone(),
+            loops: declared.loops.clone(),
+        }
+    }
+}
 
 // --- the node --------------------------------------------------------------
 
@@ -310,6 +367,17 @@ pub struct Unlock {
     pub failed: Vec<String>,
     /// Prerequisites that are not nodes in the graph.
     pub unresolved: Vec<String>,
+    /// P7 C1: prerequisites that name another plan's node, and what that
+    /// plan says about it — waiting on a live plan's unverified node, or
+    /// blocked on one that cannot ever clear (no such plan, a plan whose
+    /// status does not generate a graph, or a plan that does not declare
+    /// the node). Empty when the graph carries no cross-plan edges.
+    pub cross_plan: Vec<String>,
+    /// P7 C3: the cross-plan prerequisites that cannot ever clear, each
+    /// with the reason named. A dependency on a dead or cancelled plan is
+    /// resolved explicitly — the dependent is not left blocked forever
+    /// with no way to tell why.
+    pub unresolvable: Vec<String>,
     /// The siblings holding this node's paths, named.
     pub held: Vec<ResourceHold>,
 }
@@ -325,6 +393,8 @@ impl Default for Unlock {
             waiting: Vec::new(),
             failed: Vec::new(),
             unresolved: Vec::new(),
+            cross_plan: Vec::new(),
+            unresolvable: Vec::new(),
             held: Vec::new(),
         }
     }
@@ -335,6 +405,14 @@ impl Unlock {
     /// and resource-free.
     pub fn is_unlocked(&self) -> bool {
         self.score_zero && self.resource_free && self.deps_verified
+    }
+
+    /// P7 C1/C3: whether a cross-plan edge still holds this node. A
+    /// dependency on another plan's node is a real dependency — the node
+    /// waits — and one that can never clear is named rather than left to
+    /// look like ordinary waiting.
+    pub fn held_by_cross_plan(&self) -> bool {
+        !self.cross_plan.is_empty()
     }
 
     /// The named reason this node is held, or `None` when it is not. A
@@ -385,6 +463,10 @@ pub enum GraphError {
     PathHeld { path: String, holder: String },
     /// A failure report against a node whose artifact is verified.
     AlreadyVerified(String),
+    /// A second delta for a node that already carries one. Deltas land
+    /// once so `diff_score` stays monotone; a re-report has to come
+    /// through [`Graph::demote`], which records why.
+    DeltaAlreadyLanded(String),
 }
 
 impl fmt::Display for GraphError {
@@ -412,6 +494,12 @@ impl fmt::Display for GraphError {
                     "`{id}`'s artifact is verified: a report does not demote a fact"
                 )
             }
+            GraphError::DeltaAlreadyLanded(id) => {
+                write!(
+                    f,
+                    "`{id}` already carries a landed delta: demote it to report again"
+                )
+            }
         }
     }
 }
@@ -420,7 +508,10 @@ impl std::error::Error for GraphError {}
 
 /// The fact-gate's shape: the parent's closure over one node, answering
 /// whether the node's work has actually landed.
-type NodePredicate = Box<dyn Fn(&Node) -> bool>;
+/// The fact-gate's shape: a predicate over a node's own state.
+/// Public because the fact-gate lives outside the graph and attaches
+/// one through this seam.
+pub type NodePredicate = Box<dyn Fn(&Node) -> bool>;
 
 /// The declared graph, and the predicate that decides which of its
 /// nodes has actually landed.
@@ -471,6 +562,17 @@ impl Graph {
     /// predicate is the authority: a node it confirms is verified
     /// whatever its run reported, and a node it refuses stays
     /// unfinished however confident the report was.
+    /// Attach the fact-gate after construction.
+    ///
+    /// A loaded graph carries no verifier — a closure is not a value that
+    /// can be written down — so it unlocks nothing until a caller
+    /// attaches one. Without this, a graph read back from its file could
+    /// never verify another node, and the plan's fact-gate would have no
+    /// seam to run through.
+    pub fn set_verifier(&mut self, verify: NodePredicate) {
+        self.verify = Some(verify);
+    }
+
     pub fn with_verifier<F>(verify: F) -> Self
     where
         F: Fn(&Node) -> bool + 'static,
@@ -541,6 +643,16 @@ impl Graph {
         Ok(())
     }
 
+    /// Add several edges at once — the summary-expansion shape, where a
+    /// node's children all become its prerequisites in one move. Refuses
+    /// a cycle by name, and a repeated edge is idempotent per edge.
+    pub fn add_prerequisites(&mut self, id: &str, prereqs: &[String]) -> Result<(), GraphError> {
+        for prereq in prereqs {
+            self.add_prerequisite(id, prereq)?;
+        }
+        Ok(())
+    }
+
     /// Correct a node's cost estimate — D2's calibration as actual costs
     /// accumulate, so a shape whose briefs have historically cost N
     /// turns is estimated at N. The estimate shapes the ordering, the
@@ -559,10 +671,21 @@ impl Graph {
     /// a running node already holding one of this node's admitted paths
     /// is a refusal naming the path and its holder, never a silent
     /// reordering.
+    ///
+    /// P1 C2: refused on an already-verified node. It used to have no
+    /// status guard at all, so dispatching a verified node set it back to
+    /// `Running`, made its cost count again, and raised every dependent's
+    /// score — breaking the module's structural-monotonicity claim for
+    /// the sake of a retry path that `demote` now owns. `fail` has
+    /// refused exactly this since it was written; `dispatch` was the
+    /// asymmetric half.
     pub fn dispatch(&mut self, id: &str) -> Result<(), GraphError> {
         let index = self
             .index_of(id)
             .ok_or_else(|| GraphError::UnknownNode(id.to_string()))?;
+        if self.nodes[index].status == Status::Verified {
+            return Err(GraphError::AlreadyVerified(id.to_string()));
+        }
         if let Some(hold) = self.path_held(index, &[]) {
             return Err(GraphError::PathHeld {
                 path: hold.path,
@@ -570,6 +693,38 @@ impl Graph {
             });
         }
         self.nodes[index].status = Status::Running;
+        Ok(())
+    }
+
+    /// P1 C1: send a node back to `Pending` with a named reason, the
+    /// deliberate form of the transition `dispatch` used to perform by
+    /// accident.
+    ///
+    /// This is what "the work delivered on this node does not integrate"
+    /// needs: the node goes back to pending so `ready` and `dispatchable`
+    /// offer it again, the reason lands as an append-only `Revision`, and
+    /// every dependent's score rises automatically because the node is
+    /// unfinished again — no notification, because the score is derived
+    /// on read.
+    ///
+    /// The monotonicity claim now reads correctly: the score only falls
+    /// *as completions land*; a demotion is a named reversal, not a
+    /// violation. Back to `Pending` rather than `Running` because the
+    /// node needs re-dispatching through the same gate everything else
+    /// goes through, and the reason is recorded whether or not the node
+    /// had verified.
+    pub fn demote(&mut self, id: &str, reason: &str) -> Result<(), GraphError> {
+        let index = self
+            .index_of(id)
+            .ok_or_else(|| GraphError::UnknownNode(id.to_string()))?;
+        let from = self.nodes[index].status;
+        self.nodes[index].status = Status::Pending;
+        self.revisions.push(Revision {
+            seq: self.revisions.len() + 1,
+            cause: format!("demoted `{id}` from {}: {reason}", from.as_str()),
+            changes: vec![format!("`{id}` returns to pending")],
+        });
+        self.resync();
         Ok(())
     }
 
@@ -615,6 +770,26 @@ impl Graph {
         landed
     }
 
+    /// Promote a node whose artifact the fact-gate confirmed.
+    ///
+    /// The counterpart of `settle`, for a gate that runs outside the graph
+    /// — which is where the three real gates live, because two of them are
+    /// I/O and the third is a judgment. The graph stays pure: this takes a
+    /// verdict, it does not compute one.
+    ///
+    /// Idempotent, and refused by name on a node the graph does not carry.
+    /// Returns whether the promotion changed anything.
+    pub fn mark_verified(&mut self, id: &str) -> bool {
+        let Some(index) = self.index_of(id) else {
+            return false;
+        };
+        if self.nodes[index].status == Status::Verified {
+            return false;
+        }
+        self.nodes[index].status = Status::Verified;
+        true
+    }
+
     /// A node, by identity.
     pub fn node(&self, id: &str) -> Option<&Node> {
         self.index_of(id).map(|index| &self.nodes[index])
@@ -648,23 +823,37 @@ impl Graph {
     /// sum only loses terms.
     pub fn score(&self, id: &str) -> Option<u64> {
         let index = self.index_of(id)?;
+        let mut seen = vec![false; self.nodes.len()];
+        let mut stack = Vec::new();
+        Some(self.remaining_at(index, &mut seen, &mut stack))
+    }
+
+    /// The time to completion for a node: the longest chain below it.
+    /// See [`Graph::completion_at`] for why this is a separate number
+    /// from [`Graph::score`].
+    pub fn time_to_completion(&self, id: &str) -> Option<u64> {
+        let index = self.index_of(id)?;
         let mut cache = vec![None; self.nodes.len()];
         let mut stack = Vec::new();
-        Some(self.score_at(index, &mut cache, &mut stack))
+        Some(self.completion_at(index, &mut cache, &mut stack))
     }
 
     /// Every node's score, in declaration order — the snapshot a caller
     /// diffs across a settle to record what moved.
     pub fn scores(&self) -> Vec<(String, u64)> {
-        let mut cache = vec![None; self.nodes.len()];
-        let mut stack = Vec::new();
         self.nodes
             .iter()
             .enumerate()
             .map(|(index, node)| {
+                // A fresh `seen` per node: a set sum's visited set is
+                // rooted at the node being measured, so sharing one
+                // across the snapshot would zero every node after the
+                // first that reached a common ancestor.
+                let mut seen = vec![false; self.nodes.len()];
+                let mut stack = Vec::new();
                 (
                     node.id.clone(),
-                    self.score_at(index, &mut cache, &mut stack),
+                    self.remaining_at(index, &mut seen, &mut stack),
                 )
             })
             .collect()
@@ -672,8 +861,25 @@ impl Graph {
 
     /// The three conditions for one node, reported separately.
     pub fn unlock(&self, id: &str) -> Option<Unlock> {
+        self.unlock_with(id, None)
+    }
+
+    /// The unlock with a registry of other plans, so a prerequisite that
+    /// names another plan's node resolves instead of reading as an
+    /// unknown name.
+    ///
+    /// P7 C1: `Unlock::unresolved` used to be the only answer for a
+    /// prerequisite this graph does not carry, which made a cross-plan
+    /// dependency indistinguishable from a typo. With a registry the two
+    /// separate: a cross-plan edge that resolves to a verified node clears,
+    /// one that resolves to a waiting node holds and says so, and one that
+    /// cannot ever clear is named in `unresolvable` (P7 C3).
+    pub fn unlock_with(
+        &self,
+        id: &str,
+        registry: Option<&crate::plan_graph::PlanRegistry>,
+    ) -> Option<Unlock> {
         let index = self.index_of(id)?;
-        let mut cache = vec![None; self.nodes.len()];
         let mut stack = Vec::new();
         // Start verified: the loop below is what takes it away, so a node
         // with no prerequisites reads verified rather than defaulting to
@@ -682,24 +888,72 @@ impl Graph {
             deps_verified: true,
             ..Unlock::default()
         };
-        unlock.score_zero = self.score_at(index, &mut cache, &mut stack) == 0;
+        let mut seen = vec![false; self.nodes.len()];
+        unlock.score_zero = self.remaining_at(index, &mut seen, &mut stack) == 0;
         for prereq in &self.nodes[index].prereqs {
-            match self.index_of(prereq) {
-                None => {
-                    unlock.deps_verified = false;
-                    unlock.unresolved.push(prereq.clone());
+            // A prerequisite this graph does not carry is either another
+            // plan's node or a name nobody declared. The registry tells
+            // the two apart.
+            let Some(dep) = self.index_of(prereq) else {
+                match registry.and_then(|registry| {
+                    crate::plan_graph::cross_plan_edge(prereq).map(|edge| {
+                        let resolution = registry.resolve(&edge);
+                        (edge, resolution)
+                    })
+                }) {
+                    Some((_edge, crate::plan_graph::CrossPlanResolution::Verified)) => {
+                        // The other plan's node has verified: the edge is
+                        // satisfied and this graph's own arithmetic already
+                        // treats it as carrying no cost.
+                    }
+                    Some((edge, crate::plan_graph::CrossPlanResolution::Waiting(node))) => {
+                        unlock.deps_verified = false;
+                        unlock
+                            .cross_plan
+                            .push(format!("waiting on `{node}` in the `{}` plan", edge.slug));
+                    }
+                    Some((edge, crate::plan_graph::CrossPlanResolution::NotApproved(status))) => {
+                        unlock.deps_verified = false;
+                        let named = format!(
+                            "the `{}` plan is `{status}`, so `{}` can never verify",
+                            edge.slug, edge.node
+                        );
+                        unlock.cross_plan.push(named.clone());
+                        unlock.unresolvable.push(named);
+                    }
+                    Some((edge, crate::plan_graph::CrossPlanResolution::NoSuchPlan)) => {
+                        let named = format!(
+                            "no `{}` plan holds a graph, so `{}` cannot resolve",
+                            edge.slug, edge.node
+                        );
+                        unlock.cross_plan.push(named.clone());
+                        unlock.unresolvable.push(named);
+                        unlock.deps_verified = false;
+                    }
+                    Some((edge, crate::plan_graph::CrossPlanResolution::NoSuchNode)) => {
+                        let named =
+                            format!("the `{}` plan does not declare `{}`", edge.slug, edge.node);
+                        unlock.cross_plan.push(named.clone());
+                        unlock.unresolvable.push(named);
+                        unlock.deps_verified = false;
+                    }
+                    None => {
+                        unlock.deps_verified = false;
+                        unlock.unresolved.push(prereq.clone());
+                    }
                 }
-                Some(dep) => match self.nodes[dep].status {
-                    Status::Verified => {}
-                    Status::Failed => {
-                        unlock.deps_verified = false;
-                        unlock.failed.push(prereq.clone());
-                    }
-                    _ => {
-                        unlock.deps_verified = false;
-                        unlock.waiting.push(prereq.clone());
-                    }
-                },
+                continue;
+            };
+            match self.nodes[dep].status {
+                Status::Verified => {}
+                Status::Failed => {
+                    unlock.deps_verified = false;
+                    unlock.failed.push(prereq.clone());
+                }
+                _ => {
+                    unlock.deps_verified = false;
+                    unlock.waiting.push(prereq.clone());
+                }
             }
         }
         for hold in self.holds_on(index) {
@@ -718,6 +972,7 @@ impl Graph {
     /// started, in declaration order. The graph's own view:
     /// [`Graph::dispatchable`] applies the concurrency bound and the
     /// caller's record of what is in flight.
+    /// The pending nodes that could start now.
     pub fn ready(&self) -> Vec<String> {
         self.nodes
             .iter()
@@ -725,6 +980,66 @@ impl Graph {
             .filter(|node| self.is_unlocked(&node.id))
             .map(|node| node.id.clone())
             .collect()
+    }
+
+    /// P1 C8: whether the graph has reached a terminal standstill — every
+    /// remaining pending node is blocked by a failed or unresolved
+    /// prerequisite, so nothing will ever become ready on its own.
+    ///
+    /// Without this, a blocked graph and a finished one look identical
+    /// from the outside: `ready()` returns empty either way. The
+    /// difference matters enormously — one means "all the work landed,"
+    /// the other means "the run is stuck and nothing is telling anyone."
+    /// A `Failed` node can still be promoted by a later artifact, so a
+    /// failed dependency alone is not terminal; what is terminal is that
+    /// no pending node is unlocked AND none of the blockers is still
+    /// running, because then nothing in the graph can change the
+    /// situation.
+    pub fn is_terminally_blocked(&self) -> bool {
+        if self.nodes.is_empty() || !self.ready().is_empty() {
+            return false;
+        }
+        // A graph with nothing left pending is complete, not stuck. The
+        // `all` below would otherwise read an empty set of pending nodes
+        // as "every one of them is blocked" and name a finished graph as
+        // terminally blocked — the exact confusion this method exists to
+        // prevent, inverted.
+        if !self.nodes.iter().any(|node| node.status == Status::Pending) {
+            return false;
+        }
+        // Anything still running could land an artifact and unblock the
+        // rest, so the graph is not stuck yet.
+        if self.nodes.iter().any(|node| node.status == Status::Running) {
+            return false;
+        }
+        self.nodes
+            .iter()
+            .filter(|node| node.status == Status::Pending)
+            .all(|node| {
+                self.unlock(&node.id)
+                    .is_some_and(|unlock| !unlock.is_unlocked())
+            })
+    }
+
+    /// Why the graph is terminally blocked, named — the pending nodes and
+    /// what each is waiting on. `None` when the graph is not stuck.
+    pub fn terminal_block(&self) -> Option<Vec<(String, String)>> {
+        if !self.is_terminally_blocked() {
+            return None;
+        }
+        Some(
+            self.nodes
+                .iter()
+                .filter(|node| node.status == Status::Pending)
+                .map(|node| {
+                    let reason = self
+                        .unlock(&node.id)
+                        .map(|unlock| unlock.reason().unwrap_or_else(|| "blocked".to_string()))
+                        .unwrap_or_else(|| "blocked".to_string());
+                    (node.id.clone(), reason)
+                })
+                .collect(),
+        )
     }
 
     /// The nodes that can start right now: unlocked, not already
@@ -804,13 +1119,18 @@ impl Graph {
         let mut stack = Vec::new();
         let mut head: Option<usize> = None;
         for index in 0..self.nodes.len() {
-            let score = self.score_at(index, &mut cache, &mut stack);
+            // P2 C4: the head is the longest time to completion, not the
+            // largest remaining work. A convergence node's set sum counts
+            // both branches once each, so it reads as more work left than
+            // a genuinely longer single chain and used to win the head
+            // selection on that basis.
+            let longest = self.completion_at(index, &mut cache, &mut stack);
             let better = match head {
                 None => true,
                 Some(current) => {
-                    let standing = self.score_at(current, &mut cache, &mut stack);
-                    score > standing
-                        || (score == standing && self.nodes[index].id < self.nodes[current].id)
+                    let standing = self.completion_at(current, &mut cache, &mut stack);
+                    longest > standing
+                        || (longest == standing && self.nodes[index].id < self.nodes[current].id)
                 }
             };
             if better {
@@ -820,7 +1140,7 @@ impl Graph {
         let Some(head) = head else {
             return Vec::new();
         };
-        if self.score_at(head, &mut cache, &mut stack) == 0 {
+        if self.completion_at(head, &mut cache, &mut stack) == 0 {
             return Vec::new();
         }
         let mut path = vec![self.nodes[head].id.clone()];
@@ -837,7 +1157,9 @@ impl Graph {
                 if path.iter().any(|seen| seen == &self.nodes[dep].id) {
                     continue;
                 }
-                let weight = self.nodes[dep].cost + self.score_at(dep, &mut cache, &mut stack);
+                // And each link is the dependency whose own longest
+                // chain below it is deepest — the path, not the pile.
+                let weight = self.nodes[dep].cost + self.completion_at(dep, &mut cache, &mut stack);
                 let better = match next {
                     None => true,
                     Some((standing, chosen)) => {
@@ -925,20 +1247,38 @@ impl Graph {
     // --- the arithmetic ----------------------------------------------------
 
     /// A node's position in the declaration order.
-    fn index_of(&self, id: &str) -> Option<usize> {
+    /// A node's index, by identity. Public because the plan-graph module's
+    /// merge validates a sub-plan's edges against the graph as it stands.
+    pub fn index_of(&self, id: &str) -> Option<usize> {
         self.nodes.iter().position(|node| node.id == id)
     }
 
-    /// The score, memoized per call. The visiting stack is a defensive
-    /// guard rather than a reachable path — cycles are refused at
-    /// declaration — and it returns 0 rather than hanging.
-    fn score_at(&self, index: usize, cache: &mut Vec<Option<u64>>, stack: &mut Vec<usize>) -> u64 {
-        if let Some(cached) = cache[index] {
-            return cached;
+    /// The remaining work in a node's closure, memoized per call.
+    ///
+    /// P2: a sum over the **set** of unfinished nodes in the closure,
+    /// each counted once. This is what the module's doc always claimed —
+    /// "the total remaining work in a node's dependency closure" — and
+    /// what the arithmetic did not do: it summed over *paths*, so a
+    /// shared dependency was counted once per path that reached it. In
+    /// the module's own diamond (`base` 2, `left` 3 on base, `right` 4
+    /// on base, `ship` 6 on both), the path sum reads
+    /// `(3+2)+(4+2) = 11` while the closure is `3+4+2 = 9`. Eleven is
+    /// neither the work left nor the time left, and `critical_path`
+    /// picked its head by it.
+    ///
+    /// The visiting stack is a defensive guard rather than a reachable
+    /// path — cycles are refused at declaration — and it returns 0
+    /// rather than hanging. `seen` is what makes this a set sum: a node
+    /// reached a second time through a diamond contributes nothing,
+    /// because its work is already counted.
+    fn remaining_at(&self, index: usize, seen: &mut Vec<bool>, stack: &mut Vec<usize>) -> u64 {
+        if seen[index] {
+            return 0;
         }
         if stack.contains(&index) {
             return 0;
         }
+        seen[index] = true;
         stack.push(index);
         let mut total: u64 = 0;
         for prereq in &self.nodes[index].prereqs {
@@ -951,12 +1291,66 @@ impl Graph {
             if self.nodes[dep].status == Status::Verified {
                 continue;
             }
+            // The set sum's own guard, and it has to sit here rather than
+            // only inside the recursion: the cost is added at the call
+            // site, so without this a node reached by two paths is
+            // counted once per path — which is the path sum this replaced.
+            // In the diamond, `base`'s cost enters through `left` and
+            // would enter again through `right`.
+            if seen[dep] {
+                continue;
+            }
             total = total.saturating_add(self.nodes[dep].cost);
-            total = total.saturating_add(self.score_at(dep, cache, stack));
+            total = total.saturating_add(self.remaining_at(dep, seen, stack));
         }
         stack.pop();
-        cache[index] = Some(total);
         total
+    }
+
+    /// The time to completion for a node: the longest chain *below* it,
+    /// the critical-path method's earliest start.
+    ///
+    /// P2's second number. It excludes the node's own cost — that
+    /// exclusion is stated because "longest path" is otherwise ambiguous,
+    /// and including it would produce a third number that is neither the
+    /// work left nor the time until this node can start. In the diamond
+    /// it is `max(3+2, 4+2) = 6`, against the path sum's 11 and the set
+    /// sum's 9.
+    ///
+    /// This is what `critical_path` selects its head by, and it is the
+    /// number that makes a convergence node stop outranking a genuinely
+    /// longer single chain: a diamond of branches 3 and 4 has a real
+    /// longest path of 6, where a single chain of costs 2 and 9 has 11,
+    /// and the path sum scored both at 11.
+    fn completion_at(
+        &self,
+        index: usize,
+        cache: &mut Vec<Option<u64>>,
+        stack: &mut Vec<usize>,
+    ) -> u64 {
+        if let Some(cached) = cache[index] {
+            return cached;
+        }
+        if stack.contains(&index) {
+            return 0;
+        }
+        stack.push(index);
+        let mut longest: u64 = 0;
+        for prereq in &self.nodes[index].prereqs {
+            let Some(dep) = self.index_of(prereq) else {
+                continue;
+            };
+            if self.nodes[dep].status == Status::Verified {
+                continue;
+            }
+            let via = self.nodes[dep]
+                .cost
+                .saturating_add(self.completion_at(dep, cache, stack));
+            longest = longest.max(via);
+        }
+        stack.pop();
+        cache[index] = Some(longest);
+        longest
     }
 
     /// Recompute every node's score and raise its peak to the highest it
@@ -964,11 +1358,11 @@ impl Graph {
     /// changes: a node added before its prerequisites exist reads zero
     /// until they land, and the peak must not remember that.
     fn resync(&mut self) {
-        let mut cache = vec![None; self.nodes.len()];
-        let mut stack = Vec::new();
         for index in 0..self.nodes.len() {
-            let score = self.score_at(index, &mut cache, &mut stack);
-            self.nodes[index].peak = self.nodes[index].peak.max(score);
+            let mut seen = vec![false; self.nodes.len()];
+            let mut stack = Vec::new();
+            let remaining = self.remaining_at(index, &mut seen, &mut stack);
+            self.nodes[index].peak = self.nodes[index].peak.max(remaining);
         }
     }
 
@@ -1289,7 +1683,12 @@ pub fn diff_weight(delta: &crate::subagents::Delta) -> u64 {
     }
     let base = match delta.reason {
         crate::subagents::DeltaReason::RightAndFollowed
-        | crate::subagents::DeltaReason::BetterRoute => 0,
+        | crate::subagents::DeltaReason::BetterRoute
+        // P6 C4: a node recognised as a summary is not a deviation from
+        // anything. The child did what it was asked, and the looking is
+        // what produced the breakdown — so it costs nothing and fires no
+        // replan. It is handled by the merge, not by the arithmetic.
+        | crate::subagents::DeltaReason::NotAtomic => 0,
         crate::subagents::DeltaReason::CompanionMissing => COMPANION_WEIGHT,
         crate::subagents::DeltaReason::Infeasible => INFEASIBLE_WEIGHT,
     };
@@ -1329,6 +1728,11 @@ pub const NODE_DIFF_THRESHOLD: u64 = 5;
 /// under its own children is worse than a tree that was wrong once.
 pub const REPLAN_CAP: usize = 2;
 
+/// A per-write serial for the graph's temp name, so two fleet processes
+/// — or two writes in one process — never share a temp file. The memory
+/// index's own serial, mirrored for the second writer.
+static GRAPH_WRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
+
 /// One replan, recorded append-only.
 ///
 /// The revision is what makes the tree's history reconstructable
@@ -1357,6 +1761,13 @@ impl Graph {
     /// lived anywhere else could not be part of the arithmetic. A node
     /// the graph does not carry is a named error: a delta for work
     /// nobody declared is a delta nobody can act on.
+    ///
+    /// P1 C5: idempotent per node. It used to be an unconditional
+    /// overwrite, which let a second report *lower* `diff_score` and
+    /// un-fire a replan the doc claimed was "monotone by construction."
+    /// A node that already carries a delta is a named error rather than
+    /// a silent replacement, so a re-report has to come through
+    /// [`Graph::demote`] — which resets the node and records why.
     pub fn record_delta(
         &mut self,
         id: &str,
@@ -1365,6 +1776,9 @@ impl Graph {
         let index = self
             .index_of(id)
             .ok_or_else(|| GraphError::UnknownNode(id.to_string()))?;
+        if self.nodes[index].delta.is_some() {
+            return Err(GraphError::DeltaAlreadyLanded(id.to_string()));
+        }
         self.nodes[index].delta = Some(delta);
         Ok(())
     }
@@ -1374,9 +1788,10 @@ impl Graph {
     /// trigger's input.
     ///
     /// Monotone by construction — a delta lands once and nothing
-    /// removes one — so the score only rises as the tree reports, and
-    /// the render can show it climbing toward the threshold without
-    /// the reader wondering whether it could fall back.
+    /// removes one, enforced by [`Graph::record_delta`] — so the score
+    /// only rises as the tree reports, and the render can show it
+    /// climbing toward the threshold without the reader wondering
+    /// whether it could fall back.
     pub fn diff_score(&self) -> u64 {
         self.nodes
             .iter()
@@ -1433,12 +1848,22 @@ impl Graph {
         // The falsified approaches, in declaration order: the nodes
         // whose own runs reported infeasible and said what they did
         // instead.
+        //
+        // P1 C4: a CONTRADICTED report is excluded. `diff_weight` prices
+        // a contradiction at `CONTRADICTED_WEIGHT` — the highest
+        // severity, above every category — precisely because a
+        // contradicted report is the one the log does not support. The
+        // old filter keyed on `reason == Infeasible` and a non-empty
+        // `instead` only, so the single category that means "don't trust
+        // this" was trusted to replace a real approach with the child's
+        // unverifiable claim. A false report now falsifies nothing.
         let falsified: Vec<(String, String)> = self
             .nodes
             .iter()
             .filter_map(|node| match &node.delta {
                 Some(delta)
-                    if delta.reason == crate::subagents::DeltaReason::Infeasible
+                    if delta.contradiction.is_none()
+                        && delta.reason == crate::subagents::DeltaReason::Infeasible
                         && !delta.instead.trim().is_empty() =>
                 {
                     Some((node.id.clone(), delta.instead.clone()))
@@ -1558,6 +1983,16 @@ pub struct NodeFile {
     pub delta: Option<crate::subagents::Delta>,
     #[serde(default)]
     pub status: Status,
+    /// The highest score this node's closure has carried — the readiness
+    /// bar's denominator. P1 C7: it rides the file. It used to be
+    /// rebuilt by `load`'s all-`Pending` adds, so a cost revised up to 50
+    /// and back down to 1 before saving read back as `peak = 1`,
+    /// shrinking the bar's denominator and misreporting readiness.
+    /// `#[serde(default)]` keeps an older file readable: a pre-peak
+    /// graph reads back at zero and the bar renders empty rather than
+    /// the load refusing.
+    #[serde(default)]
+    pub peak: u64,
 }
 
 /// Where a home's declared graph lives: `<home>/graph.json`, beside the
@@ -1572,8 +2007,12 @@ impl Graph {
     /// The parent directory is created: a first save into a fresh home
     /// is the ordinary case, and refusing it would make the surface's
     /// first act a failure.
-    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
-        let file = GraphFile {
+    /// The graph as its file shape. Split out of [`Graph::save`] so the
+    /// plan-tied runtime file can embed it without going through a path —
+    /// the plan's file carries the graph's persistence beside the two
+    /// things that tie it to its document.
+    pub fn to_file(&self) -> GraphFile {
+        GraphFile {
             nodes: self
                 .nodes
                 .iter()
@@ -1586,33 +2025,19 @@ impl Graph {
                     approach: node.approach.clone(),
                     delta: node.delta.clone(),
                     status: node.status,
+                    peak: node.peak,
                 })
                 .collect(),
             revisions: self.revisions.clone(),
-        };
-        let text = serde_json::to_string_pretty(&file)
-            .map_err(|error| format!("the graph would not serialize: {error}"))?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("{}: {error}", parent.display()))?;
         }
-        std::fs::write(path, format!("{text}\n"))
-            .map_err(|error| format!("{}: {error}", path.display()))
     }
 
-    /// Read a declared graph back from `path`.
-    ///
-    /// Every failure is named rather than defaulted: an absent file, an
-    /// unreadable one, and a malformed one are three different facts,
-    /// and an empty graph silently substituted for any of them would
-    /// render as "nothing is blocking anything" — the one reading the
-    /// surface must never produce by accident. The loaded graph carries
-    /// no fact-gate (see [`GraphFile`]); the caller attaches its own.
-    pub fn load(path: &std::path::Path) -> Result<Graph, String> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        let file: GraphFile = serde_json::from_str(&text)
-            .map_err(|error| format!("{} is not a declared graph: {error}", path.display()))?;
+    /// Rebuild a graph from its file shape. The counterpart of
+    /// [`Graph::to_file`], and the reason `load` can refuse a malformed
+    /// file by name: every node is re-declared through `add`, so a cycle
+    /// or a duplicate id in the file is refused exactly as it would be at
+    /// declaration time.
+    pub fn from_file(file: GraphFile, path: &std::path::Path) -> Result<Graph, String> {
         let mut graph = Graph::new();
         for node in file.nodes {
             let id = node.id.clone();
@@ -1637,13 +2062,82 @@ impl Graph {
                 // the nodes, so a graph that lost its deltas on save
                 // would read back as a tree that never deviated.
                 added.delta = delta;
+                // And the peak (P1 C7): the readiness bar's denominator
+                // is a historical high, which the file is the only thing
+                // that can carry across a restart. `resync` raises it
+                // from the restored costs, so a load can only restore it
+                // upward — never lose it.
+                added.peak = added.peak.max(node.peak);
             }
         }
         // The revisions ride the file append-only, exactly as they are
         // held: the tree's history is what lets a later reader check
         // the current model against the evidence that shaped it.
-        graph.revisions = file.revisions;
+        //
+        // P1 C6: capped on load, the same bound `replan` enforces. A
+        // hand-edited or long-lived file carrying three revisions used
+        // to load fine, after which the graph could never replan again
+        // — the cap deadened the mechanism silently rather than
+        // refusing. Only the most recent `REPLAN_CAP` revisions are
+        // kept, and the load names what it dropped.
+        let declared = file.revisions.len();
+        graph.revisions = if declared > REPLAN_CAP {
+            let dropped = declared - REPLAN_CAP;
+            eprintln!(
+                "fleet: graph: {} carries {} revisions, past the cap of {REPLAN_CAP}; \
+                 the {dropped} oldest were dropped",
+                path.display(),
+                declared
+            );
+            let mut revisions = file.revisions;
+            revisions.split_off(dropped)
+        } else {
+            file.revisions
+        };
         Ok(graph)
+    }
+
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        let file = self.to_file();
+        let text = serde_json::to_string_pretty(&file)
+            .map_err(|error| format!("the graph would not serialize: {error}"))?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("{}: {error}", parent.display()))?;
+        }
+        // P1 C3: atomic, through a unique temp and a rename. It used to
+        // be a direct `fs::write`, so a crash or a concurrent writer
+        // truncated the file and the next load failed with "is not a
+        // declared graph" — the previous good state gone, with no
+        // backup. This is the discipline every other writer in the crate
+        // runs on, and it matters more here than anywhere: the graph is
+        // the execution record of an approved plan.
+        let serial = GRAPH_WRITE_SERIAL.fetch_add(1, Ordering::Relaxed);
+        let mut temp = path.to_path_buf().into_os_string();
+        temp.push(format!(".{}.{}.tmp", std::process::id(), serial));
+        let temp = std::path::PathBuf::from(temp);
+        std::fs::write(&temp, format!("{text}\n"))
+            .map_err(|error| format!("{}: {error}", temp.display()))?;
+        std::fs::rename(&temp, path).map_err(|error| {
+            let _ = std::fs::remove_file(&temp);
+            format!("{}: {error}", path.display())
+        })
+    }
+
+    /// Read a declared graph back from `path`.
+    ///
+    /// Every failure is named rather than defaulted: an absent file, an
+    /// unreadable one, and a malformed one are three different facts,
+    /// and an empty graph silently substituted for any of them would
+    /// render as "nothing is blocking anything" — the one reading the
+    /// surface must never produce by accident. The loaded graph carries
+    /// no fact-gate (see [`GraphFile`]); the caller attaches its own.
+    pub fn load(path: &std::path::Path) -> Result<Graph, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let file: GraphFile = serde_json::from_str(&text)
+            .map_err(|error| format!("{} is not a declared graph: {error}", path.display()))?;
+        Self::from_file(file, path)
     }
 }
 
@@ -1653,10 +2147,17 @@ impl Graph {
 /// remaining-work number, its edges named, and what is holding it.
 /// Never a plain-text table.
 pub fn render(graph: &Graph) -> String {
+    render_with(graph, None)
+}
+
+/// The render with a registry of other plans, so a cross-plan edge reads
+/// as what it is — waiting on another plan's node — rather than as a
+/// prerequisite the graph does not carry.
+pub fn render_with(graph: &Graph, registry: Option<&crate::plan_graph::PlanRegistry>) -> String {
     let path = graph.critical_path();
     let mut out = summary_card(graph, &path);
     for index in 0..graph.nodes.len() {
-        out.push_str(&node_card(graph, index, &path));
+        out.push_str(&node_card_with(graph, index, &path, registry));
     }
     out
 }
@@ -1813,9 +2314,14 @@ fn summary_line(marker: &str, color: &str, label: &str, value: &str) -> Vec<Stri
 /// right edge, the readiness bar beside the raw remaining-work number,
 /// the edges named, what is holding it, and the declaration and approach
 /// the node was decomposed with.
-fn node_card(graph: &Graph, index: usize, path: &[String]) -> String {
+fn node_card_with(
+    graph: &Graph,
+    index: usize,
+    path: &[String],
+    registry: Option<&crate::plan_graph::PlanRegistry>,
+) -> String {
     let node = &graph.nodes[index];
-    let unlock = graph.unlock(&node.id).unwrap_or_default();
+    let unlock = graph.unlock_with(&node.id, registry).unwrap_or_default();
     let score = graph.score(&node.id).unwrap_or(0);
     let (dot, word, color) = node_state(node, &unlock);
     let on_path = path.iter().any(|id| id == &node.id);
@@ -1828,10 +2334,11 @@ fn node_card(graph: &Graph, index: usize, path: &[String]) -> String {
     body.push(readiness_line(
         node,
         score,
+        graph.time_to_completion(&node.id).unwrap_or(0),
         color,
         graph.appears_in_scores(&node.id),
     ));
-    body.extend(edge_lines(graph, node));
+    body.extend(edge_lines_with(graph, node, registry));
     for hold in &unlock.held {
         body.push(format!(
             "{WARN}held by {holder} on {path}{RESET}",
@@ -1900,12 +2407,22 @@ fn node_card(graph: &Graph, index: usize, path: &[String]) -> String {
 /// distance to the minima — and the number is the score itself, so the
 /// estimate's shape stays visible and the exact value is never hidden
 /// behind it.
-fn readiness_line(node: &Node, score: u64, color: &str, appears: usize) -> String {
+fn readiness_line(node: &Node, score: u64, longest: u64, color: &str, appears: usize) -> String {
     let bar = readiness_bar(score, node.peak, color);
     let mut line = format!(
         "{bar} {TEXT}{number:>5} left{RESET}",
         number = score_word(score)
     );
+    // P2: the second number rides the same line. Remaining work is the
+    // pile; the longest chain is how long until this node can start, and
+    // they disagree exactly where a convergence node is involved — which
+    // is when the difference matters, so both are named.
+    if longest > 0 {
+        line = with_clause(
+            &line,
+            &format!("{} to the longest chain", score_word(longest)),
+        );
+    }
     // Both clauses are bounded by construction; the width check is the
     // belt over the braces, so a line that would reach the house width
     // drops its last clause rather than passing it (the KI-179 class).
@@ -1936,7 +2453,13 @@ fn with_clause(line: &str, clause: &str) -> String {
 /// The edges, named: every declared prerequisite with what stands behind
 /// it — the work left, `verified`, `failed`, or `not in the graph`. An
 /// edge the graph cannot resolve is named, never dropped.
-fn edge_lines(graph: &Graph, node: &Node) -> Vec<String> {
+/// The edges, named, with a registry of other plans so a cross-plan edge
+/// reads as what it is rather than as a name the graph does not carry.
+fn edge_lines_with(
+    graph: &Graph,
+    node: &Node,
+    registry: Option<&crate::plan_graph::PlanRegistry>,
+) -> Vec<String> {
     if node.prereqs.is_empty() {
         return vec![format!("{DIM}\u{b7}{RESET} {TEXT}needs nothing{RESET}")];
     }
@@ -1945,7 +2468,35 @@ fn edge_lines(graph: &Graph, node: &Node) -> Vec<String> {
         .prereqs
         .iter()
         .map(|prereq| match graph.node(prereq) {
-            None => format!("{prereq} (not in the graph)"),
+            None => match registry.and_then(|registry| {
+                crate::plan_graph::cross_plan_edge(prereq).map(|edge| {
+                    let resolution = registry.resolve(&edge);
+                    (edge, resolution)
+                })
+            }) {
+                Some((edge, crate::plan_graph::CrossPlanResolution::Verified)) => {
+                    format!("{} (verified in the `{}` plan)", edge.node, edge.slug)
+                }
+                Some((edge, crate::plan_graph::CrossPlanResolution::Waiting(_))) => {
+                    format!("{} (waiting in the `{}` plan)", edge.node, edge.slug)
+                }
+                Some((edge, crate::plan_graph::CrossPlanResolution::NotApproved(status))) => {
+                    stalled = true;
+                    format!("{} (the `{}` plan is `{status}`)", edge.node, edge.slug)
+                }
+                Some((edge, crate::plan_graph::CrossPlanResolution::NoSuchPlan)) => {
+                    stalled = true;
+                    format!("{} (no `{}` plan holds a graph)", edge.node, edge.slug)
+                }
+                Some((edge, crate::plan_graph::CrossPlanResolution::NoSuchNode)) => {
+                    stalled = true;
+                    format!(
+                        "{} (the `{}` plan does not declare it)",
+                        edge.node, edge.slug
+                    )
+                }
+                None => format!("{prereq} (not in the graph)"),
+            },
             Some(dep) => match dep.status {
                 Status::Verified => format!("{prereq} (verified)"),
                 Status::Failed => {

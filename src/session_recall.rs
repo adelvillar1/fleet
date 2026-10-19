@@ -679,7 +679,17 @@ impl RecallCounts {
     /// — the index's own discipline, so a reader never sees a
     /// half-written store and two fleet processes cannot collide on
     /// one temp — and a failed write is one logged line.
+    ///
+    /// The whole read-modify-write runs under an exclusive lock on a
+    /// sibling `.lock` beside the store (KI-235). The temp-plus-rename
+    /// discipline prevents a torn file but not a lost update: two
+    /// concurrent recalls each read the old count and each write back
+    /// one increment, and the last rename wins. The lock is what makes
+    /// the increment atomic across processes.
     pub fn bump(sessions_dir: &Path, session_id: &str) {
+        let _guard = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(
+            &counts_path(sessions_dir),
+        ));
         let mut counts = Self::load(sessions_dir);
         let entry = counts.sessions.entry(session_id.to_string()).or_default();
         entry.count += 1;
@@ -1529,6 +1539,37 @@ mod tests {
             "the log carries a count line: {text}"
         );
         assert_eq!(RecallCounts::load(&dir).count_of("20261015T000000Z-aaa"), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// KI-235: the temp-plus-rename discipline prevents a torn file but
+    /// not a lost update. Two concurrent recalls each read the old count
+    /// and each write back one increment, and the last rename wins — so
+    /// without the lock around the whole read-modify-write, one of the
+    /// two increments is silently dropped. Two threads racing the same
+    /// store is the in-process face of the same race.
+    #[test]
+    fn two_concurrent_bumps_both_land() {
+        let dir = scratch("counts-race");
+        let id = "20261015T000000Z-aaa";
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let dir = dir.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                RecallCounts::bump(&dir, id);
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("a bump thread panicked");
+        }
+        assert_eq!(
+            RecallCounts::load(&dir).count_of(id),
+            2,
+            "both increments must land — a lost update is the race the lock closes"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

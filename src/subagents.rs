@@ -650,6 +650,18 @@ pub enum DeltaReason {
     /// The approach was right and the child found a better route to
     /// the same minima. A gain, not a loss.
     BetterRoute,
+    /// P6 C4: the node was not atomic. Its run discovered that the work
+    /// breaks down further, and the children it found ride
+    /// [`Delta::declares`]. This is the mechanism that lets an
+    /// orchestrator declare to a bounded depth and expand as it reaches
+    /// a summary, rather than having to see N levels down on its first
+    /// turn.
+    ///
+    /// It is a deviation, not a failure: the child did exactly what it
+    /// was asked — it looked, and the looking is what produced the
+    /// breakdown. The delta's own weight is zero, because a summary being
+    /// recognised as a summary moves nothing that was wrong.
+    NotAtomic,
 }
 
 impl DeltaReason {
@@ -660,6 +672,7 @@ impl DeltaReason {
             DeltaReason::CompanionMissing => "companion-missing",
             DeltaReason::RightAndFollowed => "right-and-followed",
             DeltaReason::BetterRoute => "better-route",
+            DeltaReason::NotAtomic => "not-atomic",
         }
     }
 
@@ -709,6 +722,16 @@ pub struct Delta {
     /// The contradiction the child's own session log holds against
     /// this claim, named. `None` when the log corroborates it.
     pub contradiction: Option<String>,
+    /// P6 C4: the nodes this run declares as the node's children, when it
+    /// found the node to be a summary rather than an atomic task. Empty
+    /// on every other reason.
+    ///
+    /// This is the payload that makes bounded-depth planning work: the
+    /// orchestrator declares to a depth it can see, and a child that
+    /// reaches a summary hands back the breakdown instead of the
+    /// orchestrator having to anticipate it.
+    #[serde(default)]
+    pub declares: Vec<crate::graph::DeclaredNode>,
 }
 
 impl Delta {
@@ -898,6 +921,7 @@ fn block(fields: &[(String, String)]) -> Option<(String, Delta)> {
             instead: one_line(field("instead").unwrap_or_default()),
             forced: field("forced") == Some("true"),
             children: Vec::new(),
+            declares: Vec::new(),
             contradiction: field("contradiction").map(one_line),
         },
     ))
@@ -1088,19 +1112,33 @@ pub struct SubagentRequest {
     pub tools: Option<Vec<String>>,
     /// The child's turn cap.
     pub max_turns: usize,
+    /// The declared plan node this call executes, when the call named
+    /// one. The node's own approach and capability declaration become the
+    /// brief, so the plan document and the run cannot drift: the contract
+    /// the owner approved is the one the child is handed.
+    pub node: Option<String>,
 }
 
 impl SubagentRequest {
     /// Parse one call's arguments object.
     pub fn parse(arguments: &serde_json::Value) -> Result<SubagentRequest, String> {
+        // A call may name a declared node instead of carrying a goal: the
+        // node's own approach is the task, which is what keeps the plan
+        // document and the run from drifting. Naming a node with no goal
+        // is fine — the node supplies it — but a call with neither has
+        // nothing to delegate.
+        let node = optional_text(arguments, "node")?
+            .map(|node| node.trim().to_string())
+            .filter(|node| !node.is_empty());
         let goal = arguments
             .get("goal")
             .and_then(|value| value.as_str())
             .map(str::trim)
             .filter(|goal| !goal.is_empty())
             .map(str::to_string)
+            .or_else(|| node.clone())
             .ok_or_else(|| {
-                "the `goal` argument is required and must be a non-empty string: the subagent sees nothing of this conversation, so the goal has to carry the whole task".to_string()
+                "the `goal` argument is required and must be a non-empty string, or name a declared `node` whose approach is the task".to_string()
             })?;
         let tools = match arguments.get("tools") {
             None | Some(serde_json::Value::Null) => None,
@@ -1193,6 +1231,7 @@ impl SubagentRequest {
             role,
             tools,
             max_turns,
+            node,
         })
     }
 }
@@ -3133,5 +3172,89 @@ mod tests {
             "the summary must not ride the row"
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// P6 C2: a call may name a declared plan node instead of carrying a
+    /// goal, and the node's identity rides the request so the run and the
+    /// plan document cannot drift.
+    #[test]
+    fn a_call_may_name_a_declared_node_instead_of_a_goal() {
+        let with_node = SubagentRequest::parse(&serde_json::json!({
+            "node": "build-parser"
+        }))
+        .expect("a node stands in for a goal");
+        assert_eq!(with_node.node.as_deref(), Some("build-parser"));
+        assert_eq!(
+            with_node.task, "build-parser",
+            "the node's id is the task until the node's approach is resolved"
+        );
+
+        // A goal still wins when both are given, and the node rides along.
+        let both = SubagentRequest::parse(&serde_json::json!({
+            "goal": "wire the parser into the CLI",
+            "node": "build-parser"
+        }))
+        .unwrap();
+        assert_eq!(both.task, "wire the parser into the CLI");
+        assert_eq!(both.node.as_deref(), Some("build-parser"));
+
+        // Neither is a refusal that names both channels.
+        let neither = SubagentRequest::parse(&serde_json::json!({})).unwrap_err();
+        assert!(
+            neither.contains("`goal`") && neither.contains("`node`"),
+            "{neither}"
+        );
+        // An empty node is an absent node, not a goal of "".
+        let blank = SubagentRequest::parse(&serde_json::json!({"node": "   "})).unwrap_err();
+        assert!(blank.contains("`goal`"), "{blank}");
+    }
+
+    /// P6 C3: dispatch selects nodes with a zero dependency score, at
+    /// whatever depth the work sits — which is `dispatchable`'s existing
+    /// rule, now reachable through a plan.
+    #[test]
+    fn a_deep_node_dispatches_the_moment_its_chain_verifies() {
+        // Four levels of declared work: the leaf at work-depth 4 is
+        // unreachable until the whole chain above it lands, and then it is
+        // immediately dispatchable — the executor's own depth cap has nothing
+        // to do with it, because the graph carries the work structure and the
+        // session tree carries only who spawned whom.
+        let mut graph = crate::graph::Graph::new();
+        graph.add(crate::graph::Node::new("a", 1)).unwrap();
+        graph
+            .add(crate::graph::Node::new("b", 1).with_prereqs(["a"]))
+            .unwrap();
+        graph
+            .add(crate::graph::Node::new("c", 1).with_prereqs(["b"]))
+            .unwrap();
+        graph
+            .add(crate::graph::Node::new("d", 1).with_prereqs(["c"]))
+            .unwrap();
+
+        // Only `a` is unlocked to begin with: everything else has unfinished
+        // work in its closure.
+        assert_eq!(graph.dispatchable(3, &[]), vec!["a".to_string()]);
+
+        // Land the chain and the deep leaf becomes dispatchable in the same
+        // pass — it never waited for a wave, only for its dependencies.
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        let gate = std::sync::Arc::clone(&seen);
+        graph.set_verifier(Box::new(move |node: &crate::graph::Node| {
+            gate.lock().unwrap().contains(&node.id)
+        }));
+        for id in ["a", "b", "c"] {
+            seen.lock().unwrap().insert(id.to_string());
+        }
+        graph.settle();
+        assert_eq!(
+            graph.dispatchable(3, &[]),
+            vec!["d".to_string()],
+            "the leaf at work-depth 4 dispatches the moment its chain verifies"
+        );
+        assert_eq!(
+            graph.time_to_completion("d"),
+            Some(0),
+            "and its closure is done"
+        );
     }
 }

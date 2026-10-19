@@ -561,6 +561,48 @@ fn freshness_names_the_newest_mtime_the_derivation_saw() {
     assert!(cached.get("recall").is_none());
 }
 
+/// KI-232: the cache is never invalidated on its own and `fresh` has no
+/// production caller, so the write-time guard — the one caller that
+/// knows it just changed the tree — drops the entry itself. Without
+/// this, a term introduced after the derivation is reported as novel
+/// (or a drift as clean) for the rest of the process.
+#[test]
+fn invalidating_a_root_re_derives_it_on_the_next_read() {
+    let root = scratch("invalidate");
+    write(&root, "src/judge.rs", "pub fn judge() {}\n");
+    let before = vocabulary(&root);
+    assert!(
+        before.get("recall").is_none(),
+        "the term is not in the tree yet"
+    );
+
+    // The write the guard just let through introduces it.
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    write(&root, "src/memory.rs", "pub fn recall() {}\n");
+    let stale = vocabulary(&root);
+    assert!(
+        stale.get("recall").is_none(),
+        "the cache alone still cannot see it — the staleness this pins"
+    );
+
+    invalidate(&root);
+    let after = vocabulary(&root);
+    assert!(
+        after.get("recall").is_some(),
+        "and after the invalidate the next read re-derives"
+    );
+
+    // A root that was never derived is a no-op, not a panic — and the
+    // read after it still works.
+    let absent = scratch("invalidate-absent");
+    invalidate(&absent);
+    let empty = vocabulary(&absent);
+    assert!(
+        empty.is_empty(),
+        "a root with no readable sources derives an empty vocabulary"
+    );
+}
+
 // --- the proof against this repository's own vocabulary --------------------
 //
 // The plan's four proof cases, run against the tree this module ships
@@ -789,9 +831,25 @@ fn the_proof_the_vocabulary_is_bounded_and_reports_itself() {
         "the vocabulary carries the tree's terms: {}",
         vocabulary.len()
     );
-    assert!(!vocabulary.truncated, "this tree fits inside every bound");
+    // The tree's own fact, and it is stable across runs and machines: a
+    // loaded machine used to report this repository as not fitting inside
+    // its bounds, because `truncated` also carried the wall-clock budget.
+    assert!(
+        !vocabulary.truncated,
+        "this tree fits inside every content bound"
+    );
     // The bound is named, not discovered.
     assert!(vocabulary.len() <= MAX_TERMS);
     assert!(vocabulary.sources <= MAX_SOURCES);
-    assert!(vocabulary.elapsed < DERIVE_BUDGET);
+    // The budget's flag agrees with the time the derivation took. This is
+    // an assertion about the REPORTING, not about the machine's speed: a
+    // wall-clock claim in a parallel suite measures the load, not the
+    // code, and this test used to fail three runs in four for exactly
+    // that reason while passing alone every time.
+    assert_eq!(
+        vocabulary.budget_exhausted,
+        vocabulary.elapsed > DERIVE_BUDGET,
+        "the budget's flag agrees with the elapsed time: {:?} against {DERIVE_BUDGET:?}",
+        vocabulary.elapsed
+    );
 }

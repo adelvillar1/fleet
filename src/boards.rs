@@ -912,8 +912,13 @@ pub struct GraphSnapshot {
 pub struct GraphNode {
     pub id: String,
     pub cost: u64,
-    /// The remaining work in this node's dependency closure.
+    /// The remaining work in this node's dependency closure: a sum over
+    /// the SET of unfinished nodes, each counted once (P2).
     pub score: u64,
+    /// The longest chain below this node — how long until it can start.
+    /// Separate from `score` because the two disagree wherever a
+    /// convergence node is involved, and the critical path reads this one.
+    pub longest_chain: u64,
     /// The highest that score has been: the readiness bar's denominator.
     pub peak: u64,
     /// The status the file carries.
@@ -1324,6 +1329,7 @@ fn graph_snapshot(home: &Path, refused: &mut Vec<String>) -> Option<GraphSnapsho
                 id: node.id.clone(),
                 cost: node.cost,
                 score: graph.score(&node.id).unwrap_or(0),
+                longest_chain: graph.time_to_completion(&node.id).unwrap_or(0),
                 peak: node.peak(),
                 status: node.status.as_str().to_string(),
                 state: crate::graph::state_word(node, &unlock).to_string(),
