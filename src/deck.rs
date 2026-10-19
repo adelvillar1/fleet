@@ -1135,6 +1135,79 @@ fn check_of_node(node: &Node) -> bool {
         .all(|refusal| !refusal.names_node(node.id.as_str()))
 }
 
+// --- the layout template index ---------------------------------------------
+
+/// The index's entries: one embedded description per layout, written the
+/// way an owner describes what they want rather than the schema's own
+/// words. This is the vector half of "choose the layout from the
+/// content" — the intent skill's table, matched by cosine instead of
+/// read by eye.
+const LAYOUT_EXAMPLES: &[(Layout, &str)] = &[
+    (Layout::SplitTwoColumn, "a conclusion beside its supporting evidence: the point on one side, the proof and its numbers on the other"),
+    (Layout::MetricCallout, "one number carries the whole point: a single figure, large, with what it measures beneath it"),
+    (Layout::MetricRow, "three or four peer figures side by side, compared at a glance"),
+    (Layout::Timeline, "a sequence in time, step after step, left to right"),
+    (Layout::Comparison, "two states set against each other: before and after, with and without, this versus that"),
+    (Layout::Quote, "a claim worth setting apart, in someone's words, with who said it"),
+    (Layout::Chart, "a trend across periods, drawn, with a caption that says what moved"),
+    (Layout::FullBleed, "an infographic's whole frame: everything visible at once, dense, read by scanning"),
+];
+
+/// The nearest layout for one intent string, by cosine against the
+/// index, with its score. `None` when this machine has no embedding
+/// backend — the honest degradation, and the reason the intent skill's
+/// own table still exists: the match refines the classification, it
+/// does not replace it.
+pub fn suggest_layout(intent: &str) -> Option<(Layout, f64)> {
+    suggest_layouts_with(&*crate::memory::probed_embedder(), intent).into_iter().next()
+}
+
+/// The whole index ranked against one intent, best first — the tool's
+/// answer carries the top of this, so the planner sees the runner-ups
+/// and can disagree with the match on content grounds.
+pub fn suggest_layouts_with(
+    embedder: &dyn crate::memory::Embedder,
+    intent: &str,
+) -> Vec<(Layout, f64)> {
+    let query = match embedder.embed(intent) {
+        Some(query) => query,
+        None => return Vec::new(),
+    };
+    let mut ranked: Vec<(Layout, f64)> = LAYOUT_EXAMPLES
+        .iter()
+        .filter_map(|(layout, example)| {
+            embedder
+                .embed(example)
+                .map(|vector| (layout.clone(), crate::memory::cosine(&query, &vector)))
+        })
+        .collect();
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    ranked
+}
+
+/// The matcher over an explicit embedder — the seam the tests use.
+pub fn suggest_layout_with(
+    embedder: &dyn crate::memory::Embedder,
+    intent: &str,
+) -> Option<(Layout, f64)> {
+    let query = embedder.embed(intent)?;
+    LAYOUT_EXAMPLES
+        .iter()
+        .filter_map(|(layout, example)| {
+            embedder
+                .embed(example)
+                .map(|vector| (layout.clone(), crate::memory::cosine(&query, &vector)))
+        })
+        .max_by(|left, right| {
+            left.1.partial_cmp(&right.1).unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
 // --- the PPTX export -------------------------------------------------------
 
 /// The export: one deck as a `.pptx` file's bytes.
@@ -1538,6 +1611,55 @@ fn crc32(bytes: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+    /// A deterministic embedder for the matcher's test: a small keyword
+    /// space, so a text's vector is its own keyword counts.
+    struct KeywordStub;
+    impl crate::memory::Embedder for KeywordStub {
+        fn box_clone(&self) -> Box<dyn crate::memory::Embedder> {
+            Box::new(KeywordStub)
+        }
+        fn embed(&self, text: &str) -> Option<Vec<f32>> {
+            let axis = |word: &str| text.matches(word).count() as f32;
+            Some(vec![
+                axis("number"),
+                axis("sequence") + axis("time"),
+                axis("contrast") + axis("versus"),
+                axis("quote") + axis("said"),
+                axis("evidence") + axis("proof"),
+                axis("scan") + axis("infographic"),
+                axis("trend") + axis("drawn"),
+            ])
+        }
+        fn name(&self) -> &'static str { "keyword-stub" }
+        fn serves_vectors(&self) -> bool { true }
+    }
+
+    #[test]
+    fn suggest_layout_matches_the_intent_across_the_index() {
+        // A number-led intent lands on the metric callout; a sequence
+        // lands on the timeline. The stub's keyword space is crude on
+        // purpose: the matcher's job is ordering, not semantics.
+        let number_intent = "one single number that carries the whole point of the argument";
+        let (layout, score) = suggest_layout_with(&KeywordStub, number_intent).expect("the stub serves");
+        assert_eq!(layout, Layout::MetricCallout, "score {score}");
+        assert!(score > 0.9, "{score}");
+
+        let sequence_intent = "a sequence in time, step after step, left to right";
+        let (layout, score) = suggest_layout_with(&KeywordStub, sequence_intent).expect("the stub serves");
+        assert_eq!(layout, Layout::Timeline, "score {score}");
+
+        // No backend, no suggestion: the intent skill's table answers,
+        // as it always has.
+        struct NoneEmbedder;
+        impl crate::memory::Embedder for NoneEmbedder {
+            fn box_clone(&self) -> Box<dyn crate::memory::Embedder> { Box::new(NoneEmbedder) }
+            fn embed(&self, _: &str) -> Option<Vec<f32>> { None }
+            fn name(&self) -> &'static str { "none" }
+            fn serves_vectors(&self) -> bool { false }
+        }
+        assert!(suggest_layout_with(&NoneEmbedder, "anything").is_none());
+    }
 
 
     #[test]

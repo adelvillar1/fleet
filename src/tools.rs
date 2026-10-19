@@ -239,10 +239,18 @@ pub const DECK_TOOL: &str = "deck";
 pub fn deck_spec() -> ToolSpec {
     ToolSpec::function(
         DECK_TOOL,
-        "Build a presentation, infographic or poster from structured content. The deck is validated against the consultant constraints before it renders — every node opens with its conclusion (the Pyramid Principle), sub-points must not overlap (MECE), bullets must mark their key takeaway with **bold**, and the bounds differ by type (an infographic is one frame, a presentation is paced). A refusal names the node and the rule, so fix that one thing and call again. The result is the rendered deck.",
+        "Build a presentation, infographic or poster from structured content — or, in suggest mode, rank layouts for an intent before building. Building: the deck is validated against the consultant constraints before it renders — every node opens with its conclusion (the Pyramid Principle), sub-points must not overlap (MECE), bullets must mark their key takeaway with **bold**, and the bounds differ by type (an infographic is one frame, a presentation is paced). A refusal names the node and the rule, so fix that one thing and call again; an overfull layout is auto-fit in place — text compressed to the measured budgets, a roomier layout where compression would cut the content — and the repairs are named beside the render. Suggesting: pass suggest with an intent and the tool ranks the layouts by semantic match against the local embedding model, best first; build with the winner unless the content says otherwise. The result is the rendered deck, or the ranked layouts.",
         serde_json::json!({
             "type": "object",
             "properties": {
+                "suggest": {
+                    "type": "object",
+                    "description": "Suggest mode: rank the layouts for an intent instead of building. Carries one field, intent — what the owner is trying to show. Returns the nearest layouts, best first, with their match scores.",
+                    "properties": {
+                        "intent": { "type": "string", "description": "What the owner is trying to show, in their own words." }
+                    },
+                    "required": ["intent"]
+                },
                 "deck": {
                     "type": "object",
                     "description": "The deck: project_type (presentation | infographic | poster), an optional theme, and its nodes. Each node carries an id, a layout, an optional eyebrow, a headline that states its conclusion, and its components.",
@@ -288,6 +296,47 @@ pub fn deck_spec() -> ToolSpec {
 /// that breaks a constraint is a fixable answer, not a crash. The
 /// rendered HTML rides the result so a surface can show it.
 pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+    // The suggest mode: the vector half of "choose the layout from the
+    // content". An intent in, the index ranked out — the planner builds
+    // with the match or disagrees with it on content grounds, and a
+    // machine with no embedding backend is told which table to use
+    // instead.
+    if let Some(suggest) = arguments.get("suggest") {
+        let intent = suggest
+            .get("intent")
+            .and_then(|intent| intent.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if intent.is_empty() {
+            return Ok(ToolOutcome {
+                output: "error: the suggest mode needs an `intent` — what the owner is trying to show".to_string(),
+                truncated: false,
+            });
+        }
+        let ranked = crate::deck::suggest_layouts_with(
+            &*crate::memory::probed_embedder(),
+            &intent,
+        );
+        if ranked.is_empty() {
+            return Ok(ToolOutcome {
+                output: "error: this machine has no embedding backend, so there is no vector match — classify from the intent skill's own table instead".to_string(),
+                truncated: false,
+            });
+        }
+        let named: Vec<String> = ranked
+            .iter()
+            .take(3)
+            .map(|(layout, score)| format!("{} ({:.3})", layout.label(), score))
+            .collect();
+        return Ok(ToolOutcome {
+            output: format!(
+                "the nearest layouts for {intent:?}: {} — build with the first unless the content says otherwise",
+                named.join(", ")
+            ),
+            truncated: false,
+        });
+    }
     let value = arguments
         .get("deck")
         .cloned()
@@ -2202,6 +2251,30 @@ mod tests {
 
     #[test]
     #[test]
+    #[test]
+    #[test]
+    fn the_deck_tool_suggest_mode_ranks_for_an_intent() {
+        // Against the machine's own embed endpoint (loopback, fleet's
+        // own service): the ranking names layouts, best first.
+        let ask = serde_json::json!({
+            "suggest": { "intent": "a single number that carries the whole point of the argument" }
+        });
+        let outcome = run_deck(&ask).expect("a ranking is a result, not an error");
+        assert!(
+            outcome.output.contains("the nearest layouts"),
+            "{}",
+            outcome.output
+        );
+        assert!(outcome.output.contains("metric_callout"), "{}", outcome.output);
+    }
+
+    fn the_deck_tool_suggest_mode_names_a_missing_intent() {
+        let empty = serde_json::json!({ "suggest": { "intent": "" } });
+        let outcome = run_deck(&empty).expect("a refusal is a result, not an error");
+        assert!(outcome.output.starts_with("error:"), "{}", outcome.output);
+        assert!(outcome.output.contains("intent"), "{}", outcome.output);
+    }
+
     fn the_deck_tool_auto_fits_an_overfull_deck_and_renders_it() {
         // A deck the grader refuses for overflow is repaired in place —
         // the text compressed to the measured budget, the bolded
