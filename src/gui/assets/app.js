@@ -9,14 +9,11 @@
 // reported, and the inspector shows the reduction beside the event it
 // came from.
 //
-// The launch token rides the stream's URL once, is stripped from the
-// address bar, and never reaches this script again: the HttpOnly
-// cookie the page arrived with carries it for the requests that follow.
+// The face has no credential: the boundary is the machine, and the
+// server checks that a request's Host and Origin name it. The address
+// alone opens the face, and a reload is the same address again.
 (function () {
   'use strict';
-
-  var params = new URLSearchParams(window.location.search);
-  var token = params.get('token');
 
   // The plan's route table. The addresses are hash addresses and the
   // panels are keyed by them, so the browser never asks the server for
@@ -2430,9 +2427,7 @@
   // subscribe would otherwise be missed, and a reconnect starts clean
   // rather than appending to a log the server has moved past.
   function listen() {
-    // The query token rides only when the bar had one to give; a
-    // token-less reload authenticates the stream with the cookie.
-    var source = new EventSource('/events' + (token ? '?token=' + encodeURIComponent(token) : ''));
+    var source = new EventSource('/events');
     source.onopen = function () {
       load().then(function () { paint(); }).catch(function () { });
     };
@@ -2452,16 +2447,10 @@
 
   // ------------------------------------------------------------- the boot
 
-  // The boot does not ask the address bar whether it may run. The token
-  // leaves the bar the moment the face boots — so a copied URL or a
-  // screenshot carries no credential — which used to make the face's own
-  // reload a dead end: the shell rendered, the refusal said reload with
-  // the printed URL, and the printed URL was gone. The launch cookie is
-  // the credential that survives a reload, the server accepts it on
-  // every route, and load() answers 401 only when this browser holds no
-  // seat — that refusal is the one worth showing. The hash stays: it is
-  // the panel the owner opened, and the plan's route table is keyed on
-  // it.
+  // The token leaves the address bar once the face boots, so a copied
+  // URL or a screenshot carries nothing worth keeping. The hash stays:
+  // it is the panel the owner opened, and the plan's route table is
+  // keyed on it.
   window.history.replaceState(null, '', window.location.pathname + window.location.hash);
 
   el.offers.textContent = '';

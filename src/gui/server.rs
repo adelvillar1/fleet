@@ -10,12 +10,15 @@
 //! - **Loopback only.** The listener binds a loopback address, and a
 //!   `--host` that is not one is refused by name before a socket
 //!   exists. This face is the owner's machine and nothing else.
-//! - **One token per launch**, minted from the operating system's
-//!   entropy and printed with the URL. Every route requires it — from
-//!   the `x-fleet-token` header, the `token` query parameter, or the
-//!   `fleet_gui` cookie the page's first reply sets — so there is no
-//!   anonymous page, no anonymous asset, no anonymous stream, and no
-//!   anonymous action. A port scan sees 401s and learns nothing else.
+//! - **The boundary is the machine.** The listener is loopback-only,
+//!   and two checks keep the web's remote hands off the local port: a
+//!   request whose `Host` does not name this machine is refused (that
+//!   is the rebinding attack — a remote page serving the local port
+//!   under a hostname it owns), and a state-changing request with a
+//!   foreign `Origin` is refused (that is the cross-site form). A
+//!   browser on this machine fails neither, so the address alone opens
+//!   the face — the owner's ruling is that it should, and that
+//!   authentication returns only when fleet becomes a multi-user app.
 //! - **No credentials in any payload.** The page, the assets, the
 //!   stream, and the action replies carry names and presence, never
 //!   values: the masking rule doctor holds is the rule here.
@@ -52,7 +55,6 @@
 //! on it. Neither can reach a credential, and neither writes anything
 //! the substrate would refuse.
 
-use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -68,10 +70,6 @@ use crate::gui::bridge::Bridge;
 const INDEX: &str = include_str!("assets/index.html");
 const STYLES: &str = include_str!("assets/app.css");
 const SCRIPT: &str = include_str!("assets/app.js");
-
-/// The cookie the page's first reply sets, so the requests the open
-/// page makes afterwards need no token in a URL.
-const COOKIE_NAME: &str = "fleet_gui";
 
 /// How often the stream says the server is still there. The page counts
 /// the beats, so a silent stream is a dead server the owner can see.
@@ -89,7 +87,6 @@ const MAX_BODY_BYTES: usize = 64 * 1024;
 
 /// The token's length in bytes before hex encoding: 16 bytes is 128
 /// bits, which is where a guess stops being a threat model.
-const TOKEN_BYTES: usize = 16;
 
 /// One launch's face: the listener, the token, the address the owner
 /// was given, and the bridge to the agent thread the actions speak to.
@@ -97,7 +94,6 @@ const TOKEN_BYTES: usize = 16;
 /// one listener — and the per-connection tasks carry what they need by
 /// value instead.
 pub struct Server {
-    token: String,
     base_url: String,
     heartbeat: Duration,
     listener: tokio::net::TcpListener,
@@ -105,9 +101,9 @@ pub struct Server {
 }
 
 impl Server {
-    /// Binds the loopback listener and mints the launch's token. `port`
-    /// zero asks the operating system for a free one, which is what a
-    /// second concurrent launch and the tests need.
+    /// Binds the loopback listener. `port` zero asks the operating
+    /// system for a free one, which is what a second concurrent launch
+    /// and the tests need.
     pub async fn bind(host: &str, port: u16, bridge: Arc<Bridge>) -> Result<(Server, u16), String> {
         let address = loopback_address(host)?;
         let listener = tokio::net::TcpListener::bind((address, port))
@@ -117,9 +113,7 @@ impl Server {
             .local_addr()
             .map_err(|e| format!("fleet gui cannot read its own address: {e}"))?;
         let base_url = format!("http://{bound}");
-        let token = mint_token()?;
         let server = Server {
-            token,
             base_url,
             heartbeat: HEARTBEAT,
             listener,
@@ -128,15 +122,10 @@ impl Server {
         Ok((server, bound.port()))
     }
 
-    /// The address the owner opens, without the token: the token rides
-    /// the query of the printed URL and nowhere else.
+    /// The address the owner opens: the machine's own loopback name and
+    /// the bound port, and nothing secret in it.
     pub fn base_url(&self) -> &str {
         &self.base_url
-    }
-
-    /// This launch's token. Printed once, to the terminal, with the URL.
-    pub fn token(&self) -> &str {
-        &self.token
     }
 
     /// Serves until the owner stops the process. Ctrl-C ends it
@@ -147,13 +136,12 @@ impl Server {
             tokio::select! {
                 accepted = self.listener.accept() => match accepted {
                     Ok((stream, _from)) => {
-                        let token = self.token.clone();
                         let base_url = self.base_url.clone();
                         let heartbeat = self.heartbeat;
                         let bridge = Arc::clone(&self.bridge);
                         tokio::spawn(async move {
                             if let Err(e) =
-                                serve_connection(stream, &token, &base_url, heartbeat, &bridge).await
+                                serve_connection(stream, &base_url, heartbeat, &bridge).await
                             {
                                 eprintln!("fleet gui: {e}");
                             }
@@ -169,24 +157,48 @@ impl Server {
     }
 }
 
-/// One connection, start to finish: read the head, gate on the token,
-/// route, answer, and drop the socket. Every reply says
-/// `Connection: close` and means it — a browser reconnects, and a
-/// scanner learns nothing from a held-open port.
+/// One connection, start to finish: read the head, check that it came
+/// from this machine's own web, route, answer, and drop the socket.
+/// Every reply says `Connection: close` and means it — a browser
+/// reconnects, and a scanner learns nothing from a held-open port.
 async fn serve_connection(
     mut stream: tokio::net::TcpStream,
-    token: &str,
     base_url: &str,
     heartbeat: Duration,
     bridge: &Arc<Bridge>,
 ) -> Result<(), String> {
     let (head, rest) = read_head(&mut stream).await?;
     let request = Request::parse(&head)?;
-    if !request.presents(token) {
-        return write_reply(&mut stream, unauthorized()).await;
+    // The boundary is the machine, and the two checks below are what
+    // hold it: the listener is loopback-only, so a remote hand has to
+    // arrive through a browser, and a browser arriving through a
+    // rebinding page carries a foreign Host while a page driving the
+    // port cross-site carries a foreign Origin. A local browser fails
+    // neither — the owner's ruling is that the address alone opens the
+    // face.
+    if !request.host_is_loopback() {
+        return write_reply(
+            &mut stream,
+            forbidden("the Host header does not name this machine"),
+        )
+        .await;
+    }
+    if matches!(
+        request.method.as_str(),
+        "POST" | "PUT" | "PATCH" | "DELETE"
+    ) {
+        if let Some(origin) = request.header("origin") {
+            if !origin_is_loopback(origin) {
+                return write_reply(
+                    &mut stream,
+                    forbidden("the request's origin is not this machine"),
+                )
+                .await;
+            }
+        }
     }
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/") => write_reply(&mut stream, page(token)).await,
+        ("GET", "/") => write_reply(&mut stream, page()).await,
         ("GET", "/app.css") => {
             write_reply(&mut stream, asset("text/css; charset=utf-8", STYLES)).await
         }
@@ -628,34 +640,22 @@ impl Request {
             .map(|(_, value)| value.as_str())
     }
 
-    /// Whether one of the places a browser can put the token actually
-    /// carries it: the header a fetch would send, the query the page
-    /// load and the EventSource send, and the cookie the open page
-    /// sends once the first reply has set it. The check is any-of
-    /// rather than first-of on purpose — the page strips the token from
-    /// its own address bar the moment it boots, so a reload arrives
-    /// with no query token at all and must ride the cookie, and a
-    /// bookmarked query from a previous launch must not shadow the
-    /// fresh cookie a relaunch set.
-    fn presents(&self, token: &str) -> bool {
-        if self.header("x-fleet-token").map(|value| value == token).unwrap_or(false) {
-            return true;
-        }
-        if query_value(&self.query, "token").map(|value| value == token).unwrap_or(false) {
-            return true;
-        }
-        let cookie = match self.header("cookie") {
-            Some(cookie) => cookie,
-            None => return false,
-        };
-        cookie
-            .split(';')
-            .filter_map(|pair| pair.trim().split_once('='))
-            .find(|(name, _)| *name == COOKIE_NAME)
-            .map(|(_, value)| value == token)
-            .unwrap_or(false)
+    /// Whether the request's Host names this machine — the loopback
+    /// names a local browser produces, with or without the port. A
+    /// foreign Host is the rebinding attack: a remote page serving the
+    /// local port under a hostname it owns.
+    fn host_is_loopback(&self) -> bool {
+        host_is_loopback(&self.header("host").unwrap_or_default())
     }
-}
+
+    /// Whether the request's Origin — the one browsers attach to
+    /// cross-site and same-site state-changing requests — names this
+    /// machine. A foreign origin is the cross-site form: another site's
+    /// page pointing the owner's browser at the local port with its own
+    /// intent in the body.
+    fn origin_is_loopback(&self) -> bool {
+        origin_is_loopback(&self.header("origin").unwrap_or_default())
+    }}
 
 /// One query parameter's value, percent-decoded. The pane's paths are
 /// the exotic case the token never was: a file path carries spaces,
@@ -722,15 +722,13 @@ impl Reply {
     }
 }
 
-/// The page, with the cookie that lets the rest of the page's requests
-/// ride the gate without a token in a URL. HttpOnly keeps the page's
-/// own scripts from reading the capability back, and SameSite keeps
-/// another site's requests from sending it.
-fn page(token: &str) -> Reply {
+/// The page. There is no credential in it and none beside it: the
+/// boundary is the machine, and a browser on the machine is the owner.
+fn page() -> Reply {
     Reply {
         status: "200 OK",
         content_type: "text/html; charset=utf-8",
-        extra: vec![("Set-Cookie".to_string(), cookie(token))],
+        extra: Vec::new(),
         body: INDEX.to_string(),
     }
 }
@@ -744,19 +742,14 @@ fn asset(content_type: &'static str, body: &'static str) -> Reply {
     }
 }
 
-fn cookie(token: &str) -> String {
-    format!("{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Strict")
-}
-
-/// The gate's refusal. It names the rule and never the token: a caller
-/// without one learns that a token is needed, and nothing more.
-fn unauthorized() -> Reply {
+/// The web's refusal: the request arrived from somewhere the face does
+/// not serve, and the body names the rule without naming anything else.
+fn forbidden(reason: &str) -> Reply {
     Reply {
-        status: "401 Unauthorized",
+        status: "403 Forbidden",
         content_type: "text/plain; charset=utf-8",
         extra: Vec::new(),
-        body: "fleet gui serves this machine only, and this route needs the launch token — the URL fleet printed carries it.\n"
-            .to_string(),
+        body: format!("fleet gui serves this machine only: {reason}.\n"),
     }
 }
 
@@ -914,24 +907,40 @@ pub(crate) fn loopback_address(host: &str) -> Result<IpAddr, String> {
 /// Reads the operating system's entropy for this launch's token. A
 /// failure here is loud and fatal: a predictable token is worse than no
 /// server at all, and there is no weak fallback to fall back to.
-fn mint_token() -> Result<String, String> {
-    let mut entropy = std::fs::File::open("/dev/urandom")
-        .map_err(|e| format!("fleet gui cannot read /dev/urandom: {e}"))?;
-    let mut bytes = [0u8; TOKEN_BYTES];
-    entropy
-        .read_exact(&mut bytes)
-        .map_err(|e| format!("fleet gui cannot read /dev/urandom: {e}"))?;
-    let mut token = String::with_capacity(TOKEN_BYTES * 2);
-    for byte in bytes {
-        token.push_str(&format!("{byte:02x}"));
-    }
-    Ok(token)
+/// The loopback names a local browser produces in a Host header, with
+/// or without the port. Anything else is a foreign name, whether it is
+/// a rebind ("127.0.0.1.evil.com" is not 127.0.0.1) or another machine.
+fn host_is_loopback(host: &str) -> bool {
+    let host = host.trim();
+    let name = if let Some(rest) = host.strip_prefix('[') {
+        // a bracketed IPv6 literal, with or without ":port" behind it
+        rest.split_once(']').map(|(inside, _)| inside).unwrap_or(rest)
+    } else if host.matches(':').count() > 1 {
+        // a bare IPv6 address carries colons but no port
+        host
+    } else {
+        host.split(':').next().unwrap_or(host)
+    };
+    let name = name.strip_suffix('.').unwrap_or(name);
+    matches!(name.to_ascii_lowercase().as_str(), "127.0.0.1" | "localhost" | "::1")
 }
 
+/// Whether an Origin header names this machine. An origin's authority
+/// is the same host-and-port shape a Host header carries, behind the
+/// scheme this check deliberately ignores — the scheme is the web's
+/// business, the authority is the machine's.
+fn origin_is_loopback(origin: &str) -> bool {
+    let rest = match origin.split_once("://") {
+        Some((_, rest)) => rest,
+        None => return false,
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    host_is_loopback(authority)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Read, Write};
 
     /// A live server on an OS-picked port, with a heartbeat short enough
     /// that a test does not wait five seconds for a beat. The server
@@ -1109,7 +1118,10 @@ mod tests {
             .await
             .unwrap();
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
@@ -1137,7 +1149,10 @@ mod tests {
             .await
             .unwrap();
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
@@ -1202,42 +1217,43 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn every_route_needs_the_launch_token() {
-        let (token, port) = launch().await;
-        let anonymous = ask(port, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", None);
-        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
-        let wrong = ask(
+    async fn the_address_alone_opens_the_face_and_the_web_is_refused() {
+        let (_token, port) = launch().await;
+        // The owner's ruling: browsing the address of a running fleet
+        // opens fleet — no credential in the URL, in a header, or
+        // anywhere else.
+        let bare = ask(port, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", None);
+        assert!(bare.starts_with("HTTP/1.1 200"), "{bare}");
+        assert!(bare.contains("<title>fleet</title>"), "{bare}");
+        // The web's hands are refused with the rule named. A rebinding
+        // page serves the local port under a hostname it owns — and
+        // "127.0.0.1.evil.com" is exactly such a name, not an address.
+        let rebound = ask(
             port,
-            "GET /?token=deadbeef HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1.evil.com\r\n\r\n",
             None,
         );
-        assert!(wrong.starts_with("HTTP/1.1 401"), "{wrong}");
-        let right = get(port, "/", &token);
-        assert!(right.starts_with("HTTP/1.1 200"), "{right}");
-        assert!(right.contains("<title>fleet</title>"), "{right}");
-        // The refusal names the rule and never the token.
-        assert!(!anonymous.contains(&token), "{anonymous}");
-        assert!(anonymous.contains("launch token"), "{anonymous}");
+        assert!(rebound.starts_with("HTTP/1.1 403"), "{rebound}");
+        assert!(rebound.contains("does not name this machine"), "{rebound}");
+        // A cross-site form carries a foreign origin on its way in.
+        let cross = ask(
+            port,
+            "POST /api/rank HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://evil.example\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\n{}",
+            None,
+        );
+        assert!(cross.starts_with("HTTP/1.1 403"), "{cross}");
+        assert!(cross.contains("origin is not this machine"), "{cross}");
+        // The same state-changing request from the face itself — a
+        // loopback origin — is served.
+        let own = ask(
+            port,
+            "POST /api/rank HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: http://127.0.0.1:3080\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\n{}",
+            None,
+        );
+        assert!(own.starts_with("HTTP/1.1 200"), "{own}");
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn the_token_arrives_in_a_header_a_query_or_a_cookie() {
-        let (token, port) = launch().await;
-        let by_header = ask(
-            port,
-            &format!("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nx-fleet-token: {token}\r\n\r\n"),
-            None,
-        );
-        assert!(by_header.starts_with("HTTP/1.1 200"), "{by_header}");
-        let page = get(port, "/", &token);
-        assert!(page.contains(&format!("fleet_gui={token}")), "{page}");
-        let by_cookie = ask(
-            port,
-            &format!("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: fleet_gui={token}\r\n\r\n"),
-            None,
-        );
-        assert!(by_cookie.starts_with("HTTP/1.1 200"), "{by_cookie}");
-    }
+
 
     #[tokio::test(flavor = "multi_thread")]
     async fn the_assets_ride_behind_the_token() {
@@ -1248,7 +1264,7 @@ mod tests {
                 &format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
                 None,
             );
-            assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+            assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
             let served = get(port, path, &token);
             assert!(served.starts_with("HTTP/1.1 200"), "{served}");
         }
@@ -1298,12 +1314,15 @@ mod tests {
         assert!(reply.matches("data: ").count() >= 2, "{reply}");
         // The stream holds the connection open: it never says close in
         // the body, and the head's Connection line is the server's.
+        // A second connection with no token at all is served the same
+        // stream: the boundary is the machine, and this one is on it.
         let anonymous = ask(
             port,
             "GET /events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
-            None,
+            Some("hello"),
         );
-        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
+        assert!(anonymous.contains("\"type\":\"hello\""), "{anonymous}");
     }
 
     /// A bridge with no agent thread behind it, for the tests that need
@@ -1346,9 +1365,6 @@ mod tests {
                 "{}",
                 server.base_url()
             );
-            let token = server.token();
-            assert_eq!(token.len(), TOKEN_BYTES * 2, "{token}");
-            assert!(token.chars().all(|c| c.is_ascii_hexdigit()), "{token}");
         }
         // A loopback address the machine has not assigned to its
         // interface is the operating system's answer, not this
@@ -1369,7 +1385,7 @@ mod tests {
             "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
             None,
         );
-        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
         let state = get(port, "/api/state", &token);
         assert!(state.starts_with("HTTP/1.1 200"), "{state}");
         assert!(state.contains("application/json"), "{state}");
@@ -1395,7 +1411,7 @@ mod tests {
             "GET /api/router HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
             None,
         );
-        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
         let reply = get(port, "/api/router", &token);
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         assert!(reply.contains("application/json"), "{reply}");
@@ -1463,7 +1479,7 @@ mod tests {
             "GET /api/delegation HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
             None,
         );
-        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
         let reply = get(port, "/api/delegation", &token);
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         assert!(reply.contains("application/json"), "{reply}");
@@ -1535,7 +1551,7 @@ mod tests {
             "GET /api/memory HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
             None,
         );
-        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
         let reply = get(port, "/api/memory", &token);
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         assert!(reply.contains("application/json"), "{reply}");
@@ -1630,7 +1646,7 @@ mod tests {
             "GET /api/skills HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
             None,
         );
-        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
         let reply = get(port, "/api/skills", &token);
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         assert!(reply.contains("application/json"), "{reply}");
@@ -1699,7 +1715,7 @@ mod tests {
             "GET /api/tree?path=src HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
             None,
         );
-        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
 
         let tree = ask(
             port,
@@ -1851,7 +1867,10 @@ mod tests {
     async fn a_task_crosses_the_run_route_and_lands_in_the_log() {
         let (token, port) = launch().await;
         let anonymous = post(port, "/api/run", "wrong", r#"{"task":"say hello"}"#);
-        assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+        // No credential gates the route, so the task is validated and
+        // answered on its own terms: on a detached bridge that is the
+        // 409 whose reply carries the message into the log.
+        assert!(anonymous.starts_with("HTTP/1.1 409"), "{anonymous}");
         let refused = post(port, "/api/run", &token, r#"{"nope":"say hello"}"#);
         assert!(refused.starts_with("HTTP/1.1 400"), "{refused}");
         let empty = post(port, "/api/run", &token, r#"{"task":"   "}"#);
@@ -1899,11 +1918,14 @@ mod tests {
                 );
             }
         }
-        // The token rides the Set-Cookie header and never the body: the
-        // page's own markup holds no capability.
+        // The face carries no credential at all, so no reply sets a
+        // cookie: there is no capability to keep out of the body, and
+        // the head's silence about Set-Cookie is the pin.
         let (head, body) = page.split_once("\r\n\r\n").expect("a head and a body");
-        assert!(head.contains(&format!("fleet_gui={token}")), "{head}");
-        assert!(!body.contains(&token), "{body}");
+        assert!(!head.contains("Set-Cookie"), "{head}");
+        for secret in ["sk-", "DEEPSEEK_API_KEY", "fleet_gui"] {
+            assert!(!body.contains(secret) && !head.contains(secret), "{page}");
+        }
     }
 
     // -------------------------------------------------- the sessions surface (G6)
@@ -1970,7 +1992,10 @@ mod tests {
             .await
             .expect("bind");
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
@@ -2038,7 +2063,10 @@ mod tests {
             .await
             .expect("bind");
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
@@ -2081,7 +2109,10 @@ mod tests {
             .await
             .expect("bind");
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
@@ -2235,7 +2266,10 @@ mod tests {
             .await
             .expect("bind");
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
@@ -2353,7 +2387,10 @@ mod tests {
             .await
             .expect("bind");
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
@@ -2397,7 +2434,10 @@ mod tests {
             .await
             .expect("bind");
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
@@ -2563,7 +2603,10 @@ mod tests {
             .await
             .expect("bind");
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });
@@ -2719,7 +2762,10 @@ mod tests {
             .await
             .expect("bind");
         server.heartbeat = Duration::from_millis(20);
-        let token = server.token().to_string();
+        // The face no longer gates on a token; the queries below still carry
+        // one and the server ignores it, which is why these reads answer
+        // all the same either way.
+        let token = String::new();
         tokio::spawn(async move {
             let _ = server.serve().await;
         });

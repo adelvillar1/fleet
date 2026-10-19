@@ -13,11 +13,14 @@
 //! - **Loopback only.** The listener binds 127.0.0.1 and a `--host`
 //!   that is not loopback is refused by name before a socket exists.
 //!   The surface is the owner's machine and nothing else.
-//! - **One token per launch**, minted from the operating system's
-//!   entropy and printed with the URL. Every route requires it — the
-//!   header, the query, or the cookie — so there is no anonymous page,
-//!   no anonymous asset, and no anonymous stream. A port scan sees
-//!   401s.
+//! - **The address alone opens the face.** The listener is loopback
+//!   only, and the server checks that a request's Host and Origin name
+//!   this machine — which is what keeps a rebinding page or a
+//!   cross-site form from driving the agent through the local port. A
+//!   browser on this machine fails neither check, so the owner browses
+//!   the address and is in; a port scan sees 403s and learns nothing.
+//!   Authentication is a multi-user future's need, and returns when
+//!   that future arrives.
 //! - **No credentials in any payload.** The page, the assets, and the
 //!   stream carry names and presence, never values: the same masking
 //!   rule doctor holds.
@@ -42,8 +45,8 @@ pub struct GuiOptions {
     pub host: String,
     /// The port to bind; zero asks the operating system for a free one.
     pub port: u16,
-    /// Open the browser anyway? `true` means do not: the URL and token
-    /// are printed, and the owner opens the page themselves.
+    /// Open the browser anyway? `true` means do not: the address is
+    /// printed, and the owner opens the page themselves.
     pub no_open: bool,
 }
 
@@ -74,7 +77,8 @@ pub fn prompt_line(base_url: &str) -> String {
 }
 
 /// Boots the face: bind, announce, open, serve until the owner stops
-/// the process. The URL carries the token because the browser needs it
+/// the process. The URL is the machine's own address, and the browser
+/// already carries everything it needs to be let in
 /// once, and it is printed to the terminal only — never logged, never
 /// written to a file, never carried in a payload.
 ///
@@ -96,7 +100,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
     let bridge = bridge::Bridge::spawn(home, crate::api::DEFAULT_MODEL.to_string(), None, base_url);
     let (server, _port) =
         server::Server::bind(&options.host, options.port, Arc::new(bridge)).await?;
-    let url = format!("{}?token={}", server.base_url(), server.token());
+    let url = server.base_url().to_string();
     println!("fleet gui — the browser face is live");
     println!("  {url}");
     println!("  Ctrl-C stops it.");
