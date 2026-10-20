@@ -737,7 +737,8 @@ impl Bridge {
     pub async fn memory(&self) -> Value {
         let home = self.home.clone();
         let memories = self.memories.clone();
-        match tokio::task::spawn_blocking(move || memory_read(&home, &memories)).await {
+        let cwd = self.cwd.clone();
+        match tokio::task::spawn_blocking(move || memory_read(&home, &memories, &cwd)).await {
             Ok(document) => document,
             Err(_) => json!({
                 "type": "memory",
@@ -2178,7 +2179,7 @@ fn delegation_read(home: &std::path::Path, session: &str) -> Value {
 /// The memory panel's document, hand-built from the read's snapshot:
 /// memory.rs carries no serde derives, so the shapes are translated here
 /// rather than derived twice.
-fn memory_read(home: &std::path::Path, memories: &std::path::Path) -> Value {
+fn memory_read(home: &std::path::Path, memories: &std::path::Path, cwd: &std::path::Path) -> Value {
     let user_home = std::env::var("HOME").ok();
     let calib_root = crate::calib::resolve_root(home, user_home.as_deref());
     let snapshot = crate::boards::read_memory(memories, &calib_root, &crate::calib::today());
@@ -2204,6 +2205,14 @@ fn memory_read(home: &std::path::Path, memories: &std::path::Path) -> Value {
             "missing": fact.missing,
             "body": fact.body,
             "path": fact.path,
+            // The pane is contained to the launch directory, so a fact
+            // inside it is asked for relatively and one outside it is
+            // named rather than handed a path the reader would refuse.
+            "relative": std::path::Path::new(&fact.path)
+                .strip_prefix(cwd)
+                .ok()
+                .and_then(|path| path.to_str())
+                .map(str::to_string),
         })).collect::<Vec<_>>(),
         "hits": snapshot.hits.iter().map(|hit| json!({
             "ts": hit.ts,

@@ -325,6 +325,10 @@
     sessionsFilter: 'all',
     memoryFilter: 'live',
     skillsFilter: 'all',
+    // The library holds 442 rows; the query and the show-all toggle are
+    // what make a table of that length usable rather than a wall.
+    skillQuery: '',
+    skillShowAll: false,
     calibrationFilter: 'all',
     towerFilter: 'all',
     towerDay: '',
@@ -3099,13 +3103,95 @@
   // day's hits come off the calibration stream's rows; this run's own
   // recall is already in the event log, so it is reduced off the log
   // rather than read a second time.
+  // ---- the memory and skills surfaces -------------------------------------
+  // Both read like the atlas: a compact instrument in the page head, a
+  // figures strip, a dense left-hand table whose rows carry their own
+  // actions, and a narrow rail for the day's activity or the decisions
+  // waiting. The cards that carry rows are full-bleed, so a row's
+  // hairline runs the card the way a ledger's does.
+
+  function badge(text, tone) {
+    var el0 = node('span', 'badge', String(text));
+    el0.title = String(text);
+    if (tone) el0.dataset.tone = tone;
+    return el0;
+  }
+
+  function surfaceHead(eyebrow, title, note, instrument) {
+    var head = node('header', 'surface-head');
+    var main = node('div', 'surface-main');
+    main.appendChild(node('p', 'page-eyebrow', eyebrow));
+    main.appendChild(node('h1', 'surface-title', title));
+    main.appendChild(node('p', 'page-note', note));
+    head.appendChild(main);
+    if (instrument) head.appendChild(instrument);
+    return head;
+  }
+
+  function surfaceStrip(items, end) {
+    var strip = node('div', 'surface-strip');
+    items.forEach(function (item) {
+      var span = node('span', item[2] === 'down' ? 'surface-strip-down' : null);
+      span.appendChild(node('b', null, String(item[0])));
+      span.appendChild(document.createTextNode(' ' + item[1]));
+      strip.appendChild(span);
+    });
+    if (end) strip.appendChild(node('span', 'surface-strip-end', end));
+    return strip;
+  }
+
+  function surfaceInstrument(title, count, meta, actions) {
+    var box = node('div', 'surface-tool');
+    var line = node('div', 'surface-tool-line');
+    line.appendChild(node('span', 'surface-live'));
+    line.appendChild(node('b', null, title));
+    if (count != null) line.appendChild(badge(count, null));
+    box.appendChild(line);
+    if (meta) box.appendChild(node('p', 'surface-tool-meta', meta));
+    if (actions && actions.length) {
+      var act = node('div', 'surface-tool-act');
+      actions.forEach(function (action) {
+        var button = node('button', 'surface-refresh', action.label);
+        button.type = 'button';
+        button.addEventListener('click', action.run);
+        act.appendChild(button);
+      });
+      box.appendChild(act);
+    }
+    return box;
+  }
+
+  // The rail: the cards that sit beside a table, stacked in one column.
+  function surfaceRail(cards) {
+    var rail = node('div', 'surface-rail');
+    cards.forEach(function (card) { rail.appendChild(card); });
+    return rail;
+  }
+
+  function rowAction(label, title, run, primary) {
+    var button = node('button', 'row-action' + (primary ? ' row-action-primary' : ''), label);
+    button.type = 'button';
+    button.title = title || label;
+    button.addEventListener('click', function (event) {
+      event.stopPropagation();
+      run();
+    });
+    return button;
+  }
+
+  // A path opens in the pane, with the code tab in front.
+  function openPath(path) {
+    if (!path) return;
+    openPane();
+    openFile(path);
+  }
+
   function paintMemory() {
     var read = face.memory;
     el.memoryBoard.textContent = '';
     if (!read) {
-      el.memoryBoard.appendChild(pageHead('Knowledge', 'Memory',
-        'One fact per file: what this run recalled, and what the corpus already knows.',
-        null));
+      el.memoryBoard.appendChild(surfaceHead('Knowledge', 'Memory',
+        'One fact per file: what this run recalled, and what the corpus already knows.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The corpus read has not landed yet. It reads the memories tree and the day\u2019s ' +
@@ -3120,68 +3206,209 @@
     var hits = read.hits || [];
     var recalls = face.events.filter(function (event) { return event.type === 'memory'; });
     var filter = face.memoryFilter || 'live';
-    var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(live.length, 'live facts', null, function () {
-      face.memoryFilter = 'live';
-      paintMemory();
-    }));
-    tiles.appendChild(tile(protectedFacts.length, 'protected', null, function () {
-      face.memoryFilter = 'protected';
-      paintMemory();
-    }));
-    tiles.appendChild(tile(retired.length, 'retired', null, function () {
-      face.memoryFilter = 'retired';
-      paintMemory();
-    }));
-    tiles.appendChild(tile(hits.length, 'hits ' + read.day));
-    tiles.appendChild(tile(recalls.length, 'recalls this run', recalls.length ? 'live' : null));
-    el.memoryBoard.appendChild(pageHead('Knowledge', 'Memory',
-      'One fact per file: what this run recalled, and what the corpus already knows.',
-      'the corpus at ' + read.root, {
-        label: 'Ask what fleet knows',
-        run: function () {
-          ask('summarise what the memories know about my current work and cite the facts');
+    var shown = facts.filter(function (fact) {
+      return memoryFilterMatch(fact, filter) && matchesQuery(fact);
+    });
+    var instrument = surfaceInstrument('the corpus', facts.length + ' facts',
+      read.root + ' \u00b7 ' + hits.length + ' hits on ' + read.day,
+      [
+        {
+          label: 'ask what fleet knows',
+          run: function () {
+            ask('summarise what the memories know about my current work and cite the facts');
+          }
+        },
+        {
+          label: 'copy the path',
+          run: function () {
+            if (navigator.clipboard) navigator.clipboard.writeText(read.root).catch(function () { });
+            notice('the corpus path is copied', read.root);
+          }
         }
-      }));
-    el.memoryBoard.appendChild(statStrip(tiles));
-    el.memoryBoard.appendChild(memorySearch());
-    el.memoryBoard.appendChild(filterBar([
+      ]);
+    el.memoryBoard.appendChild(surfaceHead('Knowledge', 'Memory',
+      'One fact per file: what this run recalled, and what the corpus already knows.', instrument));
+    el.memoryBoard.appendChild(surfaceStrip([
+      [facts.length, 'facts'],
+      [live.length, 'live'],
+      [protectedFacts.length, 'protected'],
+      [retired.length, 'retired', retired.length ? 'down' : null],
+      [hits.length, 'hits ' + read.day],
+      [recalls.length, 'recalls this run']
+    ], 'the corpus at ' + read.root));
+    el.memoryBoard.appendChild(memCorpus(shown, filter, facts.length));
+    el.memoryBoard.appendChild(surfaceRail([memHits(read, hits, recalls), memMix(facts)]));
+    if (read.refused && read.refused.length) {
+      el.memoryBoard.appendChild(refusedCard(read.refused));
+    }
+  }
+
+  function memCorpus(shown, filter, total) {
+    var card = boardCard(8, 'the corpus',
+      shown.length + (filter === 'all' ? ' of ' + total : ' ' + filter),
+      'a fact is one file. A row opens it with its whole body and its edit, written through ' +
+      'the substrate\u2019s own rewriter; the row\u2019s own buttons do the three things you ' +
+      'reach for while reading.');
+    card.classList.add('lib-card');
+    var tools = node('div', 'lib-tools');
+    tools.appendChild(memorySearch());
+    card.appendChild(tools);
+    var facts = (face.memory && face.memory.facts) || [];
+    var live = facts.filter(function (fact) { return !fact.retired; });
+    card.appendChild(filterBar([
       { value: 'all', label: 'all', count: facts.length },
       { value: 'live', label: 'live', count: live.length },
-      { value: 'protected', label: 'protected', count: protectedFacts.length },
-      { value: 'retired', label: 'retired', count: retired.length }
+      { value: 'protected', label: 'protected', count: live.filter(function (fact) { return fact.protected; }).length },
+      { value: 'retired', label: 'retired', count: facts.filter(function (fact) { return fact.retired; }).length }
     ], filter, function (value) {
       face.memoryFilter = value;
       paintMemory();
     }));
-
-    var shown = facts.filter(function (fact) {
-      return memoryFilterMatch(fact, filter) && matchesQuery(fact);
+    var cols = node('div', 'mem-cols');
+    ['fact', 'type', 'basis', 'recalls', 'state', 'actions'].forEach(function (label) {
+      cols.appendChild(node('span', null, label));
     });
-    if (shown.length) {
-      var corpus = boardCard(12, 'the corpus',
-        shown.length + (filter === 'all' ? ' of ' + facts.length : ' ' + filter),
-        'a fact is one file under the memories tree; opening one shows its whole body and its ' +
-        'edit, written through the substrate\u2019s own rewriter.');
-      corpus.appendChild(factGrid(shown));
-      el.memoryBoard.appendChild(corpus);
-    } else {
-      var none = boardCard(12, 'the corpus', null, null);
-      none.appendChild(node('p', 'board-empty',
+    card.appendChild(cols);
+    shown.forEach(function (fact) { card.appendChild(memRow(fact)); });
+    if (!shown.length) {
+      card.appendChild(node('p', 'board-empty',
         facts.length
-          ? 'No ' + (filter === 'all' ? '' : filter + ' ') + 'fact matches' +
-            (face.query ? ' \u201c' + face.query + '\u201d' : ' this filter') +
-            '. The search reads the name, the sentence, the type, the shape tags and the body ' +
-            '\u2014 every field the fact carries.'
-          : 'This home holds no facts. A fact is one file under the memories tree, and the ' +
-            'agent writes them through the substrate\u2019s own writer.'));
-      el.memoryBoard.appendChild(none);
+          ? 'No fact matches' + (face.query ? ' \u201c' + face.query + '\u201d' : ' this filter') +
+            '. The search reads the name, the sentence, the type, the shape tags and the body.'
+          : 'This home holds no facts. The agent writes them through the substrate\u2019s own writer.'));
     }
+    return card;
+  }
 
-    el.memoryBoard.appendChild(recallCard(recalls, hits, read.day));
-    if (read.refused && read.refused.length) {
-      el.memoryBoard.appendChild(refusedCard(read.refused));
+  function memRow(fact) {
+    var row = node('div', 'mem-row');
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.title = 'open ' + fact.name + ' and its edit';
+    var main = node('div', 'mem-fact');
+    main.appendChild(node('b', null, fact.name));
+    main.appendChild(node('p', null, fact.description));
+    row.appendChild(main);
+    row.appendChild(badge(fact.fact_type, null));
+    var basis = node('div', 'mem-basis');
+    basis.appendChild(node('span', null, fact.basis));
+    basis.appendChild(node('span', 'mem-tier', fact.tier));
+    row.appendChild(basis);
+    row.appendChild(node('span', 'mem-num', String(fact.recall_count)));
+    var state = node('div', 'mem-state');
+    if (fact.retired) state.appendChild(badge('retired', 'down'));
+    else if (fact.protected) state.appendChild(badge('protected', 'accent'));
+    else state.appendChild(node('span', 'mem-live', 'live'));
+    if (fact.valid_until) state.appendChild(node('span', 'mem-tier', 'until ' + fact.valid_until));
+    row.appendChild(state);
+    var acts = node('div', 'row-actions');
+    acts.appendChild(rowAction('edit', 'open the fact and its edit', function () {
+      inspectFact(fact);
+    }, true));
+    acts.appendChild(rowAction('ask', 'ask fleet about this fact', function () {
+      ask('what do the memories say about ' + fact.name + '? cite the fact and its evidence.');
+    }));
+    acts.appendChild(rowAction('file', 'open the fact file', function () {
+      if (fact.relative) {
+        openPath(fact.relative);
+        return;
+      }
+      if (navigator.clipboard) navigator.clipboard.writeText(fact.path).catch(function () { });
+      notice('the fact is outside the working directory', 'its path is copied: ' + fact.path);
+    }));
+    row.appendChild(acts);
+    var open = function () { inspectFact(fact); };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
+    return row;
+  }
+
+  function memHits(read, hits, recalls) {
+    var card = boardCard(4, 'today\u2019s recall', hits.length + ' hits',
+      'one row per fact a recall surfaced, plus this run\u2019s own recalls from the event log.');
+    card.classList.add('lib-card');
+    var list = node('div', 'rail-list');
+    if (recalls.length) {
+      var run = node('div', 'rail-group');
+      run.appendChild(node('p', 'rail-label', 'this run \u00b7 ' + recalls.length));
+      recalls.slice(-6).forEach(function (event) {
+        var row = node('div', 'rail-row');
+        var body = node('div');
+        body.appendChild(node('b', null, (event.shape ? event.shape + ' \u00b7 ' : '') + event.facts + ' facts'));
+        body.appendChild(node('p', null, 'recalled for this run'));
+        row.appendChild(body);
+        list.appendChild(row);
+      });
+      card.appendChild(run);
     }
+    if (hits.length) {
+      var day = node('div', 'rail-group');
+      day.appendChild(node('p', 'rail-label', read.day));
+      hits.slice(0, 12).forEach(function (hit) {
+        var row = node('div', 'rail-row');
+        row.tabIndex = 0;
+        row.setAttribute('role', 'button');
+        var body = node('div');
+        body.appendChild(node('b', null, hit.fact));
+        body.appendChild(node('p', null, (hit.shape ? hit.shape + ' \u00b7 ' : '') + clock(hit.ts)));
+        row.appendChild(body);
+        row.appendChild(node('span', 'rail-em', hit.score.toFixed(2)));
+        row.addEventListener('click', function () {
+          openDrawer('recall \u00b7 ' + hit.fact, [
+            ['the record', node('pre', 'raw', JSON.stringify(hit, null, 2))]
+          ]);
+        });
+        list.appendChild(row);
+      });
+      if (hits.length > 12) {
+        list.appendChild(node('p', 'rail-more', (hits.length - 12) + ' more hits in the day\u2019s stream'));
+      }
+    }
+    if (!recalls.length && !hits.length) {
+      list.appendChild(node('p', 'board-empty',
+        'Nothing has been recalled today. A hit is one calibration row per fact a recall surfaced.'));
+    }
+    card.appendChild(list);
+    return card;
+  }
+
+  function memMix(facts) {
+    var types = {};
+    var bases = {};
+    facts.forEach(function (fact) {
+      types[fact.fact_type] = (types[fact.fact_type] || 0) + 1;
+      bases[fact.basis] = (bases[fact.basis] || 0) + 1;
+    });
+    var card = boardCard(4, 'the corpus mix', facts.length + ' facts', null);
+    card.classList.add('lib-card');
+    var list = node('div', 'rail-list');
+    var max = Object.keys(types).reduce(function (value, key) { return Math.max(value, types[key]); }, 0);
+    Object.keys(types).sort(function (left, right) { return types[right] - types[left]; })
+      .forEach(function (type) {
+        var row = node('div', 'mix-row');
+        row.appendChild(node('span', null, type));
+        var bar = node('span', 'mix-bar');
+        var fill = node('i');
+        fill.style.width = Math.round(100 * types[type] / max) + '%';
+        bar.appendChild(fill);
+        row.appendChild(bar);
+        row.appendChild(node('span', 'rail-em', String(types[type])));
+        list.appendChild(row);
+      });
+    Object.keys(bases).sort().forEach(function (basis) {
+      var row = node('div', 'mix-row');
+      row.appendChild(node('span', null, basis));
+      row.appendChild(node('span'));
+      row.appendChild(node('span', 'rail-em', String(bases[basis])));
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    return card;
   }
 
   // The search box, and the query it holds. It is built once per paint
@@ -3227,124 +3454,6 @@
       (fact.missing || []).join(' '), fact.body, fact.valid_until
     ].join(' ').toLowerCase();
     return haystack.indexOf(asked) !== -1;
-  }
-
-  // The corpus as cards: one per fact, with its type and tier as badges
-  // and its recall count beside the name. A card opens the fact in the
-  // inspector, where its whole body is and its edit lives.
-  function factGrid(facts) {
-    var grid = node('div', 'fact-grid');
-    facts.forEach(function (fact) {
-      var card0 = node('article', 'fact-card');
-      card0.dataset.act = 'inspect';
-      card0.dataset.tone = fact.protected ? 'protected' : fact.retired ? 'retired' : 'live';
-      var name = node('h3', 'fact-name', fact.name);
-      var recalls = node('span', 'fact-recalls',
-        fact.recall_count + (fact.recall_count === 1 ? ' recall' : ' recalls'));
-      card0.appendChild(name);
-      card0.appendChild(recalls);
-      var badges = node('div', 'fact-badges');
-      badges.appendChild(badge(fact.fact_type, fact.protected ? 'accent' : null));
-      badges.appendChild(badge(fact.tier, fact.tier === 'working' ? 'warn' : null));
-      if (fact.retired) badges.appendChild(badge('retired', 'down'));
-      Array.prototype.forEach.call(badges.children, function (chip) {
-        chip.classList.add('badge-filter');
-        chip.tabIndex = 0;
-        chip.setAttribute('role', 'button');
-        chip.title = 'filter the corpus by ' + chip.textContent;
-        var filter = function (event) {
-          event.stopPropagation();
-          face.query = chip.textContent;
-          paintMemory();
-        };
-        chip.addEventListener('click', filter);
-        chip.addEventListener('keydown', function (event) {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            filter(event);
-          }
-        });
-      });
-      card0.appendChild(badges);
-      card0.appendChild(node('p', 'fact-said', fact.description));
-      if (fact.shape && fact.shape.length) {
-        card0.appendChild(node('p', 'fact-meta',
-          'shape: ' + fact.shape.map(function (tag) { return clip(tag, 18); }).join(' \u00b7 ')));
-      }
-      card0.appendChild(node('p', 'fact-meta',
-        'basis: ' + fact.basis + (fact.valid_until ? ' \u00b7 valid until ' + fact.valid_until : '')));
-      card0.addEventListener('click', function () { inspectFact(fact); });
-      grid.appendChild(card0);
-    });
-    return grid;
-  }
-
-  function badge(text, tone) {
-    var el0 = node('span', 'badge', String(text));
-    el0.title = String(text);
-    if (tone) el0.dataset.tone = tone;
-    return el0;
-  }
-
-  // The recall card: this run's own recall, reduced off the log, beside
-  // the day's recorded hits. The two are labelled for what they are,
-  // because one is the run in front of the owner and the other is the
-  // stream's own audit trail.
-  function recallCard(recalls, hits, day) {
-    var card0 = boardCard(12, 'recall', null, null);
-    var body = node('div', 'board-body recall-body');
-    var mine = node('section', 'recall-side');
-    mine.appendChild(node('h3', null, 'this run'));
-    if (recalls.length) {
-      var list = node('ul', 'recall-list');
-      recalls.forEach(function (event) {
-        list.appendChild(node('li', null,
-          (event.shape ? 'shape ' + event.shape + ' \u2014 ' : '') + event.facts + ' facts'));
-      });
-      mine.appendChild(list);
-    } else {
-      mine.appendChild(node('p', 'board-empty',
-        'No recall has happened in this run yet. Each recall rides the event log as its own card, ' +
-        'so the panel reads the same place the conversation does.'));
-    }
-    var theirs = node('section', 'recall-side');
-    theirs.appendChild(node('h3', null, 'the stream, ' + day));
-    if (hits.length) {
-      var rows = node('div', 'rows');
-      hits.forEach(function (hit) {
-        var row0 = node('div', 'rrow');
-        row0.dataset.act = 'inspect';
-        row0.tabIndex = 0;
-        row0.setAttribute('role', 'button');
-        row0.title = 'open this recall\u2019s record';
-        row0.appendChild(node('span', 'rrow-at', clock(hit.ts)));
-        row0.appendChild(node('span', 'rrow-what',
-          (hit.shape ? 'shape ' + hit.shape + ' \u00b7 ' : '') + hit.fact));
-        var side = node('span', 'rrow-side');
-        side.appendChild(node('span', 'rrow-outcome', hit.score.toFixed(2)));
-        row0.appendChild(side);
-        row0.addEventListener('click', function () {
-          openDrawer('recall \u00b7 ' + hit.fact, [
-            ['the record', node('pre', 'raw', JSON.stringify(hit, null, 2))]
-          ]);
-        });
-        row0.addEventListener('keydown', function (event) {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            row0.click();
-          }
-        });
-        rows.appendChild(row0);
-      });
-      theirs.appendChild(rows);
-    } else {
-      theirs.appendChild(node('p', 'board-empty',
-        'No recall hit is recorded for today. A hit is one calibration row per fact a recall surfaced.'));
-    }
-    body.appendChild(mine);
-    body.appendChild(theirs);
-    card0.appendChild(body);
-    return card0;
   }
 
   // One fact in the inspector: its whole body, and the edit that rides
@@ -3561,9 +3670,8 @@
     var read = face.skills;
     el.skillsBoard.textContent = '';
     if (!read) {
-      el.skillsBoard.appendChild(pageHead('Knowledge', 'Skills',
-        'The library the model can reach, the names the loader declined, and the proposals waiting for a decision.',
-        null));
+      el.skillsBoard.appendChild(surfaceHead('Knowledge', 'Skills',
+        'The library the model can reach, the names the loader declined, and the proposals waiting for a decision.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The library read has not landed yet. It reads the canonical skills directory and the ' +
@@ -3576,114 +3684,200 @@
     var proposals = read.proposals || [];
     var used = skills.filter(function (skill) { return skill.uses > 0; }).length;
     var filter = face.skillsFilter || 'all';
-    var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(skills.length, 'loaded', null, function () {
-      face.skillsFilter = 'all';
-      paintSkills();
-    }));
-    tiles.appendChild(tile(skips.length, 'skipped', skips.length ? 'warn' : null, function () {
-      face.skillsFilter = 'skipped';
-      paintSkills();
-    }));
-    tiles.appendChild(tile(proposals.length, 'awaiting a decision', proposals.length ? 'live' : null,
-      function () {
-        face.skillsFilter = 'proposals';
-        paintSkills();
-      }));
-    tiles.appendChild(tile(read.unused, 'never selected', null, function () {
-      face.skillsFilter = 'unused';
-      paintSkills();
-    }));
-    tiles.appendChild(tile(read.sessions, 'sessions scanned'));
-    el.skillsBoard.appendChild(pageHead('Knowledge', 'Skills',
-      'The library the model can reach, the names the loader declined, and the proposals waiting for a decision.',
-      'the library at ' + (read.canonical || '\u2014'), {
-        label: 'Ask the curator',
-        run: function () {
-          ask('review the skill library and propose the next curation change');
-        }
-      }));
-    el.skillsBoard.appendChild(statStrip(tiles));
-    el.skillsBoard.appendChild(filterBar([
-      { value: 'all', label: 'all', count: skills.length },
-      { value: 'used', label: 'used', count: used },
-      { value: 'unused', label: 'unused', count: skills.length - used },
-      { value: 'proposals', label: 'proposals', count: proposals.length },
-      { value: 'skipped', label: 'skipped', count: skips.length }
-    ], filter, function (value) {
-      face.skillsFilter = value;
-      paintSkills();
-    }));
-
-    var showProposals = filter === 'all' || filter === 'proposals';
-    if (showProposals) {
-      if (proposals.length) {
-        el.skillsBoard.appendChild(proposalCards(proposals));
-      } else {
-        var none = boardCard(12, 'the decisions queue', null, null);
-        none.appendChild(node('p', 'board-empty',
-          'No proposal is awaiting a decision. A proposal is a drafted change under the home\u2019s own ' +
-          'proposals directory, and an approve here rides the same apply the CLI rides.'));
-        el.skillsBoard.appendChild(none);
-      }
-    }
-
-    if (filter === 'all' || filter === 'used' || filter === 'unused') {
-      var shown = skills.filter(function (skill) {
-        if (filter === 'used') return skill.uses > 0;
-        if (filter === 'unused') return !skill.uses;
-        return true;
+    var query = face.skillQuery || '';
+    var shown = skills
+      .filter(function (skill) {
+        return skillFilterMatch(skill, filter) && skillMatches(skill, query);
+      })
+      .sort(function (left, right) {
+        return right.uses - left.uses || left.name.localeCompare(right.name);
       });
-      // An empty filter is a state, not a missing card: the chip said
-      // there were none, and the card confirms it in the list's place.
-      var library = boardCard(12, filter === 'all' ? 'the library' : 'the library \u00b7 ' + filter,
-        shown.length + (filter === 'all' ? '' : ' of ' + skills.length), null);
-      if (shown.length) {
-        library.appendChild(skillGrid(shown));
-      } else {
-        library.appendChild(node('p', 'board-empty',
-          'No skill in the library is ' + (filter === 'used' ? 'used' : 'unused') + ' today.'));
-      }
-      el.skillsBoard.appendChild(library);
-    }
-    if (skips.length && (filter === 'all' || filter === 'skipped')) {
-      el.skillsBoard.appendChild(skipCard(skips));
-    }
-    if (filter === 'all' || filter === 'proposals') {
-      el.skillsBoard.appendChild(curationCard(read));
-    }
+    var instrument = surfaceInstrument('the library', skills.length + ' skills',
+      (read.canonical || 'no library') + ' \u00b7 ' + read.sessions + ' sessions scanned',
+      [
+        {
+          label: 'ask the curator',
+          run: function () {
+            ask('review the skill library and propose the next curation change');
+          }
+        },
+        {
+          label: 'copy the path',
+          run: function () {
+            if (read.canonical && navigator.clipboard) {
+              navigator.clipboard.writeText(read.canonical).catch(function () { });
+            }
+            notice('the library path is copied', read.canonical || 'no library resolved');
+          }
+        }
+      ]);
+    el.skillsBoard.appendChild(surfaceHead('Knowledge', 'Skills',
+      'The library the model can reach, the names the loader declined, and the proposals waiting for a decision.',
+      instrument));
+    el.skillsBoard.appendChild(surfaceStrip([
+      [skills.length, 'loaded'],
+      [used, 'used'],
+      [read.unused, 'never selected'],
+      [proposals.length, 'proposals', proposals.length ? 'live' : null],
+      [skips.length, 'skipped', skips.length ? 'down' : null],
+      [read.sessions, 'sessions scanned']
+    ], 'the library at ' + (read.canonical || '\u2014')));
+    el.skillsBoard.appendChild(skillLibrary(read, shown, filter));
+    el.skillsBoard.appendChild(surfaceRail([
+      skillsDecisions(proposals),
+      skillsSkips(skips),
+      skillsCuration(read)
+    ]));
     if (read.refused && read.refused.length) {
       el.skillsBoard.appendChild(refusedCard(read.refused));
     }
   }
 
-  // The proposals as cards, each with the approve that rides the apply.
-  function proposalCards(proposals) {
-    var card0 = boardCard(12, 'awaiting a decision', null,
-      'an approve runs the four cargo steps the CLI runs, in the same order, and keeps the change ' +
-      'only when every step is green. A skills write is home-side, so it creates no commit \u2014 ' +
-      'the pre-image stash beside it is what makes it restorable by `fleet improve undo`.');
-    var grid = node('div', 'fact-grid');
+  function skillFilterMatch(skill, filter) {
+    if (filter === 'used') return skill.uses > 0;
+    if (filter === 'unused') return !skill.uses;
+    return true;
+  }
+
+  function skillMatches(skill, query) {
+    var asked = (query || '').trim().toLowerCase();
+    if (!asked) return true;
+    return (skill.name + ' ' + skill.description).toLowerCase().indexOf(asked) !== -1;
+  }
+
+  function skillSearch() {
+    var wrap = node('div', 'panel-search');
+    var box = node('input', 'panel-search-box');
+    box.type = 'search';
+    box.placeholder = 'search the library \u2014 name or sentence';
+    box.value = face.skillQuery || '';
+    box.setAttribute('aria-label', 'search the library');
+    box.addEventListener('input', function () {
+      face.skillQuery = box.value;
+      paintSkills();
+      var again = el.skillsBoard.querySelector('.panel-search-box');
+      if (again) {
+        again.focus();
+        again.setSelectionRange(again.value.length, again.value.length);
+      }
+    });
+    wrap.appendChild(box);
+    return wrap;
+  }
+
+  function skillLibrary(read, shown, filter) {
+    var skills = read.skills || [];
+    var used = skills.filter(function (skill) { return skill.uses > 0; }).length;
+    var card = boardCard(8, 'the library', shown.length + ' of ' + skills.length,
+      'one row per skill the loader accepted. A row opens the skill; its buttons open the file, ' +
+      'ask the curator, or copy the name.');
+    card.classList.add('lib-card');
+    var tools = node('div', 'lib-tools');
+    tools.appendChild(skillSearch());
+    card.appendChild(tools);
+    card.appendChild(filterBar([
+      { value: 'all', label: 'all', count: skills.length },
+      { value: 'used', label: 'used', count: used },
+      { value: 'unused', label: 'never used', count: skills.length - used }
+    ], filter, function (value) {
+      face.skillsFilter = value;
+      face.skillShowAll = false;
+      paintSkills();
+    }));
+    var cols = node('div', 'skill-cols');
+    ['skill', 'uses', 'modified', 'actions'].forEach(function (label) {
+      cols.appendChild(node('span', null, label));
+    });
+    card.appendChild(cols);
+    var limit = face.skillShowAll || face.skillQuery
+      ? shown.length : Math.min(30, shown.length);
+    shown.slice(0, limit).forEach(function (skill) { card.appendChild(skillRow(skill)); });
+    if (!shown.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No skill matches' + (face.skillQuery ? ' \u201c' + face.skillQuery + '\u201d' : ' this filter') +
+        '. The search reads the name and the one sentence.'));
+    }
+    var foot = node('div', 'lib-foot');
+    foot.appendChild(node('span', null,
+      'showing ' + limit + ' of ' + shown.length + (face.skillQuery ? ' matches' : '')));
+    if (!face.skillShowAll && !face.skillQuery && shown.length > limit) {
+      var more = node('button', 'row-action', 'show all ' + shown.length);
+      more.type = 'button';
+      more.addEventListener('click', function () { face.skillShowAll = true; paintSkills(); });
+      foot.appendChild(more);
+    } else if (face.skillShowAll && shown.length > 30) {
+      var less = node('button', 'row-action', 'show the first 30');
+      less.type = 'button';
+      less.addEventListener('click', function () { face.skillShowAll = false; paintSkills(); });
+      foot.appendChild(less);
+    }
+    card.appendChild(foot);
+    return card;
+  }
+
+  function skillRow(skill) {
+    var row = node('div', 'skill-row');
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.title = 'open ' + skill.name;
+    var main = node('div', 'mem-fact');
+    main.appendChild(node('b', null, skill.name));
+    main.appendChild(node('p', null, skill.description));
+    row.appendChild(main);
+    row.appendChild(node('span', 'mem-num', String(skill.uses)));
+    row.appendChild(node('span', 'skill-mod', (skill.modified || '').slice(0, 10) || '\u2014'));
+    var acts = node('div', 'row-actions');
+    acts.appendChild(rowAction('open', 'open the skill', function () {
+      inspectSkill(skill);
+    }, true));
+    acts.appendChild(rowAction('path', 'copy the skill path', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(skill.path).catch(function () { });
+      notice('the skill path is copied', skill.path);
+    }));
+    acts.appendChild(rowAction('ask', 'ask the curator about this skill', function () {
+      ask('review the ' + skill.name + ' skill against the sessions that used it and say whether it should change');
+    }));
+    acts.appendChild(rowAction('copy', 'copy the skill name', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(skill.name).catch(function () { });
+      notice('the skill name is copied', skill.name);
+    }));
+    row.appendChild(acts);
+    var open = function () { inspectSkill(skill); };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
+    return row;
+  }
+
+  function skillsDecisions(proposals) {
+    var card = boardCard(12, 'the decisions queue',
+      proposals.length + (proposals.length === 1 ? ' proposal' : ' proposals'),
+      'a proposal is a drafted change; an approve rides the same apply the CLI rides.');
+    card.classList.add('lib-card');
+    var list = node('div', 'rail-list');
     proposals.forEach(function (proposal) {
-      var item = node('article', 'fact-card');
-      item.dataset.act = 'inspect';
-      item.dataset.tone = 'live';
-      item.appendChild(node('h3', 'fact-name', proposal.name));
-      item.appendChild(node('span', 'fact-recalls', proposal.kind));
-      var badges = node('div', 'fact-badges');
-      badges.appendChild(badge(proposal.kind, 'accent'));
-      item.appendChild(badges);
-      item.appendChild(node('p', 'fact-said', proposal.description));
-      item.appendChild(node('p', 'fact-meta', 'evidence: ' + clip(proposal.evidence, 120)));
-      var approve = node('button', 'fact-save', 'approve');
+      var row = node('div', 'rail-row');
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.title = 'read the proposal';
+      var body = node('div');
+      body.appendChild(node('b', null, proposal.name));
+      body.appendChild(node('p', null, proposal.kind + ' \u00b7 ' + clip(proposal.evidence, 130)));
+      row.appendChild(body);
+      var acts = node('div', 'row-actions');
+      var approve = node('button', 'row-action row-action-primary', 'approve');
       approve.type = 'button';
+      approve.title = 'apply this proposal';
       approve.addEventListener('click', function (event) {
         event.stopPropagation();
         approve.disabled = true;
-        approve.textContent = 'the gate is running\u2026';
+        approve.textContent = 'applying\u2026';
         post('/api/skill', { name: proposal.name }).then(function (reply) {
           if (reply.status === 200) {
-            approve.textContent = 'applied';
             notice('the proposal landed', reply.body.summary || proposal.name + ' applied');
             readSkills(true).then(paintSkills);
             return;
@@ -3697,114 +3891,92 @@
           notice('the approve did not cross', 'the server did not answer');
         });
       });
-      item.appendChild(approve);
-      item.addEventListener('click', function () { inspectProposal(proposal); });
-      grid.appendChild(item);
+      acts.appendChild(approve);
+      acts.appendChild(rowAction('read', 'read the proposal', function () {
+        inspectProposal(proposal);
+      }));
+      row.appendChild(acts);
+      row.addEventListener('click', function () { inspectProposal(proposal); });
+      row.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          inspectProposal(proposal);
+        }
+      });
+      list.appendChild(row);
     });
-    card0.appendChild(grid);
-    return card0;
+    if (!proposals.length) {
+      list.appendChild(node('p', 'board-empty',
+        'No proposal is awaiting a decision. An approve here rides the same apply the CLI rides.'));
+    }
+    card.appendChild(list);
+    return card;
   }
 
-  // The library as cards, each with its usage count: a skill the scan
-  // never saw selected reads zero, which is the whole measure the
-  // substrate reports.
-  function skillGrid(skills) {
-    var grid = node('div', 'fact-grid');
-    skills.forEach(function (skill) {
-      var item = node('article', 'fact-card');
-      item.dataset.act = 'inspect';
-      item.dataset.tone = skill.uses ? 'live' : 'retired';
-      item.appendChild(node('h3', 'fact-name', skill.name));
-      item.appendChild(node('span', 'fact-recalls',
-        skill.uses + (skill.uses === 1 ? ' use' : ' uses')));
-      item.appendChild(node('p', 'fact-said', skill.description));
-      if (skill.modified) {
-        item.appendChild(node('p', 'fact-meta', 'modified ' + clock(skill.modified)));
-      }
-      item.addEventListener('click', function () { inspectSkill(skill); });
-      grid.appendChild(item);
-    });
-    return grid;
-  }
-
-  function skipCard(skips) {
-    var card0 = boardCard(12, 'the library declined these', null,
-      'a skip is the loader\u2019s own report, in its own words: a directory with no readable ' +
-      'SKILL.md, a malformed one, or a proposal that reached the live tree.');
-    var rows = node('div', 'rows');
+  function skillsSkips(skips) {
+    var card = boardCard(12, 'declined', skips.length + ' skipped',
+      'a skip is the loader\u2019s own report, in its own words.');
+    card.classList.add('lib-card');
+    var list = node('div', 'rail-list');
     skips.forEach(function (skip) {
-      var row0 = node('div', 'rrow');
-      row0.dataset.act = 'inspect';
-      row0.tabIndex = 0;
-      row0.setAttribute('role', 'button');
-      row0.title = skip.reason;
-      row0.appendChild(node('span', 'rrow-what', skip.name));
-      var side = node('span', 'rrow-side');
-      side.appendChild(node('span', 'rrow-outcome', clip(skip.reason, 90)));
-      row0.appendChild(side);
-      row0.addEventListener('click', function () {
+      var row = node('div', 'rail-row');
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.title = skip.reason;
+      var body = node('div');
+      body.appendChild(node('b', null, skip.name));
+      body.appendChild(node('p', null, clip(skip.reason, 150)));
+      row.appendChild(body);
+      row.addEventListener('click', function () {
         openDrawer('skip \u00b7 ' + skip.name, [
           ['why the loader declined it', node('p', 'derivation', skip.reason)]
         ]);
       });
-      row0.addEventListener('keydown', function (event) {
+      row.addEventListener('keydown', function (event) {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
-          row0.click();
+          row.click();
         }
       });
-      rows.appendChild(row0);
+      list.appendChild(row);
     });
-    card0.appendChild(rows);
-    return card0;
+    if (!skips.length) list.appendChild(node('p', 'rail-note', 'The loader accepted every directory it read.'));
+    card.appendChild(list);
+    return card;
   }
 
-  // The curation card: the merge candidates, scored by the substrate's
-  // own rule at its own threshold, and the standing refusal that says
-  // why a retire is not offered. Both come off the read, so the card and
-  // the code cannot disagree.
-  function curationCard(read) {
+  function skillsCuration(read) {
     var merges = read.merges || [];
-    var card0 = boardCard(12, 'curation candidates', null, read.curation_note);
-    if (!merges.length) {
-      card0.appendChild(node('p', 'board-empty',
-        'No two descriptions in the library read as near-identical. A candidate is a pair scoring ' +
-        'at or above ' + read.threshold + ' token Jaccard \u2014 the same rule the substrate\u2019s ' +
-        'own curation files a merge under.'));
-      return card0;
-    }
-    var rows = node('div', 'rows');
+    var card = boardCard(12, 'curation', merges.length + ' candidates', read.curation_note);
+    card.classList.add('lib-card');
+    card.appendChild(node('p', 'rail-note',
+      read.unused + ' of ' + ((read.skills || []).length) + ' skills were never selected across ' +
+      read.sessions + ' scanned sessions. A merge candidate is a pair scoring at or above ' +
+      read.threshold + ' on the substrate\u2019s own description similarity.'));
+    var list = node('div', 'rail-list');
     merges.forEach(function (merge) {
-      var row0 = node('div', 'rrow');
-      row0.dataset.act = 'inspect';
-      row0.tabIndex = 0;
-      row0.setAttribute('role', 'button');
-      row0.title = 'similarity ' + merge.similarity.toFixed(2) + ' against the threshold ' +
-        read.threshold;
-      row0.appendChild(node('span', 'rrow-what',
-        merge.survivor + ' would absorb ' + merge.absorbed));
-      var side = node('span', 'rrow-side');
-      side.appendChild(node('span', 'rrow-outcome', merge.similarity.toFixed(2)));
-      row0.appendChild(side);
-      row0.addEventListener('click', function () {
+      var row = node('div', 'rail-row');
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      var body = node('div');
+      body.appendChild(node('b', null, merge.survivor + ' would absorb ' + merge.absorbed));
+      body.appendChild(node('p', null, 'similarity ' + merge.similarity.toFixed(2)));
+      row.appendChild(body);
+      row.addEventListener('click', function () {
         openDrawer('merge candidate', [
-          ['the pair', node('p', 'derivation',
-            merge.survivor + ' would absorb ' + merge.absorbed)],
+          ['the pair', node('p', 'derivation', merge.survivor + ' would absorb ' + merge.absorbed)],
           ['the measure', node('p', 'derivation',
             'description similarity ' + merge.similarity.toFixed(2) +
             ' \u00b7 the threshold is ' + read.threshold)]
         ]);
       });
-      row0.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          row0.click();
-        }
-      });
-      rows.appendChild(row0);
+      list.appendChild(row);
     });
-    card0.appendChild(rows);
-    return card0;
+    if (!merges.length) {
+      list.appendChild(node('p', 'rail-note', 'No two descriptions read as near-identical at this threshold.'));
+    }
+    card.appendChild(list);
+    return card;
   }
 
   function inspectSkill(skill) {
@@ -5924,10 +6096,10 @@
   ];
 
   function brainHead(read) {
-    var head = node('header', 'brain-head');
-    var main = node('div', 'brain-main');
+    var head = node('header', 'surface-head');
+    var main = node('div', 'surface-main');
     main.appendChild(node('p', 'page-eyebrow', 'Knowledge'));
-    main.appendChild(node('h1', 'brain-title', 'Second brain'));
+    main.appendChild(node('h1', 'surface-title', 'Second brain'));
     main.appendChild(node('p', 'page-note',
       'The project landscape, read as an atlas: every project\u2019s six-week pulse and the ' +
       'one line its last session left behind, with the decisions that need a person kept beside them.'));
@@ -5947,9 +6119,9 @@
     var pipeline = doc.pipeline;
     var running = !!(pipeline && pipeline.running);
     var live = !!plugin.live;
-    var wrap = node('div', 'brain-tool');
-    var line = node('div', 'brain-tool-line');
-    line.appendChild(node('span', live ? 'brain-live' : 'brain-dead'));
+    var wrap = node('div', 'surface-tool');
+    var line = node('div', 'surface-tool-line');
+    line.appendChild(node('span', live ? 'surface-live' : 'surface-dead'));
     line.appendChild(node('b', null, 'the tool'));
     var built = read.state_at || (pipeline && pipeline.built_at) || '';
     var age = brainAge(built);
@@ -5957,7 +6129,7 @@
       built ? (age >= 2 ? age + ' days behind' : 'fresh') : 'unread',
       built ? (age >= 2 ? 'warn' : 'ok') : null));
     wrap.appendChild(line);
-    var meta = node('p', 'brain-tool-meta');
+    var meta = node('p', 'surface-tool-meta');
     meta.appendChild(node('span', null, built ? 'state built ' + built : 'the state names no build'));
     if (read.events_since != null) {
       meta.appendChild(node('span', null, ' \u00b7 ' + read.events_since + ' events since'));
@@ -5967,8 +6139,8 @@
     }
     wrap.appendChild(meta);
 
-    var controls = node('div', 'brain-tool-act');
-    var select = node('select', 'brain-jobs');
+    var controls = node('div', 'surface-tool-act');
+    var select = node('select', 'surface-jobs');
     select.setAttribute('aria-label', 'the job to refresh');
     (plugin.jobs || []).forEach(function (job) {
       var option = node('option', null, job.label);
@@ -5978,7 +6150,7 @@
     var known = (plugin.jobs || []).some(function (job) { return job.name === face.pluginJob; });
     select.value = known ? face.pluginJob : ((plugin.jobs || [])[0] || {}).name || '';
     select.addEventListener('change', function () { face.pluginJob = select.value; });
-    var button = node('button', 'brain-refresh', running ? 'running\u2026' : 'refresh');
+    var button = node('button', 'surface-refresh', running ? 'running\u2026' : 'refresh');
     button.type = 'button';
     button.disabled = !live || running;
     if (!live) button.title = 'the tool is not answering at its address';
@@ -6046,7 +6218,7 @@
     var projects = read.projects || [];
     var attention = read.attention || {};
     var counts = attention.counts || {};
-    var strip = node('div', 'brain-strip');
+    var strip = node('div', 'surface-strip');
     var active = projects.filter(function (row) { return row.lifecycle === 'active'; }).length;
     var dirty = projects.filter(function (row) { return row.dirty > 0; }).length;
     var commits = projects.reduce(function (sum, row) { return sum + (row.commits_30d || 0); }, 0);
@@ -6060,12 +6232,12 @@
       [counts.conflicts || 0, 'conflicts', 'down'],
       [attention.total || 0, 'need attention']
     ].forEach(function (item) {
-      var span = node('span', item[2] === 'down' ? 'brain-strip-down' : null);
+      var span = node('span', item[2] === 'down' ? 'surface-strip-down' : null);
       span.appendChild(node('b', null, String(item[0])));
       span.appendChild(document.createTextNode(' ' + item[1]));
       strip.appendChild(span);
     });
-    var end = node('span', 'brain-strip-end');
+    var end = node('span', 'surface-strip-end');
     end.textContent = read.state_at
       ? 'the tool\u2019s view, built ' + read.state_at +
         (read.events_since != null ? ' \u00b7 ' + read.events_since + ' events since' : '')

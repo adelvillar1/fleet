@@ -3512,7 +3512,7 @@ pre.drawer-code {
    that carry rows are full-bleed — their header and rows own the padding,
    so a row's hairline runs the card's width the way a ledger's does. */
 
-.brain-head {
+.surface-head {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 292px;
@@ -3521,9 +3521,9 @@ pre.drawer-code {
   padding: 2px 0 4px;
 }
 
-.brain-main .page-eyebrow { margin: 0 0 8px; }
+.surface-main .page-eyebrow { margin: 0 0 8px; }
 
-.brain-title {
+.surface-title {
   margin: 0;
   font-family: var(--font-display);
   font-size: clamp(30px, 3.2vw, 38px);
@@ -3532,7 +3532,7 @@ pre.drawer-code {
   letter-spacing: -0.03em;
 }
 
-.brain-tool {
+.surface-tool {
   border: var(--card-hairline);
   border-radius: 8px;
   background: var(--card-bg);
@@ -3540,12 +3540,12 @@ pre.drawer-code {
   box-shadow: var(--shadow-1);
 }
 
-.brain-tool-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.brain-tool-line b { font-weight: 600; }
-.brain-tool-line .badge { margin-left: auto; }
+.surface-tool-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.surface-tool-line b { font-weight: 600; }
+.surface-tool-line .badge { margin-left: auto; }
 
-.brain-live,
-.brain-dead {
+.surface-live,
+.surface-dead {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -3553,19 +3553,19 @@ pre.drawer-code {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-ok) 14%, transparent);
 }
 
-.brain-dead { background: var(--dsw-alias-down); box-shadow: none; }
+.surface-dead { background: var(--dsw-alias-down); box-shadow: none; }
 
-.brain-tool-meta {
+.surface-tool-meta {
   margin: 5px 0 0;
   color: var(--dsw-alias-ink-tertiary);
   font-size: 10.5px;
   line-height: 1.45;
 }
 
-.brain-tool-meta code { color: var(--dsw-alias-ink-secondary); font-family: var(--font-mono); font-size: 10px; }
-.brain-tool-act { display: flex; gap: 6px; margin-top: 9px; }
+.surface-tool-meta code { color: var(--dsw-alias-ink-secondary); font-family: var(--font-mono); font-size: 10px; }
+.surface-tool-act { display: flex; gap: 6px; margin-top: 9px; }
 
-.brain-jobs {
+.surface-jobs {
   flex: 1;
   min-width: 0;
   height: 28px;
@@ -3578,7 +3578,7 @@ pre.drawer-code {
   font-size: 11px;
 }
 
-.brain-refresh {
+.surface-refresh {
   height: 28px;
   padding: 0 10px;
   border: var(--card-hairline);
@@ -3591,8 +3591,8 @@ pre.drawer-code {
   cursor: pointer;
 }
 
-.brain-refresh:hover:not(:disabled) { border-color: var(--dsw-alias-accent); }
-.brain-refresh:disabled { opacity: 0.55; cursor: default; }
+.surface-refresh:hover:not(:disabled) { border-color: var(--dsw-alias-accent); }
+.surface-refresh:disabled { opacity: 0.55; cursor: default; }
 
 .brain-run { display: grid; gap: 4px; margin-top: 9px; padding-top: 8px; border-top: var(--card-hairline); }
 .brain-step { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
@@ -3611,7 +3611,7 @@ pre.drawer-code {
   white-space: pre-wrap;
 }
 
-.brain-strip {
+.surface-strip {
   grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
@@ -3626,9 +3626,9 @@ pre.drawer-code {
   text-transform: uppercase;
 }
 
-.brain-strip b { margin-right: 3px; color: var(--dsw-alias-ink); font-family: var(--font-mono); font-size: 12px; letter-spacing: -0.02em; }
-.brain-strip-down b { color: var(--dsw-alias-down); }
-.brain-strip-end { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 10px; }
+.surface-strip b { margin-right: 3px; color: var(--dsw-alias-ink); font-family: var(--font-mono); font-size: 12px; letter-spacing: -0.02em; }
+.surface-strip-down b { color: var(--dsw-alias-down); }
+.surface-strip-end { margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 10px; }
 
 .board-card[data-span="8"] { grid-column: span 8; }
 .board-card[data-span="4"] { grid-column: span 4; }
@@ -3817,15 +3817,15 @@ pre.drawer-code {
 .brain-method-empty { margin: 0; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
 
 @media (max-width: 1180px) {
-  .brain-head { grid-template-columns: minmax(0, 1fr) 250px; }
+  .surface-head { grid-template-columns: minmax(0, 1fr) 250px; }
   .atlas-row { grid-template-columns: minmax(130px, 1.1fr) 84px 42px 48px minmax(0, 1.5fr); }
 }
 
 @media (max-width: 900px) {
   .board-card[data-span="8"],
   .board-card[data-span="4"] { grid-column: span 12; }
-  .brain-head { grid-template-columns: minmax(0, 1fr); align-items: start; }
-  .brain-tool { max-width: 420px; }
+  .surface-head { grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .surface-tool { max-width: 420px; }
   .brain-method { grid-template-columns: minmax(0, 1fr); gap: 18px; }
 }
 
@@ -3845,6 +3845,184 @@ pre.drawer-code {
   .commit-bars { padding: 12px 12px 4px; }
   .commit-axis { padding: 0 12px 9px; }
   .brain-gate { grid-template-columns: 78px minmax(0, 1fr) 62px; }
+}
+
+/* ---- the knowledge tables: memory and skills -------------------------------
+   Both surfaces borrow the atlas's grammar: a full-bleed table on the
+   left whose rows carry their own actions, and a rail of cards on the
+   right. The row's buttons are the point: reading a fact or a skill
+   should not require opening a drawer first. */
+
+.surface-rail { grid-column: span 4; display: grid; gap: 16px; align-content: start; min-width: 0; }
+.surface-rail > .board-card { grid-column: auto; }
+
+.lib-card { padding: 0; container-type: inline-size; }
+.atlas-card { container-type: inline-size; }
+.lib-card .board-head { padding: 14px 15px 0; margin-bottom: 0; }
+.lib-card .board-note { margin: 5px 0 0; padding: 0 15px 4px; max-width: 80ch; }
+.lib-card .filter-bar { padding: 0 15px 8px; }
+
+.lib-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 15px; }
+.lib-tools .panel-search { flex: 1; min-width: 180px; margin: 8px 0 2px; }
+
+.lib-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 15px 11px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10px;
+}
+
+.lib-foot .row-action { margin-left: auto; }
+
+.row-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+
+.row-action {
+  padding: 3px 7px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.row-action:hover:not(:disabled) { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent-lift); }
+.row-action:disabled { opacity: 0.55; cursor: default; }
+.row-action-primary { border-color: color-mix(in srgb, var(--dsw-alias-accent) 42%, transparent); color: var(--dsw-alias-accent-lift); }
+
+.mem-cols,
+.mem-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 96px 52px 100px 148px;
+  gap: 10px;
+  align-items: center;
+}
+
+.mem-cols {
+  padding: 6px 15px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mem-cols span:nth-child(4) { text-align: right; }
+
+.mem-row {
+  padding: 7px 15px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  cursor: pointer;
+}
+
+.mem-row:hover { background: color-mix(in srgb, var(--dsw-alias-ink) 3%, transparent); }
+.mem-row:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -2px; }
+
+.mem-fact { min-width: 0; }
+.mem-fact b {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.mem-fact p { display: -webkit-box; margin-top: 1px; overflow: hidden; color: var(--dsw-alias-ink-secondary); font-size: 10.5px; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.mem-basis { display: grid; gap: 1px; min-width: 0; }
+.mem-basis span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-ink-secondary); font-size: 10px; }
+.mem-tier { color: var(--dsw-alias-ink-tertiary); font-family: var(--font-mono); font-size: 8.5px; }
+.mem-num { color: var(--dsw-alias-ink-secondary); font-family: var(--font-mono); font-size: 10px; text-align: right; }
+.mem-state { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.mem-live { color: var(--dsw-alias-ok); font-size: 10px; }
+
+.skill-cols,
+.skill-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px 86px 152px;
+  gap: 10px;
+  align-items: center;
+}
+
+.skill-cols {
+  padding: 6px 15px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.skill-cols span:nth-child(2) { text-align: right; }
+
+.skill-row {
+  padding: 7px 15px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  cursor: pointer;
+}
+
+.skill-row:hover { background: color-mix(in srgb, var(--dsw-alias-ink) 3%, transparent); }
+.skill-row:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -2px; }
+.skill-mod { color: var(--dsw-alias-ink-tertiary); font-family: var(--font-mono); font-size: 9px; }
+
+.rail-list { display: grid; padding: 4px 14px 10px; }
+.rail-label { margin: 6px 0 2px; color: var(--dsw-alias-ink-tertiary); font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.rail-group + .rail-group { margin-top: 4px; border-top: 1px solid var(--dsw-alias-hairline); }
+.rail-note { padding: 6px 14px 10px; color: var(--dsw-alias-ink-tertiary); font-size: 10px; line-height: 1.5; }
+.rail-more { padding: 6px 14px 4px; color: var(--dsw-alias-accent-lift); font-size: 10px; }
+
+.rail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+  cursor: pointer;
+}
+
+.rail-row:last-child { border-bottom: 0; }
+.rail-row b { font-size: 11px; font-weight: 600; }
+.rail-row p { display: -webkit-box; margin-top: 1px; overflow: hidden; color: var(--dsw-alias-ink-secondary); font-size: 10px; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.rail-em { color: var(--dsw-alias-ink-tertiary); font-family: var(--font-mono); font-size: 8.5px; white-space: nowrap; }
+
+.mix-row { display: grid; grid-template-columns: 78px minmax(0, 1fr) 26px; gap: 8px; align-items: center; padding: 4px 0; }
+.mix-row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-ink-secondary); font-size: 10px; }
+.mix-bar { height: 3px; overflow: hidden; border-radius: 2px; background: var(--dsw-alias-hairline); }
+.mix-bar i { display: block; height: 100%; border-radius: 2px; background: var(--dsw-alias-accent); }
+
+/* The pane and the dock shrink the board without changing the viewport,
+   so the tables reflow on the card's own width: the number columns go,
+   and the row's actions take their own line under the name. */
+@container (max-width: 620px) {
+  .mem-cols, .skill-cols, .atlas-cols { display: none; }
+  .mem-row, .skill-row, .atlas-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .mem-row > .badge, .mem-row > .mem-basis, .mem-row > .mem-num, .mem-row > .mem-state,
+  .skill-row > .mem-num, .skill-row > .skill-mod,
+  .atlas-row > .atlas-num { display: none; }
+  .mem-row > .row-actions, .skill-row > .row-actions { grid-column: 1 / -1; justify-content: flex-start; margin-top: 2px; }
+  .atlas-row > .atlas-next { grid-column: 1 / -1; }
+}
+
+@media (max-width: 900px) {
+  .surface-rail { grid-column: span 12; }
+}
+
+@media (max-width: 720px) {
+  .mem-cols, .skill-cols { display: none; }
+  .mem-row, .skill-row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; padding: 7px 12px; }
+  .mem-row > .badge, .mem-row > .mem-basis, .mem-row > .mem-num, .mem-row > .mem-state,
+  .skill-row > .mem-num, .skill-row > .skill-mod { display: none; }
+  .lib-card .board-head { padding: 12px 12px 0; }
+  .lib-card .board-note, .lib-tools, .lib-card .filter-bar, .lib-foot { padding-left: 12px; padding-right: 12px; }
+  .row-actions { justify-content: flex-start; }
 }
 
 .replay-lines { display: grid; margin-top: 12px; }
