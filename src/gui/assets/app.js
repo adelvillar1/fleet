@@ -282,6 +282,12 @@
     treeAt: '',
     file: null,
     deck: null,
+    // The action cards: every source that measures a flaw and pre-bakes
+    // a correction pushes one here, and the strip above the composer
+    // renders them all — the deck's layout faults, the theme's contrast,
+    // whatever measures next. One shape, one place, regardless of which
+    // surface the work is in.
+    actionCards: [],
     paneTab: 'files'
   };
 
@@ -2330,6 +2336,7 @@
   function showDeck(event) {
     face.file = null;
     face.deck = event;
+    syncDeckCard();
     showPaneTab('preview');
     openPane();
     paintPreview();
@@ -2385,6 +2392,7 @@
         face.deck.html = answered.html;
         face.deck.faults = JSON.stringify(answered.faults || []);
         paintPreview();
+        syncDeckCard();
       })
       .catch(function () { });
   }
@@ -4905,39 +4913,106 @@
   // fix already computed — the readable theme, not a promise to find
   // one. That is the whole pattern: the interface calculates the flaw
   // and offers the correction as one click, before the owner hits it.
-  function paintContrast() {
-    var doc = face.contrast;
+  // ------------------------------------------------- the action cards
+
+  // The card bus: a source measures a flaw, pre-bakes the correction,
+  // and pushes one card — id, mark, title, the words beside it, and the
+  // clicks it offers. The strip above the composer renders whatever is
+  // here, regardless of which surface the work is in; a source refreshes
+  // by pushing the same id again, and clears by dropping it.
+  function pushActionCard(card) {
+    face.actionCards = face.actionCards.filter(function (existing) {
+      return existing.id !== card.id;
+    });
+    face.actionCards.push(card);
+    paintActions();
+  }
+
+  function dropActionCard(id) {
+    var before = face.actionCards.length;
+    face.actionCards = face.actionCards.filter(function (existing) {
+      return existing.id !== id;
+    });
+    if (face.actionCards.length !== before) paintActions();
+  }
+
+  function paintActions() {
     if (!el.actions) return;
     el.actions.textContent = '';
+    if (!face.actionCards.length) {
+      el.actions.hidden = true;
+      return;
+    }
+    face.actionCards.forEach(function (card) {
+      var card0 = node('div', 'action');
+      card0.dataset.kind = card.id;
+      card0.appendChild(node('span', 'action-mark', card.mark || '\u25d0'));
+      var body = node('div', 'action-body');
+      body.appendChild(node('p', 'action-title', card.title));
+      if (card.said) body.appendChild(node('p', 'action-said', card.said));
+      (card.do || []).forEach(function (doable) {
+        var fix = node('button', 'action-do', doable.label);
+        fix.type = 'button';
+        fix.addEventListener('click', doable.run);
+        body.appendChild(fix);
+      });
+      card0.appendChild(body);
+      el.actions.appendChild(card0);
+    });
+    el.actions.hidden = false;
+  }
+
+  // The deck's card: what the grader found on the deck as written, and
+  // the two clicks — keep the repaired render, or revert to the owner's
+  // own words. Either click re-renders through the render route, and
+  // the card re-derives from the answer's own faults.
+  function syncDeckCard() {
+    var deck = face.deck;
+    var faults = [];
+    try { faults = JSON.parse((deck && deck.faults) || '[]'); } catch (error) { faults = []; }
+    if (deck && faults.length && deck.fix_deck && deck.original_deck) {
+      pushActionCard({
+        id: 'deck-repair',
+        mark: '\u2726',
+        title: 'the deck has ' + faults.length + ' layout fault' + (faults.length === 1 ? '' : 's') +
+          ' \u2014 repaired in place',
+        said: faults.map(function (fault) {
+          return fault.trigger + ' on ' + fault.node;
+        }).join(' \u00b7 ') + ' \u2014 one click keeps the repair or reverts to your words',
+        do: [
+          { label: 'keep the repaired render', run: function () { applyDeckFix(deck.fix_deck); } },
+          { label: 'revert to as written', run: function () { applyDeckFix(deck.original_deck); } },
+        ],
+      });
+    } else {
+      dropActionCard('deck-repair');
+    }
+  }
+
+  function paintContrast() {
+    var doc = face.contrast;
     var here = doc && (doc.themes || []).filter(function (entry) {
       return entry.theme === themeNow();
     })[0];
-    if (!here || here.holds) { el.actions.hidden = true; return; }
+    if (!here || here.holds) { dropActionCard('contrast'); return; }
     var best = (doc.themes || []).filter(function (entry) { return entry.holds; })
       .sort(function (left, right) { return right.worst - left.worst; })[0];
-    var card0 = node('div', 'action');
-    card0.dataset.kind = 'contrast';
-    card0.appendChild(node('span', 'action-mark', '\u25d0'));
-    var body = node('div', 'action-body');
-    body.appendChild(node('p', 'action-title', 'this theme falls below the readable floor'));
-    body.appendChild(node('p', 'action-said',
-      'its worst text is ' + here.worst.toFixed(2) + ':1 against the ' + doc.floor.toFixed(1) +
-      ':1 floor \u2014 ' + here.failing.map(function (entry) {
-        return entry.token + ' at ' + entry.ratio.toFixed(2) + ':1';
-      }).join(', ')));
-    if (best) {
-      var fix = node('button', 'action-do');
-      fix.type = 'button';
-      fix.textContent = 'switch to ' + best.theme + ' (' + best.worst.toFixed(2) + ':1)';
-      fix.addEventListener('click', function () {
-        setTheme(best.theme);
-        readContrast(true);
-      });
-      body.appendChild(fix);
-    }
-    card0.appendChild(body);
-    el.actions.appendChild(card0);
-    el.actions.hidden = false;
+    pushActionCard({
+      id: 'contrast',
+      mark: '\u25d0',
+      title: 'this theme falls below the readable floor',
+      said: 'its worst text is ' + here.worst.toFixed(2) + ':1 against the ' + doc.floor.toFixed(1) +
+        ':1 floor \u2014 ' + here.failing.map(function (entry) {
+          return entry.token + ' at ' + entry.ratio.toFixed(2) + ':1';
+        }).join(', '),
+      do: best ? [{
+        label: 'switch to ' + best.theme + ' (' + best.worst.toFixed(2) + ':1)',
+        run: function () {
+          setTheme(best.theme);
+          readContrast(true);
+        },
+      }] : [],
+    });
   }
 
   function closeThemes() { el.themes.hidden = true; }
