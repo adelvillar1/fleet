@@ -1819,13 +1819,19 @@ pub struct ChannelsOptions {
     /// Pair a telegram peer by the chat id a refusal named, with the name
     /// it is filed under and what it may do.
     pub allow_telegram: Option<(String, Option<String>, Capability)>,
+    /// List the peers that tried and are not paired.
+    pub pending: bool,
+    /// Change a paired peer's capability: the channel, the peer, and the
+    /// capability it moves to.
+    pub capability: Option<(String, String, Capability)>,
 }
 
 /// `fleet channels [pair-webhook <name> [--callback <url>]
 /// [--capability task|observe]] [revoke-webhook <id>] [allow-telegram
-/// <chat> [--name <name>] [--capability task|observe]]`: no top-level
-/// positionals, and the two subcommands take one name or id each. A peer
-/// is paired with a minted token printed once, exactly as a device is.
+/// <chat> [--name <name>] [--capability task|observe]] [pending]
+/// [capability <channel> <peer> <task|observe>]`: no top-level
+/// positionals, and each subcommand takes the words it needs. A peer is
+/// paired with a minted token printed once, exactly as a device is.
 ///
 /// The webhook's port is not here. `--port` used to be parsed and
 /// ignored, which is a flag that lies: the port belongs to the process
@@ -1878,6 +1884,30 @@ fn parse_channels(args: &[String]) -> Result<Command, String> {
                 }
                 options.revoke_webhook = Some(take_value(args, &mut index, "revoke-webhook")?);
             }
+            "pending" => {
+                if options.pending {
+                    return Err("`pending` takes no value".to_string());
+                }
+                options.pending = true;
+            }
+            "capability" => {
+                if options.capability.is_some() {
+                    return Err("`capability` takes one channel, one peer, and one value".to_string());
+                }
+                let channel = take_value(args, &mut index, "capability")?;
+                let peer = take_value(args, &mut index, "capability")?;
+                let asked = take_value(args, &mut index, "capability")?;
+                let asked = match asked.trim() {
+                    "task" | "act" => Capability::Task,
+                    "observe" | "listen" => Capability::Observe,
+                    other => {
+                        return Err(format!(
+                            "`{other}` is not a capability; `task` acts, `observe` listens"
+                        ));
+                    }
+                };
+                options.capability = Some((channel, peer, asked));
+            }
             "allow-telegram" => {
                 let chat_id = take_value(args, &mut index, "allow-telegram")?;
                 let mut name = None;
@@ -1895,7 +1925,7 @@ fn parse_channels(args: &[String]) -> Result<Command, String> {
             }
             other => {
                 return Err(format!(
-                    "`{other}` takes no value here; channels takes pair-webhook, revoke-webhook, allow-telegram, and --capability"
+                    "`{other}` takes no value here; channels takes pair-webhook, revoke-webhook, allow-telegram, pending, capability, and --capability"
                 ));
             }
         }

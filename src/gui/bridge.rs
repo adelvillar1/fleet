@@ -257,6 +257,12 @@ pub struct Bridge {
     /// Held so the thread outlives the bridge: a `JoinHandle` dropped
     /// detaches rather than joins, which is what a browser face wants.
     _agent: Option<thread::JoinHandle<()>>,
+    /// The channel service this face hosts, when it hosts one. The face
+    /// builds the service after the bridge (the service needs it), so
+    /// this is attached rather than constructed — and a face with no
+    /// service leaves it `None`, which is what makes the control plane's
+    /// start say "not hosted here" rather than pretend.
+    channels: Mutex<Option<Arc<crate::channels::ChannelService>>>,
 }
 
 impl Bridge {
@@ -305,6 +311,7 @@ impl Bridge {
             rules,
             events,
             home_cache: Arc::new(Mutex::new(None)),
+            channels: Mutex::new(None),
             related,
             usage,
             commands: None,
@@ -785,19 +792,184 @@ impl Bridge {
                 }
             }
             "peer" => {
-                let mut store = crate::channels::PeerStore::load(&home, "webhook")
-                    .map_err(|error| error.to_string())?;
-                if store.revoke(&id) {
-                    store.save(&home, "webhook").map_err(|error| error.to_string())?;
-                    Ok(json!({"type": "revoked", "kind": "peer", "id": id}))
-                } else {
-                    Err(format!("no channel peer named `{id}`"))
+                // Every channel's store is tried: a peer's id is unique
+                // within its channel, so the first store that knows it is
+                // the one that paired it.
+                for channel in crate::channels::CHANNELS {
+                    let mut store = crate::channels::PeerStore::load(&home, channel)
+                        .map_err(|error| error.to_string())?;
+                    if store.revoke(&id) {
+                        store.save(&home, channel).map_err(|error| error.to_string())?;
+                        let mut pending = crate::channels::PendingStore::load(&home, channel);
+                        pending.forget(&id);
+                        let _ = pending.save(&home, channel);
+                        return Ok(json!({
+                            "type": "revoked",
+                            "kind": "peer",
+                            "channel": channel,
+                            "id": id,
+                        }));
+                    }
                 }
+                Err(format!("no channel peer named `{id}`"))
             }
             other => Err(format!("`{other}` is not a thing that can be revoked")),
         })
         .await
         .map_err(|_| "the revocation did not land".to_string())?
+    }
+
+    /// The channel service's control plane as one bounded document: the
+    /// service's own state (and whether its heartbeat still beats), every
+    /// channel's paired and pending peers, and the newest activity lines
+    /// with the bound named so a surface can say what it is not showing.
+    ///
+    /// It reads the same files `fleet channels` and the TUI read, so the
+    /// three cannot disagree about who can reach the face or whether the
+    /// service is up.
+    pub async fn channels_read(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || channels_read(&home))
+            .await
+            .unwrap_or_else(|_| json!({
+                "type": "channels",
+                "refused": ["the channel read did not land"],
+            }))
+    }
+
+    /// Start one channel through the service the face hosts. A face with
+    /// no service says so rather than pretending: the surface's start
+    /// button is only meaningful in the process that owns the ports.
+    pub async fn channel_start(&self, name: &str) -> Result<Value, String> {
+        let Some(service) = self.hosted_channels() else {
+            return Err(
+                "no channel service is hosted here; start the face with the channel service on"
+                    .to_string(),
+            );
+        };
+        let report = service.start(name.trim()).await;
+        Ok(json!({
+            "type": "channel",
+            "name": report.name,
+            "phase": report.phase,
+            "port": report.port,
+            "error": report.error,
+        }))
+    }
+
+    /// Stop one channel.
+    pub async fn channel_stop(&self, name: &str) -> Result<Value, String> {
+        let Some(service) = self.hosted_channels() else {
+            return Err(
+                "no channel service is hosted here; there is nothing to stop".to_string(),
+            );
+        };
+        let report = service.stop(name.trim());
+        Ok(json!({
+            "type": "channel",
+            "name": report.name,
+            "phase": report.phase,
+        }))
+    }
+
+    /// Pair a peer from the app. The token the pairing mints is in this
+    /// reply and nowhere else: the store keeps its digest, no later read
+    /// carries it, and the surface shows it in a card that is dismissed
+    /// once. That is the rule the device pairing already holds.
+    pub async fn channel_pair(
+        &self,
+        channel: &str,
+        id: &str,
+        name: &str,
+        capability: &str,
+    ) -> Result<Value, String> {
+        let channel = channel.trim().to_string();
+        let id = id.trim().to_string();
+        let name = name.trim().to_string();
+        let capability = parse_capability(capability)?;
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            let pairing = crate::channels::pair(&home, &channel, &id, &name, capability)?;
+            Ok(json!({
+                "type": "paired",
+                "channel": pairing.channel,
+                "id": pairing.id,
+                "name": pairing.name,
+                "capability": match pairing.capability {
+                    crate::channels::Capability::Task => "task",
+                    crate::channels::Capability::Observe => "observe",
+                },
+                // The one and only copy. A surface that re-reads this
+                // gets `null`, because nothing else has it.
+                "token": pairing.token,
+                "reveal": "this is the only time the token is shown; store it now",
+            }))
+        })
+        .await
+        .map_err(|_| "the pairing did not land".to_string())?
+    }
+
+    /// Change a paired peer's capability. `Observe` is real here: a peer
+    /// demoted to listening keeps its conversation and loses the door a
+    /// task comes through.
+    pub async fn channel_capability(
+        &self,
+        channel: &str,
+        id: &str,
+        capability: &str,
+    ) -> Result<Value, String> {
+        let channel = channel.trim().to_string();
+        let id = id.trim().to_string();
+        let capability = parse_capability(capability)?;
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::channels::set_capability(&home, &channel, &id, capability)?;
+            Ok(json!({
+                "type": "capability",
+                "channel": channel,
+                "id": id,
+                "capability": match capability {
+                    crate::channels::Capability::Task => "task",
+                    crate::channels::Capability::Observe => "observe",
+                },
+            }))
+        })
+        .await
+        .map_err(|_| "the capability change did not land".to_string())?
+    }
+
+    /// Refuse a pending peer: forget the attempts so the surface stops
+    /// offering it. It is not blocked — there is nothing to block — it is
+    /// simply not remembered until it tries again.
+    pub async fn channel_forget_pending(&self, channel: &str, id: &str) -> Result<Value, String> {
+        let channel = channel.trim().to_string();
+        let id = id.trim().to_string();
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut pending = crate::channels::PendingStore::load(&home, &channel);
+            if !pending.forget(&id) {
+                return Err(format!("no pending {channel} peer named `{id}`"));
+            }
+            pending
+                .save(&home, &channel)
+                .map_err(|error| error.to_string())?;
+            Ok(json!({"type": "forgotten", "channel": channel, "id": id}))
+        })
+        .await
+        .map_err(|_| "the change did not land".to_string())?
+    }
+
+    /// The service this face hosts, when it hosts one. The face attaches
+    /// it after building it — the service needs the bridge, so it cannot
+    /// be a constructor argument without a cycle.
+    pub fn hosted_channels(&self) -> Option<Arc<crate::channels::ChannelService>> {
+        lock(&self.channels).clone()
+    }
+
+    /// Attach the hosted service, so the control plane's start and stop
+    /// reach the process that owns the ports.
+    pub fn attach_channels(&self, service: Arc<crate::channels::ChannelService>) {
+        *lock(&self.channels) = Some(service);
     }
 
     /// The sessions panel's document: the archive as the summaries the
@@ -2281,6 +2453,81 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
 /// the archive pretending to be more complete than it is.
 /// The access document: the paired devices and the channel peers, with
 /// names and stamps and never a token.
+/// `task` or `observe`, as a surface's body spells it. A body that names
+/// neither is refused by name rather than defaulting: a capability is a
+/// grant, and a grant nobody typed is the wrong default.
+fn parse_capability(word: &str) -> Result<crate::channels::Capability, String> {
+    match word.trim() {
+        "task" | "act" => Ok(crate::channels::Capability::Task),
+        "observe" | "listen" => Ok(crate::channels::Capability::Observe),
+        other => Err(format!(
+            "`{other}` is not a capability; `task` acts, `observe` listens"
+        )),
+    }
+}
+
+/// The channel control plane as one document: the service's state, every
+/// channel's paired and pending peers, and the newest activity.
+///
+/// The bound is named, not implied: a surface that shows fifty lines and
+/// says "the newest 50" is telling the truth, and one that shows fifty
+/// of three hundred silently is not.
+fn channels_read(home: &std::path::Path) -> Value {
+    const ACTIVITY_SHOWN: usize = 50;
+    let service = crate::channels::service::document(home);
+    let mut channels = Vec::new();
+    for name in crate::channels::CHANNELS {
+        let peers = crate::channels::PeerStore::load(home, name)
+            .map(|store| {
+                store
+                    .peers
+                    .iter()
+                    .map(|peer| {
+                        json!({
+                            "channel": name,
+                            "id": peer.id,
+                            "name": peer.name,
+                            "capability": match peer.capability {
+                                crate::channels::Capability::Task => "task",
+                                crate::channels::Capability::Observe => "observe",
+                            },
+                            "paired": peer.created_at,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let pending = crate::channels::PendingStore::load(home, name)
+            .peers
+            .iter()
+            .map(|peer| {
+                json!({
+                    "channel": name,
+                    "id": peer.id,
+                    "name": peer.name,
+                    "attempts": peer.attempts,
+                    "first_seen": peer.first_seen,
+                    "last_seen": peer.last_seen,
+                })
+            })
+            .collect::<Vec<_>>();
+        channels.push(json!({
+            "name": name,
+            "peers": peers,
+            "pending": pending,
+        }));
+    }
+    let activity = crate::channels::service::activity(home, ACTIVITY_SHOWN);
+    json!({
+        "type": "channels",
+        "read_at": crate::boards::now_stamp(),
+        "service": service,
+        "channels": channels,
+        "activity": activity,
+        "activity_bound": ACTIVITY_SHOWN,
+    })
+}
+
 fn access_read(home: &std::path::Path) -> Value {
     let devices = crate::remote::pairing::DeviceStore::load(home)
         .map(|store| {

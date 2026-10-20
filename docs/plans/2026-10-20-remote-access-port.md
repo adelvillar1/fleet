@@ -221,6 +221,36 @@ the reading rule is amended to name that exception rather than bent
 silently. The CLI grows `--capability` on its pair forms so the terminal
 is not the poorer client.
 
+**Landed.** `PendingStore` (`<channel>-pending.json`, 0600 atomic,
+capped at 20, newest first) and the refusal path records there — in
+`Driver::deliver`, the one place the admission decision is made, so a
+refusal cannot be logged as pending by one surface and not another. A
+peer that is paired but may only listen is *not* pending: it is already
+in, and its capability is the thing to edit.
+
+`channels::pair` is the one pairing door the app and the CLI both use.
+A webhook peer's token is minted there, its id is the digest's prefix,
+the store keeps only the digest, and the token is the return value — the
+only copy, which is what makes "shown once" true rather than a promise.
+A Telegram peer keeps the chat id the platform vouches for and reveals
+nothing. Pairing clears the pending entry.
+
+`PeerStore::set_capability` + `channels::set_capability` make `Observe`
+editable after the fact, and the policy follows it: a demoted peer keeps
+its conversation and loses the door a task comes through. The CLI grew
+`pending` and `capability <channel> <peer> <task|observe>`, and both
+pair forms now route through the one door.
+
+The bridge carries the control plane P4 renders: `channels_read` (the
+service's document, every channel's paired and pending peers, and the
+newest fifty activity lines with the bound named), `channel_pair`,
+`channel_capability`, `channel_forget_pending`, `channel_start`, and
+`channel_stop`; `access_revoke` now walks every channel's store rather
+than the webhook's. The service is attached to the bridge after it is
+built, because it needs the bridge and a constructor argument would be a
+cycle — a face with no service answers "not hosted here" rather than
+pretending.
+
 ### P4 — the Bots surface
 
 `#/bots`, first in the system group, in the console's own language:

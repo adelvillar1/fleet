@@ -193,6 +193,19 @@ impl PeerStore {
         std::fs::rename(&temp, &path)
     }
 
+    /// Change a paired peer's capability. Returns false when no peer has
+    /// that id, so a surface says "no such peer" rather than writing a
+    /// roster entry that is not there.
+    pub fn set_capability(&mut self, id: &str, capability: Capability) -> bool {
+        match self.peers.iter_mut().find(|peer| peer.id == id) {
+            Some(peer) => {
+                peer.capability = capability;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Pair a peer: the token is hashed here and never stored. The id is
     /// the digest's prefix, which is unique without a second random draw.
     pub fn pair(&mut self, id: &str, name: &str, token: &str, capability: Capability, stamp: &str) {
@@ -291,6 +304,195 @@ fn log_carries(home: &Path, id: &str, peer: &Peer) -> bool {
                 if channel == peer.channel && peer_id == peer.id
         )
     })
+}
+
+/// A peer that tried to reach the service and is not paired.
+///
+/// The refusal path records it here so the owner can let it in from the
+/// app: hunting a numeric chat id out of a log to type into a terminal
+/// is the step that makes a channel feel like a config file rather than
+/// a surface. Only a channel whose peer identifies itself before pairing
+/// can record one — Telegram's chat id does, and the webhook's unknown
+/// token does not, which is why the webhook's attempt is an activity
+/// line rather than a peer to approve.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingPeer {
+    /// The peer's id on its channel.
+    pub id: String,
+    /// The name it announced, if it announced one.
+    pub name: String,
+    /// How many deliveries it has attempted. A peer that keeps trying is
+    /// one the owner probably means to let in.
+    pub attempts: u64,
+    pub first_seen: String,
+    pub last_seen: String,
+}
+
+/// How many pending peers one channel remembers. A stranger that floods
+/// the channel must not grow a file without bound.
+pub const PENDING_CAP: usize = 20;
+
+/// The unpaired peers of one channel, newest first.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct PendingStore {
+    #[serde(default)]
+    pub peers: Vec<PendingPeer>,
+}
+
+impl PendingStore {
+    /// The store's path: `<home>/channels/<channel>-pending.json`.
+    pub fn path(home: &Path, channel: &str) -> PathBuf {
+        home.join("channels").join(format!("{channel}-pending.json"))
+    }
+
+    /// Read it. A home with nothing pending has an empty store.
+    pub fn load(home: &Path, channel: &str) -> PendingStore {
+        std::fs::read_to_string(Self::path(home, channel))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    /// Write it, privately and atomically: it names who tried.
+    pub fn save(&self, home: &Path, channel: &str) -> std::io::Result<()> {
+        let path = Self::path(home, channel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let temp = path.with_extension("json.tmp");
+        let text = serde_json::to_string_pretty(self).map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+        })?;
+        {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&temp)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            }
+            file.write_all(text.as_bytes())?;
+            file.flush()?;
+        }
+        std::fs::rename(&temp, &path)
+    }
+
+    /// Record one attempt: upsert by id, count it, and keep the store
+    /// bounded. The newest is first, so the cap drops the stalest.
+    pub fn note(&mut self, id: &str, name: &str, stamp: &str) {
+        match self.peers.iter_mut().find(|peer| peer.id == id) {
+            Some(peer) => {
+                peer.attempts += 1;
+                peer.last_seen = stamp.to_string();
+                if !name.trim().is_empty() && peer.name.trim().is_empty() {
+                    peer.name = name.trim().to_string();
+                }
+            }
+            None => self.peers.insert(
+                0,
+                PendingPeer {
+                    id: id.to_string(),
+                    name: name.trim().to_string(),
+                    attempts: 1,
+                    first_seen: stamp.to_string(),
+                    last_seen: stamp.to_string(),
+                },
+            ),
+        }
+        self.peers.truncate(PENDING_CAP);
+    }
+
+    /// Forget one, for a surface that refused to let it in.
+    pub fn forget(&mut self, id: &str) -> bool {
+        let before = self.peers.len();
+        self.peers.retain(|peer| peer.id != id);
+        self.peers.len() != before
+    }
+}
+
+/// One pairing's outcome: the peer's id and the token, which is the only
+/// copy — the store keeps the digest, so a surface shows this once and
+/// never reads it back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pairing {
+    pub channel: String,
+    pub id: String,
+    pub name: String,
+    pub capability: Capability,
+    /// The token, exactly once. `None` for a channel whose credential is
+    /// the platform's own (Telegram's chat id), which has nothing to
+    /// reveal.
+    pub token: Option<String>,
+}
+
+/// Pair a peer server-side: mint the token when the channel needs one,
+/// store only its digest, and hand the token back to be shown once.
+///
+/// This is the one place a peer is created, so the CLI and the app
+/// cannot disagree about what pairing means — and the token's only exit
+/// is this return value.
+pub fn pair(
+    home: &Path,
+    channel: &str,
+    id: &str,
+    name: &str,
+    capability: Capability,
+) -> Result<Pairing, String> {
+    if !CHANNELS.contains(&channel) {
+        return Err(format!("`{channel}` is not a channel this build ships"));
+    }
+    let name = name.trim();
+    let name = if name.is_empty() { id } else { name };
+    let stamp = crate::session::iso_utc_stamp(std::time::SystemTime::now())
+        .unwrap_or_else(|_| String::from("unknown"));
+    let mut store = PeerStore::load(home, channel).map_err(|error| error.to_string())?;
+    // A webhook peer's credential is a token Fleet mints and reveals
+    // once, and its id is the digest's prefix — unique without a second
+    // random draw, and not the token itself. A Telegram peer's id is the
+    // chat id the platform vouches for, so the id is the caller's and
+    // there is nothing to reveal; the store still wants a digest slot,
+    // so a token is minted and discarded because nothing presents it.
+    let asked = id.to_string();
+    let (id, credential, token) = if channel == "webhook" {
+        let token = mint_peer_token()?;
+        let id = crate::remote::pairing::hash_hex(token.as_bytes())[..12].to_string();
+        (id, token.clone(), Some(token))
+    } else {
+        (asked.clone(), mint_peer_token()?, None)
+    };
+    store.pair(&id, name, &credential, capability, &stamp);
+    store.save(home, channel).map_err(|error| error.to_string())?;
+    // A peer that is now paired is no longer pending. The pending entry
+    // is filed under the id the caller asked about — the chat id — which
+    // is the minted id for every channel but the webhook.
+    let mut pending = PendingStore::load(home, channel);
+    let cleared = pending.forget(&asked) || pending.forget(&id);
+    if cleared {
+        let _ = pending.save(home, channel);
+    }
+    Ok(Pairing {
+        channel: channel.to_string(),
+        id,
+        name: name.to_string(),
+        capability,
+        token,
+    })
+}
+
+/// Change a paired peer's capability. Returns whether the peer exists —
+/// a surface says "no such peer" rather than writing a roster entry that
+/// is not there.
+pub fn set_capability(
+    home: &Path,
+    channel: &str,
+    id: &str,
+    capability: Capability,
+) -> Result<(), String> {
+    let mut store = PeerStore::load(home, channel).map_err(|error| error.to_string())?;
+    if !store.set_capability(id, capability) {
+        return Err(format!("no paired {channel} peer named `{id}`"));
+    }
+    store.save(home, channel).map_err(|error| error.to_string())
 }
 
 /// The peer→session mapping on disk: `<home>/channels/sessions.json`.
@@ -640,7 +842,22 @@ impl Driver {
     /// accepted immediately and its outcome arrives on the session's
     /// stream, which the channel watches for the reply.
     pub fn deliver(&self, inbound: &Inbound) -> Result<String, Refusal> {
-        self.policy.authorize(&inbound.peer)?;
+        if let Err(refusal) = self.policy.authorize(&inbound.peer) {
+            // An unpaired peer is remembered as pending, in the one place
+            // the decision is made: a surface can then let it in without
+            // the owner hunting a numeric id out of a log. A peer that is
+            // paired but may only listen is not pending — it is already
+            // in, and its capability is the thing to edit.
+            if refusal == Refusal::Unknown {
+                let home = self.bridge.home_path();
+                let stamp = crate::session::iso_utc_stamp(std::time::SystemTime::now())
+                    .unwrap_or_else(|_| String::from("unknown"));
+                let mut pending = PendingStore::load(&home, &inbound.peer.channel);
+                pending.note(&inbound.peer.id, &inbound.peer.name, &stamp);
+                let _ = pending.save(&home, &inbound.peer.channel);
+            }
+            return Err(refusal);
+        }
         // Where this peer's outcomes go, remembered BEFORE the session
         // mapping is built: a mapping that carries no reply handle is a
         // conversation nothing can be posted back to, and the seat the
@@ -979,6 +1196,118 @@ mod tests {
         let second = driver.session_for(&peer, None).unwrap();
         assert_eq!(first, second, "the peer's session is stable");
         assert_ne!(first, "session-test", "it is not the bridge's own");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A peer that is not paired is remembered as pending, counted, and
+    /// bounded — so a surface can let it in without the owner hunting a
+    /// numeric id out of a log. A peer that is paired but may only listen
+    /// is not pending: it is already in, and its capability is the thing
+    /// to edit.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refused_peer_is_remembered_as_pending_and_not_once_paired() {
+        let home = temp_home("pending");
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let driver = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
+        let stranger = Peer::new("telegram", "4242", "Alejandro");
+        let inbound = Inbound {
+            peer: stranger.clone(),
+            session: None,
+            task: "hello".to_string(),
+            reply: Reply::None,
+        };
+        assert_eq!(driver.deliver(&inbound), Err(Refusal::Unknown));
+        assert_eq!(driver.deliver(&inbound), Err(Refusal::Unknown));
+        let pending = PendingStore::load(&home, "telegram");
+        assert_eq!(pending.peers.len(), 1, "one peer, counted twice");
+        assert_eq!(pending.peers[0].id, "4242");
+        assert_eq!(pending.peers[0].name, "Alejandro");
+        assert_eq!(pending.peers[0].attempts, 2);
+
+        // Letting it in clears the pending entry and mints the pairing.
+        let pairing =
+            pair(&home, "telegram", "4242", "Alejandro", Capability::Observe).expect("paired");
+        assert_eq!(pairing.id, "4242");
+        assert_eq!(pairing.capability, Capability::Observe);
+        assert!(pairing.token.is_none(), "the chat id is the credential");
+        assert!(
+            PendingStore::load(&home, "telegram").peers.is_empty(),
+            "a paired peer is no longer pending"
+        );
+
+        // An observing peer is refused a task and is NOT recorded again:
+        // the refusal names the capability, not the admission.
+        assert_eq!(driver.deliver(&inbound), Err(Refusal::ObserveOnly));
+        assert!(PendingStore::load(&home, "telegram").peers.is_empty());
+
+        // The store is bounded, and the newest is what survives.
+        let mut pending = PendingStore::default();
+        for index in 0..(PENDING_CAP + 10) {
+            pending.note(&format!("id{index}"), "a stranger", "stamp");
+        }
+        assert_eq!(pending.peers.len(), PENDING_CAP);
+        assert_eq!(pending.peers[0].id, format!("id{}", PENDING_CAP + 9));
+        pending.save(&home, "telegram").expect("the pending store");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The pairing door is the only place a peer is created: a webhook
+    /// peer's token is minted here, revealed once, and stored only as its
+    /// digest — and the same call is what the app and the CLI use.
+    #[test]
+    fn the_pairing_door_reveals_the_token_once_and_stores_a_digest() {
+        let home = temp_home("pairing");
+        let pairing =
+            pair(&home, "webhook", "", "the CI box", Capability::Task).expect("paired");
+        let token = pairing.token.clone().expect("a webhook token");
+        assert_eq!(token.len(), 43, "32 bytes, base64url");
+        assert_eq!(
+            pairing.id,
+            crate::remote::pairing::hash_hex(token.as_bytes())[..12].to_string(),
+            "the id is the digest's prefix, not a second random draw"
+        );
+        let store = PeerStore::load(&home, "webhook").expect("the store");
+        assert_eq!(store.peers.len(), 1);
+        assert_eq!(
+            store.peers[0].token_hash,
+            crate::remote::pairing::hash_hex(token.as_bytes()),
+            "the store holds the digest"
+        );
+        // The token is nowhere on disk but its digest.
+        for entry in std::fs::read_dir(home.join("channels")).expect("the channel dir") {
+            let text = std::fs::read_to_string(entry.expect("an entry").path()).unwrap_or_default();
+            assert!(
+                !text.contains(&token),
+                "the token is not written: the reveal is the only copy"
+            );
+        }
+        // A channel this build does not ship is refused by name.
+        assert!(pair(&home, "slack", "x", "y", Capability::Task).is_err());
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// `Observe` becomes real: a paired peer's capability is editable, and
+    /// the policy answers with the new one — a demoted peer keeps its
+    /// conversation and loses the door a task comes through.
+    #[test]
+    fn a_paired_peers_capability_is_editable_and_the_policy_follows() {
+        let home = temp_home("capability");
+        let pairing =
+            pair(&home, "webhook", "", "the actor", Capability::Task).expect("paired");
+        let policy = Policy::new(home.clone());
+        let peer = Peer::new("webhook", &pairing.id, "the actor");
+        assert_eq!(policy.authorize(&peer), Ok(Capability::Task));
+        set_capability(&home, "webhook", &pairing.id, Capability::Observe).expect("demoted");
+        assert_eq!(policy.authorize(&peer), Err(Refusal::ObserveOnly));
+        assert_eq!(policy.capability(&peer), Some(Capability::Observe));
+        // A peer that is not there is refused by name rather than
+        // invented.
+        assert!(set_capability(&home, "webhook", "nobody", Capability::Task).is_err());
         std::fs::remove_dir_all(&home).ok();
     }
 

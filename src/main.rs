@@ -449,30 +449,26 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
         }
     };
     if let Some((name, callback, capability)) = &options.pair_webhook {
-        let token = match fleet::channels::mint_peer_token() {
-            Ok(token) => token,
+        // One pairing door for the app and the terminal: the store's
+        // digest and the once-only token are minted in the same place,
+        // so the two clients cannot disagree about what pairing means.
+        let pairing = match fleet::channels::pair(
+            &home,
+            "webhook",
+            // The webhook mints its own id from the token.
+            "",
+            name,
+            *capability,
+        ) {
+            Ok(pairing) => pairing,
             Err(error) => {
                 eprintln!("fleet: channels: {error}");
                 return ExitCode::FAILURE;
             }
         };
-        // The id is the digest's prefix, which is unique without a
-        // second random draw and is not the token itself.
-        let id = fleet::remote::pairing::hash_hex(token.as_bytes())[..12].to_string();
-        let mut store = match fleet::channels::PeerStore::load(&home, "webhook") {
-            Ok(store) => store,
-            Err(error) => {
-                eprintln!("fleet: channels: {error}");
-                return ExitCode::FAILURE;
-            }
-        };
-        let stamp = fleet::session::iso_utc_stamp(std::time::SystemTime::now())
-            .unwrap_or_else(|_| String::from("unknown"));
-        store.pair(&id, name, &token, *capability, &stamp);
-        if let Err(error) = store.save(&home, "webhook") {
-            eprintln!("fleet: channels: {error}");
-            return ExitCode::FAILURE;
-        }
+        let id = pairing.id.clone();
+        // The token is the one copy; the store holds its digest.
+        let token = pairing.token.clone().unwrap_or_default();
         println!("fleet channels — one webhook peer paired");
         println!("  peer:  {name}  ({id})");
         println!(
@@ -500,27 +496,9 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
         let name = name
             .clone()
             .unwrap_or_else(|| format!("telegram {chat_id}"));
-        let mut store = match fleet::channels::PeerStore::load(&home, "telegram") {
-            Ok(store) => store,
-            Err(error) => {
-                eprintln!("fleet: channels: {error}");
-                return ExitCode::FAILURE;
-            }
-        };
-        // A paired peer carries a token the platform never asks for; the
-        // store's shape is shared, so it gets one anyway — minted and
-        // discarded, since nothing will ever present it.
-        let token = match fleet::channels::mint_peer_token() {
-            Ok(token) => token,
-            Err(error) => {
-                eprintln!("fleet: channels: {error}");
-                return ExitCode::FAILURE;
-            }
-        };
-        let stamp = fleet::session::iso_utc_stamp(std::time::SystemTime::now())
-            .unwrap_or_else(|_| String::from("unknown"));
-        store.pair(chat_id, &name, &token, *capability, &stamp);
-        if let Err(error) = store.save(&home, "telegram") {
+        if let Err(error) =
+            fleet::channels::pair(&home, "telegram", chat_id, &name, *capability)
+        {
             eprintln!("fleet: channels: {error}");
             return ExitCode::FAILURE;
         }
@@ -555,6 +533,47 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
         return ExitCode::FAILURE;
     }
     // The bare command: what is configured, and who may act.
+    if let Some((channel, peer, capability)) = &options.capability {
+        match fleet::channels::set_capability(&home, channel, peer, *capability) {
+            Ok(()) => {
+                let word = match capability {
+                    fleet::channels::Capability::Task => "may act",
+                    fleet::channels::Capability::Observe => "may only listen",
+                };
+                println!("fleet channels — {peer} on {channel} now {word}");
+                return ExitCode::SUCCESS;
+            }
+            Err(error) => {
+                eprintln!("fleet: channels: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    if options.pending {
+        println!("fleet channels — peers that tried and are not paired");
+        let mut any = false;
+        for channel in fleet::channels::CHANNELS {
+            for peer in fleet::channels::PendingStore::load(&home, channel).peers {
+                any = true;
+                let name = if peer.name.is_empty() {
+                    "(no name announced)".to_string()
+                } else {
+                    peer.name.clone()
+                };
+                println!(
+                    "  {channel}  {id}  {name} · {attempts} attempt{s} · last {last}",
+                    id = peer.id,
+                    attempts = peer.attempts,
+                    s = if peer.attempts == 1 { "" } else { "s" },
+                    last = peer.last_seen,
+                );
+            }
+        }
+        if !any {
+            println!("  nothing is waiting");
+        }
+        return ExitCode::SUCCESS;
+    }
     println!("fleet channels — the channel service");
     // The service's own state first, from the one document every surface
     // reads: whether anything is running, whether the heartbeat is still

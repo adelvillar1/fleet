@@ -207,6 +207,10 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         }
         service.spawn_watcher();
         service.spawn_heartbeat();
+        // The control plane's start and stop reach the process that owns
+        // the ports: the service is attached to the bridge the server
+        // already answers from.
+        bridge.attach_channels(Arc::clone(&service));
         Some(service)
     } else {
         None
