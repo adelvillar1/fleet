@@ -51,6 +51,12 @@ const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(5);
 /// The stream and the state ride the same document the page already
 /// reduces, so a phone and the desktop see the same conversation.
 const ALLOWED_GET: &[&str] = &[
+    // The face itself: the page and its assets are the app a paired
+    // device opened, and a shell with no script is a shell that does
+    // nothing.
+    "/",
+    "/app.css",
+    "/app.js",
     "/events",
     "/api/state",
     "/api/sessions",
@@ -192,14 +198,19 @@ async fn serve_connection(
     // asking for a page is a phone that has not paired: it gets the
     // pairing page rather than a 401 it cannot act on. An API route with
     // no token gets the 401.
-    let token = device_token(&request).unwrap_or_default();
-    let device = match DeviceStore::load(home) {
-        Ok(store) => store.device_for_token(token).cloned(),
+    let store = match DeviceStore::load(home) {
+        Ok(store) => store,
         Err(error) => {
             eprintln!("fleet remote: the device store could not be read: {error}");
-            None
+            return write_reply(&mut stream, unauthorized()).await;
         }
     };
+    // Every place a token can ride, and the first that matches a paired
+    // device wins: a paired browser holds the cookie, and a query left
+    // over from a redirect must not shadow it.
+    let device = presented_tokens(&request)
+        .iter()
+        .find_map(|token| store.device_for_token(token).cloned());
     let Some(device) = device else {
         if request.method == "GET" && is_page(&request.path) {
             return write_reply(&mut stream, pairing_page()).await;
@@ -341,25 +352,32 @@ fn asked_session(bridge: &Bridge, request: &Request) -> String {
     }
 }
 
-/// The device token a request presents, from the three places a browser
-/// can carry it: the header, the query, or this face's own cookie. Its
-/// own extraction rather than the loopback face's `presented_token`,
-/// because the cookie names differ on purpose — a phone that has also
-/// visited the loopback face carries two capabilities, and each face
-/// must read only its own.
-fn device_token(request: &Request) -> Option<&str> {
+/// Every device token a request presents, most trusted first: the cookie
+/// a paired browser holds, then the header, then the query. Its own
+/// extraction rather than the loopback face's `presented_token`, because
+/// the cookie names differ on purpose — a phone that has also visited the
+/// loopback face carries two capabilities, and each face must read only
+/// its own.
+fn presented_tokens(request: &Request) -> Vec<String> {
+    let mut tokens = Vec::new();
+    if let Some(cookie) = request.header("cookie") {
+        for (name, value) in cookie.split(';').filter_map(|pair| pair.trim().split_once('=')) {
+            if name == DEVICE_COOKIE && !value.is_empty() {
+                tokens.push(value.to_string());
+            }
+        }
+    }
     if let Some(value) = request.header("x-fleet-token") {
-        return Some(value);
+        if !value.is_empty() {
+            tokens.push(value.to_string());
+        }
     }
     if let Some(value) = crate::gui::server::query_value(&request.query, "token") {
-        return Some(value);
+        if !value.is_empty() {
+            tokens.push(value.to_string());
+        }
     }
-    let cookie = request.header("cookie")?;
-    cookie
-        .split(';')
-        .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == DEVICE_COOKIE)
-        .map(|(_, value)| value)
+    tokens
 }
 
 /// Whether a GET path is the page or one of its assets, which is what a
@@ -1001,8 +1019,9 @@ mod tests {
         let (port, code) = live(home.clone()).await;
         let (_redeemed, token) = pair(port, &code);
 
-        // What a paired device may do.
-        for path in ["/api/state", "/api/sessions"] {
+        // What a paired device may do — the face itself first, because a
+        // shell with no script is a shell that does nothing.
+        for path in ["/", "/app.css", "/app.js", "/api/state", "/api/sessions"] {
             let reply = get(port, path, &token);
             assert!(reply.starts_with("HTTP/1.1 200"), "{path}: {reply}");
         }
