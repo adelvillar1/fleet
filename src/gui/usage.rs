@@ -157,7 +157,9 @@ impl UsageStore {
         {
             let mut usage = lock(&self.usage);
             match (section, event) {
-                ("suggestions", "shown") => bump_suggestion(&mut usage, id, now, |row| &mut row.shown),
+                ("suggestions", "shown") => {
+                    bump_suggestion(&mut usage, id, now, |row| &mut row.shown)
+                }
                 ("suggestions", "accepted") => {
                     bump_suggestion(&mut usage, id, now, |row| &mut row.accepted)
                 }
@@ -251,8 +253,7 @@ fn write(home: &Path, usage: &Usage) {
         };
         if text.len() <= MAX_BYTES {
             let path = home.join(FILE);
-            static SERIAL: std::sync::atomic::AtomicUsize =
-                std::sync::atomic::AtomicUsize::new(0);
+            static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut temp = path.clone().into_os_string();
             temp.push(format!(".{}.{}.tmp", std::process::id(), serial));
@@ -313,9 +314,7 @@ fn write(home: &Path, usage: &Usage) {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
 /// Whether the adaptation is on, read through `settings.rs` so the
@@ -358,7 +357,9 @@ mod tests {
             .record("suggestions", "offer:plan", "accepted")
             .expect("accepted");
         store.record("panels", "memory", "opens").expect("opens");
-        store.record("actions", "process-review", "uses").expect("uses");
+        store
+            .record("actions", "process-review", "uses")
+            .expect("uses");
         let read = UsageStore::new(home.clone()).document(true);
         assert_eq!(read["suggestions"]["offer:plan"]["shown"], 2);
         assert_eq!(read["suggestions"]["offer:plan"]["accepted"], 1);
@@ -385,7 +386,9 @@ mod tests {
         assert!(store.record("planets", "x", "shown").is_err());
         assert!(store.record("suggestions", "", "shown").is_err());
         assert!(store.record("suggestions", "a\nb", "shown").is_err());
-        assert!(store.record("suggestions", &"x".repeat(MAX_ID_CHARS + 1), "shown").is_err());
+        assert!(store
+            .record("suggestions", &"x".repeat(MAX_ID_CHARS + 1), "shown")
+            .is_err());
         assert!(!home.join(FILE).exists(), "nothing was written");
     }
 

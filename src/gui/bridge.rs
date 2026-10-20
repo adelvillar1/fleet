@@ -418,7 +418,11 @@ impl Bridge {
             .count();
         let mut named: Vec<&Value> = live.clone();
         named.sort_by_key(|fact| {
-            std::cmp::Reverse(fact.get("recall_count").and_then(Value::as_u64).unwrap_or(0))
+            std::cmp::Reverse(
+                fact.get("recall_count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            )
         });
         let top: Vec<Value> = named
             .iter()
@@ -456,7 +460,11 @@ impl Bridge {
             .iter()
             .filter(|node| node.get("state").and_then(Value::as_str) == Some("ready"))
             .collect();
-        ready.sort_by_key(|node| node.get("score").and_then(Value::as_i64).unwrap_or(i64::MAX));
+        ready.sort_by_key(|node| {
+            node.get("score")
+                .and_then(Value::as_i64)
+                .unwrap_or(i64::MAX)
+        });
         let running = nodes
             .iter()
             .find(|node| node.get("state").and_then(Value::as_str) == Some("running"));
@@ -3611,10 +3619,15 @@ mod tests {
 
         // A steer replaces the control with its text, and an empty one
         // is refused before anything is written.
-        bridge.stop(Some("read the gate first")).expect("the steer lands");
+        bridge
+            .stop(Some("read the gate first"))
+            .expect("the steer lands");
         let body = std::fs::read_to_string(&control).expect("the steer file");
         assert!(body.contains("read the gate first"), "{body}");
-        assert!(bridge.stop(Some("   ")).is_err(), "an empty steer is refused");
+        assert!(
+            bridge.stop(Some("   ")).is_err(),
+            "an empty steer is refused"
+        );
         assert_eq!(
             std::fs::read_to_string(&control).expect("the steer file"),
             body,

@@ -247,7 +247,11 @@ async fn serve_connection(
                 .trim()
                 .parse::<usize>()
                 .unwrap_or(crate::gui::related::DEFAULT_LIMIT);
-            write_reply(&mut stream, api(200, bridge.related(&kind, &id, limit).await)).await
+            write_reply(
+                &mut stream,
+                api(200, bridge.related(&kind, &id, limit).await),
+            )
+            .await
         }
         // The browser's own usage counters. Counters and ids only:
         // nothing here carries task text, a file, or a credential, and
@@ -264,9 +268,7 @@ async fn serve_connection(
             };
             match bridge.record_usage(&section, &id, &event).await {
                 Ok(document) => write_reply(&mut stream, api(200, document)).await,
-                Err(message) => {
-                    write_reply(&mut stream, api(400, json!({"error": message}))).await
-                }
+                Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
             }
         }
         ("GET", "/api/contrast") => write_reply(&mut stream, api(200, bridge.contrast())).await,
@@ -1548,7 +1550,10 @@ mod tests {
         assert!(state.contains("\"approval\":null"), "{state}");
         assert!(state.contains("\"rules\":[]"), "{state}");
         // The verify step's gate rides every state document.
-        assert!(state.contains("\"gate\":{\"informs_failover\":true,\"name\":\"sys1\"}"), "{state}");
+        assert!(
+            state.contains("\"gate\":{\"informs_failover\":true,\"name\":\"sys1\"}"),
+            "{state}"
+        );
     }
 
     /// The owner's stop and steer reach the run through the control file
@@ -1567,11 +1572,8 @@ mod tests {
         let log = crate::session::Session::create(&home, "deepseek-chat").expect("the log");
         let id = log.id().to_string();
         drop(log);
-        let (mut bridge, _sources) = Bridge::detached(
-            home.clone(),
-            "deepseek-chat".to_string(),
-            Some(id.clone()),
-        );
+        let (mut bridge, _sources) =
+            Bridge::detached(home.clone(), "deepseek-chat".to_string(), Some(id.clone()));
         let _door = bridge.connect();
         bridge.run("go").expect("the run is accepted");
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -1586,19 +1588,15 @@ mod tests {
         assert!(stopped.starts_with("HTTP/1.1 200"), "{stopped}");
         assert!(stopped.contains("\"kind\":\"stop\""), "{stopped}");
         let control = crate::home::sessions_dir(&home).join(format!("{id}.control"));
-        assert!(
-            std::fs::read_to_string(&control)
-                .expect("the control file")
-                .contains("stop")
-        );
+        assert!(std::fs::read_to_string(&control)
+            .expect("the control file")
+            .contains("stop"));
 
         let steered = post(port, "/api/steer", "", r#"{"text":"read the gate first"}"#);
         assert!(steered.starts_with("HTTP/1.1 200"), "{steered}");
-        assert!(
-            std::fs::read_to_string(&control)
-                .expect("the steer file")
-                .contains("read the gate first")
-        );
+        assert!(std::fs::read_to_string(&control)
+            .expect("the steer file")
+            .contains("read the gate first"));
         let malformed = post(port, "/api/steer", "", "{}");
         assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
     }

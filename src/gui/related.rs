@@ -113,13 +113,16 @@ struct Candidate {
 /// boundary rather than an empty list that could mean "no relation".
 pub const KINDS: [&str; 6] = ["fact", "skill", "session", "project", "route", "cell"];
 
+/// The built corpus and when it was built, shared with the warm task.
+type CorpusCache = Arc<Mutex<Option<(Instant, Vec<Candidate>)>>>;
+
 /// The related index: the sidecar, the warm flag, and the built corpus.
 pub struct RelatedIndex {
     home: PathBuf,
     memories: PathBuf,
     store: Arc<Mutex<Store>>,
     warming: Arc<AtomicBool>,
-    corpus: Arc<Mutex<Option<(Instant, Vec<Candidate>)>>>,
+    corpus: CorpusCache,
 }
 
 impl RelatedIndex {
@@ -326,10 +329,7 @@ fn build_corpus(
     // Facts: the recall cache is already warm, so this is a read of the
     // corpus and the index, not an embed. A fact with no vector this
     // load is left out of the ranking rather than scored zero.
-    let memory = crate::memory::Memory::load_with(
-        memories,
-        embedder.box_clone(),
-    );
+    let memory = crate::memory::Memory::load_with(memories, embedder.box_clone());
     let today = crate::calib::today();
     for fact in memory.facts() {
         // A superseded or expired fact is not a relation: the panel
@@ -389,8 +389,7 @@ fn build_corpus(
             }
             (store.routes.clone(), store.cells.clone(), reset)
         };
-        let (routes_fresh, routes_changed) =
-            refresh_section(&routes_existing, &routes, embedder);
+        let (routes_fresh, routes_changed) = refresh_section(&routes_existing, &routes, embedder);
         let (cells_fresh, cells_changed) = refresh_section(&cells_existing, &cells, embedder);
         if reset || routes_changed || cells_changed {
             let snapshot = {
@@ -414,7 +413,11 @@ fn build_corpus(
     candidates
 }
 
-fn push_store(candidates: &mut Vec<Candidate>, kind: &'static str, section: &HashMap<String, Entry>) {
+fn push_store(
+    candidates: &mut Vec<Candidate>,
+    kind: &'static str,
+    section: &HashMap<String, Entry>,
+) {
     for (id, entry) in section {
         candidates.push(Candidate {
             kind,
@@ -614,8 +617,7 @@ pub fn route_sources(home: &Path) -> Vec<Source> {
             let summary = format!(
                 "{}{} \u{b7} {}",
                 row.model,
-                row
-                    .workload
+                row.workload
                     .as_ref()
                     .map(|workload| format!(" \u{b7} {workload}"))
                     .unwrap_or_default(),
@@ -721,9 +723,7 @@ fn lexical(query: &std::collections::HashSet<String>, text: &str) -> f64 {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
 #[cfg(test)]
@@ -802,7 +802,7 @@ mod tests {
                 vector: None,
             },
             Candidate {
-                kind: "project".into(),
+                kind: "project",
                 id: "p".into(),
                 name: "p".into(),
                 summary: "".into(),
@@ -810,7 +810,15 @@ mod tests {
                 vector: None,
             },
         ];
-        let document = payload("fact", "a", &candidates, 3, "lexical", "warm", Some("keyword-only"));
+        let document = payload(
+            "fact",
+            "a",
+            &candidates,
+            3,
+            "lexical",
+            "warm",
+            Some("keyword-only"),
+        );
         assert_eq!(document["scores"], "lexical");
         assert_eq!(document["degraded"], "keyword-only");
         assert_eq!(document["related"][0]["id"], "router");
