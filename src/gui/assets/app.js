@@ -414,6 +414,17 @@
     towerAt: 0,
     brain: null,
     brainAt: 0,
+    // The second-brain tool plugin's read: the tool's own address and
+    // pipeline, separate from the state read because it crosses a
+    // process boundary and a dead tool must not slow the state down.
+    plugin: null,
+    pluginAt: 0,
+    pluginWasRunning: false,
+    // The job the owner picked. It lives on the face rather than on the
+    // select element because the card repaints on every poll: a selection
+    // that reset mid-choice would send a different job than the one the
+    // owner read, and `all` is a much longer run than most.
+    pluginJob: '',
     // The settings surface's read and its clock.
     settings: null,
     settingsAt: 0,
@@ -5862,6 +5873,129 @@
       .catch(function () { });
   }
 
+  // The tool plugin's read. The state the panel renders and the pipeline
+  // that produces it are two reads because they fail differently: the
+  // files can be read while the tool's server is down, and the plugin
+  // says so with the address it tried. A running job polls once a
+  // second; a job that just finished reloads the state it rebuilt.
+  function readPlugin(force) {
+    var now = Date.now();
+    if (!force && face.plugin && now - face.pluginAt < 2000) return Promise.resolve();
+    face.pluginAt = now;
+    return fetch('/api/second-brain/plugin', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        var was = face.pluginWasRunning;
+        face.plugin = doc;
+        var running = !!(doc.pipeline && doc.pipeline.running);
+        face.pluginWasRunning = running;
+        if (face.panel === 'second-brain') paintBrain();
+        if (running && face.panel === 'second-brain') {
+          window.setTimeout(function () {
+            if (face.panel === 'second-brain') readPlugin(true);
+          }, 1000);
+        } else if (was) {
+          // The job finished under the panel: the derived state it
+          // rebuilt is what the sections below should now show.
+          readBrain(true);
+        }
+      })
+      .catch(function () { });
+  }
+
+  // The tool card: what the plugin is, where it answers, and the one
+  // action fleet forwards — a refresh of one of the tool's own jobs.
+  // The pipeline renders from the tool's own status, step for step, so
+  // a failed run names the step that failed rather than a generic error.
+  function pluginCard(read) {
+    var plugin = read.plugin || {};
+    var pipeline = read.pipeline;
+    var running = !!(pipeline && pipeline.running);
+    var live = !!plugin.live;
+    var card = boardCard(12, 'the tool',
+      live ? (running ? 'running' : 'live')
+        : (plugin.has_tool === false ? 'not installed' : 'not live'),
+      'Second brain is a separate tool at ' + (plugin.home || 'an unresolved home') +
+      '. Fleet reads the state it publishes and forwards a refresh to its own pipeline; ' +
+      'nothing here writes a state file.');
+    var facts = node('div', 'plugin-facts');
+    if (plugin.address) facts.appendChild(node('span', 'plugin-fact', plugin.address));
+    if (pipeline && pipeline.built_at) {
+      facts.appendChild(node('span', 'plugin-fact', 'state built ' + pipeline.built_at));
+    }
+    if (pipeline && pipeline.last_ok) {
+      facts.appendChild(node('span', 'plugin-fact', 'last run ' + pipeline.last_ok));
+    }
+    card.appendChild(facts);
+
+    var controls = node('div', 'plugin-controls');
+    var select = node('select', 'plugin-jobs');
+    select.setAttribute('aria-label', 'the job to refresh');
+    (plugin.jobs || []).forEach(function (job) {
+      var option = node('option', null, job.label);
+      option.value = job.name;
+      select.appendChild(option);
+    });
+    var known = (plugin.jobs || []).some(function (job) { return job.name === face.pluginJob; });
+    select.value = known ? face.pluginJob : ((plugin.jobs || [])[0] || {}).name || '';
+    select.addEventListener('change', function () { face.pluginJob = select.value; });
+    var button = node('button', 'replay-button', running ? 'running\u2026' : 'refresh');
+    button.type = 'button';
+    button.disabled = !live || running;
+    if (!live) button.title = 'the tool is not answering at its address';
+    button.addEventListener('click', function () {
+      button.disabled = true;
+      button.textContent = 'starting\u2026';
+      fetch('/api/second-brain/act', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'refresh', job: select.value })
+      }).then(function (reply) {
+        return reply.json().then(function (doc) { return { ok: reply.ok, doc: doc }; });
+      }).then(function (result) {
+        if (!result.ok) {
+          notice(result.doc.error || 'the tool refused the refresh');
+          button.disabled = false;
+          button.textContent = 'refresh';
+          return;
+        }
+        readPlugin(true);
+      }).catch(function () {
+        notice('could not reach fleet');
+        button.disabled = false;
+        button.textContent = 'refresh';
+      });
+    });
+    controls.appendChild(select);
+    controls.appendChild(button);
+    card.appendChild(controls);
+
+    if (pipeline && (pipeline.steps || []).length) {
+      var run = node('div', 'plugin-run');
+      (pipeline.steps || []).forEach(function (step) {
+        var row = node('div', 'plugin-step');
+        row.appendChild(node('span', 'plugin-step-label', step.label));
+        var tone = step.status === 'failed' ? 'down' : (step.status === 'done' ? 'ok' : null);
+        row.appendChild(badge(step.status, tone));
+        if (step.ms) row.appendChild(node('span', 'plugin-fact', Math.round(step.ms) + ' ms'));
+        run.appendChild(row);
+      });
+      if (pipeline.error) run.appendChild(node('p', 'board-empty', pipeline.error));
+      var tail = (pipeline.log || []).slice(-4);
+      if (tail.length) run.appendChild(node('pre', 'raw', tail.join('\n')));
+      card.appendChild(run);
+    }
+    if (!live) {
+      card.appendChild(node('p', 'board-empty',
+        'The tool is not answering at ' + (plugin.address || 'its address') +
+        '. Start its server; the data below is the last state it published.'));
+    }
+    return card;
+  }
+
   function paintBrain() {
     var read = face.brain;
     el.brainBoard.textContent = '';
@@ -5869,6 +6003,7 @@
       el.brainBoard.appendChild(pageHead('Knowledge', 'Second brain',
         'The derived state, quieter: the gates, the loops, the harness runs, and the maturity signals.',
         null));
+      if (face.plugin) el.brainBoard.appendChild(pluginCard(face.plugin));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The derived-state read has not landed yet. It reads the six state files under the ' +
@@ -5890,6 +6025,7 @@
     el.brainBoard.appendChild(pageHead('Knowledge', 'Second brain',
       'The derived state, quieter: the gates, the loops, the harness runs, and the maturity signals.',
       read.read_at));
+    if (face.plugin) el.brainBoard.appendChild(pluginCard(face.plugin));
     el.brainBoard.appendChild(statStrip(tiles));
     // The earned-autonomy gates.
     var gates = read.gates;
@@ -8556,7 +8692,7 @@
       },
       calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
       tower: function () { paintTower(); readTower(true).then(paintTower); },
-      'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); },
+      'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); readPlugin(true); },
       settings: function () { paintSettings(); readSettings(true).then(paintSettings); }
     };
     if (arrive[address]) arrive[address]();
@@ -9561,6 +9697,10 @@
     if (face.panel === 'delegation') readDelegation(false);
     if (face.panel === 'memory') readMemory(false);
     if (face.panel === 'skills') readSkills(false);
+    // The tool's heartbeat is cheap enough for this clock, and the
+    // state read is not: the plugin polls itself at one second while a
+    // job runs, and this keeps the live dot honest when it does not.
+    if (face.panel === 'second-brain') readPlugin(false);
   }, 5000);
 
   // The counters land after the first offers paint; the offers repaint

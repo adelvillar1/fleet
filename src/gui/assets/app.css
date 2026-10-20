@@ -3475,6 +3475,38 @@ pre.drawer-code {
 .replay-button:disabled { opacity: 0.55; cursor: default; }
 .replay-resume { border-color: color-mix(in srgb, var(--dsw-alias-accent) 55%, transparent); color: var(--dsw-alias-accent-lift); }
 
+/* The tool plugin bar: the separate tool's address, its own pipeline,
+   and the one action fleet forwards. The steps read like a run card
+   because they are one — the tool's own, with the tool's own names. */
+.plugin-facts { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 2px; }
+.plugin-fact { color: var(--dsw-alias-ink-tertiary); font-size: 11.5px; }
+.plugin-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.plugin-jobs {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 11.5px;
+}
+.plugin-run {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: var(--card-hairline);
+}
+.plugin-step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.plugin-step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .replay-lines { display: grid; margin-top: 12px; }
 
 .replay-line {

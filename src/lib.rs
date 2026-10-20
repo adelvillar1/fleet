@@ -36,6 +36,7 @@ pub mod memory;
 pub mod net;
 pub mod nomenclature;
 pub mod plan_graph;
+pub mod plugins;
 pub mod recall_graph;
 pub mod remote;
 pub mod roles;

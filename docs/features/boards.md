@@ -67,6 +67,12 @@ The second-brain home resolves as `$SECOND_BRAIN_HOME`, then
 resolves as `$TOWER_LOG_PROJECTS_DIR` (the tower's own CLI names the same
 variable), then `~/Projects`.
 
+The board reads the state the tool derives; it does not produce it. The
+tool plugin (`docs/features/plugins.md`) holds the other half — the
+tool's address, its pipeline status, and the refresh action — and both
+resolve the home the same way, so the face cannot say the tool is
+elsewhere from the files it is reading.
+
 ## The snapshot contract
 
 Every board keeps the last snapshot that landed. A refused read — a

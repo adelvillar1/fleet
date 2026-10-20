@@ -1189,6 +1189,56 @@ impl Bridge {
         }
     }
 
+    /// The second-brain tool plugin: the tool's home and address, whether
+    /// its own server is answering, and the pipeline state it reports.
+    /// Separate from [`Bridge::brain`] because this one crosses the
+    /// process boundary: a tool that is down costs a two-second probe,
+    /// and the state read should not wait behind it.
+    pub async fn second_brain_plugin(&self) -> Value {
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || second_brain_plugin_read(&home)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "second_brain_plugin",
+                "refused": ["the second-brain plugin read did not land"],
+            }),
+        }
+    }
+
+    /// The plugin's one write: a refresh of one of the tool's own
+    /// pipeline jobs. The job name is the tool's vocabulary, validated by
+    /// the adapter before the call and again by the tool itself.
+    pub async fn second_brain_act(&self, body: &str) -> Result<Value, String> {
+        let arguments: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("the action is not a JSON object: {error}"))?;
+        let action = arguments
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if action != "refresh" {
+            return Err("the second-brain plugin's one action is `refresh`".to_string());
+        }
+        let job = arguments
+            .get("job")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let home = self.home.clone();
+        let asked = job.clone();
+        let reply = tokio::task::spawn_blocking(move || second_brain_refresh(&home, &asked))
+            .await
+            .map_err(|_| "the second-brain action did not land".to_string())??;
+        Ok(json!({
+            "type": "second_brain_action",
+            "action": "refresh",
+            "job": job,
+            "reply": reply,
+        }))
+    }
+
     /// One in-place edit of a fact, through the substrate's own rewriter.
     ///
     /// The body is the arguments object the browser handed over. A
@@ -3605,6 +3655,132 @@ fn project_facts_json(project: &crate::boards::ProjectFacts) -> Value {
         "behind": project.behind,
         "notes": project.notes,
     })
+}
+
+// --- the second-brain tool plugin -------------------------------------------
+
+/// The tool's port: `SECOND_BRAIN_PORT` in the process environment or the
+/// home's dotenv, the same resolution the settings surface uses, then the
+/// tool's own default. A value that is not a port is ignored rather than
+/// guessed at, so a typo leaves the known address standing.
+fn second_brain_port(dotenv: &std::collections::HashMap<String, String>) -> u16 {
+    crate::home::resolve_setting("SECOND_BRAIN_PORT", dotenv)
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(crate::plugins::second_brain::DEFAULT_PORT)
+}
+
+/// The tool adapter and the port it would listen on. The home is the
+/// board's own resolution — `SECOND_BRAIN_HOME`, then the linked
+/// `~/.second-brain`, then `~/Projects/second-brain` — so the plugin and
+/// the state read cannot disagree about which tool this machine has.
+fn second_brain_resolve(
+    home: &std::path::Path,
+) -> (Option<crate::plugins::second_brain::SecondBrain>, u16) {
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
+    let sources = crate::boards::resolve_sources(home, &dotenv);
+    let port = second_brain_port(&dotenv);
+    (
+        sources
+            .brain_home
+            .map(|brain_home| crate::plugins::second_brain::SecondBrain::new(brain_home, port)),
+        port,
+    )
+}
+
+/// The plugin's facts and its pipeline, as the browser reads them. A tool
+/// that is down is a fact with its reason, not an empty read: the page
+/// keeps showing the state the tool last published and says why refresh
+/// cannot reach it.
+fn second_brain_plugin_read(home: &std::path::Path) -> Value {
+    let (tool, port) = second_brain_resolve(home);
+    let address = format!("http://127.0.0.1:{port}");
+    let jobs = json!(crate::plugins::second_brain::JOBS
+        .iter()
+        .map(|(name, label)| json!({ "name": name, "label": label }))
+        .collect::<Vec<_>>());
+    let Some(tool) = tool else {
+        return json!({
+            "type": "second_brain_plugin",
+            "plugin": {
+                "name": "second brain",
+                "role": "tool",
+                "home": null,
+                "address": address,
+                "live": false,
+                "has_tool": false,
+                "jobs": jobs,
+            },
+            "pipeline": null,
+            "refused": ["the second-brain plugin has no home on this machine"],
+            "read_at": crate::boards::now_stamp(),
+        });
+    };
+    let mut refused: Vec<String> = Vec::new();
+    let pipeline = match tool.status() {
+        Ok(pipeline) => Some(pipeline),
+        Err(reason) => {
+            refused.push(reason);
+            None
+        }
+    };
+    json!({
+        "type": "second_brain_plugin",
+        "plugin": {
+            "name": "second brain",
+            "role": "tool",
+            "home": tool.home().display().to_string(),
+            "address": tool.address(),
+            "live": pipeline.is_some(),
+            "has_tool": tool.has_tool(),
+            "jobs": jobs,
+        },
+        "pipeline": pipeline.as_ref().map(pipeline_json),
+        "refused": refused,
+        "read_at": crate::boards::now_stamp(),
+    })
+}
+
+fn pipeline_json(pipeline: &crate::plugins::second_brain::Pipeline) -> Value {
+    json!({
+        "running": pipeline.running,
+        "job": &pipeline.job,
+        "current": pipeline.current,
+        "steps": pipeline
+            .steps
+            .iter()
+            .map(|step| json!({
+                "label": step.label,
+                "status": step.status,
+                "ms": step.ms,
+            }))
+            .collect::<Vec<_>>(),
+        "log": &pipeline.log,
+        "started": &pipeline.started,
+        "finished": &pipeline.finished,
+        "error": &pipeline.error,
+        "last_ok": &pipeline.last_ok,
+        "built_at": &pipeline.built_at,
+    })
+}
+
+/// One refresh, forwarded to the tool. A home that resolves but holds no
+/// `control_tower.py` is named as such rather than as a dead server: the
+/// misconfiguration and the outage have different fixes.
+fn second_brain_refresh(home: &std::path::Path, job: &str) -> Result<Value, String> {
+    let (tool, port) = second_brain_resolve(home);
+    let Some(tool) = tool else {
+        return Err("the second-brain plugin has no home on this machine".to_string());
+    };
+    if !tool.has_tool() {
+        return Err(format!(
+            "the second-brain tool is not in {} (no control_tower.py), so there is nothing at \
+             port {port} to refresh; set SECOND_BRAIN_HOME to the tool's repository",
+            tool.home().display()
+        ));
+    }
+    tool.refresh(job)
 }
 
 /// The second-brain panel's document: the six sections, each landed or

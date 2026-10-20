@@ -732,6 +732,19 @@ async fn serve_connection(
         ("GET", "/api/second-brain") => {
             write_reply(&mut stream, api(200, bridge.brain().await)).await
         }
+        ("GET", "/api/second-brain/plugin") => {
+            write_reply(&mut stream, api(200, bridge.second_brain_plugin().await)).await
+        }
+        ("POST", "/api/second-brain/act") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.second_brain_act(&body).await {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("POST", "/api/resume") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
