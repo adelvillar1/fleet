@@ -1624,6 +1624,7 @@ mod tests {
             workspace: workspace.map(str::to_string),
             channel: None,
             compacted: false,
+            served_model: None,
             path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),
         }
     }

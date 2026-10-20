@@ -3872,6 +3872,8 @@ mod tests {
                     created: "2026-10-13T10:10:10Z".to_string(),
                     ended: index % 3 == 0,
                     kind: None,
+                    workspace: None,
+                    channel: None,
                     compacted: false,
                     served_model: None,
                     path: std::path::PathBuf::from("/tmp/x.jsonl"),

@@ -360,7 +360,7 @@ impl Driver {
         }
         // A fresh log for this peer's first task: the same convention
         // every other surface creates one with.
-        let home = self.bridge.home();
+        let home = self.bridge.home_path();
         let mut session = crate::session::Session::create(&home, &self.bridge.model())
             .map_err(|error| format!("could not create the session: {error}"))?;
         // The log says which channel this conversation arrived on and
@@ -450,7 +450,7 @@ impl Driver {
     /// the log is the record of what was said, and a lagged stream must
     /// not produce a reply missing its ending.
     fn last_words(&self, session: &str) -> Option<String> {
-        let home = self.bridge.home();
+        let home = self.bridge.home_path();
         let session = session.to_string();
         let path = crate::session::session_path(&home, &session);
         let records = crate::session::replay(&path).ok()?;

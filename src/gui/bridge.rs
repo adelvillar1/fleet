@@ -421,8 +421,9 @@ impl Bridge {
 
     /// The home this face's sessions live under. A channel driver asks
     /// for it to create a peer's first log; nothing else outside this
-    /// module has any business writing there.
-    pub fn home(&self) -> PathBuf {
+    /// module has any business writing there. It is not `home`, which is
+    /// the welcome's document.
+    pub fn home_path(&self) -> PathBuf {
         self.home.clone()
     }
 
@@ -523,14 +524,18 @@ impl Bridge {
             }
         }
 
-        let state = self.state();
+        // The welcome is this face's own conversation: the launch
+        // session, which is the one a visitor's browser opens whether or
+        // not anything has been resumed.
+        let launch = self.launch();
+        let state = self.state(&launch);
         // The four reads are independent; run them together so the
         // welcome's first paint pays the slowest one, not their sum.
         let (sessions, memory, skills, delegation) = tokio::join!(
-            self.sessions(),
+            self.sessions(&launch),
             self.memory(),
             self.skills(),
-            self.delegation()
+            self.delegation(&launch)
         );
 
         let runs = sessions
@@ -1271,16 +1276,26 @@ impl Bridge {
         };
         let session = {
             let state = lock(&self.state);
-            if !state.running {
+            // The run in flight is the driving session — the one whose
+            // events are crossing the wire, which is exact because the
+            // thread's command loop is serial — and that session's own
+            // `running` is the flag that says so. A face with two
+            // sessions open stops the run, not the one it is looking at.
+            let driving = state.target();
+            let running = state
+                .attached_if(&driving)
+                .map(|attached| attached.running)
+                .unwrap_or(false);
+            if !running {
                 return Err("no run is in flight to stop or steer".to_string());
             }
-            if state.session.is_empty() {
+            if driving.is_empty() {
                 return Err(
                     "this run has no session log yet; there is nothing beside it to write"
                         .to_string(),
                 );
             }
-            state.session.clone()
+            driving
         };
         crate::delegate::write_control(&self.home, &session, steer)?;
         let kind = if steer.is_some() { "steer" } else { "stop" };
@@ -1290,7 +1305,7 @@ impl Bridge {
             "session": session,
             "steer": steer,
         });
-        record(&self.state, &self.events, value.clone());
+        record(&self.state, &self.events, &session, value.clone());
         Ok(value)
     }
 
@@ -3988,18 +4003,15 @@ mod tests {
         let log = Session::create(&bridge.home, "deepseek-chat").expect("the log");
         let id = log.id().to_string();
         drop(log);
-        {
-            let mut state = lock(&bridge.state);
-            state.session = id.clone();
-            state.running = true;
-        }
+        bridge.drive(&id);
+        lock(&bridge.state).attached(&id).running = true;
         let stop = bridge.stop(None).expect("the stop lands");
         assert_eq!(stop["kind"], "stop");
         assert_eq!(stop["session"], id.as_str());
         let control = crate::home::sessions_dir(&bridge.home).join(format!("{id}.control"));
         let body = std::fs::read_to_string(&control).expect("the control file");
         assert_eq!(body.trim(), r#"{"stop":true}"#, "{body}");
-        let state = bridge.state();
+        let state = bridge.state(&id);
         let events = state["events"].as_array().expect("an event log");
         assert_eq!(events.last().expect("the control")["type"], "control");
         assert_eq!(events.last().expect("the control")["kind"], "stop");
@@ -4021,8 +4033,11 @@ mod tests {
             "a refused steer leaves the standing control alone"
         );
 
-        // A run whose log does not exist yet has nothing to write beside.
-        lock(&bridge.state).session = String::new();
+        // A run whose log does not exist yet has nothing to write beside:
+        // the thread is driving the pending key, which is the launch
+        // session before it has been named.
+        bridge.drive("");
+        lock(&bridge.state).attached("").running = true;
         assert!(
             bridge
                 .stop(None)
@@ -4058,14 +4073,15 @@ mod tests {
         let _thread = spawn_agent(AgentInputs {
             home: home.clone(),
             model: "deepseek-chat".to_string(),
-            session_id: Some(id),
+            session_id: Some(id.clone()),
             ui_tx: sources.ui,
             approval_tx: sources.seat,
             command_rx: door,
             base_url: "http://127.0.0.1:1".to_string(),
             memories_root: home.clone(),
+            state: Arc::clone(&bridge.state),
         });
-        bridge.run("go").expect("the run is accepted");
+        bridge.run(&id, "go").expect("the run is accepted");
         for _ in 0..300 {
             if !control.exists() {
                 break;

@@ -155,6 +155,21 @@ impl Server {
     }
 }
 
+/// The session a request addresses: the one its query names, or the
+/// launch session when it names none. The launch session is the bridge's
+/// own answer, so a default taken here cannot drift from the one the
+/// bridge boots with — and a phone that names nothing gets the same
+/// session the desktop's own face opens.
+fn asked_session(bridge: &Bridge, request: &Request) -> String {
+    let asked = decode_query(&request.query, "session");
+    let asked = asked.trim();
+    if asked.is_empty() {
+        bridge.launch()
+    } else {
+        asked.to_string()
+    }
+}
+
 /// One connection, start to finish: read the head, check that it came
 /// from this machine's own web, route, answer, and drop the socket.
 /// Every reply says `Connection: close` and means it — a browser
@@ -203,7 +218,10 @@ async fn serve_connection(
         ("GET", "/events") => {
             stream_events(&mut stream, base_url, heartbeat, bridge.subscribe()).await
         }
-        ("GET", "/api/state") => write_reply(&mut stream, api(200, bridge.state())).await,
+        ("GET", "/api/state") => {
+            let session = asked_session(bridge, &request);
+            write_reply(&mut stream, api(200, bridge.state(&session))).await
+        }
         ("GET", "/api/home") => write_reply(&mut stream, api(200, bridge.home().await)).await,
         ("GET", "/api/router") => write_reply(&mut stream, api(200, bridge.router().await)).await,
         ("GET", "/api/delegation") => {
@@ -1617,7 +1635,7 @@ mod tests {
         let (mut bridge, _sources) =
             Bridge::detached(home.clone(), "deepseek-chat".to_string(), Some(id.clone()));
         let _door = bridge.connect();
-        bridge.run("go").expect("the run is accepted");
+        bridge.run(&id, "go").expect("the run is accepted");
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
             .unwrap();
