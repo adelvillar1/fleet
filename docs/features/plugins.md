@@ -40,14 +40,20 @@ again, which is the authority.
 
 ## The face
 
-The second brain panel opens with **the tool** card: the home, the
-address, the state's build time, the last run, a job picker, and one
-refresh button. While a job runs the card renders the tool's own steps
-(pending, running, done, failed, with milliseconds), the log tail, and
-the failure line when a step failed; the panel polls once a second and
-reloads the derived state when the run finishes. A tool that is not
-answering is a fact with its address and the last state it published —
-the sections below do not disappear.
+The second brain panel carries **the tool** instrument in its page head,
+beside the title: the live state, the state's build time, how many
+ledger events have landed since it, the last run, a job picker, and one
+refresh button. The instrument is a status line rather than a card,
+because a card at the top competed with the landscape below it.
+
+While a job runs the instrument renders the tool's own steps (pending,
+running, done, failed, with milliseconds), the log tail, and the failure
+line when a step failed; the panel polls once a second and reloads the
+derived state when the run finishes. A finished run's steps are history
+and the instrument collapses back to its status line, so the page's
+title is not pushed down by a list nobody is watching. A tool that is
+not answering is a fact with its address and the last state it
+published — the atlas below does not disappear.
 
 The chosen job lives on the face (`face.pluginJob`), not on the select
 element: the card repaints on every poll, and a selection that reset

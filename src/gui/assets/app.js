@@ -425,6 +425,11 @@
     // that reset mid-choice would send a different job than the one the
     // owner read, and `all` is a much longer run than most.
     pluginJob: '',
+    // The atlas's own two choices: which attention class the rail is
+    // filtered to, and whether the project list is showing every row.
+    // Both survive a poll repaint for the same reason the job does.
+    brainClass: '',
+    brainShowAll: false,
     // The settings surface's read and its clock.
     settings: null,
     settingsAt: 0,
@@ -5906,33 +5911,64 @@
       .catch(function () { });
   }
 
-  // The tool card: what the plugin is, where it answers, and the one
-  // action fleet forwards — a refresh of one of the tool's own jobs.
-  // The pipeline renders from the tool's own status, step for step, so
-  // a failed run names the step that failed rather than a generic error.
-  function pluginCard(read) {
-    var plugin = read.plugin || {};
-    var pipeline = read.pipeline;
+  // The second brain surface, as an atlas: the tool's instrument in the
+  // page head, the project landscape as the page itself, the queue as the
+  // column beside it, and the method band under both. The old surface put
+  // six equal cards in a stack; the eye had nowhere to land. Here the
+  // weight is the landscape, and the method telemetry is a ruled band.
+  var BRAIN_CLASSES = [
+    ['drift', 'ledger drift', 'warn'],
+    ['stale', 'stale plans', 'warn'],
+    ['handoff', 'live handoffs', 'acc'],
+    ['conflicts', 'claims vs evidence', 'down']
+  ];
+
+  function brainHead(read) {
+    var head = node('header', 'brain-head');
+    var main = node('div', 'brain-main');
+    main.appendChild(node('p', 'page-eyebrow', 'Knowledge'));
+    main.appendChild(node('h1', 'brain-title', 'Second brain'));
+    main.appendChild(node('p', 'page-note',
+      'The project landscape, read as an atlas: every project\u2019s six-week pulse and the ' +
+      'one line its last session left behind, with the decisions that need a person kept beside them.'));
+    head.appendChild(main);
+    head.appendChild(brainTool(read));
+    return head;
+  }
+
+  // The tool instrument: the plugin's facts and pipeline, in the page
+  // head rather than in a card. A card at the top competed with the
+  // landscape; this is the page's own status line. The job picker keeps
+  // its choice on the face, because the instrument repaints on every
+  // poll and a reset mid-choice would start a different job.
+  function brainTool(read) {
+    var doc = face.plugin || {};
+    var plugin = doc.plugin || {};
+    var pipeline = doc.pipeline;
     var running = !!(pipeline && pipeline.running);
     var live = !!plugin.live;
-    var card = boardCard(12, 'the tool',
-      live ? (running ? 'running' : 'live')
-        : (plugin.has_tool === false ? 'not installed' : 'not live'),
-      'Second brain is a separate tool at ' + (plugin.home || 'an unresolved home') +
-      '. Fleet reads the state it publishes and forwards a refresh to its own pipeline; ' +
-      'nothing here writes a state file.');
-    var facts = node('div', 'plugin-facts');
-    if (plugin.address) facts.appendChild(node('span', 'plugin-fact', plugin.address));
-    if (pipeline && pipeline.built_at) {
-      facts.appendChild(node('span', 'plugin-fact', 'state built ' + pipeline.built_at));
+    var wrap = node('div', 'brain-tool');
+    var line = node('div', 'brain-tool-line');
+    line.appendChild(node('span', live ? 'brain-live' : 'brain-dead'));
+    line.appendChild(node('b', null, 'the tool'));
+    var built = read.state_at || (pipeline && pipeline.built_at) || '';
+    var age = brainAge(built);
+    line.appendChild(badge(
+      built ? (age >= 2 ? age + ' days behind' : 'fresh') : 'unread',
+      built ? (age >= 2 ? 'warn' : 'ok') : null));
+    wrap.appendChild(line);
+    var meta = node('p', 'brain-tool-meta');
+    meta.appendChild(node('span', null, built ? 'state built ' + built : 'the state names no build'));
+    if (read.events_since != null) {
+      meta.appendChild(node('span', null, ' \u00b7 ' + read.events_since + ' events since'));
     }
-    if (pipeline && pipeline.last_ok) {
-      facts.appendChild(node('span', 'plugin-fact', 'last run ' + pipeline.last_ok));
+    if (!running && pipeline && pipeline.last_ok) {
+      meta.appendChild(node('span', null, ' \u00b7 last run ' + pipeline.last_ok));
     }
-    card.appendChild(facts);
+    wrap.appendChild(meta);
 
-    var controls = node('div', 'plugin-controls');
-    var select = node('select', 'plugin-jobs');
+    var controls = node('div', 'brain-tool-act');
+    var select = node('select', 'brain-jobs');
     select.setAttribute('aria-label', 'the job to refresh');
     (plugin.jobs || []).forEach(function (job) {
       var option = node('option', null, job.label);
@@ -5942,68 +5978,484 @@
     var known = (plugin.jobs || []).some(function (job) { return job.name === face.pluginJob; });
     select.value = known ? face.pluginJob : ((plugin.jobs || [])[0] || {}).name || '';
     select.addEventListener('change', function () { face.pluginJob = select.value; });
-    var button = node('button', 'replay-button', running ? 'running\u2026' : 'refresh');
+    var button = node('button', 'brain-refresh', running ? 'running\u2026' : 'refresh');
     button.type = 'button';
     button.disabled = !live || running;
     if (!live) button.title = 'the tool is not answering at its address';
-    button.addEventListener('click', function () {
-      button.disabled = true;
-      button.textContent = 'starting\u2026';
-      fetch('/api/second-brain/act', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'refresh', job: select.value })
-      }).then(function (reply) {
-        return reply.json().then(function (doc) { return { ok: reply.ok, doc: doc }; });
-      }).then(function (result) {
-        if (!result.ok) {
-          notice(result.doc.error || 'the tool refused the refresh');
-          button.disabled = false;
-          button.textContent = 'refresh';
-          return;
-        }
-        readPlugin(true);
-      }).catch(function () {
-        notice('could not reach fleet');
-        button.disabled = false;
-        button.textContent = 'refresh';
-      });
-    });
+    button.addEventListener('click', function () { brainRefresh(select, button); });
     controls.appendChild(select);
     controls.appendChild(button);
-    card.appendChild(controls);
+    wrap.appendChild(controls);
 
-    if (pipeline && (pipeline.steps || []).length) {
-      var run = node('div', 'plugin-run');
-      (pipeline.steps || []).forEach(function (step) {
-        var row = node('div', 'plugin-step');
-        row.appendChild(node('span', 'plugin-step-label', step.label));
+    // The steps belong to a run in flight or to the failure that ended
+    // the last one. A finished run's steps are history: the instrument
+    // says when it last ran and keeps the head compact, so the page's
+    // title is not pushed down by a list nobody is watching.
+    if (pipeline && (running || pipeline.error)) {
+      var run = node('div', 'brain-run');
+      (pipeline.steps || []).slice(0, 6).forEach(function (step) {
+        var row = node('div', 'brain-step');
+        row.appendChild(node('span', 'brain-step-label', step.label));
         var tone = step.status === 'failed' ? 'down' : (step.status === 'done' ? 'ok' : null);
         row.appendChild(badge(step.status, tone));
-        if (step.ms) row.appendChild(node('span', 'plugin-fact', Math.round(step.ms) + ' ms'));
+        if (step.ms) row.appendChild(node('span', 'brain-step-ms', Math.round(step.ms) + ' ms'));
         run.appendChild(row);
       });
-      if (pipeline.error) run.appendChild(node('p', 'board-empty', pipeline.error));
-      var tail = (pipeline.log || []).slice(-4);
-      if (tail.length) run.appendChild(node('pre', 'raw', tail.join('\n')));
-      card.appendChild(run);
+      if ((pipeline.steps || []).length > 6) {
+        run.appendChild(node('p', 'brain-step-more',
+          (pipeline.steps.length - 6) + ' more steps'));
+      }
+      if (pipeline.error) run.appendChild(node('p', 'brain-run-error', pipeline.error));
+      var tail = (pipeline.log || []).slice(-3);
+      if (tail.length) run.appendChild(node('pre', 'brain-run-log', tail.join('\n')));
+      wrap.appendChild(run);
     }
     if (!live) {
-      card.appendChild(node('p', 'board-empty',
+      wrap.appendChild(node('p', 'brain-run-error',
         'The tool is not answering at ' + (plugin.address || 'its address') +
-        '. Start its server; the data below is the last state it published.'));
+        '. The data below is the last state it published.'));
     }
+    return wrap;
+  }
+
+  function brainRefresh(select, button) {
+    button.disabled = true;
+    button.textContent = 'starting\u2026';
+    fetch('/api/second-brain/act', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'refresh', job: select.value })
+    }).then(function (reply) {
+      return reply.json().then(function (doc) { return { ok: reply.ok, doc: doc }; });
+    }).then(function (result) {
+      if (!result.ok) {
+        notice(result.doc.error || 'the tool refused the refresh');
+        button.disabled = false;
+        button.textContent = 'refresh';
+        return;
+      }
+      readPlugin(true);
+    }).catch(function () {
+      notice('could not reach fleet');
+      button.disabled = false;
+      button.textContent = 'refresh';
+    });
+  }
+
+  function brainStrip(read) {
+    var projects = read.projects || [];
+    var attention = read.attention || {};
+    var counts = attention.counts || {};
+    var strip = node('div', 'brain-strip');
+    var active = projects.filter(function (row) { return row.lifecycle === 'active'; }).length;
+    var dirty = projects.filter(function (row) { return row.dirty > 0; }).length;
+    var commits = projects.reduce(function (sum, row) { return sum + (row.commits_30d || 0); }, 0);
+    var open = projects.reduce(function (sum, row) { return sum + (row.open_plans || 0); }, 0);
+    [
+      [projects.length, 'projects'],
+      [active, 'active'],
+      [dirty, 'dirty'],
+      [commits, 'commits / 30d'],
+      [open, 'open plans'],
+      [counts.conflicts || 0, 'conflicts', 'down'],
+      [attention.total || 0, 'need attention']
+    ].forEach(function (item) {
+      var span = node('span', item[2] === 'down' ? 'brain-strip-down' : null);
+      span.appendChild(node('b', null, String(item[0])));
+      span.appendChild(document.createTextNode(' ' + item[1]));
+      strip.appendChild(span);
+    });
+    var end = node('span', 'brain-strip-end');
+    end.textContent = read.state_at
+      ? 'the tool\u2019s view, built ' + read.state_at +
+        (read.events_since != null ? ' \u00b7 ' + read.events_since + ' events since' : '')
+      : 'the tool names no build';
+    strip.appendChild(end);
+    return strip;
+  }
+
+  function brainAtlas(read) {
+    var projects = read.projects || [];
+    var card = boardCard(8, 'project atlas', projects.length + ' projects',
+      'the six-week pulse, the plans each project keeps open, and the one line its last ' +
+      'session left behind. A row opens the project\u2019s own page.');
+    card.classList.add('atlas-card');
+    var maxWeek = 1;
+    projects.forEach(function (row) {
+      (row.weeks || []).forEach(function (value) { maxWeek = Math.max(maxWeek, value); });
+    });
+    var columns = node('div', 'atlas-cols');
+    ['project', 'six weeks', '30d', 'open', 'left on the table'].forEach(function (label) {
+      columns.appendChild(node('span', null, label));
+    });
+    card.appendChild(columns);
+    var shown = face.brainShowAll ? projects : projects.slice(0, 16);
+    shown.forEach(function (row) { card.appendChild(atlasRow(row, maxWeek)); });
+    var reports = projects.reduce(function (sum, row) {
+      return sum + (row.reports || []).reduce(function (a, b) { return a + b; }, 0);
+    }, 0);
+    var filing = projects.filter(function (row) {
+      return (row.reports || []).some(function (value) { return value > 0; });
+    }).length;
+    var foot = node('div', 'atlas-foot');
+    foot.appendChild(node('span', null,
+      reports + ' reports filed in the same six weeks by ' + filing + ' of ' +
+      projects.length + ' projects'));
+    if (!face.brainShowAll && projects.length > shown.length) {
+      var more = node('button', 'atlas-more', 'show all ' + projects.length);
+      more.type = 'button';
+      more.addEventListener('click', function () { face.brainShowAll = true; paintBrain(); });
+      foot.appendChild(more);
+    } else if (face.brainShowAll && projects.length > 16) {
+      var less = node('button', 'atlas-more', 'show the busiest 16');
+      less.type = 'button';
+      less.addEventListener('click', function () { face.brainShowAll = false; paintBrain(); });
+      foot.appendChild(less);
+    }
+    card.appendChild(foot);
     return card;
+  }
+
+  function atlasRow(project, maxWeek) {
+    var row = node('div', 'atlas-row');
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.title = 'open ' + project.name;
+    var name = node('div', 'atlas-name');
+    name.appendChild(node('b', null, project.name));
+    if (project.lifecycle && project.lifecycle !== 'active') {
+      name.appendChild(node('span', 'atlas-life',
+        project.lifecycle === 'exploration' ? 'exploring' : project.lifecycle));
+    }
+    var marks = node('span', 'atlas-marks');
+    if (project.conflicts) {
+      marks.appendChild(node('span', 'atlas-mark down')).title =
+        project.conflicts + ' open conflicts';
+    }
+    if (project.stale_plans) {
+      marks.appendChild(node('span', 'atlas-mark warn')).title =
+        project.stale_plans + ' stale plans';
+    }
+    if (project.handoff && project.handoff.score >= 0.6) {
+      marks.appendChild(node('span', 'atlas-mark acc')).title = 'a live handoff';
+    }
+    name.appendChild(marks);
+    row.appendChild(name);
+    var bars = node('span', 'atlas-bars');
+    (project.weeks || []).forEach(function (value) {
+      var bar = node('span', value ? '' : 'zero');
+      if (value) bar.style.height = Math.max(2, Math.round(24 * Math.sqrt(value / maxWeek))) + 'px';
+      bars.appendChild(bar);
+    });
+    row.appendChild(bars);
+    row.appendChild(node('span', 'atlas-num', String(project.commits_30d || 0)));
+    row.appendChild(node('span', 'atlas-num', (project.open_plans || 0) + ' open'));
+    var next = project.handoff && project.handoff.score >= 0.5
+      ? brainClean((project.handoff.next || [])[0] || '')
+      : '';
+    row.appendChild(node('div', next ? 'atlas-next' : 'atlas-next none',
+      next || 'nothing left on the table'));
+    var open = function () { brainProjectDrawer(project); };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
+    return row;
+  }
+
+  function brainAttention(read) {
+    var attention = read.attention || {};
+    var counts = attention.counts || {};
+    var card = boardCard(4, 'needs attention', null, null);
+    card.classList.add('attn-card');
+    var total = node('div', 'attn-total');
+    total.appendChild(node('b', null, String(attention.total || 0)));
+    total.appendChild(node('span', null,
+      'decisions waiting across ' + ((read.projects || []).length) + ' projects'));
+    card.appendChild(total);
+
+    var selected = face.brainClass || '';
+    BRAIN_CLASSES.forEach(function (entry) {
+      var count = counts[entry[0]] || 0;
+      var row = node('button', 'attn-class');
+      row.type = 'button';
+      row.setAttribute('aria-pressed', selected === entry[0] ? 'true' : 'false');
+      row.appendChild(node('span', null, entry[1]));
+      var bar = node('span', 'attn-bar');
+      var fill = node('i');
+      fill.dataset.tone = entry[2];
+      fill.style.width = (attention.total
+        ? Math.round(100 * count / attention.total) : 0) + '%';
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(node('em', null, String(count)));
+      row.addEventListener('click', function () {
+        face.brainClass = face.brainClass === entry[0] ? '' : entry[0];
+        paintBrain();
+      });
+      card.appendChild(row);
+    });
+
+    var list = node('div', 'attn-list');
+    var rows = [];
+    if (selected) {
+      var klass = BRAIN_CLASSES.filter(function (entry) { return entry[0] === selected; })[0];
+      rows = (attention[selected] || []).slice(0, 12).map(function (row) {
+        return { row: row, tone: klass[2], klass: selected };
+      });
+    } else {
+      BRAIN_CLASSES.forEach(function (entry) {
+        (attention[entry[0]] || []).slice(0, entry[0] === 'conflicts' ? 3 : 2)
+          .forEach(function (row) {
+            rows.push({ row: row, tone: entry[2], klass: entry[0] });
+          });
+      });
+    }
+    rows.forEach(function (entry) {
+      list.appendChild(attentionRow(entry.row, entry.tone, entry.klass));
+    });
+    if (!rows.length) list.appendChild(node('p', 'board-empty', 'Nothing in this class.'));
+    card.appendChild(list);
+    return card;
+  }
+
+  function attentionRow(row, tone, klass) {
+    var line = node('div', 'attn-row');
+    line.tabIndex = 0;
+    line.setAttribute('role', 'button');
+    line.dataset.tone = tone;
+    line.appendChild(node('span', 'attn-glyph',
+      tone === 'down' ? '\u2715' : (tone === 'acc' ? '\u25b6' : '\u26a0')));
+    var body = node('div', 'attn-body');
+    body.appendChild(node('b', null, row.project));
+    body.appendChild(node('p', null, brainClean(row.what)));
+    line.appendChild(body);
+    line.appendChild(node('span', 'attn-ev', brainEvidence(row, klass)));
+    var open = function () {
+      if (klass === 'conflicts') brainConflictDrawer(row);
+      else brainProjectFromName(row.project);
+    };
+    line.addEventListener('click', open);
+    line.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
+    return line;
+  }
+
+  function brainEvidence(row, klass) {
+    if (klass === 'conflicts') {
+      var age = brainRel(String(row.when || '').slice(0, 10));
+      return row.evidence + (age ? ' \u00b7 ' + age : '');
+    }
+    if (!row.when) return row.evidence;
+    var relative = brainRel(String(row.when).slice(0, 10));
+    return relative ? row.evidence.replace(row.when, relative) : row.evidence;
+  }
+
+  function brainRibbon(read) {
+    var days = (read.commits || []).slice();
+    var first = -1;
+    days.forEach(function (row, index) { if (first < 0 && row.count > 0) first = index; });
+    if (first > 0) days = days.slice(first);
+    var max = days.reduce(function (value, row) { return Math.max(value, row.count); }, 0);
+    var card = boardCard(12, 'recent commits',
+      days.length ? (days[0].day + ' \u2014 ' + days[days.length - 1].day) : null,
+      'one bar per day. The tool keeps its newest 400 timeline rows, so the left edge is ' +
+      'the cap, not a quiet month.');
+    card.classList.add('brain-ribbon');
+    var strip = node('div', 'commit-bars');
+    days.forEach(function (row) {
+      var bar = node('span', row.count ? (row.count === max ? 'max' : '') : 'zero');
+      if (row.count) {
+        bar.style.height = Math.max(1, Math.round(52 * Math.sqrt(row.count / max))) + 'px';
+      }
+      bar.title = row.day + ': ' + row.count + ' commits';
+      strip.appendChild(bar);
+    });
+    card.appendChild(strip);
+    var axis = node('div', 'commit-axis');
+    [0, Math.floor(days.length / 3), Math.floor((2 * days.length) / 3), days.length - 1]
+      .forEach(function (index) {
+        if (index >= 0 && days[index]) {
+          axis.appendChild(node('span', null, days[index].day.slice(5)));
+        }
+      });
+    card.appendChild(axis);
+    return card;
+  }
+
+  function brainMethod(read) {
+    var band = node('section', 'brain-method');
+    band.dataset.span = '12';
+
+    var gates = node('div');
+    gates.appendChild(node('h3', null, 'Gates \u00b7 earned autonomy'));
+    var board = (read.gates && read.gates.board) || [];
+    board.forEach(function (row) {
+      var line = node('div', 'brain-gate');
+      line.appendChild(node('span', 'brain-gate-name', row.gate));
+      var track = node('span', 'brain-gate-track');
+      var fill = node('span', 'brain-gate-fill');
+      // The state's phrase is the authority: `3/20` is the graded count
+      // the gate needs before it may block. The row's numeric field is a
+      // convenience the tool does not always carry.
+      var graded = String(row.graded_progress || '').split('/');
+      var filled = parseInt(graded[0], 10);
+      if (!isFinite(filled)) filled = row.graded_rows || 0;
+      fill.style.width = Math.round(Math.min(1, filled / 20) * 100) + '%';
+      track.appendChild(fill);
+      line.appendChild(track);
+      line.appendChild(node('span', 'brain-gate-meta',
+        row.graded_progress +
+        (row.override_rate ? ' \u00b7 ' + Math.round(row.override_rate * 100) + '%' : '')));
+      gates.appendChild(line);
+    });
+    if (!board.length) gates.appendChild(node('p', 'brain-method-empty', 'the gates state has not landed'));
+    band.appendChild(gates);
+
+    var loops = node('div');
+    loops.appendChild(node('h3', null, 'Loops & harness'));
+    var rows = (read.loops && read.loops.loops) || [];
+    var iterations = rows.reduce(function (sum, row) { return sum + (row.iterations || 0); }, 0);
+    var pending = rows.reduce(function (sum, row) { return sum + (row.pending_review || 0); }, 0);
+    var stats = node('p', 'brain-loops-stats');
+    [
+      [rows.length, 'loops'],
+      [iterations, 'iterations'],
+      [pending, 'pending review']
+    ].forEach(function (item) {
+      var chunk = node('span');
+      chunk.appendChild(node('b', null, String(item[0])));
+      chunk.appendChild(document.createTextNode(' ' + item[1]));
+      stats.appendChild(chunk);
+    });
+    loops.appendChild(stats);
+    rows.slice()
+      .sort(function (left, right) {
+        return (right.pending_review || 0) - (left.pending_review || 0) ||
+          (right.iterations || 0) - (left.iterations || 0);
+      })
+      .slice(0, 4)
+      .forEach(function (row) {
+        var line = node('div', 'brain-loop');
+        line.appendChild(node('span', null, row.name));
+        line.appendChild(node('span', null,
+          row.iterations + ' it' + (row.pending_review ? ' \u00b7 ' + row.pending_review + ' pending' : '')));
+        loops.appendChild(line);
+      });
+    var harness = (read.harness && read.harness.loops) || [];
+    if (harness.length) {
+      loops.appendChild(node('p', 'brain-harness',
+        'harness \u2014 ' + harness[0].converged + ' of ' + harness[0].runs +
+        ' ' + harness[0].name + ' runs converged'));
+    }
+    band.appendChild(loops);
+
+    var maturity = node('div');
+    maturity.appendChild(node('h3', null, 'Maturity \u00b7 14 weeks'));
+    if (read.maturity) {
+      var weeks = (read.maturity.weeks || []).slice(-14);
+      var series = (read.maturity.series || []).map(function (row) {
+        return { name: row.name, points: (row.points || []).slice(-14) };
+      });
+      maturity.appendChild(weekGrid(series, weeks));
+      var milestones = (read.maturity.milestones || []).slice(-1);
+      if (milestones.length) {
+        maturity.appendChild(node('p', 'brain-milestone',
+          milestones[0].when + ' \u00b7 ' + milestones[0].what));
+      }
+    } else {
+      maturity.appendChild(node('p', 'brain-method-empty', 'the maturity state has not landed'));
+    }
+    band.appendChild(maturity);
+    return band;
+  }
+
+  function brainProjectDrawer(project) {
+    var sections = [];
+    sections.push(['the six weeks', node('p', 'derivation',
+      project.total + ' commits in six weeks \u00b7 ' + project.commits_30d + ' in 30 days \u00b7 ' +
+      (project.dirty ? project.dirty + ' dirty files' : 'clean worktree'))]);
+    sections.push(['the plans', node('p', 'derivation',
+      project.open_plans
+        ? project.open_plans + ' open \u00b7 ' + project.stale_plans + ' untouched for three weeks'
+        : 'the derived state names no open plan')]);
+    if (project.handoff) {
+      var handoff = node('div');
+      handoff.appendChild(node('p', 'derivation',
+        project.handoff.date + ' \u00b7 ' + Math.round((project.handoff.score || 0) * 100) +
+        '% next-step score'));
+      (project.handoff.next || []).forEach(function (line) {
+        handoff.appendChild(node('p', 'derivation', brainClean(line)));
+      });
+      sections.push(['the handoff', handoff]);
+    }
+    if (project.conflicts) {
+      sections.push(['claims vs evidence', node('p', 'derivation',
+        project.conflicts + ' open conflicts \u2014 the tool\u2019s conflicts board carries the claims')]);
+    }
+    openDrawer('project \u00b7 ' + project.name, sections);
+  }
+
+  function brainConflictDrawer(row) {
+    openDrawer('claim \u00b7 ' + row.project, [
+      ['the claim', node('p', 'derivation', brainClean(row.what))],
+      ['the evidence', node('p', 'derivation', brainClean(row.detail) || 'the tool names no reality')],
+      ['filed', node('p', 'derivation', row.when || 'the tool names no time')]
+    ]);
+  }
+
+  function brainProjectFromName(name) {
+    var projects = (face.brain && face.brain.projects) || [];
+    var project = projects.filter(function (row) { return row.name === name; })[0];
+    if (project) {
+      brainProjectDrawer(project);
+      return;
+    }
+    openDrawer('project \u00b7 ' + name, [['the state', node('p', 'derivation',
+      'the atlas names no row for this project')]]);
+  }
+
+  function brainClean(text) {
+    return String(text == null ? '' : text)
+      .replace(/\*\*/g, '')
+      .replace(/~~/g, '')
+      .replace(/`/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function brainAge(stamp) {
+    var date = String(stamp || '').slice(0, 10);
+    if (!date) return null;
+    var then = Date.parse(date + 'T00:00:00Z');
+    if (!isFinite(then)) return null;
+    var now = new Date();
+    var today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    return Math.max(0, Math.round((today - then) / 86400000));
+  }
+
+  function brainRel(date) {
+    if (!date) return '';
+    var days = brainAge(date);
+    if (days == null) return '';
+    if (days === 0) return 'today';
+    if (days < 30) return days + 'd';
+    if (days < 60) return Math.round(days / 7) + 'w';
+    return Math.round(days / 30) + 'mo';
   }
 
   function paintBrain() {
     var read = face.brain;
     el.brainBoard.textContent = '';
     if (!read) {
-      el.brainBoard.appendChild(pageHead('Knowledge', 'Second brain',
-        'The derived state, quieter: the gates, the loops, the harness runs, and the maturity signals.',
-        null));
-      if (face.plugin) el.brainBoard.appendChild(pluginCard(face.plugin));
+      el.brainBoard.appendChild(brainHead({}));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The derived-state read has not landed yet. It reads the six state files under the ' +
@@ -6014,107 +6466,20 @@
     if (read.refused && read.refused.length) {
       el.brainBoard.appendChild(refusedCard(read.refused));
     }
-    var tiles = node('div', 'tiles');
-    var reports = read.reports || {};
-    tiles.appendChild(tile(reports.doing_total || 0, 'open tasks'));
-    tiles.appendChild(tile(reports.pending_verification || 0, 'awaiting verification',
-      reports.pending_verification ? 'warn' : null));
-    tiles.appendChild(tile(reports.open_conflicts || 0, 'conflicts',
-      reports.open_conflicts ? 'down' : null));
-    tiles.appendChild(tile(reports.suppressed || 0, 'suppressed rows'));
-    el.brainBoard.appendChild(pageHead('Knowledge', 'Second brain',
-      'The derived state, quieter: the gates, the loops, the harness runs, and the maturity signals.',
-      read.read_at));
-    if (face.plugin) el.brainBoard.appendChild(pluginCard(face.plugin));
-    el.brainBoard.appendChild(statStrip(tiles));
-    // The earned-autonomy gates.
-    var gates = read.gates;
-    if (gates) {
-      var board = boardCard(12, 'the gates', gates.generated,
-        'verdicts and dispositions per gate, with the graded progress and the override rate. ' +
-        'A gate that is fit has earned its autonomy; the override rate is the human seam.');
-      (gates.board || []).forEach(function (row) {
-        var line = node('div', 'gate-row');
-        line.appendChild(node('span', 'gate-name', row.gate));
-        line.appendChild(badge(row.graded_progress, null));
-        line.appendChild(node('span', 'gate-counts',
-          row.verdicts + ' verdicts \u00b7 ' + row.dispositions + ' dispositions'));
-        line.appendChild(badge(row.fit_ready ? 'fit' : 'not yet fit', row.fit_ready ? 'ok' : 'warn'));
-        line.appendChild(node('span', 'gate-rate', 'override ' + fmtRate(row.override_rate)));
-        board.appendChild(line);
-      });
-      if ((gates.inbox || []).length) {
-        (gates.inbox || []).forEach(function (row) {
-          var line = node('div', 'stream-line');
-          line.dataset.act = 'inspect';
-          line.title = 'open this gate verdict';
-          line.appendChild(node('span', 'stream-ts', row.ts.slice(5, 16)));
-          line.appendChild(node('span', 'stream-text',
-            row.op + ' \u00b7 ' + row.verdict + ' \u00b7 ' + row.command));
-          board.appendChild(line);
-        });
-      }
-      el.brainBoard.appendChild(board);
+    el.brainBoard.appendChild(brainHead(read));
+    el.brainBoard.appendChild(brainStrip(read));
+    if (!read.projects) {
+      var empty = boardCard(12, 'the atlas', null, null);
+      empty.appendChild(node('p', 'board-empty',
+        'The tower data has not landed, so the atlas has no projects to place. The reason ' +
+        'is beside the sections that did land.'));
+      el.brainBoard.appendChild(empty);
+      return;
     }
-
-    // The quality loops.
-    var loops = read.loops;
-    if (loops) {
-      var loopCard = boardCard(12, 'the quality loops', loops.derived_at, null);
-      (loops.loops || []).forEach(function (row) {
-        var line = node('div', 'stream-line');
-        line.dataset.act = 'inspect';
-        line.title = 'open this quality loop';
-        line.appendChild(node('span', 'stream-ts', row.name));
-        line.appendChild(node('span', 'stream-text',
-          row.verdict + ' \u00b7 ' + row.iterations + ' iterations' +
-          (row.pending_review ? ' \u00b7 ' + row.pending_review + ' pending review' : '')));
-        loopCard.appendChild(line);
-      });
-      el.brainBoard.appendChild(loopCard);
-    }
-
-    // The harness runs.
-    var harness = read.harness;
-    if (harness) {
-      var harnessCard = boardCard(12, 'the harness runs', harness.generated, null);
-      (harness.loops || []).forEach(function (row) {
-        var line = node('div', 'stream-line');
-        line.dataset.act = 'inspect';
-        line.title = 'open this harness loop';
-        line.appendChild(node('span', 'stream-ts', row.name));
-        line.appendChild(node('span', 'stream-text',
-          row.runs + ' runs \u00b7 ' + row.converged + ' converged \u00b7 last ' + row.last_status));
-        harnessCard.appendChild(line);
-      });
-      (harness.recent || []).slice(0, 8).forEach(function (row) {
-        var line = node('div', 'stream-line');
-        line.dataset.act = 'inspect';
-        line.title = 'open this harness event';
-        line.appendChild(node('span', 'stream-ts', row.ts.slice(5, 16)));
-        line.appendChild(node('span', 'stream-text', row.kind + ' \u00b7 ' + row.label +
-          ' \u00b7 ' + row.outcome));
-        harnessCard.appendChild(line);
-      });
-      el.brainBoard.appendChild(harnessCard);
-    }
-
-    // The maturity week grid.
-    var maturity = read.maturity;
-    if (maturity) {
-      var weekCard = boardCard(12, 'the maturity signals', maturity.generated,
-        'one row per signal, one cell per week. A darker cell is a week with more of it.');
-      weekCard.appendChild(weekGrid(maturity.series || [], maturity.weeks || []));
-      (maturity.milestones || []).forEach(function (row) {
-        var line = node('div', 'stream-line');
-        line.dataset.act = 'inspect';
-        line.title = 'open this milestone';
-        line.appendChild(node('span', 'stream-ts', row.when));
-        line.appendChild(node('span', 'stream-text', row.what));
-        weekCard.appendChild(line);
-      });
-      el.brainBoard.appendChild(weekCard);
-    }
+    el.brainBoard.appendChild(brainAtlas(read));
+    el.brainBoard.appendChild(brainAttention(read));
+    if ((read.commits || []).length) el.brainBoard.appendChild(brainRibbon(read));
+    el.brainBoard.appendChild(brainMethod(read));
   }
 
   // The week grid: one row per series, one cell per week, the cell's

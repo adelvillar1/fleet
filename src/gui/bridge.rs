@@ -3783,6 +3783,40 @@ fn second_brain_refresh(home: &std::path::Path, job: &str) -> Result<Value, Stri
     tool.refresh(job)
 }
 
+fn attention_row_json(row: &crate::boards::AttentionRow) -> Value {
+    json!({
+        "project": row.project,
+        "what": row.what,
+        "evidence": row.evidence,
+        "detail": row.detail,
+        "when": row.when,
+    })
+}
+
+fn atlas_project_json(project: &crate::boards::AtlasProject) -> Value {
+    json!({
+        "name": project.name,
+        "lifecycle": project.lifecycle,
+        "role": project.role,
+        "commits_30d": project.commits_30d,
+        "dirty": project.dirty,
+        "open_plans": project.open_plans,
+        "drift_days": project.drift_days,
+        "weeks": project.weeks,
+        "reports": project.reports,
+        "total": project.total,
+        "stale_plans": project.stale_plans,
+        "conflicts": project.conflicts,
+        "handoff": project.handoff.as_ref().map(|handoff| json!({
+            "date": handoff.date,
+            "path": handoff.path,
+            "title": handoff.title,
+            "score": handoff.next_score,
+            "next": handoff.next_lines,
+        })),
+    })
+}
+
 /// The second-brain panel's document: the six sections, each landed or
 /// named, shaped for the browser.
 fn brain_read(home: &std::path::Path) -> Value {
@@ -3917,6 +3951,57 @@ fn brain_read(home: &std::path::Path) -> Value {
             }),
         );
     } else if let Some(reason) = snapshot.maturity.reason() {
+        refused.push(reason.to_string());
+    }
+    if let Some(tower) = snapshot.tower.landed() {
+        let reports = snapshot.reports.landed();
+        let windows = crate::boards::pulse_windows(&tower.generated_at);
+        let attention = crate::boards::attention_queue(tower, reports);
+        let projects = crate::boards::atlas_projects(tower, reports);
+        document.insert("state_at".into(), json!(tower.generated_at));
+        document.insert(
+            "events_since".into(),
+            json!(crate::boards::ledger_events_since(
+                &snapshot.home,
+                &tower.generated_at
+            )),
+        );
+        document.insert(
+            "pulse".into(),
+            json!({
+                "weeks": windows.iter().map(|(start, end)| json!({
+                    "start": start, "end": end,
+                })).collect::<Vec<_>>(),
+            }),
+        );
+        document.insert(
+            "attention".into(),
+            json!({
+                "total": attention.total,
+                "counts": {
+                    "drift": attention.drift.len(),
+                    "stale": attention.stale.len(),
+                    "handoff": attention.handoff.len(),
+                    "conflicts": attention.conflicts.len(),
+                },
+                "drift": attention.drift.iter().map(attention_row_json).collect::<Vec<_>>(),
+                "stale": attention.stale.iter().map(attention_row_json).collect::<Vec<_>>(),
+                "handoff": attention.handoff.iter().map(attention_row_json).collect::<Vec<_>>(),
+                "conflicts": attention.conflicts.iter().map(attention_row_json).collect::<Vec<_>>(),
+            }),
+        );
+        document.insert(
+            "projects".into(),
+            json!(projects.iter().map(atlas_project_json).collect::<Vec<_>>()),
+        );
+        document.insert(
+            "commits".into(),
+            json!(crate::boards::commits_by_day(tower)
+                .iter()
+                .map(|(day, count)| json!({ "day": day, "count": count }))
+                .collect::<Vec<_>>()),
+        );
+    } else if let Some(reason) = snapshot.tower.reason() {
         refused.push(reason.to_string());
     }
     document.insert("refused".into(), json!(refused));

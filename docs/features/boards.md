@@ -73,6 +73,16 @@ tool's address, its pipeline status, and the refresh action — and both
 resolve the home the same way, so the face cannot say the tool is
 elsewhere from the files it is reading.
 
+The second-brain read also carries the reductions the browser's atlas is
+built from: `attention_queue` (the tool's four classes — ledger drift,
+plans untouched for three weeks, handoffs whose recap scores a next step
+at 0.6, and every open conflict), `atlas_projects` (each project's six
+seven-day commit buckets ending on the tool's build day, its report
+buckets, open plans, stale plans, and conflict count), and
+`commits_by_day` (the tool's newest 400 timeline rows folded per day).
+They are pure functions over the parsed state, so the TUI and the
+browser read one queue rather than three.
+
 ## The snapshot contract
 
 Every board keeps the last snapshot that landed. A refused read — a

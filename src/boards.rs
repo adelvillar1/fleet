@@ -1817,6 +1817,10 @@ pub struct ReportsRead {
     /// chart's first series. The file carries it per project; the console
     /// reads it per day.
     pub report_daily: Vec<(String, u64)>,
+    /// The same counts kept per project, because the atlas asks a
+    /// different question: which projects file accounts of their work at
+    /// all. Sorted by project name.
+    pub report_daily_by_project: Vec<(String, Vec<(String, u64)>)>,
     /// The feed, newest first, capped: the console's live column.
     pub feed: Vec<FeedRow>,
 }
@@ -1834,10 +1838,20 @@ pub struct DoingRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConflictRow {
     pub task: String,
+    /// The project the claim was filed against.
+    pub project: String,
     pub class: String,
     pub severity: String,
     pub claim: String,
     pub reality: String,
+    /// The tool's own disposition: `open`, `confirmed`, `false_alarm`,
+    /// `superseded`. The attention queue counts the open ones, which is
+    /// the number the tool's `open_conflict_count` names.
+    pub status: String,
+    /// When the tower's write-time check rejected the claim.
+    pub detected_at: String,
+    /// The conflict's own key, `[0-9a-f]{12}`, for a later disposition.
+    pub key: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1884,9 +1898,12 @@ pub struct TowerDataRead {
     pub harness: Vec<HarnessMixRow>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TowerProject {
     pub name: String,
+    /// `own` or `reference`: a reference repository is studied, not
+    /// worked, and the atlas leaves it out the way the tool does.
+    pub role: String,
     pub lifecycle: String,
     pub branch: Option<String>,
     pub last_commit: String,
@@ -1894,6 +1911,103 @@ pub struct TowerProject {
     pub dirty: u64,
     /// The plan-ledger counts by status, done first.
     pub plans: Vec<(String, u64)>,
+    /// The in-progress plan rows, with the stale-day count the tool
+    /// measured against the project's latest commit.
+    pub in_progress: Vec<PlanRow>,
+    /// The planned rows. The atlas names the count, not the titles.
+    pub planned: Vec<PlanRow>,
+    /// How many days the newest plan sits behind the latest commit. The
+    /// tool only keeps a value above three days, which is the drift it
+    /// calls worth reconciling.
+    pub drift_days: Option<u64>,
+    /// The latest recap's handoff, with the score the tool gave its next
+    /// step and the lines it named.
+    pub handoff: Option<HandoffRow>,
+    /// Commits per day as the tool built them: the atlas's six-week
+    /// pulse reads these buckets.
+    pub daily: Vec<(String, u64)>,
+}
+
+/// One plan row, as the tower's knowledge index carries it. The title is
+/// the line the attention queue shows; the path is what a surface can
+/// offer to open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanRow {
+    pub title: String,
+    pub path: String,
+    pub status: String,
+    pub open_boxes: u64,
+    pub done_boxes: u64,
+    /// Days between the plan's last touch and the project's latest
+    /// commit, when the tool measured more than three.
+    pub stale_days: Option<u64>,
+}
+
+/// The latest recap's handoff for one project: when it was written, the
+/// score of its next step, and the lines naming it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandoffRow {
+    pub date: String,
+    pub path: String,
+    pub title: String,
+    /// The tool's own 0–1 score that the recap names a next action. The
+    /// queue only surfaces `>= 0.6`; the atlas shows the line from `0.5`.
+    pub next_score: f64,
+    pub next_lines: Vec<String>,
+}
+
+/// The attention queue: the four classes of thing the tool says need a
+/// person, reduced once from the state both surfaces read. A class with
+/// no rows is still named, so the queue's shape does not change on a
+/// quiet day.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AttentionRead {
+    pub drift: Vec<AttentionRow>,
+    pub stale: Vec<AttentionRow>,
+    pub handoff: Vec<AttentionRow>,
+    pub conflicts: Vec<AttentionRow>,
+    pub total: u64,
+}
+
+/// One row of the queue: which project, the line to read first, the
+/// evidence beside it, and the second line a conflict needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttentionRow {
+    pub project: String,
+    /// A plan title, a handoff's next step, or a conflict's claim.
+    pub what: String,
+    /// The mono evidence: `8d behind · 4 dirty`, `untouched 33d`,
+    /// `C7 · high`.
+    pub evidence: String,
+    /// The reality that rejected a claim; empty for the other classes.
+    pub detail: String,
+    /// The row's own date (a recap or a detection), empty when the
+    /// evidence is already a count of days.
+    pub when: String,
+}
+
+/// One project as the atlas reads it: six weeks of pulse, the plans it
+/// keeps open, and the one line its last session left behind.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AtlasProject {
+    pub name: String,
+    pub lifecycle: String,
+    pub role: String,
+    pub commits_30d: u64,
+    pub dirty: u64,
+    pub open_plans: u64,
+    pub drift_days: Option<u64>,
+    /// Commits in each of the six seven-day windows, oldest first.
+    pub weeks: Vec<u64>,
+    /// Reports filed in the same six windows.
+    pub reports: Vec<u64>,
+    /// The six-week commit total the atlas sorts by.
+    pub total: u64,
+    /// In-progress plans untouched for three weeks or more.
+    pub stale_plans: u64,
+    /// Open conflicts filed against this project.
+    pub conflicts: u64,
+    pub handoff: Option<HandoffRow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2251,12 +2365,15 @@ fn parse_reports(section: Section<Value>) -> Section<ReportsRead> {
                 .flatten()
                 .map(|row| ConflictRow {
                     task: text(row, "task").unwrap_or_default(),
+                    project: text(row, "project").unwrap_or_default(),
                     class: text(row, "type").unwrap_or_default(),
                     severity: text(row, "severity").unwrap_or_default(),
                     claim: text(row, "claim").unwrap_or_default(),
                     reality: text(row, "reality").unwrap_or_default(),
+                    status: text(row, "status").unwrap_or_default(),
+                    detected_at: text(row, "detected_at").unwrap_or_default(),
+                    key: text(row, "key").unwrap_or_default(),
                 })
-                .take(6)
                 .collect(),
             open_conflicts: number(value, "open_conflict_count").unwrap_or(0),
             trust: rows(value.get("trust"))
@@ -2297,6 +2414,33 @@ fn parse_reports(section: Section<Value>) -> Section<ReportsRead> {
                 }
                 per_day.into_iter().collect()
             },
+            report_daily_by_project: {
+                let mut per_project: Vec<(String, Vec<(String, u64)>)> = value
+                    .get("report_daily")
+                    .and_then(Value::as_object)
+                    .map(|projects| {
+                        projects
+                            .iter()
+                            .map(|(name, days)| {
+                                let mut days: Vec<(String, u64)> = days
+                                    .as_object()
+                                    .map(|days| {
+                                        days.iter()
+                                            .map(|(day, count)| {
+                                                (day.clone(), count.as_u64().unwrap_or(0))
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                days.sort_by(|left, right| left.0.cmp(&right.0));
+                                (name.clone(), days)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                per_project.sort_by(|left, right| left.0.cmp(&right.0));
+                per_project
+            },
             feed: rows(value.get("reports_recent"))
                 .into_iter()
                 .flatten()
@@ -2334,7 +2478,6 @@ fn parse_tower_data(section: Section<Value>) -> Section<TowerDataRead> {
                         project: text(row, "project").unwrap_or_default(),
                     })
                 })
-                .take(8)
                 .collect(),
             harness: rows(value.get("harness"))
                 .into_iter()
@@ -2364,15 +2507,388 @@ fn parse_tower_project(value: &Value) -> Option<TowerProject> {
             counts
         })
         .unwrap_or_default();
+    let mut daily: Vec<(String, u64)> = value
+        .get("daily")
+        .and_then(Value::as_object)
+        .map(|days| {
+            days.iter()
+                .map(|(day, count)| (day.clone(), count.as_u64().unwrap_or(0)))
+                .collect()
+        })
+        .unwrap_or_default();
+    daily.sort_by(|left, right| left.0.cmp(&right.0));
     Some(TowerProject {
         name: text(value, "name")?,
+        role: text(value, "role").unwrap_or_else(|| "own".to_string()),
         lifecycle: text(value, "lifecycle").unwrap_or_default(),
         branch: text(value, "branch"),
         last_commit: text(value, "last_commit").unwrap_or_default(),
         commits_30d: number(value, "commits_30d").unwrap_or(0),
         dirty: number(value, "dirty").unwrap_or(0),
         plans,
+        in_progress: parse_plan_rows(value.get("in_progress")),
+        planned: parse_plan_rows(value.get("planned")),
+        drift_days: number(value, "drift_days"),
+        handoff: parse_handoff(value.get("live_handoff")),
+        daily,
     })
+}
+
+fn parse_plan_rows(value: Option<&Value>) -> Vec<PlanRow> {
+    rows(value)
+        .into_iter()
+        .flatten()
+        .map(|row| PlanRow {
+            title: text(row, "title").unwrap_or_else(|| "untitled plan".to_string()),
+            path: text(row, "path").unwrap_or_default(),
+            status: text(row, "status").unwrap_or_default(),
+            open_boxes: number(row, "open_boxes").unwrap_or(0),
+            done_boxes: number(row, "done_boxes").unwrap_or(0),
+            stale_days: number(row, "stale_days"),
+        })
+        .collect()
+}
+
+/// The latest recap's handoff. The tool writes `live_handoff: null` for a
+/// project with no recap, and a value with an empty `next_lines` for one
+/// whose recap names no next step; the second is still a handoff (its
+/// date is real), so only a null is absent.
+fn parse_handoff(value: Option<&Value>) -> Option<HandoffRow> {
+    let value = value.filter(|value| value.is_object())?;
+    let date = text(value, "date").unwrap_or_default();
+    let next_lines: Vec<String> = value
+        .get("next_lines")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if date.is_empty() && next_lines.is_empty() {
+        return None;
+    }
+    Some(HandoffRow {
+        date,
+        path: text(value, "path").unwrap_or_default(),
+        title: text(value, "title").unwrap_or_default(),
+        next_score: value.get("next").and_then(Value::as_f64).unwrap_or(0.0),
+        next_lines,
+    })
+}
+
+// --- the atlas ---------------------------------------------------------------
+
+/// The atlas's six windows: seven days each, ending on the day the tower
+/// built its state. The state's own day is the anchor because the pulse
+/// is read against what the tool last saw, not against the clock: a
+/// stale build then reads as stale rather than as a quiet fortnight.
+pub fn pulse_windows(generated_at: &str) -> Vec<(String, String)> {
+    let Some(end) = civil_days(generated_at) else {
+        return Vec::new();
+    };
+    (0..6)
+        .map(|index| {
+            let start = end - 7 * (6 - index) + 1;
+            (civil_date(start), civil_date(start + 6))
+        })
+        .collect()
+}
+
+/// Days since 1970-01-01 for a `YYYY-MM-DD` date: Howard Hinnant's
+/// `days_from_civil`. No date crate — the board needs subtraction and a
+/// label, not a calendar.
+fn civil_days(text: &str) -> Option<i64> {
+    let date = text.get(..10)?;
+    let mut parts = date.split('-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next()?.parse().ok()?;
+    let day: i64 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = (month + 9) % 12;
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146097 + day_of_era - 719468)
+}
+
+fn civil_date(days: i64) -> String {
+    let shifted = days + 719468;
+    let era = if shifted >= 0 {
+        shifted
+    } else {
+        shifted - 146096
+    } / 146097;
+    let day_of_era = shifted - era * 146097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = if month_prime < 10 {
+        month_prime + 3
+    } else {
+        month_prime - 9
+    };
+    let year = if month <= 2 { year + 1 } else { year };
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// One project's daily counts folded into the six windows.
+fn pulse_for(days: &[(String, u64)], windows: &[(String, String)]) -> Vec<u64> {
+    let bounds: Vec<Option<(i64, i64)>> = windows
+        .iter()
+        .map(|(start, end)| Some((civil_days(start)?, civil_days(end)?)))
+        .collect();
+    let mut out = vec![0; windows.len()];
+    for (day, count) in days {
+        let Some(value) = civil_days(day) else {
+            continue;
+        };
+        for (index, bound) in bounds.iter().enumerate() {
+            if let Some((start, end)) = bound {
+                if value >= *start && value <= *end {
+                    out[index] += *count;
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The attention queue. The rules are the tool's own: a plan ledger more
+/// than three days behind the latest commit, an in-progress plan
+/// untouched for three weeks, a handoff whose recap scores its next step
+/// at 0.6 or more, and every open conflict. The reduction runs here so
+/// the browser, the TUI, and any later surface read one queue rather
+/// than three.
+pub fn attention_queue(tower: &TowerDataRead, reports: Option<&ReportsRead>) -> AttentionRead {
+    let mut drifting: Vec<(u64, AttentionRow)> = Vec::new();
+    let mut stale: Vec<(u64, AttentionRow)> = Vec::new();
+    let mut handoffs: Vec<AttentionRow> = Vec::new();
+    let mut conflicts: Vec<(u8, AttentionRow)> = Vec::new();
+
+    for project in tower.projects.iter().filter(|project| {
+        project.role != "reference" && matches!(project.lifecycle.as_str(), "active" | "dormant")
+    }) {
+        if let Some(days) = project.drift_days {
+            drifting.push((
+                days,
+                AttentionRow {
+                    project: project.name.clone(),
+                    what: "the plan ledger is behind the repo — reconcile docs/plans".to_string(),
+                    evidence: format!("{days}d behind · {} dirty", project.dirty),
+                    detail: String::new(),
+                    when: String::new(),
+                },
+            ));
+        }
+        for plan in project
+            .in_progress
+            .iter()
+            .filter(|plan| plan.stale_days.unwrap_or(0) >= 21)
+        {
+            let days = plan.stale_days.unwrap_or(0);
+            stale.push((
+                days,
+                AttentionRow {
+                    project: project.name.clone(),
+                    what: plan.title.clone(),
+                    evidence: format!("untouched {days}d"),
+                    detail: String::new(),
+                    when: String::new(),
+                },
+            ));
+        }
+        if let Some(handoff) = project
+            .handoff
+            .as_ref()
+            .filter(|handoff| handoff.next_score >= 0.6)
+        {
+            handoffs.push(AttentionRow {
+                project: project.name.clone(),
+                what: handoff
+                    .next_lines
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "the handoff names an open step".to_string()),
+                evidence: format!(
+                    "{} · {}%",
+                    handoff.date,
+                    (handoff.next_score * 100.0).round() as u64
+                ),
+                detail: String::new(),
+                when: handoff.date.clone(),
+            });
+        }
+    }
+
+    if let Some(reports) = reports {
+        for conflict in reports
+            .conflicts
+            .iter()
+            .filter(|conflict| conflict.status == "open")
+        {
+            conflicts.push((
+                severity_rank(&conflict.severity),
+                AttentionRow {
+                    project: conflict.project.clone(),
+                    what: conflict.claim.clone(),
+                    evidence: format!("{} · {}", conflict.class, conflict.severity),
+                    detail: conflict.reality.clone(),
+                    when: conflict.detected_at.clone(),
+                },
+            ));
+        }
+    }
+
+    drifting.sort_by(|left, right| right.0.cmp(&left.0));
+    stale.sort_by(|left, right| right.0.cmp(&left.0));
+    handoffs.sort_by(|left, right| right.when.cmp(&left.when));
+    conflicts.sort_by(|left, right| right.0.cmp(&left.0).then(right.1.when.cmp(&left.1.when)));
+
+    let drift: Vec<AttentionRow> = drifting.into_iter().map(|(_, row)| row).collect();
+    let stale: Vec<AttentionRow> = stale.into_iter().map(|(_, row)| row).collect();
+    let conflicts: Vec<AttentionRow> = conflicts.into_iter().map(|(_, row)| row).collect();
+    let total = (drift.len() + stale.len() + handoffs.len() + conflicts.len()) as u64;
+    AttentionRead {
+        drift,
+        stale,
+        handoff: handoffs,
+        conflicts,
+        total,
+    }
+}
+
+fn severity_rank(severity: &str) -> u8 {
+    match severity {
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
+}
+
+/// The atlas's project rows, busiest six-week pulse first. Reference
+/// repositories are left out: they are studied, not worked.
+pub fn atlas_projects(tower: &TowerDataRead, reports: Option<&ReportsRead>) -> Vec<AtlasProject> {
+    let windows = pulse_windows(&tower.generated_at);
+    let mut projects: Vec<AtlasProject> = tower
+        .projects
+        .iter()
+        .filter(|project| project.role != "reference")
+        .map(|project| {
+            let weeks = pulse_for(&project.daily, &windows);
+            let report_days = reports
+                .and_then(|reports| {
+                    reports
+                        .report_daily_by_project
+                        .iter()
+                        .find(|(name, _)| name == &project.name)
+                        .map(|(_, days)| days.as_slice())
+                })
+                .unwrap_or(&[]);
+            let report_weeks = pulse_for(report_days, &windows);
+            let conflicts = reports
+                .map(|reports| {
+                    reports
+                        .conflicts
+                        .iter()
+                        .filter(|conflict| {
+                            conflict.project == project.name && conflict.status == "open"
+                        })
+                        .count() as u64
+                })
+                .unwrap_or(0);
+            AtlasProject {
+                name: project.name.clone(),
+                lifecycle: project.lifecycle.clone(),
+                role: project.role.clone(),
+                commits_30d: project.commits_30d,
+                dirty: project.dirty,
+                open_plans: plan_count(&project.plans, "in_progress")
+                    + plan_count(&project.plans, "planned"),
+                drift_days: project.drift_days,
+                total: weeks.iter().sum(),
+                stale_plans: project
+                    .in_progress
+                    .iter()
+                    .filter(|plan| plan.stale_days.unwrap_or(0) >= 21)
+                    .count() as u64,
+                conflicts,
+                handoff: project.handoff.clone(),
+                weeks,
+                reports: report_weeks,
+            }
+        })
+        .collect();
+    projects.sort_by(|left, right| {
+        right
+            .total
+            .cmp(&left.total)
+            .then(right.commits_30d.cmp(&left.commits_30d))
+            .then(left.name.cmp(&right.name))
+    });
+    projects
+}
+
+fn plan_count(plans: &[(String, u64)], status: &str) -> u64 {
+    plans
+        .iter()
+        .find(|(name, _)| name == status)
+        .map(|(_, count)| *count)
+        .unwrap_or(0)
+}
+
+/// How many ledger events were filed after the tool's last build. The
+/// ledger is the tool's append-only feed; a build older than its own
+/// feed is the staleness the face has to show rather than guess at. A
+/// ledger too large to read is `None`: the count is a convenience, and
+/// an expensive one is not worth a refresh's latency.
+pub fn ledger_events_since(home: &Path, built_at: &str) -> Option<u64> {
+    const MAX_LEDGER: u64 = 32 * 1024 * 1024;
+    let path = home.join("events.jsonl");
+    let metadata = std::fs::metadata(&path).ok()?;
+    if metadata.len() > MAX_LEDGER {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    let stamp = built_at.get(..16).unwrap_or(built_at);
+    let mut count = 0u64;
+    for line in std::io::BufRead::lines(reader) {
+        let Ok(line) = line else { continue };
+        let Some(index) = line.find("\"ts\":\"") else {
+            continue;
+        };
+        let stamp_at = &line[index + 6..];
+        if stamp_at
+            .get(..16)
+            .map(|when| when >= stamp)
+            .unwrap_or(false)
+        {
+            count += 1;
+        }
+    }
+    Some(count)
+}
+
+/// The tool's timeline folded into one count per day, oldest first. The
+/// file caps its timeline at 400 rows, so this is the newest 400 commits
+/// grouped by day, not a complete history.
+pub fn commits_by_day(tower: &TowerDataRead) -> Vec<(String, u64)> {
+    let mut days: BTreeMap<String, u64> = BTreeMap::new();
+    for row in &tower.timeline {
+        *days.entry(row.date.clone()).or_insert(0) += 1;
+    }
+    days.into_iter().collect()
 }
 
 // --- the tower ---------------------------------------------------------------
@@ -3752,6 +4268,206 @@ mod tests {
         assert_eq!(tower.projects.len(), 2);
         assert_eq!(tower.projects[0].name, "fleet");
         assert_eq!(tower.projects[0].plans[0], ("done".to_string(), 9));
+    }
+
+    fn project(name: &str, role: &str, lifecycle: &str) -> TowerProject {
+        TowerProject {
+            name: name.to_string(),
+            role: role.to_string(),
+            lifecycle: lifecycle.to_string(),
+            branch: None,
+            last_commit: "2026-10-09".to_string(),
+            commits_30d: 0,
+            dirty: 0,
+            plans: Vec::new(),
+            in_progress: Vec::new(),
+            planned: Vec::new(),
+            drift_days: None,
+            handoff: None,
+            daily: Vec::new(),
+        }
+    }
+
+    fn reports_with(conflicts: Vec<ConflictRow>) -> ReportsRead {
+        ReportsRead {
+            generated_at: "2026-10-04 16:18:56".to_string(),
+            doing: Vec::new(),
+            doing_total: 0,
+            pending_verification: 0,
+            conflicts,
+            open_conflicts: 0,
+            trust: Vec::new(),
+            suppressed: 0,
+            malformed: 0,
+            events_total: 0,
+            coverage: None,
+            report_daily: Vec::new(),
+            report_daily_by_project: Vec::new(),
+            feed: Vec::new(),
+        }
+    }
+
+    fn conflict(project: &str, status: &str, severity: &str) -> ConflictRow {
+        ConflictRow {
+            task: "t1".to_string(),
+            project: project.to_string(),
+            class: "C7".to_string(),
+            severity: severity.to_string(),
+            claim: "done claiming a commit".to_string(),
+            reality: "sha-not-found".to_string(),
+            status: status.to_string(),
+            detected_at: "2026-10-02 21:26".to_string(),
+            key: "04d13aa13075".to_string(),
+        }
+    }
+
+    #[test]
+    fn the_attention_queue_reads_the_tools_four_classes() {
+        // The queue is the tool's own rules: drift, a plan untouched for
+        // three weeks, a handoff at 0.6 or more, and every open conflict.
+        // A reference repo and a paused project are outside the pool; a
+        // superseded conflict is not open; a 0.3 handoff names no step.
+        let mut drifting = project("drifting", "own", "active");
+        drifting.drift_days = Some(8);
+        drifting.dirty = 4;
+        drifting.in_progress = vec![PlanRow {
+            title: "Plan: the stale one".to_string(),
+            path: "/p/docs/plans/stale.md".to_string(),
+            status: "in_progress".to_string(),
+            open_boxes: 3,
+            done_boxes: 1,
+            stale_days: Some(33),
+        }];
+        drifting.handoff = Some(HandoffRow {
+            date: "2026-10-01".to_string(),
+            path: "/p/docs/recaps/r.md".to_string(),
+            title: "recap".to_string(),
+            next_score: 0.95,
+            next_lines: vec!["the next touch".to_string()],
+        });
+        let mut other = project("other", "own", "active");
+        other.handoff = Some(HandoffRow {
+            date: "2026-09-01".to_string(),
+            path: String::new(),
+            title: String::new(),
+            next_score: 0.3,
+            next_lines: vec!["too weak to surface".to_string()],
+        });
+        let mut reference = project("reference", "reference", "active");
+        reference.drift_days = Some(9);
+        let mut paused = project("paused", "own", "paused");
+        paused.drift_days = Some(9);
+        let tower = TowerDataRead {
+            generated_at: "2026-10-09 01:52".to_string(),
+            projects: vec![drifting, other, reference, paused],
+            timeline: Vec::new(),
+            harness: Vec::new(),
+        };
+        let reports = reports_with(vec![
+            conflict("drifting", "open", "high"),
+            conflict("other", "superseded", "high"),
+        ]);
+
+        let queue = attention_queue(&tower, Some(&reports));
+
+        assert_eq!(queue.drift.len(), 1);
+        assert_eq!(queue.drift[0].project, "drifting");
+        assert_eq!(queue.drift[0].evidence, "8d behind · 4 dirty");
+        assert_eq!(queue.stale.len(), 1);
+        assert_eq!(queue.stale[0].what, "Plan: the stale one");
+        assert_eq!(queue.stale[0].evidence, "untouched 33d");
+        assert_eq!(queue.handoff.len(), 1);
+        assert_eq!(queue.handoff[0].what, "the next touch");
+        assert_eq!(queue.conflicts.len(), 1);
+        assert_eq!(queue.conflicts[0].detail, "sha-not-found");
+        assert_eq!(queue.total, 4);
+    }
+
+    #[test]
+    fn the_pulse_windows_end_on_the_tools_build_day_and_fold_the_daily_counts() {
+        assert_eq!(
+            pulse_windows("2026-10-09 01:52"),
+            vec![
+                ("2026-08-29".to_string(), "2026-09-04".to_string()),
+                ("2026-09-05".to_string(), "2026-09-11".to_string()),
+                ("2026-09-12".to_string(), "2026-09-18".to_string()),
+                ("2026-09-19".to_string(), "2026-09-25".to_string()),
+                ("2026-09-26".to_string(), "2026-10-02".to_string()),
+                ("2026-10-03".to_string(), "2026-10-09".to_string()),
+            ]
+        );
+        assert!(pulse_windows("not a date").is_empty());
+
+        // The boundaries belong to the window they start: 4 Sep is the
+        // first window's last day, 5 Sep opens the second.
+        let mut busy = project("busy", "own", "active");
+        busy.daily = vec![
+            ("2026-09-04".to_string(), 5),
+            ("2026-09-05".to_string(), 2),
+            ("2026-10-09".to_string(), 7),
+        ];
+        busy.plans = vec![("in_progress".to_string(), 1), ("planned".to_string(), 2)];
+        busy.in_progress = vec![PlanRow {
+            title: "stale".to_string(),
+            path: String::new(),
+            status: "in_progress".to_string(),
+            open_boxes: 1,
+            done_boxes: 0,
+            stale_days: Some(21),
+        }];
+        let tower = TowerDataRead {
+            generated_at: "2026-10-09 01:52".to_string(),
+            projects: vec![busy, project("quiet", "own", "active")],
+            timeline: vec![
+                TimelineRow {
+                    date: "2026-10-08".to_string(),
+                    subject: "one".to_string(),
+                    project: "busy".to_string(),
+                },
+                TimelineRow {
+                    date: "2026-10-08".to_string(),
+                    subject: "two".to_string(),
+                    project: "quiet".to_string(),
+                },
+            ],
+            harness: Vec::new(),
+        };
+        let mut reports = reports_with(vec![
+            conflict("busy", "open", "high"),
+            conflict("busy", "open", "low"),
+        ]);
+        reports.report_daily_by_project =
+            vec![("busy".to_string(), vec![("2026-09-05".to_string(), 3)])];
+
+        let atlas = atlas_projects(&tower, Some(&reports));
+
+        assert_eq!(atlas[0].name, "busy");
+        assert_eq!(atlas[0].weeks, vec![5, 2, 0, 0, 0, 7]);
+        assert_eq!(atlas[0].reports, vec![0, 3, 0, 0, 0, 0]);
+        assert_eq!(atlas[0].total, 14);
+        assert_eq!(atlas[0].open_plans, 3);
+        assert_eq!(atlas[0].stale_plans, 1);
+        assert_eq!(atlas[0].conflicts, 2);
+        assert_eq!(atlas[1].name, "quiet");
+        assert_eq!(commits_by_day(&tower), vec![("2026-10-08".to_string(), 2)]);
+    }
+
+    #[test]
+    fn the_ledger_since_names_the_events_after_the_build() {
+        let scratch = Scratch::new("brain-ledger");
+        let home = scratch.path();
+        std::fs::write(
+            home.join("events.jsonl"),
+            concat!(
+                "{\"ts\":\"2026-10-08 23:59:59\",\"type\":\"start\"}\n",
+                "{\"ts\":\"2026-10-09 01:52:00\",\"type\":\"start\"}\n",
+                "{\"ts\":\"2026-10-20 20:24:05\",\"type\":\"done\"}\n",
+            ),
+        )
+        .expect("the ledger");
+
+        assert_eq!(ledger_events_since(home, "2026-10-09 01:52"), Some(2));
+        assert_eq!(ledger_events_since(home, "2027-01-01 00:00"), Some(0));
     }
 
     #[test]
