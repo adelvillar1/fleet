@@ -457,7 +457,11 @@
       <section class="card process-card" id="process-card">
         <header class="card-head">
           <h2>the run</h2>
-          <span class="count" id="process-state">idle</span>
+          <span class="dock-head-side">
+            <span class="count" id="process-state">idle</span>
+            <button class="ghost dock-fold" id="dock-fold" type="button"
+                    aria-label="collapse the dock" title="collapse this panel">collapse</button>
+          </span>
         </header>
         <div class="process-body" id="process-body"></div>
         <!-- The only part of this card the event loop never rebuilds:
@@ -476,7 +480,8 @@
       <section class="card dock-object" id="dock-object" hidden>
         <header class="card-head">
           <h2 id="dock-object-title">object</h2>
-          <button class="ghost" id="dock-object-close" type="button">clear</button>
+          <button class="ghost" id="dock-object-close" type="button"
+                  title="close this object, and the dock if it opened it">close</button>
         </header>
         <div class="dock-object-body" id="dock-object-body"></div>
       </section>

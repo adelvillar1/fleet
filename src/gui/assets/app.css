@@ -2141,6 +2141,12 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 .ghost:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent-lift); }
 
+/* The dock's own fold: the topbar toggle exists, but a panel that opens
+   itself when an object is selected has to offer the way back where the
+   owner is looking. */
+.dock-head-side { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.dock-fold { padding: 2px 7px; font-size: 9.5px; letter-spacing: 0.03em; }
+
 .facts { display: grid; margin: 0; }
 
 .fact {

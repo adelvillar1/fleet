@@ -190,6 +190,7 @@
     railScrim: document.getElementById('rail-scrim'),
     railWhere: document.getElementById('rail-where'),
     asideToggle: document.getElementById('aside-toggle'),
+    dockFold: document.getElementById('dock-fold'),
     dock: document.getElementById('dock'),
     dockObject: document.getElementById('dock-object'),
     dockObjectTitle: document.getElementById('dock-object-title'),
@@ -340,6 +341,10 @@
     // The nav mode the owner had before the dock auto-folded it at the
     // mid breakpoint. Restored when the dock closes or the screen widens.
     railBeforeDock: null,
+    // Whether the dock was closed before an object opened it. Closing
+    // the object then collapses the dock too, rather than leaving a
+    // column the owner never asked for standing open.
+    asideBeforeObject: false,
     // The live process: the run's own stage, turn, tool, and counts,
     // reduced from the same event log the transcript reads.
     process: null,
@@ -4361,6 +4366,7 @@
     // The dock is the inspector wherever there is room. The fixed drawer
     // is the narrow-screen fallback, not a second surface to maintain.
     if (window.innerWidth > 1180 && el.dockObject) {
+      if (document.body.dataset.aside !== 'open') face.asideBeforeObject = true;
       setAside(true);
       el.dockObjectTitle.textContent = title;
       el.dockObjectBody.textContent = '';
@@ -4389,6 +4395,13 @@
       el.dockObjectBody.textContent = '';
       el.faceCard.hidden = false;
       el.trustCard.hidden = false;
+      // An object that opened the dock closes it again. A dock the
+      // owner had open before the object stays open: the column is
+      // theirs, not the object's.
+      if (face.asideBeforeObject) {
+        face.asideBeforeObject = false;
+        setAside(false);
+      }
       return;
     }
     el.drawer.hidden = true;
@@ -4699,8 +4712,17 @@
   }
   if (el.asideToggle) {
     el.asideToggle.addEventListener('click', function () {
+      // A dock opened by hand is the owner's: closing an object later
+      // must not fold it.
+      face.asideBeforeObject = false;
       setAside(document.body.dataset.aside === 'closed');
       if (face.panel === 'sessions') paintSessions();
+    });
+  }
+  if (el.dockFold) {
+    el.dockFold.addEventListener('click', function () {
+      face.asideBeforeObject = false;
+      setAside(false);
     });
   }
   if (el.dockObjectClose) {
