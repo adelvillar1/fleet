@@ -584,7 +584,42 @@ mod tests {
                         }
                         head.extend_from_slice(&chunk[..read]);
                     }
-                    let text = String::from_utf8_lossy(&head).to_string();
+                    // The body is read to its declared length. Reading
+                    // only until the head terminator works on an idle
+                    // machine, where one read brings both, and drops the
+                    // body the moment the scheduler splits them — which is
+                    // how this double passed for months and failed the
+                    // first time a build ran beside the suite.
+                    let split = head
+                        .windows(4)
+                        .position(|w| w == b"\r\n\r\n")
+                        .map(|at| at + 4)
+                        .unwrap_or(head.len());
+                    let (head_part, mut body_part) = head.split_at(split);
+                    let declared = String::from_utf8_lossy(head_part)
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            if name.eq_ignore_ascii_case("content-length") {
+                                value.trim().parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0);
+                    let mut rest = body_part.to_vec();
+                    while rest.len() < declared {
+                        let read = stream.read(&mut chunk).await.unwrap_or(0);
+                        if read == 0 {
+                            break;
+                        }
+                        rest.extend_from_slice(&chunk[..read]);
+                    }
+                    let text = format!(
+                        "{}{}",
+                        String::from_utf8_lossy(head_part),
+                        String::from_utf8_lossy(&rest)
+                    );
                     let body = if text.starts_with("GET ") && text.contains("getUpdates") {
                         let updates = fake
                             .updates
