@@ -157,6 +157,11 @@ struct GuiState {
     /// log behind.
     launch: Option<String>,
     driving: Option<String>,
+    /// The face's run policy: how tool calls are approved for the next
+    /// run, and the provider the next route is pinned to. The command
+    /// loop is serial, so one pair is the whole state.
+    permissions: crate::approvals::Mode,
+    provider_pin: Option<String>,
 }
 
 impl GuiState {
@@ -296,6 +301,8 @@ impl Bridge {
             sessions,
             launch,
             driving: None,
+            permissions: crate::approvals::Mode::Ask,
+            provider_pin: None,
         }));
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
         tokio::spawn(fan_out(ui_rx, seat_rx, Arc::clone(&state), events.clone()));
@@ -1573,6 +1580,26 @@ impl Bridge {
         self.dispatch(session, task, |session, task| {
             Command::Run(session.to_string(), task.to_string())
         })
+    }
+
+    /// The same run, with the face's two standing choices: how this
+    /// run's tool calls are approved, and the provider its route is
+    /// pinned to (`None` is `auto`). Both are read by the agent thread
+    /// when it prepares the run, so they apply to this run and not to
+    /// the face's other sessions.
+    pub fn run_with(
+        &self,
+        session: &str,
+        task: &str,
+        mode: crate::approvals::Mode,
+        pin: Option<String>,
+    ) -> Result<(), String> {
+        {
+            let mut state = lock(&self.state);
+            state.permissions = mode;
+            state.provider_pin = pin;
+        }
+        self.run(session, task)
     }
 
     /// The owner's one instruction to the run in flight, through the
@@ -4418,20 +4445,28 @@ async fn fan_out(
 pub struct GuiApprover {
     requests: UnboundedSender<ApprovalRequest>,
     rules: Arc<Mutex<approvals::Rules>>,
+    /// The run's approval mode, the same gate the console and the TUI
+    /// run: `ask` prompts for every call (minus remembered rules),
+    /// `yes-guarded` runs everything but the destructive class, and
+    /// `yes` runs everything but the always-ask class.
+    gate: approvals::Gate,
     /// The run-scoped "allow everything" latch, reported through
     /// [`Approver::latched`] exactly as the console's and the TUI's are.
     always: bool,
 }
 
 impl GuiApprover {
-    /// An approver that prompts `requests` and consults `rules` first.
+    /// An approver in `mode` that prompts `requests` and consults
+    /// `rules` first.
     pub fn new(
         requests: UnboundedSender<ApprovalRequest>,
         rules: Arc<Mutex<approvals::Rules>>,
+        mode: approvals::Mode,
     ) -> GuiApprover {
         GuiApprover {
             requests,
             rules,
+            gate: approvals::Gate::new(mode),
             always: false,
         }
     }
@@ -4446,6 +4481,13 @@ impl Approver for GuiApprover {
         // seat's `remember` swaps this same mutex, and holding it across
         // the blocking recv would deadlock the face on a reload.
         if lock(&self.rules).covers(call) {
+            return true;
+        }
+        // The mode is the second answer, after the owner's remembered
+        // rules: the gate knows the destructive and always-ask classes,
+        // so a call it clears needs no prompt and a call it does not
+        // still reaches the seat.
+        if self.gate.approves_without_asking(call) {
             return true;
         }
         let (responder, decision) = std::sync::mpsc::channel();
@@ -4470,7 +4512,7 @@ impl Approver for GuiApprover {
     }
 
     fn latched(&self) -> bool {
-        self.always
+        self.always || self.gate.mode() == approvals::Mode::Yes
     }
 }
 
@@ -4552,6 +4594,11 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             // first task arrives.
             let mut routes: std::collections::HashMap<String, Option<crate::route::Prepared>> =
                 std::collections::HashMap::new();
+            // The provider each prepared route was judged under: a chat
+            // that changes its pin is re-routed rather than served the
+            // old decision.
+            let mut route_pins: std::collections::HashMap<String, Option<String>> =
+                std::collections::HashMap::new();
             let mut judge_tasks: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
             // The launch session does not exist yet: it is created on the
@@ -4601,19 +4648,25 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         // driven, which is exact because the thread's
                         // command loop is serial.
                         lock(&state).driving = Some(driving.clone());
+                        let pin = lock(&state).provider_pin.clone();
+                        if route_pins.get(&driving).cloned().flatten() != pin {
+                            routes.insert(driving.clone(), None);
+                        }
                         let slot = routes.entry(driving.clone()).or_insert(None);
                         if slot.is_none() {
-                            match crate::route::prepare(
+                            match crate::route::prepare_with_pin(
                                 &home,
                                 &dotenv,
                                 &task,
                                 &std::collections::HashMap::new(),
+                                pin.as_deref(),
                             )
                             .await
                             {
                                 Ok(fresh) => {
                                     judge_tasks.insert(driving.clone(), task.clone());
                                     *slot = Some(fresh);
+                                    route_pins.insert(driving.clone(), pin.clone());
                                 }
                                 Err(error) => {
                                     // A stop can be written while the
@@ -4692,8 +4745,12 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             checkpoints: Some(home.join("checkpoints")),
                             plan_mode,
                         };
-                        let approver: Box<dyn Approver> =
-                            Box::new(GuiApprover::new(approval_tx.clone(), Arc::clone(&rules)));
+                        let mode = lock(&state).permissions;
+                        let approver: Box<dyn Approver> = Box::new(GuiApprover::new(
+                            approval_tx.clone(),
+                            Arc::clone(&rules),
+                            mode,
+                        ));
                         // Progress text has a sink here: the page renders
                         // the events, and the log records exactly what
                         // headless records.

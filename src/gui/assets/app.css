@@ -1643,6 +1643,37 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .composer textarea:focus { outline: none; }
 .composer textarea::placeholder { color: var(--dsw-alias-ink-tertiary); }
 
+/* The run bar: this chat's two standing choices, above the send row.
+   The destructive class still asks under Autonomous; Full access is the
+   one label that colours red, because it is the one that should. */
+.runbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px 0; }
+.runbar-perms { display: inline-flex; overflow: hidden; border: 1px solid var(--dsw-alias-hairline); border-radius: 7px; }
+.runbar-perms button {
+  padding: 5px 9px;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.runbar-perms button:hover { color: var(--dsw-alias-ink); }
+.runbar-perms button[aria-pressed="true"] { background: var(--dsw-alias-ink); color: var(--dsw-alias-page); }
+.runbar[data-mode="full"] .runbar-perms button[aria-pressed="true"] { background: var(--dsw-alias-down); color: #fff; }
+.runbar-route { display: inline-flex; align-items: center; gap: 6px; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
+.runbar-route select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: var(--dsw-alias-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 10.5px;
+}
+.runbar-note { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
+.runbar[data-mode="full"] .runbar-note { color: var(--dsw-alias-down); font-weight: 600; }
+
 .composer-foot {
   display: flex;
   align-items: center;

@@ -338,6 +338,23 @@
       <form class="composer" id="composer" autocomplete="off">
         <label class="sr-only" for="task">the task</label>
         <textarea id="task" rows="1" placeholder="Ask fleet for something&hellip;" spellcheck="false"></textarea>
+        <div class="runbar" id="runbar" data-mode="ask">
+          <div class="runbar-perms" id="run-perms" role="group" aria-label="permissions">
+            <button type="button" data-mode="ask" aria-pressed="true"
+                    title="every tool call asks, except the rules you have remembered">Ask before</button>
+            <button type="button" data-mode="auto" aria-pressed="false"
+                    title="everything runs except the destructive class, which still asks">Autonomous</button>
+            <button type="button" data-mode="full" aria-pressed="false"
+                    title="nothing asks except the always-ask class — a standing risk">Full access</button>
+          </div>
+          <label class="runbar-route">
+            <span>route</span>
+            <select id="run-provider" aria-label="pin a provider for this chat">
+              <option value="">Auto</option>
+            </select>
+          </label>
+          <span class="runbar-note" id="run-route-note">the router decides</span>
+        </div>
         <footer class="composer-foot">
           <span class="composer-hint" id="hint">Enter sends &middot; Shift+Enter is a newline</span>
           <button type="button" class="send send-plan" id="plan" aria-pressed="false">Plan</button>

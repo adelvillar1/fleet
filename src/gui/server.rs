@@ -352,8 +352,12 @@ async fn serve_connection(
                 Ok(task) => task,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
+            let (mode, pin) = match run_policy_of(&body) {
+                Ok(policy) => policy,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
             let session = asked_session(bridge, &request);
-            match bridge.run(&session, &task) {
+            match bridge.run_with(&session, &task, mode, pin) {
                 Ok(()) => {
                     write_reply(
                         &mut stream,
@@ -848,6 +852,30 @@ pub(crate) async fn read_body(
 /// The task a run's body carries. Anything that is not a JSON object
 /// with a `task` string is a malformed request, and saying so is the
 /// whole reply.
+/// The run's two standing choices: how its tool calls are approved, and
+/// the provider its route is pinned to. A body that names neither is the
+/// safe pair — `ask` and `auto` — so an older page keeps working.
+fn run_policy_of(body: &str) -> Result<(crate::approvals::Mode, Option<String>), String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
+    let mode = match parsed
+        .get("mode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("ask")
+    {
+        "full" | "yes" => crate::approvals::Mode::Yes,
+        "auto" | "yes-guarded" => crate::approvals::Mode::YesGuarded,
+        _ => crate::approvals::Mode::Ask,
+    };
+    let pin = parsed
+        .get("pin")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|pin| !pin.is_empty())
+        .map(str::to_string);
+    Ok((mode, pin))
+}
+
 fn task_of(body: &str) -> Result<String, String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
@@ -1458,6 +1486,28 @@ fn origin_is_loopback(origin: &str) -> bool {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    fn the_run_policy_names_its_two_choices() {
+        let (mode, pin) =
+            run_policy_of(r#"{"task":"x","mode":"auto","pin":"stepfun"}"#).expect("a body");
+        assert_eq!(mode, crate::approvals::Mode::YesGuarded);
+        assert_eq!(pin.as_deref(), Some("stepfun"));
+        // A body that names nothing is the safe pair, so an older page
+        // keeps working.
+        let (mode, pin) = run_policy_of(r#"{"task":"x"}"#).expect("a body");
+        assert_eq!(mode, crate::approvals::Mode::Ask);
+        assert_eq!(pin, None);
+        assert_eq!(
+            run_policy_of(r#"{"task":"x","mode":"full"}"#)
+                .expect("a body")
+                .0,
+            crate::approvals::Mode::Yes
+        );
+        // An empty pin is auto, not a provider named "".
+        let (_, pin) = run_policy_of(r#"{"task":"x","pin":"  "}"#).expect("a body");
+        assert_eq!(pin, None);
+    }
 
     /// A live server on an OS-picked port, with a heartbeat short enough
     /// that a test does not wait five seconds for a beat. The server

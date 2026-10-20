@@ -296,6 +296,10 @@
     send: document.getElementById('send'),
     plan: document.getElementById('plan'),
     hint: document.getElementById('hint'),
+    runbar: document.getElementById('runbar'),
+    runPerms: document.getElementById('run-perms'),
+    runProvider: document.getElementById('run-provider'),
+    runRouteNote: document.getElementById('run-route-note'),
     facts: document.getElementById('facts'),
     rules: document.getElementById('rules'),
     ruleCount: document.getElementById('rule-count'),
@@ -387,6 +391,13 @@
     flush: 0,
     // Plan mode: the composer's second door, the browser's own state.
     planMode: false,
+    // The composer's run policy: how this chat's tool calls are approved
+    // and the provider it pins ('auto' is the empty string). Both ride
+    // the next run and never a global config write.
+    permissions: 'ask',
+    providerPin: '',
+    providers: null,
+    providersAt: 0,
     planned: false,
     // Which keyed panel is showing, and the router board's last read. The
     // read is the board's document; the live decision is not in it, and
@@ -4128,7 +4139,11 @@
     el.empty.hidden = true;
     el.log.hidden = false;
     var before = face.events.length;
-    post('/api/run', { task: task }).then(function (reply) {
+    post('/api/run', {
+      task: task,
+      mode: face.permissions,
+      pin: face.providerPin || null
+    }).then(function (reply) {
       if (reply.status === 200) {
         face.running = true;
         face.stop = null;
@@ -4834,6 +4849,71 @@
     event.preventDefault();
     send();
   });
+
+  // The composer's run policy: the permissions control and the route
+  // picker. A chat's choices live on the face and ride its next run;
+  // "auto" is the empty pin, and the destructive class still asks under
+  // autonomous.
+  function paintRunbar() {
+    if (!el.runbar) return;
+    Array.prototype.forEach.call(el.runPerms.querySelectorAll('button[data-mode]'), function (button) {
+      button.setAttribute('aria-pressed',
+        button.dataset.mode === face.permissions ? 'true' : 'false');
+    });
+    el.runbar.dataset.mode = face.permissions;
+    if (el.runProvider) {
+      el.runProvider.value = face.providerPin || '';
+      el.runProvider.disabled = !face.providers;
+    }
+    var route = face.providerPin ? 'pinned to ' + face.providerPin : 'the router decides';
+    el.runRouteNote.textContent =
+      (face.permissions === 'full' ? 'full access \u00b7 ' : '') + route;
+  }
+
+  // The pin's choices are the roster's enabled providers, read once off
+  // the settings catalog and cached on the face.
+  function readProviders(force) {
+    var now = Date.now();
+    if (!force && face.providers && now - face.providersAt < 60000) return Promise.resolve();
+    face.providersAt = now;
+    return fetch('/api/settings', { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (doc) {
+        face.providers = ((doc.catalog && doc.catalog.providers) || [])
+          .filter(function (provider) { return provider.enabled; });
+        var select = el.runProvider;
+        while (select.options.length > 1) select.remove(1);
+        face.providers.forEach(function (provider) {
+          var option = node('option', null, provider.id);
+          option.value = provider.id;
+          select.appendChild(option);
+        });
+        if (face.providerPin && !face.providers.some(function (provider) {
+          return provider.id === face.providerPin;
+        })) {
+          face.providerPin = '';
+        }
+        paintRunbar();
+      })
+      .catch(function () { });
+  }
+
+  if (el.runPerms) {
+    el.runPerms.addEventListener('click', function (event) {
+      var button = event.target.closest('button[data-mode]');
+      if (!button) return;
+      face.permissions = button.dataset.mode;
+      paintRunbar();
+    });
+  }
+  if (el.runProvider) {
+    el.runProvider.addEventListener('change', function () {
+      face.providerPin = el.runProvider.value;
+      paintRunbar();
+    });
+  }
+  paintRunbar();
+  readProviders(false);
 
   el.task.addEventListener('input', function () {
     grow();

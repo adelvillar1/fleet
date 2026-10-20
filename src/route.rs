@@ -2241,7 +2241,25 @@ pub async fn prepare(
     task: &str,
     specs: &HashMap<String, ServerSpec>,
 ) -> Result<Prepared, ConfigError> {
-    let roster = load_roster(home)?;
+    prepare_with_pin(home, dotenv, task, specs, None).await
+}
+
+/// [`prepare`] with the chat's own provider pin laid over the roster's:
+/// `None` is the router's `auto`, and `Some(provider)` is this run's
+/// standing choice, never a write to the owner's config. A pinned
+/// provider that is not in the roster is the same named fallback a
+/// `routing.json` pin gets — the decision says why it did not serve.
+pub async fn prepare_with_pin(
+    home: &Path,
+    dotenv: &HashMap<String, String>,
+    task: &str,
+    specs: &HashMap<String, ServerSpec>,
+    pin: Option<&str>,
+) -> Result<Prepared, ConfigError> {
+    let mut roster = load_roster(home)?;
+    if let Some(pin) = pin {
+        roster.pin = Some(pin.to_string());
+    }
     let resolved = resolve(&roster.candidates, dotenv);
     // The route-decision cache, read beside the roster it describes. A
     // hit skips the judge lane's spawn entirely; a miss writes
