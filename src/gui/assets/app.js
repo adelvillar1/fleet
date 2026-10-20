@@ -4735,10 +4735,16 @@
     var compacted = sessions.filter(function (row) { return row.compacted; }).length;
     var open = sessions.filter(function (row) { return !row.ended; }).length;
     var tiles = node('div', 'tiles');
+    var viaChannel = sessions.filter(function (row) { return row.channel && row.channel.length; });
     tiles.appendChild(tile(sessions.length, 'logs in the archive', null, function () {
       face.sessionsFilter = 'all';
       paintSessions();
     }));
+    tiles.appendChild(tile(viaChannel.length, 'arrived on a channel',
+      viaChannel.length ? 'accent' : null, function () {
+        face.sessionsFilter = 'channel';
+        paintSessions();
+      }));
     tiles.appendChild(tile(open, 'without an end record', open ? 'warn' : null, function () {
       face.sessionsFilter = 'open';
       paintSessions();
@@ -4760,7 +4766,8 @@
       var shown = sessions.filter(sessionMatches);
       var bar = node('div', 'filter-bar');
       [['all', 'all'], ['open', 'open'], ['ended', 'ended'],
-        ['delegated', 'delegated'], ['compacted', 'compacted']].forEach(function (pair) {
+        ['delegated', 'delegated'], ['compacted', 'compacted'],
+        ['channel', 'via a channel']].forEach(function (pair) {
         var chip = node('button', 'filter-chip', pair[1]);
         chip.type = 'button';
         chip.setAttribute('aria-pressed', face.sessionsFilter === pair[0] ? 'true' : 'false');
@@ -4828,6 +4835,7 @@
       case 'ended': return !!row.ended;
       case 'delegated': return row.kind === 'subagent';
       case 'compacted': return !!row.compacted;
+      case 'channel': return !!(row.channel && row.channel.length);
       default: return true;
     }
   }
@@ -4872,6 +4880,34 @@
     return parts[2] + '-' + parts[3] + ' ' + parts[4] + ':' + parts[5] + ' \u00b7 ' + parts[6];
   }
 
+  /// The origin line under a row's name: the project the session was
+  /// born in, and — for a channel conversation — which transport carried
+  /// it and who the peer is. An ordinary session in the launch directory
+  /// has nothing to say here, and says nothing.
+  function sessionWhere(row) {
+    var parts = [];
+    if (row.workspace) {
+      var full = String(row.workspace);
+      var segments = full.split('/');
+      var project = node('span', 'session-row-project', segments[segments.length - 1] || full);
+      project.title = full;
+      parts.push(project);
+    }
+    if (row.channel && row.channel.length >= 2) {
+      // The read carries (channel, peer id, name). The name is what an
+      // owner recognizes; the id is what the Bots surface matches on.
+      var peerName = row.channel.length > 2 ? row.channel[2] : row.channel[1];
+      var via = node('span', 'session-row-via',
+        'via ' + row.channel[0] + ' \u00b7 ' + (peerName || row.channel[1]));
+      via.title = row.channel[0] + ' \u00b7 ' + row.channel[1];
+      parts.push(via);
+    }
+    if (!parts.length) return null;
+    var line = node('span', 'session-row-where');
+    parts.forEach(function (part) { line.appendChild(part); });
+    return line;
+  }
+
   function sessionRow(row) {
     var line = node('button', 'session-row');
     line.type = 'button';
@@ -4879,8 +4915,17 @@
     line.dataset.id = row.id;
     line.title = row.id;
     if (face.replayId === row.id) line.setAttribute('aria-selected', 'true');
-    var name = node('span', 'session-row-id', sessionLabel(row.id));
-    if (row.current) name.appendChild(badge('this face', 'accent'));
+    var name = node('span', 'session-row-id');
+    var top = node('span', 'session-row-top');
+    top.appendChild(node('span', 'session-row-label', sessionLabel(row.id)));
+    if (row.current) top.appendChild(badge('this face', 'accent'));
+    name.appendChild(top);
+    // Where the run came from, under its name rather than in a sixth
+    // column: the archive stays four columns wide, and a row that has
+    // something to say about its origin grows one line instead of
+    // dragging the whole table out of alignment.
+    var where = sessionWhere(row);
+    if (where) name.appendChild(where);
     line.appendChild(name);
     // The model that actually served (the end record's, via the read).
     // Null while the run is in flight — nothing has served yet — and a
@@ -5044,6 +5089,14 @@
       line.appendChild(node('span', 'replay-text',
         entry.turns + ' turns became one summary \u00b7 ' +
         entry.before + ' \u2192 ' + entry.after + ' tokens'));
+    } else if (entry.type === 'channel') {
+      // The booking the log opens with: which transport carried this
+      // conversation and who the peer is. It reads here rather than
+      // falling through to a bare type name, which is what a record the
+      // page does not know looks like.
+      line.appendChild(node('span', 'replay-who', 'channel'));
+      line.appendChild(node('span', 'replay-text',
+        'via ' + entry.channel + ' \u00b7 ' + (entry.peer || entry.peer_id || 'an unnamed peer')));
     } else {
       line.appendChild(node('span', 'replay-who', entry.type));
     }

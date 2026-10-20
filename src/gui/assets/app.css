@@ -3383,17 +3383,54 @@ pre.drawer-code {
 .legend li[data-act]:hover .legend-name { color: var(--dsw-alias-ink); }
 
 .session-row-id {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   min-width: 0;
   overflow: hidden;
   color: var(--dsw-alias-ink);
   font-family: var(--font-mono);
   font-size: 11.5px;
+}
+
+.session-row-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* The label is its own box so the ellipsis lands where the room runs
+   out rather than on the badges beside it. */
+.session-row-label {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Where a run came from, under its name: the project it was born in and,
+   for a channel conversation, the transport and the peer. One hairline
+   line — the archive stays four columns wide. */
+.session-row-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 10px;
+  max-width: 100%;
+}
+
+.session-row-project,
+.session-row-via {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dsw-alias-ink-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.session-row-via { color: var(--dsw-alias-accent-lift); }
 
 .session-row-model {
   overflow: hidden;

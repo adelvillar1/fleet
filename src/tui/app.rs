@@ -529,6 +529,10 @@ pub enum PanelKind {
     Skills,
     Calibration,
     Delegation,
+    /// The channel service: the channels, the peers, the door, and what
+    /// they have done. It reads the same document the browser's Bots
+    /// surface reads, so the two cannot disagree.
+    Bots,
 }
 
 impl PanelKind {
@@ -538,6 +542,55 @@ impl PanelKind {
             PanelKind::Skills => "skills",
             PanelKind::Calibration => "calibration",
             PanelKind::Delegation => "delegation",
+            PanelKind::Bots => "bots",
+        }
+    }
+}
+
+/// The channel service as the Bots panel reads it. It is the same
+/// document the browser renders, unpacked: the service's own status,
+/// every channel's paired and pending peers, and the newest activity.
+#[derive(Debug, Clone)]
+pub struct BotsSnapshot {
+    pub service: Option<crate::channels::Status>,
+    pub stale: bool,
+    pub channels: Vec<BotsChannel>,
+    pub activity: Vec<crate::channels::service::Activity>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BotsChannel {
+    pub name: String,
+    pub peers: Vec<crate::channels::PairedPeer>,
+    pub pending: Vec<crate::channels::PendingPeer>,
+}
+
+impl BotsSnapshot {
+    /// Read it from the home: the status document, the stores, and the
+    /// activity log. A home with nothing configured is an empty snapshot
+    /// rather than an error — the panel says "nothing configured", which
+    /// is what the machine is.
+    pub fn read(home: &std::path::Path) -> BotsSnapshot {
+        let service = crate::channels::Status::load(home);
+        let stale = service
+            .as_ref()
+            .map(|status| status.is_stale(std::time::SystemTime::now()))
+            .unwrap_or(false);
+        let channels = crate::channels::CHANNELS
+            .iter()
+            .map(|name| BotsChannel {
+                name: (*name).to_string(),
+                peers: crate::channels::PeerStore::load(home, name)
+                    .map(|store| store.peers)
+                    .unwrap_or_default(),
+                pending: crate::channels::PendingStore::load(home, name).peers,
+            })
+            .collect();
+        BotsSnapshot {
+            service,
+            stale,
+            channels,
+            activity: crate::channels::service::activity(home, 50),
         }
     }
 }
@@ -557,6 +610,7 @@ pub enum PanelData {
     Skills(crate::boards::SkillsSnapshot),
     Calibration(CalibrationData),
     Delegation(crate::boards::DelegationSnapshot),
+    Bots(BotsSnapshot),
 }
 
 /// One selectable row in a knowledge panel. The list is generic so the
@@ -1777,6 +1831,7 @@ impl App {
             PanelKind::Skills => &["all", "used", "unused", "proposals", "skipped"],
             PanelKind::Calibration => &["all", "fit", "informing"],
             PanelKind::Delegation => &["all", "live", "history"],
+            PanelKind::Bots => &["service", "peers", "pending", "activity"],
         };
         words[self.panel_filter.min(words.len() - 1)]
     }
@@ -1789,6 +1844,7 @@ impl App {
             PanelKind::Skills => 5,
             PanelKind::Calibration => 3,
             PanelKind::Delegation => 3,
+            PanelKind::Bots => 4,
         };
         self.panel_filter = (self.panel_filter + 1) % len;
         self.selected = 0;
@@ -1906,7 +1962,151 @@ impl App {
                 }
                 rows
             }
+            Some(PanelData::Bots(snapshot)) => self.bots_rows(snapshot),
             None => Vec::new(),
+        }
+    }
+
+    /// The Bots panel's rows: four views of one document. The service's
+    /// channels, the peers, the door, and the activity — the same four
+    /// things the browser's surface cards answer, in the one list this
+    /// panel has.
+    ///
+    /// Start and stop are not here, and the service view says so: a port
+    /// belongs to the process that holds it, and this terminal is not
+    /// that process. A panel that offered a button it could not press
+    /// would be a panel that lies.
+    fn bots_rows(&self, snapshot: &BotsSnapshot) -> Vec<PanelRow> {
+        match self.panel_filter {
+            1 => snapshot
+                .channels
+                .iter()
+                .flat_map(|channel| {
+                    channel.peers.iter().map(|peer| PanelRow {
+                        label: if peer.name.is_empty() {
+                            peer.id.clone()
+                        } else {
+                            peer.name.clone()
+                        },
+                        meta: format!(
+                            "{} \u{b7} {}",
+                            channel.name,
+                            match peer.capability {
+                                crate::channels::Capability::Task => "may act",
+                                crate::channels::Capability::Observe => "may only listen",
+                            }
+                        ),
+                        detail: format!(
+                            "id       {}\npaired   {}\ncapability {}\n\n{}",
+                            peer.id,
+                            peer.created_at,
+                            match peer.capability {
+                                crate::channels::Capability::Task =>
+                                    "may act \u{2014} it can hand fleet a task",
+                                crate::channels::Capability::Observe =>
+                                    "may only listen \u{2014} it is told things, and cannot task",
+                            },
+                            "Throw it out with `fleet channels revoke-webhook <id>`, or from the Bots surface."
+                        ),
+                    })
+                })
+                .collect(),
+            2 => snapshot
+                .channels
+                .iter()
+                .flat_map(|channel| {
+                    channel.pending.iter().map(|peer| PanelRow {
+                        label: if peer.name.is_empty() {
+                            peer.id.clone()
+                        } else {
+                            peer.name.clone()
+                        },
+                        meta: format!(
+                            "{} \u{b7} {} attempt{}",
+                            channel.name,
+                            peer.attempts,
+                            if peer.attempts == 1 { "" } else { "s" }
+                        ),
+                        detail: format!(
+                            "id         {}\nfirst seen {}\nlast seen  {}\n\nIt tried to reach a channel and is not paired. Let it in from the Bots surface, or with `fleet channels pair-webhook` (a webhook peer) or `fleet channels allow-telegram <chat-id>` (a chat).",
+                            peer.id, peer.first_seen, peer.last_seen
+                        ),
+                    })
+                })
+                .collect(),
+            3 => snapshot
+                .activity
+                .iter()
+                .rev()
+                .map(|line| PanelRow {
+                    label: format!(
+                        "{} {}",
+                        line.at,
+                        line.peer.clone().or_else(|| line.peer_id.clone()).unwrap_or_default()
+                    ),
+                    meta: line.kind.clone(),
+                    detail: format!(
+                        "at      {}\nchannel {}\npeer    {}\ntask    {}\nsession {}\ndetail  {}",
+                        line.at,
+                        line.channel,
+                        line.peer.clone().unwrap_or_default(),
+                        line.task.clone().unwrap_or_default(),
+                        line.session.clone().unwrap_or_default(),
+                        line.detail.clone().unwrap_or_default(),
+                    ),
+                })
+                .collect(),
+            _ => {
+                let mut rows = Vec::new();
+                match &snapshot.service {
+                    Some(status) => {
+                        for report in &status.channels {
+                            rows.push(PanelRow {
+                                label: report.name.clone(),
+                                meta: format!(
+                                    "{}{}",
+                                    report.phase.label(),
+                                    match report.port {
+                                        Some(port) => format!(" \u{b7} 127.0.0.1:{port}"),
+                                        None => String::new(),
+                                    }
+                                ),
+                                detail: format!(
+                                    "state      {}{}\nsince      {}{}\nservice    pid {} \u{b7} started {}\n           beating every {}s{}\n\nStart and stop live in the face that hosts the service (`fleet gui --channels`, or `channels.enabled` in the settings). This terminal reads the same document that face writes; it cannot hold the port itself.",
+                                    report.phase.label(),
+                                    if snapshot.stale { " (last report)" } else { "" },
+                                    report.since,
+                                    match &report.error {
+                                        Some(error) => format!("\nerror      {error}"),
+                                        None => String::new(),
+                                    },
+                                    status.pid,
+                                    status.started,
+                                    status.heartbeat_secs,
+                                    if snapshot.stale {
+                                        " \u{2014} the heartbeat has stopped, so this is the last report of a process that is no longer running"
+                                    } else {
+                                        ""
+                                    },
+                                ),
+                            });
+                        }
+                        if status.channels.is_empty() {
+                            rows.push(PanelRow {
+                                label: "no channels".to_string(),
+                                meta: status.pid.to_string(),
+                                detail: "The service is running but hosts no channel in this build.".to_string(),
+                            });
+                        }
+                    }
+                    None => rows.push(PanelRow {
+                        label: "no service".to_string(),
+                        meta: String::new(),
+                        detail: "No channel service has run in this home. `channels.enabled` in the settings, or `fleet gui --channels`, turns it on.".to_string(),
+                    }),
+                }
+                rows
+            }
         }
     }
 
@@ -2337,6 +2537,11 @@ impl App {
                 label: "delegation",
                 detail: "the child runs and the graph",
                 action: Action::OpenPanel(PanelKind::Delegation),
+            },
+            PaletteItem {
+                label: "bots",
+                detail: "the channels, who is paired, and what they asked for",
+                action: Action::OpenPanel(PanelKind::Bots),
             },
             PaletteItem {
                 label: "sessions",

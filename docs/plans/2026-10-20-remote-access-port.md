@@ -318,6 +318,30 @@ process that is. Hosting channels in the TUI would mean porting the
 registry onto the TUI's single-session agent, which is a different slice
 with little payoff; this is a scope boundary, not sold as parity.
 
+**Landed.** The archive is the inbox. A row's name cell now carries a
+second line — the project it was born in and, for a channel
+conversation, `via <webhook> · <peer>` — so the archive stays four
+columns wide and a row from a channel grows one line instead of
+dragging the table out of alignment. A sixth filter chip, `via a
+channel`, joins the five, and a tile counts what it would show. The
+replay card's channel record reads `via webhook · the messenger` rather
+than falling through to a bare type name.
+
+`PanelKind::Bots` in the TUI reads `BotsSnapshot`, built from the same
+three files the browser's read walks: the status document, the two
+stores, and the activity log. Four views — service, peers, pending,
+activity — and the service view says plainly that start and stop live in
+the face that hosts the service, because a port belongs to the process
+that holds it and a panel that offered a button it could not press would
+be a panel that lies. The panel is in the palette as `bots`.
+
+Verified live in Chromium: the archive row names `fleet-remote · via
+webhook · the messenger`, the chip filters to it, and the replay card
+says the same. The TUI panel is pinned by a test that draws it and reads
+the frame back as words — the title, the port, the sentence about who
+holds it, the peers view's capability, the door's attempt count, and the
+activity's session.
+
 ### P6 — continuity, the relay, and the docs
 
 The channel record gains the peer's id beside its name, and the

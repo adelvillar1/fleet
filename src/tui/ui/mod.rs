@@ -4551,6 +4551,119 @@ mod tests {
         );
     }
 
+    /// A drawn frame as words: box glyphs and punctuation dropped, runs
+    /// of whitespace collapsed. The panels wrap prose and draw borders on
+    /// every line, so an assertion about what a panel says has to be
+    /// about its words rather than its line breaks.
+    fn words(frame: &str) -> String {
+        frame
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The Bots panel reads the same document the browser renders, and it
+    /// says plainly which process holds the port: a panel that offered a
+    /// start it could not perform would be a panel that lies.
+    #[test]
+    fn the_bots_panel_names_the_service_and_says_who_holds_the_port() {
+        use crate::channels::{Capability, PendingStore, PeerStore, Status, ChannelReport, Phase};
+        use crate::channels::service;
+        let home = std::env::temp_dir().join(format!(
+            "fleet-tui-bots-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut store = PeerStore::default();
+        store.pair("wh1", "the CI box", "unused", Capability::Task, "2026-10-20T00:00:00Z");
+        store.save(&home, "webhook").unwrap();
+        let mut pending = PendingStore::default();
+        pending.note("4242", "Alejandro", "2026-10-20T15:00:00Z");
+        pending.save(&home, "telegram").unwrap();
+        let status = Status {
+            pid: 4242,
+            started: "2026-10-20T15:00:00Z".to_string(),
+            updated: "2026-10-20T15:00:10Z".to_string(),
+            updated_unix: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            heartbeat_secs: 10,
+            channels: vec![ChannelReport {
+                name: "webhook".to_string(),
+                phase: Phase::Live,
+                port: Some(3081),
+                error: None,
+                since: "2026-10-20T15:00:00Z".to_string(),
+            }],
+        };
+        status.save(&home).unwrap();
+        let _ = service::record(&home, service::Activity {
+            at: "2026-10-20T15:00:05Z".to_string(),
+            kind: "delivery".to_string(),
+            channel: "webhook".to_string(),
+            peer: Some("the CI box".to_string()),
+            peer_id: Some("wh1".to_string()),
+            session: Some("20261020T150000Z-abc".to_string()),
+            task: Some("check the build".to_string()),
+            detail: None,
+        });
+
+        let mut app = fresh();
+        let generation = app.open_panel(crate::tui::app::PanelKind::Bots);
+        app.apply_panel(
+            generation,
+            crate::tui::app::PanelKind::Bots,
+            Ok(crate::tui::app::PanelData::Bots(
+                crate::tui::app::BotsSnapshot::read(&home),
+            )),
+        );
+        let service_view = draw(&app, 120, 40);
+        // The detail column wraps and the pane's borders ride every line,
+        // so the prose is compared as words: punctuation and box glyphs
+        // dropped, whitespace collapsed. What is asserted is the sentence
+        // the panel says, not where the pane broke it.
+        let flat = words(&service_view);
+        // The title is one line, so the raw buffer has it whole; the prose
+        // is compared as words.
+        assert!(service_view.contains("bots \u{2014} service"), "{service_view}");
+        assert!(flat.contains("webhook"), "{service_view}");
+        assert!(flat.contains("127 0 0 1 3081"), "{service_view}");
+        assert!(
+            flat.contains("Start and stop live in the face that hosts the service"),
+            "the panel says who holds the port: {service_view}"
+        );
+
+        // The peers view names the capability in words.
+        app.cycle_panel_filter();
+        let peers = words(&draw(&app, 120, 40));
+        assert!(peers.contains("the CI box"), "{peers}");
+        assert!(peers.contains("may act"), "{peers}");
+
+        // The door names the peer that tried.
+        app.cycle_panel_filter();
+        let door = words(&draw(&app, 120, 40));
+        assert!(door.contains("Alejandro"), "{door}");
+        assert!(door.contains("pending"), "{door}");
+        assert!(door.contains("attempt"), "{door}");
+
+        // The activity names the delivery and its session.
+        app.cycle_panel_filter();
+        let activity = words(&draw(&app, 120, 40));
+        assert!(activity.contains("delivery"), "{activity}");
+        assert!(activity.contains("check the build"), "{activity}");
+        assert!(activity.contains("20261020T150000Z abc"), "{activity}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
     #[test]
     fn the_plan_card_offers_the_edit_door() {
         let mut app = fresh();

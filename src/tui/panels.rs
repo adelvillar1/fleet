@@ -42,6 +42,7 @@ pub fn read(home: &Path, kind: PanelKind, session: &str) -> Result<PanelData, St
                 cells,
             }))
         }
+        PanelKind::Bots => Ok(PanelData::Bots(crate::tui::app::BotsSnapshot::read(home))),
         PanelKind::Delegation => Ok(PanelData::Delegation(boards::read_delegation(
             home, session,
         ))),
