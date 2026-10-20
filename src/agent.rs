@@ -349,6 +349,15 @@ pub enum UiEvent {
         nodes: usize,
         /// The rendered fragment.
         html: String,
+        /// The grader's faults as a JSON array — the action card's
+        /// measured half. A string because the event derives Eq.
+        faults: String,
+        /// The deck as written — what a revert renders.
+        original_deck: Option<String>,
+        /// The auto-fit repair's own deck — what an apply renders.
+        fix_deck: Option<String>,
+        /// The repairs the auto-fit made, in order.
+        fix_actions: Vec<String>,
     },
     /// Where a delegated child run stands, reported to the parent's
     /// live surface while the parent's turn waits for it.
@@ -2123,10 +2132,10 @@ impl<'a> Agent<'a> {
             // model-visible error naming the node and the rule.
             return Ok(match serde_json::from_str(&call.function.arguments) {
                 Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
-                Ok(arguments) => match tools::run_deck(&arguments) {
+                Ok(arguments) => match tools::run_deck_with_event(&arguments) {
                     Err(error) => settled(format!("error: {error}")),
-                    Ok(outcome) => {
-                        let bounded = tools::bound(outcome);
+                    Ok(run) => {
+                        let bounded = tools::bound(run.outcome);
                         // The HTML is everything past the summary line:
                         // the model reads the summary, the surface reads
                         // the deck.
@@ -2137,9 +2146,23 @@ impl<'a> Agent<'a> {
                             ),
                             None => (bounded.output.clone(), String::new()),
                         };
+                        let (faults, original_deck, fix_deck, fix_actions) = match &run.event {
+                            Some(event) => (
+                                serde_json::to_string(&event.faults)
+                                    .expect("fault values serialize"),
+                                Some(event.original_deck.clone()),
+                                Some(event.fix_deck.clone()),
+                                event.fix_actions.clone(),
+                            ),
+                            None => (String::new(), None, None, Vec::new()),
+                        };
                         Prepared::Ready(Work::Deck {
                             summary,
                             html,
+                            faults,
+                            original_deck,
+                            fix_deck,
+                            fix_actions,
                             ui_tx: self.ui_tx.clone(),
                         })
                     }
@@ -2667,6 +2690,14 @@ enum Work {
     Deck {
         summary: String,
         html: String,
+        /// The grader's faults as a JSON array, the deck as written,
+        /// and the repair — the action card's measured half and its two
+        /// payloads. The faults ride as a string because the event
+        /// derives Eq.
+        faults: String,
+        original_deck: Option<String>,
+        fix_deck: Option<String>,
+        fix_actions: Vec<String>,
         ui_tx: Option<UnboundedSender<UiEvent>>,
     },
     /// One vision ask: a question about images the caller read. The
@@ -2810,6 +2841,10 @@ async fn run_work(work: Work) -> (String, bool) {
         Work::Deck {
             summary,
             html,
+            faults,
+            original_deck,
+            fix_deck,
+            fix_actions,
             ui_tx,
         } => {
             // The fragment rides the event log, where every surface
@@ -2828,6 +2863,10 @@ async fn run_work(work: Work) -> (String, bool) {
                         project,
                         nodes,
                         html,
+                        faults,
+                        original_deck,
+                        fix_deck,
+                        fix_actions,
                     });
                 }
             }

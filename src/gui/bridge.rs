@@ -2707,11 +2707,22 @@ fn describe(event: &UiEvent) -> Value {
             project,
             nodes,
             html,
+            faults,
+            original_deck,
+            fix_deck,
+            fix_actions,
         } => json!({
             "type": "deck",
             "project": project,
             "nodes": nodes,
             "html": html,
+            // The action card's measured half and its payloads: the
+            // faults ride as a JSON array in a string, and the two decks
+            // are the render endpoint's own inputs.
+            "faults": faults,
+            "original_deck": original_deck,
+            "fix_deck": fix_deck,
+            "fix_actions": fix_actions,
         }),
         UiEvent::Subagent {
             goal,
@@ -3585,6 +3596,10 @@ mod tests {
                 project: "presentation".to_string(),
                 nodes: 2,
                 html: "<section class=\"deck\" data-type=\"presentation\">x</section>".to_string(),
+                faults: "[{\"trigger\":\"overfull\",\"node\":\"slide_01\"}]".to_string(),
+                original_deck: Some("{}".to_string()),
+                fix_deck: Some("{}".to_string()),
+                fix_actions: vec!["`slide_01`: compressed".to_string()],
             })
             .expect("the deck lands");
         // The fan-out is a task of the caller's, so the event needs a

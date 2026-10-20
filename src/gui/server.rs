@@ -275,6 +275,58 @@ async fn serve_connection(
                 }
             }
         }
+        ("POST", "/api/deck/render") => {
+            // The deck pane's apply: the browser sends a deck — the one
+            // the event carried, as written or as repaired — and this
+            // validates, renders, and names the verdict. The boundary
+            // checks above already held; a deck that breaks a consultant
+            // constraint is a 409 that names the rule, not a render.
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(parsed) => parsed,
+                Err(message) => {
+                    return write_reply(&mut stream, bad_request(&message.to_string())).await
+                }
+            };
+            let deck: Result<crate::deck::Deck, String> = parsed
+                .get("deck")
+                .cloned()
+                .ok_or_else(|| "the body carries no `deck`".to_string())
+                .and_then(|value| {
+                    serde_json::from_value(value)
+                        .map_err(|error| format!("the deck does not parse: {error}"))
+                });
+            let deck = match deck {
+                Ok(deck) => deck,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let refusals = crate::deck::check(&deck);
+            if !refusals.is_empty() {
+                let named: Vec<String> = refusals.iter().map(|r| r.line()).collect();
+                let reply = serde_json::json!({
+                    "status": "refused", "refusals": named,
+                });
+                return write_reply(
+                    &mut stream,
+                    api(409, reply),
+                )
+                .await;
+            }
+            let review = crate::deck::review(&deck);
+            let faults: Vec<serde_json::Value> =
+                review.iter().map(crate::deck::fault_value).collect();
+            let html = crate::deck::render(&deck);
+            let reply = serde_json::json!({
+                "status": "rendered",
+                "review": crate::deck::review_line(&deck),
+                "faults": faults,
+                "html": html,
+            });
+            write_reply(&mut stream, api(200, reply)).await
+        }
         ("POST", "/api/rank") => {
             // The composer's command type-ahead: the browser sends the
             // command declarations it owns, and this ranks them against
@@ -647,15 +699,7 @@ impl Request {
     fn host_is_loopback(&self) -> bool {
         host_is_loopback(&self.header("host").unwrap_or_default())
     }
-
-    /// Whether the request's Origin — the one browsers attach to
-    /// cross-site and same-site state-changing requests — names this
-    /// machine. A foreign origin is the cross-site form: another site's
-    /// page pointing the owner's browser at the local port with its own
-    /// intent in the body.
-    fn origin_is_loopback(&self) -> bool {
-        origin_is_loopback(&self.header("origin").unwrap_or_default())
-    }}
+}
 
 /// One query parameter's value, percent-decoded. The pane's paths are
 /// the exotic case the token never was: a file path carries spaces,
@@ -1704,6 +1748,28 @@ mod tests {
     }
 
     /// The pane's two routes, behind the launch token like every other.
+    /// The deck pane's apply: a checked deck renders with its verdict,
+    /// and a deck that breaks a consultant constraint is a 409 that
+    /// names the rule — the browser applies a card's payload, the
+    /// server decides whether the result is honest.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_deck_render_route_renders_a_checked_deck_and_refuses_a_lying_one() {
+        let (_token, port) = launch().await;
+        let good = r#"{"deck":{"project_type":"infographic","nodes":[{"id":"frame_01","layout":"metric_callout","headline":"Q3 margins grew by fourteen percent","components":[{"type":"metric","value":"14%","label":"margins"}]}]}}"#;
+        let rendered = post(port, "/api/deck/render", "", good);
+        assert!(rendered.starts_with("HTTP/1.1 200"), "{rendered}");
+        assert!(rendered.contains("\"status\":\"rendered\""), "{rendered}");
+        assert!(rendered.contains("deck-node"), "{rendered}");
+        assert!(rendered.contains("review"), "{rendered}");
+        // A deck that breaks the pyramid is refused with the rule, and
+        // nothing renders — the browser's apply cannot make the server
+        // ship a deck that lies.
+        let lying = r#"{"deck":{"project_type":"infographic","nodes":[{"id":"frame_01","layout":"split_two_column","headline":"Market Analysis 2026","components":[{"type":"bullet_list","items":["**a marked point**"]}]}]}}"#;
+        let refused = post(port, "/api/deck/render", "", lying);
+        assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
+        assert!(refused.contains("not a conclusion"), "{refused}");
+    }
+
     /// The tree reads the working directory this face was launched from,
     /// the file read carries the text, and both refuse what they must:
     /// a path that escapes the root, and a credential file by name.

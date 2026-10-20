@@ -808,6 +808,25 @@ const HEADLINE_HOLDS: usize = 2;
 /// heavier column sets to this many times the lighter one's lines.
 const UNBALANCED_RATIO: usize = 3;
 
+/// One fault as the card's JSON: the trigger named, the node and the
+/// numbers beside it — the shape a live surface renders without
+/// re-deriving anything.
+pub fn fault_value(fault: &LayoutFault) -> serde_json::Value {
+    match fault {
+        LayoutFault::Overfull { node, component, lines, holds } => serde_json::json!({
+            "trigger": "overfull", "node": node, "component": component,
+            "lines": lines, "holds": holds,
+        }),
+        LayoutFault::Unbalanced { node, columns } => serde_json::json!({
+            "trigger": "unbalanced", "node": node, "columns": columns,
+        }),
+        LayoutFault::HeadlineOverflow { node, lines, holds } => serde_json::json!({
+            "trigger": "headline_overflow", "node": node,
+            "lines": lines, "holds": holds,
+        }),
+    }
+}
+
 /// Grade one deck's layout: whether its text fits its boxes and its
 /// columns carry comparable weight.
 ///

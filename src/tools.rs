@@ -295,7 +295,42 @@ pub fn deck_spec() -> ToolSpec {
 /// house rule is that model-visible output is never a panic, and a deck
 /// that breaks a constraint is a fixable answer, not a crash. The
 /// rendered HTML rides the result so a surface can show it.
+/// The deck run's two faces: what the model reads, and what a live
+/// surface renders beside it.
+pub struct DeckRun {
+    /// The model's answer: the verdict line, any repairs, then the
+    /// rendered fragment.
+    pub outcome: ToolOutcome,
+    /// The live surface's event payload, when a deck rendered: the
+    /// grader's faults as they were found, the deck as written, and the
+    /// auto-fit repair's own deck — the fix pre-baked, ready to apply
+    /// or revert client-side.
+    pub event: Option<DeckEventData>,
+}
+
+/// One rendered deck's event payload.
+pub struct DeckEventData {
+    pub project: String,
+    pub nodes: usize,
+    pub html: String,
+    /// The grader's faults as they were found on the deck as written.
+    pub faults: Vec<serde_json::Value>,
+    /// The deck as written — what "revert" renders.
+    pub original_deck: String,
+    /// The auto-fit repair's own deck — what "apply" renders, and what
+    /// the run rendered first.
+    pub fix_deck: String,
+    /// The repairs the auto-fit made, in the order it made them.
+    pub fix_actions: Vec<String>,
+}
+
 pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+    run_deck_with_event(arguments).map(|run| run.outcome)
+}
+
+pub fn run_deck_with_event(
+    arguments: &serde_json::Value,
+) -> Result<DeckRun, String> {
     // The suggest mode: the vector half of "choose the layout from the
     // content". An intent in, the index ranked out — the planner builds
     // with the match or disagrees with it on content grounds, and a
@@ -309,9 +344,12 @@ pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
             .trim()
             .to_string();
         if intent.is_empty() {
-            return Ok(ToolOutcome {
-                output: "error: the suggest mode needs an `intent` — what the owner is trying to show".to_string(),
-                truncated: false,
+            return Ok(DeckRun {
+                outcome: ToolOutcome {
+                    output: "error: the suggest mode needs an `intent` — what the owner is trying to show".to_string(),
+                    truncated: false,
+                },
+                event: None,
             });
         }
         let ranked = crate::deck::suggest_layouts_with(
@@ -319,9 +357,12 @@ pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
             &intent,
         );
         if ranked.is_empty() {
-            return Ok(ToolOutcome {
-                output: "error: this machine has no embedding backend, so there is no vector match — classify from the intent skill's own table instead".to_string(),
-                truncated: false,
+            return Ok(DeckRun {
+                outcome: ToolOutcome {
+                    output: "error: this machine has no embedding backend, so there is no vector match — classify from the intent skill's own table instead".to_string(),
+                    truncated: false,
+                },
+                event: None,
             });
         }
         let named: Vec<String> = ranked
@@ -329,12 +370,15 @@ pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
             .take(3)
             .map(|(layout, score)| format!("{} ({:.3})", layout.label(), score))
             .collect();
-        return Ok(ToolOutcome {
-            output: format!(
-                "the nearest layouts for {intent:?}: {} — build with the first unless the content says otherwise",
-                named.join(", ")
-            ),
-            truncated: false,
+        return Ok(DeckRun {
+            outcome: ToolOutcome {
+                output: format!(
+                    "the nearest layouts for {intent:?}: {} — build with the first unless the content says otherwise",
+                    named.join(", ")
+                ),
+                truncated: false,
+            },
+            event: None,
         });
     }
     let value = arguments
@@ -343,12 +387,19 @@ pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
         .ok_or_else(|| "the `deck` argument is required: the deck object itself".to_string())?;
     let deck: crate::deck::Deck = serde_json::from_value(value)
         .map_err(|error| format!("the deck is not the schema this tool declares: {error}"))?;
+    // The deck as written, kept for the surface's revert: the auto-fit
+    // repairs in place, and the owner's own words are the alternative
+    // it offers.
+    let original = deck.clone();
     let refusals = crate::deck::check(&deck);
     if !refusals.is_empty() {
         let named: Vec<String> = refusals.iter().map(|r| r.line()).collect();
-        return Ok(ToolOutcome {
-            output: format!("error: {}", named.join("; ")),
-            truncated: false,
+        return Ok(DeckRun {
+            outcome: ToolOutcome {
+                output: format!("error: {}", named.join("; ")),
+                truncated: false,
+            },
+            event: None,
         });
     }
     // The layout review, after the constraints pass: the checker is the
@@ -369,25 +420,43 @@ pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
     if !residual.is_empty() {
         let named: Vec<String> = residual.iter().map(|fault| fault.line()).collect();
         let holds = crate::deck::layout_holds();
-        return Ok(ToolOutcome {
-            output: format!(
-                "error: {}\nthe budgets that did not close: every component holds {} lines at {} characters a line — compress to those numbers and call again",
-                named.join("; "),
-                holds,
-                crate::deck::CHARS_PER_LINE
-            ),
-            truncated: false,
+        return Ok(DeckRun {
+            outcome: ToolOutcome {
+                output: format!(
+                    "error: {}\nthe budgets that did not close: every component holds {} lines at {} characters a line — compress to those numbers and call again",
+                    named.join("; "),
+                    holds,
+                    crate::deck::CHARS_PER_LINE
+                ),
+                truncated: false,
+            },
+            event: None,
         });
     }
     let html = crate::deck::render(&deck);
+    // The surface's card: what the grader found, the deck as written,
+    // and the repair — so the owner can keep the repair or revert to
+    // their own words, one click either way, without a model call.
+    let event = DeckEventData {
+        project: deck.project_type.label().to_string(),
+        nodes: deck.nodes.len(),
+        html: html.clone(),
+        faults: faults.iter().map(crate::deck::fault_value).collect(),
+        original_deck: serde_json::to_string(&original).expect("a checked deck serializes"),
+        fix_deck: serde_json::to_string(&deck).expect("a checked deck serializes"),
+        fix_actions: actions.clone(),
+    };
     let mut output = crate::deck::review_line(&deck);
     if !actions.is_empty() {
         output.push_str(&format!("\n{}", actions.join("\n")));
     }
     output.push_str(&format!("\n\n{}", html));
-    Ok(ToolOutcome {
-        output,
-        truncated: false,
+    Ok(DeckRun {
+        outcome: ToolOutcome {
+            output,
+            truncated: false,
+        },
+        event: Some(event),
     })
 }
 
@@ -2273,6 +2342,39 @@ mod tests {
         let outcome = run_deck(&empty).expect("a refusal is a result, not an error");
         assert!(outcome.output.starts_with("error:"), "{}", outcome.output);
         assert!(outcome.output.contains("intent"), "{}", outcome.output);
+    }
+
+    #[test]
+    fn the_deck_run_carries_the_faults_and_the_prebaked_fix() {
+        // The event is the action card's payload: the faults the grader
+        // found, the deck as written, and the auto-fit repair — the two
+        // renders the owner chooses between, without a model call.
+        let long = "y".repeat(780);
+        let overfull = serde_json::json!({
+            "deck": {
+                "project_type": "presentation",
+                "nodes": [{
+                    "id": "slide_01",
+                    "layout": "split_two_column",
+                    "headline": "Q3 margins grew by fourteen percent on regional strength",
+                    "components": [{"type": "bullet_list", "items": [format!("**Margins grew 14%**{long}")]}]
+                }, {
+                    "id": "slide_02",
+                    "layout": "metric_callout",
+                    "headline": "The reserve covers two quarters at current burn",
+                    "components": [{"type": "bullet_list", "items": ["**18 months** of runway"]}]
+                }]
+            }
+        });
+        let run = run_deck_with_event(&overfull).expect("a result, not an error");
+        let event = run.event.expect("a rendered deck carries its event");
+        assert!(!event.faults.is_empty(), "the faults ride the event");
+        assert!(event.fix_deck.contains("slide_01"), "the repair rides as JSON");
+        assert!(event.original_deck.contains("slide_01"), "the original rides for the revert");
+        assert!(!event.fix_actions.is_empty(), "the repairs are named");
+        // The pre-baked fix is the honest one: its own review is clean.
+        let fixed: crate::deck::Deck = serde_json::from_str(&event.fix_deck).unwrap();
+        assert!(crate::deck::review(&fixed).is_empty());
     }
 
     fn the_deck_tool_auto_fits_an_overfull_deck_and_renders_it() {

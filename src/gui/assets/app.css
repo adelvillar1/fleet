@@ -2329,6 +2329,62 @@ body[data-rail="icons"][data-pane="open"] .face {
    inherits the theme switch for free — the same three-tier chain the
    rest of the surface uses, and the reason the renderer carries no CSS
    of its own. */
+/* The deck's action card: the grader's faults named, and the two
+   renders the owner chooses between. One hairline card, themed by the
+   same aliases the deck itself reads. */
+.deck-card {
+  border: var(--card-hairline);
+  border-radius: var(--card-radius);
+  padding: 12px 14px;
+  margin: 0 0 12px;
+  background: var(--dsw-alias-surface);
+  display: grid;
+  gap: 6px;
+}
+
+.deck-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dsw-alias-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.deck-card-mark { color: var(--dsw-alias-accent); }
+
+.deck-card-fault {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 12px;
+}
+
+.deck-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.deck-card-apply, .deck-card-revert {
+  border: var(--card-hairline);
+  border-radius: var(--card-radius-inner);
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.deck-card-apply:hover, .deck-card-revert:hover {
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink);
+}
+
+.deck-card-apply {
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink);
+}
+
 .deck-frame { max-width: 100%; overflow-x: auto; }
 
 .deck { display: grid; gap: 18px; }

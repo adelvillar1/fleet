@@ -2335,6 +2335,60 @@
     paintPreview();
   }
 
+  // The deck's action card: the grader's faults named, and the two
+  // renders the owner chooses between — the auto-fit repair, or the
+  // deck as written. Either click re-renders through the render route
+  // and the card updates from the answer's own verdict.
+  function deckCard(deck) {
+    var card = node('div', 'deck-card');
+    var title = node('div', 'deck-card-title');
+    title.appendChild(node('span', 'deck-card-mark', '\u2726'));
+    title.appendChild(node('span', null,
+      'the grader found ' + JSON.parse(deck.faults).length +
+      ' layout fault' + (JSON.parse(deck.faults).length === 1 ? '' : 's') +
+      ' \u2014 repaired in place'));
+    card.appendChild(title);
+    JSON.parse(deck.faults).forEach(function (fault) {
+      var what = fault.trigger === 'overfull'
+        ? 'text sets to ' + fault.lines + ' lines in a box that holds ' + fault.holds
+        : fault.trigger === 'unbalanced'
+          ? 'columns read lopsided: ' + (fault.columns || []).join(', ') + ' lines'
+          : 'the headline sets past its own box';
+      card.appendChild(node('div', 'deck-card-fault', what + ' \u2014 ' + fault.node));
+    });
+    var actions = node('div', 'deck-card-actions');
+    var apply = node('button', 'deck-card-apply', 'keep the repaired render');
+    apply.type = 'button';
+    apply.addEventListener('click', function () { applyDeckFix(deck.fix_deck); });
+    var revert = node('button', 'deck-card-revert', 'revert to as written');
+    revert.type = 'button';
+    revert.addEventListener('click', function () { applyDeckFix(deck.original_deck); });
+    actions.appendChild(apply);
+    actions.appendChild(revert);
+    card.appendChild(actions);
+    return card;
+  }
+
+  // One click, one render: the deck JSON goes to the render route, the
+  // answer's fragment and verdict replace what the pane shows, and the
+  // card re-derives from the answer's own faults — an applied repair
+  // empties it, a revert repopulates it.
+  function applyDeckFix(deckJson) {
+    fetch('/api/deck/render', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deck: JSON.parse(deckJson) })
+    })
+      .then(function (reply) { return reply.json(); })
+      .then(function (answered) {
+        if (answered.status !== 'rendered') return;
+        face.deck.html = answered.html;
+        face.deck.faults = JSON.stringify(answered.faults || []);
+        paintPreview();
+      })
+      .catch(function () { });
+  }
+
   // The deck in the inspector: the same fragment, beside the run that
   // produced it.
   function inspectDeck(event) {
@@ -4290,6 +4344,13 @@
       head.appendChild(node('span', 'pane-file-meta',
         face.deck.nodes + ' node' + (face.deck.nodes === 1 ? '' : 's')));
       el.panePreview.appendChild(head);
+      // The action card, when the grader found faults and the repair is
+      // pre-baked: what was measured, and the two renders between which
+      // the owner chooses — the repair or their own words. One click
+      // either way, and the pane re-renders from the answer.
+      if ((face.deck.faults || '').length && face.deck.fix_deck) {
+        el.panePreview.appendChild(deckCard(face.deck));
+      }
       el.panePreview.appendChild(node('div', 'deck-frame', face.deck.html));
       return;
     }
