@@ -2508,15 +2508,10 @@
 
   function paintRouter() {
     var read = face.router;
-    var wide7 = cardWide(el.routerBoard, 7);
     el.routerBoard.textContent = '';
-    // Before the first read lands, the panel says so rather than drawing
-    // an empty grid. The live decision is not in the read and paints
-    // either way, so it is drawn first in both cases.
     if (!read) {
-      el.routerBoard.appendChild(pageHead('Intelligence', 'Router',
-        'Where this run\u2019s work went, what it tried first, and what the day has served.',
-        null));
+      el.routerBoard.appendChild(surfaceHead('Intelligence', 'Router',
+        'Where this run\u2019s work went, what it tried first, and what the day has served.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The board\u2019s read has not landed yet. The live decision below is the run\u2019s own event ' +
@@ -2525,27 +2520,55 @@
       el.routerBoard.appendChild(decisionCard());
       return;
     }
-    el.routerBoard.appendChild(pageHead('Intelligence', 'Router',
-      'Where this run\u2019s work went, what it tried first, and what the day has served.',
-      read.read_at, {
-        label: 'Ask sys1 for a judgment',
-        run: function () {
-          ask('use the sys1 lane to review today\u2019s route decisions and report the fit');
+    var tiers = read.tiers || [];
+    var totals = read.totals || {};
+    var errors = totals.errors || 0;
+    var rate = totals.success_rate == null ? '\u2014' : Math.round(totals.success_rate * 100) + '%';
+    var instrument = surfaceInstrument('the router', read.pin || 'no pin',
+      'judge ' + (read.judge ? read.judge.lane : '\u2014') + ' \u00b7 ' + tiers.length + ' tier chains',
+      [
+        {
+          label: 'ask sys1 for a judgment',
+          run: function () {
+            ask('use the sys1 lane to review today\u2019s route decisions and report the fit');
+          }
+        },
+        {
+          label: 'open settings',
+          run: function () { window.location.hash = '#/settings'; }
         }
-      }));
-    el.routerBoard.appendChild(decisionCard());
-    el.routerBoard.appendChild(cacheCard(read));
-    el.routerBoard.appendChild(dayCard(read, wide7));
-    el.routerBoard.appendChild(mixCard(read));
-    el.routerBoard.appendChild(chainCard(read));
-    el.routerBoard.appendChild(rowsCard(read));
-    el.routerBoard.appendChild(mixSplitCard(read));
+      ]);
+    el.routerBoard.appendChild(surfaceHead('Intelligence', 'Router',
+      'Where this run\u2019s work went, what it tried first, and what the day has served.', instrument));
+    el.routerBoard.appendChild(surfaceStrip([
+      [totals.calls || 0, 'calls today'],
+      [totals.ok || 0, 'ok'],
+      [errors, 'errors', errors ? 'down' : null],
+      [rate, 'success'],
+      [totals.total_tokens || 0, 'tokens'],
+      [read.judge ? read.judge.lane : '\u2014', 'judge']
+    ], read.pin ? 'pinned to ' + read.pin : 'no pin'));
+
+    var left = node('div', 'surface-column');
+    left.appendChild(decisionCard());
+    left.appendChild(chainCard(read));
+    left.appendChild(rowsCard(read));
+    el.routerBoard.appendChild(left);
+
+    var rail = [
+      dayCard(read, cardWide(el.routerBoard, 4)),
+      mixCard(read),
+      mixSplitCard(read),
+      cacheCard(read)
+    ];
     var guidance = guidanceCard(read);
-    if (guidance) el.routerBoard.appendChild(guidance);
+    if (guidance) rail.push(guidance);
+    el.routerBoard.appendChild(surfaceRail(rail));
+
     if (read.refused && read.refused.length) {
-      var el0 = boardCard(12, 'reads that did not land', 'the board\u2019s read');
-      el0.appendChild(node('p', 'board-empty', read.refused.join(' \u00b7 ')));
-      el.routerBoard.appendChild(el0);
+      var refused = boardCard(12, 'reads that did not land', 'the board\u2019s read');
+      refused.appendChild(node('p', 'board-empty', read.refused.join(' \u00b7 ')));
+      el.routerBoard.appendChild(refused);
     }
   }
 
@@ -3017,12 +3040,10 @@
 
   function paintDelegation() {
     var read = face.delegation;
-    var wide = cardWide(el.delegationBoard, 12);
     el.delegationBoard.textContent = '';
     if (!read) {
-      el.delegationBoard.appendChild(pageHead('Intelligence', 'Delegation',
-        'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.',
-        null));
+      el.delegationBoard.appendChild(surfaceHead('Intelligence', 'Delegation',
+        'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The delegation read has not landed yet. It reads the session logs and the graph file, ' +
@@ -3030,55 +3051,79 @@
       el.delegationBoard.appendChild(waiting);
       return;
     }
-    var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(read.depth_cap, 'depth cap'));
-    tiles.appendChild(tile(read.live ? countNodes(read.live) : 0, 'in this run'));
-    tiles.appendChild(tile(read.history.length, 'recent runs'));
-    tiles.appendChild(tile(read.graph ? read.graph.nodes.length : 0, 'graph nodes'));
-    el.delegationBoard.appendChild(pageHead('Intelligence', 'Delegation',
-      'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.',
-      null, {
-        label: 'Ask for the next step',
+    var live = read.live;
+    var history = read.history || [];
+    var graph = read.graph;
+    var instrument = surfaceInstrument('the tree',
+      live ? 'live run' : 'no run in flight',
+      'depth cap ' + read.depth_cap + ' \u00b7 ' + history.length +
+      (history.length === 1 ? ' past run' : ' past runs'),
+      [{
+        label: 'ask for the next step',
         run: function () {
           ask('read the dependency graph and tell me the next ready node to work');
         }
-      }));
-    el.delegationBoard.appendChild(statStrip(tiles));
+      }]);
+    el.delegationBoard.appendChild(surfaceHead('Intelligence', 'Delegation',
+      'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.',
+      instrument));
+    el.delegationBoard.appendChild(surfaceStrip([
+      [read.depth_cap, 'depth cap'],
+      [live ? countNodes(live) : 0, 'in this run'],
+      [history.length, 'past runs'],
+      [graph ? graph.nodes.length : 0, 'graph nodes'],
+      [(read.refused || []).length, 'reads refused', (read.refused || []).length ? 'down' : null]
+    ], live ? 'a run is in flight' : 'no run in flight'));
 
-    if (read.live) {
-      el.delegationBoard.appendChild(treeCard(read.live,
-        'the run in flight', null, read.depth_cap, wide));
+    var left = node('div', 'surface-column');
+    var wide = cardWide(el.delegationBoard, 8);
+    if (live) {
+      left.appendChild(treeCard(live, 'the run in flight', null, read.depth_cap, wide));
     } else {
       var none = boardCard(12, 'the run in flight', null, null);
       none.appendChild(node('p', 'board-empty',
         'No readable session log for this run yet. A tree is rebuilt off the logs\u2019 own start ' +
         'records, so a run that has not written one has no tree to draw.'));
-      el.delegationBoard.appendChild(none);
+      left.appendChild(none);
     }
-
-    read.history.forEach(function (root) {
-      el.delegationBoard.appendChild(treeCard(root,
+    history.forEach(function (root) {
+      left.appendChild(treeCard(root,
         'run ' + clip(root.id, 22),
         (root.stop_reason ? 'stopped: ' + root.stop_reason : 'no end record')
         + (root.turns != null ? ' \u00b7 ' + root.turns + ' turns' : '')
         + (root.goal ? ' \u00b7 ' + root.goal : ''),
         read.depth_cap, wide));
     });
+    el.delegationBoard.appendChild(left);
 
-    if (read.graph && read.graph.nodes.length) {
-      el.delegationBoard.appendChild(graphCard(read.graph, wide));
-      el.delegationBoard.appendChild(unlockCard(read.graph));
-      el.delegationBoard.appendChild(graphTiles(read.graph));
+    var summary = boardCard(12, 'what the read saw', live ? 'live' : 'idle',
+      'the tree is rebuilt off the start records\u2019 own parent ids; the graph is a file the plan\u2019s work writes.');
+    [
+      ['depth cap', String(read.depth_cap)],
+      ['nodes in this run', String(live ? countNodes(live) : 0)],
+      ['past runs', String(history.length)],
+      ['graph nodes', String(graph ? graph.nodes.length : 0)],
+      ['graph edges', String(graph ? graph.edges.length : 0)]
+    ].forEach(function (pair) {
+      var line = node('p', 'derivation');
+      line.appendChild(node('b', null, pair[0] + ' \u00b7 '));
+      line.appendChild(document.createTextNode(pair[1]));
+      summary.appendChild(line);
+    });
+    var rail = [summary];
+    if ((read.refused || []).length) rail.push(refusedCard(read.refused));
+    el.delegationBoard.appendChild(surfaceRail(rail));
+
+    if (graph && graph.nodes.length) {
+      el.delegationBoard.appendChild(graphCard(graph, cardWide(el.delegationBoard, 12)));
+      el.delegationBoard.appendChild(unlockCard(graph));
+      el.delegationBoard.appendChild(graphTiles(graph));
     } else {
       var empty = boardCard(12, 'the dependency graph', null, null);
       empty.appendChild(node('p', 'board-empty',
         'This home has declared no dependency graph. The graph is a file the plan\u2019s work ' +
         'writes; nothing here is inferred from what a run did.'));
       el.delegationBoard.appendChild(empty);
-    }
-
-    if (read.refused && read.refused.length) {
-      el.delegationBoard.appendChild(refusedCard(read.refused));
     }
   }
 

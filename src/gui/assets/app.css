@@ -3860,6 +3860,8 @@ pre.drawer-code {
    should not require opening a drawer first. */
 
 .surface-rail { grid-column: span 4; display: grid; gap: 16px; align-content: start; min-width: 0; }
+.surface-column { grid-column: span 8; display: grid; gap: 16px; align-content: start; min-width: 0; }
+.surface-column > .board-card, .surface-rail > .board-card { grid-column: auto; }
 .surface-rail > .board-card { grid-column: auto; }
 
 .lib-card { padding: 0; container-type: inline-size; }
@@ -4100,7 +4102,7 @@ pre.drawer-code {
 }
 
 @media (max-width: 900px) {
-  .surface-rail { grid-column: span 12; }
+  .surface-rail, .surface-column { grid-column: span 12; }
 }
 
 @media (max-width: 720px) {
