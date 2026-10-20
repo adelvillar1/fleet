@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-20
 updated: 2026-10-20
 slug: remote-access-port
@@ -341,6 +341,48 @@ says the same. The TUI panel is pinned by a test that draws it and reads
 the frame back as words — the title, the port, the sentence about who
 holds it, the peers view's capability, the door's attempt count, and the
 activity's session.
+
+**Landed.** The relay needed no structural port — its client, its
+handler, and `relay/relay.py` all sit on master's structure — but
+re-verification through the reference relay found three defects that had
+survived the branch's own live pass, each because the body came through
+and nobody read the status:
+
+- `status_of` parsed the *second* word of a `NNN Reason` line, so the
+  reason phrase failed to parse and **every** answer that crossed a
+  relay went to the phone as a 500 with a correct body under it. Fixed
+  to the first word, pinned by `the_relay_frame_carries_the_numeric_status`.
+- `relay/relay.py`'s `do_POST` forwarded only `/join` and `/frame`, so a
+  phone could read the face through the relay and could not say anything
+  through it — a run, a plan, and a seat's answer are all POSTs. Fixed
+  to forward `/s/` for every verb, as the module's own doc says.
+- `answer_frame` rebuilt the request head from the frame's headers, and
+  the relay strips `content-length` (the frame carries the bytes), so
+  every POST body had a declared length of zero and arrived as `EOF
+  while parsing a value`. The head now declares the frame's own body
+  length.
+
+Re-verification also closed a boundary gap: `answer_frame` routed
+without the allowlist, so a relayed phone reached `/api/settings` by
+falling off the end of the router as a 404 rather than by the named
+rule. The relay path now applies `allowed()` and refuses by name, and
+`a_relayed_phone_is_held_to_the_same_allowlist` pins both halves — the
+page, the assets and the state answer 200, and the control plane answers
+403 naming the route.
+
+Verified live through the reference relay: the page (22,855 bytes), the
+stylesheet (121,110), the script (345,583), the state and the archive
+all answer 200; `/api/settings` and `/api/channels` answer 403 by name;
+`/events` answers the tail with the poll marker; and a phone starts a
+run — `{"accepted":true,"from":"device",…}` — with the state moving to
+that session.
+
+`docs/features/remote-access.md` now names the retired `#/channels`, the
+`#/bots` control plane, the service and its two truth files, and the
+shared boundary; `docs/features/gui.md` gains the `#/bots` row and the
+`/api/channels` endpoints; `docs/features/tui.md` gains the Bots reader
+and the reason it cannot start or stop. This plan's frontmatter is
+`completed`.
 
 ### P6 — continuity, the relay, and the docs
 

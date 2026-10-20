@@ -132,8 +132,8 @@ back; there is no unconfirmed destructive key.
 
 ## The knowledge panels
 
-The palette opens memory, skills, calibration, and delegation. Each is
-an on-demand read on its own thread — the library scan and the archive
+The palette opens memory, skills, calibration, delegation, and bots. Each
+is an on-demand read on its own thread — the library scan and the archive
 replay are too heavy for the 30-second board cadence — and each renders
 a list on the left and a detail column on the right (stacked below 100
 columns). `f` cycles the panel's own filter:
@@ -142,12 +142,21 @@ columns). `f` cycles the panel's own filter:
 - skills: all / used / unused / proposals / skipped
 - calibration: all / fit / informing
 - delegation: all / live / history
+- bots: service / peers / pending / activity
 
 The rows are the substrate's own reads (`boards::read_memory`,
 `read_skills`, `read_delegation`, `calib::read_day` + `calibration`),
-not a second derivation. A read that fails lands a named note in the
-panel; a read that finishes after the panel closed is dropped by the
-generation stamp.
+not a second derivation — and the bots panel reads the same three files
+the browser's `#/bots` reads (`channels/status.json`, the two stores,
+and `activity.jsonl`), so the two surfaces cannot disagree about who can
+reach the fleet. A read that fails lands a named note in the panel; a
+read that finishes after the panel closed is dropped by the generation
+stamp.
+
+The bots panel does not start or stop a channel, and says so in its
+service view: a port belongs to the process that holds it, and the TUI
+is not that process. Start and stop live where the service is hosted —
+`fleet gui --channels`, or `channels.enabled` in the settings.
 
 ## Widgets and the contract
 

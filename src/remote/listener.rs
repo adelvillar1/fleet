@@ -272,11 +272,18 @@ impl crate::remote::relay::Handler for RelayHandler {
 }
 
 /// The numeric status a reply's line carries.
+///
+/// The line is `NNN Reason` — the code is the *first* word. Reading the
+/// second gave the reason phrase, every parse failed, and every answer
+/// that crossed a relay went to the phone as a 500 with a correct body
+/// under it: a page that renders and a client that refuses it. Found by
+/// fetching the face through the reference relay rather than by reading
+/// this function.
 fn status_of(reply: &Reply) -> u16 {
     reply
         .status
         .split_whitespace()
-        .nth(1)
+        .next()
         .and_then(|code| code.parse().ok())
         .unwrap_or(500)
 }
@@ -297,20 +304,35 @@ async fn answer_frame(
 ) -> Reply {
     // Re-parse the frame's head the way a socket's head is parsed: one
     // parser, one shape.
+    // The length is the frame's own body, stated here rather than taken
+    // from the frame: a relay is free to strip `content-length` (the
+    // reference one does, because the frame carries the bytes), and a
+    // body whose declared length is zero is a body every reader drops —
+    // which is how a relayed run arrived as `EOF while parsing a value`.
     let head = format!(
-        "{} {} HTTP/1.1\r\n{}\r\n",
+        "{} {} HTTP/1.1\r\n{}\r\ncontent-length: {}\r\n",
         frame.method,
         frame.path,
         frame
             .headers
             .iter()
+            .filter(|(name, _)| !name.eq_ignore_ascii_case("content-length"))
             .map(|(name, value)| format!("{name}: {value}"))
             .collect::<Vec<_>>()
-            .join("\r\n")
+            .join("\r\n"),
+        frame.body.as_bytes().len()
     );
     let Ok(request) = Request::parse(head.trim_end()) else {
         return bad_request("the relay forwarded a request this face could not read");
     };
+    // The boundary does not depend on the transport. A relayed phone is
+    // held to the same allowlist the socket path applies, and refused by
+    // name rather than by falling off the end of the router as a 404: a
+    // route that is closed only because nothing matches it is a route
+    // that opens the day somebody adds a match.
+    if !allowed(&request) {
+        return forbidden(&request.method, &request.path);
+    }
     if request.path == "/events" {
         return relay_stream(&request, bridge);
     }
@@ -1011,6 +1033,105 @@ mod tests {
         assert_eq!(store.devices.len(), 1, "a second pairing wrote a device");
 
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The relay is a transport, not a second door: a frame the phone
+    /// sends is held to the same allowlist the socket is, and refused by
+    /// name rather than by missing every route and answering 404.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_relayed_phone_is_held_to_the_same_allowlist() {
+        let home = fresh_home();
+        let (bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some("session-test".to_string()),
+        );
+        let bridge = Arc::new(bridge);
+        let frame = |method: &str, path: &str| crate::remote::relay::Frame {
+            id: "f1".to_string(),
+            method: method.to_string(),
+            path: path.to_string(),
+            headers: vec![("host".to_string(), "127.0.0.1".to_string())],
+            body: String::new(),
+        };
+        // The face the relay exists to carry.
+        for path in ["/", "/app.css", "/app.js", "/api/state", "/api/sessions"] {
+            let reply = answer_frame(&frame("GET", path), &bridge, "a relayed phone").await;
+            assert_eq!(reply.status, "200 OK", "{path}");
+        }
+        // A frame's body is the frame's: a POST reaches the router with
+        // the bytes the phone sent, whatever the relay did with the
+        // headers.
+        let posted = crate::remote::relay::Frame {
+            id: "f2".to_string(),
+            method: "POST".to_string(),
+            path: "/api/run".to_string(),
+            headers: vec![
+                ("host".to_string(), "127.0.0.1".to_string()),
+                ("content-type".to_string(), "application/json".to_string()),
+            ],
+            body: "{\"task\":\"say hello\"}".to_string(),
+        };
+        let accepted = answer_frame(&posted, &bridge, "a relayed phone").await;
+        // A detached bridge has no agent thread, so the run is refused —
+        // but refused by the *router*, which means the body was read and
+        // parsed. A body that never arrived fails earlier, with the
+        // parser's own words, which is the defect this pins.
+        assert_eq!(accepted.status, "409 Conflict", "{}", accepted.body);
+        assert!(
+            accepted.body.contains("no agent"),
+            "the body reached the router: {}",
+            accepted.body
+        );
+        assert!(
+            !accepted.body.contains("could not read the run's body"),
+            "the frame's bytes are the request's body: {}",
+            accepted.body
+        );
+
+        // And the boundary, named.
+        for (method, path) in [
+            ("GET", "/api/settings"),
+            ("GET", "/api/channels"),
+            ("GET", "/api/access"),
+            ("POST", "/api/channels/pair"),
+            ("POST", "/api/settings"),
+        ] {
+            let reply = answer_frame(&frame(method, path), &bridge, "a relayed phone").await;
+            assert_eq!(reply.status, "403 Forbidden", "{method} {path}");
+            assert!(
+                reply.body.contains(path),
+                "the refusal names the route: {}",
+                reply.body
+            );
+        }
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// Every reply's status line is `NNN Reason`, and the relay's frame
+    /// carries the number. Reading the word after the number handed every
+    /// answer to a phone as a 500 with a correct body under it — so this
+    /// pins the number, not the body.
+    #[test]
+    fn the_relay_frame_carries_the_numeric_status() {
+        assert_eq!(status_of(&page()), 200);
+        assert_eq!(status_of(&asset("text/css; charset=utf-8", "body")), 200);
+        assert_eq!(status_of(&api(200, json!({"type": "x"}))), 200);
+        assert_eq!(status_of(&unauthorized()), 401);
+        assert_eq!(status_of(&forbidden("GET", "/api/settings")), 403);
+        assert_eq!(status_of(&bad_request("no")), 400);
+        assert_eq!(status_of(&not_found("/nope")), 404);
+        // A status that is not a number is not silently 200: the frame
+        // says 500 and the client sees a failure rather than a lie.
+        assert_eq!(
+            status_of(&Reply {
+                status: "not a status",
+                content_type: "text/plain",
+                extra: Vec::new(),
+                body: String::new(),
+            }),
+            500
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

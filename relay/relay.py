@@ -117,6 +117,12 @@ class Handler(BaseHTTPRequestHandler):
             self._join()
         elif parsed.path == "/frame":
             self._frame(parsed)
+        elif parsed.path.startswith("/s/"):
+            # The phone's verb is ANY, as the module says — and a run, a
+            # plan, and a seat's answer are all POSTs. Routing only GET
+            # here left a phone able to read the face through the relay
+            # and unable to say anything through it.
+            self._phone(parsed)
         else:
             self._reply(404, {"error": "no route"})
 
@@ -128,6 +134,12 @@ class Handler(BaseHTTPRequestHandler):
             self._phone(parsed)
         else:
             self._reply(404, {"error": "no route"})
+
+    # The phone's verbs beyond GET: a run and a plan are POSTs and a
+    # seat's answer is a POST with a smaller body. Only the phone's path
+    # is forwarded; the device's own frames still have their two verbs.
+    do_PUT = do_POST
+    do_DELETE = do_POST
 
     # ------------------------------------------------- the device's verbs
 

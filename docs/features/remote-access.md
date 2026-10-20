@@ -6,8 +6,11 @@ messaging platform, and an outbound relay for a phone on another network.
 All three are off by default; the chat path is byte-for-byte what it was
 when nothing is configured.
 
-Plan: [`../plans/2026-10-18-remote-access-lanes.md`](../plans/2026-10-18-remote-access-lanes.md)
-(remote access, R0–R8, complete).
+Plans: [`../plans/2026-10-18-remote-access-lanes.md`](../plans/2026-10-18-remote-access-lanes.md)
+(the branches, R0–R8, complete) and
+[`../plans/2026-10-20-remote-access-port.md`](../plans/2026-10-20-remote-access-port.md)
+(onto the editorial console, P0–P6, complete). Where the two differ, the
+port is the truth: this document describes what is on `master`.
 
 ## The shape
 
@@ -39,13 +42,22 @@ is deliberately added. The access lists are a loopback read and write
 only — a phone that could revoke devices is a phone that could lock its
 owner out.
 
-## The inbox
+## The archive is the inbox
 
-The `#/channels` surface lists every session this home holds, grouped by
-the project it was born in, each row naming the channel and the peer when
-it has one — a reply typed there goes back to that peer. The access card
-rides the same surface: who may reach this face, with a revocation beside
-each.
+There is no second archive. `#/channels` existed on the branches and is
+**retired**: the editorial console already had `#/sessions`, and a second
+list of the same logs is the duplicate the console removed. The archive's
+rows carry the origin instead — the project a session was born in under
+its name, and `via <channel> · <peer>` when a delivery started it — with
+a `via a channel` filter chip joining the five, and the replay card's
+channel record saying the same. A reply from a peer's conversation goes
+back to that peer.
+
+**Who can reach this face** lives on `#/bots`, the control plane: the
+service's real state, the peers waiting at the door, the pair form with
+its one-time token reveal, every paired peer with its editable
+capability, and the newest activity. A channel is live only when its
+plugin says so — see *The service* below.
 
 ## Channels
 
@@ -60,8 +72,18 @@ same seat.
 
 | Channel | How it arrives | How it pairs |
 |---|---|---|
-| webhook | a POST to `127.0.0.1:3081/hook` | `fleet channels pair-webhook <name> --callback <url>` mints a token |
-| telegram | a private-chat message to the bot | `fleet channels allow-telegram <chat_id>` after a refusal names it |
+| webhook | a POST to `127.0.0.1:3081/hook` (or `channels.webhook_port`) | `fleet channels pair-webhook <name> --callback <url>` mints a token, shown once |
+| telegram | a private-chat message to the bot | `fleet channels allow-telegram <chat_id>`, or the Bots surface once a refusal recorded it |
+
+Capability is a parameter of the pairing — `--capability task|observe`,
+or a choice in the Bots form — rather than a later edit only. `observe`
+is a peer that is told things and cannot hand Fleet a task; `fleet
+channels capability <channel> <peer> task|observe` changes it afterwards,
+and the policy follows. A peer that tried and is not paired is recorded
+as **pending** (`<channel>-pending.json`, capped at twenty) so it can be
+let in from the app instead of the owner hunting a numeric id out of a
+log. The webhook's unpaired token has no identity to approve, so that
+attempt is an activity line rather than a peer.
 
 A seat is raised once and presented everywhere the session has a
 surface: the channel the delivery arrived on and the GUI inbox alike.
@@ -71,11 +93,48 @@ button standing for a decision already made. What a channel cannot do is
 retract a notification it has already sent, and the module says so rather
 than pretending otherwise.
 
+## The service
+
+`channels.enabled` in the settings brings the channel service up with the
+face; `fleet gui --channels` overrides the door on a home that has not
+set it. Off — and off is the default — binds nothing and writes nothing.
+
+The service is a supervisor, and readiness is its whole point: a plugin
+answers a `ready` signal exactly once, `Ok(port)` after the thing that
+could fail has succeeded (the bind for a listener, the first answered
+poll for a long-poller) or `Err(reason)` when it could not. A channel is
+`live` only after that report, `starting` while it waits, and `failed`
+with the reason otherwise — on the terminal and in the document, so a
+face cannot say "live" over a socket nothing holds.
+
+Two files are the truth every surface reads:
+
+- `<FLEET_HOME>/channels/status.json` — written atomically on every
+  transition, refreshed on a ten-second heartbeat, with `updated_unix`
+  beside the readable stamp. Three missed beats read **stale**, and a
+  stale document's phases are labelled "last report" rather than
+  believed, because a dead process's last words look exactly like a live
+  one's report.
+- `<FLEET_HOME>/channels/activity.jsonl` — one line per delivery,
+  refusal, reply, seat, state change, and unpaired-token attempt (never
+  the token), carrying the peer, the kind, the task's first line, and the
+  session. Capped at 500 lines.
+
+`fleet channels`, the browser's `#/bots`, and the TUI's Bots panel read
+those two files, so they cannot disagree. The peer→session mapping
+persists to `channels/sessions.json` and is validated on load — the log
+must exist and carry that peer's own channel record — so a restart
+resumes the same conversation and a stale mapping is dropped rather than
+handing a peer somebody else's log.
+
 ## The relay
 
 `fleet gui --remote --relay <url>` dials out and holds a long-poll
-against a relay; a phone's HTTP requests arrive as frames on that poll
-and the answers go back as frames. The relay never parses either — it is
+against a relay; a phone's HTTP requests — any verb — arrive as frames
+on that poll and the answers go back as frames, status line included.
+The relayed phone is held to the same allowlist the socket path applies
+and refused by name, because the boundary must not depend on the
+transport. The relay never parses either — it is
 a map of pending request ids and two queues, which is why the reference
 implementation in `relay/relay.py` is a hundred lines of anything. The
 page is Fleet's own, served through the relay rather than copied into it:

@@ -212,11 +212,18 @@ Escape clears the object, never the dock.
 | `GET/POST /api/usage` | the browser's counters and the adaptation knob |
 | `GET /api/router`, `/api/delegation`, `/api/memory`, `/api/skills`, `/api/sessions`, `/api/session`, `/api/calibration`, `/api/tower`, `/api/second-brain`, `/api/settings` | the panels' own reads |
 | `GET /api/tree`, `/api/file`, `/api/web` | the pane's contained reads: the working directory, a credential-refusing file read, a guarded fetch |
+| `GET /api/channels` | the channel control plane: the service's status (and whether its heartbeat still beats), every channel's paired and pending peers, and the newest fifty activity lines with the bound named |
+| `POST /api/channels/{start,stop,pair,capability,revoke,forget}` | the control plane's writes. `pair` answers with the token exactly once; there is no read that returns it again |
 | `POST /api/fact`, `/api/skill`, `/api/resume`, `/api/rewind`, `/api/diff/reject`, `/api/settings`, `/api/deck/render` | the writes, each through the writer the substrate already owns |
+
+The channel control plane's routes are **not** on the remote face's
+allowlist: a paired phone answers 403 by name, the same rule settings
+has. A phone that could pair a peer would be a phone that can widen the
+door it came through.
 
 ## The surfaces
 
-Ten keyed panels under hash addresses, four destinations in the rail
+Eleven keyed panels under hash addresses, four destinations in the rail
 (work, intelligence, knowledge, system), one flat level beneath each,
 and ⌘K reaching all of them so the grouping is a convenience rather than
 a maze. The rail's collapsed state is remembered across launches.
@@ -228,11 +235,12 @@ a maze. The rail's collapsed state is remembered across launches.
 | `#/delegation` | the live run's tree and the dependency graph with the unlock conditions the code requires |
 | `#/memory` | the fact corpus, the day's recall hits, search; an edit rides the substrate's own rewriter |
 | `#/skills` | the library with its loaded/skipped split, the proposals, the curation candidates |
-| `#/sessions` | the archive newest-first; a row opens its replay, and the replay's resume re-anchors the face to that log |
+| `#/sessions` | the archive newest-first; a row opens its replay, and the replay's resume re-anchors the face to that log. A row also names the project it was born in and, when a channel started it, `via <channel> · <peer>`; `via a channel` is a filter chip |
 | `#/calibration` | the day's stream rows by op and the judged quality's fit cells, the same computation `fleet calib --calibration` rides |
 | `#/tower` | the control tower — the one console surface: the KPI strip, the hero activity chart, the harness donut, the ranked projects, the claims against the evidence, the report feed |
 | `#/second-brain` | the derived state, quieter: the gates, the inbox, the loops, the harness runs, the maturity week grid |
-| `#/settings` | every configurable surface: the knobs, both lists, the rules, the cron jobs, the identity slot, the env names |
+| `#/bots` | the channel control plane: the service and its heartbeat, who can reach the fleet with an editable capability, the peers waiting at the door, the pair form with its one-time token reveal, and what they have done. The rail entry carries a count only when something is waiting |
+| `#/settings` | every configurable surface: the knobs, both lists, the rules, the cron jobs, the identity slot, the env names — including `channels.enabled` and `channels.webhook_port` |
 
 ## The trust trio
 
