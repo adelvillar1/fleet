@@ -29,19 +29,35 @@ the owner's ruling forces.
 
 `919416a` makes the loopback face open to any browser on the machine.
 The remote face cannot inherit that: a phone is not this machine, and
-the port it reaches is routable. The ruling's own words — "authentication
-returns only when fleet becomes a multi-user app" — describe exactly
-this moment, because a paired device *is* a second user. So:
+the port it reaches is routable.
+
+The owner's ruling on what that gate *is*: a paired device is not a
+second user — it is the same user with access to the existing sessions.
+Pairing is at most a handshake token shared between devices. So the
+device token is not authentication in the multi-user sense the ruling
+deferred; it is a **capability the owner hands to a device he owns**, a
+secret shared between two of his own machines, and its whole job is to
+keep an unpaired network peer off a routable port. Consequences that
+follow and are load-bearing:
 
 - The loopback face keeps master's shape exactly: no token, Host and
   Origin checks, the address alone opens it. Untouched.
-- The remote face gates on the device token the pairing flow mints, as
-  the branch built it. The token is not a return of the loopback token;
-  it is the credential a *second user* needs, which is the condition the
-  ruling named.
+- The remote face gates on the pairing handshake, as the branch built
+  it — but the store's shape is renamed to say what it is: a handshake
+  secret per device, digested at rest, revocable. Not a user account,
+  not a role, not an identity. There is one user; there are N devices.
+- Everything a paired device may reach is everything the owner may
+  reach from the loopback face over the same sessions. The remote
+  allowlist is a *route* boundary (a phone cannot write settings), not
+  an *identity* boundary. There is no per-device permission model,
+  because there is no second user to have permissions.
+- The channel peers are the one place a genuinely foreign identity
+  arrives, and there the policy stays what it was: `may act` /
+  `may only listen` per peer, pending peers, revocable. That is a
+  channel's authorization, not the remote face's.
 
-This is the only place the two disagree, and it is a disagreement the
-ruling itself anticipates rather than one this plan invents.
+This is the only place the two faces disagree, and it is a disagreement
+about which machine is asking rather than about who is asking.
 
 ## The second decision: one archive, not two
 
