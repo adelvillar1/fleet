@@ -377,6 +377,15 @@ all answer 200; `/api/settings` and `/api/channels` answer 403 by name;
 run — `{"accepted":true,"from":"device",…}` — with the state moving to
 that session.
 
+An observing peer also hears why its task was refused: the Telegram
+plugin speaks the refusal back into the chat it arrived from, so
+"may only listen" is a sentence the peer is told rather than silence it
+cannot distinguish from a Fleet that never heard it. The webhook needs no
+equivalent — its refusal is the HTTP answer the delivery already gets.
+Pinned by `an_observing_peer_is_told_why_its_task_was_refused`, which
+uses the service's sink so the refusal and the reply both land in the
+activity log.
+
 `docs/features/remote-access.md` now names the retired `#/channels`, the
 `#/bots` control plane, the service and its two truth files, and the
 shared boundary; `docs/features/gui.md` gains the `#/bots` row and the

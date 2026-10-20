@@ -347,7 +347,9 @@ impl ChannelService {
         // with no credential is not a stopped channel, it is a channel
         // this machine has not configured.
         if let Some(token) = crate::channels::telegram_token(&home) {
-            plugins.push(Arc::new(crate::channels::telegram::Telegram::new(token)));
+            plugins.push(Arc::new(
+                crate::channels::telegram::Telegram::new(token).at_home(home.clone()),
+            ));
         }
         let channels = plugins
             .iter()
@@ -524,7 +526,7 @@ impl ChannelService {
 
     /// The sink every plugin hands its deliveries to: the driver, with
     /// the activity line recorded on both ends of the decision.
-    fn sink(
+    pub(crate) fn sink(
         &self,
     ) -> Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync> {
         let driver = Arc::clone(&self.driver);

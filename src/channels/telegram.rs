@@ -50,6 +50,9 @@ pub struct Telegram {
     /// `offset = last + 1` is what makes a reconnect a resume rather than
     /// a replay of the whole history.
     offset: Arc<std::sync::Mutex<i64>>,
+    /// The home whose activity log records what this channel says. A
+    /// test channel has none and records nothing; the service sets it.
+    home: Option<std::path::PathBuf>,
 }
 
 impl Telegram {
@@ -59,7 +62,16 @@ impl Telegram {
             token,
             api_base: "https://api.telegram.org".to_string(),
             offset: Arc::new(std::sync::Mutex::new(0)),
+            home: None,
         }
+    }
+
+    /// Record this channel's activity in `home`. The service sets it;
+    /// a plugin built by hand records nothing, which is what a test
+    /// wants and what a plugin with no home must do rather than guess.
+    pub fn at_home(mut self, home: std::path::PathBuf) -> Telegram {
+        self.home = Some(home);
+        self
     }
 
     /// A Telegram channel against another API base. Production uses the
@@ -69,6 +81,7 @@ impl Telegram {
             token,
             api_base,
             offset: Arc::new(std::sync::Mutex::new(0)),
+            home: None,
         }
     }
 
@@ -180,6 +193,23 @@ impl Telegram {
                                     id = inbound.peer.id,
                                     name = inbound.peer.name,
                                 );
+                                // The refusal IS the reply: a peer that
+                                // may only listen is told so in its own
+                                // chat rather than left with silence it
+                                // cannot distinguish from a Fleet that
+                                // never heard it. The webhook needs no
+                                // equivalent — its refusal is the HTTP
+                                // answer the delivery already receives.
+                                self.reply(&inbound.reply, &refusal.to_string());
+                                if let Some(home) = &self.home {
+                                    crate::channels::service::note_reply(
+                                        home,
+                                        "telegram",
+                                        &inbound.peer.id,
+                                        &inbound.reply,
+                                        &refusal.to_string(),
+                                    );
+                                }
                             }
                         }
                     }
@@ -422,10 +452,13 @@ mod tests {
         // — not the bridge's launch session.
         fake.offer(update(11, 4242, "check the build"));
         // The channel polls on its own schedule, so the delivery needs a
-        // moment to land.
+        // moment to land. The bound is ten seconds rather than two: these
+        // tests run beside twelve hundred others, and a wait sized for an
+        // idle machine is a flake under load — the suite's own lesson,
+        // from both ends.
         let _session = {
             let mut found = None;
-            for _ in 0..100 {
+            for _ in 0..500 {
                 let sessions = driver
                     .sessions
                     .lock()
@@ -451,6 +484,79 @@ mod tests {
             .clone();
         assert_eq!(sent.len(), 1, "the outcome was sent: {sent:?}");
         assert!(sent[0].1.contains("the build is green"), "{sent:?}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// An observing peer is refused a task — and told so in its own chat
+    /// rather than left with silence it cannot tell from a Fleet that
+    /// never heard it. The refusal is the reply the channel owes it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_observing_peer_is_told_why_its_task_was_refused() {
+        let home = temp_home("telegram-observe");
+        let mut store = PeerStore::default();
+        store.pair("4242", "Alejandro", "unused", Capability::Observe, "stamp");
+        store.save(&home, "telegram").unwrap();
+
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let bridge = Arc::new(bridge);
+        let driver = Arc::new(Driver::new(Arc::clone(&bridge), Policy::new(home.clone())));
+        // The service's sink, not the driver's, because the sink is what
+        // records the refusal: the test should exercise the same path a
+        // running service does.
+        let service = Arc::new(crate::channels::ChannelService::new(
+            Arc::clone(&bridge),
+            Arc::clone(&driver),
+            &crate::channels::ServiceConfig {
+                home: home.clone(),
+                webhook_port: 0,
+                enabled: false,
+            },
+        ));
+        let sink = service.sink();
+
+        let fake = FakeTelegram::new();
+        let base = start_fake(Arc::clone(&fake)).await;
+        let served: Arc<dyn Channel> = Arc::new(
+            Telegram::with_api_base("test-token".to_string(), base).at_home(home.clone()),
+        );
+        let serving = Arc::clone(&served);
+        tokio::spawn(async move {
+            let (ready, _arrived) = tokio::sync::oneshot::channel();
+            let (_stop, stopped) = tokio::sync::watch::channel(false);
+            let _ = serving.serve(sink, ready, stopped).await;
+        });
+
+        fake.offer(update(12, 4242, "do the thing"));
+        let mut sent = Vec::new();
+        for _ in 0..500 {
+            sent = fake
+                .sent
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .clone();
+            if !sent.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(sent.len(), 1, "the refusal came back: {sent:?}");
+        assert!(sent[0].1.contains("may only listen"), "{sent:?}");
+        // And the attempt is in the activity log, twice over: the
+        // refusal the driver recorded and the reply the channel sent.
+        let activity = crate::channels::service::activity(&home, 10);
+        assert!(
+            activity.iter().any(|line| line.kind == "refusal"),
+            "{activity:?}"
+        );
+        assert!(
+            activity.iter().any(|line| line.kind == "reply"),
+            "the reply is recorded: {activity:?}"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 
