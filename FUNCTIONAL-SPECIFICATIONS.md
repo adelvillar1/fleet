@@ -81,10 +81,10 @@ briefing, the endpoints, and the interaction layer are documented in
 | Run | Stop/steer controls and the live delegation-branch cursor | `docs/features/tui.md` |
 | Steer | One-line steer editor inside the run controls | `docs/features/tui.md` |
 | Palette | Filtered command list for every pane, panel, and action (Ctrl+P) | `docs/features/tui.md` |
-| Pane | Run/router/brain/tower tabs in the right column (Ctrl+B) | `docs/features/boards.md`; `docs/features/tui.md` |
+| Pane | Run/router/brain/tower tabs; the router and tower compose charts and bars (Ctrl+B) | `docs/features/boards.md`; `docs/features/tui.md` |
 | Sessions | Styled table, `f` filter, Enter resumes | `docs/features/subagents.md`; `docs/features/tui.md` |
 | Approval | Keyboard-driven approve/deny | `docs/architecture/overview.md` |
-| Lanes | Health cards for each vendored lane core | `docs/features/install.md` |
+| Lanes | Health table for each vendored lane core, with blend1's doctor rows | `docs/features/install.md`; `docs/features/tui.md` |
 | Checkpoints | Turn table, Enter arms a rewind, `d` opens the diff (Ctrl+K) | `docs/features/tui.md` |
 | Diff | File/hunk review, `r` rejects the hunk, `R` the file | `docs/features/tui.md` |
 | Confirm | `y` lands an armed rewind/reject; any other key walks away | `docs/features/tui.md` |

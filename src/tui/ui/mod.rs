@@ -13,12 +13,14 @@ use unicode_width::UnicodeWidthStr;
 
 use super::app::{App, Entry, Mode, Pane, SettingsRow, ToolStatus};
 use crate::boards::{self, BoardData, BoardKind, Section, Slot};
-use crate::lanes::LaneState;
 
+mod board_view;
 mod command;
 mod knowledge;
+mod lanes;
 mod run;
 mod trust;
+mod widgets;
 
 /// The palette. One home per role, so the surface stays coherent as later
 /// slices extend it.
@@ -86,7 +88,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Mode::Chat => {}
         Mode::Sessions => render_picker(frame, app),
         Mode::Approval => render_approval(frame, app),
-        Mode::Lanes => render_lanes(frame, app),
+        Mode::Lanes => lanes::render(frame, app),
         Mode::Explain => render_explain(frame, app),
         Mode::Settings | Mode::SettingsEdit => render_settings(frame, app),
         Mode::SettingsConfirm => render_settings_confirm(frame, app),
@@ -606,7 +608,6 @@ fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect, kind: BoardKind) {
     }
 
     let width = inner.width as usize;
-    let visible = inner.height as usize;
     // The header rides the top of the pane. A refused read names its
     // reason there, wrapped because a narrow pane clipping a named error
     // is the same failure as not naming it, with the minute of the last
@@ -616,7 +617,7 @@ fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect, kind: BoardKind) {
     // between a live board and a stale one — and a scan the tower's
     // budget cut short is exactly the case where the age of the data is
     // the fact at issue.
-    let (header, content_height) = match &slot.error {
+    let header: Vec<Line<'static>> = match &slot.error {
         Some(reason) => {
             let budget = width.saturating_mul(3).saturating_sub(3);
             let reason = boards::trim_to(reason, budget);
@@ -632,42 +633,45 @@ fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect, kind: BoardKind) {
                 stamp,
                 Style::new().fg(palette::DIM),
             )));
-            (lines, visible.saturating_sub(4))
+            lines
         }
         None => match &slot.snapshot {
-            Some(snapshot) => (
-                vec![Line::from(Span::styled(
-                    format!("   read {}", snapshot.read_at()),
-                    Style::new().fg(palette::DIM),
-                ))],
-                visible.saturating_sub(2),
-            ),
+            Some(snapshot) => vec![Line::from(Span::styled(
+                format!("   read {}", snapshot.read_at()),
+                Style::new().fg(palette::DIM),
+            ))],
             // A board still on its opening read says it is reading; a
             // board whose read was refused says so and names the reason.
             // Neither has a read time to name yet.
-            None => (Vec::new(), visible),
+            None => Vec::new(),
         },
     };
-    let mut lines = board_lines(kind, slot, width);
-    // A board longer than its pane names what it is holding back rather
-    // than silently cutting its tail.
-    if lines.len() > content_height {
-        let hidden = lines.len() - content_height + 1;
-        lines.truncate(content_height.saturating_sub(1));
-        lines.push(Line::from(Span::styled(
-            format!(" +{hidden} more"),
-            Style::new().fg(palette::DIM),
-        )));
-    }
-    if header.is_empty() {
-        frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+    let content = if header.is_empty() {
+        inner
+    } else {
+        let [top, rest] =
+            Layout::vertical([Constraint::Length(header.len() as u16), Constraint::Min(1)])
+                .areas(inner);
+        frame.render_widget(Paragraph::new(Text::from(header)), top);
+        rest
+    };
+    if content.height == 0 || content.width == 0 {
         return;
     }
-    let [top, rest] =
-        Layout::vertical([Constraint::Length(header.len() as u16), Constraint::Min(1)])
-            .areas(inner);
-    frame.render_widget(Paragraph::new(Text::from(header)), top);
-    frame.render_widget(Paragraph::new(Text::from(lines)), rest);
+    match &slot.snapshot {
+        Some(BoardData::Router(snapshot)) => board_view::render_router(frame, snapshot, content),
+        Some(BoardData::Tower(snapshot)) => board_view::render_tower(frame, app, snapshot, content),
+        Some(BoardData::Brain(snapshot)) => board_view::render_lines(
+            frame,
+            brain_lines(snapshot, content.width as usize),
+            content,
+        ),
+        None => board_view::render_lines(
+            frame,
+            board_lines(kind, slot, content.width as usize),
+            content,
+        ),
+    }
 }
 
 /// The active board's content: the snapshot that landed, the read in
@@ -725,7 +729,7 @@ fn board_lines(kind: BoardKind, slot: &Slot, width: usize) -> Vec<Line<'static>>
 /// chains with their candidates, the gates, what Fleet just served, and
 /// the day's counts. Nothing here is dialed: the router is this crate's
 /// own, so the board reads what the router reads.
-fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'static>> {
+pub(super) fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'static>> {
     let judge = snapshot
         .judge
         .as_ref()
@@ -785,56 +789,6 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
                 ),
                 (format!(" {tail}"), Style::new().fg(palette::DIM)),
             ],
-            width,
-        ));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(section("served"));
-    for row in snapshot.recent.iter().take(6) {
-        let (glyph, color) = if row.ok() {
-            ("\u{25cf}", palette::DONE)
-        } else {
-            ("\u{2715}", palette::DENIED)
-        };
-        // The row names its own outcome, and the model it names is the
-        // served candidate's own: the provider prefix is what the tier
-        // lines above already say, so it is the part a narrow pane drops
-        // first. The workload rides the tail for the same reason — every
-        // workload is named in the tiers block.
-        let model = row
-            .model
-            .rsplit('/')
-            .next()
-            .unwrap_or(&row.model)
-            .to_string();
-        let workload = row.workload.clone().unwrap_or_default();
-        let ms = row
-            .ms
-            .map(|ms| format!("{}ms", boards::grouped(ms)))
-            .unwrap_or_default();
-        let room =
-            width.saturating_sub(3 + row.outcome.chars().count() + 1 + ms.chars().count() + 1);
-        lines.push(line_of(
-            vec![
-                (format!(" {glyph} "), Style::new().fg(color)),
-                (row.outcome.clone(), Style::new().fg(color)),
-                (
-                    format!(" {}", boards::trim_to(&model, room)),
-                    Style::new().fg(palette::TEXT),
-                ),
-                (format!(" {ms}"), Style::new().fg(palette::DIM)),
-                (format!(" {workload}"), Style::new().fg(palette::DIM)),
-            ],
-            width,
-        ));
-    }
-    if snapshot.recent.is_empty() {
-        lines.push(line_of(
-            vec![(
-                " no route rows today".to_string(),
-                Style::new().fg(palette::DIM),
-            )],
             width,
         ));
     }
@@ -902,6 +856,56 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
             width,
         ));
     }
+    lines.push(Line::from(""));
+    lines.push(section("served"));
+    for row in snapshot.recent.iter().take(6) {
+        let (glyph, color) = if row.ok() {
+            ("\u{25cf}", palette::DONE)
+        } else {
+            ("\u{2715}", palette::DENIED)
+        };
+        // The row names its own outcome, and the model it names is the
+        // served candidate's own: the provider prefix is what the tier
+        // lines above already say, so it is the part a narrow pane drops
+        // first. The workload rides the tail for the same reason — every
+        // workload is named in the tiers block.
+        let model = row
+            .model
+            .rsplit('/')
+            .next()
+            .unwrap_or(&row.model)
+            .to_string();
+        let workload = row.workload.clone().unwrap_or_default();
+        let ms = row
+            .ms
+            .map(|ms| format!("{}ms", boards::grouped(ms)))
+            .unwrap_or_default();
+        let room =
+            width.saturating_sub(3 + row.outcome.chars().count() + 1 + ms.chars().count() + 1);
+        lines.push(line_of(
+            vec![
+                (format!(" {glyph} "), Style::new().fg(color)),
+                (row.outcome.clone(), Style::new().fg(color)),
+                (
+                    format!(" {}", boards::trim_to(&model, room)),
+                    Style::new().fg(palette::TEXT),
+                ),
+                (format!(" {ms}"), Style::new().fg(palette::DIM)),
+                (format!(" {workload}"), Style::new().fg(palette::DIM)),
+            ],
+            width,
+        ));
+    }
+    if snapshot.recent.is_empty() {
+        lines.push(line_of(
+            vec![(
+                " no route rows today".to_string(),
+                Style::new().fg(palette::DIM),
+            )],
+            width,
+        ));
+    }
+
     // The workload mix: where the day's routes actually went.
     if !snapshot.workloads.is_empty() {
         let mix: Vec<String> = snapshot
@@ -938,33 +942,8 @@ fn router_lines(snapshot: &boards::RouterSnapshot, width: usize) -> Vec<Line<'st
         }
         lines.push(line_of(pieces, width));
     }
-    // The models as bars: a comparison that reads at a glance.
-    let busiest = snapshot
-        .models
-        .first()
-        .map(|model| model.calls)
-        .unwrap_or(0);
-    for model in snapshot.models.iter().take(3) {
-        lines.push(line_of(
-            vec![
-                (" ".to_string(), Style::new()),
-                (
-                    boards::cell(&model.model, 14),
-                    Style::new().fg(palette::TEXT),
-                ),
-                (" ".to_string(), Style::new()),
-                (
-                    boards::bar(model.calls, busiest, 10),
-                    Style::new().fg(palette::ACCENT),
-                ),
-                (
-                    format!(" {}", boards::grouped(model.calls)),
-                    Style::new().fg(palette::DIM),
-                ),
-            ],
-            width,
-        ));
-    }
+    // The model mix is the board's `BarChart`, above these lines; the
+    // guidance sentence is the only part that stays a line.
     for (tier, sentence) in snapshot.guidance.iter().take(1) {
         lines.push(line_of(
             vec![
@@ -1292,7 +1271,7 @@ fn brain_lines(snapshot: &boards::BrainSnapshot, width: usize) -> Vec<Line<'stat
 
 /// The tower: per-project cards — branch, dirty dot, head commit, the
 /// trailing-thirty-day count, ahead/behind — dirtiest first.
-fn tower_lines(snapshot: &boards::TowerSnapshot, width: usize) -> Vec<Line<'static>> {
+pub(super) fn tower_lines(snapshot: &boards::TowerSnapshot, width: usize) -> Vec<Line<'static>> {
     let mut lines = vec![
         line_of(
             vec![
@@ -1869,9 +1848,21 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
             .add_modifier(Modifier::BOLD),
     )
     .highlight_symbol("▸ ");
+    let overflow = rows.len() > inner.height.saturating_sub(1) as usize;
+    let table_area = Rect {
+        width: inner.width.saturating_sub(u16::from(overflow)),
+        ..inner
+    };
     let mut state =
         TableState::default().with_selected(Some(app.selected.min(rows.len().saturating_sub(1))));
-    frame.render_stateful_widget(table, inner, &mut state);
+    frame.render_stateful_widget(table, table_area, &mut state);
+    widgets::scrollbar(
+        frame,
+        inner,
+        rows.len(),
+        state.offset(),
+        table_area.height.saturating_sub(1) as usize,
+    );
 }
 
 /// A session id as the picker reads it: the day, the minute, and the
@@ -1911,6 +1902,7 @@ fn short_stamp(stamp: &str) -> String {
 /// card clipped by its own modal is the failure the boards already
 /// learned from. Clamped at both ends, so a small frame or an unexpected
 /// line count cannot push the modal off screen.
+#[cfg(test)]
 fn lanes_height(lines: usize) -> u16 {
     let wanted = (lines as u16).saturating_add(4);
     wanted.clamp(4, 20)
@@ -1984,272 +1976,6 @@ fn render_explain(frame: &mut Frame<'_>, app: &App) {
 /// The lanes modal's width, as a share of the frame. Wide enough for a
 /// lane row plus a doctor row with its reason; the same share the
 /// sessions picker takes, so the two overlays read as one family.
-const LANES_MODAL_PERCENT: u16 = 78;
-
-/// The lane health view over the conversation: one card-like row per
-/// lane — status dot, name, role, version, tool count, state — with the
-/// tool names (or the failure reason) underneath, in registry order. A
-/// lane that exposes a `doctor` tool (blend1) also renders its per-lane
-/// availability as named rows with status dots, exactly as the headless
-/// card renders them — the two surfaces read as one.
-fn render_lanes(frame: &mut Frame<'_>, app: &App) {
-    // The modal's width comes from the frame, so every line is composed
-    // for the columns it will actually be drawn in — the same share
-    // `centered_sized` lays out, read off the frame independently of the
-    // height the lines then decide.
-    let [columns] = Layout::horizontal([Constraint::Percentage(LANES_MODAL_PERCENT)])
-        .flex(Flex::Center)
-        .areas(frame.area());
-    let width = columns.width.saturating_sub(2).max(1) as usize;
-    let lines = lane_modal_lines(app, width);
-    let area = centered_sized(LANES_MODAL_PERCENT, lanes_height(lines.len()), frame.area());
-    frame.render_widget(Clear, area);
-    let block = Block::bordered()
-        .title(" lanes — esc close ")
-        .title_style(title_style())
-        .border_style(Style::new().fg(palette::ACCENT));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    if inner.height == 0 {
-        return;
-    }
-
-    if app.lanes.is_empty() && app.lanes_loading {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " probing the lanes…",
-                Style::new().fg(palette::DIM),
-            ))),
-            inner,
-        );
-        return;
-    }
-
-    // A modal longer than its pane names what it is holding back rather
-    // than silently cutting its tail — the boards' contract.
-    let visible = inner.height as usize;
-    let mut drawn = lines;
-    if drawn.len() > visible {
-        let hidden = drawn.len() - visible + 1;
-        drawn.truncate(visible.saturating_sub(1));
-        drawn.push(Line::from(Span::styled(
-            format!(" +{hidden} more"),
-            Style::new().fg(palette::DIM),
-        )));
-    }
-    frame.render_widget(Paragraph::new(Text::from(drawn)), inner);
-}
-
-/// Every line the lanes modal draws at `width`, in registry order. Built
-/// whole so the modal is sized from its own content, and so a test reads
-/// the same lines the frame draws.
-fn lane_modal_lines(app: &App, width: usize) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    for (index, lane) in app.lanes.iter().enumerate() {
-        let selected = index == app.selected;
-        let marker = if selected { "▸" } else { " " };
-        let (dot, color) = match lane.state {
-            LaneState::Ok => ("●", palette::DONE),
-            LaneState::Unavailable => ("○", palette::DIM),
-            LaneState::Error => ("✕", palette::DENIED),
-        };
-        let version = lane.server_version.as_deref().unwrap_or("—");
-        let name_style = if selected {
-            Style::new().fg(palette::TEXT).add_modifier(Modifier::BOLD)
-        } else {
-            Style::new().fg(palette::TEXT)
-        };
-        lines.push(line_of(
-            vec![
-                (format!("{marker} "), Style::new().fg(palette::ACCENT)),
-                (format!("{dot} "), Style::new().fg(color)),
-                (lane.name.clone(), name_style),
-                (format!("  {}  ", lane.role), Style::new().fg(palette::DIM)),
-                (format!("v{version}"), Style::new().fg(palette::DIM)),
-                (
-                    format!(
-                        "  {} tool{}",
-                        lane.tools.len(),
-                        if lane.tools.len() == 1 { "" } else { "s" }
-                    ),
-                    Style::new().fg(palette::TEXT),
-                ),
-                (format!("  {}", lane.state.label()), Style::new().fg(color)),
-            ],
-            width,
-        ));
-        // The latency, exactly as the headless card renders it — the two
-        // surfaces are meant to read as one.
-        if lane.source.is_some() {
-            lines
-                .last_mut()
-                .expect("the row just pushed")
-                .push_span(Span::styled(
-                    format!("  · {} ms", lane.elapsed_ms),
-                    Style::new().fg(palette::DIM),
-                ));
-        }
-        // The detail line: the tool names when the lane answered, the
-        // reason it could not when it did not.
-        let detail = if lane.tools.is_empty() {
-            lane.detail.clone()
-        } else {
-            lane.tools.join(" · ")
-        };
-        lines.push(line_of(
-            vec![(format!("   {detail}"), Style::new().fg(palette::DIM))],
-            width,
-        ));
-        // The lane's own `doctor` report, when it exposed one: a named
-        // row per sub-lane with its status dot and its named reason. A
-        // lane whose probe was refused keeps its card and names the
-        // error rather than dropping the section silently.
-        if lane.name == DOCTOR_LANE {
-            lines.extend(doctor_lines(lane, width));
-        }
-    }
-    lines
-}
-
-/// The one lane whose probe carries a `doctor` report: the blended lane's
-/// own per-lane availability. The other four expose no such tool, so
-/// their cards carry no doctor section.
-const DOCTOR_LANE: &str = "blend1";
-
-/// The sub-lane name's column width on a doctor row, so every reason
-/// starts in one column the way a card's facts do.
-const DOCTOR_NAME_COLUMN: usize = 10;
-
-/// The doctor section of blend1's card: a section header, one named row
-/// per sub-lane the probe parsed, and the section's own named state when
-/// the report did not land. Each row is a status dot, the sub-lane's
-/// name in one column, and its named reason — green and its backing
-/// provider when the lane can answer, dim and the reason it cannot when
-/// it cannot. A long reason wraps under its row rather than being
-/// clipped, because a clipped reason is not a named one.
-fn doctor_lines(lane: &crate::lanes::LaneHealth, width: usize) -> Vec<Line<'static>> {
-    let mut lines = vec![section("doctor")];
-    if lane.doctor.is_empty() {
-        // A refused probe (or a report the parser could not read) keeps
-        // the card and names it: the snapshot-and-name contract the
-        // boards' refused reads already follow. The reason wraps rather
-        // than clipping, because a clipped reason is not a named one.
-        let named = if lane.tools.is_empty() {
-            lane.detail.clone()
-        } else {
-            "the probe's doctor report did not land".to_string()
-        };
-        lines.extend(wrapped(
-            "   ",
-            &named,
-            Style::new().fg(palette::DENIED),
-            width,
-        ));
-        return lines;
-    }
-    // The web leg is not one of the five blend sub-lanes — it is the
-    // web leg blend1 serves — and the card marks the difference at a
-    // glance, the same distinction `lanes::render_card` draws on the
-    // CLI's card. It gets its own accented line below rather than a
-    // sixth row in the sub-lane column, because the two surfaces
-    // disagreeing on what the web leg IS would be the drift.
-    let web = lane
-        .doctor
-        .iter()
-        .find(|entry| entry.lane == crate::lanes::WEB_LEG);
-    for availability in lane
-        .doctor
-        .iter()
-        .filter(|entry| entry.lane != crate::lanes::WEB_LEG)
-    {
-        let (dot, color) = if availability.available {
-            ("●", palette::DONE)
-        } else {
-            ("○", palette::DIM)
-        };
-        // The reason is named either way: an available lane says what
-        // backs it, an unavailable one says what is missing. A bare dot
-        // is never the whole row.
-        let named = if availability.reason.is_empty() {
-            availability.provider.clone()
-        } else {
-            availability.reason.clone()
-        };
-        let named_style = if availability.available {
-            Style::new().fg(palette::DIM)
-        } else {
-            Style::new().fg(palette::DENIED)
-        };
-        // The row's head keeps its shape at every width; the reason fills
-        // the room that is left and wraps under the row when it needs
-        // more, indented to the reason's own column.
-        let head = format!("   {dot} ");
-        let head_width = head.chars().count() + DOCTOR_NAME_COLUMN;
-        let room = width.saturating_sub(head_width + 1).max(8);
-        let chunks = wrap(&named, room);
-        let first = chunks.first().cloned().unwrap_or_default();
-        lines.push(Line::from(vec![
-            Span::styled(head, Style::new().fg(color)),
-            Span::styled(
-                format!(
-                    "{:<column$}",
-                    availability.lane,
-                    column = DOCTOR_NAME_COLUMN
-                ),
-                Style::new().fg(palette::TEXT),
-            ),
-            Span::styled(first, named_style),
-        ]));
-        for chunk in chunks.into_iter().skip(1) {
-            lines.push(Line::from(Span::styled(
-                format!("{}{}", " ".repeat(head_width), chunk),
-                Style::new().fg(palette::DIM),
-            )));
-        }
-    }
-    // The web leg's own line: the label leads in the accent color, the
-    // dot and the named reason beside it — available says what backs
-    // it, unavailable says what is missing, and the reason wraps under
-    // the line rather than clipping.
-    if let Some(web) = web {
-        let (dot, color) = if web.available {
-            ("●", palette::DONE)
-        } else {
-            ("○", palette::DIM)
-        };
-        let named = if web.reason.is_empty() {
-            web.provider.clone()
-        } else {
-            web.reason.clone()
-        };
-        let named_style = if web.available {
-            Style::new().fg(palette::DIM)
-        } else {
-            Style::new().fg(palette::DENIED)
-        };
-        let head = format!("   web leg {dot} \u{2014} ");
-        let room = width.saturating_sub(head.chars().count()).max(8);
-        let chunks = wrap(&named, room);
-        let first = chunks.first().cloned().unwrap_or_default();
-        lines.push(Line::from(vec![
-            Span::styled("   ", Style::new().fg(color)),
-            Span::styled("web leg", Style::new().fg(palette::ACCENT)),
-            Span::styled(format!(" {dot} \u{2014} "), Style::new().fg(color)),
-            Span::styled(first, named_style),
-        ]));
-        for chunk in chunks.into_iter().skip(1) {
-            lines.push(Line::from(Span::styled(
-                format!("{}{}", " ".repeat(head.chars().count()), chunk),
-                Style::new().fg(palette::DIM),
-            )));
-        }
-    }
-    lines
-}
-
-/// One reason as wrapped lines: the first carries `indent` and `style`,
-/// every continuation is indented to the reason's own column and dimmed.
-/// A reason is never clipped — a clipped reason is not a named one.
 fn wrapped(indent: &str, text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
     let room = width.saturating_sub(indent.chars().count()).max(8);
     let chunks = wrap(text, room);
@@ -2826,6 +2552,7 @@ fn short_id(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lanes::LaneState;
 
     /// The settings pane renders as a scrolled list of rows, never a
     /// plain-text table, and the editor replaces the list while a value
@@ -3814,6 +3541,54 @@ mod tests {
     }
 
     #[test]
+    fn the_router_composes_the_busiest_hours_and_the_served_gauge() {
+        let app = board_app(
+            crate::boards::BoardKind::Router,
+            crate::boards::BoardData::Router(Box::new(router_snapshot())),
+        );
+        let drawn = draw(&app, 120, 42);
+        assert!(drawn.contains("09:00"), "{drawn}");
+        assert!(drawn.contains("% served"), "{drawn}");
+        assert!(drawn.contains("tiers"), "{drawn}");
+        // The chart collapses at 80x24; the ledger and tiers stay.
+        let narrow = draw(&app, 80, 24);
+        assert!(!narrow.contains("09:00"), "{narrow}");
+        assert!(narrow.contains("ledger"), "{narrow}");
+    }
+
+    #[test]
+    fn the_tower_composes_the_reports_chart_and_the_project_bars() {
+        let mut app = board_app(
+            crate::boards::BoardKind::Tower,
+            crate::boards::BoardData::Tower(Box::new(tower_snapshot())),
+        );
+        let mut brain = brain_snapshot();
+        if let crate::boards::Section::Landed(reports) = &mut brain.reports {
+            reports.report_daily =
+                vec![("2026-10-02".to_string(), 4), ("2026-10-03".to_string(), 6)];
+        }
+        if let crate::boards::Section::Landed(tower) = &mut brain.tower {
+            tower.timeline = vec![crate::boards::TimelineRow {
+                date: "2026-10-03".to_string(),
+                subject: "the chart".to_string(),
+                project: "fleet".to_string(),
+            }];
+        }
+        app.apply_board(
+            crate::boards::BoardKind::Brain,
+            Ok(crate::boards::BoardData::Brain(Box::new(brain))),
+        );
+        let drawn = draw(&app, 120, 42);
+        assert!(drawn.contains("reports by day"), "{drawn}");
+        assert!(drawn.contains("commits by day"), "{drawn}");
+        assert!(drawn.contains("fleet"), "{drawn}");
+        // The chart is omitted at 80x24; the project bars and cards stay.
+        let narrow = draw(&app, 80, 24);
+        assert!(!narrow.contains("reports by day"), "{narrow}");
+        assert!(narrow.contains("fleet"), "{narrow}");
+    }
+
+    #[test]
     fn the_tower_board_renders_git_facts_per_project() {
         let app = board_app(
             crate::boards::BoardKind::Tower,
@@ -4081,6 +3856,27 @@ mod tests {
     }
 
     #[test]
+    fn a_long_sessions_list_shows_the_scrollbar() {
+        let mut app = fresh();
+        app.open_sessions(
+            (0..40)
+                .map(|index| crate::session::SessionSummary {
+                    id: format!("20261013T1010{index:02}Z-{index:06x}"),
+                    model: "deepseek-chat".to_string(),
+                    created: "2026-10-13T10:10:10Z".to_string(),
+                    ended: index % 3 == 0,
+                    kind: None,
+                    compacted: false,
+                    served_model: None,
+                    path: std::path::PathBuf::from("/tmp/x.jsonl"),
+                })
+                .collect(),
+        );
+        let drawn = draw(&app, 120, 40);
+        assert!(drawn.contains("\u{25b2}"), "the scrollbar thumb: {drawn}");
+    }
+
+    #[test]
     fn the_lanes_modal_is_sized_from_its_rows_not_a_fixed_share() {
         // A four-lane modal is eight two-line rows plus headroom; it must
         // not keep a fixed 62% of the screen.
@@ -4145,7 +3941,8 @@ mod tests {
             drawn.contains("ask · doctor · search · refresh · seed"),
             "{drawn}"
         );
-        // The card is genuinely visual: status dots, not a plain-text table.
+        // The table keeps the status dots and the named reasons; it is
+        // not a plain-text dump.
         assert!(!drawn.contains("| name |"), "{drawn}");
         // At 80 columns the doctor rows still carry their facts.
         let narrow = draw(&app, 80, 24);

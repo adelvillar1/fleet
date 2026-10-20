@@ -70,11 +70,23 @@ pub(super) fn render_checkpoints(frame: &mut Frame<'_>, app: &App) {
             .add_modifier(Modifier::BOLD),
     )
     .highlight_symbol("▸ ");
+    let overflow = app.checkpoints_view.len() > inner.height.saturating_sub(1) as usize;
+    let table_area = Rect {
+        width: inner.width.saturating_sub(u16::from(overflow)),
+        ..inner
+    };
     let mut state = TableState::default().with_selected(Some(
         app.selected
             .min(app.checkpoints_view.len().saturating_sub(1)),
     ));
-    frame.render_stateful_widget(table, inner, &mut state);
+    frame.render_stateful_widget(table, table_area, &mut state);
+    super::widgets::scrollbar(
+        frame,
+        inner,
+        app.checkpoints_view.len(),
+        state.offset(),
+        table_area.height.saturating_sub(1) as usize,
+    );
 }
 
 pub(super) fn render_diff(frame: &mut Frame<'_>, app: &App) {

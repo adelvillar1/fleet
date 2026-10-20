@@ -34,6 +34,36 @@ streamed `usage` event; the conversation has a `Scrollbar`; the boards
 use the tab row as their title. The palette and the tables are the only
 surfaces that need their own state (`ListState`/`TableState`).
 
+## The composed boards
+
+The router and tower boards are not one paragraph of hand-built lines.
+Their data gets geometry:
+
+- **Router.** The busiest hours of the day as a horizontal `BarChart`
+  (hour label, calls, bar); the day's served rate as a `Gauge`; the
+  model mix as a second `BarChart` when more than one model took a call;
+  then the tier chains, the ledger, the served rows, the judge split,
+  the workload mix, the payg guard, and the guidance as composed lines.
+  The ledger is above the served rows so a short pane truncates the
+  list, not the counts, and the tail is always named with `+N more`.
+- **Tower.** The reports-by-day series from the brain board's
+  `reports.report_daily` as a `Chart`, and the commits series from
+  `tower.timeline` as a `Sparkline` on its own scale — a shared axis
+  would flatten commits into the baseline. The top six projects by
+  thirty-day commits are a horizontal `BarChart`; the existing
+  two-line project cards carry branch, dirty/ahead/behind, and the head
+  subject below them.
+- **Lanes.** The lane health view is a `Table` with lane, role, state,
+  tools, and version/latency columns; the selected lane's tool names
+  and blend1's doctor sub-lanes are spanning rows underneath, and a
+  `Scrollbar` marks an overflowing list.
+
+The charts are fed by the snapshots the boards already read; the tower
+composes from the brain slot rather than adding a read. At 80×24 the
+router charts collapse to the lines and the tower keeps only the project
+bars and cards; the chart is omitted, never drawn empty, when the brain
+slot has not landed or refused.
+
 ## Modes
 
 | Mode | What it is |
@@ -122,21 +152,26 @@ generation stamp.
 ## Widgets and the contract
 
 Only the already-declared `ratatui 0.30.2` is used. The revamp added
-`Tabs`, `Table`/`TableState`, `LineGauge`, `Sparkline`, `Scrollbar`/
-`ScrollbarState`, `List`/`ListState`, and `Cell`/`Row`; the boards and
-settings keep their hand-composed cards. No crate was added, so the
-one-static-binary contract is unchanged.
+`Tabs`, `Table`/`TableState`, `LineGauge`, `Gauge`, `BarChart`, `Chart`
+with `Axis`/`Dataset`, `Sparkline`, `Scrollbar`/`ScrollbarState`,
+`List`/`ListState`, and `Cell`/`Row`; the settings and the project cards
+keep their hand-composed cards, because that is what reads best at
+their widths. No crate was added, so the one-static-binary contract is
+unchanged.
 
-The 0.30 traps are respected: the gauge's ratio is clamped, the
-scrollbar's content length is only rendered when it is non-zero, and
-the deprecated `Table::highlight_style`, `LineGauge::line_set`, and
+The 0.30 traps are respected: both gauges clamp their ratio, the
+scrollbar is drawn only when the content overflows, the chart's axis
+labels are edge labels at 42 columns, and the deprecated
+`Table::highlight_style`, `LineGauge::line_set`, and
 `LineGauge::gauge_style` are not used.
 
 ## Verification
 
 The state machine and key mapping are tested without a terminal; the
-renderer uses `TestBackend` at 120×40, 80×24, and a 20×20
+renderer uses `TestBackend` at 120×40/42, 80×24/25, and a 20×20
 does-not-panic case, asserting the rendered text and, where precision
-matters, the buffer cells and cursor. A live terminal pass in tmux
+matters, the buffer cells and cursor. The board tests pin the charts at
+the wide size and their collapse at 80×24. A live terminal pass in tmux
 covers the run card, stop/steer, plan mode, the palette, sessions,
-checkpoints, the diff and confirm, and every knowledge panel.
+checkpoints, the diff and confirm, every knowledge panel, and the
+composed boards.

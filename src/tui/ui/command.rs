@@ -66,10 +66,19 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &App) {
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("\u{25b8} ");
-        let mut state = ListState::default().with_selected(Some(
-            app.palette_selected.min(items.len().saturating_sub(1)),
-        ));
-        frame.render_stateful_widget(list, list_area, &mut state);
+        let selected = app.palette_selected.min(items.len().saturating_sub(1));
+        let visible = list_area.height as usize;
+        let offset = selected.saturating_sub(visible.saturating_sub(1));
+        let overflow = items.len() > visible;
+        let table_area = Rect {
+            width: list_area.width.saturating_sub(u16::from(overflow)),
+            ..list_area
+        };
+        let mut state = ListState::default()
+            .with_offset(offset)
+            .with_selected(Some(selected));
+        frame.render_stateful_widget(list, table_area, &mut state);
+        super::widgets::scrollbar(frame, list_area, items.len(), offset, visible);
     }
     let hint = Line::from(Span::styled(
         " type to filter \u{b7} \u{2191}\u{2193} move \u{b7} enter pick \u{b7} esc close",

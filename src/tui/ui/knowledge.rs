@@ -112,9 +112,21 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &App) {
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▸ ");
+    let overflow = rows.len() > list_inner.height.saturating_sub(1) as usize;
+    let table_area = Rect {
+        width: list_inner.width.saturating_sub(u16::from(overflow)),
+        ..list_inner
+    };
     let mut state =
         TableState::default().with_selected(Some(app.selected.min(rows.len().saturating_sub(1))));
-    frame.render_stateful_widget(table, list_inner, &mut state);
+    frame.render_stateful_widget(table, table_area, &mut state);
+    super::widgets::scrollbar(
+        frame,
+        list_inner,
+        rows.len(),
+        state.offset(),
+        table_area.height.saturating_sub(1) as usize,
+    );
 }
 
 fn render_detail(
