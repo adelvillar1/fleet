@@ -4,13 +4,21 @@
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Cell, Clear, LineGauge, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Table, TableState, Tabs, Wrap,
+};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use super::app::{App, Entry, Mode, SettingsRow, ToolStatus};
+use super::app::{App, Entry, Mode, Pane, SettingsRow, ToolStatus};
 use crate::boards::{self, BoardData, BoardKind, Section, Slot};
 use crate::lanes::LaneState;
+
+mod command;
+mod knowledge;
+mod run;
+mod trust;
 
 /// The palette. One home per role, so the surface stays coherent as later
 /// slices extend it.
@@ -27,6 +35,8 @@ mod palette {
     pub const DONE: Color = Color::Green;
     pub const WORKING: Color = Color::Yellow;
     pub const IDLE: Color = Color::Green;
+    /// Text drawn on an accent-filled cell, as the palette's selection is.
+    pub const ON_ACCENT: Color = Color::Black;
 }
 
 /// The board pane's width. Slice 3 mounted the pane at 26 columns as a
@@ -36,10 +46,17 @@ mod palette {
 /// the rest.
 const BOARD_WIDTH: u16 = 42;
 
+/// The pane needs this much room beside a usable conversation. Below it
+/// the right column folds into the one-line run strip above the input.
+const PANE_MIN_WIDTH: u16 = 80;
+
 /// Draw one frame.
 pub fn render(frame: &mut Frame<'_>, app: &App) {
-    let [main, error_bar, status, input, footer] = Layout::vertical([
+    let pane = frame.area().width >= PANE_MIN_WIDTH;
+    let strip = !pane && (app.run.active || app.run.stop_reason.is_some());
+    let [main, strip_bar, error_bar, status, input, footer] = Layout::vertical([
         Constraint::Min(3),
+        Constraint::Length(if strip { 1 } else { 0 }),
         Constraint::Length(if app.error.is_some() { 1 } else { 0 }),
         Constraint::Length(1),
         Constraint::Length(5),
@@ -47,17 +64,23 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     ])
     .areas(frame.area());
 
-    let [conversation, board] =
-        Layout::horizontal([Constraint::Min(20), Constraint::Length(BOARD_WIDTH)]).areas(main);
-
-    render_conversation(frame, app, conversation);
-    render_board(frame, app, board);
+    if pane {
+        let [conversation, right] =
+            Layout::horizontal([Constraint::Min(20), Constraint::Length(BOARD_WIDTH)]).areas(main);
+        render_conversation(frame, app, conversation);
+        render_pane(frame, app, right);
+    } else {
+        render_conversation(frame, app, main);
+        if strip {
+            run::render_strip(frame, app, strip_bar);
+        }
+    }
     if let Some(message) = &app.error {
         render_error(frame, message, error_bar);
     }
     render_status(frame, app, status);
     render_input(frame, app, input);
-    render_footer(frame, footer);
+    render_footer(frame, app, footer);
 
     match app.mode {
         Mode::Chat => {}
@@ -67,6 +90,54 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Mode::Explain => render_explain(frame, app),
         Mode::Settings | Mode::SettingsEdit => render_settings(frame, app),
         Mode::SettingsConfirm => render_settings_confirm(frame, app),
+        Mode::Run => run::render_controls(frame, app),
+        Mode::Steer => run::render_steer(frame, app),
+        Mode::Palette => command::render(frame, app),
+        Mode::Checkpoints => trust::render_checkpoints(frame, app),
+        Mode::Diff => trust::render_diff(frame, app),
+        Mode::Confirm => trust::render_confirm(frame, app),
+        Mode::Panel => knowledge::render(frame, app),
+    }
+}
+
+/// The right pane: a real tab row over the run card or a board. The
+/// tabs are what replaced the invisible Ctrl-B cycle; the key still
+/// moves between them, but the owner can see where they are.
+fn render_pane(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    if area.height == 0 {
+        return;
+    }
+    let [tabs_area, content] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
+    let show_run = app.pane == Pane::Run;
+    // The board tab follows the board the refresher is pointed at, which
+    // is also the board the pane renders. A test or a direct set of
+    // `boards.active` therefore stays coherent without a second field
+    // to keep in step.
+    let selected = if show_run {
+        0
+    } else {
+        1 + match app.boards.active {
+            BoardKind::Router => 0,
+            BoardKind::Brain => 1,
+            BoardKind::Tower => 2,
+        }
+    };
+    let titles = Pane::ALL.iter().map(|pane| pane.label());
+    let tabs = Tabs::new(titles)
+        .select(selected)
+        .style(Style::new().fg(palette::DIM))
+        .highlight_style(
+            Style::new()
+                .fg(palette::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )
+        .divider(" ");
+    frame.render_widget(tabs, tabs_area);
+    if show_run {
+        run::render(frame, app, content);
+    } else {
+        render_board(frame, app, content, app.boards.active);
     }
 }
 
@@ -401,31 +472,37 @@ fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
         return;
     }
 
+    // One column for the scrollbar, reserved whenever there is room: a
+    // bar that appears and disappears reflows the whole conversation.
+    let bar_area = (inner.width > 12).then(|| Rect {
+        x: inner.x + inner.width - 1,
+        y: inner.y,
+        width: 1,
+        height: inner.height,
+    });
+    let text_width = inner
+        .width
+        .saturating_sub(if bar_area.is_some() { 1 } else { 0 });
+    let entries = app.conversation_lines();
     let mut lines: Vec<Line<'_>> = Vec::new();
-    for entry in app.conversation_lines() {
-        lines.extend(entry_lines(&entry, inner.width as usize));
+    for entry in &entries {
+        lines.extend(entry_lines(entry, text_width as usize));
     }
+    lines.extend(run::plan_lines(app, text_width as usize));
     // A fresh session is not an empty void: the pane says what this is and
-    // what to do, so the first frame reads as intentional rather than broken.
+    // what to do, so the first frame reads as intentional rather than
+    // broken. The session-start skills card is the one entry that is not
+    // a conversation, so the welcome still leads when it is the only one.
+    let only_skills = entries.len() == 1 && matches!(&entries[0], Entry::Skills(_));
     if lines.is_empty() {
-        let welcome = Text::from(vec![
-            Line::from(Span::styled(
-                "fleet",
-                Style::new()
-                    .fg(palette::ACCENT)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "a native agent on this machine.",
-                Style::new().fg(palette::TEXT),
-            )),
-            Line::from(Span::styled(
-                "type a task below — tools ask before they run.",
-                Style::new().fg(palette::DIM),
-            )),
-        ]);
-        frame.render_widget(Paragraph::new(welcome), inner);
+        frame.render_widget(Paragraph::new(Text::from(welcome_lines(app))), inner);
         return;
+    }
+    if only_skills {
+        let mut with_welcome = welcome_lines(app);
+        with_welcome.push(Line::from(""));
+        with_welcome.extend(lines);
+        lines = with_welcome;
     }
     let total = lines.len();
     let visible = inner.height as usize;
@@ -437,7 +514,77 @@ fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     };
     let paragraph =
         Paragraph::new(Text::from(lines)).scroll((offset.min(u16::MAX as usize) as u16, 0));
-    frame.render_widget(paragraph, inner);
+    let text_area = bar_area
+        .map(|_| Rect {
+            width: inner.width.saturating_sub(1),
+            ..inner
+        })
+        .unwrap_or(inner);
+    frame.render_widget(paragraph, text_area);
+    if let Some(bar) = bar_area {
+        // A bar with nothing to say is not drawn; `content_length == 0`
+        // renders nothing anyway, but the branch makes that explicit.
+        if total > visible {
+            let mut state = ScrollbarState::new(total)
+                .position(offset)
+                .viewport_content_length(visible);
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .style(Style::new().fg(palette::DIM)),
+                bar,
+                &mut state,
+            );
+        }
+    }
+}
+
+/// The opening card: what this is, what to do, and what the machine
+/// already holds. Used both when the conversation is empty and when the
+/// only thing on screen is the library's session-start report.
+fn welcome_lines(app: &App) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "fleet",
+            Style::new()
+                .fg(palette::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "a native agent on this machine.",
+            Style::new().fg(palette::TEXT),
+        )),
+        Line::from(Span::styled(
+            "type a task below — tools ask before they run.",
+            Style::new().fg(palette::DIM),
+        )),
+    ];
+    if let Some(said) = welcome_facts(app) {
+        lines.push(Line::from(Span::styled(
+            said,
+            Style::new().fg(palette::DIM),
+        )));
+    }
+    lines
+}
+
+/// The one welcome line the opening board reads can already answer. It
+/// is absent while the opening reads are in flight, not a zero that
+/// would read as "this machine holds nothing".
+fn welcome_facts(app: &App) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(BoardData::Router(snapshot)) = &app.boards.slot(BoardKind::Router).snapshot {
+        if let Some(totals) = &snapshot.totals {
+            parts.push(format!("{} route calls today", totals.calls));
+        }
+    }
+    if let Some(BoardData::Tower(snapshot)) = &app.boards.slot(BoardKind::Tower).snapshot {
+        parts.push(format!("{} projects", snapshot.projects.len()));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!(" {}", parts.join(" \u{b7} ")))
+    }
 }
 
 /// The board pane: one of the three read-only surfaces, whichever is
@@ -446,8 +593,7 @@ fn render_conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
 /// named line beside the time of the last good read. A healthy board names
 /// its own read time on that same line, so the age of the data on screen
 /// is never a thing the operator has to guess at.
-fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let kind = app.boards.active;
+fn render_board(frame: &mut Frame<'_>, app: &App, area: Rect, kind: BoardKind) {
     let slot = app.boards.slot(kind);
     let block = Block::bordered()
         .title(format!(" board \u{2014} {} ", kind.label()))
@@ -1346,6 +1492,15 @@ fn render_error(frame: &mut Frame<'_>, message: &str, area: Rect) {
 /// The status bar: model, session, turn, tokens, and the run's state.
 fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let status = &app.status;
+    // The context gauge gets its own cells on the right where the bar is
+    // wide enough; on a narrow terminal the status line stands alone.
+    let (line_area, gauge_area) = if area.width >= 80 {
+        let [left, right] =
+            Layout::horizontal([Constraint::Min(40), Constraint::Length(18)]).areas(area);
+        (left, Some(right))
+    } else {
+        (area, None)
+    };
     let (dot, state) = if status.working {
         (palette::WORKING, "working")
     } else {
@@ -1423,13 +1578,25 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // instruction routed under and the fact count. Slice 8 part 2's
     // half of the turn-path surfacing — the `memory` record's live
     // counterpart, and absent on a run whose assembly was empty.
-    // The active board, so the pane's title is never the only place the
-    // surface is named.
-    spans.push(Span::styled("  board ", Style::new().fg(palette::DIM)));
-    spans.push(Span::styled(
-        app.boards.active.label(),
-        Style::new().fg(palette::ACCENT),
-    ));
+    // Plan mode is a composer toggle with consequences for the next
+    // run, so it belongs where the owner types, not only in the run card.
+    if app.run.plan {
+        spans.push(Span::styled("  plan ", Style::new().fg(palette::DIM)));
+        spans.push(Span::styled("on", Style::new().fg(palette::PENDING)));
+    }
+    // The active surface, so the pane's title is never the only place
+    // it is named. The run tab names itself; the board tabs name the
+    // board the refresher is pointed at.
+    if app.pane == Pane::Run {
+        spans.push(Span::styled("  pane ", Style::new().fg(palette::DIM)));
+        spans.push(Span::styled("run", Style::new().fg(palette::ACCENT)));
+    } else {
+        spans.push(Span::styled("  board ", Style::new().fg(palette::DIM)));
+        spans.push(Span::styled(
+            app.boards.active.label(),
+            Style::new().fg(palette::ACCENT),
+        ));
+    }
     if let Some((shape, facts)) = &status.memory {
         spans.push(Span::styled("  memory ", Style::new().fg(palette::DIM)));
         let named = if shape.is_empty() {
@@ -1451,7 +1618,7 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // narrow bar drops — in that order. The session id is the last to
     // go, because it is already abbreviated and its tail is the part
     // that identifies the log.
-    let width = area.width as usize;
+    let width = line_area.width as usize;
     // The boundaries: the spans are built in a fixed order, and the
     // budget walks them by priority group rather than by position.
     let total = spans.iter().map(|span| span.width()).sum::<usize>();
@@ -1473,7 +1640,35 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         }
         Line::from(kept)
     };
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(Paragraph::new(line), line_area);
+    if let Some(gauge_area) = gauge_area {
+        render_context_gauge(frame, app, gauge_area);
+    }
+}
+
+/// The context meter: the last request's prompt against the compaction
+/// budget. A gauge, not a second number in the bar, because the shape is
+/// the point — how full the window is before the next fold.
+fn render_context_gauge(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let budget = crate::compaction::COMPACTION_TOKEN_BUDGET as f64;
+    let ratio = if budget > 0.0 {
+        (app.run.context as f64 / budget).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let percent = (ratio * 100.0).round() as u16;
+    let gauge = LineGauge::default()
+        .ratio(ratio)
+        .label(format!("ctx {percent}%"))
+        .filled_style(Style::new().fg(if percent >= 90 {
+            palette::DENIED
+        } else if percent >= 70 {
+            palette::PENDING
+        } else {
+            palette::ACCENT
+        }))
+        .unfilled_style(Style::new().fg(palette::DIM));
+    frame.render_widget(gauge, area);
 }
 
 /// The input box with its cursor.
@@ -1501,10 +1696,14 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
     }
 }
 
-/// The key hints.
-fn render_footer(frame: &mut Frame<'_>, area: Rect) {
-    let hints =
-        "enter send · ctrl+o sessions · ctrl+l lanes · ctrl+, settings · ctrl+x explain · ctrl+b board · q quit";
+/// The key hints. The run's own controls lead while it is in flight; the
+/// rest of the keys stay for the idle face.
+fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let hints = if app.run.active {
+        "enter send \u{b7} ctrl+p palette \u{b7} ctrl+r run controls \u{b7} ctrl+t plan \u{b7} ctrl+o sessions \u{b7} ctrl+k checkpoints \u{b7} q quit"
+    } else {
+        "enter send \u{b7} ctrl+p palette \u{b7} ctrl+r run \u{b7} ctrl+t plan \u{b7} ctrl+o sessions \u{b7} ctrl+k checkpoints \u{b7} ctrl+l lanes \u{b7} ctrl+, settings \u{b7} q quit"
+    };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             hints,
@@ -1578,7 +1777,10 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
     let area = centered(78, 62, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::bordered()
-        .title(" sessions — enter resume, esc close ")
+        .title(format!(
+            " sessions — {} · f filter · enter resume, esc close ",
+            app.session_filter.label()
+        ))
         .title_style(title_style())
         .border_style(Style::new().fg(palette::ACCENT));
     let inner = block.inner(area);
@@ -1597,56 +1799,109 @@ fn render_picker(frame: &mut Frame<'_>, app: &App) {
         );
         return;
     }
-
-    let visible = inner.height as usize;
-    // Keep the selection in view.
-    let first = app.selected.saturating_sub(visible.saturating_sub(1));
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    for (index, summary) in app.sessions.iter().enumerate().skip(first).take(visible) {
-        let selected = index == app.selected;
-        let marker = if selected { "▸" } else { " " };
-        let (dot, state) = if summary.ended {
-            (palette::DONE, "ended")
-        } else {
-            (palette::PENDING, "open")
-        };
-        let current = summary.id == app.status.session_id;
-        let mut spans = vec![
-            Span::styled(format!("{marker} "), Style::new().fg(palette::ACCENT)),
-            Span::styled("● ", Style::new().fg(dot)),
-            Span::styled(
-                summary.id.clone(),
-                if selected {
-                    Style::new().fg(palette::TEXT).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::new().fg(palette::TEXT)
-                },
-            ),
-            Span::styled(
-                format!("  {}  ", summary.model),
+    let rows = app.session_rows();
+    if rows.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(
+                    " no session matches {} · f cycles the filter",
+                    app.session_filter.label()
+                ),
                 Style::new().fg(palette::DIM),
-            ),
-            Span::styled(state, Style::new().fg(dot)),
-        ];
-        if current {
-            spans.push(Span::styled(
-                "  (current)",
-                Style::new().fg(palette::ACCENT),
-            ));
-        }
-        // A delegated child's log is an ordinary session with a marker:
-        // the picker says so, so a resumed child reads as what it is.
-        if summary.kind.as_deref() == Some(crate::session::SUBAGENT_KIND) {
-            spans.push(Span::styled("  subagent", Style::new().fg(palette::DIM)));
-        }
-        // A compacted session replays as a compacted shape, so the picker
-        // marks it before it is opened rather than after.
-        if summary.compacted {
-            spans.push(Span::styled("  compacted", Style::new().fg(palette::DIM)));
-        }
-        lines.push(Line::from(spans));
+            ))),
+            inner,
+        );
+        return;
     }
-    frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+
+    let header = Row::new(vec![
+        Cell::from("id"),
+        Cell::from("served by"),
+        Cell::from("state"),
+        Cell::from("marks"),
+        Cell::from("started"),
+    ])
+    .style(Style::new().fg(palette::DIM).add_modifier(Modifier::BOLD));
+    let body: Vec<Row> = rows
+        .iter()
+        .map(|summary| {
+            let (dot, state) = if summary.ended {
+                (palette::DONE, "● ended")
+            } else {
+                (palette::PENDING, "● open")
+            };
+            let mut marks: Vec<&str> = Vec::new();
+            if summary.id == app.status.session_id {
+                marks.push("current");
+            }
+            if summary.kind.as_deref() == Some(crate::session::SUBAGENT_KIND) {
+                marks.push("subagent");
+            }
+            if summary.compacted {
+                marks.push("compacted");
+            }
+            Row::new(vec![
+                Cell::from(session_label(&summary.id)),
+                Cell::from(summary.serving_model().unwrap_or("routing…").to_string()),
+                Cell::from(state).style(Style::new().fg(dot)),
+                Cell::from(marks.join(" · ")).style(Style::new().fg(palette::DIM)),
+                Cell::from(short_stamp(&summary.created)).style(Style::new().fg(palette::DIM)),
+            ])
+        })
+        .collect();
+    let table = Table::new(
+        body,
+        [
+            // The highlight symbol eats two cells of the first column.
+            Constraint::Length(22),
+            Constraint::Length(15),
+            Constraint::Length(9),
+            Constraint::Length(12),
+            Constraint::Min(10),
+        ],
+    )
+    .header(header)
+    .column_spacing(1)
+    .row_highlight_style(
+        Style::new()
+            .bg(palette::ACCENT)
+            .fg(palette::ON_ACCENT)
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("▸ ");
+    let mut state =
+        TableState::default().with_selected(Some(app.selected.min(rows.len().saturating_sub(1))));
+    frame.render_stateful_widget(table, inner, &mut state);
+}
+
+/// A session id as the picker reads it: the day, the minute, and the
+/// hash — enough to tell two runs apart without spelling 27 characters.
+fn session_label(id: &str) -> String {
+    let bytes = id.as_bytes();
+    if bytes.len() >= 16 && bytes.get(8) == Some(&b'T') && bytes.get(15) == Some(&b'Z') {
+        let hash: String = id
+            .rsplit_once('-')
+            .map(|(_, hash)| hash.chars().take(6).collect())
+            .unwrap_or_default();
+        if let (Some(month), Some(day), Some(hour), Some(minute)) =
+            (id.get(4..6), id.get(6..8), id.get(9..11), id.get(11..13))
+        {
+            return format!("{month}-{day} {hour}:{minute} \u{b7} {hash}");
+        }
+    }
+    id.chars().take(20).collect()
+}
+
+/// A session's created stamp, shortened to the part a picker reads. The
+/// archive's ids are the same stamp, so this is a rendering of the id's
+/// own prefix rather than a second date.
+fn short_stamp(stamp: &str) -> String {
+    let text = String::from(stamp);
+    if text.len() >= 16 && text.as_bytes().get(10) == Some(&b'T') {
+        format!("{} {}", &text[5..10], &text[11..16])
+    } else {
+        text.chars().take(16).collect()
+    }
 }
 
 /// The lanes modal's height in rows: one row per rendered line, the
@@ -2017,6 +2272,98 @@ fn wrapped(indent: &str, text: &str, style: Style, width: usize) -> Vec<Line<'st
 
 /// One conversation entry as wrapped lines: tool calls are cards with a
 /// status dot and a result preview.
+/// The assistant's text with the little markdown the model actually
+/// writes: headings, bullets, numbered steps, fenced code, and inline
+/// code. A full parser is not the job; a terminal that shows `##` and
+/// backticks raw reads worse than the words.
+fn markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+    let width = width.max(8);
+    let mut lines = Vec::new();
+    let mut fence = false;
+    for raw in text.lines() {
+        if raw.trim_start().starts_with("```") {
+            fence = !fence;
+            continue;
+        }
+        if fence {
+            for chunk in wrap(raw, width.saturating_sub(3).max(4)) {
+                lines.push(Line::from(vec![
+                    Span::styled(" \u{2502} ", Style::new().fg(palette::DIM)),
+                    Span::styled(chunk, Style::new().fg(palette::DIM)),
+                ]));
+            }
+            continue;
+        }
+        let trimmed = raw.trim_end();
+        if trimmed.is_empty() {
+            lines.push(Line::from(""));
+            continue;
+        }
+        if let Some((level, title)) = heading(trimmed) {
+            let style = Style::new()
+                .fg(if level <= 2 {
+                    palette::ACCENT
+                } else {
+                    palette::TEXT
+                })
+                .add_modifier(Modifier::BOLD);
+            for chunk in wrap(title, width) {
+                lines.push(Line::from(Span::styled(chunk, style)));
+            }
+            continue;
+        }
+        let (prefix, rest) = if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "))
+        {
+            ("\u{2022} ", rest)
+        } else {
+            ("", trimmed)
+        };
+        let room = width.saturating_sub(prefix.width()).max(4);
+        for (index, chunk) in wrap(rest, room).into_iter().enumerate() {
+            let mut spans = Vec::new();
+            if index == 0 && !prefix.is_empty() {
+                spans.push(Span::styled(prefix, Style::new().fg(palette::DIM)));
+            } else if !prefix.is_empty() {
+                spans.push(Span::styled("  ", Style::new()));
+            }
+            spans.extend(inline_spans(&chunk));
+            lines.push(Line::from(spans));
+        }
+    }
+    lines
+}
+
+fn heading(line: &str) -> Option<(usize, &str)> {
+    let hashes = line.chars().take_while(|c| *c == '#').count();
+    if hashes == 0 || hashes > 4 {
+        return None;
+    }
+    let title = line[hashes..].trim_start();
+    (!title.is_empty()).then_some((hashes, title))
+}
+
+/// Inline code: backtick spans in the accent, the rest in the text
+/// colour. Paired by position; an unbalanced backtick styles the tail.
+fn inline_spans(text: &str) -> Vec<Span<'static>> {
+    text.split('`')
+        .enumerate()
+        .filter(|(_, piece)| !piece.is_empty())
+        .map(|(index, piece)| {
+            Span::styled(
+                piece.to_string(),
+                if index % 2 == 1 {
+                    Style::new().fg(palette::ACCENT)
+                } else {
+                    Style::new().fg(palette::TEXT)
+                },
+            )
+        })
+        .collect()
+}
+
 fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
     let width = width.max(8);
     match entry {
@@ -2041,10 +2388,7 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                 }
             })
             .collect(),
-        Entry::Assistant(text) => wrap(text, width)
-            .into_iter()
-            .map(|chunk| Line::from(Span::styled(chunk, Style::new().fg(palette::TEXT))))
-            .collect(),
+        Entry::Assistant(text) => markdown_lines(text, width),
         Entry::Tool(card) => {
             let (dot, state) = match card.status {
                 ToolStatus::Pending => (palette::PENDING, "pending"),
@@ -2882,11 +3226,11 @@ mod tests {
             served_model: None,
             path: std::path::PathBuf::from("/tmp/x.jsonl"),
         }]);
-        let picker = draw(&app, 80, 24);
+        let picker = draw(&app, 120, 40);
         assert!(picker.contains("sessions"), "{picker}");
-        assert!(picker.contains("20261013T101010Z-abcdef"), "{picker}");
+        assert!(picker.contains("abcdef"), "{picker}");
         assert!(picker.contains("ended"), "{picker}");
-        assert!(picker.contains("(current)"), "{picker}");
+        assert!(picker.contains("current"), "{picker}");
         // An ordinary session carries no compaction marker.
         assert!(!picker.contains("compacted"), "{picker}");
 
@@ -2903,12 +3247,9 @@ mod tests {
             served_model: None,
             path: std::path::PathBuf::from("/tmp/child.jsonl"),
         }]);
-        let child_picker = draw(&children, 80, 24);
+        let child_picker = draw(&children, 120, 40);
         assert!(child_picker.contains("subagent"), "{child_picker}");
-        assert!(
-            child_picker.contains("20261013T111111Z-fedcba"),
-            "{child_picker}"
-        );
+        assert!(child_picker.contains("fedcba"), "{child_picker}");
 
         // A compacted session replays as a compacted shape, so the picker
         // marks it before it is opened.
@@ -2923,12 +3264,9 @@ mod tests {
             served_model: None,
             path: std::path::PathBuf::from("/tmp/folded.jsonl"),
         }]);
-        let folded_picker = draw(&folded, 80, 24);
+        let folded_picker = draw(&folded, 120, 40);
         assert!(folded_picker.contains("compacted"), "{folded_picker}");
-        assert!(
-            folded_picker.contains("20261013T121212Z-cabbag"),
-            "{folded_picker}"
-        );
+        assert!(folded_picker.contains("cabbag"), "{folded_picker}");
 
         // The approval modal.
         let mut approving = fresh();
@@ -3393,7 +3731,9 @@ mod tests {
             crate::boards::BoardKind::Router,
             crate::boards::BoardData::Router(Box::new(router_snapshot())),
         );
-        let drawn = draw(&app, 120, 40);
+        // One row more than the old board-only layout: the tab row is
+        // the pane's new title line.
+        let drawn = draw(&app, 120, 42);
         // The pane's title names the board, and the status bar repeats it.
         assert!(drawn.contains("board \u{2014} router"), "{drawn}");
         assert!(drawn.contains("board router"), "{drawn}");
@@ -3434,7 +3774,7 @@ mod tests {
         // A second cycle moves to the second-brain board.
         app.apply(crate::tui::app::Action::CycleBoard);
         assert_eq!(app.boards.active, crate::boards::BoardKind::Brain);
-        let cycled = draw(&app, 120, 40);
+        let cycled = draw(&app, 120, 42);
         assert!(cycled.contains("board \u{2014} second-brain"), "{cycled}");
         assert!(cycled.contains("board second-brain"), "{cycled}");
     }
@@ -3678,7 +4018,8 @@ mod tests {
             crate::boards::BoardKind::Router,
             crate::boards::BoardData::Router(Box::new(snapshot)),
         );
-        for (width, height) in [(120, 40), (80, 24)] {
+        // The tab row costs one line from the old board-only layout.
+        for (width, height) in [(120, 42), (80, 25)] {
             let drawn = draw(&app, width, height);
             assert!(drawn.contains("no route rows today"), "{width}: {drawn}");
             // The chain is what a route selects, so it renders regardless.
@@ -4243,6 +4584,178 @@ mod tests {
         assert!(
             named.contains("session 20261017T090000Z-abcdef"),
             "the created session's id is named: {named}"
+        );
+    }
+
+    fn running_app() -> App {
+        let mut app = fresh();
+        app.set_gate(Some(true));
+        app.apply(crate::tui::app::Action::Input('g'));
+        app.apply(crate::tui::app::Action::Submit);
+        app.apply_ui_event(UiEvent::Routed {
+            provider: "stepfun".to_string(),
+            model: "step-5-preview".to_string(),
+            how: "judged".to_string(),
+            workload: Some("standard_code".to_string()),
+            verdict: Some("pass".to_string()),
+            judged_from: "fresh".to_string(),
+            reason: "the orchestrator walks hard's chain".to_string(),
+            order: vec![("stepfun".to_string(), "step-5-preview".to_string())],
+        });
+        app.apply_ui_event(UiEvent::Turn(2));
+        app.apply_ui_event(UiEvent::ToolCall {
+            name: "bash".to_string(),
+            summary: "cargo test".to_string(),
+        });
+        app.apply_ui_event(UiEvent::Subagent {
+            goal: "read the router".to_string(),
+            session: "20261020T000000Z-abcdef".to_string(),
+            stage: crate::agent::SubagentStage::Working {
+                calls: 2,
+                tool: "bash".to_string(),
+            },
+        });
+        app.apply_ui_event(UiEvent::Usage {
+            prompt_tokens: 33_360,
+            completion_tokens: 3,
+        });
+        app
+    }
+
+    #[test]
+    fn the_run_pane_shows_the_loop_the_gate_and_the_controls() {
+        let app = running_app();
+        let drawn = draw(&app, 120, 40);
+        assert!(drawn.contains("the run"), "{drawn}");
+        assert!(drawn.contains("in flight"), "{drawn}");
+        assert!(drawn.contains("route"), "{drawn}");
+        assert!(drawn.contains("think"), "{drawn}");
+        assert!(drawn.contains("act"), "{drawn}");
+        assert!(drawn.contains("verify"), "{drawn}");
+        assert!(drawn.contains("gate on \u{b7} sys1"), "{drawn}");
+        assert!(drawn.contains("[s] stop"), "{drawn}");
+        assert!(drawn.contains("[i] steer"), "{drawn}");
+        assert!(drawn.contains("branches 1"), "{drawn}");
+        assert!(drawn.contains("abcdef"), "{drawn}");
+        // The gauge names the context the last request carried.
+        assert!(drawn.contains("ctx 33%"), "{drawn}");
+    }
+
+    #[test]
+    fn the_narrow_layout_keeps_the_run_strip_and_no_pane() {
+        let app = running_app();
+        let drawn = draw(&app, 60, 24);
+        assert!(drawn.contains("in flight"), "{drawn}");
+        assert!(drawn.contains("[ctrl-r]"), "{drawn}");
+        assert!(!drawn.contains("the run "), "{drawn}");
+    }
+
+    #[test]
+    fn the_run_controls_overlay_names_the_branches_and_the_two_verbs() {
+        let mut app = running_app();
+        app.apply(crate::tui::app::Action::OpenRunControls);
+        let drawn = draw(&app, 120, 40);
+        assert!(drawn.contains("run controls"), "{drawn}");
+        assert!(drawn.contains("stop"), "{drawn}");
+        assert!(drawn.contains("steer"), "{drawn}");
+        assert!(drawn.contains("read the router"), "{drawn}");
+        // The steer editor is its own one-line modal.
+        app.apply(crate::tui::app::Action::OpenSteer);
+        for character in "one word".chars() {
+            app.apply(crate::tui::app::Action::Input(character));
+        }
+        let steered = draw(&app, 120, 40);
+        assert!(steered.contains("steer the run"), "{steered}");
+        assert!(steered.contains("one word"), "{steered}");
+    }
+
+    #[test]
+    fn the_checkpoints_table_names_the_turns_and_the_diff_names_the_hunks() {
+        let mut app = fresh();
+        app.open_checkpoints(vec![crate::checkpoints::Snapshot {
+            turn: 4,
+            at: "2026-10-20T00:00:00Z".to_string(),
+            files: 407,
+            bytes: 20_516_618,
+            unread: 0,
+        }]);
+        let checkpoints = draw(&app, 120, 40);
+        assert!(checkpoints.contains("checkpoints"), "{checkpoints}");
+        assert!(checkpoints.contains("turn"), "{checkpoints}");
+        assert!(checkpoints.contains("407"), "{checkpoints}");
+
+        app.open_diff(
+            4,
+            vec![crate::checkpoints::FileDiff {
+                path: "src/lib.rs".to_string(),
+                kind: crate::checkpoints::DiffKind::Modified,
+                hunks: vec![crate::checkpoints::Hunk {
+                    old: vec!["old line".to_string()],
+                    new: vec!["new line".to_string()],
+                    new_at: 2,
+                }],
+                too_large: false,
+            }],
+        );
+        let diff = draw(&app, 120, 40);
+        assert!(diff.contains("diff \u{2014} turn 4"), "{diff}");
+        assert!(diff.contains("src/lib.rs"), "{diff}");
+        assert!(diff.contains("modified"), "{diff}");
+        assert!(diff.contains("old line"), "{diff}");
+        assert!(diff.contains("new line"), "{diff}");
+        assert!(diff.contains("r rejects the hunk"), "{diff}");
+
+        app.arm_reject_hunk();
+        let confirm = draw(&app, 120, 40);
+        assert!(confirm.contains("reject hunk 1 of src/lib.rs"), "{confirm}");
+        assert!(confirm.contains("[y] land it"), "{confirm}");
+    }
+
+    #[test]
+    fn the_welcome_names_what_the_opening_boards_hold() {
+        let mut app = fresh();
+        app.boards.apply(
+            BoardKind::Router,
+            Ok(BoardData::Router(Box::new(router_snapshot()))),
+        );
+        app.boards.apply(
+            BoardKind::Tower,
+            Ok(BoardData::Tower(Box::new(tower_snapshot()))),
+        );
+        let drawn = draw(&app, 120, 40);
+        assert!(drawn.contains("route calls today"), "{drawn}");
+        assert!(drawn.contains("projects"), "{drawn}");
+    }
+
+    #[test]
+    fn a_knowledge_panel_names_itself_and_its_loading_state() {
+        let mut app = fresh();
+        let generation = app.open_panel(crate::tui::app::PanelKind::Memory);
+        let loading = draw(&app, 120, 40);
+        assert!(loading.contains("memory \u{2014} all"), "{loading}");
+        assert!(loading.contains("reading the machine"), "{loading}");
+        app.apply_panel(
+            generation,
+            crate::tui::app::PanelKind::Memory,
+            Err("the corpus read did not land".to_string()),
+        );
+        let failed = draw(&app, 120, 40);
+        assert!(
+            failed.contains("the corpus read did not land"),
+            "the panel names the read's own refusal: {failed}"
+        );
+    }
+
+    #[test]
+    fn the_plan_card_offers_the_edit_door() {
+        let mut app = fresh();
+        app.plan_text = Some("the next increment".to_string());
+        let drawn = draw(&app, 120, 40);
+        assert!(drawn.contains("plan ready"), "{drawn}");
+        assert!(drawn.contains("the next increment"), "{drawn}");
+        assert!(
+            drawn.contains("ctrl+e loads it into the message box"),
+            "{drawn}"
         );
     }
 }

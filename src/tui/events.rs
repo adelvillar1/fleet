@@ -24,6 +24,7 @@ pub fn action_for(app: &App, key: &KeyEvent) -> Option<Action> {
             KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
             KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
             KeyCode::Enter => Some(Action::Pick),
+            KeyCode::Char('f') if !control => Some(Action::CycleSessionFilter),
             KeyCode::Esc => Some(Action::CloseOverlay),
             KeyCode::Char('q') if !control => Some(Action::Quit),
             _ => None,
@@ -64,6 +65,73 @@ pub fn action_for(app: &App, key: &KeyEvent) -> Option<Action> {
             KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
             KeyCode::Esc => Some(Action::CloseOverlay),
             KeyCode::Char('q') if !control => Some(Action::Quit),
+            _ => None,
+        },
+        // The run controls: a branch cursor, a stop, and a steer.
+        Mode::Run => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
+            KeyCode::Char('s') if !control => Some(Action::StopRun),
+            KeyCode::Char('i') if !control => Some(Action::OpenSteer),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Char('q') if !control => Some(Action::Quit),
+            _ => None,
+        },
+        // The steer editor: one line, enter sends, esc returns to the
+        // run controls with the text dropped.
+        Mode::Steer => match key.code {
+            KeyCode::Enter => Some(Action::Submit),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Backspace => Some(Action::Backspace),
+            KeyCode::Char(character) if !control && !alt => Some(Action::Input(character)),
+            _ => None,
+        },
+        // One knowledge panel: a cursor, a filter, close.
+        Mode::Panel => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
+            KeyCode::Char('f') if !control => Some(Action::CyclePanelFilter),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Char('q') if !control => Some(Action::Quit),
+            _ => None,
+        },
+        // The checkpoint list: a cursor, a rewind, and a diff.
+        Mode::Checkpoints => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
+            KeyCode::Enter => Some(Action::Pick),
+            KeyCode::Char('d') if !control => Some(Action::OpenDiff),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Char('q') if !control => Some(Action::Quit),
+            _ => None,
+        },
+        // The diff: file and hunk cursors, and the two rejects.
+        Mode::Diff => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::Move(-1)),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::Move(1)),
+            KeyCode::Tab => Some(Action::MoveHunk(1)),
+            KeyCode::BackTab => Some(Action::MoveHunk(-1)),
+            KeyCode::Char('r') if !control => Some(Action::RejectHunk),
+            KeyCode::Char('R') => Some(Action::RejectFile),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Char('q') if !control => Some(Action::Quit),
+            _ => None,
+        },
+        // An armed write is answered or abandoned on any key.
+        Mode::Confirm => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => Some(Action::TrustConfirm),
+            _ => Some(Action::TrustCancel),
+        },
+        // The palette: type to filter, move, pick, close. `j` and `k`
+        // are TEXT here, not movement: every letter belongs to the
+        // filter, and a command named "skills" must be typeable.
+        Mode::Palette => match key.code {
+            KeyCode::Up => Some(Action::Move(-1)),
+            KeyCode::Down => Some(Action::Move(1)),
+            KeyCode::Enter => Some(Action::Pick),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Backspace => Some(Action::Backspace),
+            KeyCode::Char(character) if !control && !alt => Some(Action::Input(character)),
             _ => None,
         },
         // The explanation card is information with a cursor too: it
@@ -110,12 +178,19 @@ fn chat_action(app: &App, key: &KeyEvent, control: bool, alt: bool) -> Option<Ac
         KeyCode::PageUp => Some(Action::Scroll(10)),
         KeyCode::PageDown => Some(Action::Scroll(-10)),
         KeyCode::Char('o') if control => Some(Action::OpenSessions),
+        KeyCode::Char('k') if control => Some(Action::OpenCheckpoints),
         KeyCode::Char('l') if control => Some(Action::OpenLanes),
         KeyCode::Char(',') if control => Some(Action::OpenSettings),
         // The latest explanation card, in the lanes' own ctrl-key family.
         KeyCode::Char('x') if control => Some(Action::OpenExplain),
-        // The board pane's cycle, in the lanes' own ctrl-key family.
+        // The right pane's cycle, in the lanes' own ctrl-key family.
         KeyCode::Char('b') if control => Some(Action::CycleBoard),
+        // The palette, the run controls, plan-mode toggle, and the
+        // ready plan's edit door.
+        KeyCode::Char('p') if control => Some(Action::OpenPalette),
+        KeyCode::Char('r') if control => Some(Action::OpenRunControls),
+        KeyCode::Char('t') if control => Some(Action::TogglePlan),
+        KeyCode::Char('e') if control => Some(Action::LoadPlan),
         KeyCode::Char(character) => {
             if control {
                 // Ctrl+key combinations are commands or nothing, never text.
@@ -436,6 +511,44 @@ mod tests {
         assert_eq!(
             action_for(&app, &key(KeyCode::Enter)),
             Some(Action::Approve(Approval::Denied))
+        );
+    }
+
+    #[test]
+    fn the_run_keys_open_controls_toggle_plan_and_load_the_plan() {
+        let mut app = app();
+        assert_eq!(
+            action_for(&app, &control(KeyCode::Char('r'))),
+            Some(Action::OpenRunControls)
+        );
+        assert_eq!(
+            action_for(&app, &control(KeyCode::Char('t'))),
+            Some(Action::TogglePlan)
+        );
+        assert_eq!(
+            action_for(&app, &control(KeyCode::Char('e'))),
+            Some(Action::LoadPlan)
+        );
+        // The run controls type no text: `s` and `i` are the two verbs.
+        app.mode = Mode::Run;
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('s'))),
+            Some(Action::StopRun)
+        );
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('i'))),
+            Some(Action::OpenSteer)
+        );
+        // The steer editor is a one-line input.
+        app.mode = Mode::Steer;
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Char('x'))),
+            Some(Action::Input('x'))
+        );
+        assert_eq!(action_for(&app, &key(KeyCode::Enter)), Some(Action::Submit));
+        assert_eq!(
+            action_for(&app, &key(KeyCode::Esc)),
+            Some(Action::CloseOverlay)
         );
     }
 

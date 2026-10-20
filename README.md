@@ -47,6 +47,19 @@ Each lane is idempotent and degrades without: a venv that cannot be built — no
 
 ## Commands
 
+### `fleet`
+
+The terminal face: the conversation first, a tabbed right pane (run,
+router, brain, tower), and a status bar with a context gauge. The run
+card shows the route → think → act → verify loop, the live delegation
+branches, and the sys1 gate; `Ctrl-R` stops or steers the run, `Ctrl-T`
+toggles plan mode, `Ctrl-E` loads a finished plan into the message box,
+and `Ctrl-P` opens a command palette over every pane and panel. `Ctrl-K`
+opens the checkpoint store (rewind and diff), and the palette opens the
+memory, skills, calibration, and delegation panels. Sessions are a
+styled table; `f` filters it. See
+[`docs/features/tui.md`](docs/features/tui.md).
+
 ### `fleet install [--lanes]`
 
 Create the home layout (`sessions/`, `memories/`, `skills/`, `cron/`, `proposals/`) and the config scaffold, then run the doctor gate — the install's exit code is the doctor's. Idempotent: re-running names what exists and never rewrites an existing `config.json`. `--lanes` also bootstraps the heavy-lane venvs under `<home>/venvs/<lane>/` (sys1's GLiNER, sdm1's models, sem1's sentence-transformers, gen1's kokoro, blend1's union of the three siblings' sets), each lane skipped by name when it cannot be built. See Quick start above.

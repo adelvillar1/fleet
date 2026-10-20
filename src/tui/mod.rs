@@ -15,6 +15,7 @@
 
 pub mod app;
 pub mod events;
+pub mod panels;
 pub mod ui;
 
 use std::io;
@@ -33,7 +34,7 @@ use crate::api::Client;
 use crate::boards::{self, BoardUpdate};
 use crate::lanes::{self, LaneHealth};
 use crate::route;
-use crate::session::{self, Session};
+use crate::session::{self, Record, Session};
 
 use app::{Action, App, Effect, StatusUpdate};
 use events::action_for;
@@ -57,8 +58,14 @@ pub struct Config {
 enum Command {
     /// Run this task in the current session.
     Run(String),
+    /// Plan this task: the run refuses the write-class tools and its
+    /// final message records as a plan the owner edits.
+    Plan(String),
     /// Append the next run to this session's log.
     Resume(String),
+    /// The view was rewound to this turn: the prepared route answered
+    /// the conversation that is gone, so it is dropped.
+    Rewind(u64),
 }
 
 /// The agent thread's inputs.
@@ -133,6 +140,12 @@ pub fn run(config: Config) -> Result<(), String> {
     });
 
     let mut app = App::new(&config.model, "");
+    // The verify step's gate is the route module's own failover knob,
+    // read once at launch exactly as the browser face reads it per
+    // state request.
+    app.set_gate(Some(
+        route::calibration_config(&config.home).informs_failover,
+    ));
     // The status bar names the routing mode, never the compiled-in
     // default: `deepseek-chat` is the fallback seed and the reserve, and
     // naming it as the model in use is the exact misdirection the route
@@ -142,15 +155,29 @@ pub fn run(config: Config) -> Result<(), String> {
     // business, the provider is the owner's.
     app.status.routing = Some(match route::load_roster(&config.home) {
         Ok(roster) => match roster.pin.as_deref() {
-            Some(pin) => format!(
-                "pinned \u{b7} {}",
-                pin.split('/').next().unwrap_or(pin).trim()
-            ),
+            Some(pin) => {
+                let provider = pin.split('/').next().unwrap_or(pin).trim();
+                // An empty pin is no pin: the router does not read it,
+                // and a bar that says `pinned ·` with nothing after it
+                // is a claim about a decision nobody made.
+                if provider.is_empty() {
+                    "auto".to_string()
+                } else {
+                    format!("pinned \u{b7} {provider}")
+                }
+            }
             None => "auto".to_string(),
         },
         Err(_) => "auto".to_string(),
     });
     let (lanes_tx, lanes_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, Vec<LaneHealth>)>();
+    // The knowledge panels read on their own thread; the generation in
+    // each answer keeps a closed panel from receiving a late one.
+    let (panels_tx, panels_rx) = tokio::sync::mpsc::unbounded_channel::<(
+        u64,
+        app::PanelKind,
+        Result<app::PanelData, String>,
+    )>();
     // The boards: their sources resolved once, exactly the way every
     // credential in this crate resolves (the environment, then the fleet
     // home's `.env`), and one refresher thread that reads all three on
@@ -170,6 +197,8 @@ pub fn run(config: Config) -> Result<(), String> {
         &lanes_tx,
         boards_rx,
         &boards_tx,
+        panels_rx,
+        &panels_tx,
     );
     // The agent thread is detached: it ends between runs once the command
     // channel closes, and the process's exit ends it mid-run, which leaves
@@ -198,6 +227,8 @@ fn event_loop(
     lanes_tx: &UnboundedSender<(u64, Vec<LaneHealth>)>,
     mut boards_rx: UnboundedReceiver<BoardUpdate>,
     boards_tx: &UnboundedSender<boards::BoardCommand>,
+    mut panels_rx: UnboundedReceiver<(u64, app::PanelKind, Result<app::PanelData, String>)>,
+    panels_tx: &UnboundedSender<(u64, app::PanelKind, Result<app::PanelData, String>)>,
 ) -> Result<(), String> {
     let mut pending: Option<ApprovalRequest> = None;
     while !app.should_quit {
@@ -225,6 +256,11 @@ fn event_loop(
         while let Ok(update) = boards_rx.try_recv() {
             app.apply_board(update.kind, update.outcome);
         }
+        // Knowledge-panel reads land here. The generation is the state
+        // machine's guard against a read for a panel already closed.
+        while let Ok((generation, kind, result)) = panels_rx.try_recv() {
+            app.apply_panel(generation, kind, result);
+        }
 
         if ratatui::crossterm::event::poll(POLL)
             .map_err(|error| format!("the keyboard could not be read: {error}"))?
@@ -237,6 +273,7 @@ fn event_loop(
                     command_tx,
                     lanes_tx,
                     boards_tx,
+                    panels_tx,
                     &mut pending,
                 ),
                 // A paste is typing: the text lands in the input box with
@@ -254,7 +291,9 @@ fn event_loop(
 }
 
 /// Translate one key press into state changes and the effects the loop
-/// performs around them.
+/// performs around them. The channels are the wiring itself; bundling
+/// them would not reduce what the function is handed.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_key(
     home: &Path,
     app: &mut App,
@@ -262,11 +301,40 @@ fn dispatch_key(
     command_tx: &UnboundedSender<Command>,
     lanes_tx: &UnboundedSender<(u64, Vec<LaneHealth>)>,
     boards_tx: &UnboundedSender<boards::BoardCommand>,
+    panels_tx: &UnboundedSender<(u64, app::PanelKind, Result<app::PanelData, String>)>,
     pending: &mut Option<ApprovalRequest>,
 ) {
     let Some(action) = action_for(app, key) else {
         return;
     };
+    // A palette pick is an action the loop performs, not an effect the
+    // state machine returns: the chosen command may be a filesystem read
+    // (sessions, settings) or a child-process probe (lanes).
+    if app.mode == crate::tui::app::Mode::Palette && action == Action::Pick {
+        if let Some(chosen) = app.palette_pick() {
+            perform_action(
+                home, app, chosen, command_tx, lanes_tx, boards_tx, panels_tx, pending,
+            );
+        }
+        return;
+    }
+    perform_action(
+        home, app, action, command_tx, lanes_tx, boards_tx, panels_tx, pending,
+    );
+}
+
+/// Perform one action, including the reads the state machine cannot do.
+#[allow(clippy::too_many_arguments)]
+fn perform_action(
+    home: &Path,
+    app: &mut App,
+    action: Action,
+    command_tx: &UnboundedSender<Command>,
+    lanes_tx: &UnboundedSender<(u64, Vec<LaneHealth>)>,
+    boards_tx: &UnboundedSender<boards::BoardCommand>,
+    panels_tx: &UnboundedSender<(u64, app::PanelKind, Result<app::PanelData, String>)>,
+    pending: &mut Option<ApprovalRequest>,
+) {
     // The cycle names the board it turned to: KI-118 — the cadence
     // reads only the active board, so the refresher learns which one
     // that is and reads it immediately rather than waiting a period.
@@ -275,6 +343,19 @@ fn dispatch_key(
     // hands them to the state machine.
     if matches!(action, Action::OpenSessions) {
         open_picker(home, app);
+        return;
+    }
+    // The checkpoint store and the diff are filesystem reads too.
+    if matches!(action, Action::OpenCheckpoints) {
+        open_checkpoints(home, app);
+        return;
+    }
+    if matches!(action, Action::OpenDiff) {
+        open_diff(home, app);
+        return;
+    }
+    if let Action::OpenPanel(kind) = action {
+        open_panel(home, app, kind, panels_tx);
         return;
     }
     // The lanes' rows are child-process probes, so the loop hands the
@@ -303,7 +384,9 @@ fn dispatch_key(
         apply_effect(home, app, effect, command_tx, pending);
     }
     if cycling {
-        let _ = boards_tx.send(boards::BoardCommand::Active(app.boards.active));
+        if let Some(kind) = app.pane.board() {
+            let _ = boards_tx.send(boards::BoardCommand::Active(kind));
+        }
     }
 }
 
@@ -315,6 +398,149 @@ fn open_picker(home: &Path, app: &mut App) {
         Ok(sessions) => app.open_sessions(sessions),
         Err(error) => {
             app.error = Some(format!("could not list the sessions: {error}"));
+        }
+    }
+}
+
+/// The store both surfaces share: the TUI writes nothing of its own.
+fn checkpoint_store(home: &Path) -> PathBuf {
+    home.join("checkpoints")
+}
+
+/// Open the checkpoint list for this face's session. An empty list is a
+/// real answer (the run has not checkpointed a turn yet), not an error;
+/// a face with no session has nothing to list and says so.
+fn open_checkpoints(home: &Path, app: &mut App) {
+    if app.status.session_id.is_empty() {
+        app.error =
+            Some("this face has no session log yet; there is no checkpoint store".to_string());
+        return;
+    }
+    let rows = crate::checkpoints::list(&checkpoint_store(home), &app.status.session_id);
+    app.open_checkpoints(rows);
+}
+
+/// Read one checkpoint's diff and open it. The request names the turn
+/// under the cursor, so the read is the same one the browser face makes.
+fn open_diff(home: &Path, app: &mut App) {
+    let Some(turn) = app.checkpoint_turn() else {
+        app.error = Some("no checkpoint is selected".to_string());
+        return;
+    };
+    let root = std::env::current_dir().unwrap_or_default();
+    match crate::checkpoints::diff(&root, &checkpoint_store(home), &app.status.session_id, turn) {
+        Ok(rows) => app.open_diff(turn, rows),
+        Err(error) => app.error = Some(format!("the diff could not be read: {error}")),
+    }
+}
+
+/// Open a knowledge panel and start its read on a thread of its own. The
+/// generation comes from the state machine before the thread starts, so
+/// a read that finishes after the owner closed the panel is dropped.
+fn open_panel(
+    home: &Path,
+    app: &mut App,
+    kind: app::PanelKind,
+    panels_tx: &UnboundedSender<(u64, app::PanelKind, Result<app::PanelData, String>)>,
+) {
+    let generation = app.open_panel(kind);
+    let home = home.to_path_buf();
+    let session = app.status.session_id.clone();
+    let tx = panels_tx.clone();
+    std::thread::spawn(move || {
+        let result = crate::tui::panels::read(&home, kind, &session);
+        let _ = tx.send((generation, kind, result));
+    });
+}
+
+/// Restore the tree, cut the log, reseed the view, and tell the agent
+/// thread its prepared route is stale. The log stays append-only: the
+/// rewind record is the cut the next replay reads.
+fn rewind(home: &Path, app: &mut App, turn: u64, command_tx: &UnboundedSender<Command>) {
+    if app.status.working {
+        app.error = Some("wait for the run to finish before rewinding".to_string());
+        return;
+    }
+    let session = app.status.session_id.clone();
+    if session.is_empty() {
+        app.error = Some("this face has no session log to rewind".to_string());
+        return;
+    }
+    let root = std::env::current_dir().unwrap_or_default();
+    let store = checkpoint_store(home);
+    let (restored, removed) = match crate::checkpoints::restore(&root, &store, &session, turn) {
+        Ok(counts) => counts,
+        Err(error) => {
+            app.error = Some(format!("the rewind could not restore the tree: {error}"));
+            return;
+        }
+    };
+    let path = session::session_path(home, &session);
+    let record = Record::Rewind {
+        turn,
+        restored: restored as u64,
+        removed: removed as u64,
+    };
+    if let Err(error) = Session::open(&path).and_then(|mut log| log.record(&record)) {
+        app.error = Some(format!("the rewind record could not land: {error}"));
+        return;
+    }
+    match session::replay(&path) {
+        Ok(records) => {
+            app.seed(session::rewind_cut(&records));
+            app.status.session_id = session;
+            app.mode = crate::tui::app::Mode::Chat;
+            let _ = command_tx.send(Command::Rewind(turn));
+        }
+        Err(error) => app.error = Some(format!("the rewound log could not be read: {error}")),
+    }
+}
+
+/// Put one hunk back and re-read the diff, so the view shows the tree as
+/// it now is rather than the tree as it was when the panel opened.
+fn reject_hunk(home: &Path, app: &mut App, turn: u64, file: &str, hunk: usize) {
+    let root = std::env::current_dir().unwrap_or_default();
+    let store = checkpoint_store(home);
+    let session = app.status.session_id.clone();
+    let rows = match crate::checkpoints::diff(&root, &store, &session, turn) {
+        Ok(rows) => rows,
+        Err(error) => {
+            app.error = Some(format!("the diff could not be read: {error}"));
+            return;
+        }
+    };
+    let Some(diff) = rows.iter().find(|entry| entry.path == file) else {
+        app.error = Some(format!("`{file}` is not in this checkpoint's diff"));
+        return;
+    };
+    let Some(change) = diff.hunks.get(hunk) else {
+        app.error = Some("the selected hunk is no longer in the diff".to_string());
+        return;
+    };
+    match crate::checkpoints::reject_hunk(&root, diff, change) {
+        Ok(()) => refresh_diff(home, app, turn),
+        Err(error) => app.error = Some(format!("the hunk could not be put back: {error}")),
+    }
+}
+
+/// Put a whole file back and re-read the diff.
+fn reject_file(home: &Path, app: &mut App, turn: u64, file: &str) {
+    let root = std::env::current_dir().unwrap_or_default();
+    let store = checkpoint_store(home);
+    let session = app.status.session_id.clone();
+    match crate::checkpoints::reject_file(&root, &store, &session, turn, file) {
+        Ok(()) => refresh_diff(home, app, turn),
+        Err(error) => app.error = Some(format!("the file could not be put back: {error}")),
+    }
+}
+
+fn refresh_diff(home: &Path, app: &mut App, turn: u64) {
+    let root = std::env::current_dir().unwrap_or_default();
+    match crate::checkpoints::diff(&root, &checkpoint_store(home), &app.status.session_id, turn) {
+        Ok(rows) => app.open_diff(turn, rows),
+        Err(error) => {
+            app.error = Some(format!("the diff could not be re-read: {error}"));
+            app.mode = crate::tui::app::Mode::Checkpoints;
         }
     }
 }
@@ -392,14 +618,22 @@ fn apply_effect(
     pending: &mut Option<ApprovalRequest>,
 ) {
     match effect {
-        Effect::Run(task) => {
-            let _ = command_tx.send(Command::Run(task));
+        Effect::Run { task, plan } => {
+            let command = if plan {
+                Command::Plan(task)
+            } else {
+                Command::Run(task)
+            };
+            let _ = command_tx.send(command);
         }
         Effect::Resume(id) => {
             let path = session::session_path(home, &id);
             match session::replay(&path) {
                 Ok(records) => {
-                    app.seed(&records);
+                    // A resumed log may carry a rewind; the conversation
+                    // on screen is the one after its cut, exactly as the
+                    // browser face reseeds.
+                    app.seed(session::rewind_cut(&records));
                     app.status.session_id = id.clone();
                     let _ = command_tx.send(Command::Resume(id));
                 }
@@ -413,8 +647,25 @@ fn apply_effect(
                 let _ = request.responder.send(decision);
             }
         }
+        Effect::Control { steer } => {
+            match crate::delegate::write_control(home, &app.status.session_id, steer.as_deref()) {
+                Ok(_) => app.error = None,
+                Err(reason) => app.error = Some(reason),
+            }
+        }
+        Effect::Rewind(turn) => rewind(home, app, turn, command_tx),
+        Effect::RejectHunk { turn, file, hunk } => reject_hunk(home, app, turn, &file, hunk),
+        Effect::RejectFile { turn, file } => reject_file(home, app, turn, &file),
         Effect::Quit => app.should_quit = true,
     }
+}
+
+/// Remove the control beside a session's log when a run ends. The agent
+/// consumes one on read; a stop that lands after the last check is never
+/// read, and a file left behind would end the next run in this session
+/// before its first turn.
+fn clear_control(path: &Path) {
+    let _ = std::fs::remove_file(path.with_extension("control"));
 }
 
 /// Run the agent on its own thread and runtime, so the interface thread
@@ -426,7 +677,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             model,
             session_id,
             ui_tx,
-            status_tx,
+            status_tx: _status_tx,
             approval_tx,
             command_rx,
         } = config;
@@ -501,8 +752,12 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             let mut current_session = session_id;
             let mut commands = command_rx;
             while let Some(command) = commands.recv().await {
+                // The arm this task arrived on: the plan bit is the only
+                // difference between a run and a plan, and it must be
+                // read before the match consumes the command.
+                let plan_mode = matches!(command, Command::Plan(_));
                 match command {
-                    Command::Run(task) => {
+                    Command::Run(task) | Command::Plan(task) => {
                         // The first run creates the log it runs in. The
                         // creation is here rather than at launch because
                         // a session that holds nothing but a `start`
@@ -538,6 +793,12 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                                     prepared = Some(fresh);
                                 }
                                 Err(error) => {
+                                    // A stop can be written while the route
+                                    // is judged; this run will never read
+                                    // it, and a later run must not.
+                                    if let Some(id) = current_session.as_deref() {
+                                        clear_control(&session::session_path(&home, id));
+                                    }
                                     let _ = ui_tx
                                         .send(UiEvent::Failed(format!("routing config: {error}")));
                                     continue;
@@ -570,6 +831,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                         let mut log = match Session::open(&path) {
                             Ok(log) => log,
                             Err(error) => {
+                                clear_control(&path);
                                 let _ = ui_tx.send(UiEvent::Failed(format!(
                                     "could not open the session log: {error}"
                                 )));
@@ -602,7 +864,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             // rewound from the browser face too — one
                             // store, one conversation, two surfaces.
                             checkpoints: Some(home.join("checkpoints")),
-                            plan_mode: false,
+                            plan_mode,
                         };
                         let approver: Box<dyn Approver> =
                             Box::new(TuiApprover::new(approval_tx.clone()));
@@ -614,15 +876,38 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             match Agent::new(&client, options, &mut log, approver, &mut progress) {
                                 Ok(agent) => agent,
                                 Err(error) => {
+                                    clear_control(&path);
                                     let _ = ui_tx.send(UiEvent::Failed(error.to_string()));
                                     continue;
                                 }
                             };
-                        if let Ok(report) = agent.run(&task).await {
-                            let _ = status_tx.send(StatusUpdate::Usage(report.usage));
-                        }
+                        // The per-response `Usage` events already fed the
+                        // bar; the run's own report is not sent a second
+                        // time, so a rewind cannot be repopulated by a
+                        // report that crossed after the view changed.
+                        let _ = agent.run(&task).await;
+                        // A control that landed on the run's last step is
+                        // never read by the loop. Left in place it would
+                        // stop the next run in this session before that
+                        // run's first turn, which is not what the owner
+                        // asked for.
+                        clear_control(&path);
                     }
-                    Command::Resume(id) => current_session = Some(id),
+                    Command::Resume(id) => {
+                        current_session = Some(id);
+                        // The prepared route answered the conversation
+                        // this view came in on; the resumed one deserves
+                        // its own judgment.
+                        prepared = None;
+                        judge_task.clear();
+                    }
+                    // The view restored an earlier tree and cut the log;
+                    // the route that answered the abandoned turns is no
+                    // longer the route for this conversation.
+                    Command::Rewind(_turn) => {
+                        prepared = None;
+                        judge_task.clear();
+                    }
                 }
             }
             // The session's routing decision is recorded once, when the

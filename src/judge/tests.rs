@@ -1461,7 +1461,8 @@ fn no_synchronous_path_references_the_judgment_beat() {
         ("subagents.rs", include_str!("../subagents.rs")),
         ("tui/mod.rs", include_str!("../tui/mod.rs")),
         ("tui/app.rs", include_str!("../tui/app.rs")),
-        ("tui/ui.rs", include_str!("../tui/ui.rs")),
+        ("tui/ui/mod.rs", include_str!("../tui/ui/mod.rs")),
+        ("tui/ui/run.rs", include_str!("../tui/ui/run.rs")),
         ("tui/events.rs", include_str!("../tui/events.rs")),
     ] {
         assert!(
@@ -1504,7 +1505,8 @@ fn no_synchronous_path_references_the_judgment_beat() {
         ("subagents.rs", include_str!("../subagents.rs")),
         ("tui/mod.rs", include_str!("../tui/mod.rs")),
         ("tui/app.rs", include_str!("../tui/app.rs")),
-        ("tui/ui.rs", include_str!("../tui/ui.rs")),
+        ("tui/ui/mod.rs", include_str!("../tui/ui/mod.rs")),
+        ("tui/ui/run.rs", include_str!("../tui/ui/run.rs")),
         ("tui/events.rs", include_str!("../tui/events.rs")),
     ] {
         let allowed = name == "calib.rs" || name == "judge.rs";

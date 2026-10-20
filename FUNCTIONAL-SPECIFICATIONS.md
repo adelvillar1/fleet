@@ -77,12 +77,20 @@ briefing, the endpoints, and the interaction layer are documented in
 
 | Mode | Behavior | Source |
 |---|---|---|
-| Chat | Streamed tokens, approval prompt, tool-call progress | `docs/architecture/deep-dive-2026-10-15.md` |
-| Sessions | Session picker with compacted marker, recall launch | `docs/features/subagents.md`; `docs/features/memory.md` |
+| Chat | Streamed tokens, approval prompt, tool-call progress, plan card | `docs/features/tui.md` |
+| Run | Stop/steer controls and the live delegation-branch cursor | `docs/features/tui.md` |
+| Steer | One-line steer editor inside the run controls | `docs/features/tui.md` |
+| Palette | Filtered command list for every pane, panel, and action (Ctrl+P) | `docs/features/tui.md` |
+| Pane | Run/router/brain/tower tabs in the right column (Ctrl+B) | `docs/features/boards.md`; `docs/features/tui.md` |
+| Sessions | Styled table, `f` filter, Enter resumes | `docs/features/subagents.md`; `docs/features/tui.md` |
 | Approval | Keyboard-driven approve/deny | `docs/architecture/overview.md` |
 | Lanes | Health cards for each vendored lane core | `docs/features/install.md` |
+| Checkpoints | Turn table, Enter arms a rewind, `d` opens the diff (Ctrl+K) | `docs/features/tui.md` |
+| Diff | File/hunk review, `r` rejects the hunk, `R` the file | `docs/features/tui.md` |
+| Confirm | `y` lands an armed rewind/reject; any other key walks away | `docs/features/tui.md` |
+| Panel | Memory/skills/calibration/delegation list + detail, `f` filters | `docs/features/tui.md` |
 | Settings | Scalar knobs as cards; list surfaces are CLI-only today | `docs/architecture/deep-dive-2026-10-15.md` |
-| Board | Three read-only boards cycle with Ctrl+B | `docs/features/boards.md` |
+| Explain | Today's explanation card | `docs/features/explain.md` |
 
 ## Background jobs
 

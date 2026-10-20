@@ -1659,7 +1659,7 @@ fn no_synchronous_path_references_the_delegation_beat() {
     // `api.rs` and `mcp.rs` are in the scanned set on purpose: the
     // sibling's proof omitted them, and they are the two modules a beat
     // most plausibly reaches for from inside a turn.
-    const MODULES: [(&str, &str); 26] = [
+    const MODULES: [(&str, &str); 27] = [
         ("doctor.rs", include_str!("../doctor.rs")),
         ("memory.rs", include_str!("../memory.rs")),
         ("agent.rs", include_str!("../agent.rs")),
@@ -1682,7 +1682,8 @@ fn no_synchronous_path_references_the_delegation_beat() {
         ("cli.rs", include_str!("../cli.rs")),
         ("tui/mod.rs", include_str!("../tui/mod.rs")),
         ("tui/app.rs", include_str!("../tui/app.rs")),
-        ("tui/ui.rs", include_str!("../tui/ui.rs")),
+        ("tui/ui/mod.rs", include_str!("../tui/ui/mod.rs")),
+        ("tui/ui/run.rs", include_str!("../tui/ui/run.rs")),
         ("tui/events.rs", include_str!("../tui/events.rs")),
         ("main.rs", include_str!("../main.rs")),
         ("eval.rs", include_str!("../eval.rs")),
@@ -1698,6 +1699,15 @@ fn no_synchronous_path_references_the_delegation_beat() {
         if DRIVERS.contains(&name) {
             continue;
         }
+        // The control writer is not the beat: it writes the session's
+        // control file and never spends a lane ask. The TUI's stop and
+        // steer use it on the run path, so exactly that symbol is
+        // allowed; every other name from the module stays refused.
+        let source = source
+            .lines()
+            .filter(|line| !line.contains("delegate::write_control"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
             !source.contains("delegate::"),
             "{name} names the delegation beat"

@@ -4,11 +4,60 @@
 //! rendering only reads it. Keeping it pure is what makes the interaction
 //! testable without a terminal.
 
+use std::time::Instant;
+
 use crate::agent::{Approval, SubagentStage, UiEvent};
 use crate::api::Usage;
 use crate::boards::{BoardData, BoardKind, Boards};
 use crate::lanes::LaneHealth;
 use crate::session::{Record, SessionSummary};
+
+/// The sessions table's filter. A picker that quietly hides rows is a
+/// picker the owner cannot trust, so the active filter is named in the
+/// title and cycled with one key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionFilter {
+    #[default]
+    All,
+    Open,
+    Ended,
+    Delegated,
+    Compacted,
+}
+
+impl SessionFilter {
+    pub fn next(self) -> SessionFilter {
+        match self {
+            SessionFilter::All => SessionFilter::Open,
+            SessionFilter::Open => SessionFilter::Ended,
+            SessionFilter::Ended => SessionFilter::Delegated,
+            SessionFilter::Delegated => SessionFilter::Compacted,
+            SessionFilter::Compacted => SessionFilter::All,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SessionFilter::All => "all",
+            SessionFilter::Open => "open",
+            SessionFilter::Ended => "ended",
+            SessionFilter::Delegated => "delegated",
+            SessionFilter::Compacted => "compacted",
+        }
+    }
+
+    fn matches(self, summary: &SessionSummary) -> bool {
+        match self {
+            SessionFilter::All => true,
+            SessionFilter::Open => !summary.ended,
+            SessionFilter::Ended => summary.ended,
+            SessionFilter::Delegated => {
+                summary.kind.as_deref() == Some(crate::session::SUBAGENT_KIND)
+            }
+            SessionFilter::Compacted => summary.compacted,
+        }
+    }
+}
 
 /// One rendered block in the conversation pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +168,194 @@ pub enum ToolStatus {
     Done,
 }
 
+/// The right pane's surface: the live run, or one of the three boards.
+/// A tab, not a cycle hidden behind a key, so where the owner is stays
+/// visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Run,
+    Router,
+    Tower,
+    Brain,
+}
+
+impl Pane {
+    /// Every pane, in tab order. Run leads because it is the surface a
+    /// run is watched on; the boards keep the router → brain → tower
+    /// order the old Ctrl-B cycle used.
+    pub const ALL: [Pane; 4] = [Pane::Run, Pane::Router, Pane::Brain, Pane::Tower];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Pane::Run => "run",
+            Pane::Router => "router",
+            Pane::Tower => "tower",
+            Pane::Brain => "brain",
+        }
+    }
+
+    /// The board this pane shows, when it shows one.
+    pub fn board(self) -> Option<BoardKind> {
+        match self {
+            Pane::Run => None,
+            Pane::Router => Some(BoardKind::Router),
+            Pane::Tower => Some(BoardKind::Tower),
+            Pane::Brain => Some(BoardKind::Brain),
+        }
+    }
+
+    pub fn next(self) -> Pane {
+        match self {
+            Pane::Run => Pane::Router,
+            Pane::Router => Pane::Brain,
+            Pane::Brain => Pane::Tower,
+            Pane::Tower => Pane::Run,
+        }
+    }
+
+    pub fn index(self) -> usize {
+        Pane::ALL.iter().position(|pane| *pane == self).unwrap_or(0)
+    }
+}
+
+/// Where the current run is in its loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Stage {
+    #[default]
+    Route,
+    Think,
+    Act,
+    Verify,
+}
+
+impl Stage {
+    pub const ALL: [Stage; 4] = [Stage::Route, Stage::Think, Stage::Act, Stage::Verify];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Stage::Route => "route",
+            Stage::Think => "think",
+            Stage::Act => "act",
+            Stage::Verify => "verify",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        Stage::ALL
+            .iter()
+            .position(|stage| *stage == self)
+            .unwrap_or(0)
+    }
+}
+
+/// One delegated child, as the run card shows it. The parent's subagent
+/// tool card keeps the lifecycle dot; this is the branch's own state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Branch {
+    pub session: String,
+    pub goal: String,
+    pub stage: String,
+    pub calls: u64,
+    pub tool: String,
+    pub outcome: String,
+    pub turns: u64,
+}
+
+/// The live run, reduced from the same `UiEvent` log the conversation
+/// reads. The browser face's process card is the same idea; the TUI's
+/// copy is denser and carries the terminal's own controls.
+#[derive(Debug, Clone)]
+pub struct RunState {
+    pub active: bool,
+    /// The composer's plan-mode toggle for the next run.
+    pub plan: bool,
+    pub stage: Stage,
+    pub started: Option<Instant>,
+    pub ended: Option<Instant>,
+    pub turn: u64,
+    pub tool: String,
+    pub calls: u64,
+    pub facts: usize,
+    pub shape: String,
+    /// The last request's prompt size: the context the next model call
+    /// will carry, and what the status gauge divides by the budget.
+    pub context: u64,
+    pub lanes: u64,
+    pub checkpoint: Option<u64>,
+    pub provider: String,
+    pub model: String,
+    pub workload: String,
+    /// `Some(true)` means the calibration may move the failover's
+    /// preference; `Some(false)` is the gate shut. `None` is a home
+    /// whose config could not be read at launch.
+    pub gate: Option<bool>,
+    pub branches: Vec<Branch>,
+    pub last: String,
+    pub stop_reason: Option<String>,
+    pub stopping: bool,
+    /// Tokens per streamed response, for the pane's sparkline. This is
+    /// not the spend line: the status bar sums the finished report.
+    pub tokens: Vec<u64>,
+}
+
+impl Default for RunState {
+    fn default() -> RunState {
+        RunState {
+            active: false,
+            plan: false,
+            stage: Stage::Route,
+            started: None,
+            ended: None,
+            turn: 0,
+            tool: String::new(),
+            calls: 0,
+            facts: 0,
+            shape: String::new(),
+            context: 0,
+            lanes: 0,
+            checkpoint: None,
+            provider: String::new(),
+            model: String::new(),
+            workload: String::new(),
+            gate: None,
+            branches: Vec::new(),
+            last: String::new(),
+            stop_reason: None,
+            stopping: false,
+            tokens: Vec::new(),
+        }
+    }
+}
+
+impl RunState {
+    /// One line for the narrow layout and the status bar.
+    pub fn strip(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.active {
+            parts.push("in flight".to_string());
+        } else if let Some(reason) = &self.stop_reason {
+            parts.push(reason.clone());
+        } else {
+            parts.push("idle".to_string());
+        }
+        if self.turn > 0 {
+            parts.push(format!("t{}", self.turn));
+        }
+        if !self.tool.is_empty() {
+            parts.push(self.tool.clone());
+        }
+        if self.calls > 0 {
+            parts.push(format!("{} call(s)", self.calls));
+        }
+        if self.gate == Some(true) {
+            parts.push("gate on".to_string());
+        } else if self.gate == Some(false) {
+            parts.push("gate shut".to_string());
+        }
+        parts.join(" \u{b7} ")
+    }
+}
+
 /// What the interface is doing right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -140,6 +377,21 @@ pub enum Mode {
     /// lands. The CLI's `force` flag is a shell word; a pane has nowhere
     /// to put one, so the question is what stands in for it.
     SettingsConfirm,
+    /// The run controls are open over the conversation: a branch cursor,
+    /// a stop, and a steer.
+    Run,
+    /// The one-line steer editor inside the run controls.
+    Steer,
+    /// The command palette: a filtered list of every surface and action.
+    Palette,
+    /// The checkpoint list over the conversation.
+    Checkpoints,
+    /// The diff for one checkpoint.
+    Diff,
+    /// A trust-trio write is armed and waiting for `y`.
+    Confirm,
+    /// One knowledge panel over the conversation.
+    Panel,
 }
 
 /// One key press, translated for the current mode.
@@ -183,13 +435,47 @@ pub enum Action {
     OpenLanes,
     /// Open the latest explanation card.
     OpenExplain,
-    /// Cycle the board pane to the next board.
+    /// Cycle the right pane to the next tab.
     CycleBoard,
+    /// Open the command palette.
+    OpenPalette,
+    /// Show one pane/tab.
+    OpenPane(Pane),
+    /// Open one knowledge panel.
+    OpenPanel(PanelKind),
+    /// Cycle the open panel's filter.
+    CyclePanelFilter,
+    /// Open the checkpoints view.
+    OpenCheckpoints,
+    /// Open the diff review for the selected checkpoint.
+    OpenDiff,
+    /// Move the diff's hunk cursor.
+    MoveHunk(i32),
+    /// Reject the selected hunk.
+    RejectHunk,
+    /// Reject the whole selected file.
+    RejectFile,
+    /// Land the armed trust-trio write.
+    TrustConfirm,
+    /// Abandon the armed write.
+    TrustCancel,
+    /// Open the run controls.
+    OpenRunControls,
+    /// Stop the run in flight.
+    StopRun,
+    /// Open the one-line steer editor inside the run controls.
+    OpenSteer,
+    /// Toggle plan mode for the next run.
+    TogglePlan,
+    /// Load the ready plan into the message box for editing.
+    LoadPlan,
     /// Close whatever overlay is open.
     CloseOverlay,
+    /// Cycle the sessions picker's filter.
+    CycleSessionFilter,
     /// Move the picker selection; positive is down.
     Move(i32),
-    /// Pick the selected session.
+    /// Pick the selected session or branch.
     Pick,
     /// Answer the pending approval.
     Approve(Approval),
@@ -200,14 +486,111 @@ pub enum Action {
 /// Something the event loop must do outside the state machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Send this task to the agent.
-    Run(String),
+    /// Send this task to the agent. `plan` is the composer's plan-mode
+    /// toggle for this run.
+    Run { task: String, plan: bool },
     /// Resume this session id: seed the conversation and append to its log.
     Resume(String),
     /// Answer the pending approval.
     Answer(Approval),
+    /// Write the run's control file: `steer` is the one-line text, and
+    /// `None` is a stop.
+    Control { steer: Option<String> },
+    /// Restore the tree to this turn's checkpoint, cut the log, and
+    /// reseed the view.
+    Rewind(u64),
+    /// Put this hunk's checkpoint lines back.
+    RejectHunk {
+        turn: u64,
+        file: String,
+        hunk: usize,
+    },
+    /// Put the whole file back.
+    RejectFile { turn: u64, file: String },
     /// Leave the TUI.
     Quit,
+}
+
+/// One command in the palette. The labels are the surface's own words,
+/// so the palette and the key hints cannot drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaletteItem {
+    pub label: &'static str,
+    pub detail: &'static str,
+    pub action: Action,
+}
+
+/// The knowledge panels the palette opens. They are on-demand reads,
+/// not the 30-second boards: the library scan and the archive replay are
+/// too heavy to run on a cadence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelKind {
+    Memory,
+    Skills,
+    Calibration,
+    Delegation,
+}
+
+impl PanelKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            PanelKind::Memory => "memory",
+            PanelKind::Skills => "skills",
+            PanelKind::Calibration => "calibration",
+            PanelKind::Delegation => "delegation",
+        }
+    }
+}
+
+/// One calibration read, as the panel needs it.
+#[derive(Debug, Clone)]
+pub struct CalibrationData {
+    pub day: String,
+    pub rows_read: usize,
+    pub cells: Vec<crate::calib::CalibrationCell>,
+}
+
+/// The landed data behind a panel.
+#[derive(Debug, Clone)]
+pub enum PanelData {
+    Memory(crate::boards::MemorySnapshot),
+    Skills(crate::boards::SkillsSnapshot),
+    Calibration(CalibrationData),
+    Delegation(crate::boards::DelegationSnapshot),
+}
+
+/// One selectable row in a knowledge panel. The list is generic so the
+/// table has one shape; each panel decides what the row says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelRow {
+    pub label: String,
+    pub meta: String,
+    pub detail: String,
+}
+
+/// The trust-trio write a confirmation is about to land.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrustAction {
+    Rewind(u64),
+    RejectHunk {
+        turn: u64,
+        file: String,
+        hunk: usize,
+    },
+    RejectFile {
+        turn: u64,
+        file: String,
+    },
+}
+
+/// One armed trust-trio write, with the sentence the confirmation shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustConfirm {
+    pub title: String,
+    pub detail: String,
+    pub action: TrustAction,
+    /// The view `esc` returns to when the write is abandoned.
+    pub back: Mode,
 }
 
 /// The prompt shown in the approval modal.
@@ -306,6 +689,8 @@ pub struct App {
     pub mode: Mode,
     /// The picker's rows, oldest first, exactly as `session::list` returns.
     pub sessions: Vec<SessionSummary>,
+    /// The picker's filter, named in the picker's title.
+    pub session_filter: SessionFilter,
     /// The lane health rows, in registry order, exactly as
     /// `lanes::health_all` returns.
     pub lanes: Vec<LaneHealth>,
@@ -343,8 +728,37 @@ pub struct App {
     pub scrolled_back: usize,
     /// True when the view sticks to the newest content.
     pub following: bool,
-    /// The three read-only boards: which one the pane shows, and each
-    /// one's last snapshot with its named refusal.
+    /// The right pane's tab and the live run it can show.
+    pub pane: Pane,
+    pub run: RunState,
+    /// The ready plan's text. `Ctrl-E` loads it into the message box;
+    /// the TUI never sends it on its own.
+    pub plan_text: Option<String>,
+    /// The one-line steer buffer inside the run controls.
+    pub steer_input: String,
+    /// The palette's filter and cursor. It starts empty on every open,
+    /// so a previous command never leaks into the next one.
+    pub palette_query: String,
+    pub palette_selected: usize,
+    /// The checkpoint list and the diff it can open.
+    pub checkpoints_view: Vec<crate::checkpoints::Snapshot>,
+    pub diff_view: Vec<crate::checkpoints::FileDiff>,
+    pub diff_turn: u64,
+    pub diff_file: usize,
+    pub diff_hunk: usize,
+    /// The armed trust-trio write, while the confirmation is asking.
+    pub confirm: Option<TrustConfirm>,
+    /// The open knowledge panel, its landing data, and the generation
+    /// its read belongs to.
+    pub panel_kind: Option<PanelKind>,
+    pub panel: Option<PanelData>,
+    pub panel_loading: bool,
+    pub panel_generation: u64,
+    pub panel_filter: usize,
+    /// Why the open panel's read did not land, if it did not.
+    pub panel_note: Option<String>,
+    /// The three read-only boards: each one's last snapshot with its
+    /// named refusal.
     pub boards: Boards,
     /// The latest explanation card's lines, or `None` when today's
     /// stream holds no explanation — the headless card, read back from
@@ -363,6 +777,7 @@ impl App {
             cursor: 0,
             mode: Mode::Chat,
             sessions: Vec::new(),
+            session_filter: SessionFilter::default(),
             lanes: Vec::new(),
             lanes_loading: false,
             lanes_probe: 0,
@@ -391,6 +806,24 @@ impl App {
             error: None,
             scrolled_back: 0,
             following: true,
+            pane: Pane::Router,
+            run: RunState::default(),
+            plan_text: None,
+            steer_input: String::new(),
+            palette_query: String::new(),
+            palette_selected: 0,
+            checkpoints_view: Vec::new(),
+            diff_view: Vec::new(),
+            diff_turn: 0,
+            diff_file: 0,
+            diff_hunk: 0,
+            confirm: None,
+            panel_kind: None,
+            panel: None,
+            panel_loading: false,
+            panel_generation: 0,
+            panel_filter: 0,
+            panel_note: None,
             boards: Boards::new(),
             should_quit: false,
         }
@@ -489,7 +922,11 @@ impl App {
             },
             Mode::Sessions => match action {
                 Action::Move(delta) => {
-                    self.move_selection(delta, self.sessions.len());
+                    self.move_selection(delta, self.session_rows().len());
+                    None
+                }
+                Action::CycleSessionFilter => {
+                    self.cycle_session_filter();
                     None
                 }
                 Action::Pick => self.pick_session(),
@@ -537,9 +974,190 @@ impl App {
                 }
                 _ => None,
             },
+            // One knowledge panel: a cursor, a filter, and close.
+            Mode::Panel => match action {
+                Action::Move(delta) => {
+                    self.move_selection(delta, self.panel_rows().len());
+                    None
+                }
+                Action::CyclePanelFilter => {
+                    self.cycle_panel_filter();
+                    None
+                }
+                Action::CloseOverlay => {
+                    self.mode = Mode::Chat;
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                _ => None,
+            },
+            // The checkpoint list: a cursor, the rewind, and the diff.
+            Mode::Checkpoints => match action {
+                Action::Move(delta) => {
+                    self.move_selection(delta, self.checkpoints_view.len());
+                    None
+                }
+                Action::Pick => {
+                    self.arm_rewind();
+                    None
+                }
+                Action::CloseOverlay => {
+                    self.mode = Mode::Chat;
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                _ => None,
+            },
+            // The diff: a file cursor, a hunk cursor, and two rejects.
+            // The write is armed first; `y` lands it in the confirm view.
+            Mode::Diff => match action {
+                Action::Move(delta) => {
+                    self.diff_file = clamp_step(self.diff_file, delta, self.diff_view.len());
+                    self.diff_hunk = 0;
+                    None
+                }
+                Action::MoveHunk(delta) => {
+                    let hunks = self
+                        .selected_diff_file()
+                        .map(|file| file.hunks.len())
+                        .unwrap_or(0);
+                    self.diff_hunk = clamp_step(self.diff_hunk, delta, hunks);
+                    None
+                }
+                Action::RejectHunk => {
+                    self.arm_reject_hunk();
+                    None
+                }
+                Action::RejectFile => {
+                    self.arm_reject_file();
+                    None
+                }
+                Action::CloseOverlay => {
+                    self.mode = Mode::Checkpoints;
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                _ => None,
+            },
+            // An armed trust-trio write: `y` lands it, everything else
+            // walks away with the tree untouched.
+            Mode::Confirm => match action {
+                Action::TrustConfirm => self.land_trust(),
+                Action::TrustCancel => {
+                    self.cancel_trust();
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                _ => {
+                    self.cancel_trust();
+                    None
+                }
+            },
+            // The run controls: a stop, a steer, and a branch cursor.
+            // The stop is written through the agent's control file, so
+            // its latency is the run's next model call and the card
+            // says `stopping` until the end record lands.
+            Mode::Run => match action {
+                Action::Move(delta) => {
+                    self.move_selection(delta, self.run.branches.len());
+                    None
+                }
+                Action::StopRun => self.stop_run(),
+                Action::OpenSteer => {
+                    if self.run.active {
+                        self.steer_input.clear();
+                        self.mode = Mode::Steer;
+                    }
+                    None
+                }
+                Action::CloseOverlay => {
+                    self.mode = Mode::Chat;
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                _ => None,
+            },
+            // The steer editor is one line; it mirrors the message box's
+            // editing keys but has its own buffer, so a steer never
+            // consumes the task the owner was composing.
+            Mode::Steer => match action {
+                Action::Input(character) => {
+                    if self.steer_input.chars().count() < 2000 {
+                        self.steer_input.push(character);
+                    }
+                    None
+                }
+                Action::Backspace => {
+                    self.steer_input.pop();
+                    None
+                }
+                Action::Submit => self.send_steer(),
+                Action::CloseOverlay => {
+                    self.mode = Mode::Run;
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                _ => None,
+            },
+            Mode::Palette => match action {
+                Action::Input(character) => {
+                    self.palette_query.push(character);
+                    self.palette_selected = 0;
+                    None
+                }
+                Action::Backspace => {
+                    self.palette_query.pop();
+                    self.palette_selected = 0;
+                    None
+                }
+                Action::Move(delta) => {
+                    self.palette_move(delta);
+                    None
+                }
+                Action::CloseOverlay => {
+                    self.mode = Mode::Chat;
+                    None
+                }
+                Action::Quit => {
+                    self.should_quit = true;
+                    Some(Effect::Quit)
+                }
+                // `Pick` is performed by the event loop: it owns the
+                // reads the chosen action may need.
+                _ => None,
+            },
             Mode::Chat => match action {
                 Action::Input(character) => {
                     self.push_input(character);
+                    None
+                }
+                Action::OpenPalette => {
+                    self.open_palette();
+                    None
+                }
+                Action::OpenPane(pane) => {
+                    self.pane = pane;
+                    if let Some(board) = pane.board() {
+                        self.boards.active = board;
+                    }
                     None
                 }
                 Action::Backspace => {
@@ -571,12 +1189,44 @@ impl App {
                     None
                 }
                 Action::Submit => self.submit(),
+                // The palette reaches the stop and the steer from any
+                // mode; their keys live in the run controls.
+                Action::StopRun => self.stop_run(),
+                Action::OpenSteer => {
+                    if self.run.active {
+                        self.steer_input.clear();
+                        self.mode = Mode::Steer;
+                    }
+                    None
+                }
+                Action::TogglePlan => {
+                    self.run.plan = !self.run.plan;
+                    None
+                }
+                Action::LoadPlan => {
+                    if let Some(plan) = self.plan_text.take() {
+                        self.input = plan;
+                        self.cursor = self.input.chars().count();
+                        if self.mode == Mode::Run {
+                            self.mode = Mode::Chat;
+                        }
+                    } else {
+                        self.error = Some("no plan is ready to edit".to_string());
+                    }
+                    None
+                }
+                Action::OpenRunControls => {
+                    self.selected = 0;
+                    self.steer_input.clear();
+                    self.mode = Mode::Run;
+                    None
+                }
                 Action::OpenLanes => {
                     self.open_lanes();
                     None
                 }
                 Action::CycleBoard => {
-                    self.cycle_board();
+                    self.cycle_pane();
                     None
                 }
                 Action::Scroll(delta) => {
@@ -598,6 +1248,10 @@ impl App {
             UiEvent::Token(delta) => self.streaming.push_str(&delta),
             UiEvent::Turn(turn) => {
                 self.flush_streaming();
+                self.run.active = true;
+                self.run.stage = Stage::Think;
+                self.run.turn = turn;
+                self.run.last = format!("turn {turn}");
                 self.status.turn = turn;
                 self.status.working = true;
             }
@@ -615,17 +1269,35 @@ impl App {
                 self.flush_streaming();
                 self.entries.push(Entry::Deck(DeckCard { project, nodes }));
             }
-            UiEvent::Usage { .. } => {
-                // The browser face reads this one: it has no finished
-                // `RunReport` to sum, so the per-response numbers are
-                // how its spend line and context meter are fed. This
-                // pane's counters are summed from the finished run's
-                // report (`StatusUpdate::Usage`), which already
-                // includes every response — folding these in as well
-                // would count the same run twice.
+            UiEvent::Usage {
+                prompt_tokens,
+                completion_tokens,
+            } => {
+                // The per-response numbers feed the bar's totals and the
+                // run card's sparkline. Summing these events, rather
+                // than a finished `RunReport` that arrives on its own
+                // channel, is what keeps a rewind honest: the totals
+                // belong to the view, and a seed resets them before any
+                // late report can repopulate them.
+                self.run.context = prompt_tokens;
+                self.status.prompt_tokens += prompt_tokens;
+                self.status.completion_tokens += completion_tokens;
+                let total = prompt_tokens + completion_tokens;
+                self.run.tokens.push(total);
+                if self.run.tokens.len() > 64 {
+                    self.run.tokens.remove(0);
+                }
             }
             UiEvent::ToolCall { name, summary } => {
                 self.flush_streaming();
+                self.run.stage = Stage::Act;
+                self.run.calls += 1;
+                self.run.tool = name.clone();
+                self.run.last = if summary.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{name} \u{b7} {summary}")
+                };
                 self.entries.push(Entry::Tool(ToolCard {
                     name,
                     summary,
@@ -643,6 +1315,12 @@ impl App {
                 } else {
                     ToolStatus::Denied
                 };
+                self.run.stage = Stage::Act;
+                self.run.tool = name.clone();
+                self.run.last = format!(
+                    "{name} \u{b7} {}",
+                    if approved { "done" } else { "refused" }
+                );
                 // The card this result belongs to is the newest one for the
                 // tool that is still open.
                 let card = self
@@ -675,6 +1353,9 @@ impl App {
                 // something the model said: it flushes the streaming tail
                 // and lands as its own block, exactly like a tool card.
                 self.flush_streaming();
+                self.run.stage = Stage::Act;
+                self.run.lanes += 1;
+                self.run.last = format!("lane {lane} \u{b7} {tool_count} tool(s)");
                 self.entries
                     .push(Entry::Lane(LaneCard { lane, tool_count }));
             }
@@ -693,10 +1374,24 @@ impl App {
                 // run yet has no session to name.
                 self.status.session_id = id;
             }
-            UiEvent::Routed { provider, how, .. } => {
+            UiEvent::Routed {
+                provider,
+                model,
+                how,
+                workload,
+                ..
+            } => {
                 // The route this run takes: the status bar shows the active
-                // provider and how it was chosen. The rest of the decision
-                // is the browser face's to render; the bar reads two facts.
+                // provider and how it was chosen; the run card keeps the
+                // model and the workload, because the next step needs to
+                // name what actually answered.
+                self.run.provider = provider.clone();
+                self.run.model = model;
+                self.run.workload = workload.unwrap_or_default();
+                if self.run.turn == 0 {
+                    self.run.stage = Stage::Route;
+                }
+                self.run.last = format!("routed to {provider}");
                 self.status.provider = Some(provider);
                 self.status.route_how = Some(how);
             }
@@ -706,6 +1401,8 @@ impl App {
                 // the turn in its own status line rather than carrying
                 // the store's counts, which the browser face renders.
                 self.status.checkpoints.push(turn);
+                self.run.checkpoint = Some(turn);
+                self.run.last = format!("checkpoint \u{b7} turn {turn}");
                 let _ = files;
             }
             UiEvent::Compacted {
@@ -729,6 +1426,10 @@ impl App {
                 // What the run's assembled memory carried: the status bar
                 // shows the shape and the fact count, the live half of the
                 // `memory` record the log carries.
+                self.run.stage = Stage::Act;
+                self.run.facts = facts;
+                self.run.shape = shape.clone();
+                self.run.last = format!("memory \u{b7} {facts} facts");
                 self.status.memory = Some((shape, facts));
             }
             UiEvent::CronFire {
@@ -760,6 +1461,11 @@ impl App {
                 session,
                 stage,
             } => {
+                // The run card keeps one branch per child, rewritten by
+                // each stage. The conversation's subagent tool card
+                // below still owns the call's lifecycle dot.
+                self.run.stage = Stage::Act;
+                self.apply_branch(&goal, &session, &stage);
                 // A delegated child run, reported while the parent's turn
                 // waits for it. It lands on the `subagent` call's own tool
                 // card — the same card the ordinary ToolCall event opened
@@ -812,16 +1518,54 @@ impl App {
                     })),
                 }
             }
-            UiEvent::Finished { .. } => {
+            UiEvent::Finished { stop_reason } => {
                 self.flush_streaming();
+                self.run.active = false;
+                self.run.ended = Some(Instant::now());
+                self.run.stage = Stage::Verify;
+                self.run.stopping = false;
+                self.run.stop_reason = Some(stop_reason.clone());
+                self.run.last = format!("finished \u{b7} {stop_reason}");
                 self.status.working = false;
                 self.status.turn = 0;
+                // The run controls were a view of a run that no longer
+                // exists; leaving them over the composer would swallow
+                // the next task as unhandled keys.
+                if matches!(self.mode, Mode::Run | Mode::Steer) {
+                    self.mode = Mode::Chat;
+                }
+                // A plan-mode run's final answer is the plan the owner
+                // edits. Keep it in the state machine; `Ctrl-E` loads it
+                // into the message box, and nothing sends it on its own.
+                if self.run.plan {
+                    self.plan_text = self.entries.iter().rev().find_map(|entry| match entry {
+                        Entry::Assistant(text) if !text.trim().is_empty() => Some(text.clone()),
+                        _ => None,
+                    });
+                }
             }
             UiEvent::Failed(message) => {
                 self.flush_streaming();
+                self.run.active = false;
+                self.run.ended = Some(Instant::now());
+                self.run.stage = Stage::Verify;
+                self.run.stopping = false;
                 self.status.working = false;
                 self.status.turn = 0;
-                self.error = Some(message);
+                if matches!(self.mode, Mode::Run | Mode::Steer) {
+                    self.mode = Mode::Chat;
+                }
+                // The core reports the owner's stop through `failed`; only
+                // the reason separates it from a failure. The card must
+                // not call the owner's own decision an error.
+                if message.contains("stopped by the owner") {
+                    self.run.stop_reason = Some("stopped by you".to_string());
+                    self.run.last = "stopped by you".to_string();
+                } else {
+                    self.run.stop_reason = Some("failed".to_string());
+                    self.run.last = format!("failed \u{b7} {message}");
+                    self.error = Some(message);
+                }
             }
         }
     }
@@ -836,8 +1580,334 @@ impl App {
     /// Open the picker over `sessions` (oldest first, as listed).
     pub fn open_sessions(&mut self, sessions: Vec<SessionSummary>) {
         self.sessions = sessions;
+        // The filter is the picker's own state and it does not survive a
+        // close: a list that quietly hides rows on the next visit is a
+        // list the owner cannot trust.
+        self.session_filter = SessionFilter::All;
         self.selected = 0;
         self.mode = Mode::Sessions;
+    }
+
+    /// The picker's rows under the active filter, in the archive's own
+    /// oldest-first order.
+    pub fn session_rows(&self) -> Vec<&SessionSummary> {
+        self.sessions
+            .iter()
+            .filter(|summary| self.session_filter.matches(summary))
+            .collect()
+    }
+
+    /// Cycle the picker's filter and put the cursor back at the top:
+    /// the row that was selected under the old filter may not exist.
+    pub fn cycle_session_filter(&mut self) {
+        self.session_filter = self.session_filter.next();
+        self.selected = 0;
+    }
+
+    /// Open the checkpoint list. The rows are newest first, exactly as
+    /// the store's own `list` returns them.
+    pub fn open_checkpoints(&mut self, rows: Vec<crate::checkpoints::Snapshot>) {
+        self.checkpoints_view = rows;
+        self.selected = 0;
+        self.mode = Mode::Checkpoints;
+    }
+
+    /// The turn the checkpoint cursor names, for the loop's diff read.
+    pub fn checkpoint_turn(&self) -> Option<u64> {
+        self.checkpoints_view
+            .get(self.selected)
+            .map(|snapshot| snapshot.turn)
+    }
+
+    /// Show one checkpoint's diff.
+    pub fn open_diff(&mut self, turn: u64, rows: Vec<crate::checkpoints::FileDiff>) {
+        self.diff_view = rows;
+        self.diff_turn = turn;
+        self.diff_file = 0;
+        self.diff_hunk = 0;
+        self.mode = Mode::Diff;
+    }
+
+    pub fn selected_diff_file(&self) -> Option<&crate::checkpoints::FileDiff> {
+        self.diff_view.get(self.diff_file)
+    }
+
+    pub fn selected_hunk(&self) -> Option<&crate::checkpoints::Hunk> {
+        self.selected_diff_file()
+            .and_then(|file| file.hunks.get(self.diff_hunk))
+    }
+
+    /// Arm a rewind of the selected checkpoint.
+    pub fn arm_rewind(&mut self) {
+        let Some(snapshot) = self.checkpoints_view.get(self.selected) else {
+            return;
+        };
+        self.confirm = Some(TrustConfirm {
+            title: format!("rewind to turn {}", snapshot.turn),
+            detail: format!(
+                "restores {} file(s) from the checkpoint at {} and cuts the log after that turn",
+                snapshot.files, snapshot.at
+            ),
+            action: TrustAction::Rewind(snapshot.turn),
+            back: Mode::Checkpoints,
+        });
+        self.mode = Mode::Confirm;
+    }
+
+    /// Arm a hunk's rejection; a file with no alignable hunk (an addition
+    /// or a removal) arms the whole-file form instead.
+    pub fn arm_reject_hunk(&mut self) {
+        let Some(file) = self.selected_diff_file() else {
+            return;
+        };
+        let path = file.path.clone();
+        let turn = self.diff_turn;
+        let hunk = self.diff_hunk;
+        if file.hunks.is_empty() {
+            self.confirm = Some(TrustConfirm {
+                title: format!("reject {path}"),
+                detail: "puts the checkpoint's whole file back".to_string(),
+                action: TrustAction::RejectFile { turn, file: path },
+                back: Mode::Diff,
+            });
+            self.mode = Mode::Confirm;
+            return;
+        }
+        if file.hunks.get(hunk).is_none() {
+            return;
+        }
+        self.confirm = Some(TrustConfirm {
+            title: format!("reject hunk {} of {path}", hunk + 1),
+            detail: "puts this hunk's checkpoint lines back".to_string(),
+            action: TrustAction::RejectHunk {
+                turn,
+                file: path,
+                hunk,
+            },
+            back: Mode::Diff,
+        });
+        self.mode = Mode::Confirm;
+    }
+
+    /// Arm a whole file's rejection.
+    pub fn arm_reject_file(&mut self) {
+        let Some(file) = self.selected_diff_file() else {
+            return;
+        };
+        self.confirm = Some(TrustConfirm {
+            title: format!("reject {}", file.path),
+            detail: "puts the checkpoint's whole file back".to_string(),
+            action: TrustAction::RejectFile {
+                turn: self.diff_turn,
+                file: file.path.clone(),
+            },
+            back: Mode::Diff,
+        });
+        self.mode = Mode::Confirm;
+    }
+
+    /// Land the armed write: the effect the loop performs.
+    pub fn land_trust(&mut self) -> Option<Effect> {
+        let confirm = self.confirm.take()?;
+        self.mode = confirm.back;
+        match confirm.action {
+            TrustAction::Rewind(turn) => {
+                self.mode = Mode::Chat;
+                Some(Effect::Rewind(turn))
+            }
+            TrustAction::RejectHunk { turn, file, hunk } => {
+                Some(Effect::RejectHunk { turn, file, hunk })
+            }
+            TrustAction::RejectFile { turn, file } => Some(Effect::RejectFile { turn, file }),
+        }
+    }
+
+    /// Abandon the armed write, with nothing touched.
+    pub fn cancel_trust(&mut self) {
+        if let Some(confirm) = self.confirm.take() {
+            self.mode = confirm.back;
+        }
+    }
+
+    /// Open one knowledge panel in its loading state. The returned
+    /// generation stamps the read, so a panel the owner has already
+    /// closed cannot receive a late answer.
+    pub fn open_panel(&mut self, kind: PanelKind) -> u64 {
+        self.panel_generation = self.panel_generation.wrapping_add(1);
+        self.panel_kind = Some(kind);
+        self.panel = None;
+        self.panel_loading = true;
+        self.panel_filter = 0;
+        self.panel_note = None;
+        self.selected = 0;
+        self.mode = Mode::Panel;
+        self.panel_generation
+    }
+
+    /// Land a panel read. A read from a superseded generation, or for a
+    /// panel that is no longer open, is dropped.
+    pub fn apply_panel(
+        &mut self,
+        generation: u64,
+        kind: PanelKind,
+        result: Result<PanelData, String>,
+    ) {
+        if generation != self.panel_generation || self.panel_kind != Some(kind) {
+            return;
+        }
+        self.panel_loading = false;
+        match result {
+            Ok(data) => {
+                self.panel = Some(data);
+                self.panel_note = None;
+                self.selected = 0;
+            }
+            Err(reason) => {
+                self.panel_note = Some(reason.clone());
+                self.error = Some(reason);
+            }
+        }
+    }
+
+    /// The open panel's filter words, for the title.
+    pub fn panel_filter_label(&self) -> &'static str {
+        let kind = self.panel_kind.unwrap_or(PanelKind::Memory);
+        let words: &[&str] = match kind {
+            PanelKind::Memory => &["all", "live", "protected", "retired"],
+            PanelKind::Skills => &["all", "used", "unused", "proposals", "skipped"],
+            PanelKind::Calibration => &["all", "fit", "informing"],
+            PanelKind::Delegation => &["all", "live", "history"],
+        };
+        words[self.panel_filter.min(words.len() - 1)]
+    }
+
+    /// Cycle the open panel's filter.
+    pub fn cycle_panel_filter(&mut self) {
+        let kind = self.panel_kind.unwrap_or(PanelKind::Memory);
+        let len = match kind {
+            PanelKind::Memory => 4,
+            PanelKind::Skills => 5,
+            PanelKind::Calibration => 3,
+            PanelKind::Delegation => 3,
+        };
+        self.panel_filter = (self.panel_filter + 1) % len;
+        self.selected = 0;
+    }
+
+    /// The rows the panel's list shows, under its active filter.
+    pub fn panel_rows(&self) -> Vec<PanelRow> {
+        match &self.panel {
+            Some(PanelData::Memory(snapshot)) => snapshot
+                .facts
+                .iter()
+                .filter(|fact| match self.panel_filter {
+                    1 => !fact.retired,
+                    2 => fact.protected && !fact.retired,
+                    3 => fact.retired,
+                    _ => true,
+                })
+                .map(|fact| PanelRow {
+                    label: fact.name.clone(),
+                    meta: format!("{} \u{b7} {} recall(s)", fact.fact_type, fact.recall_count),
+                    detail: format!("{}\n\n{}\n\n{}", fact.description, fact.body, fact.path),
+                })
+                .collect(),
+            Some(PanelData::Skills(snapshot)) => match self.panel_filter {
+                3 => snapshot
+                    .proposals
+                    .iter()
+                    .map(|proposal| PanelRow {
+                        label: proposal.name.clone(),
+                        meta: proposal.kind.clone(),
+                        detail: format!(
+                            "{}\n\n{}\n\n{}",
+                            proposal.description, proposal.evidence, proposal.path
+                        ),
+                    })
+                    .collect(),
+                4 => snapshot
+                    .skips
+                    .iter()
+                    .map(|skip| PanelRow {
+                        label: skip.name.clone(),
+                        meta: "skipped".to_string(),
+                        detail: skip.reason.clone(),
+                    })
+                    .collect(),
+                _ => snapshot
+                    .skills
+                    .iter()
+                    .filter(|skill| match self.panel_filter {
+                        1 => skill.uses > 0,
+                        2 => skill.uses == 0,
+                        _ => true,
+                    })
+                    .map(|skill| PanelRow {
+                        label: skill.name.clone(),
+                        meta: format!(
+                            "{} use{}",
+                            skill.uses,
+                            if skill.uses == 1 { "" } else { "s" }
+                        ),
+                        detail: format!("{}\n\n{}", skill.description, skill.path),
+                    })
+                    .collect(),
+            },
+            Some(PanelData::Calibration(data)) => data
+                .cells
+                .iter()
+                .filter(|cell| match self.panel_filter {
+                    1 => cell.fit.label() == "fit",
+                    2 => cell.informs_failover(),
+                    _ => true,
+                })
+                .map(|cell| PanelRow {
+                    label: cell.provider.clone(),
+                    meta: format!(
+                        "{} \u{b7} {}",
+                        if cell.workload.is_empty() {
+                            "no shape"
+                        } else {
+                            cell.workload.as_str()
+                        },
+                        cell.fit.label()
+                    ),
+                    detail: format!(
+                        "{} judged \u{b7} {} right \u{b7} {} wrong \u{b7} {} insufficient\n\
+                         weighted wrong {:.2} \u{b7} insufficient {:.2} \u{b7} span {:.2}\n\
+                         spend {:.4} \u{b7} gate {}",
+                        cell.judged,
+                        cell.right,
+                        cell.wrong,
+                        cell.insufficient,
+                        cell.weighted_wrong_rate,
+                        cell.weighted_insufficient_rate,
+                        cell.confidence_span,
+                        cell.spend_usd,
+                        if cell.informs_failover() {
+                            "informing"
+                        } else {
+                            "not informing"
+                        }
+                    ),
+                })
+                .collect(),
+            Some(PanelData::Delegation(snapshot)) => {
+                let mut rows = Vec::new();
+                if self.panel_filter != 2 {
+                    if let Some(live) = &snapshot.live {
+                        push_node(&mut rows, live, 0);
+                    }
+                }
+                if self.panel_filter != 1 {
+                    for root in &snapshot.history {
+                        push_node(&mut rows, root, 0);
+                    }
+                }
+                rows
+            }
+            None => Vec::new(),
+        }
     }
 
     /// Open the settings pane over the conversation, with the states the
@@ -1195,11 +2265,160 @@ impl App {
         self.selected = 0;
     }
 
-    /// Cycle the board pane to the next board and mark it for an
-    /// immediate read. The cadence already covers every board, so this is
-    /// about the one the user just asked for.
-    pub fn cycle_board(&mut self) {
-        self.boards.cycle();
+    /// Cycle the right pane to the next tab. A board tab points the
+    /// refresher at the board it shows; the run tab asks for no read.
+    pub fn cycle_pane(&mut self) {
+        self.pane = self.pane.next();
+        if let Some(board) = self.pane.board() {
+            self.boards.active = board;
+        }
+    }
+
+    /// The failover gate read at launch. `None` is a home whose config
+    /// could not be read, which the card says rather than guessing on.
+    pub fn set_gate(&mut self, informs: Option<bool>) {
+        self.run.gate = informs;
+    }
+
+    /// Open the command palette. Every open starts empty: a filter that
+    /// survived the last command would hide the command the owner wants.
+    pub fn open_palette(&mut self) {
+        self.palette_query.clear();
+        self.palette_selected = 0;
+        self.mode = Mode::Palette;
+    }
+
+    /// Every palette command, in the order the palette shows them when
+    /// the filter is empty. Direct keys stay for muscle memory; this is
+    /// how the owner finds a surface they do not have a key for.
+    pub fn palette_items(&self) -> Vec<PaletteItem> {
+        vec![
+            PaletteItem {
+                label: "run controls",
+                detail: "stop, steer, branches",
+                action: Action::OpenRunControls,
+            },
+            PaletteItem {
+                label: "run pane",
+                detail: "the live loop",
+                action: Action::OpenPane(Pane::Run),
+            },
+            PaletteItem {
+                label: "router",
+                detail: "the declared chain and the day's rows",
+                action: Action::OpenPane(Pane::Router),
+            },
+            PaletteItem {
+                label: "brain",
+                detail: "the derived state",
+                action: Action::OpenPane(Pane::Brain),
+            },
+            PaletteItem {
+                label: "tower",
+                detail: "the projects and their evidence",
+                action: Action::OpenPane(Pane::Tower),
+            },
+            PaletteItem {
+                label: "memory",
+                detail: "the corpus, its tiers, and the day's hits",
+                action: Action::OpenPanel(PanelKind::Memory),
+            },
+            PaletteItem {
+                label: "skills",
+                detail: "the library, proposals, and skips",
+                action: Action::OpenPanel(PanelKind::Skills),
+            },
+            PaletteItem {
+                label: "calibration",
+                detail: "the judged fit cells",
+                action: Action::OpenPanel(PanelKind::Calibration),
+            },
+            PaletteItem {
+                label: "delegation",
+                detail: "the child runs and the graph",
+                action: Action::OpenPanel(PanelKind::Delegation),
+            },
+            PaletteItem {
+                label: "sessions",
+                detail: "the archive; enter resumes",
+                action: Action::OpenSessions,
+            },
+            PaletteItem {
+                label: "lanes",
+                detail: "the vendored lanes' health",
+                action: Action::OpenLanes,
+            },
+            PaletteItem {
+                label: "checkpoints",
+                detail: "rewind to a turn",
+                action: Action::OpenCheckpoints,
+            },
+            PaletteItem {
+                label: "plan mode",
+                detail: "toggle the next run's plan bit",
+                action: Action::TogglePlan,
+            },
+            PaletteItem {
+                label: "stop the run",
+                detail: "write the run's control file",
+                action: Action::StopRun,
+            },
+            PaletteItem {
+                label: "steer the run",
+                detail: "send one line to the run",
+                action: Action::OpenSteer,
+            },
+            PaletteItem {
+                label: "settings",
+                detail: "every configurable surface",
+                action: Action::OpenSettings,
+            },
+            PaletteItem {
+                label: "explain",
+                detail: "today's explanation card",
+                action: Action::OpenExplain,
+            },
+            PaletteItem {
+                label: "quit",
+                detail: "leave fleet",
+                action: Action::Quit,
+            },
+        ]
+    }
+
+    /// The commands the current filter keeps, in display order.
+    pub fn palette_filtered(&self) -> Vec<PaletteItem> {
+        let asked = self.palette_query.trim().to_ascii_lowercase();
+        self.palette_items()
+            .into_iter()
+            .filter(|item| {
+                asked.is_empty()
+                    || format!("{} {}", item.label, item.detail)
+                        .to_ascii_lowercase()
+                        .contains(&asked)
+            })
+            .collect()
+    }
+
+    /// Move the palette cursor, clamped to the filtered list.
+    pub fn palette_move(&mut self, delta: i32) {
+        let len = self.palette_filtered().len();
+        if len == 0 {
+            self.palette_selected = 0;
+            return;
+        }
+        let last = len as i32 - 1;
+        self.palette_selected = (self.palette_selected as i32 + delta).clamp(0, last) as usize;
+    }
+
+    /// Commit the highlighted command: close the palette and hand the
+    /// action back to the event loop, which performs the reads the
+    /// state machine cannot (sessions, lanes, settings).
+    pub fn palette_pick(&mut self) -> Option<Action> {
+        let items = self.palette_filtered();
+        let action = items.get(self.palette_selected)?.action;
+        self.mode = Mode::Chat;
+        Some(action)
     }
 
     /// Land one finished board read. A refusal keeps the last snapshot
@@ -1227,6 +2446,27 @@ impl App {
         self.following = true;
         self.status.turn = 0;
         self.status.working = false;
+        // The run card describes the run this view was watching; a
+        // resumed log replaces that view, so the card comes back idle.
+        // The plan toggle and the gate are the next run's, and stay.
+        self.run.active = false;
+        self.run.ended = None;
+        self.run.started = None;
+        self.run.stage = Stage::Route;
+        self.run.turn = 0;
+        self.run.tool.clear();
+        self.run.calls = 0;
+        self.run.facts = 0;
+        self.run.shape.clear();
+        self.run.context = 0;
+        self.run.lanes = 0;
+        self.run.checkpoint = None;
+        self.run.branches.clear();
+        self.run.last.clear();
+        self.run.stop_reason = None;
+        self.run.stopping = false;
+        self.run.tokens.clear();
+        self.plan_text = None;
         // The counters belong to the view being replaced, not to the log
         // being replayed: the resumed conversation's earlier runs never
         // streamed through here, so the count restarts at zero.
@@ -1347,10 +2587,71 @@ impl App {
             self.should_quit = true;
             return Some(Effect::Quit);
         }
+        // A new run resets the run card but keeps the composer's plan
+        // toggle and the gate the launch read: both belong to the next
+        // run, not to the one that just ended.
+        let plan = self.run.plan;
+        let gate = self.run.gate;
+        self.run = RunState {
+            plan,
+            active: true,
+            started: Some(Instant::now()),
+            gate,
+            last: "the task is with the agent".to_string(),
+            ..RunState::default()
+        };
+        self.pane = Pane::Run;
+        self.plan_text = None;
+        self.error = None;
+        self.status.working = true;
+        self.status.turn = 0;
         self.entries.push(Entry::User(text.clone()));
         self.scrolled_back = 0;
         self.following = true;
-        Some(Effect::Run(text))
+        Some(Effect::Run { task: text, plan })
+    }
+
+    /// Stop the run in flight through its control file. The session id
+    /// is the file's own key, so a run that has not created its log yet
+    /// is a named refusal rather than a file nothing reads.
+    fn stop_run(&mut self) -> Option<Effect> {
+        if !self.run.active {
+            self.error = Some("no run is in flight to stop".to_string());
+            return None;
+        }
+        if self.status.session_id.is_empty() {
+            self.error = Some(
+                "this run has no session log yet; there is nothing beside it to write".to_string(),
+            );
+            return None;
+        }
+        if self.run.stopping {
+            return None;
+        }
+        self.run.stopping = true;
+        self.run.last = "stopping \u{b7} the run ends at its next step".to_string();
+        Some(Effect::Control { steer: None })
+    }
+
+    /// Send the one-line steer. A steer rides one turn, and the control
+    /// file is consumed by the loop; a second one is a second write.
+    fn send_steer(&mut self) -> Option<Effect> {
+        let text = self.steer_input.trim().to_string();
+        if !self.run.active || text.is_empty() {
+            self.mode = Mode::Run;
+            return None;
+        }
+        if self.status.session_id.is_empty() {
+            self.error = Some(
+                "this run has no session log yet; there is nothing beside it to write".to_string(),
+            );
+            return None;
+        }
+        let preview: String = text.chars().take(60).collect();
+        self.steer_input.clear();
+        self.run.last = format!("steer sent \u{b7} {preview}");
+        self.mode = Mode::Run;
+        Some(Effect::Control { steer: Some(text) })
     }
 
     fn pick_session(&mut self) -> Option<Effect> {
@@ -1360,7 +2661,7 @@ impl App {
             self.error = Some("wait for the run to finish before resuming a session".to_string());
             return None;
         }
-        let picked = self.sessions.get(self.selected)?.id.clone();
+        let picked = self.session_rows().get(self.selected)?.id.clone();
         self.mode = Mode::Chat;
         Some(Effect::Resume(picked))
     }
@@ -1393,6 +2694,52 @@ impl App {
         }
     }
 
+    /// One delegated child's branch, rewritten by each stage. The list
+    /// is capped: a run can spawn many children, and the run card shows
+    /// the newest few rather than growing without bound.
+    fn apply_branch(&mut self, goal: &str, session: &str, stage: &SubagentStage) {
+        let (kind, calls, tool, outcome, turns) = match stage {
+            SubagentStage::Spawned => ("spawned", 0, String::new(), String::new(), 0),
+            SubagentStage::Working { calls, tool } => {
+                ("working", *calls, tool.clone(), String::new(), 0)
+            }
+            SubagentStage::Done { outcome, turns } => {
+                ("done", 0, String::new(), outcome.clone(), *turns)
+            }
+        };
+        let suffix = if tool.is_empty() {
+            String::new()
+        } else {
+            format!(" \u{b7} {tool}")
+        };
+        self.run.last = format!("delegation \u{b7} {kind}{suffix}");
+        if let Some(branch) = self
+            .run
+            .branches
+            .iter_mut()
+            .find(|branch| branch.session == session)
+        {
+            branch.stage = kind.to_string();
+            branch.calls = calls;
+            branch.tool = tool;
+            branch.outcome = outcome;
+            branch.turns = turns;
+        } else {
+            self.run.branches.push(Branch {
+                session: session.to_string(),
+                goal: goal.to_string(),
+                stage: kind.to_string(),
+                calls,
+                tool,
+                outcome,
+                turns,
+            });
+            if self.run.branches.len() > 32 {
+                self.run.branches.remove(0);
+            }
+        }
+    }
+
     /// Flip the newest open tool card to approved, so the run's progress
     /// is visible while the call executes.
     fn mark_pending_approved(&mut self) {
@@ -1406,6 +2753,46 @@ impl App {
                 card.status = ToolStatus::Approved;
             }
         }
+    }
+}
+
+/// Flatten one delegation tree into selectable rows, keeping the depth
+/// as indentation so the panel reads as a tree rather than a list.
+fn push_node(rows: &mut Vec<PanelRow>, node: &crate::boards::DelegationNode, depth: usize) {
+    let indent = "  ".repeat(depth);
+    let turn = node
+        .turns
+        .map(|turns| format!(" \u{b7} {turns} turn(s)"))
+        .unwrap_or_default();
+    rows.push(PanelRow {
+        label: format!("{indent}{}", short_session_id(&node.id)),
+        meta: node.status.clone(),
+        detail: format!(
+            "{}{}\n\nmodel {}\nstop {}{}",
+            node.goal.as_deref().unwrap_or("no goal recorded"),
+            if depth == 0 { "" } else { " (child)" },
+            node.model,
+            node.stop_reason.as_deref().unwrap_or("\u{2014}"),
+            turn
+        ),
+    });
+    for child in &node.children {
+        push_node(rows, child, depth + 1);
+    }
+}
+
+fn short_session_id(id: &str) -> String {
+    id.rsplit_once('Z')
+        .map(|(head, tail)| format!("{}Z{}", &head[head.len().saturating_sub(5)..], tail))
+        .unwrap_or_else(|| id.chars().take(20).collect())
+}
+
+/// Step a cursor and clamp it to a list of `len` items.
+fn clamp_step(current: usize, delta: i32, len: usize) -> usize {
+    if len == 0 {
+        0
+    } else {
+        (current as i32 + delta).clamp(0, len as i32 - 1) as usize
     }
 }
 
@@ -1956,7 +3343,13 @@ mod tests {
         app.push_input('h');
         app.push_input('i');
         let effect = app.apply(Action::Submit).unwrap();
-        assert_eq!(effect, Effect::Run("hi".to_string()));
+        assert_eq!(
+            effect,
+            Effect::Run {
+                task: "hi".to_string(),
+                plan: false
+            }
+        );
         assert_eq!(app.entries, vec![Entry::User("hi".to_string())]);
         assert!(app.input.is_empty());
         assert!(app.following);
@@ -2863,5 +4256,348 @@ mod tests {
                 Entry::Assistant("carried on".to_string()),
             ]
         );
+    }
+
+    fn routed() -> UiEvent {
+        UiEvent::Routed {
+            provider: "stepfun".to_string(),
+            model: "step-5-preview".to_string(),
+            how: "judged".to_string(),
+            workload: Some("hard".to_string()),
+            verdict: Some("pass".to_string()),
+            judged_from: "fresh".to_string(),
+            reason: "the orchestrator walks hard's chain".to_string(),
+            order: vec![("stepfun".to_string(), "step-5-preview".to_string())],
+        }
+    }
+
+    #[test]
+    fn a_run_walks_the_loop_and_reduces_its_branches() {
+        let mut app = app();
+        app.push_input('g');
+        app.push_input('o');
+        assert_eq!(
+            app.apply(Action::Submit),
+            Some(Effect::Run {
+                task: "go".to_string(),
+                plan: false
+            })
+        );
+        assert!(app.run.active);
+        assert_eq!(app.run.stage, Stage::Route);
+        assert_eq!(app.pane, Pane::Run);
+
+        app.apply_ui_event(routed());
+        assert_eq!(app.run.provider, "stepfun");
+        assert_eq!(app.run.model, "step-5-preview");
+        assert_eq!(app.run.workload, "hard");
+
+        app.apply_ui_event(UiEvent::Turn(3));
+        assert_eq!(app.run.stage, Stage::Think);
+        assert_eq!(app.run.turn, 3);
+
+        app.apply_ui_event(UiEvent::ToolCall {
+            name: "bash".to_string(),
+            summary: "cargo test".to_string(),
+        });
+        assert_eq!(app.run.stage, Stage::Act);
+        assert_eq!(app.run.calls, 1);
+        assert_eq!(app.run.tool, "bash");
+
+        app.apply_ui_event(UiEvent::Memory {
+            shape: "change".to_string(),
+            facts: 24,
+        });
+        assert_eq!(app.run.facts, 24);
+        assert_eq!(app.run.shape, "change");
+
+        app.apply_ui_event(UiEvent::Checkpoint {
+            turn: 3,
+            files: 2,
+            bytes: 10,
+        });
+        assert_eq!(app.run.checkpoint, Some(3));
+
+        app.apply_ui_event(UiEvent::Subagent {
+            goal: "read the router".to_string(),
+            session: "20261020T000000Z-abcdef".to_string(),
+            stage: SubagentStage::Spawned,
+        });
+        app.apply_ui_event(UiEvent::Subagent {
+            goal: "read the router".to_string(),
+            session: "20261020T000000Z-abcdef".to_string(),
+            stage: SubagentStage::Working {
+                calls: 2,
+                tool: "bash".to_string(),
+            },
+        });
+        app.apply_ui_event(UiEvent::Subagent {
+            goal: "read the router".to_string(),
+            session: "20261020T000000Z-abcdef".to_string(),
+            stage: SubagentStage::Done {
+                outcome: "completed".to_string(),
+                turns: 4,
+            },
+        });
+        assert_eq!(app.run.branches.len(), 1);
+        assert_eq!(app.run.branches[0].stage, "done");
+        assert_eq!(app.run.branches[0].outcome, "completed");
+        assert_eq!(app.run.branches[0].turns, 4);
+
+        app.apply_ui_event(UiEvent::Usage {
+            prompt_tokens: 33_360,
+            completion_tokens: 3,
+        });
+        assert_eq!(app.run.context, 33_360);
+        assert_eq!(app.run.tokens, vec![33_363]);
+
+        app.apply_ui_event(UiEvent::Finished {
+            stop_reason: "completed".to_string(),
+        });
+        assert!(!app.run.active);
+        assert_eq!(app.run.stage, Stage::Verify);
+        assert_eq!(app.run.stop_reason.as_deref(), Some("completed"));
+        assert!(!app.status.working);
+    }
+
+    #[test]
+    fn plan_mode_keeps_the_plan_and_ctrl_e_loads_it_without_sending() {
+        let mut app = app();
+        app.apply(Action::TogglePlan);
+        assert!(app.run.plan);
+        app.apply(Action::Input('p'));
+        assert_eq!(
+            app.apply(Action::Submit),
+            Some(Effect::Run {
+                task: "p".to_string(),
+                plan: true
+            })
+        );
+        app.apply_ui_event(UiEvent::Token("the plan".to_string()));
+        app.apply_ui_event(UiEvent::Finished {
+            stop_reason: "completed".to_string(),
+        });
+        assert_eq!(app.plan_text.as_deref(), Some("the plan"));
+        // Ctrl-E copies it into the message box; it never submits.
+        assert_eq!(app.apply(Action::LoadPlan), None);
+        assert_eq!(app.input, "the plan");
+        assert!(app.plan_text.is_none());
+        assert!(app
+            .entries
+            .iter()
+            .any(|entry| entry == &Entry::User("p".to_string())));
+    }
+
+    #[test]
+    fn stop_and_steer_need_a_run_and_a_log_and_record_the_intent() {
+        let mut app = app();
+        assert_eq!(app.apply(Action::StopRun), None);
+        assert!(app.error.is_some());
+        // A run is in flight but the agent has not created the log yet:
+        // the control file has no beside-the-log home, so it is refused.
+        app.apply(Action::Input('x'));
+        app.apply(Action::Submit);
+        app.status.session_id.clear();
+        assert_eq!(app.apply(Action::StopRun), None);
+        assert!(app
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("no session log")));
+        // Once the log exists, the stop is one control write.
+        app.status.session_id = "20261020T000000Z-abcdef".to_string();
+        assert_eq!(
+            app.apply(Action::StopRun),
+            Some(Effect::Control { steer: None })
+        );
+        assert!(app.run.stopping);
+        // A steer is its own one-line write.
+        app.apply(Action::OpenSteer);
+        for character in "read the gate".chars() {
+            app.apply(Action::Input(character));
+        }
+        assert_eq!(
+            app.apply(Action::Submit),
+            Some(Effect::Control {
+                steer: Some("read the gate".to_string())
+            })
+        );
+        assert_eq!(app.mode, Mode::Run);
+        assert!(app.run.last.contains("steer sent"));
+    }
+
+    fn snapshot(turn: u64) -> crate::checkpoints::Snapshot {
+        crate::checkpoints::Snapshot {
+            turn,
+            at: "2026-10-20T00:00:00Z".to_string(),
+            files: 4,
+            bytes: 1024,
+            unread: 0,
+        }
+    }
+
+    fn diff_file() -> crate::checkpoints::FileDiff {
+        crate::checkpoints::FileDiff {
+            path: "src/lib.rs".to_string(),
+            kind: crate::checkpoints::DiffKind::Modified,
+            hunks: vec![crate::checkpoints::Hunk {
+                old: vec!["old line".to_string()],
+                new: vec!["new line".to_string()],
+                new_at: 2,
+            }],
+            too_large: false,
+        }
+    }
+
+    #[test]
+    fn the_checkpoint_cursor_arms_a_rewind_and_the_confirm_lands_it() {
+        let mut app = app();
+        app.open_checkpoints(vec![snapshot(4), snapshot(2)]);
+        assert_eq!(app.mode, Mode::Checkpoints);
+        assert_eq!(app.checkpoint_turn(), Some(4));
+        app.arm_rewind();
+        assert_eq!(app.mode, Mode::Confirm);
+        assert_eq!(
+            app.land_trust(),
+            Some(Effect::Rewind(4)),
+            "the armed turn is the one the effect names"
+        );
+        assert_eq!(app.mode, Mode::Chat);
+        // The second row is the older checkpoint.
+        app.open_checkpoints(vec![snapshot(4), snapshot(2)]);
+        app.apply(Action::Move(1));
+        assert_eq!(app.checkpoint_turn(), Some(2));
+    }
+
+    #[test]
+    fn the_diff_arms_a_hunk_or_a_file_and_a_cancel_touches_nothing() {
+        let mut app = app();
+        app.open_diff(4, vec![diff_file()]);
+        assert_eq!(app.mode, Mode::Diff);
+        app.arm_reject_hunk();
+        assert_eq!(app.mode, Mode::Confirm);
+        assert_eq!(
+            app.land_trust(),
+            Some(Effect::RejectHunk {
+                turn: 4,
+                file: "src/lib.rs".to_string(),
+                hunk: 0,
+            })
+        );
+        app.arm_reject_file();
+        assert_eq!(
+            app.land_trust(),
+            Some(Effect::RejectFile {
+                turn: 4,
+                file: "src/lib.rs".to_string(),
+            })
+        );
+        // Esc in the confirm view returns to the diff with nothing armed.
+        app.arm_reject_file();
+        app.apply(Action::TrustCancel);
+        assert_eq!(app.mode, Mode::Diff);
+        assert!(app.confirm.is_none());
+    }
+
+    #[test]
+    fn usage_events_feed_the_bar_and_the_run_card() {
+        let mut app = app();
+        app.apply_ui_event(UiEvent::Usage {
+            prompt_tokens: 100,
+            completion_tokens: 10,
+        });
+        assert_eq!(app.status.prompt_tokens, 100);
+        assert_eq!(app.status.completion_tokens, 10);
+        assert_eq!(app.run.context, 100);
+        assert_eq!(app.run.tokens, vec![110]);
+        app.apply_ui_event(UiEvent::Usage {
+            prompt_tokens: 20,
+            completion_tokens: 2,
+        });
+        assert_eq!(app.status.prompt_tokens, 120);
+        assert_eq!(app.status.completion_tokens, 12);
+        // The context is the last request, not the sum.
+        assert_eq!(app.run.context, 20);
+        assert_eq!(app.run.tokens, vec![110, 22]);
+    }
+
+    fn memory_snapshot() -> crate::boards::MemorySnapshot {
+        let fact = crate::boards::MemoryFact {
+            name: "a-fact".to_string(),
+            description: "the sentence".to_string(),
+            fact_type: "project".to_string(),
+            basis: "inferred".to_string(),
+            tier: "durable".to_string(),
+            date: "2026-10-20".to_string(),
+            recall_count: 3,
+            protected: true,
+            retired: false,
+            superseded_by: String::new(),
+            valid_until: String::new(),
+            shape: Vec::new(),
+            phrases: Vec::new(),
+            missing: Vec::new(),
+            body: "the whole body".to_string(),
+            path: "memories/a-fact.md".to_string(),
+        };
+        crate::boards::MemorySnapshot {
+            read_at: "2026-10-20T00:00:00Z".to_string(),
+            day: "2026-10-20".to_string(),
+            root: "memories".to_string(),
+            facts: vec![fact],
+            hits: Vec::new(),
+            refused: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_panel_read_lands_only_for_its_generation_and_filters() {
+        let mut app = app();
+        let generation = app.open_panel(PanelKind::Memory);
+        assert!(app.panel_loading);
+        assert_eq!(app.mode, Mode::Panel);
+        // A late read from a previous open is dropped.
+        app.apply_panel(
+            generation.wrapping_sub(1),
+            PanelKind::Memory,
+            Ok(PanelData::Memory(memory_snapshot())),
+        );
+        assert!(app.panel.is_none());
+        app.apply_panel(
+            generation,
+            PanelKind::Memory,
+            Ok(PanelData::Memory(memory_snapshot())),
+        );
+        assert!(!app.panel_loading);
+        let rows = app.panel_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "a-fact");
+        assert!(rows[0].detail.contains("the whole body"));
+        assert_eq!(app.panel_filter_label(), "all");
+        app.cycle_panel_filter();
+        assert_eq!(app.panel_filter_label(), "live");
+        app.cycle_panel_filter();
+        assert_eq!(app.panel_filter_label(), "protected");
+        assert_eq!(app.panel_rows().len(), 1);
+        app.cycle_panel_filter();
+        assert_eq!(app.panel_filter_label(), "retired");
+        assert!(app.panel_rows().is_empty());
+    }
+
+    #[test]
+    fn an_owner_stop_is_not_a_failure() {
+        let mut app = app();
+        app.apply(Action::Input('x'));
+        app.apply(Action::Submit);
+        app.apply_ui_event(UiEvent::Failed("stopped by the owner".to_string()));
+        assert_eq!(app.run.stop_reason.as_deref(), Some("stopped by you"));
+        assert!(app.error.is_none());
+        assert_eq!(app.mode, Mode::Chat);
+        // A real failure still banners.
+        let mut failed = self::app();
+        failed.apply(Action::Input('x'));
+        failed.apply(Action::Submit);
+        failed.apply_ui_event(UiEvent::Failed("the provider refused".to_string()));
+        assert_eq!(failed.run.stop_reason.as_deref(), Some("failed"));
+        assert!(failed.error.is_some());
     }
 }

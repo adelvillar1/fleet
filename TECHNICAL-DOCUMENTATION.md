@@ -270,8 +270,14 @@ Loopback reachability probe used by doctor.
 
 #### `tui/`
 The ratatui surface: `app.rs` state machine, `events.rs` key mapping,
-`ui.rs` rendering, and `mod.rs` event loop. Eight modes, board pane, and the
-approval prompt are the user-facing surfaces.
+`panels.rs` the knowledge panels' on-demand reads, `ui/` the renderers
+(`mod.rs` layout, `run.rs` the run card and controls, `command.rs` the
+palette, `trust.rs` checkpoints/diff/confirm, `knowledge.rs` the memory,
+skills, calibration and delegation panels), and `mod.rs` the event loop.
+The right pane is a tabbed surface (run, router, brain, tower); the
+conversation carries the plan card and a scrollbar; the status bar carries
+a context gauge. Stop/steer ride the agent's control file, rewind/diff ride
+`checkpoints.rs`, and plan mode is the per-run `AgentOptions` bit.
 
 #### `gui/`
 The browser face: `mod.rs` the serve entry, `server.rs` the hand-rolled
