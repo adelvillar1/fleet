@@ -4187,6 +4187,195 @@ body[data-rail="icons"][data-pane="open"] .face {
 /* ---------------------------------------------------------- responsive */
 
 /* Tablet: the conversation loses its aside before it loses its measure. */
+/* The Bots surface: the service's rows, the door's queue, the peers and
+   their actions, and the activity. The console's own vocabulary — a
+   hairline row, a mono meta line, and actions that are buttons — and
+   nothing cockpit-shaped: five cards, each answering one question. */
+/* The rail's count: a number that appears only when something is
+   waiting, because an empty counter is decoration. */
+.surfaces-count {
+  margin-left: auto;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--dsw-alias-accent);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.surfaces-count[hidden] { display: none; }
+
+.bots-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px 14px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+}
+
+.bots-row:last-child { border-bottom: 0; }
+
+.bots-row-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.bots-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-ink);
+}
+
+button.bots-open {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--dsw-alias-hairline-strong);
+  text-underline-offset: 3px;
+}
+
+button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
+
+.bots-row-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dsw-alias-ink-tertiary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bots-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.bots-act {
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bots-act:hover {
+  border-color: var(--dsw-alias-accent);
+  color: var(--dsw-alias-accent-lift);
+  background: var(--dsw-alias-accent-wash);
+}
+
+.bots-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  align-items: end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.bots-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bots-label {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+
+.bots-input {
+  width: 100%;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.bots-input:focus {
+  outline: none;
+  border-color: var(--dsw-alias-accent);
+  box-shadow: 0 0 0 2px var(--dsw-alias-accent-wash);
+}
+
+.bots-feed {
+  display: flex;
+  flex-direction: column;
+  margin-top: 2px;
+}
+
+.bots-activity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+}
+
+.bots-activity:last-child { border-bottom: 0; }
+
+.bots-activity-at {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dsw-alias-ink-tertiary);
+  min-width: 38px;
+}
+
+.bots-activity-said {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-ink);
+}
+
+.bots-session {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dsw-alias-accent-lift);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.bots-token {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 8px 10px;
+  border: 1px dashed var(--dsw-alias-hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--dsw-alias-surface-raised);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 @media (max-width: 1180px) {
   .face { grid-template-columns: var(--rail-width) minmax(0, 1fr); }
   body[data-rail="icons"] .face {

@@ -519,6 +519,80 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        // The channel control plane: one bounded document for the Bots
+        // surface, and the writes that change it. The remote face's
+        // default-deny allowlist does not carry any of these — a phone
+        // answers 403 by name, the same rule settings already has — so
+        // the read here is the machine's own, not a paired device's.
+        ("GET", "/api/channels") => {
+            write_reply(&mut stream, api(200, bridge.channels_read().await)).await
+        }
+        ("POST", "/api/channels/start") => {
+            let name = match field_of(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(reply) => return write_reply(&mut stream, reply).await,
+            };
+            match bridge.channel_start(&name).await {
+                Ok(report) => write_reply(&mut stream, api(200, report)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/channels/stop") => {
+            let name = match field_of(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(reply) => return write_reply(&mut stream, reply).await,
+            };
+            match bridge.channel_stop(&name).await {
+                Ok(report) => write_reply(&mut stream, api(200, report)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/channels/pair") => {
+            let body = match channel_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(reply) => return write_reply(&mut stream, reply).await,
+            };
+            match bridge
+                .channel_pair(&body.channel, &body.id, &body.name, &body.capability)
+                .await
+            {
+                Ok(pairing) => write_reply(&mut stream, api(200, pairing)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/channels/capability") => {
+            let body = match channel_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(reply) => return write_reply(&mut stream, reply).await,
+            };
+            match bridge
+                .channel_capability(&body.channel, &body.id, &body.capability)
+                .await
+            {
+                Ok(changed) => write_reply(&mut stream, api(200, changed)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/channels/revoke") => {
+            let body = match channel_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(reply) => return write_reply(&mut stream, reply).await,
+            };
+            match bridge.access_revoke("peer", &body.id).await {
+                Ok(revoked) => write_reply(&mut stream, api(200, revoked)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/channels/forget") => {
+            let body = match channel_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(reply) => return write_reply(&mut stream, reply).await,
+            };
+            match bridge.channel_forget_pending(&body.channel, &body.id).await {
+                Ok(forgotten) => write_reply(&mut stream, api(200, forgotten)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("GET", "/api/session") => {
             let asked = decode_query(&request.query, "id");
             write_reply(&mut stream, api(200, bridge.replay(&asked).await)).await
@@ -744,6 +818,72 @@ fn steer_of(body: &str) -> Result<String, String> {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "a steer's body is a JSON object with a text string".to_string())
+}
+
+/// One `name` field from a control body: the channel a start or stop
+/// names. A body with no name is a 400, not a guess at which channel the
+/// caller meant.
+async fn field_of(
+    stream: &mut (impl tokio::io::AsyncRead + Unpin),
+    request: &Request,
+    rest: Vec<u8>,
+) -> Result<String, Reply> {
+    let body = match read_body(stream, request, rest).await {
+        Ok(body) => body,
+        Err(message) => return Err(bad_request(&message)),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(parsed) => parsed,
+        Err(message) => return Err(bad_request(&message.to_string())),
+    };
+    let name = parsed
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return Err(bad_request("a channel control names one channel in `name`"));
+    }
+    Ok(name)
+}
+
+/// The channel control plane's body: which channel, which peer, what it
+/// may do, and the name it is filed under.
+struct ChannelBody {
+    channel: String,
+    id: String,
+    name: String,
+    capability: String,
+}
+
+async fn channel_body(
+    stream: &mut (impl tokio::io::AsyncRead + Unpin),
+    request: &Request,
+    rest: Vec<u8>,
+) -> Result<ChannelBody, Reply> {
+    let body = match read_body(stream, request, rest).await {
+        Ok(body) => body,
+        Err(message) => return Err(bad_request(&message)),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(parsed) => parsed,
+        Err(message) => return Err(bad_request(&message.to_string())),
+    };
+    let text = |key: &str| {
+        parsed
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    Ok(ChannelBody {
+        channel: text("channel"),
+        id: text("id"),
+        name: text("name"),
+        capability: text("capability"),
+    })
 }
 
 /// The session id a resume's body carries. The shape itself is the

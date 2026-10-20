@@ -28,7 +28,8 @@
     ['calibration', 'calibration'],
     ['settings', 'settings'],
     ['tower', 'tower'],
-    ['second-brain', 'second brain']
+    ['second-brain', 'second brain'],
+    ['bots', 'bots']
   ];
 
   // The same ten surfaces, grouped by what the owner came to do rather
@@ -55,6 +56,7 @@
       ['second-brain', 'second brain']
     ]],
     ['system', 'system', [
+      ['bots', 'bots'],
       ['settings', 'settings'],
       ['calibration', 'calibration'],
       ['tower', 'tower']
@@ -136,6 +138,15 @@
       ['rect', { x: 13.5, y: 3.5, width: 7, height: 7, rx: 1.5 }],
       ['rect', { x: 3.5, y: 13.5, width: 7, height: 7, rx: 1.5 }],
       ['rect', { x: 13.5, y: 13.5, width: 7, height: 7, rx: 1.5 }]
+    ],
+    bots: [
+      ['rect', { x: 4, y: 8, width: 16, height: 11, rx: 2.5 }],
+      ['path', { d: 'M12 8V4.5' }],
+      ['circle', { cx: 12, cy: 3.4, r: 1.3 }],
+      ['path', { d: 'M9 13v1.5' }],
+      ['path', { d: 'M15 13v1.5' }],
+      ['path', { d: 'M2.5 12.5v3' }],
+      ['path', { d: 'M21.5 12.5v3' }]
     ],
     settings: [
       ['path', { d: 'M4 7h10' }],
@@ -231,6 +242,7 @@
     panelCalibration: document.getElementById('panel-calibration'),
     panelTower: document.getElementById('panel-tower'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
+    panelBots: document.getElementById('panel-bots'),
     panelSettings: document.getElementById('panel-settings'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
@@ -243,6 +255,7 @@
     calibrationBoard: document.getElementById('calibration-board'),
     towerBoard: document.getElementById('tower-board'),
     brainBoard: document.getElementById('brain-board'),
+    botsBoard: document.getElementById('bots-board'),
     settingsBoard: document.getElementById('settings-board'),
     routePill: document.getElementById('route-pill'),
     statePill: document.getElementById('state-pill'),
@@ -5964,6 +5977,503 @@
     }).catch(function () { });
   }
 
+  // ------------------------------------------------------------- bots
+
+  // The Bots surface: who can reach this fleet, whether the service that
+  // carries them is up, and what they have done. Five cards and the
+  // actions that change them — not a console. The tower is the one
+  // surface allowed cockpit density.
+  //
+  // The read is `GET /api/channels`, one bounded document: the service's
+  // own status (and whether its heartbeat still beats), every channel's
+  // paired and pending peers, and the newest activity with the bound
+  // named. The CLI and the TUI read the same files, so the three cannot
+  // disagree about who is in or whether anything is listening.
+
+  function readBots(force) {
+    var now = Date.now();
+    if (!force && face.bots && now - face.botsAt < 4000) return Promise.resolve();
+    face.botsAt = now;
+    return fetch('/api/channels', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.bots = doc;
+        markBotsCount();
+        if (face.panel === 'bots') paintBots();
+      })
+      .catch(function () { });
+  }
+
+  /// The rail's count: the peers waiting at the door plus the peer seats
+  /// waiting on an answer. Both are things an owner has to act on, and
+  /// nothing else on this surface is.
+  function markBotsCount() {
+    var read = face.bots;
+    if (!read) return;
+    var pending = 0;
+    (read.channels || []).forEach(function (channel) {
+      pending += (channel.pending || []).length;
+    });
+    var waiting = Number(read.waiting_seats || 0);
+    var total = pending + waiting;
+    var spot = el.railTree.querySelector('[data-count="bots"]');
+    if (!spot) return;
+    if (total > 0) {
+      spot.textContent = String(total);
+      spot.hidden = false;
+      spot.title = pending + ' waiting at the door, ' + waiting + ' waiting on an answer';
+    } else {
+      spot.textContent = '';
+      spot.hidden = true;
+      spot.removeAttribute('title');
+    }
+  }
+
+  // One write, then the read again: the surface paints what the server
+  // confirmed, and a refusal says what the writer said rather than a
+  // generic failure.
+  function writeBots(path, body, onDone) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body || {})
+    }).then(function (reply) {
+      return reply.json().then(function (doc) { return { ok: reply.ok, doc: doc }; });
+    }).then(function (result) {
+      if (!result.ok) {
+        notice(result.doc.error || 'the write was refused');
+        return null;
+      }
+      return readBots(true).then(function () {
+        paintBots();
+        if (onDone) onDone(result.doc);
+        return result.doc;
+      });
+    }).catch(function () { notice('could not reach fleet'); return null; });
+  }
+
+  function channelName(report) {
+    return report.name;
+  }
+
+  function phaseTone(phase) {
+    if (phase === 'live') return 'ok';
+    if (phase === 'failed') return 'down';
+    if (phase === 'starting') return 'warn';
+    return null;
+  }
+
+  function capabilityWord(value) {
+    return value === 'observe' ? 'may only listen' : 'may act';
+  }
+
+  function paintBots() {
+    var read = face.bots;
+    el.botsBoard.textContent = '';
+    if (!read) {
+      el.botsBoard.appendChild(pageHead('System', 'Bots',
+        'The channels that carry work in from outside: who is paired, what they may do, ' +
+        'whether the service is listening, and what they have asked for.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The channel read has not landed yet. It reads the home\u2019s channel stores and ' +
+        'the service\u2019s own status document.'));
+      el.botsBoard.appendChild(waiting);
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.botsBoard.appendChild(refusedCard(read.refused));
+    }
+    var service = read.service || {};
+    var channels = read.channels || [];
+    var activity = read.activity || [];
+    var bound = read.activity_bound == null ? activity.length : read.activity_bound;
+    var reports = service.channels || [];
+
+    var live = reports.filter(function (row) { return row.phase === 'live'; }).length;
+    var failed = reports.filter(function (row) { return row.phase === 'failed'; }).length;
+    var peers = [];
+    var pending = [];
+    channels.forEach(function (channel) {
+      (channel.peers || []).forEach(function (peer) {
+        peers.push(peer);
+      });
+      (channel.pending || []).forEach(function (peer) {
+        pending.push(peer);
+      });
+    });
+    var deliveries = activity.filter(function (line) { return line.kind === 'delivery'; }).length;
+    var refusedAtTheDoor = activity.filter(function (line) {
+      return line.kind === 'refusal';
+    }).length;
+
+    var filter = face.botsFilter || 'all';
+    // A count of one says so: "1 peers paired" is the kind of number that
+    // makes an owner distrust the rest of the board.
+    var plural = function (count, one, many) {
+      return count === 1 ? '1 ' + one : count + ' ' + many;
+    };
+    var tiles = node('div', 'tiles');
+    tiles.appendChild(tile(live, live === 1 ? 'channel live' : 'channels live',
+      live ? 'ok' : null, function () {
+      face.botsFilter = 'all';
+      paintBots();
+    }));
+    tiles.appendChild(tile(failed, failed === 1 ? 'channel failed' : 'channels failed',
+      failed ? 'down' : null));
+    tiles.appendChild(tile(peers.length, peers.length === 1 ? 'peer paired' : 'peers paired',
+      null, function () {
+      face.botsFilter = 'peers';
+      paintBots();
+    }));
+    tiles.appendChild(tile(pending.length, 'waiting at the door', pending.length ? 'warn' : null,
+      function () {
+        face.botsFilter = 'pending';
+        paintBots();
+      }));
+    tiles.appendChild(tile(refusedAtTheDoor,
+      refusedAtTheDoor === 1 ? 'refusal logged' : 'refusals logged'));
+    var waitingSeats = Number(read.waiting_seats || 0);
+    tiles.appendChild(tile(waitingSeats, 'waiting on an answer', waitingSeats ? 'warn' : null));
+    el.botsBoard.appendChild(pageHead('System', 'Bots',
+      'The channels that carry work in from outside: who is paired, what they may do, ' +
+      'whether the service is listening, and what they have asked for.',
+      read.read_at));
+    el.botsBoard.appendChild(statStrip(tiles));
+    el.botsBoard.appendChild(filterBar([
+      { value: 'all', label: 'all', count: peers.length },
+      { value: 'acting', label: 'may act',
+        count: peers.filter(function (peer) { return peer.capability === 'task'; }).length },
+      { value: 'listening', label: 'may only listen',
+        count: peers.filter(function (peer) { return peer.capability === 'observe'; }).length },
+      { value: 'pending', label: 'pending', count: pending.length }
+    ], filter, function (value) {
+      face.botsFilter = value;
+      paintBots();
+    }));
+
+    // The service: what is listening, and the start/stop that changes it.
+    // A stale heartbeat is named rather than rendered as a live service.
+    var serviceCard = boardCard(12, 'the service',
+      service.running ? 'live' : (service.updated || null),
+      service.stale
+        ? (service.note || 'the heartbeat has stopped')
+        : (service.pid
+          ? 'pid ' + service.pid + ' \u00b7 started ' + (service.started || '\u2014') +
+            ' \u00b7 beating every ' + (service.heartbeat_secs || 0) + 's'
+          : (service.note || 'no channel service has run in this home')));
+    if (!reports.length) {
+      serviceCard.appendChild(node('p', 'board-empty',
+        'Nothing to start: this build hosts the webhook channel and Telegram when its bot ' +
+        'token is set. `channels.enabled` in the settings, or `fleet gui --channels`, turns ' +
+        'the service on.'));
+    }
+    reports.forEach(function (report) {
+      var row = node('div', 'bots-row');
+      row.dataset.channel = report.name;
+      var head = node('div', 'bots-row-main');
+      head.appendChild(node('span', 'bots-row-name', report.name));
+      head.appendChild(badge(report.phase, phaseTone(report.phase)));
+      if (report.port) head.appendChild(node('span', 'bots-row-meta', '127.0.0.1:' + report.port));
+      head.appendChild(node('span', 'bots-row-meta',
+        'since ' + (report.since || '\u2014') + (service.stale ? ' (last report)' : '')));
+      row.appendChild(head);
+      if (report.error) row.appendChild(node('p', 'board-empty', report.error));
+      var acts = node('div', 'bots-acts');
+      if (report.phase === 'live' || report.phase === 'starting') {
+        acts.appendChild(botsButton('stop', 'stop', function () {
+          writeBots('/api/channels/stop', { name: report.name });
+        }));
+      } else {
+        acts.appendChild(botsButton('start', 'start', function () {
+          writeBots('/api/channels/start', { name: report.name });
+        }));
+      }
+      row.appendChild(acts);
+      serviceCard.appendChild(row);
+    });
+    el.botsBoard.appendChild(serviceCard);
+
+    // Waiting at the door: a refusal recorded the peer, so it can be let
+    // in from here instead of hunting an id out of a log.
+    var doorCard = boardCard(12, 'waiting at the door', pending.length
+      ? pending.length + (pending.length === 1 ? ' peer' : ' peers')
+      : null,
+      'peers that tried to reach a channel and are not paired. Letting one in mints its ' +
+      'credential; turning one away forgets it until it tries again.');
+    if (!pending.length) {
+      doorCard.appendChild(node('p', 'board-empty',
+        'Nothing is waiting. A refusal lands here the moment an unpaired peer tries.'));
+    }
+    pending.forEach(function (peer) {
+      var row = node('div', 'bots-row');
+      row.dataset.id = peer.id;
+      var head = node('div', 'bots-row-main');
+      head.appendChild(node('span', 'bots-row-name', peer.name || '(no name announced)'));
+      head.appendChild(node('span', 'bots-row-meta', peer.channel + ' \u00b7 ' + peer.id));
+      head.appendChild(node('span', 'bots-row-meta',
+        peer.attempts + (peer.attempts === 1 ? ' attempt' : ' attempts') +
+        ' \u00b7 last ' + (peer.last_seen || '\u2014')));
+      row.appendChild(head);
+      var acts = node('div', 'bots-acts');
+      acts.appendChild(botsButton('let-in-task', 'let it in \u00b7 may act', function () {
+        writeBots('/api/channels/pair', {
+          channel: peer.channel, id: peer.id, name: peer.name, capability: 'task'
+        }, revealPairing);
+      }));
+      acts.appendChild(botsButton('let-in-listen', 'let it in \u00b7 may only listen', function () {
+        writeBots('/api/channels/pair', {
+          channel: peer.channel, id: peer.id, name: peer.name, capability: 'observe'
+        }, revealPairing);
+      }));
+      acts.appendChild(botsButton('turn-away', 'turn away', function () {
+        writeBots('/api/channels/forget', { channel: peer.channel, id: peer.id });
+      }));
+      row.appendChild(acts);
+      doorCard.appendChild(row);
+    });
+    el.botsBoard.appendChild(doorCard);
+
+    // The pair form: a webhook peer's token is minted server-side and
+    // shown exactly once, in a card that is dismissed rather than
+    // re-read — the store keeps only its digest, so there is nothing to
+    // come back to.
+    var pairCard = boardCard(5, 'let one in', null,
+      'A webhook peer gets a token minted here and shown once. A Telegram chat is let in by ' +
+      'the id it refused under. The capability is part of the pairing, not a later edit.');
+    var form = node('form', 'bots-form');
+    var channelPick = node('select', 'bots-input');
+    channelPick.name = 'channel';
+    ['webhook', 'telegram'].forEach(function (name) {
+      var choice = node('option', null, name);
+      choice.value = name;
+      channelPick.appendChild(choice);
+    });
+    form.appendChild(labelled('channel', channelPick));
+    var idInput = node('input', 'bots-input');
+    idInput.name = 'id';
+    idInput.type = 'text';
+    idInput.placeholder = 'a telegram chat id (webhook mints its own)';
+    form.appendChild(labelled('peer id', idInput));
+    var nameInput = node('input', 'bots-input');
+    nameInput.name = 'name';
+    nameInput.type = 'text';
+    nameInput.placeholder = 'the CI box';
+    form.appendChild(labelled('name', nameInput));
+    var capPick = node('select', 'bots-input');
+    capPick.name = 'capability';
+    [['task', 'may act'], ['observe', 'may only listen']].forEach(function (pair) {
+      var choice = node('option', null, pair[1]);
+      choice.value = pair[0];
+      capPick.appendChild(choice);
+    });
+    form.appendChild(labelled('may', capPick));
+    var send = node('button', 'page-action', 'pair');
+    send.type = 'submit';
+    send.dataset.act = 'pair';
+    form.appendChild(send);
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      writeBots('/api/channels/pair', {
+        channel: channelPick.value,
+        id: idInput.value,
+        name: nameInput.value,
+        capability: capPick.value
+      }, revealPairing);
+    });
+    pairCard.appendChild(form);
+    el.botsBoard.appendChild(pairCard);
+
+    // Who can reach the fleet: the peers, their capability, and the two
+    // actions that change it.
+    var shown = peers.filter(function (peer) {
+      if (filter === 'acting') return peer.capability === 'task';
+      if (filter === 'listening') return peer.capability === 'observe';
+      if (filter === 'pending') return false;
+      return true;
+    });
+    var peersCard = boardCard(7, 'who can reach the fleet', shown.length
+      ? shown.length + (shown.length === 1 ? ' peer' : ' peers')
+      : null,
+      'a row opens the peer: its capability, its conversation, and its last delivery. ' +
+      'The capability changes here; nothing about a peer is hidden behind a second surface.');
+    if (!shown.length) {
+      peersCard.appendChild(node('p', 'board-empty',
+        filter === 'all'
+          ? 'Nothing is paired. Let a peer in from the form, or `fleet channels pair-webhook`.'
+          : 'No peer matches this filter. Clear it to see every peer.'));
+    }
+    shown.forEach(function (peer) {
+      var row = node('div', 'bots-row bots-peer');
+      row.dataset.id = peer.id;
+      var head = node('div', 'bots-row-main');
+      var open = node('button', 'bots-row-name bots-open', peer.name || peer.id);
+      open.type = 'button';
+      open.dataset.act = 'inspect-peer';
+      open.addEventListener('click', function () {
+        openPeer(peer, activity, peers, channels);
+      });
+      head.appendChild(open);
+      head.appendChild(badge(capabilityWord(peer.capability),
+        peer.capability === 'task' ? 'ok' : null));
+      head.appendChild(node('span', 'bots-row-meta', peer.channel + ' \u00b7 ' + peer.id));
+      head.appendChild(node('span', 'bots-row-meta', 'paired ' + (peer.paired || '\u2014')));
+      row.appendChild(head);
+      var acts = node('div', 'bots-acts');
+      var flip = peer.capability === 'task' ? 'observe' : 'task';
+      acts.appendChild(botsButton(
+        'capability', 'make it ' + capabilityWord(flip), function () {
+          writeBots('/api/channels/capability', {
+            channel: peer.channel, id: peer.id, capability: flip
+          });
+        }
+      ));
+      acts.appendChild(botsButton('revoke', 'throw it out', function () {
+        writeBots('/api/channels/revoke', { channel: peer.channel, id: peer.id });
+      }));
+      row.appendChild(acts);
+      peersCard.appendChild(row);
+    });
+    el.botsBoard.appendChild(peersCard);
+
+    // What they have done. The bound is the document's, named here: a
+    // surface that shows fifty of three hundred silently is lying about
+    // what it shows.
+    var fedCard = boardCard(12, 'what they have done', activity.length
+      ? 'newest ' + activity.length + ' of the last ' + bound
+      : null,
+      'deliveries, refusals, replies, seats, and state changes, newest last. The log is the ' +
+      'service\u2019s own file; a row names the peer and the session it landed in.');
+    if (!activity.length) {
+      fedCard.appendChild(node('p', 'board-empty',
+        'Nothing recorded yet. The log fills as peers deliver, answer, and are refused.'));
+    }
+    var feed = node('div', 'bots-feed');
+    activity.slice().reverse().forEach(function (line) {
+      feed.appendChild(activityRow(line));
+    });
+    fedCard.appendChild(feed);
+    el.botsBoard.appendChild(fedCard);
+  }
+
+  /// The pairing's one-time reveal: the token exists here and nowhere
+  /// else, because the store kept its digest. Dismissing the card is the
+  /// only way to lose it, and the card says so.
+  function revealPairing(doc) {
+    var sections = [
+      ['the peer', node('p', 'derivation',
+        (doc.name || doc.id) + ' on ' + doc.channel + ' \u00b7 ' + capabilityWord(doc.capability))],
+      ['how to reach it', node('p', 'derivation',
+        doc.channel === 'webhook'
+          ? 'POST to http://127.0.0.1:' + webhookPort() + '/hook with the header ' +
+            'x-fleet-peer, carrying the token below.'
+          : 'the bot answers chat ' + doc.id + '; it presents no token.')]
+    ];
+    if (doc.token) {
+      var token = node('code', 'bots-token', doc.token);
+      sections.push(['the token \u2014 shown once', token]);
+      sections.push(['what happens next', node('p', 'derivation',
+        doc.reveal || 'this is the only time the token is shown; store it now')]);
+    }
+    openDrawer('paired \u00b7 ' + (doc.name || doc.id), sections);
+  }
+
+  /// The port the service says the webhook holds, so the reveal names the
+  /// address that is actually listening rather than the compiled-in
+  /// default. A service that is not running has no port to name, and the
+  /// pairing still happened — the line says where it will answer.
+  function webhookPort() {
+    var service = (face.bots && face.bots.service) || {};
+    var reports = service.channels || [];
+    for (var index = 0; index < reports.length; index += 1) {
+      if (reports[index].name === 'webhook' && reports[index].port) {
+        return reports[index].port;
+      }
+    }
+    return 'the configured port';
+  }
+
+  /// One peer's inspector: what it may do, where its conversation is, and
+  /// what it last did.
+  function openPeer(peer, activity, peers, channels) {
+    var mine = activity.filter(function (line) {
+      return line.peer_id === peer.id && line.channel === peer.channel;
+    });
+    var session = null;
+    mine.forEach(function (line) {
+      if (line.session) session = line.session;
+    });
+    var last = mine.length ? mine[mine.length - 1] : null;
+    var sections = [
+      ['what it may do', node('p', 'derivation',
+        capabilityWord(peer.capability) +
+        (peer.capability === 'task'
+          ? ' \u2014 it can hand fleet a task and receives the outcome'
+          : ' \u2014 it is notified and cannot hand fleet a task'))],
+      ['its conversation', node('p', 'derivation',
+        session ? session : 'no delivery has landed yet, so it has no conversation')],
+      ['its last delivery', node('p', 'derivation',
+        last ? (last.kind + ' at ' + (last.at || '\u2014') + ' \u00b7 ' +
+          (last.task || last.detail || '')) : 'nothing recorded')],
+      ['paired', node('p', 'derivation', peer.paired || '\u2014')]
+    ];
+    if (session) {
+      var go = node('button', 'replay-button replay-resume');
+      go.type = 'button';
+      go.textContent = 'open the conversation';
+      go.addEventListener('click', function () {
+        window.location.hash = '#/sessions/' + encodeURIComponent(session);
+      });
+      sections.push(['where it lands', go]);
+    }
+    openDrawer(peer.channel + ' \u00b7 ' + (peer.name || peer.id), sections);
+  }
+
+  function activityRow(line) {
+    var row = node('div', 'bots-activity');
+    row.dataset.kind = line.kind;
+    row.appendChild(node('span', 'bots-activity-at', clock(line.at)));
+    row.appendChild(badge(line.kind, line.kind === 'refusal' ? 'down'
+      : line.kind === 'delivery' ? 'ok' : null));
+    var said = node('span', 'bots-activity-said');
+    said.textContent = line.peer || line.peer_id || line.channel;
+    row.appendChild(said);
+    var detail = line.task || line.detail || '';
+    if (detail) row.appendChild(node('span', 'bots-row-meta', detail));
+    if (line.session) {
+      var open = node('button', 'bots-session', line.session);
+      open.type = 'button';
+      open.dataset.act = 'open-session';
+      open.addEventListener('click', function () {
+        window.location.hash = '#/sessions/' + encodeURIComponent(line.session);
+      });
+      row.appendChild(open);
+    }
+    return row;
+  }
+
+  function botsButton(act, label, run) {
+    var button = node('button', 'bots-act', label);
+    button.type = 'button';
+    button.dataset.act = act;
+    button.addEventListener('click', function () {
+      usageRecord('actions', 'bots:' + act, 'uses');
+      run();
+    });
+    return button;
+  }
+
+  function labelled(text, field) {
+    var wrap = node('label', 'bots-field');
+    wrap.appendChild(node('span', 'bots-label', text));
+    wrap.appendChild(field);
+    return wrap;
+  }
+
   function paintSettings() {
     var read = face.settings;
     el.settingsBoard.textContent = '';
@@ -6602,6 +7112,7 @@
     calibration: el.panelCalibration,
     tower: el.panelTower,
     'second-brain': el.panelSecondBrain,
+    bots: el.panelBots,
     settings: el.panelSettings
   };
 
@@ -6636,6 +7147,7 @@
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
       memory: function () { paintMemory(); readMemory(true).then(paintMemory); },
       skills: function () { paintSkills(); readSkills(true).then(paintSkills); },
+      bots: function () { paintBots(); readBots(true).then(paintBots); },
       sessions: function () {
         if (face.focus && face.focus.id) face.replayId = face.focus.id;
         paintSessions();
@@ -7190,6 +7702,12 @@
         link.title = name;
         link.appendChild(icon(address, 'surfaces-icon'));
         link.appendChild(node('span', 'surfaces-label', name));
+        // A surface that has something waiting says so on the rail, and
+        // says nothing when it does not — an empty counter is decoration.
+        var count = node('span', 'surfaces-count');
+        count.dataset.count = address;
+        count.hidden = true;
+        link.appendChild(count);
         link.addEventListener('click', function () {
           window.location.hash = '#/' + address;
           setMobileRail(false);
@@ -7203,7 +7721,7 @@
   // Which surfaces are live today, and which are a later increment — the
   // rail says so rather than pretending all ten are built.
   var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration',
-    'tower', 'second-brain', 'settings'];
+    'tower', 'second-brain', 'bots', 'settings'];
 
   function markRail() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');

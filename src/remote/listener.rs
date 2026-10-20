@@ -1028,13 +1028,26 @@ mod tests {
 
         // What it may not: the loopback face's own routes, refused by
         // name so a later addition there stays closed here.
+        // The channel control plane is the loudest of these: a phone
+        // that could pair a peer or start a channel would be a phone that
+        // can widen the door it came through, which is the one thing the
+        // route boundary exists to prevent.
         for (method, path) in [
             ("GET", "/api/settings"),
             ("GET", "/api/tree"),
             ("GET", "/api/memory"),
+            ("GET", "/api/channels"),
+            ("GET", "/api/access"),
             ("POST", "/api/fact"),
             ("POST", "/api/skill"),
             ("POST", "/api/settings"),
+            ("POST", "/api/channels/pair"),
+            ("POST", "/api/channels/capability"),
+            ("POST", "/api/channels/revoke"),
+            ("POST", "/api/channels/forget"),
+            ("POST", "/api/channels/start"),
+            ("POST", "/api/channels/stop"),
+            ("POST", "/api/access/revoke"),
         ] {
             let raw = if method == "GET" {
                 format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {DEVICE_COOKIE}={token}\r\n\r\n")

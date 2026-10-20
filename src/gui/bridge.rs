@@ -829,12 +829,43 @@ impl Bridge {
     /// service is up.
     pub async fn channels_read(&self) -> Value {
         let home = self.home.clone();
-        tokio::task::spawn_blocking(move || channels_read(&home))
+        let mut document = tokio::task::spawn_blocking(move || channels_read(&home))
             .await
             .unwrap_or_else(|_| json!({
                 "type": "channels",
                 "refused": ["the channel read did not land"],
-            }))
+            }));
+        // A peer waiting on an answer is the thing an owner most needs to
+        // notice, and only this process knows it: the seat lives in the
+        // live state, not on disk. The activity log names the session
+        // each peer's delivery landed in, so the two meet here.
+        let waiting = {
+            let state = lock(&self.state);
+            state
+                .sessions
+                .iter()
+                .filter(|(_, session)| session.seat.is_some())
+                .map(|(key, _)| key.clone())
+                .collect::<Vec<_>>()
+        };
+        let mut peer_waiting = 0u64;
+        if let Some(lines) = document.get("activity").and_then(Value::as_array) {
+            let mut seen: Vec<&str> = Vec::new();
+            for line in lines.iter().rev() {
+                let Some(session) = line.get("session").and_then(Value::as_str) else {
+                    continue;
+                };
+                if seen.contains(&session) {
+                    continue;
+                }
+                seen.push(session);
+                if waiting.iter().any(|held| held == session) {
+                    peer_waiting += 1;
+                }
+            }
+        }
+        document["waiting_seats"] = json!(peer_waiting);
+        document
     }
 
     /// Start one channel through the service the face hosts. A face with
@@ -4246,6 +4277,69 @@ mod tests {
         assert_eq!(events[0]["role"], "owner");
         assert_eq!(events[0]["text"], "look at the router");
         assert_eq!(state["running"], true);
+    }
+
+    /// The control plane's document names every channel, its paired and
+    /// pending peers, and the activity's bound — and a face that hosts no
+    /// service says so rather than claiming one.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_control_plane_names_every_channel_and_its_bound() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-control-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let mut store = crate::channels::PeerStore::default();
+        store.pair(
+            "wh1",
+            "the CI box",
+            "unused",
+            crate::channels::Capability::Task,
+            "2026-10-20T00:00:00Z",
+        );
+        store.save(&home, "webhook").expect("the webhook store");
+        let mut pending = crate::channels::PendingStore::default();
+        pending.note("4242", "Alejandro", "2026-10-20T15:00:00Z");
+        pending.save(&home, "telegram").expect("the pending store");
+
+        let (bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some("session-test".to_string()),
+        );
+        let document = bridge.channels_read().await;
+        assert_eq!(document["type"], "channels");
+        let channels = document["channels"].as_array().expect("the channel list");
+        assert_eq!(
+            channels.len(),
+            crate::channels::CHANNELS.len(),
+            "every channel is named, not only the one with peers"
+        );
+        let telegram = channels
+            .iter()
+            .find(|channel| channel["name"] == "telegram")
+            .expect("telegram is named");
+        assert_eq!(telegram["pending"][0]["id"], "4242");
+        assert_eq!(telegram["pending"][0]["attempts"], 1);
+        assert_eq!(telegram["peers"].as_array().map(Vec::len), Some(0));
+        // The activity's bound is named rather than implied.
+        assert_eq!(
+            document["activity_bound"].as_u64(),
+            Some(50),
+            "the bound is in the document the surface renders"
+        );
+        // A face hosting no service says so.
+        assert_eq!(document["service"]["running"], false);
+        assert!(document["service"]["note"].is_string());
+        // And no start is pretended: there is no service in this process.
+        assert!(bridge.channel_start("webhook").await.is_err());
+        assert!(bridge.channel_stop("webhook").await.is_err());
+        std::fs::remove_dir_all(&home).ok();
     }
 
     /// "Who can reach this face" walks every channel's store, not the

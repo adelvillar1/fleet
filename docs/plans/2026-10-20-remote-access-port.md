@@ -273,6 +273,37 @@ control routes: a phone answers 403 by name, the same rule settings
 already has. A phone may read its own session and answer its own seat,
 and nothing else.
 
+**Landed.** `#/bots`, first in the system group, in the console's own
+language: `pageHead`, a six-tile `statStrip`, a four-chip `filterBar`,
+and five `boardCard`s — the service, the door, the pair form, who can
+reach the fleet, and what they have done. Every action is a button with
+`data-act` (`start`, `stop`, `let-in-task`, `let-in-listen`,
+`turn-away`, `pair`, `inspect-peer`, `capability`, `revoke`), and
+selecting a peer opens the dock inspector with its capability, its
+conversation, its last delivery, and a button to that session. The
+rail's Bots entry carries a count only when something is waiting — a
+pending peer or a peer's unanswered seat — and nothing when it is not.
+
+The one-time reveal is the rule the device pairing already holds: the
+token is in the pair reply and nowhere else, the card shows it, and a
+reload finds it gone because the store kept only its digest. Verified
+live in Chromium: pair a webhook peer, read the token off the card, and
+after a reload the token appears nowhere in the document.
+
+Wired to `GET /api/channels` — the bounded document the CLI and the TUI
+read — and to `POST /api/channels/{start,stop,pair,capability,revoke,forget}`.
+The remote listener's allowlist does **not** gain them, and the boundary
+test now pins `GET /api/channels`, `GET /api/access`,
+`POST /api/channels/*` and `POST /api/access/revoke` as 403 by name: a
+phone that could pair a peer would be a phone that can widen the door it
+came through.
+
+Verified live: the surface renders five cards with the real service
+state; letting a pending peer in as listening pairs it, clears the
+queue, and empties the rail count; the capability flip moves the row and
+the filter counts; the inspector names the peer's conversation; no page
+errors on any of it.
+
 ### P5 — sessions becomes the inbox, and the TUI reads
 
 Sessions rows gain `via <channel> · <peer>` and the project, a
