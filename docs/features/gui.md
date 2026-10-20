@@ -62,25 +62,50 @@ the runs and facts that landed while the owner was away.
 
 ## The process card
 
-A run is a loop, and the face shows where it is. The right pane opens
-with **the run**: route, think, act, verify, with the current step, the
+A run is a loop, and the face shows where it is. The dock opens with
+**the run**: route, think, act, verify, with the current step, the
 turn, the tool, the facts, the delegations, the checkpoints, and the
 elapsed time. It is reduced from the same event log the transcript
 reads, so it cannot claim a step the run did not take. A plan-mode run
-uses its own three-step loop (plan, review, build). When the run ends
-the card keeps the final state and the last step; when no run is in
-flight it says so and offers **start with Plan**.
+uses its own three-step loop (plan, review, build).
+
+- **Live branches.** Each `delegation` event updates a branch keyed by
+  the child session: its goal, stage, call count, last tool, outcome,
+  and turns. The three newest render under the stepper; clicking one
+  opens that child's replay in the dock over the live conversation.
+- **The gate.** The verify step names the failover gate from
+  `/api/state` (`gate on · sys1` or `gate shut`). A finished run offers
+  **ask sys1 for a review**, which fills the composer with the review
+  task and leaves the send to the owner.
+- **Stop and steer.** While a run is in flight the card carries a stop
+  button and a one-line steer field. Both write the control file the
+  agent's turn loop reads before its next model call
+  (`<sessions>/<session>.control`); a stop shows `stopping…` until the
+  run's own end record lands, and a run the owner stopped renders as
+  **stopped by you**, not as a failure. The control file is cleared
+  when the run returns, so a stop that lands on the last step cannot
+  end the next run in the same session.
 
 The topbar carries a compact process chip on every panel, so a run is
-visible while the owner is reading the router or the tower. The right
-pane is collapsible from the topbar; when it is closed, the same state
-becomes one line above the composer.
+visible while the owner is reading the router or the tower. The dock is
+collapsible from the topbar; when it is closed, the same state becomes
+one line above the composer.
+
+**The dock's layout.** From 1600px the nav, content, and dock stand as
+three columns. From 1181–1599 opening the dock folds the nav to its
+icon rail; expanding the nav while the dock is open turns the dock into
+a pinned overlay, and closing it restores the nav mode the owner had.
+At 1180px and below there is no dock column: the process becomes the
+strip above the composer and selected objects use the fixed drawer.
+The dock and the file/preview pane are mutually exclusive columns.
 
 ## Selected objects and related suggestions
 
 Selecting an object opens the same right-hand inspector, non-modal, so
-the owner can keep working while it stays open. The inspector carries
-the object's facts, its actions, and its related objects.
+the owner can keep working while it stays open. Above 1180px it is the
+dock's object card, above the session and trust cards; at and below
+1180px it is the fixed drawer. It carries the object's facts, its
+actions, and its related objects.
 
 - A **fact** opens its type, tier, basis, recall count, path, its edit
   form, and actions to ask the agent, copy the name, or filter by shape.
@@ -95,36 +120,72 @@ the object's facts, its actions, and its related objects.
   gate-review action.
 - A **KPI tile** opens its derivation and the list below it.
 
-**Related suggestions are embedding-driven.** The candidates are the
-fact corpus, the skill library, and the project list; a lexical pass
-shortlists the candidates worth embedding, and `/api/rank` compares them
-by cosine. The percentage shown is the backend's cosine, not a score
-this surface invented. With no embedder the card says no close match
-rather than inventing an order.
+**Related suggestions are one server-side index.** `GET
+/api/related?kind&id&limit` compares the selected object against every
+other kind — facts, skills, sessions, projects, route rows, and
+calibration cells — by the same embedder the recall uses. Facts reuse
+`memories/.recall-index.json` and sessions reuse
+`<sessions>/.recall-index.json`; the sidecar `<FLEET_HOME>/.related-index.json`
+owns the kinds that had no index (skills, projects, routes, cells).
+
+- The percentage is the raw cosine, not a score this surface invented.
+  A score under 0.72 is marked **weak** rather than filtered: KI-058
+  measured unrelated pairs at 0.58–0.66 and related ones at 0.77–0.93.
+- The cold half — every skill description and every project's identity
+  — warms once at launch, off the request path. A click that arrives
+  first answers from what is ready and says `warming`; the card retries
+  once after two seconds. A request never pays the archive's cold embed.
+- With no embedding backend the card answers lexically and says
+  `keyword match · no embedder`. Facts and sessions are cache-only on
+  this path, exactly so a model swap cannot turn a click into a
+  minute-long wait.
+- Related rows exist on sessions, routes, and calibration cells as well
+  as facts, skills, and projects.
+
+**The counters adapt the order.** The browser stores counters — never
+text — in `<FLEET_HOME>/ui.json`: offers and related pairs shown,
+accepted, and dismissed; panels opened; actions used. An accepted-over-
+shown ratio raises an offer or a related row by at most a third; nothing
+is hidden and the primary lanes never move. The knob `ui.adapt` (default
+on) switches the re-ranking off. The store is atomic, capped, and a
+malformed or foreign-version file reads as empty.
 
 ## The interaction layer
 
 No object is decorative. Every row, tile, badge, chart segment, pill,
-and node has a purpose and an action, and the same detail drawer serves
-them all.
+and node has a purpose and an action, and the same inspector serves
+them all. The rule is audited, not assumed: a Playwright pass asserts
+every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
+`.stream-line`, `.cand`, `.chart-col`, and `.related-row` carries a
+`data-act`, a button role, or a title.
 
 - **Sessions** select in place. The list and the selected replay stand
   side by side; arrow keys move the selection, Enter/click reads it,
   Escape returns to the list, and `#/sessions/<id>` makes the selection
-  a link. The archive's filters — open, ended, delegated, compacted —
-  are visible chips with a count, never a hidden state.
+  a link. Below a 1000px content track the replay becomes the dock's
+  object card instead of a fourth column.
 - **Facts** open their detail and edit; their type and tier badges
-  filter the corpus; the drawer can ask the agent about the fact.
+  filter the corpus.
+- **Every panel has visible filters with counts.** Memory: all, live,
+  protected, retired. Skills: all, used, unused, proposals, skipped.
+  Calibration: all, fit, informing. Tower: all, dirty. Sessions: all,
+  open, ended, delegated, compacted. The matching KPI tile applies its
+  filter, and the chosen chip is the only one pressed.
+- **Chart segments filter.** A router hour column narrows the route
+  rows to that hour; a donut segment (or its legend row) narrows them to
+  that model; a tower activity day narrows the report feed to that day.
+  Each leaves a removable chip above the narrowed list.
 - **Route rows** open their walk and offer a sys1 second opinion;
   chain candidates copy the model id.
 - **Calibration cells** open the fit and the rule, with a gate-review
-  action.
+  action and related objects.
 - **Graph nodes** open their unlock conditions and hand the node to the
   composer.
-- **Project rows** open their git facts; feed rows are the evidence
-  behind them.
-- **Tiles** open the metric's derivation and the list below it; session
-  tiles apply the matching filter.
+- **Project rows** open their git facts; a report-feed row opens its
+  project's card, and claims, gate verdicts, and scan skips open their
+  record.
+- **Tiles** open the metric's derivation and the list below it; the
+  tiles that count a filterable set apply the matching filter.
 - **Topbar chips** open the surface that explains them; the route opens
   Router, the state opens the archive at this run, and spend/context
   open the derivation.
@@ -132,8 +193,26 @@ them all.
   opens the graph; Verify asks sys1 for a gate review; memory, skills,
   web, and deck open or dispatch their lane.
 
-The drawer is the one detail surface. It never navigates away from the
-panel behind it, and its footer carries the object's actions.
+The inspector is one detail surface with two homes: the dock's object
+card above 1180px, the fixed drawer at and below it. Neither navigates
+away from the panel behind it, and both carry the object's actions.
+Escape clears the object, never the dock.
+
+## The endpoints
+
+| Route | What it does |
+|---|---|
+| `GET /api/state` | the session, model, gate, budget, ordered log, seat, and remembered rules |
+| `GET /api/home` | the welcome's bounded read, cached 30s |
+| `GET /events` | the live half of the same ordered log (SSE) |
+| `POST /api/run`, `/api/plan` | hand a task to the agent thread |
+| `POST /api/stop`, `/api/steer` | write the run's control file; 409 when no run or no log |
+| `POST /api/approve` | answer the standing seat |
+| `GET /api/related` | cross-kind related objects for one selected id |
+| `GET/POST /api/usage` | the browser's counters and the adaptation knob |
+| `GET /api/router`, `/api/delegation`, `/api/memory`, `/api/skills`, `/api/sessions`, `/api/session`, `/api/calibration`, `/api/tower`, `/api/second-brain`, `/api/settings` | the panels' own reads |
+| `GET /api/tree`, `/api/file`, `/api/web` | the pane's contained reads: the working directory, a credential-refusing file read, a guarded fetch |
+| `POST /api/fact`, `/api/skill`, `/api/resume`, `/api/rewind`, `/api/diff/reject`, `/api/settings`, `/api/deck/render` | the writes, each through the writer the substrate already owns |
 
 ## The surfaces
 
@@ -190,10 +269,13 @@ panel:
   the tower scan names what it left unread.
 - No credential value ever reaches a payload. Names and presence only,
   the doctor's masking rule.
-- The browser's client is verified by running the real `app.js` in a
-  Node `vm` against a stubbed DOM fed the bridge's own documents. The
-  harness lives in `tmp/` and is never committed — the repo has no JS
-  runner, so the harness is the verification.
+- The client is verified two ways, both scratch and uncommitted because
+  the repo carries no JS runner: the real `app.js` runs in a Node `vm`
+  against a stubbed DOM fed the bridge's own documents, and since
+  2026-10-19 a Playwright pass drives a real Chromium at the shipped
+  widths for rendering, interaction, overflow, console errors, and the
+  `data-act` audit. The stub is not the truth about what renders; the
+  browser is.
 
 ## The launch
 

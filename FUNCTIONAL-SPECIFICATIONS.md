@@ -51,8 +51,11 @@ aggregated here; when behavior changes, follow that file.
 interface on loopback: the conversation first, the intelligence
 surfaces one flat level beneath four destinations, and the tower as the
 one console. The face is light-first (warm paper by default) and the
-address alone opens it; a non-loopback host is refused by name. The
-surfaces, the home briefing, and the interaction layer are documented in
+address alone opens it; a non-loopback host is refused by name. A run
+can be stopped or steered from its process card, its delegation branches
+open beside the live conversation, and every panel's filters, chart
+segments, and related objects are interactive. The surfaces, the home
+briefing, the endpoints, and the interaction layer are documented in
 `docs/features/gui.md`.
 
 ## Run behavior

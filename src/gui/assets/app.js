@@ -179,9 +179,20 @@
     railScrim: document.getElementById('rail-scrim'),
     railWhere: document.getElementById('rail-where'),
     asideToggle: document.getElementById('aside-toggle'),
+    dock: document.getElementById('dock'),
+    dockObject: document.getElementById('dock-object'),
+    dockObjectTitle: document.getElementById('dock-object-title'),
+    dockObjectBody: document.getElementById('dock-object-body'),
+    dockObjectClose: document.getElementById('dock-object-close'),
+    faceCard: document.getElementById('face-card'),
+    trustCard: document.getElementById('trust-card'),
     processCard: document.getElementById('process-card'),
     processState: document.getElementById('process-state'),
     processBody: document.getElementById('process-body'),
+    processControls: document.getElementById('process-controls'),
+    processStop: document.getElementById('process-stop'),
+    processSteerForm: document.getElementById('process-steer-form'),
+    processSteer: document.getElementById('process-steer'),
     processStrip: document.getElementById('process-strip'),
     processPill: document.getElementById('process-pill'),
     crumbGroup: document.getElementById('crumb-group'),
@@ -294,12 +305,25 @@
     focus: null,
     // A panel's own filters, held in memory for this visit only.
     sessionsFilter: 'all',
+    memoryFilter: 'live',
+    skillsFilter: 'all',
+    calibrationFilter: 'all',
+    towerFilter: 'all',
+    towerDay: '',
+    routerHour: null,
+    routerModel: '',
     // The visit stamp, read before it is overwritten, so the home can
     // say what happened while the owner was away.
     lastVisit: '',
+    // The nav mode the owner had before the dock auto-folded it at the
+    // mid breakpoint. Restored when the dock closes or the screen widens.
+    railBeforeDock: null,
     // The live process: the run's own stage, turn, tool, and counts,
     // reduced from the same event log the transcript reads.
     process: null,
+    // The verify step's gate, read from the state document: the same
+    // failover knob the route module owns.
+    gate: null,
     budget: 0,
     spend: 0,
     context: 0,
@@ -317,6 +341,15 @@
     assistant: null,
     pending: [],
     delegations: {},
+    // Related documents by kind:id, held for a minute: a board that
+    // repaints on its clock must not re-ask the index on every tick.
+    related: {},
+    // The browser's own counters and the knob that switches their
+    // effect off. One exposure is recorded per id per visit, so a
+    // repaint is not a second showing.
+    usage: null,
+    offerShown: {},
+    relatedShown: {},
     lastTurn: 0,
     stick: true,
     buffer: '',
@@ -407,24 +440,28 @@
 
   var OFFERS = [
     {
+      id: 'plan',
       icon: 'plan',
       title: 'Read the plan',
       said: 'Find the next increment and what it still owes.',
       prompt: 'read the plan and tell me what the next increment owes'
     },
     {
+      id: 'review',
       icon: 'sessions',
       title: 'Review today\u2019s changes',
       said: 'See every file the run touched, hunk by hunk, before it lands.',
       prompt: '/review'
     },
     {
+      id: 'memory',
       icon: 'memory',
       title: 'Ask what fleet knows',
       said: 'Search the corpus for the decisions you already made.',
       prompt: 'what do the memories say about the fleet router'
     },
     {
+      id: 'router',
       icon: 'router',
       title: 'Walk the router',
       said: 'Send a small task and see the chain it chose, and why.',
@@ -613,9 +650,13 @@
   }
 
   function endRow(event) {
-    var failed = event.type === 'failed';
-    var el0 = card(failed ? 'failed' : 'finished', failed ? '!' : '\u2713',
-      failed ? 'failed' : 'finished', event.reason, null, null);
+    // The core reports an owner's stop through `failed`; the reason is
+    // the only thing that separates it from a failure, and calling the
+    // owner's own decision a failure would be the wrong card.
+    var stopped = event.type === 'failed' && /stopped by the owner/i.test(event.reason || '');
+    var failed = event.type === 'failed' && !stopped;
+    var el0 = card(failed ? 'failed' : 'finished', stopped ? '\u25a0' : failed ? '!' : '\u2713',
+      stopped ? 'stopped by you' : failed ? 'failed' : 'finished', event.reason, null, null);
     return row(el0, event);
   }
 
@@ -816,8 +857,14 @@
       el.statePill.textContent = 'running';
       el.statePill.dataset.state = 'working';
     } else {
-      el.statePill.textContent = face.stop ? (face.stop.type === 'failed' ? 'failed' : 'idle') : 'idle';
-      el.statePill.dataset.state = face.stop && face.stop.type === 'failed' ? 'down' : 'idle';
+      // An owner's stop reaches the page as a failure whose reason names
+      // the owner. It is not a failure, and the header must not say so.
+      var stopped = face.stop && face.stop.type === 'failed' &&
+        /stopped by the owner/i.test(face.stop.reason || '');
+      el.statePill.textContent = stopped ? 'stopped'
+        : face.stop ? (face.stop.type === 'failed' ? 'failed' : 'idle') : 'idle';
+      el.statePill.dataset.state = face.stop && face.stop.type === 'failed' && !stopped
+        ? 'down' : 'idle';
     }
 
     paintFacts();
@@ -843,7 +890,9 @@
       ['context', face.context ? tokens(face.context) + ' of ' + tokens(face.budget) : '\u2014'],
       ['turns', face.turn ? String(face.turn) : '\u2014'],
       ['route', face.route ? face.route.provider : '\u2014'],
-      ['state', face.seat ? 'a seat is standing' : face.running ? 'running' : face.stop ? face.stop.type : 'idle']
+      ['state', face.seat ? 'a seat is standing' : face.running ? 'running'
+        : face.stop ? (/stopped by the owner/i.test(face.stop.reason || '') ? 'stopped' : face.stop.type)
+          : 'idle']
     ];
     if (face.dropped) rows.push(['dropped', String(face.dropped)]);
     el.facts.textContent = '';
@@ -947,11 +996,15 @@
     ['build', 'Build', 'post the edited plan']
   ];
 
-  function resetProcess(mode) {
+  function resetProcess(mode, replayed) {
     face.process = {
       mode: mode || 'run',
       stage: mode === 'plan' ? 'plan' : 'route',
       active: true,
+      // A replay cannot know when the run began, only when this page
+      // read it. The card says nothing rather than counting from the
+      // moment the owner opened it.
+      replayed: !!replayed,
       started: Date.now(),
       ended: 0,
       turn: 0,
@@ -965,6 +1018,10 @@
       checkpoint: 0,
       waiting: false,
       stop: '',
+      stopping: false,
+      branches: {},
+      branchOrder: [],
+      gate: face.gate || null,
       last: '',
       at: 0
     };
@@ -986,10 +1043,10 @@
       // A replayed session can begin at any point. The first run-shaped
       // event creates the card; a cron or a skills boot event does not.
       if (['turn', 'routed', 'tool_call', 'tool_result', 'seat', 'memory',
-        'lane', 'delegation', 'plan', 'finished', 'failed'].indexOf(event.type) === -1) {
+        'lane', 'delegation', 'control', 'plan', 'finished', 'failed'].indexOf(event.type) === -1) {
         return;
       }
-      resetProcess(face.planMode ? 'plan' : 'run');
+      resetProcess(face.planMode ? 'plan' : 'run', true);
     }
     var p = face.process;
     p.at = Date.now();
@@ -1040,9 +1097,39 @@
         break;
       case 'delegation':
         p.stage = 'act';
-        p.delegations = Object.keys(face.delegations || {}).length;
+        // One branch per child session, rewritten by each stage. The
+        // order is the order the children were spawned, so the card
+        // reads like the tree it came from rather than like its last
+        // report.
+        if (event.session) {
+          if (!p.branches[event.session]) p.branchOrder.push(event.session);
+          p.branches[event.session] = {
+            session: event.session,
+            goal: event.goal || '',
+            stage: event.stage || 'spawned',
+            calls: event.detail && event.detail.calls ? Number(event.detail.calls) : 0,
+            tool: event.detail && event.detail.tool ? event.detail.tool : '',
+            outcome: event.detail && event.detail.outcome ? event.detail.outcome : '',
+            turns: event.detail && event.detail.turns ? Number(event.detail.turns) : 0,
+            at: Date.now()
+          };
+        }
+        p.delegations = p.branchOrder.length;
         p.last = 'delegation \u00b7 ' + (event.stage || 'spawned') +
           (event.detail && event.detail.tool ? ' \u00b7 ' + event.detail.tool : '');
+        break;
+      case 'control':
+        // The owner's own instruction, recorded by the bridge when the
+        // control file was written. The run reads it at its next model
+        // call, so the card says "stopping" until the run ends rather
+        // than pretending the stop was instant.
+        p.stage = 'act';
+        if (event.kind === 'stop') {
+          p.stopping = true;
+          p.last = 'stopping \u00b7 the run ends at its next step';
+        } else {
+          p.last = 'steer sent \u00b7 ' + clip(event.steer || '', 50);
+        }
         break;
       case 'checkpoint':
         p.checkpoint = Number(event.turn) || p.checkpoint;
@@ -1057,6 +1144,7 @@
         p.active = false;
         p.ended = Date.now();
         p.stop = 'plan';
+        p.stopping = false;
         p.last = 'the plan is ready to edit';
         break;
       case 'finished':
@@ -1068,6 +1156,7 @@
         p.active = false;
         p.ended = Date.now();
         p.stop = 'finished';
+        p.stopping = false;
         if (event.turns) p.turn = Number(event.turns) || p.turn;
         p.last = 'finished \u00b7 ' + (event.stop_reason || 'the answer landed');
         break;
@@ -1075,8 +1164,14 @@
         p.stage = 'verify';
         p.active = false;
         p.ended = Date.now();
-        p.stop = 'failed';
-        p.last = 'failed \u00b7 ' + (event.stop_reason || 'the run stopped');
+        // A stop by the owner is a different end from a failure: the
+        // core reports both through `failed`, and only the reason says
+        // which. The card must not call the owner's own decision a
+        // failure.
+        var failedReason = event.reason || event.stop_reason || 'the run stopped';
+        p.stop = /stopped by the owner/i.test(failedReason) ? 'stopped' : 'failed';
+        p.stopping = false;
+        p.last = (p.stop === 'stopped' ? 'stopped by you' : 'failed') + ' \u00b7 ' + failedReason;
         break;
       default:
         break;
@@ -1128,7 +1223,17 @@
         if (p.calls) return p.calls + ' calls';
         return p.active ? 'no tool yet' : 'no tool this run';
       case 'verify':
-        return p.stop === 'failed' ? 'the run stopped' : 'the answer and the gate';
+        if (p.stop === 'failed') return 'the run stopped';
+        if (p.stop === 'stopped') return 'stopped by you';
+        // The gate is the route module's own failover knob, read from
+        // the state document: "on" means the calibration may move the
+        // preference, and the step says so instead of describing a
+        // check the run did not make.
+        return p.gate
+          ? (p.gate.informs_failover
+            ? 'gate on \u00b7 ' + (p.gate.name || 'sys1')
+            : 'gate shut')
+          : 'the answer and the gate';
       case 'plan':
         return 'the run writes nothing';
       case 'review':
@@ -1146,7 +1251,8 @@
     var state = !p ? 'idle'
       : p.active ? 'running'
         : p.stop === 'failed' ? 'failed'
-          : p.mode === 'plan' && p.stage === 'review' ? 'review' : 'done';
+          : p.stop === 'stopped' ? 'stopped'
+            : p.mode === 'plan' && p.stage === 'review' ? 'review' : 'done';
     el.processState.textContent = state;
     el.processState.dataset.state = state === 'review' ? 'running' : state;
     if (el.processPill) {
@@ -1168,16 +1274,23 @@
         el.task.focus();
       });
       el.processBody.appendChild(start);
+      paintProcessControls(null);
       paintProcessStrip(null);
       return;
     }
     var head = node('div', 'process-head-row');
     head.appendChild(node('span', 'process-state',
-      p.mode === 'plan' ? 'plan mode' : p.active ? 'in flight' : p.stop === 'failed' ? 'stopped' : 'done'));
+      p.mode === 'plan' ? 'plan mode' : p.active ? 'in flight'
+        : p.stop === 'failed' ? 'stopped'
+          : p.stop === 'stopped' ? 'stopped by you' : 'done'));
     head.lastChild.dataset.state = state === 'review' ? 'running' : state;
-    head.appendChild(node('span', 'process-elapsed', elapsedText(p.started, p.ended)));
+    if (!p.replayed) {
+      head.appendChild(node('span', 'process-elapsed', elapsedText(p.started, p.ended)));
+    }
     el.processBody.appendChild(head);
     el.processBody.appendChild(processSteps(p));
+    var branches = processBranches(p);
+    if (branches) el.processBody.appendChild(branches);
     var meta = node('div', 'process-meta');
     if (p.turn) meta.appendChild(node('span', null, 'turn ' + p.turn));
     if (p.calls) meta.appendChild(node('span', null, p.calls + ' calls'));
@@ -1192,7 +1305,116 @@
       last.appendChild(document.createTextNode(' \u00b7 ' + p.last));
       el.processBody.appendChild(last);
     }
+    // A finished run offers the gate's next step: a review task lands in
+    // the composer, and the owner still sends it. The UI never speaks
+    // for the owner, and a batch judge with spend semantics is exactly a
+    // task the owner should see before it runs.
+    if (!p.active && p.stop !== 'failed' && p.gate && p.gate.informs_failover) {
+      var review = node('button', 'replay-button process-review', 'ask sys1 for a review');
+      review.type = 'button';
+      review.dataset.act = 'action';
+      review.title = 'fill the composer with a review task; nothing runs until you send it';
+      review.addEventListener('click', function () {
+        usageRecord('actions', 'process-review', 'uses');
+        ask('Ask sys1 to review the last run: grade the evidence for what it claims, ' +
+          'name the weakest step, and say what would change the verdict.');
+      });
+      el.processBody.appendChild(review);
+    }
+    paintProcessControls(p);
     paintProcessStrip(p);
+  }
+
+  // The live delegation branches, capped at the three most recent: the
+  // full tree is the delegation panel, and the process card's job is
+  // to show that the work fanned out and where each child stands.
+  function processBranches(p) {
+    var ids = p.branchOrder || [];
+    if (!ids.length) return null;
+    var wrap = node('div', 'process-branches');
+    var head = node('div', 'process-branches-head');
+    head.appendChild(node('span', null, 'branches'));
+    head.appendChild(node('span', 'process-branches-count', String(ids.length)));
+    wrap.appendChild(head);
+    var shown = ids.slice(-3);
+    shown.forEach(function (id) {
+      var info = p.branches[id];
+      if (!info) return;
+      var line = node('button', 'process-branch');
+      line.type = 'button';
+      line.dataset.act = 'inspect';
+      line.title = info.goal || id;
+      line.dataset.state = info.stage === 'done'
+        ? (info.outcome === 'completed' ? 'done' : 'down')
+        : info.stage === 'working' ? 'current' : 'pending';
+      line.appendChild(node('span', 'process-branch-dot'));
+      line.appendChild(node('span', 'process-branch-id', shortSession(id)));
+      line.appendChild(node('span', 'process-branch-note', branchNote(info)));
+      line.addEventListener('click', function () { openBranchSession(id); });
+      wrap.appendChild(line);
+    });
+    if (ids.length > shown.length) {
+      var rest = node('button', 'process-branch-more',
+        '+' + (ids.length - shown.length) + ' in the delegation panel');
+      rest.type = 'button';
+      rest.addEventListener('click', function () { window.location.hash = '#/delegation'; });
+      wrap.appendChild(rest);
+    }
+    return wrap;
+  }
+
+  function shortSession(id) {
+    var text = String(id || '');
+    var hash = /Z-(.+)$/.exec(text);
+    return hash ? hash[1].slice(0, 8) : text.slice(0, 8);
+  }
+
+  function branchNote(info) {
+    if (info.stage === 'working') {
+      return (info.calls || 0) + ' calls' + (info.tool ? ' \u00b7 ' + info.tool : '');
+    }
+    if (info.stage === 'done') {
+      return (info.outcome || 'done') + (info.turns ? ' \u00b7 ' + info.turns + ' turns' : '');
+    }
+    return clip(info.goal || 'spawned', 42);
+  }
+
+  // A branch opens the child's own replay in the dock, over the live
+  // conversation rather than instead of it: the owner keeps watching
+  // the run and still reads the child's log.
+  function openBranchSession(id) {
+    fetch('/api/session?id=' + encodeURIComponent(id), {
+      headers: { accept: 'application/json' }
+    })
+      .then(function (reply) { return reply.json(); })
+      .then(function (doc) {
+        if (doc && doc.refused && doc.refused.length) {
+          notice('the branch could not be read', doc.refused[0]);
+          return;
+        }
+        showSessionObject(doc, face.session);
+      })
+      .catch(function () {
+        notice('the branch could not be read', 'the server did not answer');
+      });
+  }
+
+  // The two controls are the only part of the process card the paint
+  // loop never rebuilds, so a half-typed steer survives every event.
+  function paintProcessControls(p) {
+    if (!el.processControls) return;
+    var show = !!p && p.active;
+    el.processControls.hidden = !show;
+    if (!show) {
+      // A steer typed for a run that has ended is not a draft for the
+      // next one: the next run has its own task and its own control.
+      el.processSteer.value = '';
+      return;
+    }
+    el.processStop.disabled = !!p.stopping;
+    el.processStop.textContent = p.stopping ? 'stopping\u2026' : 'stop';
+    el.processStop.dataset.state = p.stopping ? 'stopping' : '';
+    el.processSteer.disabled = !!p.stopping;
   }
 
   function paintProcessStrip(p) {
@@ -1212,7 +1434,8 @@
     main.appendChild(node('span', 'process-strip-label',
       p.turn ? 'turn ' + p.turn : p.mode === 'plan' ? 'plan mode' : 'the run'));
     main.appendChild(node('span', 'process-strip-note',
-      p.tool || (p.stage === 'review' ? 'the plan is ready' : p.last || '')));
+      p.tool || (p.stage === 'review' ? 'the plan is ready'
+        : p.last && p.last !== 'turn ' + p.turn ? p.last : '')));
     var dots = node('span', 'process-strip-dots');
     var steps = p.mode === 'plan' ? PLAN_STEPS : RUN_STEPS;
     var order = steps.map(function (step) { return step[0]; });
@@ -1230,7 +1453,7 @@
   }
 
   function openProcess() {
-    if (window.innerWidth > 1180 && face.panel === 'chat') {
+    if (window.innerWidth > 1180) {
       setAside(true);
       return;
     }
@@ -1255,14 +1478,28 @@
 
   function setAside(open) {
     document.body.dataset.aside = open ? 'open' : 'closed';
+    // At the mid breakpoint the dock only has room as a column if the
+    // nav folds. Opening it folds the nav and remembers what was there;
+    // the fold is not written to storage because it is not the owner's
+    // choice.
+    if (open && window.innerWidth > 1180 && window.innerWidth < 1600 &&
+        document.body.dataset.rail !== 'icons' && !face.railBeforeDock) {
+      face.railBeforeDock = document.body.dataset.rail || 'full';
+      applyRail('icons', false);
+    }
+    if (!open && face.railBeforeDock) {
+      var restore = face.railBeforeDock;
+      face.railBeforeDock = null;
+      applyRail(restore, false);
+    }
     if (el.asideToggle) {
       el.asideToggle.setAttribute('aria-pressed', open ? 'true' : 'false');
       el.asideToggle.setAttribute('aria-label',
-        open ? 'hide the run\u2019s process' : 'show the run\u2019s process');
-      el.asideToggle.title = open ? 'hide the run\u2019s process' : 'show the run\u2019s process';
+        open ? 'undock the run\u2019s card' : 'dock the run\u2019s card');
+      el.asideToggle.title = open ? 'undock the run\u2019s card' : 'dock the run\u2019s card';
     }
     try { window.localStorage.setItem('fleet-aside', open ? 'open' : 'closed'); } catch (error) { }
-    paintProcess();
+    syncDock();
   }
 
   // ------------------------------------------------------------- the home
@@ -1496,7 +1733,11 @@
       if (action) {
         var button = node('button', 'page-action', action.label);
         button.type = 'button';
-        button.addEventListener('click', action.run);
+        button.dataset.act = 'action';
+        button.addEventListener('click', function () {
+          usageRecord('actions', 'page:' + action.label, 'uses');
+          action.run();
+        });
         side.appendChild(button);
       }
       head.appendChild(side);
@@ -1514,6 +1755,7 @@
 
   function tile(value, label, tone, run) {
     var el0 = run ? node('button', 'tile') : node('div', 'tile');
+    el0.dataset.act = run ? 'filter' : 'inspect';
     if (run) {
       el0.type = 'button';
       el0.title = label + ': open the list it counts';
@@ -1558,6 +1800,24 @@
     ]);
   }
 
+  // A panel's filter chips. One shape for memory, skills, calibration,
+  // and the tower, so a filter reads the same wherever it is: the value
+  // it sets, the word it shows, and its count. `current` is the live
+  // value; the chosen chip is the only one pressed.
+  function filterBar(items, current, onPick) {
+    var bar = node('div', 'filter-bar');
+    items.forEach(function (item) {
+      var label = item.label + (item.count == null ? '' : ' ' + item.count);
+      var chip = node('button', 'filter-chip', label);
+      chip.type = 'button';
+      chip.dataset.act = 'filter';
+      chip.setAttribute('aria-pressed', current === item.value ? 'true' : 'false');
+      chip.addEventListener('click', function () { onPick(item.value); });
+      bar.appendChild(chip);
+    });
+    return bar;
+  }
+
   // The clock a stamp carries, not the stamp: a route row's own time is
   // the crate's UTC vocabulary, and the panel shows the hour and minute
   // the row was written at.
@@ -1573,7 +1833,7 @@
   // be inventing the shape of a day it never saw. The width is the card's
   // own, so the columns widen with the card instead of the whole chart
   // being scaled up to it.
-  function dayChart(hours, wide) {
+  function dayChart(hours, wide, onHour) {
     var wrap = node('div', 'chart');
     var W = Math.max(240, Math.round(wide || 320)), H = 118, base = H - 18, top = 14, gap = 6;
     var width = hours.length ? (W - gap * (hours.length - 1)) / hours.length : 0;
@@ -1586,11 +1846,11 @@
       var bad = column.calls ? Math.round((column.errors / column.calls) * full) : 0;
       if (full > 0) {
         plot.appendChild(svg('rect', { x: x, y: base - full, width: width, height: Math.max(1, full),
-          rx: 2, class: 'chart-col' }));
+          rx: 2, class: 'chart-col', 'data-act': 'filter-hour' }));
       }
       if (bad > 0) {
         plot.appendChild(svg('rect', { x: x, y: base - full, width: width, height: Math.max(1, bad),
-          rx: 2, class: 'chart-col', 'data-tone': 'down' }));
+          rx: 2, class: 'chart-col', 'data-tone': 'down', 'data-act': 'filter-hour' }));
       }
       if (column.calls) {
         var cap = svg('text', { x: x + width / 2, y: base - full - 4, class: 'chart-cap',
@@ -1601,6 +1861,25 @@
       var hour = svg('text', { x: x + width / 2, y: H - 5, class: 'chart-hour', 'text-anchor': 'middle' });
       hour.textContent = String(column.hour).padStart(2, '0');
       plot.appendChild(hour);
+      if (onHour) {
+        var hit = svg('rect', {
+          x: x - 2, y: top - 8, width: width + 4, height: base - top + 20,
+          fill: 'transparent', class: 'chart-hit', 'data-act': 'filter-hour',
+          role: 'button', tabindex: '0'
+        });
+        var title = svg('title');
+        title.textContent = String(column.hour).padStart(2, '0') + ':00 \u00b7 ' +
+          column.calls + ' calls \u00b7 ' + column.errors + ' failed';
+        hit.appendChild(title);
+        hit.addEventListener('click', function () { onHour(column.hour); });
+        hit.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onHour(column.hour);
+          }
+        });
+        plot.appendChild(hit);
+      }
     });
     wrap.appendChild(plot);
     return wrap;
@@ -1611,7 +1890,7 @@
   // of the day draws an arc, and no path arithmetic is involved. The total
   // is the day's calls, not its serves: the mix says where calls landed,
   // and the ledger beside it already says how many served.
-  function donut(models) {
+  function donut(models, onModel) {
     var wrap = node('div', 'donut');
     var R = 34, C = 2 * Math.PI * R;
     var total = models.reduce(function (sum, entry) { return sum + entry.calls; }, 0);
@@ -1621,13 +1900,30 @@
     models.forEach(function (entry, index) {
       var share = total ? entry.calls / total : 0;
       if (share <= 0) return;
-      plot.appendChild(svg('circle', {
+      var segment = svg('circle', {
         cx: 46, cy: 46, r: R, class: 'donut-seg', 'stroke-width': 13,
         stroke: MIX_COLORS[index % MIX_COLORS.length],
         'stroke-dasharray': (share * C).toFixed(2) + ' ' + (C - share * C).toFixed(2),
         'stroke-dashoffset': (-run * C).toFixed(2),
         transform: 'rotate(-90 46 46)'
-      }));
+      });
+      var title = svg('title');
+      title.textContent = entry.model + ' \u00b7 ' + entry.calls + ' calls \u00b7 ' +
+        Math.round(share * 100) + '%';
+      segment.appendChild(title);
+      if (onModel) {
+        segment.setAttribute('data-act', 'filter-model');
+        segment.setAttribute('role', 'button');
+        segment.setAttribute('tabindex', '0');
+        segment.addEventListener('click', function () { onModel(entry.model); });
+        segment.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onModel(entry.model);
+          }
+        });
+      }
+      plot.appendChild(segment);
       run += share;
     });
     var mid = svg('text', { x: 46, y: 43, 'text-anchor': 'middle',
@@ -1642,6 +1938,19 @@
     var legend = node('ul', 'legend');
     models.forEach(function (entry, index) {
       var item = node('li');
+      if (onModel) {
+        item.dataset.act = 'filter-model';
+        item.tabIndex = 0;
+        item.setAttribute('role', 'button');
+        item.title = 'filter the rows to ' + entry.model;
+        item.addEventListener('click', function () { onModel(entry.model); });
+        item.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onModel(entry.model);
+          }
+        });
+      }
       var swatch = node('span', 'swatch');
       swatch.style.background = MIX_COLORS[index % MIX_COLORS.length];
       item.appendChild(swatch);
@@ -1834,7 +2143,10 @@
         'than drawn as a zero.');
       note.style.marginTop = '14px';
       el0.appendChild(note);
-      el0.appendChild(dayChart(read.hours, wide));
+      el0.appendChild(dayChart(read.hours, wide, function (hour) {
+        face.routerHour = face.routerHour === hour ? null : hour;
+        paintRouter();
+      }));
     }
     return el0;
   }
@@ -1847,7 +2159,10 @@
       el0.appendChild(node('p', 'board-empty', 'No model took a call today.'));
       return el0;
     }
-    el0.appendChild(donut(read.models));
+    el0.appendChild(donut(read.models, function (model) {
+      face.routerModel = face.routerModel === model ? '' : model;
+      paintRouter();
+    }));
     return el0;
   }
 
@@ -1859,9 +2174,53 @@
       el0.appendChild(node('p', 'board-empty', 'No route rows today.'));
       return el0;
     }
+    var hour = face.routerHour;
+    var model = face.routerModel || '';
+    var shown = read.recent.filter(function (entry) {
+      if (hour != null && Number(String(entry.at).slice(11, 13)) !== hour) return false;
+      if (model && entry.model !== model) return false;
+      return true;
+    });
+    // The chart's own selection, named and removable: a filtered list
+    // with no visible cause is a list the owner cannot trust.
+    if (hour != null || model) {
+      var bar = node('div', 'filter-bar');
+      if (hour != null) {
+        var hourChip = node('button', 'filter-chip filter-chip-active',
+          String(hour).padStart(2, '0') + ':00 \u00d7');
+        hourChip.type = 'button';
+        hourChip.dataset.act = 'clear-filter';
+        hourChip.title = 'clear the hour filter';
+        hourChip.addEventListener('click', function () {
+          face.routerHour = null;
+          paintRouter();
+        });
+        bar.appendChild(hourChip);
+      }
+      if (model) {
+        var modelChip = node('button', 'filter-chip filter-chip-active', model + ' \u00d7');
+        modelChip.type = 'button';
+        modelChip.dataset.act = 'clear-filter';
+        modelChip.title = 'clear the model filter';
+        modelChip.addEventListener('click', function () {
+          face.routerModel = '';
+          paintRouter();
+        });
+        bar.appendChild(modelChip);
+      }
+      bar.appendChild(node('span', 'filter-count',
+        shown.length + ' of ' + read.recent.length + ' rows'));
+      el0.appendChild(bar);
+    }
+    if (!shown.length) {
+      el0.appendChild(node('p', 'board-empty',
+        'No route row today matches this filter. Clear it to see the rows.'));
+      return el0;
+    }
     var rows = node('div', 'rows');
-    read.recent.forEach(function (entry) {
+    shown.forEach(function (entry) {
       var line = node('div', 'rrow');
+      line.dataset.act = 'inspect';
       line.appendChild(node('span', 'rrow-at', clock(entry.at)));
       var what = node('div', 'rrow-what');
       what.appendChild(node('span', 'rrow-model', entry.model));
@@ -1939,6 +2298,7 @@
         (entry.ms == null ? '' : ' \u00b7 ' + entry.ms + ' ms') +
         (entry.reason ? ' \u00b7 ' + entry.reason : ''))],
       ['the walk', node('p', 'derivation', walk)],
+      ['related', relatedFor('route', entry.at)],
       ['what you can do', actions]
     ]);
   }
@@ -2644,12 +3004,24 @@
     }
     var facts = read.facts || [];
     var live = facts.filter(function (fact) { return !fact.retired; });
+    var protectedFacts = live.filter(function (fact) { return fact.protected; });
+    var retired = facts.filter(function (fact) { return fact.retired; });
     var hits = read.hits || [];
     var recalls = face.events.filter(function (event) { return event.type === 'memory'; });
+    var filter = face.memoryFilter || 'live';
     var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(live.length, 'live facts'));
-    tiles.appendChild(tile(facts.filter(function (fact) { return fact.protected; }).length, 'protected'));
-    tiles.appendChild(tile(facts.length - live.length, 'retired'));
+    tiles.appendChild(tile(live.length, 'live facts', null, function () {
+      face.memoryFilter = 'live';
+      paintMemory();
+    }));
+    tiles.appendChild(tile(protectedFacts.length, 'protected', null, function () {
+      face.memoryFilter = 'protected';
+      paintMemory();
+    }));
+    tiles.appendChild(tile(retired.length, 'retired', null, function () {
+      face.memoryFilter = 'retired';
+      paintMemory();
+    }));
     tiles.appendChild(tile(hits.length, 'hits ' + read.day));
     tiles.appendChild(tile(recalls.length, 'recalls this run', recalls.length ? 'live' : null));
     el.memoryBoard.appendChild(pageHead('Knowledge', 'Memory',
@@ -2662,10 +3034,22 @@
       }));
     el.memoryBoard.appendChild(statStrip(tiles));
     el.memoryBoard.appendChild(memorySearch());
+    el.memoryBoard.appendChild(filterBar([
+      { value: 'all', label: 'all', count: facts.length },
+      { value: 'live', label: 'live', count: live.length },
+      { value: 'protected', label: 'protected', count: protectedFacts.length },
+      { value: 'retired', label: 'retired', count: retired.length }
+    ], filter, function (value) {
+      face.memoryFilter = value;
+      paintMemory();
+    }));
 
-    var shown = live.filter(function (fact) { return matchesQuery(fact); });
+    var shown = facts.filter(function (fact) {
+      return memoryFilterMatch(fact, filter) && matchesQuery(fact);
+    });
     if (shown.length) {
-      var corpus = boardCard(12, 'the corpus', shown.length + ' live',
+      var corpus = boardCard(12, 'the corpus',
+        shown.length + (filter === 'all' ? ' of ' + facts.length : ' ' + filter),
         'a fact is one file under the memories tree; opening one shows its whole body and its ' +
         'edit, written through the substrate\u2019s own rewriter.');
       corpus.appendChild(factGrid(shown));
@@ -2673,23 +3057,17 @@
     } else {
       var none = boardCard(12, 'the corpus', null, null);
       none.appendChild(node('p', 'board-empty',
-        live.length
-          ? 'No live fact matches \u201c' + face.query + '\u201d. The search reads the name, the ' +
-            'sentence, the type, the shape tags and the body \u2014 every field the fact carries.'
-          : 'This home holds no live facts. A fact is one file under the memories tree, and the ' +
+        facts.length
+          ? 'No ' + (filter === 'all' ? '' : filter + ' ') + 'fact matches' +
+            (face.query ? ' \u201c' + face.query + '\u201d' : ' this filter') +
+            '. The search reads the name, the sentence, the type, the shape tags and the body ' +
+            '\u2014 every field the fact carries.'
+          : 'This home holds no facts. A fact is one file under the memories tree, and the ' +
             'agent writes them through the substrate\u2019s own writer.'));
       el.memoryBoard.appendChild(none);
     }
 
     el.memoryBoard.appendChild(recallCard(recalls, hits, read.day));
-
-    var retired = facts.filter(function (fact) { return fact.retired; });
-    if (retired.length) {
-      var folded = boardCard(12, 'retired facts', null,
-        'a supersession folded these away, or their valid-until passed. The corpus keeps them and recall skips them.');
-      folded.appendChild(factGrid(retired));
-      el.memoryBoard.appendChild(folded);
-    }
     if (read.refused && read.refused.length) {
       el.memoryBoard.appendChild(refusedCard(read.refused));
     }
@@ -2715,6 +3093,17 @@
     return wrap;
   }
 
+  // The corpus's tier filter. A protected fact is always live by the
+  // corpus's own rule, so the two chips agree rather than double-count.
+  function memoryFilterMatch(fact, filter) {
+    switch (filter) {
+      case 'live': return !fact.retired;
+      case 'protected': return !!fact.protected && !fact.retired;
+      case 'retired': return !!fact.retired;
+      default: return true;
+    }
+  }
+
   // Whether one fact matches the panel's query: every field the fact
   // carries, lowercased, because a search that read only the name would
   // miss the fact whose body is the reason it was recalled.
@@ -2736,6 +3125,7 @@
     var grid = node('div', 'fact-grid');
     facts.forEach(function (fact) {
       var card0 = node('article', 'fact-card');
+      card0.dataset.act = 'inspect';
       card0.dataset.tone = fact.protected ? 'protected' : fact.retired ? 'retired' : 'live';
       var name = node('h3', 'fact-name', fact.name);
       var recalls = node('span', 'fact-recalls',
@@ -2812,12 +3202,27 @@
       var rows = node('div', 'rows');
       hits.forEach(function (hit) {
         var row0 = node('div', 'rrow');
+        row0.dataset.act = 'inspect';
+        row0.tabIndex = 0;
+        row0.setAttribute('role', 'button');
+        row0.title = 'open this recall\u2019s record';
         row0.appendChild(node('span', 'rrow-at', clock(hit.ts)));
         row0.appendChild(node('span', 'rrow-what',
           (hit.shape ? 'shape ' + hit.shape + ' \u00b7 ' : '') + hit.fact));
         var side = node('span', 'rrow-side');
         side.appendChild(node('span', 'rrow-outcome', hit.score.toFixed(2)));
         row0.appendChild(side);
+        row0.addEventListener('click', function () {
+          openDrawer('recall \u00b7 ' + hit.fact, [
+            ['the record', node('pre', 'raw', JSON.stringify(hit, null, 2))]
+          ]);
+        });
+        row0.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            row0.click();
+          }
+        });
         rows.appendChild(row0);
       });
       theirs.appendChild(rows);
@@ -2918,9 +3323,7 @@
       ['the fact', node('p', 'derivation',
         'type ' + fact.fact_type + ' \u00b7 tier ' + fact.tier + ' \u00b7 basis ' + fact.basis +
         ' \u00b7 ' + fact.recall_count + ' recalls \u00b7 ' + fact.path)],
-      ['related', relatedFor('fact',
-        [fact.name, fact.description, (fact.shape || []).join(' '), clip(fact.body || '', 300)].join(' '),
-        fact.name)],
+      ['related', relatedFor('fact', fact.name)],
       ['edit in place', form],
       ['what you can do', related]
     ]);
@@ -2957,6 +3360,43 @@
         paintSince();
       })
       .catch(function () { });
+  }
+
+  // The usage counters: one read when the page boots and one after
+  // every record, so the ranking state is the store's own. Counters
+  // only — the ids are the labels the pages already show.
+  function readUsage() {
+    return fetch('/api/usage', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status !== 200) throw new Error('usage');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.usage = doc;
+      })
+      .catch(function () { });
+  }
+
+  function usageRecord(section, id, event) {
+    post('/api/usage', { section: section, id: id, event: event })
+      .then(function (reply) {
+        if (reply.status === 200 && reply.body && reply.body.type === 'usage') {
+          face.usage = reply.body;
+        }
+      })
+      .catch(function () { });
+  }
+
+  // Accepted-over-shown is the signal, capped at a third: a familiar
+  // offer rises, but never enough to bury the primary lanes. With the
+  // knob off the multiplier is exactly 1.
+  function usageBoost(kind, id) {
+    if (!face.usage || !face.usage.adapt) return 1;
+    var row = (face.usage.suggestions || {})[kind + ':' + id];
+    var shown = row ? Number(row.shown) || 0 : 0;
+    var accepted = row ? Number(row.accepted) || 0 : 0;
+    if (!shown || !accepted) return 1;
+    return 1 + Math.min(0.35, (accepted / shown) * 0.35);
   }
 
   // What changed while the owner was away. The stamp is the browser's
@@ -3023,11 +3463,26 @@
     var skills = read.skills || [];
     var skips = read.skips || [];
     var proposals = read.proposals || [];
+    var used = skills.filter(function (skill) { return skill.uses > 0; }).length;
+    var filter = face.skillsFilter || 'all';
     var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(skills.length, 'loaded'));
-    tiles.appendChild(tile(skips.length, 'skipped', skips.length ? 'warn' : null));
-    tiles.appendChild(tile(proposals.length, 'awaiting a decision', proposals.length ? 'live' : null));
-    tiles.appendChild(tile(read.unused, 'never selected'));
+    tiles.appendChild(tile(skills.length, 'loaded', null, function () {
+      face.skillsFilter = 'all';
+      paintSkills();
+    }));
+    tiles.appendChild(tile(skips.length, 'skipped', skips.length ? 'warn' : null, function () {
+      face.skillsFilter = 'skipped';
+      paintSkills();
+    }));
+    tiles.appendChild(tile(proposals.length, 'awaiting a decision', proposals.length ? 'live' : null,
+      function () {
+        face.skillsFilter = 'proposals';
+        paintSkills();
+      }));
+    tiles.appendChild(tile(read.unused, 'never selected', null, function () {
+      face.skillsFilter = 'unused';
+      paintSkills();
+    }));
     tiles.appendChild(tile(read.sessions, 'sessions scanned'));
     el.skillsBoard.appendChild(pageHead('Knowledge', 'Skills',
       'The library the model can reach, the names the loader declined, and the proposals waiting for a decision.',
@@ -3038,26 +3493,54 @@
         }
       }));
     el.skillsBoard.appendChild(statStrip(tiles));
+    el.skillsBoard.appendChild(filterBar([
+      { value: 'all', label: 'all', count: skills.length },
+      { value: 'used', label: 'used', count: used },
+      { value: 'unused', label: 'unused', count: skills.length - used },
+      { value: 'proposals', label: 'proposals', count: proposals.length },
+      { value: 'skipped', label: 'skipped', count: skips.length }
+    ], filter, function (value) {
+      face.skillsFilter = value;
+      paintSkills();
+    }));
 
-    if (proposals.length) {
-      el.skillsBoard.appendChild(proposalCards(proposals));
-    } else {
-      var none = boardCard(12, 'the decisions queue', null, null);
-      none.appendChild(node('p', 'board-empty',
-        'No proposal is awaiting a decision. A proposal is a drafted change under the home\u2019s own ' +
-        'proposals directory, and an approve here rides the same apply the CLI rides.'));
-      el.skillsBoard.appendChild(none);
+    var showProposals = filter === 'all' || filter === 'proposals';
+    if (showProposals) {
+      if (proposals.length) {
+        el.skillsBoard.appendChild(proposalCards(proposals));
+      } else {
+        var none = boardCard(12, 'the decisions queue', null, null);
+        none.appendChild(node('p', 'board-empty',
+          'No proposal is awaiting a decision. A proposal is a drafted change under the home\u2019s own ' +
+          'proposals directory, and an approve here rides the same apply the CLI rides.'));
+        el.skillsBoard.appendChild(none);
+      }
     }
 
-    if (skills.length) {
-      var library = boardCard(12, 'the library', null, null);
-      library.appendChild(skillGrid(skills));
+    if (filter === 'all' || filter === 'used' || filter === 'unused') {
+      var shown = skills.filter(function (skill) {
+        if (filter === 'used') return skill.uses > 0;
+        if (filter === 'unused') return !skill.uses;
+        return true;
+      });
+      // An empty filter is a state, not a missing card: the chip said
+      // there were none, and the card confirms it in the list's place.
+      var library = boardCard(12, filter === 'all' ? 'the library' : 'the library \u00b7 ' + filter,
+        shown.length + (filter === 'all' ? '' : ' of ' + skills.length), null);
+      if (shown.length) {
+        library.appendChild(skillGrid(shown));
+      } else {
+        library.appendChild(node('p', 'board-empty',
+          'No skill in the library is ' + (filter === 'used' ? 'used' : 'unused') + ' today.'));
+      }
       el.skillsBoard.appendChild(library);
     }
-    if (skips.length) {
+    if (skips.length && (filter === 'all' || filter === 'skipped')) {
       el.skillsBoard.appendChild(skipCard(skips));
     }
-    el.skillsBoard.appendChild(curationCard(read));
+    if (filter === 'all' || filter === 'proposals') {
+      el.skillsBoard.appendChild(curationCard(read));
+    }
     if (read.refused && read.refused.length) {
       el.skillsBoard.appendChild(refusedCard(read.refused));
     }
@@ -3072,6 +3555,7 @@
     var grid = node('div', 'fact-grid');
     proposals.forEach(function (proposal) {
       var item = node('article', 'fact-card');
+      item.dataset.act = 'inspect';
       item.dataset.tone = 'live';
       item.appendChild(node('h3', 'fact-name', proposal.name));
       item.appendChild(node('span', 'fact-recalls', proposal.kind));
@@ -3117,6 +3601,7 @@
     var grid = node('div', 'fact-grid');
     skills.forEach(function (skill) {
       var item = node('article', 'fact-card');
+      item.dataset.act = 'inspect';
       item.dataset.tone = skill.uses ? 'live' : 'retired';
       item.appendChild(node('h3', 'fact-name', skill.name));
       item.appendChild(node('span', 'fact-recalls',
@@ -3138,10 +3623,25 @@
     var rows = node('div', 'rows');
     skips.forEach(function (skip) {
       var row0 = node('div', 'rrow');
+      row0.dataset.act = 'inspect';
+      row0.tabIndex = 0;
+      row0.setAttribute('role', 'button');
+      row0.title = skip.reason;
       row0.appendChild(node('span', 'rrow-what', skip.name));
       var side = node('span', 'rrow-side');
       side.appendChild(node('span', 'rrow-outcome', clip(skip.reason, 90)));
       row0.appendChild(side);
+      row0.addEventListener('click', function () {
+        openDrawer('skip \u00b7 ' + skip.name, [
+          ['why the loader declined it', node('p', 'derivation', skip.reason)]
+        ]);
+      });
+      row0.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          row0.click();
+        }
+      });
       rows.appendChild(row0);
     });
     card0.appendChild(rows);
@@ -3165,11 +3665,31 @@
     var rows = node('div', 'rows');
     merges.forEach(function (merge) {
       var row0 = node('div', 'rrow');
+      row0.dataset.act = 'inspect';
+      row0.tabIndex = 0;
+      row0.setAttribute('role', 'button');
+      row0.title = 'similarity ' + merge.similarity.toFixed(2) + ' against the threshold ' +
+        read.threshold;
       row0.appendChild(node('span', 'rrow-what',
         merge.survivor + ' would absorb ' + merge.absorbed));
       var side = node('span', 'rrow-side');
       side.appendChild(node('span', 'rrow-outcome', merge.similarity.toFixed(2)));
       row0.appendChild(side);
+      row0.addEventListener('click', function () {
+        openDrawer('merge candidate', [
+          ['the pair', node('p', 'derivation',
+            merge.survivor + ' would absorb ' + merge.absorbed)],
+          ['the measure', node('p', 'derivation',
+            'description similarity ' + merge.similarity.toFixed(2) +
+            ' \u00b7 the threshold is ' + read.threshold)]
+        ]);
+      });
+      row0.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          row0.click();
+        }
+      });
       rows.appendChild(row0);
     });
     card0.appendChild(rows);
@@ -3199,9 +3719,7 @@
       ['the skill', node('p', 'derivation',
         skill.uses + ' uses across ' + (face.skills ? face.skills.sessions : 0) + ' scanned sessions' +
         ' \u00b7 ' + skill.path)],
-      ['related', relatedFor('skill',
-        [skill.name, skill.description, clip(skill.body || '', 300)].join(' '),
-        skill.name)],
+      ['related', relatedFor('skill', skill.name)],
       ['the body', node('pre', 'drawer-code', skill.body || '')],
       ['what the model sees', node('p', 'derivation',
         'the system prompt carries the name and the one sentence. The body enters context only when ' +
@@ -3296,6 +3814,66 @@
     });
   }
 
+  // The run's two controls. The server writes the control file the turn
+  // loop reads before its next model call, so the latency is one step
+  // and the card says "stopping" until the run's own end record lands.
+  function stopRun() {
+    if (!face.process || !face.process.active || face.process.stopping) return;
+    // The reply races the run's own end record: a stop can be accepted
+    // just as the answer lands. The card belongs to this run only, so a
+    // late reply never overwrites the run that already ended.
+    var p = face.process;
+    el.processStop.disabled = true;
+    post('/api/stop', {}).then(function (reply) {
+      if (reply.status === 200) {
+        if (face.process === p && p.active) {
+          p.stopping = true;
+          p.last = 'stopping \u00b7 the run ends at its next step';
+          paintProcess();
+        }
+        return;
+      }
+      if (face.process === p && p.active) {
+        notice('the stop was refused',
+          (reply.body && reply.body.error) || 'the server did not take it');
+        paintProcessControls(p);
+      }
+    }).catch(function () {
+      if (face.process === p && p.active) {
+        notice('the stop was refused', 'the server did not answer');
+        paintProcessControls(p);
+      }
+    });
+  }
+
+  function steerRun(event) {
+    event.preventDefault();
+    var text = el.processSteer.value.trim();
+    if (!text || !face.process || !face.process.active) return;
+    var p = face.process;
+    el.processSteer.disabled = true;
+    post('/api/steer', { text: text }).then(function (reply) {
+      if (face.process === p) el.processSteer.disabled = false;
+      if (reply.status === 200) {
+        if (face.process === p && p.active) {
+          el.processSteer.value = '';
+          p.last = 'steer sent \u00b7 ' + clip(text, 50);
+          paintProcess();
+        }
+        return;
+      }
+      if (face.process === p && p.active) {
+        notice('the steer was refused',
+          (reply.body && reply.body.error) || 'the server did not take it');
+      }
+    }).catch(function () {
+      if (face.process === p) el.processSteer.disabled = false;
+      if (face.process === p && p.active) {
+        notice('the steer was refused', 'the server did not answer');
+      }
+    });
+  }
+
   function answer(decision) {
     post('/api/approve', { decision: decision }).then(function (reply) {
       // The seat is already gone — the bridge clears it before it
@@ -3315,89 +3893,164 @@
 
   // ---------------------------------------------------------- related objects
 
-  // Suggestions are the harness's own embedding path, not a second
-  // recommender: the candidates are the corpus and the library, a lexical
-  // pass shortlists the handful worth embedding, and /api/rank compares
-  // them by cosine. A machine with no embedder degrades to "no close
-  // match" rather than inventing an order.
-  function wordsOf(text) {
-    return String(text || '').toLowerCase().split(/[^a-z0-9_]+/)
-      .filter(function (word) { return word.length > 2; });
-  }
-
-  function lexicalScore(queryWords, text) {
-    var words = wordsOf(text);
-    var seen = {};
-    words.forEach(function (word) { seen[word] = 1; });
-    var score = 0;
-    queryWords.forEach(function (word) { if (seen[word]) score += 1; });
-    return score;
-  }
-
-  function shortlist(query, pool, most) {
-    var queryWords = wordsOf(query);
-    var seen = {};
-    var unique = [];
-    pool.forEach(function (item) {
-      var key = item.kind + ':' + item.id;
-      if (seen[key]) return;
-      seen[key] = 1;
-      unique.push(item);
-    });
-    if (!queryWords.length) return unique.slice(0, most || 24);
-    return unique
-      .map(function (item) {
-        return { item: item, score: lexicalScore(queryWords, item.text) };
-      })
-      .sort(function (left, right) { return right.score - left.score; })
-      .slice(0, most || 24)
-      .map(function (entry) { return entry.item; });
-  }
-
-  function relatedBlock(query, pool, onPick) {
+  // Suggestions are one server-side read: the related index compares
+  // the selected object against every other kind by the same embedder
+  // the recall uses, and names its own state (warm, warming, lexical).
+  // The browser no longer shortlists or embeds anything — a second
+  // ranking path would be a second answer to what "related" means.
+  function relatedFor(kind, id) {
     var wrap = node('div', 'related');
-    var wait = node('p', 'related-wait', 'reading the corpus\u2026');
-    wrap.appendChild(wait);
-    var short = shortlist(query, pool, 12);
-    if (!short.length || !wordsOf(query).length) {
-      wait.textContent = 'nothing close enough to rank yet';
+    var key = kind + ':' + id;
+    var cached = face.related[key];
+    if (cached && cached.doc.index !== 'warming' && Date.now() - cached.at < 60000) {
+      paintRelated(wrap, cached.doc);
       return wrap;
     }
-    post('/api/rank', { asked: query, candidates: short.map(function (item) { return item.text; }) })
-      .then(function (reply) {
-        if (reply.status !== 200) {
-          wait.textContent = 'semantic suggestions are unavailable';
-          return;
-        }
-        var ranked = (reply.body.ranked || []).filter(function (row) {
-          return Number(row.score) > 0.12;
-        }).slice(0, 3);
-        wrap.textContent = '';
-        if (!ranked.length) {
-          wrap.appendChild(node('p', 'related-wait',
-            'no close match in the corpus'));
-          return;
-        }
-        var list = node('div', 'related-list');
-        ranked.forEach(function (row) {
-          var item = short[row.index];
-          if (!item) return;
-          var button = node('button', 'related-row');
-          button.type = 'button';
-          button.title = 'open ' + item.label;
-          button.appendChild(node('span', 'related-kind', item.kind));
-          button.appendChild(node('span', 'related-name', item.label));
-          button.appendChild(node('span', 'related-score',
-            Math.round(Number(row.score) * 100) + '%'));
-          button.addEventListener('click', function () { onPick(item); });
-          list.appendChild(button);
-        });
-        wrap.appendChild(list);
+    var wait = node('p', 'related-wait', 'reading the index\u2026');
+    wrap.appendChild(wait);
+    var retried = false;
+
+    function load() {
+      fetch('/api/related?kind=' + encodeURIComponent(kind) +
+        '&id=' + encodeURIComponent(id) + '&limit=3', {
+        headers: { accept: 'application/json' }
       })
-      .catch(function () {
-        wait.textContent = 'semantic suggestions are unavailable';
-      });
+        .then(function (reply) {
+          if (reply.status === 401) throw new Error('token');
+          if (reply.status !== 200) throw new Error('status ' + reply.status);
+          return reply.json();
+        })
+        .then(function (doc) {
+          if (doc.refused && doc.refused.length) {
+            wait.textContent = doc.refused[0];
+            return;
+          }
+          // One retry is the whole warming contract: the first pass
+          // answers from what is ready and says so; two seconds later
+          // the cold half has usually landed.
+          if (doc.index === 'warming' && !retried) {
+            retried = true;
+            wait.textContent = 'warming the index \u00b7 the first pass is keyword-only';
+            window.setTimeout(load, 2000);
+            return;
+          }
+          if (doc.index !== 'warming') face.related[key] = { at: Date.now(), doc: doc };
+          paintRelated(wrap, doc);
+        })
+        .catch(function () {
+          wait.textContent = 'the related read did not land';
+        });
+    }
+
+    load();
     return wrap;
+  }
+
+  function paintRelated(wrap, doc) {
+    wrap.textContent = '';
+    var rows = doc.related || [];
+    if (!rows.length) {
+      wrap.appendChild(node('p', 'related-wait',
+        doc.scores === 'lexical' ? 'no shared words in the corpus' : 'no close match in the corpus'));
+      return;
+    }
+    // The accepted-over-shown signal re-orders the rows without hiding
+    // any: a pair the owner keeps opening rises by at most a third.
+    rows = rows.slice().sort(function (left, right) {
+      var leftScore = Number(left.score) * usageBoost('related', left.kind + ':' + left.id);
+      var rightScore = Number(right.score) * usageBoost('related', right.kind + ':' + right.id);
+      return rightScore - leftScore;
+    });
+    var list = node('div', 'related-list');
+    rows.forEach(function (row) {
+      var usageKey = 'related:' + row.kind + ':' + row.id;
+      if (!face.relatedShown[usageKey]) {
+        face.relatedShown[usageKey] = 1;
+        usageRecord('suggestions', usageKey, 'shown');
+      }
+      var button = node('button', 'related-row');
+      button.type = 'button';
+      button.dataset.act = 'inspect';
+      button.title = row.summary || ('open ' + row.name);
+      button.appendChild(node('span', 'related-kind', row.kind));
+      button.appendChild(node('span', 'related-name',
+        row.kind === 'session' ? sessionLabel(row.id) : row.name));
+      var score = node('span', 'related-score',
+        doc.scores === 'cosine' ? Math.round(Number(row.score) * 100) + '%' : '\u2248');
+      if (row.weak) score.dataset.weak = 'yes';
+      button.appendChild(score);
+      button.addEventListener('click', function () { openRelated(row); });
+      list.appendChild(button);
+    });
+    wrap.appendChild(list);
+    // The state is named, not implied: a weak percentage, a keyword
+    // match, and a still-warming index are three different answers.
+    wrap.appendChild(node('p', 'related-state',
+      doc.scores === 'lexical'
+        ? (doc.index === 'warming' ? 'keyword match \u00b7 the index is warming' : 'keyword match \u00b7 no embedder')
+        : (doc.index === 'warming' ? 'cosine \u00b7 the index is still warming' : 'cosine')));
+  }
+
+  // One related row opens the object, not a second copy of it: facts
+  // and skills through their own inspectors, sessions through the
+  // replay, projects through the tower's drawer. A route or a cell has
+  // no detail read of its own here, so it names what the relation is
+  // and offers the panel that owns it.
+  function openRelated(row) {
+    usageRecord('suggestions', 'related:' + row.kind + ':' + row.id, 'accepted');
+    if (row.kind === 'session') {
+      openBranchSession(row.id);
+      return;
+    }
+    if (row.kind === 'fact' || row.kind === 'skill') {
+      ensureCorpus().then(function () {
+        if (row.kind === 'fact') {
+          var fact = ((face.memory && face.memory.facts) || []).find(function (item) {
+            return item.name === row.id;
+          });
+          if (fact) { inspectFact(fact); return; }
+        } else {
+          var skill = ((face.skills && face.skills.skills) || []).find(function (item) {
+            return item.name === row.id;
+          });
+          if (skill) { inspectSkill(skill); return; }
+        }
+        genericRelated(row);
+      });
+      return;
+    }
+    if (row.kind === 'project') {
+      var project = ((face.tower && face.tower.projects) || []).find(function (item) {
+        return item.name === row.id;
+      });
+      if (project) { projectDrawer(project, null, face.tower && face.tower.root); return; }
+      readTower(false).then(function () {
+        var loaded = ((face.tower && face.tower.projects) || []).find(function (item) {
+          return item.name === row.id;
+        });
+        if (loaded) projectDrawer(loaded, null, face.tower && face.tower.root);
+        else genericRelated(row);
+      });
+      return;
+    }
+    genericRelated(row);
+  }
+
+  function genericRelated(row) {
+    var actions = node('div', 'replay-actions');
+    var open = node('button', 'replay-button replay-resume',
+      'open the ' + (row.kind === 'cell' ? 'calibration' : 'router') + ' panel');
+    open.type = 'button';
+    open.addEventListener('click', function () {
+      window.location.hash = row.kind === 'cell' ? '#/calibration' : '#/router';
+    });
+    actions.appendChild(open);
+    openDrawer(row.kind + ' \u00b7 ' + row.name, [
+      ['the relation', node('p', 'derivation',
+        (row.summary || 'no summary recorded') +
+        (row.score == null ? '' : ' \u00b7 ' + Math.round(Number(row.score) * 100) + '%'))],
+      ['what you can do', actions]
+    ]);
   }
 
   function ensureCorpus() {
@@ -3407,88 +4060,54 @@
     return Promise.all(waits).catch(function () { });
   }
 
-  function factPool(except) {
-    return ((face.memory && face.memory.facts) || [])
-      .filter(function (fact) { return !fact.retired && fact.name !== except; })
-      .map(function (fact) {
-        return {
-          kind: 'fact',
-          id: fact.name,
-          label: fact.name,
-          text: [fact.name, fact.description, (fact.shape || []).join(' '),
-            clip(fact.body || '', 240)].join(' '),
-          fact: fact
-        };
-      });
-  }
-
-  function skillPool(except) {
-    return ((face.skills && face.skills.skills) || [])
-      .filter(function (skill) { return skill.name !== except; })
-      .map(function (skill) {
-        return {
-          kind: 'skill',
-          id: skill.name,
-          label: skill.name,
-          text: [skill.name, skill.description, clip(skill.body || '', 200)].join(' '),
-          skill: skill
-        };
-      });
-  }
-
-  function relatedFor(kind, query, except, onPick) {
-    var wrap = node('div', 'related');
-    var wait = node('p', 'related-wait', 'reading the corpus\u2026');
-    wrap.appendChild(wait);
-    ensureCorpus().then(function () {
-      var pool = factPool(except).concat(skillPool(except));
-      wrap.textContent = '';
-      wrap.appendChild(relatedBlock(query, pool, function (item) {
-        if (item.kind === 'fact') inspectFact(item.fact);
-        else inspectSkill(item.skill);
-        if (onPick) onPick(item);
-      }));
-    });
-    return wrap;
-  }
-
-  function projectPool(except) {
-    return ((face.tower && face.tower.projects) || [])
-      .filter(function (row) { return row.name !== except; })
-      .map(function (row) {
-        return {
-          kind: 'project',
-          id: row.name,
-          label: row.name,
-          text: [row.name, row.subject || '', row.branch || ''].join(' '),
-          project: row
-        };
-      });
-  }
-
-  function openDrawer(title, sections) {
-    el.drawerTitle.textContent = title;
-    el.drawerBody.textContent = '';
+  function renderSections(container, sections) {
     sections.forEach(function (section) {
       var head = node('h3', null, section[0]);
-      el.drawerBody.appendChild(head);
+      container.appendChild(head);
       if (section[1] instanceof Node) {
-        el.drawerBody.appendChild(section[1]);
+        container.appendChild(section[1]);
       } else {
         var para = node('p', 'derivation');
         para.innerHTML = section[1];
-        el.drawerBody.appendChild(para);
+        container.appendChild(para);
       }
     });
+  }
+
+  function openDrawer(title, sections) {
+    // The dock is the inspector wherever there is room. The fixed drawer
+    // is the narrow-screen fallback, not a second surface to maintain.
+    if (window.innerWidth > 1180 && el.dockObject) {
+      setAside(true);
+      el.dockObjectTitle.textContent = title;
+      el.dockObjectBody.textContent = '';
+      renderSections(el.dockObjectBody, sections);
+      el.dockObject.hidden = false;
+      el.faceCard.hidden = true;
+      el.trustCard.hidden = true;
+      window.setTimeout(function () {
+        if (el.dockObject.scrollIntoView) {
+          el.dockObject.scrollIntoView({ block: 'nearest' });
+        }
+      }, 0);
+      return;
+    }
+    el.drawerTitle.textContent = title;
+    el.drawerBody.textContent = '';
+    renderSections(el.drawerBody, sections);
     el.drawer.hidden = false;
-    // The inspector is a right-hand card, not a modal, on a wide screen:
-    // it stays open while the owner keeps working. On a narrow screen it
-    // takes the whole width, so the scrim stays and the drawer is modal.
-    el.drawer.setAttribute('aria-modal', window.innerWidth > 900 ? 'false' : 'true');
-    el.scrim.hidden = window.innerWidth > 900;
+    el.drawer.setAttribute('aria-modal', 'true');
+    el.scrim.hidden = false;
   }
 
   function closeDrawer() {
+    if (el.dockObject && !el.dockObject.hidden) {
+      el.dockObject.hidden = true;
+      el.dockObjectBody.textContent = '';
+      el.faceCard.hidden = false;
+      el.trustCard.hidden = false;
+      return;
+    }
     el.drawer.hidden = true;
     el.scrim.hidden = true;
   }
@@ -3617,6 +4236,7 @@
     face.route = null;
     face.stop = null;
     face.seatKey = '';
+    face.gate = state.gate || null;
     face.process = null;
 
     el.log.textContent = '';
@@ -3700,24 +4320,40 @@
   // keyed on it.
   window.history.replaceState(null, '', window.location.pathname + window.location.hash);
 
-  el.offers.textContent = '';
-  OFFERS.forEach(function (offer) {
-    var button = node('button', 'offer');
-    button.type = 'button';
-    var mark = node('span', 'offer-mark');
-    mark.appendChild(icon(offer.icon));
-    button.appendChild(mark);
-    var body = node('span', 'offer-body');
-    body.appendChild(node('span', 'offer-title', offer.title));
-    body.appendChild(node('span', 'offer-said', offer.said));
-    button.appendChild(body);
-    button.addEventListener('click', function () {
-      el.task.value = offer.prompt;
-      grow();
-      el.task.focus();
+  // The four offers, ordered by what the owner actually accepts. A
+  // familiar offer rises; nothing is hidden, and the static order is
+  // the order when the knob is off or the counters are empty.
+  function paintOffers() {
+    el.offers.textContent = '';
+    OFFERS.slice().sort(function (left, right) {
+      return usageBoost('offer', right.id) - usageBoost('offer', left.id);
+    }).forEach(function (offer) {
+      var button = node('button', 'offer');
+      button.type = 'button';
+      button.dataset.act = 'offer';
+      button.dataset.offer = offer.id;
+      var mark = node('span', 'offer-mark');
+      mark.appendChild(icon(offer.icon));
+      button.appendChild(mark);
+      var body = node('span', 'offer-body');
+      body.appendChild(node('span', 'offer-title', offer.title));
+      body.appendChild(node('span', 'offer-said', offer.said));
+      button.appendChild(body);
+      if (!face.offerShown[offer.id]) {
+        face.offerShown[offer.id] = 1;
+        usageRecord('suggestions', 'offer:' + offer.id, 'shown');
+      }
+      button.addEventListener('click', function () {
+        usageRecord('suggestions', 'offer:' + offer.id, 'accepted');
+        el.task.value = offer.prompt;
+        grow();
+        el.task.focus();
+      });
+      el.offers.appendChild(button);
     });
-    el.offers.appendChild(button);
-  });
+  }
+
+  paintOffers();
 
   Array.prototype.forEach.call(el.empty.querySelectorAll('[data-step]'), function (button) {
     button.addEventListener('click', function () {
@@ -3771,19 +4407,29 @@
 
   try {
     var savedAside = window.localStorage.getItem('fleet-aside');
-    setAside(savedAside !== 'closed');
+    // A first visit keeps the labeled nav and leaves the dock closed
+    // until it is asked for; a wide desk has room for both. The topbar
+    // chip and the process strip keep the run visible either way.
+    setAside(savedAside ? savedAside === 'open' : window.innerWidth >= 1600);
   } catch (error) {
-    setAside(true);
+    setAside(window.innerWidth >= 1600);
   }
   if (el.asideToggle) {
     el.asideToggle.addEventListener('click', function () {
       setAside(document.body.dataset.aside === 'closed');
+      if (face.panel === 'sessions') paintSessions();
     });
+  }
+  if (el.dockObjectClose) {
+    el.dockObjectClose.addEventListener('click', closeDrawer);
   }
   if (el.processPill) {
     el.processPill.addEventListener('click', openProcess);
   }
-  window.addEventListener('resize', function () { paintProcess(); });
+  window.addEventListener('resize', function () {
+    syncDock();
+    if (face.panel === 'sessions') paintSessions();
+  });
 
   if (el.railMenu) {
     el.railMenu.addEventListener('click', function () {
@@ -4041,8 +4687,19 @@
         shown.length + ' of ' + sessions.length));
       el.sessionsBoard.appendChild(bar);
 
-      var list = boardCard(face.replayId ? 7 : 12, 'the archive', null,
-        'the row this face anchors is marked. Selecting a row reads it beside the list.');
+      // The split is a width decision, not a mode: below a 1000px track
+      // the archive takes the whole board and the replay moves to the
+      // dock (or, with no dock, below the list). It never overflows.
+      var track = el.sessionsBoard.clientWidth || 0;
+      var split = track >= 1000;
+      var docked = !split && window.innerWidth > 1180 &&
+        document.body.dataset.aside === 'open';
+      var list = boardCard(split && face.replayId ? 7 : 12, 'the archive', null,
+        split
+          ? 'the row this face anchors is marked. Selecting a row reads it beside the list.'
+          : docked
+            ? 'the selected run reads in the dock beside the work.'
+            : 'the selected run reads below the list.');
       var headRow = node('div', 'session-head-row');
       headRow.appendChild(node('span', null, 'session'));
       headRow.appendChild(node('span', null, 'served by'));
@@ -4056,9 +4713,12 @@
       shown.forEach(function (row) { list.appendChild(sessionRow(row)); });
       el.sessionsBoard.appendChild(list);
       if (face.replayId) {
-        if (face.replay) paintReplayInto(el.sessionsBoard, face.replay, read.current);
-        else {
-          var waitingReplay = boardCard(5, 'selected replay', null, null);
+        if (face.replay) {
+          if (split) paintReplayInto(el.sessionsBoard, face.replay, read.current, 5);
+          else if (docked) showSessionObject(face.replay, read.current);
+          else paintReplayInto(el.sessionsBoard, face.replay, read.current, 12);
+        } else {
+          var waitingReplay = boardCard(split ? 5 : 12, 'selected replay', null, null);
           waitingReplay.appendChild(node('p', 'board-empty', 'Reading this run\u2026'));
           el.sessionsBoard.appendChild(waitingReplay);
         }
@@ -4128,6 +4788,7 @@
   function sessionRow(row) {
     var line = node('button', 'session-row');
     line.type = 'button';
+    line.dataset.act = 'inspect';
     line.dataset.id = row.id;
     line.title = row.id;
     if (face.replayId === row.id) line.setAttribute('aria-selected', 'true');
@@ -4167,21 +4828,7 @@
     return line;
   }
 
-  // The replay card: the head the start record pinned, the summary the
-  // end record and the compaction marks carry, the resume that
-  // re-anchors this face, and the cards themselves.
-  function paintReplayInto(board, replay, current) {
-    if (!replay) return;
-    if (replay.refused && replay.refused.length) {
-      board.appendChild(refusedCard(replay.refused));
-      return;
-    }
-    var summary = (replay.model || 'routing\u2026') +
-      (replay.kind ? ' \u00b7 ' + replay.kind : '') +
-      ' \u00b7 ' + (replay.ended
-        ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
-        : 'no end record \u2014 the run was interrupted');
-    var card = boardCard(5, 'replay \u00b7 ' + sessionLabel(replay.id), replay.created, summary);
+  function replayActions(replay, current) {
     var actions = node('div', 'replay-actions');
     var back = node('button', 'replay-button');
     back.type = 'button';
@@ -4210,9 +4857,13 @@
       resume.addEventListener('click', function () { resumeSession(replay.id); });
     }
     actions.appendChild(resume);
-    card.appendChild(actions);
+    return actions;
+  }
+
+  function replayBody(replay) {
+    var wrap = node('div', 'replay-body');
     if (replay.omitted) {
-      card.appendChild(node('p', 'board-empty',
+      wrap.appendChild(node('p', 'board-empty',
         replay.omitted + ' earlier card' + (replay.omitted === 1 ? ' is' : 's are') +
         ' left out of this preview. The log holds them; the preview shows the newest ' +
         'and the resume reseeds from the whole log.'));
@@ -4222,7 +4873,44 @@
     if (!(replay.cards || []).length) {
       lines.appendChild(node('p', 'board-empty', 'This log carries no messages yet.'));
     }
-    card.appendChild(lines);
+    wrap.appendChild(lines);
+    return wrap;
+  }
+
+  // The replay in the dock, for a narrow track: the same run summary,
+  // the same lines, and the same actions, without a second board card.
+  function showSessionObject(replay, current) {
+    var summary = (replay.model || 'routing\u2026') +
+      (replay.kind ? ' \u00b7 ' + replay.kind : '') +
+      ' \u00b7 ' + (replay.ended
+        ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
+        : 'no end record \u2014 the run was interrupted');
+    openDrawer('session \u00b7 ' + sessionLabel(replay.id), [
+      ['the run', node('p', 'derivation', summary)],
+      ['related', relatedFor('session', replay.id)],
+      ['the replay', replayBody(replay)],
+      ['what you can do', replayActions(replay, current)]
+    ]);
+  }
+
+  // The replay card: the head the start record pinned, the summary the
+  // end record and the compaction marks carry, the resume that
+  // re-anchors this face, and the cards themselves.
+  function paintReplayInto(board, replay, current, span) {
+    if (!replay) return;
+    if (replay.refused && replay.refused.length) {
+      board.appendChild(refusedCard(replay.refused));
+      return;
+    }
+    var summary = (replay.model || 'routing\u2026') +
+      (replay.kind ? ' \u00b7 ' + replay.kind : '') +
+      ' \u00b7 ' + (replay.ended
+        ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
+        : 'no end record \u2014 the run was interrupted');
+    var card = boardCard(span || 5, 'replay \u00b7 ' + sessionLabel(replay.id), replay.created, summary);
+    card.appendChild(replayActions(replay, current));
+    card.appendChild(relatedFor('session', replay.id));
+    card.appendChild(replayBody(replay));
     board.appendChild(card);
   }
 
@@ -4337,12 +5025,22 @@
     var judged = cells.reduce(function (sum, cell) { return sum + cell.judged; }, 0);
     var fit = cells.filter(function (cell) { return cell.fit === 'fit'; }).length;
     var informing = cells.filter(function (cell) { return cell.informs_failover; }).length;
+    var filter = face.calibrationFilter || 'all';
     var tiles = node('div', 'tiles');
     tiles.appendChild(tile(read.rows_read, 'rows, the day\u2019s last ' + read.cap));
     tiles.appendChild(tile(judged, 'judged rows'));
-    tiles.appendChild(tile(cells.length, 'fit cells'));
-    tiles.appendChild(tile(fit, 'fit', fit ? 'live' : null));
-    tiles.appendChild(tile(informing, 'informing the failover'));
+    tiles.appendChild(tile(cells.length, 'fit cells', null, function () {
+      face.calibrationFilter = 'all';
+      paintCalibration();
+    }));
+    tiles.appendChild(tile(fit, 'fit', fit ? 'live' : null, function () {
+      face.calibrationFilter = 'fit';
+      paintCalibration();
+    }));
+    tiles.appendChild(tile(informing, 'informing the failover', null, function () {
+      face.calibrationFilter = 'informing';
+      paintCalibration();
+    }));
     tiles.appendChild(tile(read.gate && read.gate.informs_failover ? 'on' : 'off',
       'failover gate'));
     el.calibrationBoard.appendChild(pageHead('System', 'Calibration',
@@ -4354,13 +5052,33 @@
         }
       }));
     el.calibrationBoard.appendChild(statStrip(tiles));
+    el.calibrationBoard.appendChild(filterBar([
+      { value: 'all', label: 'all', count: cells.length },
+      { value: 'fit', label: 'fit', count: fit },
+      { value: 'informing', label: 'informing', count: informing }
+    ], filter, function (value) {
+      face.calibrationFilter = value;
+      paintCalibration();
+    }));
 
-    if (cells.length) {
-      var cellCard = boardCard(12, 'the judged quality, per provider and shape', null,
+    var shownCells = cells.filter(function (cell) {
+      if (filter === 'fit') return cell.fit === 'fit';
+      if (filter === 'informing') return !!cell.informs_failover;
+      return true;
+    });
+    if (shownCells.length) {
+      var cellCard = boardCard(12, 'the judged quality, per provider and shape',
+        shownCells.length + (filter === 'all' ? '' : ' of ' + cells.length),
         'a cell is fit when its sample is big enough and wide enough \u2014 ' +
         read.fit_rule.rows + ' graded rows, a ' + read.fit_rule.span + ' confidence span');
-      cells.forEach(function (cell) { cellCard.appendChild(calibrationCell(cell)); });
+      shownCells.forEach(function (cell) { cellCard.appendChild(calibrationCell(cell)); });
       el.calibrationBoard.appendChild(cellCard);
+    } else if (cells.length) {
+      var empty = boardCard(12, 'the judged quality', null, null);
+      empty.appendChild(node('p', 'board-empty',
+        'No cell matches ' + filter + '. The chip\u2019s count says how many there are; ' +
+        'clear the filter to see them.'));
+      el.calibrationBoard.appendChild(empty);
     } else {
       var none = boardCard(12, 'the judged quality', null, null);
       none.appendChild(node('p', 'board-empty',
@@ -4383,6 +5101,7 @@
   // nothing.
   function calibrationCell(cell) {
     var card = node('article', 'cal-cell');
+    card.dataset.act = 'inspect';
     card.dataset.fit = cell.fit;
     var title = node('h3', 'cal-cell-title',
       cell.provider + (cell.workload ? ' \u00b7 ' + cell.workload : ' \u00b7 no shape judged'));
@@ -4439,6 +5158,7 @@
           cell.wrong + ' wrong \u00b7 span ' + fmtRate(cell.confidence_span))],
         ['what it still needs', node('p', 'derivation',
           wants.length ? wants.join(' \u00b7 ') : 'this cell informs the failover')],
+        ['related', relatedFor('cell', cell.provider + '::' + (cell.workload || ''))],
         ['what you can do', actions]
       ]);
     });
@@ -4470,6 +5190,8 @@
 
   function streamLine(op, row) {
     var line = node('div', 'stream-line');
+    line.dataset.act = 'inspect';
+    line.title = 'open this ' + op + ' record';
     line.appendChild(node('span', 'stream-ts', (row.ts || '').slice(11, 19) || '\u2014'));
     var text = {
       route: function () {
@@ -4595,24 +5317,42 @@
     var brain = read.brain_projects || [];
 
     // The KPI strip: five big numbers, each a read's own count.
+    var dirty = projects.filter(function (row) { return row.dirty > 0; }).length;
+    var filter = face.towerFilter || 'all';
     var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(projects.length, 'projects tracked'));
+    tiles.appendChild(tile(projects.length, 'projects tracked', null, function () {
+      face.towerFilter = 'all';
+      paintTower();
+    }));
     tiles.appendChild(tile(kpis.doing || 0, 'open tasks', kpis.doing ? 'warn' : null));
     tiles.appendChild(tile(kpis.open_conflicts || 0, 'open conflicts',
       kpis.open_conflicts ? 'down' : null));
     tiles.appendChild(tile(reportsToday(feed), 'reports today'));
-    tiles.appendChild(tile(projects.filter(function (row) { return row.dirty > 0; }).length,
-      'dirty worktrees'));
+    tiles.appendChild(tile(dirty, 'dirty worktrees', null, function () {
+      face.towerFilter = 'dirty';
+      paintTower();
+    }));
     el.towerBoard.appendChild(pageHead('System', 'Tower',
       'The projects, the claims filed against them, and the evidence behind both.',
       read.read_at));
     el.towerBoard.appendChild(statStrip(tiles));
+    el.towerBoard.appendChild(filterBar([
+      { value: 'all', label: 'all', count: projects.length },
+      { value: 'dirty', label: 'dirty', count: dirty }
+    ], filter, function (value) {
+      face.towerFilter = value;
+      paintTower();
+    }));
 
     // The hero: reports filed per day against commits shipped per day.
     var hero = boardCard(12, 'activity', null,
       'reports filed per day against the commits the shipped timeline names, over the last ' +
-      'fourteen days. The feed is as fresh as the derived state\u2019s last build and says so.');
-    hero.appendChild(twoSeries(daily, timeline));
+      'fourteen days. The feed is as fresh as the derived state\u2019s last build and says so. ' +
+      'A day opens the feed on that day.');
+    hero.appendChild(twoSeries(daily, timeline, function (day) {
+      face.towerDay = face.towerDay === day ? '' : day;
+      paintTower();
+    }));
     el.towerBoard.appendChild(hero);
 
     // The harness mix, beside the coverage line.
@@ -4636,7 +5376,11 @@
     el.towerBoard.appendChild(cover);
 
     // The ranked projects: trailing-30-day commits, bar, share, facts.
-    var ranked = projects.slice().sort(function (left, right) {
+    var rankedAll = projects.slice();
+    var ranked = (filter === 'dirty'
+      ? rankedAll.filter(function (row) { return row.dirty > 0; })
+      : rankedAll
+    ).sort(function (left, right) {
       return right.commits_30d - left.commits_30d;
     });
     var top = ranked.reduce(function (max, row) { return Math.max(max, row.commits_30d); }, 0);
@@ -4647,6 +5391,10 @@
       var health = brain.filter(function (entry) { return entry.name === row.name; })[0];
       rankCard.appendChild(projectRow(row, health, top, read.root));
     });
+    if (!ranked.length) {
+      rankCard.appendChild(node('p', 'board-empty',
+        'No dirty worktree right now. Clear the filter to see every project.'));
+    }
     el.towerBoard.appendChild(rankCard);
 
     // The claims against the evidence, and the precision each harness
@@ -4657,6 +5405,8 @@
     if (conflicts.length) {
       conflicts.forEach(function (row) {
         var line = node('div', 'stream-line');
+        line.dataset.act = 'inspect';
+        line.title = 'open this claim\u2019s record';
         line.appendChild(node('span', 'stream-ts', row.task));
         line.appendChild(node('span', 'stream-text',
           row.claim + '  \u2014  ' + row.reality));
@@ -4668,6 +5418,8 @@
     if (trust.length) {
       trust.forEach(function (row) {
         var line = node('div', 'stream-line');
+        line.dataset.act = 'inspect';
+        line.title = 'open this harness\u2019s precision record';
         line.appendChild(node('span', 'stream-ts', row.harness));
         line.appendChild(node('span', 'stream-text',
           row.evidenced + ' of ' + row.claimed + ' claims carried evidence \u00b7 precision ' +
@@ -4677,22 +5429,63 @@
     }
     el.towerBoard.appendChild(claims);
 
-    // The feed, newest first, with its own staleness named.
+    // The feed, newest first, with its own staleness named. A day
+    // chosen on the activity chart narrows it; the chip is removable.
     var feedCard = boardCard(12, 'the report feed', (read.reports_at || '\u2014') + ' built',
       'every filed report, newest first. The feed is as fresh as the derived state\u2019s last ' +
       'build and says so rather than pretending to be live.');
-    if (feed.length) {
-      feed.forEach(function (row) {
+    var feedShown = feed;
+    if (face.towerDay) {
+      feedShown = feed.filter(function (row) {
+        return (row.ts || '').slice(0, 10) === face.towerDay;
+      });
+      var dayChip = node('button', 'filter-chip filter-chip-active',
+        face.towerDay + ' \u00b7 ' + feedShown.length + ' \u00d7');
+      dayChip.type = 'button';
+      dayChip.dataset.act = 'clear-filter';
+      dayChip.title = 'clear the day filter';
+      dayChip.addEventListener('click', function () {
+        face.towerDay = '';
+        paintTower();
+      });
+      var dayBar = node('div', 'filter-bar');
+      dayBar.appendChild(dayChip);
+      feedCard.appendChild(dayBar);
+    }
+    if (feedShown.length) {
+      feedShown.forEach(function (row) {
         var line = node('div', 'stream-line');
+        line.dataset.act = 'inspect';
+        line.tabIndex = 0;
+        line.setAttribute('role', 'button');
+        line.title = 'open the project this report names';
         line.appendChild(node('span', 'stream-ts', (row.ts || '').slice(5, 16)));
         line.appendChild(node('span', 'stream-text',
           row.kind + ' \u00b7 ' + row.project + ' \u00b7 ' + row.summary +
           (row.commit ? ' \u00b7 ' + row.commit.slice(0, 12) : ' \u00b7 no commit filed')));
+        line.addEventListener('click', function (event) {
+          event.stopPropagation();
+          var project = projects.filter(function (entry) {
+            return entry.name === row.project;
+          })[0];
+          if (project) {
+            var health = brain.filter(function (entry) {
+              return entry.name === row.project;
+            })[0];
+            projectDrawer(project, health, read.root);
+          } else {
+            openDrawer('report \u00b7 ' + row.project, [
+              ['the report', node('pre', 'raw', JSON.stringify(row, null, 2))]
+            ]);
+          }
+        });
         feedCard.appendChild(line);
       });
     } else {
       feedCard.appendChild(node('p', 'board-empty',
-        'No reports are in the feed. The ledger at ~/.second-brain is where they are filed.'));
+        face.towerDay
+          ? 'No report names ' + face.towerDay + '. Clear the day to see the whole feed.'
+          : 'No reports are in the feed. The ledger at ~/.second-brain is where they are filed.'));
     }
     el.towerBoard.appendChild(feedCard);
 
@@ -4705,6 +5498,8 @@
     if ((read.skipped || []).length) {
       read.skipped.forEach(function (row) {
         var line = node('div', 'stream-line');
+        line.dataset.act = 'inspect';
+        line.title = 'open this skipped directory\u2019s record';
         line.appendChild(node('span', 'stream-ts', row.name));
         line.appendChild(node('span', 'stream-text', row.reason));
         status.appendChild(line);
@@ -4723,7 +5518,7 @@
   // The hero: two bars per day, reports filed against commits shipped.
   // Hand-rolled SVG in the board's own chart language; the days are the
   // union of both series' dates, so a day one series misses reads zero.
-  function twoSeries(daily, timeline) {
+  function twoSeries(daily, timeline, onDay) {
     var reports = {};
     var commits = {};
     daily.forEach(function (row) { reports[row.day] = (reports[row.day] || 0) + row.count; });
@@ -4749,6 +5544,27 @@
       var x = 14 + index * 30;
       var reports_h = Math.round((reports[day] || 0) * scale);
       var commits_h = Math.round((commits[day] || 0) * scale);
+      if (onDay) {
+        // A transparent hit area over the day's pair: a bar is a shape,
+        // and the day is what a click means.
+        var hit = svg('rect', {
+          x: x - 4, y: 6, width: 28, height: base - 6,
+          fill: 'transparent', class: 'chart-hit', 'data-act': 'filter-day',
+          role: 'button', tabindex: '0'
+        });
+        hit.addEventListener('click', function () { onDay(day); });
+        hit.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onDay(day);
+          }
+        });
+        var title = svg('title');
+        title.textContent = day + ' \u00b7 ' + (reports[day] || 0) + ' reports \u00b7 ' +
+          (commits[day] || 0) + ' commits';
+        hit.appendChild(title);
+        plot.appendChild(hit);
+      }
       if (reports_h > 0) {
         plot.appendChild(svg('rect', {
           x: x, y: base - reports_h, width: 9, height: reports_h,
@@ -4791,6 +5607,7 @@
   // measured would be a lie the bar graph tells.
   function projectRow(row, health, top, root) {
     var line = node('div', 'rank-row');
+    line.dataset.act = 'inspect';
     var dot = node('span', 'health-dot');
     var lifecycle = health && health.lifecycle ? health.lifecycle : '';
     dot.dataset.health = lifecycle === 'active' ? 'ok'
@@ -4866,10 +5683,7 @@
         plans.length
           ? plans.map(function (plan) { return plan.status + ' ' + plan.count; }).join(' \u00b7 ')
           : 'the derived state names no plan for this project')],
-      ['related', relatedBlock(
-        [row.name, row.subject || '', row.branch || ''].join(' '),
-        projectPool(row.name),
-        function (item) { projectDrawer(item.project, null, root); })],
+      ['related', relatedFor('project', row.name)],
       ['what you can do', actions]
     ]);
   }
@@ -4948,6 +5762,8 @@
       if ((gates.inbox || []).length) {
         (gates.inbox || []).forEach(function (row) {
           var line = node('div', 'stream-line');
+          line.dataset.act = 'inspect';
+          line.title = 'open this gate verdict';
           line.appendChild(node('span', 'stream-ts', row.ts.slice(5, 16)));
           line.appendChild(node('span', 'stream-text',
             row.op + ' \u00b7 ' + row.verdict + ' \u00b7 ' + row.command));
@@ -4963,6 +5779,8 @@
       var loopCard = boardCard(12, 'the quality loops', loops.derived_at, null);
       (loops.loops || []).forEach(function (row) {
         var line = node('div', 'stream-line');
+        line.dataset.act = 'inspect';
+        line.title = 'open this quality loop';
         line.appendChild(node('span', 'stream-ts', row.name));
         line.appendChild(node('span', 'stream-text',
           row.verdict + ' \u00b7 ' + row.iterations + ' iterations' +
@@ -4978,6 +5796,8 @@
       var harnessCard = boardCard(12, 'the harness runs', harness.generated, null);
       (harness.loops || []).forEach(function (row) {
         var line = node('div', 'stream-line');
+        line.dataset.act = 'inspect';
+        line.title = 'open this harness loop';
         line.appendChild(node('span', 'stream-ts', row.name));
         line.appendChild(node('span', 'stream-text',
           row.runs + ' runs \u00b7 ' + row.converged + ' converged \u00b7 last ' + row.last_status));
@@ -4985,6 +5805,8 @@
       });
       (harness.recent || []).slice(0, 8).forEach(function (row) {
         var line = node('div', 'stream-line');
+        line.dataset.act = 'inspect';
+        line.title = 'open this harness event';
         line.appendChild(node('span', 'stream-ts', row.ts.slice(5, 16)));
         line.appendChild(node('span', 'stream-text', row.kind + ' \u00b7 ' + row.label +
           ' \u00b7 ' + row.outcome));
@@ -5001,6 +5823,8 @@
       weekCard.appendChild(weekGrid(maturity.series || [], maturity.weeks || []));
       (maturity.milestones || []).forEach(function (row) {
         var line = node('div', 'stream-line');
+        line.dataset.act = 'inspect';
+        line.title = 'open this milestone';
         line.appendChild(node('span', 'stream-ts', row.when));
         line.appendChild(node('span', 'stream-text', row.what));
         weekCard.appendChild(line);
@@ -5118,7 +5942,8 @@
       environment: 'environment',
       calib: 'calibration',
       route_cache: 'route cache',
-      skills: 'skills'
+      skills: 'skills',
+      ui: 'interface'
     };
     order.forEach(function (prefix) {
       knobs.appendChild(node('h3', 'form-section',
@@ -5444,6 +6269,18 @@
   // browser's own — the server has no session-scoped mode, because a
   // mode that outlived the message that asked for it would be a mode
   // nobody chose for the next task.
+  if (el.processStop) el.processStop.addEventListener('click', stopRun);
+  if (el.processSteerForm) el.processSteerForm.addEventListener('submit', steerRun);
+  if (el.processSteer) {
+    el.processSteer.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        el.processSteer.value = '';
+        el.processSteer.blur();
+      }
+    });
+  }
+
   el.plan.addEventListener('click', function () {
     face.planMode = !face.planMode;
     el.plan.setAttribute('aria-pressed', face.planMode ? 'true' : 'false');
@@ -5703,7 +6540,7 @@
     var address = which === 'chat' || !known ? 'chat' : which;
     closeDrawer();
     face.panel = address;
-    if (el.asideToggle) el.asideToggle.hidden = address !== 'chat';
+    usageRecord('panels', address, 'opens');
     face.focus = focusId ? { panel: address, id: focusId } : null;
     try { window.localStorage.setItem('fleet-panel', address); } catch (error) { }
     markRail();
@@ -6325,10 +7162,17 @@
   // the rail is chrome, and while navigating it is the map, so the one
   // switch worth offering is a mode rather than a fork of the structure.
   function railCollapsed() {
-    try { return window.localStorage.getItem('fleet-rail') === 'icons'; } catch (error) { return false; }
+    // The live mode, not the stored preference: the dock can auto-fold
+    // the rail without writing that fold to storage.
+    return document.body.dataset.rail === 'icons';
   }
 
   function setRail(mode) {
+    applyRail(mode, true);
+    syncDock();
+  }
+
+  function applyRail(mode, remember) {
     document.body.dataset.rail = mode;
     el.railToggle.setAttribute('aria-expanded', mode === 'icons' ? 'false' : 'true');
     el.railToggle.setAttribute('aria-label',
@@ -6336,7 +7180,27 @@
     if (el.railToggleName) {
       el.railToggleName.textContent = mode === 'icons' ? 'expand the rail' : 'collapse the rail';
     }
-    try { window.localStorage.setItem('fleet-rail', mode); } catch (error) { }
+    if (remember) {
+      try { window.localStorage.setItem('fleet-rail', mode); } catch (error) { }
+    }
+  }
+
+  function dockMode() {
+    if (document.body.dataset.aside === 'closed' || window.innerWidth <= 1180) return 'closed';
+    if (window.innerWidth >= 1600) return 'column';
+    return document.body.dataset.rail === 'icons' ? 'column' : 'overlay';
+  }
+
+  function syncDock() {
+    // At the wide breakpoint the nav is the owner's choice again; a fold
+    // that was only there to make room for the dock is undone.
+    if (window.innerWidth >= 1600 && face.railBeforeDock) {
+      var restore = face.railBeforeDock;
+      face.railBeforeDock = null;
+      applyRail(restore, false);
+    }
+    document.body.dataset.dock = dockMode();
+    paintProcess();
   }
 
   // ------------------------------------------------------ the palette
@@ -6637,6 +7501,7 @@
   setRail(railCollapsed() ? 'icons' : 'full');
   el.railToggle.addEventListener('click', function () {
     setRail(railCollapsed() ? 'full' : 'icons');
+    if (face.panel === 'sessions') paintSessions();
   });
   el.paletteOpen.addEventListener('click', openPalette);
   el.railJump.addEventListener('click', openPalette);
@@ -6700,6 +7565,10 @@
     if (face.panel === 'memory') readMemory(false);
     if (face.panel === 'skills') readSkills(false);
   }, 5000);
+
+  // The counters land after the first offers paint; the offers repaint
+  // in their learned order, and the exposure was already recorded once.
+  readUsage().then(paintOffers);
 
   load().then(listen).catch(function (error) {
     if (error && error.message === 'token') {

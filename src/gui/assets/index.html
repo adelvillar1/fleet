@@ -19,7 +19,7 @@
   }
 </script>
 </head>
-<body>
+<body data-aside="closed" data-dock="closed">
 <div class="face">
 
   <!-- The surfaces rail: the plan's left column, full height. One
@@ -255,42 +255,6 @@
 
     </section>
 
-    <aside class="rail">
-      <!-- The live process. A run is a loop, and this is where it is:
-           route, think, act, verify, with the current step, the turn,
-           the tool, and the elapsed time. It is the first card in the
-           aside because it answers "where are we" before "what exists". -->
-      <section class="card process-card" id="process-card">
-        <header class="card-head">
-          <h2>the run</h2>
-          <span class="count" id="process-state">idle</span>
-        </header>
-        <div class="process-body" id="process-body"></div>
-      </section>
-
-      <section class="card" id="face-card">
-        <header class="card-head">
-          <h2>this session</h2>
-          <button class="ghost" id="inspect-face" type="button">inspect</button>
-        </header>
-        <dl class="facts" id="facts"></dl>
-      </section>
-
-      <!-- Where the trust state lives: the rules the owner has written
-           through the one writer, in the order the writer holds them.
-           A prompt that never comes back is this list. -->
-      <section class="card" id="trust-card">
-        <header class="card-head">
-          <h2>trust</h2>
-          <span class="count" id="rule-count">0</span>
-        </header>
-        <p class="card-note" id="trust-note">
-          Calls the owner has said yes to for good. A remembered rule stops the prompt before it
-          is drawn, so the seat thins out as the work repeats.
-        </p>
-        <ul class="rules" id="rules"></ul>
-      </section>
-    </aside>
   </main>
 
   <!-- The router. Two sources, and the panel says which is which: the
@@ -384,9 +348,66 @@
       </div>
     </div>
   </main>
-</div>
 
-<div class="scrim" id="scrim" hidden></div>
+  <!-- The dock: the live process and the selected object, beside the
+       work rather than over it. It is a grid column where the width
+       allows, a pinned overlay when the nav is expanded at 1440, and
+       the fixed drawer's content below 1180. -->
+  <aside class="dock rail" id="dock" aria-label="the run and the selected object">
+      <!-- The live process. A run is a loop, and this is where it is:
+           route, think, act, verify, with the current step, the turn,
+           the tool, and the elapsed time. It is the first card in the
+           aside because it answers "where are we" before "what exists". -->
+      <section class="card process-card" id="process-card">
+        <header class="card-head">
+          <h2>the run</h2>
+          <span class="count" id="process-state">idle</span>
+        </header>
+        <div class="process-body" id="process-body"></div>
+        <!-- The only part of this card the event loop never rebuilds:
+             a half-typed steer survives every turn's repaint. -->
+        <div class="process-controls" id="process-controls" hidden>
+          <form class="process-steer" id="process-steer-form">
+            <input type="text" id="process-steer" placeholder="steer the run&hellip;"
+                   autocomplete="off" aria-label="steer this run" />
+            <button class="ghost" type="submit" title="send this steer to the run">steer</button>
+          </form>
+          <button class="process-stop" id="process-stop" type="button"
+                  title="stop at the run&rsquo;s next step">stop</button>
+        </div>
+      </section>
+
+      <section class="card dock-object" id="dock-object" hidden>
+        <header class="card-head">
+          <h2 id="dock-object-title">object</h2>
+          <button class="ghost" id="dock-object-close" type="button">clear</button>
+        </header>
+        <div class="dock-object-body" id="dock-object-body"></div>
+      </section>
+
+      <section class="card" id="face-card">
+        <header class="card-head">
+          <h2>this session</h2>
+          <button class="ghost" id="inspect-face" type="button">inspect</button>
+        </header>
+        <dl class="facts" id="facts"></dl>
+      </section>
+
+      <!-- Where the trust state lives: the rules the owner has written
+           through the one writer, in the order the writer holds them.
+           A prompt that never comes back is this list. -->
+      <section class="card" id="trust-card">
+        <header class="card-head">
+          <h2>trust</h2>
+          <span class="count" id="rule-count">0</span>
+        </header>
+        <p class="card-note" id="trust-note">
+          Calls the owner has said yes to for good. A remembered rule stops the prompt before it
+          is drawn, so the seat thins out as the work repeats.
+        </p>
+        <ul class="rules" id="rules"></ul>
+      </section>
+  </aside>
 
   <!-- The pane: the working directory, beside the surface rather than in
        it. The tree explores, the viewer reads the actual code, and the
@@ -425,6 +446,11 @@
       <div class="pane-page" id="pane-page"></div>
     </div>
   </aside>
+
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+
 
 <!-- The inspector: the raw event behind anything on the face, plus the
      derivation of every number in the header. One place, so a figure

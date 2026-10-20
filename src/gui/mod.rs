@@ -33,8 +33,10 @@
 //! same core, and this module adds a third rather than replacing one.
 
 pub mod bridge;
+pub mod related;
 pub mod server;
 pub mod themes;
+pub mod usage;
 
 use std::process::Command;
 use std::sync::Arc;

@@ -158,6 +158,15 @@ pub struct Bridge {
     /// summary, the skill count, and the graph's next node, cached for
     /// half a minute so a reload is not a second walk of the machine.
     home_cache: Arc<Mutex<Option<(Instant, Value)>>>,
+    /// The cross-kind related index: the sidecar for skills, projects,
+    /// routes, and cells beside the two recall caches' facts and
+    /// sessions. Shared rather than moved because its warm pass and its
+    /// reads run on blocking workers.
+    related: Arc<crate::gui::related::RelatedIndex>,
+    /// The browser's own usage counters: what it accepts, opens, and
+    /// uses. Counters only; the adaptation reads them and the settings
+    /// knob switches it off.
+    usage: Arc<crate::gui::usage::UsageStore>,
     /// The agent thread's command channel. `None` on a detached bridge,
     /// which has no thread to command — so `run` says so rather than
     /// queueing a task nobody will read.
@@ -195,15 +204,24 @@ impl Bridge {
         }));
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
         tokio::spawn(fan_out(ui_rx, seat_rx, Arc::clone(&state), events.clone()));
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let memories = crate::memory::resolve_root(&cwd);
+        let related = Arc::new(crate::gui::related::RelatedIndex::new(
+            home.clone(),
+            memories.clone(),
+        ));
+        let usage = Arc::new(crate::gui::usage::UsageStore::new(home.clone()));
         let bridge = Bridge {
             home,
             model,
-            memories: crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default()),
-            cwd: std::env::current_dir().unwrap_or_default(),
+            memories,
+            cwd,
             state,
             rules,
             events,
             home_cache: Arc::new(Mutex::new(None)),
+            related,
+            usage,
             commands: None,
             _agent: None,
         };
@@ -263,6 +281,11 @@ impl Bridge {
     ) -> Bridge {
         let (mut bridge, sources) = Bridge::detached(home.clone(), model.clone(), session.clone());
         let command_rx = bridge.connect();
+        // The related index's cold half — every skill description and
+        // every project's identity — is embedded once, off the request
+        // path. A click that arrives first answers from the two recall
+        // caches and names the index as warming.
+        bridge.related.warm();
         // One resolution, shared: the consolidator the thread starts and
         // the browser's memory panel read the same corpus because they
         // are handed the same root, not because they each walked for one.
@@ -301,11 +324,21 @@ impl Bridge {
         let state = lock(&self.state);
         let rules = lock(&self.rules);
         let session = state.session.clone();
+        // The gate the verify step names: the same knob the failover's
+        // decision reads, never a second interpretation of it. It is one
+        // small config file and the page asks for state once per load,
+        // so it is read here rather than kept as another copy of a fact
+        // the route module owns.
+        let gate = crate::route::calibration_config(&self.home);
         json!({
             "session": session,
             "model": self.model,
             "workspace": self.cwd.display().to_string(),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
+            "gate": {
+                "name": "sys1",
+                "informs_failover": gate.informs_failover,
+            },
             "running": state.running,
             "dropped": state.dropped,
             "events": state.events,
@@ -850,6 +883,60 @@ impl Bridge {
         json!({"type": "rank", "ranked": ranked})
     }
 
+    /// The inspector's related suggestions: one selected object, the
+    /// other objects nearest it across every kind, by the related
+    /// index's own read. Off the async worker because it touches the
+    /// corpus, the session archive, and the sidecar — and because a
+    /// cold corpus may embed a route row.
+    pub async fn related(&self, kind: &str, id: &str, limit: usize) -> Value {
+        let index = Arc::clone(&self.related);
+        let kind = kind.to_string();
+        let id = id.to_string();
+        let failure = json!({
+            "type": "related",
+            "kind": kind.clone(),
+            "id": id.clone(),
+            "refused": ["the related read did not land"],
+        });
+        match tokio::task::spawn_blocking(move || index.related(&kind, &id, limit)).await {
+            Ok(document) => document,
+            Err(_) => failure,
+        }
+    }
+
+    /// The browser's usage counters and whether the adaptation is on.
+    /// A read of the GUI's own file plus the one settings knob, never a
+    /// look at any text the owner wrote.
+    pub fn usage(&self) -> Value {
+        self.usage.document(crate::gui::usage::adapt(&self.home))
+    }
+
+    /// Record one counter and answer with the whole document, so the
+    /// page's ranking state is the store's state rather than a local
+    /// guess. The write is off the async worker; a refused event is the
+    /// store's own sentence.
+    pub async fn record_usage(
+        &self,
+        section: &str,
+        id: &str,
+        event: &str,
+    ) -> Result<Value, String> {
+        let store = Arc::clone(&self.usage);
+        let section = section.to_string();
+        let id = id.to_string();
+        let event = event.to_string();
+        let adapt = crate::gui::usage::adapt(&self.home);
+        match tokio::task::spawn_blocking(move || {
+            store.record(&section, &id, &event)?;
+            Ok::<Value, String>(store.document(adapt))
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err("the usage write did not land".to_string()),
+        }
+    }
+
     /// The theme set's measured contrast, for the action card that offers
     /// a readable alternative when the current theme does not clear the
     /// floor. A measurement, not an opinion — the card offers a number
@@ -946,6 +1033,52 @@ impl Bridge {
     /// the header's running flag moves on the same event.
     pub fn run(&self, task: &str) -> Result<(), String> {
         self.dispatch(task, |task| Command::Run(task.to_string()))
+    }
+
+    /// The owner's one instruction to the run in flight, through the
+    /// control file the agent's turn loop reads before every model call:
+    /// a stop, or a steer that rides exactly one turn. `None` steers
+    /// nothing and stops; `Some(text)` steers and does not stop.
+    ///
+    /// Both refusals are named rather than silent: a control with no run
+    /// in flight would sit until some later run read it, and a control
+    /// for a session whose log does not exist is a file nothing reads.
+    /// The event lands in the ordered log as its own `control` card, so
+    /// a refresh replays the owner's intervention rather than losing it.
+    pub fn stop(&self, steer: Option<&str>) -> Result<Value, String> {
+        let steer = match steer {
+            Some(text) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    return Err("a steer needs some text".to_string());
+                }
+                Some(text)
+            }
+            None => None,
+        };
+        let session = {
+            let state = lock(&self.state);
+            if !state.running {
+                return Err("no run is in flight to stop or steer".to_string());
+            }
+            if state.session.is_empty() {
+                return Err(
+                    "this run has no session log yet; there is nothing beside it to write"
+                        .to_string(),
+                );
+            }
+            state.session.clone()
+        };
+        crate::delegate::write_control(&self.home, &session, steer)?;
+        let kind = if steer.is_some() { "steer" } else { "stop" };
+        let value = json!({
+            "type": "control",
+            "kind": kind,
+            "session": session,
+            "steer": steer,
+        });
+        record(&self.state, &self.events, value.clone());
+        Ok(value)
     }
 
     /// The shared door: the task validated, the flag set, the owner's
@@ -3079,6 +3212,15 @@ impl Approver for GuiApprover {
     }
 }
 
+/// Remove the control beside a session's log when a run ends. The agent
+/// consumes one on read; a stop that lands after the last check is never
+/// read, and a file left behind would end the next run in this session
+/// before its first turn. Best-effort: an absent file is the ordinary
+/// case, and a removal that fails leaves evidence rather than a panic.
+fn clear_control(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path.with_extension("control"));
+}
+
 /// Runs the agent on its own thread and runtime, so the browser's tasks
 /// never wait on the network or on a tool. The shape is `spawn_agent`'s
 /// in the TUI, call for call; the differences are the prompt line and
@@ -3195,6 +3337,13 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                     prepared = Some(fresh);
                                 }
                                 Err(error) => {
+                                    // A stop can be written while the
+                                    // route is being judged. This run
+                                    // will never read it, and a later
+                                    // run in the same session must not.
+                                    if let Some(id) = current_session.as_deref() {
+                                        clear_control(&session::session_path(&home, id));
+                                    }
                                     let _ = ui_tx
                                         .send(UiEvent::Failed(format!("routing config: {error}")));
                                     continue;
@@ -3225,6 +3374,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         let mut log = match Session::open(&path) {
                             Ok(log) => log,
                             Err(error) => {
+                                clear_control(&path);
                                 let _ = ui_tx.send(UiEvent::Failed(format!(
                                     "could not open the session log: {error}"
                                 )));
@@ -3273,11 +3423,18 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             match Agent::new(&client, options, &mut log, approver, &mut progress) {
                                 Ok(agent) => agent,
                                 Err(error) => {
+                                    clear_control(&path);
                                     let _ = ui_tx.send(UiEvent::Failed(error.to_string()));
                                     continue;
                                 }
                             };
                         let _ = agent.run(&task).await;
+                        // A control that landed on the run's last step is
+                        // never read by the loop. Left in place it would
+                        // stop the next run in this session before that
+                        // run's first turn, which is not what the owner
+                        // asked for.
+                        clear_control(&path);
                     }
                     Command::Rewind(_turn) => {
                         // The face already restored the tree, recorded
@@ -3417,6 +3574,108 @@ mod tests {
         assert_eq!(events[0]["role"], "owner");
         assert_eq!(events[0]["text"], "look at the router");
         assert_eq!(state["running"], true);
+    }
+
+    /// The owner's stop and steer write the file the turn loop reads,
+    /// and both refusals are named: no run in flight, and a run whose
+    /// log does not exist yet. The control rides the ordered log as its
+    /// own card, so a refresh replays what the owner did.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_control_rides_beside_the_log_and_is_refused_when_idle() {
+        let (bridge, _sources, _door) = bridge().await;
+        assert!(
+            bridge
+                .stop(None)
+                .unwrap_err()
+                .contains("no run is in flight"),
+            "an idle face refuses a control"
+        );
+        let log = Session::create(&bridge.home, "deepseek-chat").expect("the log");
+        let id = log.id().to_string();
+        drop(log);
+        {
+            let mut state = lock(&bridge.state);
+            state.session = id.clone();
+            state.running = true;
+        }
+        let stop = bridge.stop(None).expect("the stop lands");
+        assert_eq!(stop["kind"], "stop");
+        assert_eq!(stop["session"], id.as_str());
+        let control = crate::home::sessions_dir(&bridge.home).join(format!("{id}.control"));
+        let body = std::fs::read_to_string(&control).expect("the control file");
+        assert_eq!(body.trim(), r#"{"stop":true}"#, "{body}");
+        let state = bridge.state();
+        let events = state["events"].as_array().expect("an event log");
+        assert_eq!(events.last().expect("the control")["type"], "control");
+        assert_eq!(events.last().expect("the control")["kind"], "stop");
+
+        // A steer replaces the control with its text, and an empty one
+        // is refused before anything is written.
+        bridge.stop(Some("read the gate first")).expect("the steer lands");
+        let body = std::fs::read_to_string(&control).expect("the steer file");
+        assert!(body.contains("read the gate first"), "{body}");
+        assert!(bridge.stop(Some("   ")).is_err(), "an empty steer is refused");
+        assert_eq!(
+            std::fs::read_to_string(&control).expect("the steer file"),
+            body,
+            "a refused steer leaves the standing control alone"
+        );
+
+        // A run whose log does not exist yet has nothing to write beside.
+        lock(&bridge.state).session = String::new();
+        assert!(
+            bridge
+                .stop(None)
+                .unwrap_err()
+                .contains("no session log yet"),
+            "a faceless run refuses a control"
+        );
+    }
+
+    /// A control written while the route is being judged is never read
+    /// by a run that fails before the loop; left in place it would end
+    /// the next run in the same session. The thread clears it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_leftover_control_does_not_survive_a_run_that_never_started() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-gui-control-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let log = Session::create(&home, "deepseek-chat").expect("the log");
+        let id = log.id().to_string();
+        drop(log);
+        let control = crate::home::sessions_dir(&home).join(format!("{id}.control"));
+        std::fs::write(&control, "{\"stop\":true}\n").expect("the standing control");
+        let (mut bridge, sources) =
+            Bridge::detached(home.clone(), "deepseek-chat".to_string(), Some(id.clone()));
+        let door = bridge.connect();
+        let _thread = spawn_agent(AgentInputs {
+            home: home.clone(),
+            model: "deepseek-chat".to_string(),
+            session_id: Some(id),
+            ui_tx: sources.ui,
+            approval_tx: sources.seat,
+            command_rx: door,
+            base_url: "http://127.0.0.1:1".to_string(),
+            memories_root: home.clone(),
+        });
+        bridge.run("go").expect("the run is accepted");
+        for _ in 0..300 {
+            if !control.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            !control.exists(),
+            "the run never read the control, and the next one must not either"
+        );
     }
 
     /// KI-022: the launch face has no session until the first task
@@ -3732,6 +3991,12 @@ mod tests {
         assert_eq!(events[3]["type"], "finished");
         assert_eq!(state["running"], false, "the run ended");
         assert_eq!(state["budget"], crate::compaction::COMPACTION_TOKEN_BUDGET);
+        // The gate the verify step names is the failover's own knob.
+        assert_eq!(state["gate"]["name"], "sys1");
+        assert_eq!(
+            state["gate"]["informs_failover"],
+            crate::route::calibration_config(&bridge.home).informs_failover
+        );
     }
 
     /// The pane's tree: one directory's entries, with each entry's kind

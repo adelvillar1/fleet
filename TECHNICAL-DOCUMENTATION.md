@@ -276,9 +276,13 @@ approval prompt are the user-facing surfaces.
 #### `gui/`
 The browser face: `mod.rs` the serve entry, `server.rs` the hand-rolled
 HTTP/1.1 loop, `bridge.rs` the agent thread and the ordered event log,
-`themes.rs` the theme set, and `assets/` the embedded page. Every read is a spawn_blocking off the async worker; every write
-rides the module the CLI rides. The trust trio's floor is
-`checkpoints.rs`; the deck pipeline renders through `deck.rs`.
+`related.rs` the cross-kind related index beside the two recall caches,
+`usage.rs` the browser's counters in `<home>/ui.json`, `themes.rs` the
+theme set, and `assets/` the embedded page. Every read is a
+spawn_blocking off the async worker; every write rides the module the
+CLI rides. The trust trio's floor is `checkpoints.rs`; the deck pipeline
+renders through `deck.rs`; the run's stop and steer ride the agent's own
+control-file protocol in `delegate.rs`.
 
 ### Integration harness
 

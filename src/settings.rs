@@ -107,6 +107,13 @@ pub const SETTINGS: &[Setting] = &[
         summary: "Whether a fit, wrong-heavy judged sample may skip a provider in the failover.",
     },
     Setting {
+        key: "ui.adapt",
+        kind: Kind::Toggle,
+        file: File::Config,
+        summary: "Whether the browser re-ranks its offers and related suggestions from your own \
+                  accepts. Counters only; off is the static order.",
+    },
+    Setting {
         key: "skills.retire_after_sessions",
         kind: Kind::Count,
         file: File::Config,

@@ -65,7 +65,7 @@ The same loop interactively: one session, many tasks, `you>` prompt, `/exit` or 
 
 ### `fleet gui [--port N] [--no-open] [--host H]`
 
-Serve the app's browser face on loopback (default `127.0.0.1:3080`): the conversation first, the intelligence surfaces and the tower console beneath it, and the trust trio — per-turn checkpoints with rewind, plan mode, and the diff review — riding the conversation. The face is light-first (warm paper, with console/graphite/contrast as remembered options); the address alone opens it, and a non-loopback host is refused by name. See [`docs/features/gui.md`](docs/features/gui.md).
+Serve the app's browser face on loopback (default `127.0.0.1:3080`): the conversation first, the intelligence surfaces and the tower console beneath it, and the trust trio — per-turn checkpoints with rewind, plan mode, and the diff review — riding the conversation. A run's process card carries live delegation branches, the sys1 gate, and stop/steer; selecting any object opens a docked inspector with embedding-ranked related objects across facts, skills, sessions, projects, routes, and calibration cells. The face is light-first (warm paper, with console/graphite/contrast as remembered options); the address alone opens it, and a non-loopback host is refused by name. See [`docs/features/gui.md`](docs/features/gui.md).
 
 ### `fleet sessions`
 

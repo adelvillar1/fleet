@@ -523,67 +523,7 @@ impl SessionIndex {
         instruction: &str,
     ) -> Vec<ScoredHit> {
         let facts = facts_from_dir(sessions_dir);
-        let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
-        if embedder.serves_vectors() {
-            let key = embedder.vector_info();
-            // A cache keyed to another embedder is not this embedder's
-            // cache: discard it whole, the way the recall index does.
-            if !matches!(&key, Some(key) if self.keyed_for(key)) {
-                self.embedder.clear();
-                self.dims = 0;
-                self.sessions.clear();
-            }
-            let mut fresh: HashMap<String, SessionEntry> = HashMap::new();
-            let mut changed = false;
-            for fact in &facts {
-                let cached = fact.stamp.as_ref().and_then(|stamp| {
-                    self.sessions
-                        .get(&fact.name)
-                        .filter(|entry| &entry.stamp == stamp)
-                        .map(|entry| entry.vector.clone())
-                });
-                let vector = match cached {
-                    Some(vector) => vector,
-                    None => match embedder.embed(&fact.indexed_text()) {
-                        Some(vector) => {
-                            changed = true;
-                            vector
-                        }
-                        None => {
-                            // Never silent: the session keeps no vector
-                            // this load and one line says so, by id —
-                            // the keyword channels still rank it.
-                            eprintln!(
-                                "fleet: sessions: `{}` \u{2014} the embed failed, so it carries no vector this load",
-                                fact.name
-                            );
-                            continue;
-                        }
-                    },
-                };
-                if let Some(stamp) = &fact.stamp {
-                    fresh.insert(
-                        fact.name.clone(),
-                        SessionEntry {
-                            stamp: stamp.clone(),
-                            vector: vector.clone(),
-                        },
-                    );
-                }
-                vectors.insert(fact.name.clone(), vector);
-            }
-            // Flush only when something changed — a new embed, a
-            // dropped session, or a discarded cache — so an unchanged
-            // archive costs no write.
-            if changed || fresh.len() != self.sessions.len() {
-                SessionIndex::write(sessions_dir, key.as_ref(), &fresh);
-            }
-            self.sessions = fresh;
-            if let Some((name, dims)) = &key {
-                self.embedder = name.clone();
-                self.dims = *dims;
-            }
-        }
+        let vectors = self.vectors_for(sessions_dir, embedder.as_ref(), &facts);
         // The ranker itself, unchanged: the corpus's own recall over
         // the synthetic facts and their vectors.
         memory::Memory::from_facts(facts, vectors, embedder)
@@ -591,6 +531,105 @@ impl SessionIndex {
             .iter()
             .map(hit_of)
             .collect()
+    }
+
+    /// The vectors the cache already holds for `facts`, keyed by id —
+    /// no embed, no write. The related index's read: a request must not
+    /// pay the archive's cold embed (one call per session, which on a
+    /// model swap is a minute), so it ranks the sessions the cache can
+    /// answer and leaves the rest to the background warm.
+    pub fn cached_vectors(&self, facts: &[memory::Fact]) -> HashMap<String, Vec<f32>> {
+        let mut vectors = HashMap::new();
+        for fact in facts {
+            let Some(stamp) = &fact.stamp else {
+                continue;
+            };
+            if let Some(entry) = self
+                .sessions
+                .get(&fact.name)
+                .filter(|entry| &entry.stamp == stamp)
+            {
+                vectors.insert(fact.name.clone(), entry.vector.clone());
+            }
+        }
+        vectors
+    }
+
+    /// The vectors this cache holds for `facts`, embedding only what
+    /// changed and flushing the index only when something did — the
+    /// body [`SessionIndex::recall`] has always run, split out so the
+    /// related index can read the archive's vectors without running a
+    /// recall it does not want. A keyword-only embedder answers with
+    /// an empty map and writes nothing, exactly as the recall does.
+    pub fn vectors_for(
+        &mut self,
+        sessions_dir: &Path,
+        embedder: &dyn memory::Embedder,
+        facts: &[memory::Fact],
+    ) -> HashMap<String, Vec<f32>> {
+        let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
+        if !embedder.serves_vectors() {
+            return vectors;
+        }
+        let key = embedder.vector_info();
+        // A cache keyed to another embedder is not this embedder's
+        // cache: discard it whole, the way the recall index does.
+        if !matches!(&key, Some(key) if self.keyed_for(key)) {
+            self.embedder.clear();
+            self.dims = 0;
+            self.sessions.clear();
+        }
+        let mut fresh: HashMap<String, SessionEntry> = HashMap::new();
+        let mut changed = false;
+        for fact in facts {
+            let cached = fact.stamp.as_ref().and_then(|stamp| {
+                self.sessions
+                    .get(&fact.name)
+                    .filter(|entry| &entry.stamp == stamp)
+                    .map(|entry| entry.vector.clone())
+            });
+            let vector = match cached {
+                Some(vector) => vector,
+                None => match embedder.embed(&fact.indexed_text()) {
+                    Some(vector) => {
+                        changed = true;
+                        vector
+                    }
+                    None => {
+                        // Never silent: the session keeps no vector
+                        // this load and one line says so, by id —
+                        // the keyword channels still rank it.
+                        eprintln!(
+                            "fleet: sessions: `{}` \u{2014} the embed failed, so it carries no vector this load",
+                            fact.name
+                        );
+                        continue;
+                    }
+                },
+            };
+            if let Some(stamp) = &fact.stamp {
+                fresh.insert(
+                    fact.name.clone(),
+                    SessionEntry {
+                        stamp: stamp.clone(),
+                        vector: vector.clone(),
+                    },
+                );
+            }
+            vectors.insert(fact.name.clone(), vector);
+        }
+        // Flush only when something changed — a new embed, a dropped
+        // session, or a discarded cache — so an unchanged archive costs
+        // no write.
+        if changed || fresh.len() != self.sessions.len() {
+            SessionIndex::write(sessions_dir, key.as_ref(), &fresh);
+        }
+        self.sessions = fresh;
+        if let Some((name, dims)) = &key {
+            self.embedder = name.clone();
+            self.dims = *dims;
+        }
+        vectors
     }
 }
 

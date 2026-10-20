@@ -2228,6 +2228,15 @@ impl Memory {
         lock_facts(&self.facts).clone()
     }
 
+    /// The vector this corpus holds for one fact, by name — `None` when
+    /// the fact is unknown or the embedder served no vector for it this
+    /// load. The related index reads the recall cache's work rather
+    /// than re-embedding the corpus: this is the one accessor that
+    /// turns the cache inside [`Memory::load_with`] into a read.
+    pub fn vector_of(&self, name: &str) -> Option<Vec<f32>> {
+        self.vectors.get(name).cloned()
+    }
+
     /// The protected tier: every non-forgotten protected fact, sorted by
     /// name. These enter a turn unconditionally — the budget never
     /// evicts them. Their score is [`Score::unranked`]: the tier did not
@@ -8665,23 +8674,34 @@ mod tests {
             "the corpus that motivated R1: {saturated} of {} facts sit above the old ceiling of 8",
             facts.len()
         );
-        // The curve is strictly increasing across the observed range, so
-        // no two counts in the corpus collapse to one term.
+        // The curve is strictly increasing below the ceiling, so no two
+        // distinct counts there collapse to one term. At and above the
+        // ceiling the term is exactly 1.0 by design: a saturated channel
+        // is the clamp's own statement, not a defect. The corpus has
+        // since grown a fact past 128, which is why the assertion is
+        // scoped to the range where the curve discriminates.
         let mut sorted = counts.clone();
         sorted.sort_unstable();
         sorted.dedup();
-        let terms: Vec<u64> = sorted
+        let below: Vec<u64> = sorted
             .iter()
-            .map(|count| (history_term(*count) * 1e9) as u64)
+            .copied()
+            .filter(|count| *count < RECALL_CEILING)
             .collect();
-        let mut deduped = terms.clone();
-        deduped.sort_unstable();
-        deduped.dedup();
-        assert_eq!(
-            terms.len(),
-            deduped.len(),
-            "every distinct recall-count in the corpus must map to a distinct history term"
-        );
+        let terms: Vec<f64> = below.iter().map(|count| history_term(*count)).collect();
+        for pair in terms.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "the history curve must be strictly increasing below the ceiling: {pair:?}"
+            );
+        }
+        for count in sorted.iter().filter(|count| **count >= RECALL_CEILING) {
+            assert_eq!(
+                history_term(*count),
+                1.0,
+                "a count at or past the ceiling is the channel's saturation"
+            );
+        }
     }
 
     #[test]

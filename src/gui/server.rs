@@ -2,8 +2,9 @@
 //!
 //! Hand-rolled HTTP/1.1 over tokio's `TcpListener`, because the crate
 //! contract is one static Rust binary: a framework would buy this
-//! surface nothing it does not already do by hand — four GET routes,
-//! one SSE stream, three actions, and a token on every one of them.
+//! surface nothing it does not already do by hand — the panel reads,
+//! one SSE stream, and the small set of actions the substrate already
+//! owns. The route table below is the whole surface.
 //!
 //! ## The security shape
 //!
@@ -218,6 +219,56 @@ async fn serve_connection(
             let asked = decode_query(&request.query, "path");
             write_reply(&mut stream, api(200, bridge.tree(&asked).await)).await
         }
+        // The inspector's related suggestions. The kind is a closed set
+        // — an unknown one is a 400, not an empty list that could mean
+        // "nothing is related" — and the id is the selected object's
+        // own key, exactly as the panel named it.
+        ("GET", "/api/related") => {
+            let kind = decode_query(&request.query, "kind");
+            if !crate::gui::related::KINDS.contains(&kind.as_str()) {
+                return write_reply(
+                    &mut stream,
+                    bad_request(&format!(
+                        "`{kind}` is not a kind of object; the kinds are {}",
+                        crate::gui::related::KINDS.join(", ")
+                    )),
+                )
+                .await;
+            }
+            let id = decode_query(&request.query, "id");
+            if id.trim().is_empty() {
+                return write_reply(
+                    &mut stream,
+                    bad_request("a related read needs the selected object's `id`"),
+                )
+                .await;
+            }
+            let limit = decode_query(&request.query, "limit")
+                .trim()
+                .parse::<usize>()
+                .unwrap_or(crate::gui::related::DEFAULT_LIMIT);
+            write_reply(&mut stream, api(200, bridge.related(&kind, &id, limit).await)).await
+        }
+        // The browser's own usage counters. Counters and ids only:
+        // nothing here carries task text, a file, or a credential, and
+        // the store refuses a section/event pair outside its closed set.
+        ("GET", "/api/usage") => write_reply(&mut stream, api(200, bridge.usage())).await,
+        ("POST", "/api/usage") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let (section, id, event) = match usage_event_of(&body) {
+                Ok(parts) => parts,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.record_usage(&section, &id, &event).await {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => {
+                    write_reply(&mut stream, api(400, json!({"error": message}))).await
+                }
+            }
+        }
         ("GET", "/api/contrast") => write_reply(&mut stream, api(200, bridge.contrast())).await,
         ("GET", "/api/web") => {
             let asked = decode_query(&request.query, "url");
@@ -244,6 +295,29 @@ async fn serve_connection(
                     )
                     .await
                 }
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        // The owner's two instructions to the run in flight. Both write
+        // the control file the agent's turn loop already reads before
+        // every model call; the route only names what the write means.
+        // A face with no run, or a run with no log yet, is a 409 that
+        // says which — never a file nobody will read.
+        ("POST", "/api/stop") => match bridge.stop(None) {
+            Ok(control) => write_reply(&mut stream, api(200, control)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
+        ("POST", "/api/steer") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let text = match steer_of(&body) {
+                Ok(text) => text,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.stop(Some(&text)) {
+                Ok(control) => write_reply(&mut stream, api(200, control)).await,
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
@@ -581,6 +655,37 @@ fn task_of(body: &str) -> Result<String, String> {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "a run's body is a JSON object with a task string".to_string())
+}
+
+/// One usage event's three words. The store validates their closed
+/// sets; this only reads the strings, so a malformed body is a 400
+/// before anything is written.
+fn usage_event_of(body: &str) -> Result<(String, String, String), String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the usage body: {e}"))?;
+    let field = |name: &str| {
+        parsed
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                format!("a usage body is a JSON object with section, id, and event strings ({name} is missing)")
+            })
+    };
+    Ok((field("section")?, field("id")?, field("event")?))
+}
+
+/// The text a steer's body carries. The bridge owns the rule that an
+/// empty steer is refused; this only reads the one string the body
+/// holds, so a malformed body is a 400 before any control is written.
+fn steer_of(body: &str) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the steer's body: {e}"))?;
+    parsed
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "a steer's body is a JSON object with a text string".to_string())
 }
 
 /// The session id a resume's body carries. The shape itself is the
@@ -1217,10 +1322,18 @@ mod tests {
     /// a normal reply arrives: the server closes every connection it
     /// answers.
     fn ask(port: u16, raw: &str, needle: Option<&str>) -> String {
+        ask_within(port, raw, needle, Duration::from_secs(3))
+    }
+
+    /// The same read with its own budget. The related route's first
+    /// request builds the corpus — the corpus's index, the archive's
+    /// cached vectors, and the day's routes — and the full suite's
+    /// load can push that past the ordinary read's three seconds.
+    fn ask_within(port: u16, raw: &str, needle: Option<&str>, budget: Duration) -> String {
         let mut stream =
             std::net::TcpStream::connect(("127.0.0.1", port)).expect("the server is listening");
         stream
-            .set_read_timeout(Some(Duration::from_secs(3)))
+            .set_read_timeout(Some(budget))
             .expect("a read timeout is settable");
         stream
             .write_all(raw.as_bytes())
@@ -1434,6 +1547,140 @@ mod tests {
         assert!(state.contains("\"events\":[]"), "{state}");
         assert!(state.contains("\"approval\":null"), "{state}");
         assert!(state.contains("\"rules\":[]"), "{state}");
+        // The verify step's gate rides every state document.
+        assert!(state.contains("\"gate\":{\"informs_failover\":true,\"name\":\"sys1\"}"), "{state}");
+    }
+
+    /// The owner's stop and steer reach the run through the control file
+    /// the turn loop reads. An idle face is a 409 that names the reason,
+    /// a steer body that is not a text string is a 400, and the control
+    /// a live run accepts is on disk beside its log.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_control_routes_reach_the_run_and_refuse_an_idle_face() {
+        let (_token, port) = launch().await;
+        let idle = post(port, "/api/stop", "", "{}");
+        assert!(idle.starts_with("HTTP/1.1 409"), "{idle}");
+        assert!(idle.contains("no run is in flight"), "{idle}");
+
+        // A face with a run in flight and a log beside it.
+        let home = fresh_home();
+        let log = crate::session::Session::create(&home, "deepseek-chat").expect("the log");
+        let id = log.id().to_string();
+        drop(log);
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some(id.clone()),
+        );
+        let _door = bridge.connect();
+        bridge.run("go").expect("the run is accepted");
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .unwrap();
+        server.heartbeat = Duration::from_millis(20);
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+
+        let stopped = post(port, "/api/stop", "", "{}");
+        assert!(stopped.starts_with("HTTP/1.1 200"), "{stopped}");
+        assert!(stopped.contains("\"kind\":\"stop\""), "{stopped}");
+        let control = crate::home::sessions_dir(&home).join(format!("{id}.control"));
+        assert!(
+            std::fs::read_to_string(&control)
+                .expect("the control file")
+                .contains("stop")
+        );
+
+        let steered = post(port, "/api/steer", "", r#"{"text":"read the gate first"}"#);
+        assert!(steered.starts_with("HTTP/1.1 200"), "{steered}");
+        assert!(
+            std::fs::read_to_string(&control)
+                .expect("the steer file")
+                .contains("read the gate first")
+        );
+        let malformed = post(port, "/api/steer", "", "{}");
+        assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+    }
+
+    /// The related route answers one document for a selected object and
+    /// refuses a kind outside the closed set by naming the set. A fresh
+    /// home has an empty archive and sidecar, so the document may carry
+    /// no rows — but it still says what it looked at and how it scored.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_related_route_answers_one_document_and_refuses_a_foreign_kind() {
+        let (token, port) = launch().await;
+        let anonymous = ask_within(
+            port,
+            "GET /api/related?kind=fact&id=one HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+            Duration::from_secs(12),
+        );
+        assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
+        let document: serde_json::Value = serde_json::from_str(
+            anonymous
+                .split("\r\n\r\n")
+                .nth(1)
+                .expect("a body past the head"),
+        )
+        .expect("a JSON document");
+        assert_eq!(document["type"], "related");
+        assert_eq!(document["kind"], "fact");
+        assert_eq!(document["id"], "one");
+        assert!(document["related"].is_array());
+        assert!(["cosine", "lexical"].contains(&document["scores"].as_str().unwrap_or("")));
+        assert!(["warm", "warming"].contains(&document["index"].as_str().unwrap_or("")));
+
+        let foreign = ask(
+            port,
+            &format!(
+                "GET /api/related?kind=planet&id=one&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+            ),
+            None,
+        );
+        assert!(foreign.starts_with("HTTP/1.1 400"), "{foreign}");
+        assert!(
+            foreign.contains("planet") && foreign.contains("fact, skill"),
+            "{foreign}"
+        );
+    }
+
+    /// The usage route reads and writes the browser's own counters:
+    /// the document survives the POST, the knob rides along, and a
+    /// section outside the closed set is a 400 that writes nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_usage_route_counts_and_refuses_a_foreign_section() {
+        let (_token, port) = launch().await;
+        let before = get(port, "/api/usage", "");
+        assert!(before.starts_with("HTTP/1.1 200"), "{before}");
+        assert!(before.contains("\"type\":\"usage\""), "{before}");
+        assert!(before.contains("\"adapt\":true"), "{before}");
+
+        let recorded = post(
+            port,
+            "/api/usage",
+            "",
+            r#"{"section":"suggestions","id":"offer:plan","event":"shown"}"#,
+        );
+        assert!(recorded.starts_with("HTTP/1.1 200"), "{recorded}");
+        assert!(recorded.contains("\"offer:plan\""), "{recorded}");
+        assert!(recorded.contains("\"shown\":1"), "{recorded}");
+        let recorded = post(
+            port,
+            "/api/usage",
+            "",
+            r#"{"section":"suggestions","id":"offer:plan","event":"accepted"}"#,
+        );
+        assert!(recorded.contains("\"accepted\":1"), "{recorded}");
+
+        let foreign = post(
+            port,
+            "/api/usage",
+            "",
+            r#"{"section":"planets","id":"x","event":"shown"}"#,
+        );
+        assert!(foreign.starts_with("HTTP/1.1 400"), "{foreign}");
+        assert!(foreign.contains("planets"), "{foreign}");
     }
 
     /// The router panel's document is the board's own reads: the declared

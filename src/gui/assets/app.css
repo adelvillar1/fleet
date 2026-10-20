@@ -111,7 +111,8 @@
   --topbar-height: 58px;
   --rail-width: 236px;
   --rail-width-icons: 66px;
-  --aside-width: 304px;
+  --aside-width: 320px;
+  --dock-width: 320px;
   --pane-width: 440px;
   --drawer-width: 440px;
   --card-bg: var(--dsw-alias-surface);
@@ -317,15 +318,39 @@ button, input, textarea, select { font: inherit; }
 .face {
   position: relative;
   display: grid;
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--dock-width);
   grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
 }
 
 .surfaces { grid-column: 1; grid-row: 1 / -1; }
-.topbar, .meter { grid-column: 2; }
+.topbar, .meter { grid-column: 2 / -1; }
 .stage { grid-column: 2; grid-row: 3; }
+.dock { grid-column: 3; grid-row: 3; }
+
+/* The dock is a column where there is room, a pinned overlay when the
+   nav is expanded at 1440, and absent below 1180 where the fixed drawer
+   carries the selected object. */
+body[data-aside="closed"] .face,
+body[data-dock="closed"] .face,
+body[data-dock="overlay"] .face {
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+}
+
+body[data-aside="closed"] .dock,
+body[data-dock="closed"] .dock,
+body[data-pane="open"] .dock { display: none; }
+
+body[data-dock="overlay"] .dock {
+  position: fixed;
+  top: calc(var(--topbar-height) + 2px);
+  right: 0;
+  bottom: 0;
+  z-index: 18;
+  width: var(--dock-width);
+  box-shadow: var(--shadow-3);
+}
 
 /* ------------------------------------------------------------ the rail */
 
@@ -560,6 +585,12 @@ button, input, textarea, select { font: inherit; }
 
 /* The compact rail: the map loses its words, not its places. */
 body[data-rail="icons"] .face {
+  grid-template-columns: var(--rail-width-icons) minmax(0, 1fr) var(--dock-width);
+}
+
+body[data-rail="icons"][data-aside="closed"] .face,
+body[data-rail="icons"][data-dock="closed"] .face,
+body[data-rail="icons"][data-dock="overlay"] .face {
   grid-template-columns: var(--rail-width-icons) minmax(0, 1fr);
 }
 
@@ -894,7 +925,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 .stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--aside-width);
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -902,11 +933,6 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 
 .stage[hidden] { display: none; }
-
-/* The right pane is part of the workspace, so it collapses without
-   navigating: the conversation keeps its measure and the run continues. */
-body[data-aside="closed"] .stage { grid-template-columns: minmax(0, 1fr); }
-body[data-aside="closed"] .rail { display: none; }
 
 .column {
   display: grid;
@@ -1677,6 +1703,55 @@ body[data-aside="closed"] .rail { display: none; }
   background: var(--card-bg);
 }
 
+/* The dock is the inspector's home: the process card first, then the
+   selected object, then the session and trust cards when nothing is
+   selected. It scrolls as one column. */
+.dock {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+}
+
+.dock-object-body {
+  display: grid;
+  /* One track that can shrink: a long fact name, a path, or a form
+     value must wrap inside the dock rather than widen the card past
+     the column (the face clips, so an overflow here reads as text cut
+     at the window edge). */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-content: start;
+  overflow-wrap: anywhere;
+}
+
+.dock-object-body > *,
+.dock .fact-field,
+.dock .fact-field input,
+.dock .fact-field textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dock .fact-field input,
+.dock .fact-field textarea { width: 100%; }
+
+.dock-object .card-head h2 {
+  color: var(--dsw-alias-ink);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.dock-object-body h3 {
+  margin: 0 0 7px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 /* The live process: a vertical stepper, not a spinner. A long run is a
    sequence, and the owner should be able to see which step is moving and
    what the last step actually was. */
@@ -1802,6 +1877,156 @@ body[data-aside="closed"] .rail { display: none; }
 }
 
 .process-last b { color: var(--dsw-alias-ink); font-weight: 600; }
+
+/* The branches: one row per child, each a button into its replay. The
+   dot borrows the stepper's language so the two read as one picture. */
+.process-branches {
+  display: grid;
+  gap: 3px;
+  padding-top: 9px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+}
+
+.process-branches-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.process-branches-count { font-family: var(--font-mono); letter-spacing: 0; }
+
+.process-branch {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) minmax(0, 1.4fr);
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.process-branch:hover { background: var(--dsw-alias-surface-sunken); }
+.process-branch:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -1px; }
+
+.process-branch-dot {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--dsw-alias-hairline-strong);
+  border-radius: 50%;
+  background: var(--dsw-alias-surface);
+}
+
+.process-branch[data-state="current"] .process-branch-dot {
+  border-color: var(--dsw-alias-accent);
+  background: var(--dsw-alias-accent-wash);
+  box-shadow: 0 0 0 2px var(--dsw-alias-accent-wash);
+}
+
+.process-branch[data-state="done"] .process-branch-dot {
+  border-color: var(--dsw-alias-ok);
+  background: var(--dsw-alias-ok);
+}
+
+.process-branch[data-state="down"] .process-branch-dot {
+  border-color: var(--dsw-alias-down);
+  background: var(--dsw-alias-down);
+}
+
+.process-branch-id {
+  overflow: hidden;
+  color: var(--dsw-alias-ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.process-branch-note {
+  overflow: hidden;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.process-branch-more {
+  padding: 3px 6px;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-accent-ink);
+  font: inherit;
+  font-size: 10.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.process-branch-more:hover { text-decoration: underline; }
+
+/* Stop and steer. They sit under the card's reading so the run's
+   narrative is never interrupted by its controls. */
+.process-controls {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+}
+
+.process-steer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px;
+}
+
+.process-steer input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 11px;
+}
+
+.process-steer input:focus {
+  border-color: var(--dsw-alias-accent);
+  outline: 2px solid var(--dsw-alias-accent-wash);
+  outline-offset: 0;
+}
+
+.process-steer .ghost { height: 28px; padding: 0 8px; font-size: 10.5px; }
+
+.process-stop {
+  justify-self: start;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 10.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.process-stop:hover { color: var(--dsw-alias-down); }
+.process-stop:disabled { cursor: progress; text-decoration: none; }
+.process-stop[data-state="stopping"] { color: var(--dsw-alias-down); }
+
+.process-review { margin-top: 9px; }
 
 .process-idle {
   margin: 0;
@@ -2286,9 +2511,10 @@ pre.drawer-code {
 
 .derivation { color: var(--dsw-alias-ink-secondary); font-size: 12px; line-height: 1.55; }
 
-/* Related objects, ranked by the embedding backend over a lexical
-   shortlist. The percentage is the cosine the backend returned, not a
-   relevance score this surface invented. */
+/* Related objects, ranked by the server's related index across every
+   kind. The percentage is the cosine the index returned, not a
+   relevance score this surface invented; a weak percentage is toned and
+   a keyword-only pass says so under the list. */
 .related { display: grid; gap: 6px; }
 
 .related-wait {
@@ -2342,6 +2568,16 @@ pre.drawer-code {
   font-family: var(--font-mono);
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
+}
+
+.related-score[data-weak="yes"] { color: var(--dsw-alias-warn); }
+
+.related-state {
+  margin: 2px 0 0;
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.02em;
 }
 
 .derivation code {
@@ -3126,6 +3362,26 @@ pre.drawer-code {
   font-variant-numeric: tabular-nums;
 }
 
+/* A selected filter that narrows a list the chart chose: same chip,
+   the filter tone, and the × is what clears it. */
+.filter-chip-active {
+  border-color: color-mix(in srgb, var(--dsw-alias-accent) 45%, transparent);
+  background: var(--dsw-alias-accent-wash);
+  color: var(--dsw-alias-accent-lift);
+}
+
+.filter-chip-active:hover {
+  color: var(--dsw-alias-accent-deep);
+  border-color: var(--dsw-alias-accent);
+}
+
+/* A chart segment is a filter, and it says so on hover. The hit layer
+   is transparent and never paints over the bars it covers. */
+.chart-hit { fill: transparent; cursor: pointer; }
+.chart-col[data-act] { cursor: pointer; }
+.donut-seg[data-act], .legend li[data-act] { cursor: pointer; }
+.legend li[data-act]:hover .legend-name { color: var(--dsw-alias-ink); }
+
 .session-row-id {
   display: inline-flex;
   align-items: center;
@@ -3522,7 +3778,7 @@ body[data-rail="icons"][data-pane="open"] .face {
   grid-template-columns: var(--rail-width-icons) minmax(0, 1fr) var(--pane-width);
 }
 
-.face > .pane { grid-column: 3; grid-row: 1 / -1; }
+.face > .pane { grid-column: 3; grid-row: 3; }
 
 .pane-head {
   display: flex;
@@ -3932,6 +4188,11 @@ body[data-rail="icons"][data-pane="open"] .face {
 
 /* Tablet: the conversation loses its aside before it loses its measure. */
 @media (max-width: 1180px) {
+  .face { grid-template-columns: var(--rail-width) minmax(0, 1fr); }
+  body[data-rail="icons"] .face {
+    grid-template-columns: var(--rail-width-icons) minmax(0, 1fr);
+  }
+  .topbar, .meter { grid-column: 2; }
   .stage { grid-template-columns: minmax(0, 1fr); }
   .rail { display: none; }
   #aside-toggle { display: none; }
