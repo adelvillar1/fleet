@@ -215,6 +215,7 @@ Escape clears the object, never the dock.
 | `GET /api/tree`, `/api/file`, `/api/web` | the pane's contained reads: the working directory, a credential-refusing file read, a guarded fetch |
 | `GET /api/channels` | the channel control plane: the service's status (and whether its heartbeat still beats), every channel's paired and pending peers, and the newest fifty activity lines with the bound named |
 | `POST /api/channels/{start,stop,pair,capability,revoke,forget}` | the control plane's writes. `pair` answers with the token exactly once; there is no read that returns it again |
+| `GET /api/access`, `POST /api/access/revoke` | the paired devices and channel peers, by name and digest only, and the revocation that forgets one |
 | `POST /api/fact`, `/api/skill`, `/api/resume`, `/api/rewind`, `/api/diff/reject`, `/api/settings`, `/api/deck/render` | the writes, each through the writer the substrate already owns |
 
 The channel control plane's routes are **not** on the remote face's
@@ -240,8 +241,78 @@ a maze. The rail's collapsed state is remembered across launches.
 | `#/calibration` | the day's stream rows by op and the judged quality's fit cells, the same computation `fleet calib --calibration` rides |
 | `#/tower` | the control tower — the one console surface: the KPI strip, the hero activity chart, the harness donut, the ranked projects, the claims against the evidence, the report feed |
 | `#/second-brain` | the derived state, quieter: the gates, the inbox, the loops, the harness runs, the maturity week grid |
-| `#/bots` | the channel control plane: the service and its heartbeat, who can reach the fleet with an editable capability, the peers waiting at the door, the pair form with its callback and one-time token reveal, and what they have done. The rail entry carries a count only when something is waiting |
-| `#/settings` | every configurable surface: the knobs, both lists, the rules, the cron jobs, the identity slot, the env names — including `channels.enabled` and `channels.webhook_port` |
+| `#/bots` | the channel control plane: the service and its heartbeat, the write-only Telegram token, the paired devices with revoke, who can reach the fleet with an editable capability, the peers waiting at the door, the pair form with its callback and one-time token reveal, and what they have done. The rail entry carries a count only when something is waiting |
+| `#/settings` | every configurable surface: the router (spend guard, tiers with resolved-now, thresholds, pin), the providers as field editors, the four lane cards, the roles editor, the vault, the spend caps, the remaining knobs, the rules, the cron jobs, the identity slot, and the env names |
+
+## The configuration surface
+
+The Settings page is one page with section chips: **router · providers ·
+lanes · roles · vault · spend · knobs · rules · cron · identity ·
+environment**. Every write goes through the one writer the CLI uses
+(`settings.rs` for the router, providers, lanes, secrets, and spend; the
+roles writer for the roles), and every value field is a pick from a
+catalog first.
+
+**The catalog.** `settings::catalog` is returned in `/api/settings` and
+is the one source every picker reads: every `provider/model` from the
+resolved roster plus every value the current `routing.json` names (a
+value the roster no longer carries stays as a `custom` entry), the
+provider states, the workload names, the env names with presence and
+source but never a value, the resolved paths, the admissible tools, the
+skills library, and the memory shapes. The lane cards add the declared
+defaults each lane publishes.
+
+**The input rule.** A closed set is a `<select>`; an open set is a
+combobox whose datalist carries the catalog and whose text stays free for
+a new value; an ordered list (a workload's fallbacks, sys1's chain) is a
+chip editor with move-up/move-down; an unordered set (a role's tools,
+skills, shapes) is a multi-chip editor. A value already present is
+preselected or a chip, and an unknown current value is shown rather than
+dropped. Free text is reserved for a genuinely new value: a description,
+an overlay, a cron expression, a provider id, or a secret.
+
+**The router.** The spend guard writes `gates.allow_api_models`; each
+tier's target is a model select and its fallbacks are ordered chips; the
+resolved column is the first candidate admissible under the gate and
+enabled with its key present (or not required), or the first blocking
+reason. The orchestrator's `hard` tier carries a `walker` badge. The
+thresholds write `gates.min_confidence`, `gates.default_workload`, and
+`pin`; the pin is a select over provider ids and pairs.
+
+**The providers.** Each roster entry is a field editor — base URL, key
+env (a name), models as chips, billing, kind, enabled, key required,
+disabled reason — and the save builds the entry the loader validates.
+The raw JSON textarea is gone. An override of a compiled-in provider
+reverts; an entry the file added needs the destructive confirmation.
+
+**The lanes.** sys1, sdm1, sem1, gen1 (and the browser and composer)
+each have a card: the home path, the env names the lane declares, and
+the per-call defaults for the tools whose schemas accept them. The write
+is a fleet-owned `<FLEET_HOME>/lanes.json`; the lane's own repository and
+sys1's TOML are never rewritten. `lanes::configured_spec` injects the
+values at launch with the precedence process env > `.env`/vault >
+`lanes.json`; an undeclared name never crosses. The agent merges a
+lane's per-tool defaults under the model's arguments, so an explicit
+value always wins.
+
+**The roles.** A role is `<home>/roles/<name>.md`; the editor writes the
+loader's own frontmatter, preserves unknown keys, and picks tools,
+skills, and shapes from the catalog.
+
+**Secrets and the vault.** A secret is write-only: the value is sent
+once, the input is cleared, and no read carries it back. It is sealed
+into the vault when the process holds `FLEET_VAULT_PASSPHRASE`, else it
+lands as one line in the home's `.env`. The vault card lists names and
+whether a passphrase is present; sealing and removing need the
+passphrase.
+
+**Spend and runtime.** The daily caps (judge, delegate, explain) are
+`Usd` settings that can only tighten the compiled ceiling; the empty box
+is seeded with the cap in force. `FLEET_CONCURRENCY`, the web cache TTL,
+the skills directory, and the services root are env knobs. The binary
+loads `<FLEET_HOME>/fleet.env` at startup, skipping credential-shaped
+names and never overriding a set variable, so a write there applies at
+the next launch.
 
 ## The trust trio
 

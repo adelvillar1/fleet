@@ -16,6 +16,27 @@ use fleet::net;
 use fleet::route;
 use fleet::session::{self, Session};
 
+/// Load the home's `fleet.env` into the process environment, skipping
+/// credential-shaped names and never overriding a variable already set.
+/// One helper, so a scripted export and the GUI's write have the same
+/// precedence.
+fn load_fleet_env() {
+    let env = std::env::var("FLEET_HOME").ok();
+    let user = std::env::var("HOME").ok();
+    let Ok(home) = home::fleet_home(env.as_deref(), user.as_deref()) else {
+        return;
+    };
+    for (name, value) in home::read_fleet_env(&home) {
+        if name.ends_with("_KEY") || name.ends_with("_TOKEN") || name.ends_with("_SECRET") {
+            continue;
+        }
+        if std::env::var_os(&name).is_some() {
+            continue;
+        }
+        std::env::set_var(&name, value);
+    }
+}
+
 fn main() -> ExitCode {
     // KI-128: restore the default SIGPIPE disposition. Rust sets it to
     // ignore, which turns a closed stdout pipe into an `io::Error` that
@@ -30,6 +51,12 @@ fn main() -> ExitCode {
         // SIGPIPE is 13 and SIG_DFL is 0 on every unix.
         signal(13, 0);
     }
+    // The GUI-owned `fleet.env` is the settings surface's non-secret
+    // counterpart file. Loading it before anything reads `std::env` is
+    // what makes a write there take effect at the next launch; the
+    // process environment always wins, and a credential-shaped name is
+    // never loaded (secrets belong in `.env` or the vault).
+    load_fleet_env();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // No subcommand is the TUI, Fleet's daily-driver surface. KI-023: it
     // gets no runtime at all — the multi-thread runtime `#[tokio::main]`

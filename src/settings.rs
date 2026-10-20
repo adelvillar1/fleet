@@ -27,7 +27,7 @@
 //!   never rendered — the surface shows set/unset beside the name, per
 //!   the standing credential rule.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -42,7 +42,7 @@ const ENV_FILE: &str = "fleet.env";
 /// One setting the surface can address, as the writer sees it. The
 /// key is what `fleet settings set` takes and what the TUI pane lists;
 /// the kind is what decides the editor shape and the validation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
     /// Free text — a path, a url, a model id.
     Text,
@@ -54,6 +54,10 @@ pub enum Kind {
     Ratio,
     /// A whole number — the session counts and turn budgets.
     Count,
+    /// A dollar amount above zero and at or below the compiled ceiling.
+    Usd(f64),
+    /// A whole number at or below a compiled ceiling.
+    CountTo(u64),
 }
 
 /// One addressable setting: its key, its kind, the file it lives in,
@@ -159,6 +163,13 @@ pub const SETTINGS: &[Setting] = &[
         file: File::Routing,
         summary: "The workload a gated or absent judgment falls back to.",
     },
+    Setting {
+        key: "gates.allow_api_models",
+        kind: Kind::Toggle,
+        file: File::Routing,
+        summary: "Whether the roster's hosted API models may receive requests. Off keeps every \
+                  HTTP candidate out of every order, even a pin; vendored lanes still serve.",
+    },
     // --- fleet.env: the env-var counterparts ----------------------------
     Setting {
         key: "FLEET_EMBEDDING_ENDPOINT",
@@ -173,6 +184,51 @@ pub const SETTINGS: &[Setting] = &[
         file: File::Env,
         summary:
             "The cua driver binary the desktop tool launches. Empty resolves the tools directory.",
+    },
+    // --- the spend caps and the runtime knobs ---------------------------
+    Setting {
+        key: "FLEET_JUDGE_BUDGET_USD_DAY",
+        kind: Kind::Usd(crate::judge::JUDGE_BUDGET_USD_DAY),
+        file: File::Env,
+        summary: "The daily cap the judge's asks may spend. It can only tighten the compiled \
+                  ceiling; a value above it is refused.",
+    },
+    Setting {
+        key: "FLEET_DELEGATE_BUDGET_USD_DAY",
+        kind: Kind::Usd(crate::delegate::DELEGATE_BUDGET_USD_DAY),
+        file: File::Env,
+        summary: "The daily cap the delegation judge's asks may spend.",
+    },
+    Setting {
+        key: "FLEET_EXPLAIN_BUDGET_USD_DAY",
+        kind: Kind::Usd(crate::explain::EXPLAIN_BUDGET_USD_DAY),
+        file: File::Env,
+        summary: "The daily cap the explain beat's asks may spend.",
+    },
+    Setting {
+        key: "FLEET_CONCURRENCY",
+        kind: Kind::CountTo(crate::agent::DELEGATION_CONCURRENCY as u64),
+        file: File::Env,
+        summary: "How many of one turn's independent tool calls run at once. It can only lower \
+                  the compiled bound.",
+    },
+    Setting {
+        key: "FLEET_WEB_CACHE_TTL_SECS",
+        kind: Kind::Count,
+        file: File::Env,
+        summary: "How long a web lane answer is reused. `0` disables the cache.",
+    },
+    Setting {
+        key: "FLEET_SKILLS_DIR",
+        kind: Kind::Text,
+        file: File::Env,
+        summary: "The skills library the loader reads. Empty resolves ~/.agents/skills.",
+    },
+    Setting {
+        key: "FLEET_SERVICES_ROOT",
+        kind: Kind::Text,
+        file: File::Env,
+        summary: "The services tree the lanes launch from. Empty walks up from the executable.",
     },
 ];
 
@@ -274,6 +330,32 @@ fn validate(setting: &Setting, value: &str) -> Result<Value, String> {
                 .map_err(|_| format!("`{}` is a whole number, not `{trimmed}`", setting.key))?;
             Ok(Value::Number(number.into()))
         }
+        Kind::Usd(ceiling) => {
+            let number: f64 = trimmed
+                .parse()
+                .map_err(|_| format!("`{}` is a dollar amount, not `{trimmed}`", setting.key))?;
+            if !number.is_finite() || number <= 0.0 || number > ceiling {
+                return Err(format!(
+                    "`{}` is above zero and at or below {ceiling:.2}, and {number} is not",
+                    setting.key
+                ));
+            }
+            Ok(serde_json::Number::from_f64(number)
+                .map(Value::Number)
+                .unwrap_or_else(|| Value::String(trimmed.to_string())))
+        }
+        Kind::CountTo(maximum) => {
+            let number: u64 = trimmed
+                .parse()
+                .map_err(|_| format!("`{}` is a whole number, not `{trimmed}`", setting.key))?;
+            if number == 0 || number > maximum {
+                return Err(format!(
+                    "`{}` is 1..={maximum}, and {number} is outside it",
+                    setting.key
+                ));
+            }
+            Ok(Value::Number(number.into()))
+        }
     }
 }
 
@@ -300,8 +382,14 @@ pub fn set(home: &Path, key: &str, value: &str) -> Result<(), String> {
         File::Routing => routing_path,
         File::Env => {
             // The env file is `NAME=value` lines, not JSON: a different
-            // writer over the same atomic rule.
-            return write_env(&env_path, key, stored.as_str().unwrap_or_default());
+            // writer over the same atomic rule. A numeric setting (a
+            // budget, a count) is rendered as its own text rather than
+            // dropped for not being a JSON string.
+            let text = match &stored {
+                Value::String(text) => text.clone(),
+                other => render_value(other),
+            };
+            return write_env(&env_path, key, &text);
         }
     };
     let mut document = read_json(&path)?;
@@ -449,6 +537,12 @@ pub fn states(home: &Path) -> Vec<State> {
             // first, the file second, and `from_env` says which answered.
             let (value, from_env) = if setting.file == File::Env {
                 match process_env(setting.key) {
+                    // The startup load puts `fleet.env` into the process
+                    // environment; a value that is the file's own is
+                    // still a file value, not an export.
+                    Some(value) if env_file.get(setting.key) == Some(&value) => {
+                        (Some(value), false)
+                    }
                     Some(value) => (Some(value), true),
                     None => (env_file.get(setting.key).cloned(), false),
                 }
@@ -780,6 +874,8 @@ fn kind_name(kind: Kind) -> String {
         Kind::Choice(words) => format!("one of {}", words.join(", ")),
         Kind::Ratio => "ratio 0..1".to_string(),
         Kind::Count => "whole number".to_string(),
+        Kind::Usd(ceiling) => format!("usd, at most {ceiling:.2}"),
+        Kind::CountTo(maximum) => format!("whole number, 1..={maximum}"),
     }
 }
 
@@ -833,6 +929,10 @@ mod list_tests {
             error.contains("unknown field") || error.contains("keyenv"),
             "{error}"
         );
+        // An empty model list is a provider nothing can serve.
+        let empty = set_provider(&home, r#"{"id":"stepfun","models":[]}"#)
+            .expect_err("an empty models list must refuse");
+        assert!(empty.contains("empty models"), "{empty}");
         // And a well-formed one lands.
         let id = set_provider(
             &home,
@@ -1017,6 +1117,375 @@ mod list_tests {
 }
 
 #[cfg(test)]
+mod router_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-settings-router-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn dotenv(home: &Path) -> HashMap<String, String> {
+        crate::home::read_dotenv(home)
+    }
+
+    /// The guard is a setting like any other: it validates as a toggle and
+    /// lands in routing.json, where the router already reads it.
+    #[test]
+    fn the_spend_guard_is_a_setting_that_round_trips() {
+        let home = scratch("guard");
+        set(&home, "gates.allow_api_models", "false").unwrap();
+        let state = states(&home)
+            .into_iter()
+            .find(|state| state.key == "gates.allow_api_models")
+            .expect("the guard is in the table");
+        assert_eq!(state.value.as_deref(), Some("false"));
+        let text = fs::read_to_string(home.join("routing.json")).unwrap();
+        assert!(text.contains("\"allow_api_models\": false"), "{text}");
+        let error = set(&home, "gates.allow_api_models", "maybe").expect_err("a toggle");
+        assert!(error.contains("true or false"), "{error}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The resolved column is the first candidate that would actually
+    /// serve: the gate applied, the provider enabled, its key present.
+    #[test]
+    fn router_config_resolves_the_first_serving_candidate() {
+        let home = scratch("resolve");
+        fs::write(
+            home.join(".env"),
+            "STEPFUN_API_KEY=test\nXIAOMI_MIMO_API_KEY=test\nZAI_CODING_API_KEY=test\n",
+        )
+        .unwrap();
+        let config = router_config(&home, &dotenv(&home));
+        let quick = config
+            .tiers
+            .iter()
+            .find(|tier| tier.workload == "quick")
+            .expect("quick");
+        assert_eq!(quick.resolved.as_deref(), Some("stepfun/step-3.7-flash"));
+        assert!(quick.reason.is_none());
+
+        // Disabling stepfun moves quick to its next candidate.
+        fs::write(
+            home.join("config.json"),
+            r#"{"providers":[{"id":"stepfun","enabled":false}]}"#,
+        )
+        .unwrap();
+        let config = router_config(&home, &dotenv(&home));
+        let quick = config
+            .tiers
+            .iter()
+            .find(|tier| tier.workload == "quick")
+            .expect("quick");
+        assert_eq!(
+            quick.resolved.as_deref(),
+            Some("xiaomi-mimo/mimo-v2.6-flash")
+        );
+
+        // The guard keeps every HTTP candidate out; the lane still serves.
+        fs::write(
+            home.join("routing.json"),
+            r#"{"gates":{"allow_api_models":false}}"#,
+        )
+        .unwrap();
+        let config = router_config(&home, &dotenv(&home));
+        let quick = config
+            .tiers
+            .iter()
+            .find(|tier| tier.workload == "quick")
+            .expect("quick");
+        assert!(quick.resolved.is_none());
+        assert!(
+            quick
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("spend guard")),
+            "{:?}",
+            quick.reason
+        );
+        let composed = config
+            .tiers
+            .iter()
+            .find(|tier| tier.workload == "composed")
+            .expect("composed");
+        assert_eq!(composed.resolved.as_deref(), Some("blend1/blend1"));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A keyless provider is named by its env var, not silently skipped.
+    #[test]
+    fn a_missing_key_is_named_in_the_reason() {
+        let home = scratch("no-key");
+        fs::write(
+            home.join("config.json"),
+            r#"{"providers":[{"id":"ghost","base_url":"http://127.0.0.1:9/v1",
+                 "key_env":"FLEET_TEST_GHOST_KEY_XYZ","models":["ghost-model"]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            home.join("routing.json"),
+            r#"{"workloads":[{"workload":"ghostly","candidates":["ghost/ghost-model"]}]}"#,
+        )
+        .unwrap();
+        let config = router_config(&home, &dotenv(&home));
+        let ghostly = config
+            .tiers
+            .iter()
+            .find(|tier| tier.workload == "ghostly")
+            .expect("the added workload");
+        assert!(ghostly.resolved.is_none());
+        assert!(
+            ghostly
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("FLEET_TEST_GHOST_KEY_XYZ")),
+            "{:?}",
+            ghostly.reason
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// An empty pin the GUI writes means auto everywhere, not a phantom
+    /// provider.
+    #[test]
+    fn an_empty_pin_is_no_pin() {
+        let home = scratch("empty-pin");
+        fs::write(home.join("config.json"), r#"{"pin":""}"#).unwrap();
+        let config = router_config(&home, &dotenv(&home));
+        assert!(config.pin.is_none());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The catalog carries every roster model, the current table's values
+    /// (known or not), the env names, and the vocabularies the forms pick.
+    #[test]
+    fn the_catalog_is_the_pickers_source() {
+        let home = scratch("catalog");
+        fs::write(home.join(".env"), "STEPFUN_API_KEY=test\n").unwrap();
+        let catalog = catalog(&home, &dotenv(&home));
+        assert!(
+            catalog
+                .models
+                .iter()
+                .any(|model| model.value == "stepfun/step-3.7-flash" && model.known),
+            "{:?}",
+            catalog.models
+        );
+        assert!(catalog.workloads.iter().any(|workload| workload == "quick"));
+        assert!(
+            catalog
+                .env_names
+                .iter()
+                .any(|name| name.name == "STEPFUN_API_KEY" && name.present),
+            "{:?}",
+            catalog.env_names
+        );
+        assert!(catalog.tools.iter().any(|tool| tool == "bash"));
+        assert!(catalog.shapes.iter().any(|shape| shape == "rendering"));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A model the roster no longer carries but the current table names
+    /// stays in the catalog as a custom value, so a picker cannot rewrite
+    /// the walk by dropping it.
+    #[test]
+    fn a_lost_roster_model_stays_as_a_custom_value() {
+        let home = scratch("lost-model");
+        fs::write(
+            home.join("routing.json"),
+            r#"{"workloads":[{"workload":"quick","candidates":["ghost/old-model"]}]}"#,
+        )
+        .unwrap();
+        let catalog = catalog(&home, &dotenv(&home));
+        let lost = catalog
+            .models
+            .iter()
+            .find(|model| model.value == "ghost/old-model")
+            .expect("the current value stays");
+        assert!(!lost.known);
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A lane write validates the lane's own allowlist, refuses a
+    /// credential-shaped name, and preserves the other lanes.
+    #[test]
+    fn a_lane_write_validates_and_preserves() {
+        let home = scratch("lanes");
+        let sem1 = serde_json::json!({
+            "env": {"SEM1_ST_VENV": "/opt/venv-st"},
+            "defaults": {"sem1_embed": {"provider": "llama-server", "model": "embeddinggemma-2-BF16"}}
+        });
+        assert_eq!(set_lane(&home, "sem1", &sem1).unwrap(), "sem1");
+        let sys1 = serde_json::json!({
+            "env": {"SYS1_CLASSIFY__PROVIDER": "glide"},
+            "defaults": {}
+        });
+        set_lane(&home, "sys1", &sys1).unwrap();
+        // The tabular lane's provider rides the schema's own `model`
+        // argument, and the bundled media lane only exposes imagine.
+        let sdm1 = serde_json::json!({
+            "defaults": {"sdm1_classify": {"model": "tabpfn-hosted"}}
+        });
+        set_lane(&home, "sdm1", &sdm1).unwrap();
+        let gen1 = serde_json::json!({
+            "defaults": {"gen1_imagine": {"provider": "wan"}}
+        });
+        set_lane(&home, "gen1", &gen1).unwrap();
+        let read = crate::lanes::read_lane(&home, "sem1")
+            .unwrap()
+            .expect("sem1");
+        assert_eq!(
+            read.env.get("SEM1_ST_VENV").map(String::as_str),
+            Some("/opt/venv-st")
+        );
+        assert_eq!(
+            read.defaults
+                .get("sem1_embed")
+                .and_then(|args| args.get("provider"))
+                .map(String::as_str),
+            Some("llama-server")
+        );
+        assert!(crate::lanes::read_lane(&home, "sys1").unwrap().is_some());
+
+        // An undeclared name does not cross.
+        let bad = serde_json::json!({"env": {"DEEPSEEK_API_KEY": "x"}, "defaults": {}});
+        let error = set_lane(&home, "sem1", &bad).expect_err("undeclared");
+        assert!(error.contains("does not cross"), "{error}");
+        // A credential-shaped name is refused even when the lane's
+        // namespace would otherwise let it cross.
+        let secret = serde_json::json!({"env": {"SYS1_SOMETHING_TOKEN": "x"}, "defaults": {}});
+        let error = set_lane(&home, "sys1", &secret).expect_err("secret-shaped");
+        assert!(error.contains("credential-shaped"), "{error}");
+        // A relative home is refused.
+        let relative = serde_json::json!({"home": "services/sem1", "env": {}, "defaults": {}});
+        let error = set_lane(&home, "sem1", &relative).expect_err("relative");
+        assert!(error.contains("absolute"), "{error}");
+        // An unknown tool is refused.
+        let unknown = serde_json::json!({"env": {}, "defaults": {"sem1_other": {"provider": "x"}}});
+        let error = set_lane(&home, "sem1", &unknown).expect_err("unknown tool");
+        assert!(error.contains("not a tool"), "{error}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// Without a passphrase a secret lands in the home's own `.env`, one
+    /// line, and the state names the source without the value.
+    #[test]
+    fn a_secret_lands_in_the_dotenv_without_a_passphrase() {
+        let home = scratch("secret-dotenv");
+        let store = set_secret_with(&home, "FLEET_TEST_KEY", "super-secret", None).unwrap();
+        assert_eq!(store, ".env");
+        let text = fs::read_to_string(home.join(".env")).unwrap();
+        assert!(text.contains("FLEET_TEST_KEY=super-secret"), "{text}");
+        let (present, source) = secret_state(&home, "FLEET_TEST_KEY");
+        assert!(present);
+        assert_eq!(source, "dotenv");
+        remove_secret_with(&home, "FLEET_TEST_KEY", None).unwrap();
+        let text = fs::read_to_string(home.join(".env")).unwrap();
+        assert!(!text.contains("FLEET_TEST_KEY"), "{text}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// With a passphrase a secret is sealed into the vault, and the vault
+    /// opens it only with that passphrase.
+    #[test]
+    fn a_secret_lands_in_the_vault_when_the_passphrase_is_present() {
+        let home = scratch("secret-vault");
+        let store = set_secret_with(
+            &home,
+            "FLEET_TEST_TOKEN",
+            "super-secret",
+            Some("passphrase"),
+        )
+        .unwrap();
+        assert_eq!(store, "vault");
+        let (names, exists, _) = vault_state(&home);
+        assert!(exists);
+        assert!(
+            names.iter().any(|name| name == "FLEET_TEST_TOKEN"),
+            "{names:?}"
+        );
+        let (present, source) = secret_state(&home, "FLEET_TEST_TOKEN");
+        assert!(present);
+        assert_eq!(source, "vault");
+        let text = fs::read_to_string(home.join(crate::vault::VAULT_FILE)).unwrap();
+        let vault = crate::vault::Vault::from_json(&text).unwrap();
+        assert_eq!(
+            vault.get("passphrase", "FLEET_TEST_TOKEN").unwrap(),
+            "super-secret"
+        );
+        assert!(vault.get("wrong", "FLEET_TEST_TOKEN").is_err());
+        remove_secret_with(&home, "FLEET_TEST_TOKEN", Some("passphrase")).unwrap();
+        assert!(!vault_state(&home)
+            .0
+            .iter()
+            .any(|name| name == "FLEET_TEST_TOKEN"));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A non-credential-shaped name is refused: the secret store is not a
+    /// general settings writer.
+    #[test]
+    fn a_secret_must_be_credential_shaped() {
+        let home = scratch("secret-shape");
+        let error =
+            set_secret_with(&home, "FLEET_TEST_SETTING", "x", None).expect_err("a non-secret name");
+        assert!(error.contains("credential-shaped"), "{error}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A numeric env setting is written as text into `fleet.env`, and a
+    /// value above its compiled ceiling is refused.
+    #[test]
+    fn a_numeric_env_setting_is_written_as_text() {
+        let home = scratch("numeric-env");
+        set(&home, "FLEET_JUDGE_BUDGET_USD_DAY", "0.03").unwrap();
+        set(&home, "FLEET_CONCURRENCY", "2").unwrap();
+        let text = fs::read_to_string(home.join("fleet.env")).unwrap();
+        assert!(text.contains("FLEET_JUDGE_BUDGET_USD_DAY=0.03"), "{text}");
+        assert!(text.contains("FLEET_CONCURRENCY=2"), "{text}");
+        let budget = states(&home)
+            .into_iter()
+            .find(|state| state.key == "FLEET_JUDGE_BUDGET_USD_DAY")
+            .expect("the budget");
+        assert_eq!(budget.value.as_deref(), Some("0.03"));
+        assert_eq!(budget.source(), "file");
+        let error =
+            set(&home, "FLEET_JUDGE_BUDGET_USD_DAY", "9").expect_err("above the compiled ceiling");
+        assert!(error.contains("at or below"), "{error}");
+        let error = set(&home, "FLEET_CONCURRENCY", "9").expect_err("above the compiled bound");
+        assert!(error.contains("1..="), "{error}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// Clearing a lane's values removes its entry rather than leaving an
+    /// empty object behind.
+    #[test]
+    fn a_cleared_lane_is_removed() {
+        let home = scratch("clear-lane");
+        let sem1 = serde_json::json!({"env": {"SEM1_LOG_DIR": "/tmp/sem1"}, "defaults": {}});
+        set_lane(&home, "sem1", &sem1).unwrap();
+        set_lane(
+            &home,
+            "sem1",
+            &serde_json::json!({"env": {}, "defaults": {}}),
+        )
+        .unwrap();
+        assert!(crate::lanes::read_lane(&home, "sem1").unwrap().is_none());
+        let _ = fs::remove_dir_all(&home);
+    }
+}
+
+#[cfg(test)]
 mod render_tests {
     use super::*;
 
@@ -1093,6 +1562,388 @@ pub fn compiled_in_workloads() -> Vec<String> {
     crate::route::default_preferences()
         .into_iter()
         .map(|preference| preference.workload.to_string())
+        .collect()
+}
+
+// --- the router read -------------------------------------------------------
+
+/// One workload tier as the router reads it: the ordered candidates, and
+/// what the router would actually serve for it right now. `resolved` is
+/// the first candidate that is admissible under the spend gate and whose
+/// provider is enabled with its key present (or not required); `reason`
+/// names the first blocker when nothing resolves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TierConfig {
+    pub workload: String,
+    pub candidates: Vec<String>,
+    pub resolved: Option<String>,
+    pub reason: Option<String>,
+    /// True when the workload is in the compiled-in table, so removing
+    /// its preference reverts it rather than deleting it.
+    pub reverts: bool,
+}
+
+/// One roster entry as the router resolves it. The key's presence is a
+/// boolean; its value never rides this type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RosterEntry {
+    pub id: String,
+    pub base_url: String,
+    pub models: Vec<String>,
+    pub kind: &'static str,
+    pub billing: &'static str,
+    pub enabled: bool,
+    pub key_present: bool,
+    pub key_required: bool,
+    pub key_env: String,
+    pub disabled_reason: Option<String>,
+}
+
+/// The router's configuration as the settings surface reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RouterConfig {
+    pub spend_guard: bool,
+    pub min_confidence: f64,
+    pub default_workload: String,
+    pub pin: Option<String>,
+    pub orchestrator: &'static str,
+    pub tiers: Vec<TierConfig>,
+    pub roster: Vec<RosterEntry>,
+    pub refused: Vec<String>,
+}
+
+/// Read the router's table, its gates, and the resolution of every tier.
+/// The router's own loader and key resolution are used, so the surface
+/// cannot disagree with the walk about what would serve.
+pub fn router_config(home: &Path, dotenv: &HashMap<String, String>) -> RouterConfig {
+    let gates = crate::route::Gates::default();
+    let mut out = RouterConfig {
+        spend_guard: gates.allow_api_models,
+        min_confidence: gates.min_confidence,
+        default_workload: gates.default_workload.to_string(),
+        pin: None,
+        orchestrator: crate::route::ORCHESTRATOR_WORKLOAD,
+        tiers: Vec::new(),
+        roster: Vec::new(),
+        refused: Vec::new(),
+    };
+    let roster = match crate::route::load_roster(home) {
+        Ok(roster) => roster,
+        Err(error) => {
+            out.refused
+                .push(format!("the router config did not load: {error}"));
+            return out;
+        }
+    };
+    let resolved = crate::route::resolve(&roster.candidates, dotenv);
+    out.spend_guard = roster.gates.allow_api_models;
+    out.min_confidence = roster.gates.min_confidence;
+    out.default_workload = roster.gates.default_workload.to_string();
+    out.pin = roster.pin.clone();
+    out.roster = resolved.iter().map(roster_entry).collect();
+    let compiled = compiled_in_workloads();
+    out.tiers = roster
+        .preferences
+        .iter()
+        .map(|preference| {
+            let candidates: Vec<String> = preference
+                .candidates
+                .iter()
+                .map(|(provider, model)| format!("{provider}/{model}"))
+                .collect();
+            let (resolved, reason) =
+                first_serving(&preference.candidates, &resolved, &roster.gates);
+            TierConfig {
+                workload: preference.workload.to_string(),
+                candidates,
+                resolved,
+                reason,
+                reverts: compiled.iter().any(|known| known == preference.workload),
+            }
+        })
+        .collect();
+    out
+}
+
+fn roster_entry(entry: &crate::route::Resolved) -> RosterEntry {
+    RosterEntry {
+        id: entry.id().to_string(),
+        base_url: entry.candidate.base_url.clone(),
+        models: entry.candidate.models.clone(),
+        kind: match entry.candidate.kind {
+            crate::route::CandidateKind::Http => "http",
+            crate::route::CandidateKind::Lane => "lane",
+        },
+        billing: match entry.candidate.billing {
+            crate::route::Billing::Plan => "plan",
+            crate::route::Billing::Payg => "payg",
+        },
+        enabled: entry.candidate.enabled,
+        key_present: entry.key.is_some(),
+        key_required: entry.candidate.key_required,
+        key_env: entry.candidate.key_env.clone(),
+        disabled_reason: entry.candidate.disabled_reason.clone(),
+    }
+}
+
+/// The first candidate the walk would actually serve: admissible under
+/// the gate, enabled, and keyed (or key-free). The first blocker is
+/// named when none resolves.
+fn first_serving(
+    chain: &[(&'static str, &'static str)],
+    resolved: &[crate::route::Resolved],
+    gates: &crate::route::Gates,
+) -> (Option<String>, Option<String>) {
+    let mut reason: Option<String> = None;
+    for (provider, model) in chain {
+        let Some(entry) = resolved.iter().find(|entry| entry.id() == *provider) else {
+            reason.get_or_insert_with(|| format!("`{provider}` is not in the roster"));
+            continue;
+        };
+        if !crate::route::admissible(resolved, provider, gates) {
+            reason.get_or_insert_with(|| format!("the spend guard blocks `{provider}/{model}`"));
+            continue;
+        }
+        if !entry.candidate.enabled {
+            reason.get_or_insert_with(|| format!("`{provider}` is disabled"));
+            continue;
+        }
+        if entry.key.is_none() && entry.candidate.key_required {
+            reason.get_or_insert_with(|| {
+                format!("no `{}` for `{provider}`", entry.candidate.key_env)
+            });
+            continue;
+        }
+        return (Some(format!("{provider}/{model}")), None);
+    }
+    (
+        None,
+        Some(reason.unwrap_or_else(|| "the chain names no candidate".to_string())),
+    )
+}
+
+// --- the catalog ------------------------------------------------------------
+
+/// One `provider/model` the pickers offer. `known` is false for a value
+/// the current routing file names but the roster no longer carries — the
+/// surface shows it as a custom chip instead of dropping it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelOption {
+    pub value: String,
+    pub provider: String,
+    pub model: String,
+    pub known: bool,
+    pub enabled: bool,
+    pub key_present: bool,
+    pub billing: &'static str,
+    pub kind: &'static str,
+}
+
+/// One environment-variable name the key-env picker offers. The value is
+/// never part of this type, only presence and where it resolved from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvOption {
+    pub name: String,
+    pub present: bool,
+    pub source: &'static str,
+}
+
+/// Everything the settings forms pick from, read once. The model list is
+/// the resolved roster plus the current routing values; the env list is
+/// the roster's key names plus every name the home's files carry; the
+/// tools, skills, and shapes are the vocabularies the role editor needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Catalog {
+    pub models: Vec<ModelOption>,
+    pub providers: Vec<RosterEntry>,
+    pub workloads: Vec<String>,
+    pub env_names: Vec<EnvOption>,
+    pub paths: Vec<(String, String)>,
+    pub tools: Vec<String>,
+    pub skills: Vec<String>,
+    pub shapes: Vec<String>,
+}
+
+/// Read the catalog every settings form shares.
+pub fn catalog(home: &Path, dotenv: &HashMap<String, String>) -> Catalog {
+    let router = router_config(home, dotenv);
+    let mut models: Vec<ModelOption> = Vec::new();
+    for entry in &router.roster {
+        for model in &entry.models {
+            models.push(ModelOption {
+                value: format!("{}/{}", entry.id, model),
+                provider: entry.id.clone(),
+                model: model.clone(),
+                known: true,
+                enabled: entry.enabled,
+                key_present: entry.key_present,
+                billing: entry.billing,
+                kind: entry.kind,
+            });
+        }
+    }
+    // Every value the current table names, even when the roster no longer
+    // carries it: a picker that dropped it would silently rewrite a walk.
+    for tier in &router.tiers {
+        for candidate in &tier.candidates {
+            if models.iter().any(|model| model.value == *candidate) {
+                continue;
+            }
+            let (provider, model) = candidate
+                .split_once('/')
+                .map(|(provider, model)| (provider.to_string(), model.to_string()))
+                .unwrap_or_else(|| (candidate.clone(), String::new()));
+            models.push(ModelOption {
+                value: candidate.clone(),
+                provider,
+                model,
+                known: false,
+                enabled: false,
+                key_present: false,
+                billing: "plan",
+                kind: "http",
+            });
+        }
+    }
+    let workloads = router
+        .tiers
+        .iter()
+        .map(|tier| tier.workload.clone())
+        .collect();
+    let env_names = catalog_env_names(home, dotenv, &router.roster);
+    let paths = catalog_paths(home);
+    let tools = crate::subagents::ADMISSIBLE_TOOLS
+        .iter()
+        .map(|tool| (*tool).to_string())
+        .collect();
+    let skills = catalog_skills();
+    let mut shapes: Vec<String> = crate::memory::SHAPES
+        .iter()
+        .map(|shape| (*shape).to_string())
+        .collect();
+    for shape in crate::memory::FAILURE_SHAPES {
+        if !shapes.iter().any(|known| known == shape) {
+            shapes.push((*shape).to_string());
+        }
+    }
+    for shape in crate::memory::OUTCOME_SHAPES {
+        if !shapes.iter().any(|known| known == shape) {
+            shapes.push((*shape).to_string());
+        }
+    }
+    Catalog {
+        models,
+        providers: router.roster,
+        workloads,
+        env_names,
+        paths,
+        tools,
+        skills,
+        shapes,
+    }
+}
+
+fn catalog_env_names(
+    home: &Path,
+    dotenv: &HashMap<String, String>,
+    roster: &[RosterEntry],
+) -> Vec<EnvOption> {
+    let fleet_env = crate::home::read_fleet_env(home);
+    let vault = vault_names(home);
+    let mut names: Vec<String> = roster
+        .iter()
+        .map(|entry| entry.key_env.clone())
+        .filter(|name| !name.is_empty())
+        .collect();
+    for name in dotenv.keys() {
+        if !names.iter().any(|known| known == name) {
+            names.push(name.clone());
+        }
+    }
+    for name in fleet_env.keys() {
+        if !names.iter().any(|known| known == name) {
+            names.push(name.clone());
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+        .into_iter()
+        .map(|name| {
+            let source = if std::env::var(&name).is_ok_and(|value| !value.is_empty()) {
+                "process"
+            } else if vault.iter().any(|sealed| sealed == &name) {
+                "vault"
+            } else if dotenv.contains_key(&name) {
+                "dotenv"
+            } else if fleet_env.contains_key(&name) {
+                "fleet.env"
+            } else {
+                "unset"
+            };
+            EnvOption {
+                present: source != "unset",
+                name,
+                source,
+            }
+        })
+        .collect()
+}
+
+/// The names sealed in the vault, without opening it: `Vault::names`
+/// reads the entry names, never a value.
+fn vault_names(home: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(home.join(crate::vault::VAULT_FILE)) else {
+        return Vec::new();
+    };
+    crate::vault::Vault::from_json(&text)
+        .map(|vault| vault.names())
+        .unwrap_or_default()
+}
+
+fn catalog_paths(home: &Path) -> Vec<(String, String)> {
+    let mut paths: Vec<(String, String)> = Vec::new();
+    for lane in crate::lanes::LANES {
+        if let crate::lanes::LaneHome::Resolved {
+            home: lane_home, ..
+        } = crate::lanes::resolve_home(lane)
+        {
+            paths.push((
+                lane_home.display().to_string(),
+                format!("{} home", lane.name),
+            ));
+        }
+    }
+    if let Ok(root) = crate::lanes::services_root() {
+        paths.push((root.display().to_string(), "services root".to_string()));
+    }
+    let override_dir = std::env::var("FLEET_SKILLS_DIR").ok();
+    let user_home = std::env::var("HOME").ok();
+    if let Some(dir) =
+        crate::skills::resolve_skills_dir(override_dir.as_deref(), user_home.as_deref())
+    {
+        paths.push((dir.display().to_string(), "skills library".to_string()));
+    }
+    for (value, label) in crate::lanes::known_paths() {
+        if !paths.iter().any(|(known, _)| known == &value) {
+            paths.push((value, label.to_string()));
+        }
+    }
+    let _ = home;
+    paths
+}
+
+fn catalog_skills() -> Vec<String> {
+    let override_dir = std::env::var("FLEET_SKILLS_DIR").ok();
+    let user_home = std::env::var("HOME").ok();
+    let Some(dir) =
+        crate::skills::resolve_skills_dir(override_dir.as_deref(), user_home.as_deref())
+    else {
+        return Vec::new();
+    };
+    crate::skills::load(&dir)
+        .into_iter()
+        .map(|skill| skill.name)
         .collect()
 }
 
@@ -1243,6 +2094,11 @@ pub fn set_provider(home: &Path, entry: &str) -> Result<String, String> {
     if id.is_empty() {
         return Err("the entry names no provider id".to_string());
     }
+    if parsed.models.as_ref().is_some_and(Vec::is_empty) {
+        return Err(format!(
+            "`{id}` names an empty models list; a provider needs at least one model"
+        ));
+    }
     let path = home.join("config.json");
     let mut document = read_json(&path)?;
     let providers = document
@@ -1387,6 +2243,294 @@ pub fn remove_workload(home: &Path, workload: &str, force: bool) -> Result<(), S
         &path,
         &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
     )
+}
+
+// --- the lanes document -----------------------------------------------------
+
+/// The lane names the surface can address.
+pub fn lane_names() -> Vec<String> {
+    crate::lanes::LANES
+        .iter()
+        .map(|lane| lane.name.to_string())
+        .collect()
+}
+
+/// Write one lane's object into `<FLEET_HOME>/lanes.json` through the
+/// same atomic, unknown-preserving rule every other writer here uses.
+/// The whole lane object is validated before the rename: a home is
+/// absolute, an env name is one the lane actually accepts, a secret is
+/// refused with a pointer to the vault, and a default is one of the
+/// lane's curated tool/argument pairs.
+pub fn set_lane(home: &Path, lane: &str, config: &Value) -> Result<String, String> {
+    if !lane_names().iter().any(|known| known == lane) {
+        return Err(format!(
+            "`{lane}` is not a lane; the registry carries {}",
+            lane_names().join(", ")
+        ));
+    }
+    let Some(lane_entry) = crate::lanes::LANES.iter().find(|entry| entry.name == lane) else {
+        return Err(format!("`{lane}` is not a lane"));
+    };
+    let Some(object) = config.as_object() else {
+        return Err("a lane write carries an object".to_string());
+    };
+    let mut cleaned = Map::new();
+    if let Some(value) = object.get("home") {
+        let text = value
+            .as_str()
+            .ok_or_else(|| "`home` is a path string".to_string())?
+            .trim();
+        if !text.is_empty() {
+            let path = Path::new(text);
+            if !path.is_absolute() {
+                return Err(format!(
+                    "`{text}` is a relative home; an absolute path is required, because a \
+                     relative one resolves against the caller's working directory"
+                ));
+            }
+            cleaned.insert("home".to_string(), Value::String(text.to_string()));
+        }
+    }
+    let mut env = Map::new();
+    if let Some(value) = object.get("env") {
+        let Some(map) = value.as_object() else {
+            return Err("`env` is an object of name → value".to_string());
+        };
+        for (name, value) in map {
+            let Some(value) = value.as_str() else {
+                return Err(format!("`env.{name}` is a string"));
+            };
+            if !crate::lanes::lane_allows(lane_entry, name) {
+                return Err(format!(
+                    "`{name}` does not cross into `{lane}`; the lane declares {}",
+                    lane_entry.passthrough.join(", ")
+                ));
+            }
+            if is_secret_name(name) {
+                return Err(format!(
+                    "`{name}` is a credential-shaped name; keys belong in the vault or `.env`, \
+                     never in lanes.json"
+                ));
+            }
+            if !value.trim().is_empty() {
+                env.insert(name.clone(), Value::String(value.trim().to_string()));
+            }
+        }
+    }
+    cleaned.insert("env".to_string(), Value::Object(env));
+    let mut defaults = Map::new();
+    if let Some(value) = object.get("defaults") {
+        let Some(map) = value.as_object() else {
+            return Err("`defaults` is an object of tool → arguments".to_string());
+        };
+        for (tool, args) in map {
+            if !default_tool_allowed(lane, tool) {
+                return Err(format!(
+                    "`{tool}` is not a tool this surface sets defaults for on `{lane}`"
+                ));
+            }
+            let Some(args) = args.as_object() else {
+                return Err(format!(
+                    "`defaults.{tool}` is an object of argument → value"
+                ));
+            };
+            let mut kept = Map::new();
+            for (argument, value) in args {
+                if !default_argument_allowed(lane, tool, argument) {
+                    return Err(format!(
+                        "`{argument}` is not an argument this surface sets for `{tool}`"
+                    ));
+                }
+                let Some(value) = value.as_str() else {
+                    return Err(format!("`defaults.{tool}.{argument}` is a string"));
+                };
+                if !value.trim().is_empty() {
+                    kept.insert(argument.clone(), Value::String(value.trim().to_string()));
+                }
+            }
+            if !kept.is_empty() {
+                defaults.insert(tool.clone(), Value::Object(kept));
+            }
+        }
+    }
+    cleaned.insert("defaults".to_string(), Value::Object(defaults));
+    let path = crate::lanes::lanes_path(home);
+    let mut document = crate::lanes::read_lanes(home)?;
+    let lanes = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?
+        .entry("lanes")
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(lanes) = lanes.as_object_mut() else {
+        return Err("`lanes` is not an object of lane → configuration".to_string());
+    };
+    if cleaned
+        .get("env")
+        .is_some_and(|env| env.as_object().is_some_and(|env| env.is_empty()))
+        && cleaned.get("defaults").is_some_and(|defaults| {
+            defaults
+                .as_object()
+                .is_some_and(|defaults| defaults.is_empty())
+        })
+        && !cleaned.contains_key("home")
+    {
+        lanes.remove(lane);
+    } else {
+        lanes.insert(lane.to_string(), Value::Object(cleaned));
+    }
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
+    )?;
+    Ok(lane.to_string())
+}
+
+fn default_tool_allowed(lane: &str, tool: &str) -> bool {
+    match lane {
+        "sem1" => tool == "sem1_embed",
+        // The tabular lane takes its provider under the `model` argument
+        // (the schema's own name: `tabpfn-hosted` or `nvidia-sdm`).
+        "sdm1" => tool == "sdm1_classify",
+        // The bundled media lane exposes image generation; its speech
+        // and transcription models are configured through the env names,
+        // not a per-call argument.
+        "gen1" => tool == "gen1_imagine",
+        _ => false,
+    }
+}
+
+fn default_argument_allowed(lane: &str, tool: &str, argument: &str) -> bool {
+    match (lane, tool) {
+        ("sem1", "sem1_embed") => matches!(argument, "provider" | "model" | "endpoint"),
+        ("sdm1", "sdm1_classify") => argument == "model",
+        ("gen1", "gen1_imagine") => argument == "provider",
+        _ => false,
+    }
+}
+
+// --- secrets and the vault --------------------------------------------------
+
+/// Whether a credential resolves, and where from. The value is never part
+/// of the answer.
+pub fn secret_state(home: &Path, name: &str) -> (bool, &'static str) {
+    if std::env::var(name).is_ok_and(|value| !value.is_empty()) {
+        return (true, "process");
+    }
+    if vault_names(home).iter().any(|sealed| sealed == name) {
+        return (true, "vault");
+    }
+    if crate::home::read_dotenv(home).contains_key(name) {
+        return (true, "dotenv");
+    }
+    // `fleet.env` is deliberately not a secret source: the startup loader
+    // skips credential-shaped names, and the channel resolver never reads
+    // one from there. A token hand-written into it is not a token the
+    // reader would answer, so saying otherwise would be a lie.
+    (false, "unset")
+}
+
+/// The vault's names, whether the file exists, and whether this process
+/// holds a passphrase. No value is read.
+pub fn vault_state(home: &Path) -> (Vec<String>, bool, bool) {
+    (
+        vault_names(home),
+        home.join(crate::vault::VAULT_FILE).is_file(),
+        std::env::var("FLEET_VAULT_PASSPHRASE").is_ok_and(|passphrase| !passphrase.is_empty()),
+    )
+}
+
+/// Seal one credential. The vault is preferred when this process holds
+/// the passphrase; otherwise the value lands as one line in the home's
+/// own `.env`, preserving every other line. The returned word names the
+/// store, never the value.
+pub fn set_secret(home: &Path, name: &str, value: &str) -> Result<String, String> {
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    set_secret_with(home, name, value, passphrase.as_deref())
+}
+
+/// The same write over an explicit passphrase, so the two paths are
+/// testable without mutating the process environment.
+pub fn set_secret_with(
+    home: &Path,
+    name: &str,
+    value: &str,
+    passphrase: Option<&str>,
+) -> Result<String, String> {
+    if !is_secret_name(name) {
+        return Err(format!(
+            "`{name}` is not a credential-shaped name; a secret ends in _KEY, _TOKEN, or _SECRET"
+        ));
+    }
+    if value.trim().is_empty() {
+        return Err("a secret cannot be empty".to_string());
+    }
+    if let Some(passphrase) = passphrase.filter(|passphrase| !passphrase.is_empty()) {
+        let path = home.join(crate::vault::VAULT_FILE);
+        let mut vault = match fs::read_to_string(&path) {
+            Ok(text) => crate::vault::Vault::from_json(&text)
+                .map_err(|error| format!("{} is not a vault: {error}", path.display()))?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                crate::vault::Vault::init()
+            }
+            Err(error) => {
+                return Err(format!("{} is unreadable: {error}", path.display()));
+            }
+        };
+        vault.set(passphrase, name, value);
+        write_atomic(&path, &vault.to_json())?;
+        return Ok("vault".to_string());
+    }
+    write_env(&home.join(".env"), name, value)?;
+    Ok(".env".to_string())
+}
+
+/// Forget one credential, through the store that holds it.
+pub fn remove_secret(home: &Path, name: &str) -> Result<String, String> {
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    remove_secret_with(home, name, passphrase.as_deref())
+}
+
+pub fn remove_secret_with(
+    home: &Path,
+    name: &str,
+    passphrase: Option<&str>,
+) -> Result<String, String> {
+    if let Some(_passphrase) = passphrase.filter(|passphrase| !passphrase.is_empty()) {
+        let path = home.join(crate::vault::VAULT_FILE);
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("{} is unreadable: {error}", path.display()))?;
+        let mut vault = crate::vault::Vault::from_json(&text)
+            .map_err(|error| format!("{} is not a vault: {error}", path.display()))?;
+        vault
+            .remove(name)
+            .map_err(|error| format!("`{name}` is not sealed: {error}"))?;
+        write_atomic(&path, &vault.to_json())?;
+        return Ok("vault".to_string());
+    }
+    remove_env(&home.join(".env"), name)?;
+    Ok(".env".to_string())
+}
+
+fn remove_env(path: &Path, name: &str) -> Result<(), String> {
+    let existing = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("{} is unreadable: {error}", path.display())),
+    };
+    let kept: Vec<&str> = existing
+        .lines()
+        .filter(|line| {
+            line.trim()
+                .split_once('=')
+                .map(|(key, _)| key.trim() != name)
+                .unwrap_or(true)
+        })
+        .collect();
+    let mut text = kept.join("\n");
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    write_atomic(path, &text)
 }
 
 /// The remembered approvals, as the trust surface reads them.

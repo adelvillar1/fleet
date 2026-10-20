@@ -2624,6 +2624,10 @@ fn channels_read(home: &std::path::Path) -> Value {
         }));
     }
     let activity = crate::channels::service::activity(home, ACTIVITY_SHOWN);
+    // The Telegram credential, by presence and source only. The value is
+    // never part of this document.
+    let (telegram_present, telegram_source) =
+        crate::settings::secret_state(home, "FLEET_TELEGRAM_BOT_TOKEN");
     json!({
         "type": "channels",
         "read_at": crate::boards::now_stamp(),
@@ -2631,6 +2635,10 @@ fn channels_read(home: &std::path::Path) -> Value {
         "channels": channels,
         "activity": activity,
         "activity_bound": ACTIVITY_SHOWN,
+        "telegram": {
+            "present": telegram_present,
+            "source": telegram_source,
+        },
     })
 }
 
@@ -2924,6 +2932,8 @@ fn settings_read(home: &std::path::Path) -> Value {
                     crate::settings::Kind::Choice(_) => "choice",
                     crate::settings::Kind::Ratio => "ratio",
                     crate::settings::Kind::Count => "count",
+                    crate::settings::Kind::Usd(_) => "usd",
+                    crate::settings::Kind::CountTo(_) => "count",
                 },
                 "file": match state.file {
                     crate::settings::File::Config => "config",
@@ -2933,6 +2943,11 @@ fn settings_read(home: &std::path::Path) -> Value {
                 "summary": state.summary,
                 "value": state.rendered(),
                 "source": state.source(),
+                "ceiling": match state.kind {
+                    crate::settings::Kind::Usd(ceiling) => json!(ceiling),
+                    crate::settings::Kind::CountTo(maximum) => json!(maximum),
+                    _ => Value::Null,
+                },
             })
         })
         .collect::<Vec<_>>();
@@ -2993,6 +3008,13 @@ fn settings_read(home: &std::path::Path) -> Value {
         Err(_) => Vec::new(),
     };
     let soul = crate::home::read_soul(home);
+    let router = crate::settings::router_config(home, &dotenv);
+    let catalog = crate::settings::catalog(home, &dotenv);
+    let lanes = lanes_document(home);
+    let roles = roles_document(home);
+    let (vault_names, vault_exists, vault_passphrase) = crate::settings::vault_state(home);
+    let (telegram_present, telegram_source) =
+        crate::settings::secret_state(home, "FLEET_TELEGRAM_BOT_TOKEN");
     json!({
         "type": "settings",
         "read_at": crate::boards::now_stamp(),
@@ -3005,6 +3027,177 @@ fn settings_read(home: &std::path::Path) -> Value {
             "present": soul.is_some(),
             "text": soul.unwrap_or_default(),
         },
+        "router": router_document(&router),
+        "catalog": catalog_document(&catalog),
+        "lanes": lanes,
+        "roles": roles,
+        "vault": {
+            "names": vault_names,
+            "exists": vault_exists,
+            "passphrase": vault_passphrase,
+        },
+        "telegram": {
+            "present": telegram_present,
+            "source": telegram_source,
+        },
+    })
+}
+
+fn roles_document(home: &std::path::Path) -> Value {
+    let entries = crate::roles::catalog(home)
+        .into_iter()
+        .map(|entry| match entry.role {
+            Some(role) => json!({
+                "name": role.name,
+                "description": role.description,
+                "tools": role.tools,
+                "skills": role.skills,
+                "shapes": role.shapes,
+                "overlay": role.overlay,
+                "path": role.path.display().to_string(),
+                "modified": role.modified.and_then(|at| crate::session::iso_utc_stamp(at).ok()),
+                "broken": Value::Null,
+            }),
+            None => json!({
+                "name": entry.name,
+                "description": "",
+                "tools": [],
+                "skills": [],
+                "shapes": [],
+                "overlay": "",
+                "path": "",
+                "modified": Value::Null,
+                "broken": entry.broken,
+            }),
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "dir": crate::roles::roles_dir(home).display().to_string(),
+        "entries": entries,
+    })
+}
+
+fn router_document(config: &crate::settings::RouterConfig) -> Value {
+    json!({
+        "spend_guard": config.spend_guard,
+        "min_confidence": config.min_confidence,
+        "default_workload": config.default_workload,
+        "pin": config.pin,
+        "orchestrator": config.orchestrator,
+        "tiers": config.tiers.iter().map(|tier| json!({
+            "workload": tier.workload,
+            "candidates": tier.candidates,
+            "resolved": tier.resolved,
+            "reason": tier.reason,
+            "reverts": tier.reverts,
+        })).collect::<Vec<_>>(),
+        "roster": config.roster.iter().map(|entry| json!({
+            "id": entry.id,
+            "base_url": entry.base_url,
+            "models": entry.models,
+            "kind": entry.kind,
+            "billing": entry.billing,
+            "enabled": entry.enabled,
+            "key_present": entry.key_present,
+            "key_required": entry.key_required,
+            "key_env": entry.key_env,
+            "disabled_reason": entry.disabled_reason,
+        })).collect::<Vec<_>>(),
+        "refused": config.refused,
+    })
+}
+
+fn catalog_document(catalog: &crate::settings::Catalog) -> Value {
+    json!({
+        "models": catalog.models.iter().map(|model| json!({
+            "value": model.value,
+            "provider": model.provider,
+            "model": model.model,
+            "known": model.known,
+            "enabled": model.enabled,
+            "key_present": model.key_present,
+            "billing": model.billing,
+            "kind": model.kind,
+        })).collect::<Vec<_>>(),
+        "providers": catalog.providers.iter().map(|entry| json!({
+            "id": entry.id,
+            "kind": entry.kind,
+            "billing": entry.billing,
+            "enabled": entry.enabled,
+            "key_present": entry.key_present,
+        })).collect::<Vec<_>>(),
+        "workloads": catalog.workloads,
+        "env_names": catalog.env_names.iter().map(|name| json!({
+            "name": name.name,
+            "present": name.present,
+            "source": name.source,
+        })).collect::<Vec<_>>(),
+        "paths": catalog.paths.iter().map(|(value, label)| json!({
+            "value": value,
+            "label": label,
+        })).collect::<Vec<_>>(),
+        "tools": catalog.tools,
+        "skills": catalog.skills,
+        "shapes": catalog.shapes,
+    })
+}
+
+/// The lane configuration as the cards read it: the file's own document,
+/// one row per registered lane with its resolved home, and the pickable
+/// values the lane's defaults publish.
+fn lanes_document(home: &std::path::Path) -> Value {
+    let document = match crate::lanes::read_lanes(home) {
+        Ok(document) => document,
+        Err(error) => {
+            return json!({
+                "document": {},
+                "lanes": [],
+                "refused": [error],
+            });
+        }
+    };
+    let lanes = crate::lanes::LANES
+        .iter()
+        .map(|lane| {
+            let configured = document
+                .get("lanes")
+                .and_then(|lanes| lanes.get(lane.name))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let (resolved_home, source, unavailable) = match crate::lanes::resolve_home(lane) {
+                crate::lanes::LaneHome::Resolved { home, source } => (
+                    Some(home.display().to_string()),
+                    Some(source.to_string()),
+                    None,
+                ),
+                crate::lanes::LaneHome::Unavailable { reason } => (None, None, Some(reason)),
+            };
+            let choices = crate::lanes::choices(lane.name)
+                .into_iter()
+                .map(|choice| {
+                    json!({
+                        "value": choice.value,
+                        "label": choice.label,
+                        "provider": choice.provider,
+                        "kind": choice.kind,
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "name": lane.name,
+                "role": lane.role,
+                "configured": configured,
+                "resolved_home": resolved_home,
+                "source": source,
+                "unavailable": unavailable,
+                "choices": choices,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "document": document,
+        "lanes": lanes,
+        "refused": [],
     })
 }
 
@@ -3026,6 +3219,18 @@ fn settings_apply(
             .ok_or_else(|| format!("the write names its {key}"))
     };
     let flag = |key: &str| arguments.get(key).and_then(serde_json::Value::as_bool);
+    let list = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
     match op {
         "set" => {
             let key = text("key")?;
@@ -3061,6 +3266,44 @@ fn settings_apply(
             let workload = text("workload")?;
             crate::settings::remove_workload(home, &workload, flag("force").unwrap_or(false))?;
             Ok(workload)
+        }
+        "lane" => {
+            let lane = text("lane")?;
+            let config = arguments
+                .get("config")
+                .cloned()
+                .ok_or_else(|| "the write names its config".to_string())?;
+            crate::settings::set_lane(home, &lane, &config)
+        }
+        "role" => {
+            let name = text("name")?;
+            let fields = crate::roles::RoleFields {
+                description: text("description")?,
+                tools: list("tools"),
+                skills: list("skills"),
+                shapes: list("shapes"),
+                overlay: arguments
+                    .get("overlay")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            };
+            crate::roles::write(home, &name, &fields)?;
+            Ok(name)
+        }
+        "role-remove" => {
+            let name = text("name")?;
+            crate::roles::remove(home, &name)?;
+            Ok(name)
+        }
+        "secret" => {
+            let name = text("name")?;
+            let value = text("value")?;
+            crate::settings::set_secret(home, &name, &value)
+        }
+        "secret-remove" => {
+            let name = text("name")?;
+            crate::settings::remove_secret(home, &name)
         }
         "rule" => {
             // The browser sends the file's own shape; the call is

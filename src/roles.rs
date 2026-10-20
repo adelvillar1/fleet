@@ -208,6 +208,159 @@ pub fn load_all(home: &Path) -> Vec<Role> {
     roles
 }
 
+/// One role as the editor reads it: the parsed role, or the named reason
+/// the file is not one. A broken file is named rather than skipped
+/// silently on the settings surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleEntry {
+    pub name: String,
+    pub role: Option<Role>,
+    pub broken: Option<String>,
+}
+
+/// Every role file in the home, in name order, with broken files named.
+pub fn catalog(home: &Path) -> Vec<RoleEntry> {
+    let dir = roles_dir(home);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<RoleEntry> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let name = name.to_string();
+        let entry = match std::fs::read_to_string(&path) {
+            Ok(text) => match Role::parse(&name, &text, path) {
+                Ok(role) => RoleEntry {
+                    name,
+                    role: Some(role),
+                    broken: None,
+                },
+                Err(reason) => RoleEntry {
+                    name,
+                    role: None,
+                    broken: Some(reason),
+                },
+            },
+            Err(error) => RoleEntry {
+                name: name.clone(),
+                role: None,
+                broken: Some(format!("{} is unreadable: {error}", path.display())),
+            },
+        };
+        out.push(entry);
+    }
+    out.sort_by(|left, right| left.name.cmp(&right.name));
+    out
+}
+
+/// The fields the editor owns. The writer preserves every frontmatter
+/// key it does not own and replaces the overlay's body.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoleFields {
+    pub description: String,
+    pub tools: Vec<String>,
+    pub skills: Vec<String>,
+    pub shapes: Vec<String>,
+    pub overlay: String,
+}
+
+/// Write one role file through the loader's own grammar. The name is
+/// validated with the same rule `load` applies; the description is
+/// required; unknown frontmatter keys survive the edit; the write is a
+/// unique temp file and a rename.
+pub fn write(home: &Path, name: &str, fields: &RoleFields) -> Result<(), String> {
+    validate_name(name)?;
+    let description = fields.description.trim();
+    if description.is_empty() {
+        return Err("a role needs a description".to_string());
+    }
+    let path = roles_dir(home).join(format!("{name}.md"));
+    let existing = std::fs::read_to_string(&path).ok();
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    if let Some(text) = &existing {
+        let lines: Vec<&str> = text.lines().collect();
+        if lines.first().map(|line| line.trim_end()) == Some("---") {
+            for line in lines.iter().skip(1) {
+                if line.trim_end() == "---" {
+                    break;
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Some((key, value)) = trimmed.split_once(':') {
+                    pairs.push((
+                        unquote(key.trim()).to_string(),
+                        unquote(value.trim()).to_string(),
+                    ));
+                }
+            }
+        }
+    }
+    let known = ["description", "tools", "skills", "shapes"];
+    pairs.retain(|(key, _)| !known.contains(&key.as_str()));
+    pairs.push(("description".to_string(), description.to_string()));
+    for (key, values) in [
+        ("tools", &fields.tools),
+        ("skills", &fields.skills),
+        ("shapes", &fields.shapes),
+    ] {
+        if !values.is_empty() {
+            pairs.push((key.to_string(), values.join(", ")));
+        }
+    }
+    pairs.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut text = String::from("---\n");
+    for (key, value) in pairs {
+        text.push_str(&format!("{key}: {value}\n"));
+    }
+    text.push_str("---\n");
+    let overlay = fields.overlay.trim();
+    if !overlay.is_empty() {
+        text.push_str(overlay);
+        text.push('\n');
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("{} cannot be created: {error}", parent.display()))?;
+    }
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    std::fs::write(&temp, text)
+        .map_err(|error| format!("{} cannot be written: {error}", temp.display()))?;
+    std::fs::rename(&temp, &path)
+        .map_err(|error| format!("{} cannot be replaced: {error}", path.display()))
+}
+
+/// Remove one role file. The name is validated with the loader's rule, so
+/// a path-shaped name can never address a file outside the roles dir.
+pub fn remove(home: &Path, name: &str) -> Result<(), String> {
+    validate_name(name)?;
+    let path = roles_dir(home).join(format!("{name}.md"));
+    std::fs::remove_file(&path)
+        .map_err(|error| format!("{} cannot be removed: {error}", path.display()))
+}
+
+fn validate_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || name == "."
+        || name.starts_with('.')
+    {
+        return Err(format!(
+            "`{name}` is not a role name \u{2014} a role's name is a name, not a path"
+        ));
+    }
+    Ok(())
+}
+
 /// The frame a role's overlay rides in on the child's system prompt:
 /// delimited so the child knows what is standing instruction for this
 /// delegation's role and what is the compiled-in harness prompt, and
@@ -439,6 +592,82 @@ mod tests {
         // An empty home says so rather than drawing an empty table.
         let empty = render(&[]);
         assert!(empty.contains("no roles"), "{empty}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-roles-write-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The writer round-trips through the loader's own parser, and an
+    /// unknown frontmatter key survives the edit.
+    #[test]
+    fn a_role_write_round_trips_and_preserves_unknown_keys() {
+        let home = scratch("round-trip");
+        std::fs::create_dir_all(roles_dir(&home)).unwrap();
+        std::fs::write(
+            roles_dir(&home).join("auditor.md"),
+            "---\ndescription: old\nowner_note: keep me\n---\nold overlay\n",
+        )
+        .unwrap();
+        write(
+            &home,
+            "auditor",
+            &RoleFields {
+                description: "reads a diff".to_string(),
+                tools: vec!["bash".to_string(), "read_file".to_string()],
+                skills: vec!["codebase-survey".to_string()],
+                shapes: vec!["rendering".to_string()],
+                overlay: "Prefer the smallest diff.".to_string(),
+            },
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(roles_dir(&home).join("auditor.md")).unwrap();
+        assert!(text.contains("owner_note: keep me"), "{text}");
+        let role = load(&home, "auditor").unwrap();
+        assert_eq!(role.description, "reads a diff");
+        assert_eq!(role.tools, vec!["bash", "read_file"]);
+        assert_eq!(role.skills, vec!["codebase-survey"]);
+        assert_eq!(role.shapes, vec!["rendering"]);
+        assert_eq!(role.overlay, "Prefer the smallest diff.");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A path-shaped name is refused by the writer with the loader's own
+    /// rule, and a broken file is named by the catalog rather than
+    /// skipped.
+    #[test]
+    fn the_writer_refuses_a_path_and_the_catalog_names_a_broken_file() {
+        let home = scratch("refusals");
+        let fields = RoleFields {
+            description: "x".to_string(),
+            ..RoleFields::default()
+        };
+        let error = write(&home, "../escape", &fields).expect_err("a path-like name");
+        assert!(error.contains("not a path"), "{error}");
+        let error = write(&home, "empty", &RoleFields::default()).expect_err("no description");
+        assert!(error.contains("description"), "{error}");
+        std::fs::create_dir_all(roles_dir(&home)).unwrap();
+        std::fs::write(roles_dir(&home).join("broken.md"), "no fence\n").unwrap();
+        let entries = catalog(&home);
+        let broken = entries
+            .iter()
+            .find(|entry| entry.name == "broken")
+            .expect("the broken file is named");
+        assert!(broken.broken.is_some());
+        assert!(broken.role.is_none());
+        remove(&home, "broken").unwrap();
+        assert!(catalog(&home).is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
 }

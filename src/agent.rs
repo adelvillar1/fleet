@@ -903,7 +903,11 @@ impl<'a> Agent<'a> {
         // An injected spec map wins for the lanes it names; every other
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
-        let lanes = LaneRoster::new(options.lane_specs.clone().unwrap_or_default());
+        let mut lanes = LaneRoster::new(options.lane_specs.clone().unwrap_or_default());
+        lanes.home = options
+            .improve_home
+            .clone()
+            .or_else(crate::lanes::fleet_home_path);
         let calib = options.calib.clone();
         // A resumed run seeds its conversation from the log, and the log's
         // own turn numbering with it: the compacted shape is materialized
@@ -4142,6 +4146,10 @@ struct LaneRoster {
     /// Lane names in join order, so the declaration order is stable and
     /// the log reads in the order the run met the lanes.
     order: Vec<String>,
+    /// The fleet home the run's lane defaults read from, when it has
+    /// one. `None` is a run with no home: no defaults, exactly the call
+    /// the model made.
+    home: Option<std::path::PathBuf>,
 }
 
 /// One lane's child process for the length of a run.
@@ -4182,6 +4190,7 @@ impl LaneRoster {
     fn new(specs: HashMap<String, ServerSpec>) -> LaneRoster {
         LaneRoster {
             specs,
+            home: None,
             children: HashMap::new(),
             order: Vec::new(),
         }
@@ -4336,7 +4345,16 @@ impl LaneRoster {
                     };
                 };
                 let lane_tool = listed.lane_tool.clone();
-                match server.call_tool(&lane_tool, arguments.clone()).await {
+                // The lane's configured defaults fill only the arguments
+                // the model left out; an explicit value always wins. The
+                // run's home is the same one `improve` files under, with
+                // the ambient home as the fallback for a run that has
+                // none.
+                let arguments = match &self.home {
+                    Some(home) => crate::lanes::lane_arguments(home, lane, &lane_tool, arguments),
+                    None => arguments.clone(),
+                };
+                match server.call_tool(&lane_tool, arguments).await {
                     Ok(result) => LaneOutcome {
                         text: lane_call_output(&result),
                         truncated: false,

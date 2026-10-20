@@ -3764,6 +3764,179 @@ pre.drawer-code {
 
 .list-row:last-child { border-bottom: 0; }
 
+/* The configuration sections: one nav, a grid of fields, and chips. */
+
+.cfg-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+}
+
+.cfg-chip {
+  padding: 5px 10px;
+  border: var(--card-hairline);
+  border-radius: 999px;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.cfg-chip:hover { color: var(--dsw-alias-ink); border-color: var(--dsw-alias-accent); }
+
+.cfg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px 16px;
+  margin: 10px 0;
+}
+
+.cfg-field { display: grid; gap: 4px; min-width: 0; }
+
+.cfg-label {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.cfg-note { color: var(--dsw-alias-ink-tertiary); font-size: 11px; line-height: 1.45; }
+.cfg-readonly { font-family: var(--font-mono); font-size: 12px; color: var(--dsw-alias-ink-secondary); }
+.cfg-combo { display: block; min-width: 0; }
+.cfg-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cfg-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+
+.cfg-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  color: var(--dsw-alias-ink);
+  font-size: 12px;
+}
+
+.cfg-switch input { accent-color: var(--dsw-alias-accent); }
+.cfg-switch .cfg-note { flex-basis: 100%; margin-left: 22px; }
+
+.cfg-form {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 14px;
+  border: var(--card-hairline);
+  border-radius: 10px;
+  background: var(--dsw-alias-page);
+}
+
+.cfg-form:last-child { margin-bottom: 0; }
+.cfg-form-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+
+.cfg-details {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: var(--card-hairline);
+  border-radius: 10px;
+  background: var(--dsw-alias-page);
+}
+
+.cfg-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--dsw-alias-ink);
+  font-size: 12px;
+}
+
+.cfg-lane-name { font-family: var(--font-mono); font-weight: 600; }
+
+.tier-grid {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.7fr) minmax(190px, 1.5fr) minmax(220px, 1.8fr) minmax(150px, 1.2fr) 24px;
+  gap: 8px;
+  align-items: start;
+  margin: 12px 0;
+}
+
+.tier-head {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.tier-row { display: contents; }
+
+.tier-name { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+.tier-resolved { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.pool-grid {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.7fr) minmax(160px, 1.5fr) minmax(160px, 1.5fr) minmax(140px, 1.2fr);
+  gap: 6px 10px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.pool-name { font-family: var(--font-mono); font-size: 11.5px; }
+
+.cfg-roster-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+}
+
+.cfg-roster-row:last-child { border-bottom: 0; }
+.cfg-roster-id { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; min-width: 130px; }
+
+.chip-editor { display: grid; gap: 6px; min-width: 0; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: var(--card-hairline);
+  border-radius: 999px;
+  background: var(--dsw-alias-surface);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dsw-alias-ink-secondary);
+}
+
+.chip-act {
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chip-act:hover:not(:disabled) { color: var(--dsw-alias-accent); }
+.chip-act:disabled { opacity: 0.35; cursor: default; }
+.chip-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip-add .knob-box { max-width: 180px; }
+
+@media (max-width: 900px) {
+  .tier-grid, .pool-grid { grid-template-columns: minmax(0, 1fr); }
+  .tier-head { display: none; }
+  .tier-row { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--dsw-alias-hairline); }
+  .cfg-form, .cfg-details { padding: 12px; }
+}
+
 /* ----------------------------------------------------------- trust trio */
 
 .diff-file {

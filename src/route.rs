@@ -903,7 +903,16 @@ fn merge(
             }
         }
     }
-    Ok((candidates, file.pin.clone()))
+    // An empty pin is no pin. The settings surface writes an empty value to
+    // mean "auto", and a hand-written `"pin": ""` must read the same way —
+    // otherwise the walk carries a spurious unknown-provider note.
+    Ok((
+        candidates,
+        file.pin
+            .clone()
+            .map(|pin| pin.trim().to_string())
+            .filter(|pin| !pin.is_empty()),
+    ))
 }
 
 /// A roster candidate with its key resolved for this run.
@@ -1421,7 +1430,7 @@ fn fallback(
 /// all: not from the judged chain, not from the fallback, not from the
 /// head walk, not from a pin. A provider the roster does not name
 /// stays admissible; the walk fails over past unknowns on its own.
-fn admissible(resolved: &[Resolved], provider: &str, gates: &Gates) -> bool {
+pub(crate) fn admissible(resolved: &[Resolved], provider: &str, gates: &Gates) -> bool {
     gates.allow_api_models
         || resolved
             .iter()

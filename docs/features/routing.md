@@ -129,3 +129,17 @@ silently ignored. Unknown fields are rejected the same way: a misspelled
 override (`keyenv`) fails the load rather than vanishing. A new provider id
 must be fully specified (base_url, key_env, model) to be added; a partial one
 is a named error.
+
+The gates live in `<FLEET_HOME>/routing.json` and are all optional:
+`gates.min_confidence`, `gates.default_workload`, and
+`gates.allow_api_models`. The last is the spend guard: `false` keeps every
+`Http` candidate out of every order the router builds — the judged chain,
+the fallback, the head walk, and a pin. Vendored lanes still serve. The
+GUI's Settings page exposes it as a switch, the thresholds as a select and
+an input, and the tiers as a target select plus ordered fallback chips; the
+`resolved now` column is the first candidate the walk would actually serve
+(the gate applied, the provider enabled, its key present). The page writes
+through the same `settings.rs` writer the CLI uses.
+
+An empty `"pin": ""` reads as no pin: the loader trims it away, so the GUI's
+"auto" and a hand-written empty value mean the same thing.

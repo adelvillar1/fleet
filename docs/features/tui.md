@@ -79,7 +79,7 @@ slot has not landed or refused.
 | Panel | memory, skills, calibration, or delegation, list + detail |
 | Approval | the tool call's yes/no/always prompt |
 | Lanes | the vendored lanes' health |
-| Settings | the scalar knobs and both lists, cards not a bare table |
+| Settings | the scalar knobs (including the spend guard and the spend/runtime env knobs) and both lists, cards not a bare table |
 | Explain | today's explanation card |
 
 ## The run card and the controls

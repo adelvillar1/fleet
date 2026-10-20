@@ -120,9 +120,13 @@ out. The adapter translates Fleet's request vocabulary into the lane's own
 tool calls and normalizes the result.
 
 #### `lanes.rs`
-Home resolution: env override, bundled `services/`, or unavailable with one
-named log line. Launch specs, health probes, and the `fleet lanes` card
-renderer live here.
+Home resolution: env override, the home's `lanes.json`, bundled `services/`,
+or unavailable with one named log line. Launch specs, health probes, the
+lane catalog the settings pickers read, the `fleet lanes` card renderer, and
+the launch-time configuration live here. `configured_spec` injects a lane's
+configured env values and the `.env`/vault values for the names the lane
+declares (process env wins; an undeclared name never crosses); per-call
+defaults merge under the model's lane arguments, which always win.
 
 #### `mcp.rs`
 The hand-rolled MCP stdio client: spawn, initialize, tools/list, tools/call,
@@ -193,7 +197,9 @@ concurrent execution of competing paths.
 #### `roles.rs`
 Named delegation specializations: one frontmatter file per role under
 `<FLEET_HOME>/roles/`, carrying description, admitted tools, skills, memory
-shapes, and an optional system-prompt overlay.
+shapes, and an optional system-prompt overlay. `catalog` names every role and
+every broken file; `write` validates the loader's name rule, preserves
+unknown frontmatter keys, and writes atomically; `remove` deletes by name.
 
 #### `cron.rs`
 Scheduled runs: the job store, five-field parser, catch-up on missed windows,
@@ -249,8 +255,17 @@ Fleet home resolution, `.env` fallback, and credential resolution. This is
 the single source of truth for "Fleet reads Fleet's home and nothing else."
 
 #### `settings.rs`
-One writer over `config.json` / `routing.json` / `fleet.env`. The CLI and TUI
-settings surfaces read and write through this module.
+One writer over `config.json` / `routing.json` / `fleet.env` / `lanes.json`,
+and the secret writer over the vault and `.env`. The CLI, TUI, and GUI
+settings surfaces read and write through this module. `router_config` reads
+the tiers, gates, pin, and roster through the router's own loader and key
+resolution, naming the first candidate that would serve each tier and the
+first blocker when none would. `catalog` is the one read every GUI picker
+draws from: roster models plus the current table's values, provider states,
+env names with presence/source and never a value, paths, tools, skills, and
+shapes. `set_lane` validates a lane object against the lane registry and
+writes it atomically; `set_secret` seals into the vault when the process
+holds the passphrase, else writes one atomic `.env` line.
 
 #### `boards.rs`
 The three read-only boards: Fleet's own routing state, the second-brain's
@@ -315,7 +330,7 @@ cannot reproduce.
 
 | Area | Status | Likely source |
 |---|---|---|
-| `docs/features/settings.md` | Missing | `src/settings.rs`, `src/cli.rs`, `src/tui/app.rs`, `docs/architecture/deep-dive-2026-10-15.md` |
+| `docs/features/settings.md` | Covered by `docs/features/gui.md`'s "The configuration surface" section | `src/settings.rs`, `src/cli.rs`, `src/tui/app.rs`, `docs/architecture/deep-dive-2026-10-15.md` |
 | `docs/architecture/ecosystem.md` routing rows | Dated in places | `docs/plans/2026-10-16-fleet-routes-through-its-own-router.md`, `src/route.rs` |
 | `services/README.md` lane count | Corrected in code; doc wording should be re-verified | `src/lanes.rs`, `fleet doctor` |
 

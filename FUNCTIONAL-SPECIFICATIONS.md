@@ -89,7 +89,7 @@ briefing, the endpoints, and the interaction layer are documented in
 | Diff | File/hunk review, `r` rejects the hunk, `R` the file | `docs/features/tui.md` |
 | Confirm | `y` lands an armed rewind/reject; any other key walks away | `docs/features/tui.md` |
 | Panel | Memory/skills/calibration/delegation list + detail, `f` filters | `docs/features/tui.md` |
-| Settings | Scalar knobs as cards; list surfaces are CLI-only today | `docs/architecture/deep-dive-2026-10-15.md` |
+| Settings | The TUI: scalar knobs (including the spend guard and the spend/runtime env knobs) and both lists, as cards. The GUI: router, providers, lanes, roles, vault, spend, and the remaining knobs, with catalog-backed pickers | `docs/features/gui.md`; `docs/architecture/deep-dive-2026-10-15.md` |
 | Explain | Today's explanation card | `docs/features/explain.md` |
 
 ## Background jobs
@@ -131,7 +131,7 @@ lands one `eval_corpus` row.
 | Area | Status | Likely source |
 |---|---|---|
 | TUI settings list surfaces | Partially implemented | `src/settings.rs`, `src/tui/app.rs`, `docs/architecture/deep-dive-2026-10-15.md` |
-| Structured provider editor | Follow-up | `src/settings.rs` |
+| Structured provider editor | Implemented: field editor over the roster, key presence by name, pin, add/remove | `src/gui/assets/app.js`; `src/settings.rs` |
 | Human TUI open | Unclosed | `docs/architecture/deep-dive-2026-10-15.md` |
 
 These gaps are noted here as missing coverage, not as defects in code. When

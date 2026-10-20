@@ -417,6 +417,9 @@
     // The settings surface's read and its clock.
     settings: null,
     settingsAt: 0,
+    // The access read: paired devices beside the channel peers.
+    access: null,
+    accessAt: 0,
     // The pane's web tab: the page in front and the address it came
     // from. One read per address, so re-reading is a refresh and not a
     // second fetch of the same page.
@@ -6065,6 +6068,65 @@
       .catch(function () { });
   }
 
+  /// The paired devices, read beside the channel peers. A device token is
+  /// stored as a digest, so this names who is paired and never what would
+  /// let them in.
+  function readAccess(force) {
+    var now = Date.now();
+    if (!force && face.access && now - face.accessAt < 4000) return Promise.resolve();
+    face.accessAt = now;
+    return fetch('/api/access', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.access = doc;
+        if (face.panel === 'bots') paintBots();
+      })
+      .catch(function () { });
+  }
+
+  /// The paired phones and browsers. The store holds token digests, so a
+  /// row names the device and never the token; revoking forgets it.
+  function devicesCard() {
+    var read = face.access;
+    var devices = (read && read.devices) || [];
+    var card = boardCard(12, 'paired devices', devices.length
+      ? devices.length + (devices.length === 1 ? ' device' : ' devices')
+      : null,
+      'A device token is stored as a digest; this names who is paired and never what would ' +
+      'let them in. Revoking forgets the token.');
+    if (!read) {
+      card.appendChild(node('p', 'board-empty',
+        'The access read has not landed yet. It reads the home\u2019s device store.'));
+      return card;
+    }
+    if (!devices.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No device is paired. Mint a code from the pair button to let a phone in.'));
+      return card;
+    }
+    devices.forEach(function (device) {
+      var row = node('div', 'bots-row');
+      var head = node('div', 'bots-row-main');
+      head.appendChild(node('span', 'bots-row-name', device.name || device.id));
+      head.appendChild(node('span', 'bots-row-meta', 'paired ' + (device.paired || '\u2014')));
+      if (device.seen) head.appendChild(node('span', 'bots-row-meta', 'last seen ' + device.seen));
+      row.appendChild(head);
+      var acts = node('div', 'bots-acts');
+      acts.appendChild(botsButton('revoke-device', 'revoke', function () {
+        if (!window.confirm('Revoke the device `' + (device.name || device.id) + '`?')) return;
+        post('/api/access/revoke', { kind: 'device', id: device.id }).then(function () {
+          readAccess(true);
+        });
+      }));
+      row.appendChild(acts);
+      card.appendChild(row);
+    });
+    return card;
+  }
+
   /// The rail's count: the peers waiting at the door plus the peer seats
   /// waiting on an answer. Both are things an owner has to act on, and
   /// nothing else on this surface is.
@@ -6246,6 +6308,42 @@
         'token is set. `channels.enabled` in the settings, or `fleet gui --channels`, turns ' +
         'the service on.'));
     }
+    // The Telegram credential, write-only: the value is sent once, the
+    // input is cleared, and no read carries it back.
+    var telegram = read.telegram || { present: false, source: 'unset' };
+    var credential = node('div', 'bots-row');
+    var credentialHead = node('div', 'bots-row-main');
+    credentialHead.appendChild(node('span', 'bots-row-name', 'telegram'));
+    credentialHead.appendChild(badge(telegram.present
+      ? 'token \u00b7 ' + telegram.source
+      : 'no token', telegram.present ? 'ok' : 'warn'));
+    credential.appendChild(credentialHead);
+    var token = node('input', 'bots-input');
+    token.type = 'password';
+    token.autocomplete = 'off';
+    token.placeholder = 'FLEET_TELEGRAM_BOT_TOKEN';
+    token.setAttribute('aria-label', 'the Telegram bot token');
+    credential.appendChild(token);
+    var credentialActs = node('div', 'bots-acts');
+    credentialActs.appendChild(botsButton('seal-token', 'seal the token', function () {
+      if (!token.value.trim()) return;
+      var value = token.value;
+      token.value = '';
+      post('/api/settings', {
+        op: 'secret',
+        name: 'FLEET_TELEGRAM_BOT_TOKEN',
+        value: value
+      }).then(function (reply) {
+        if (reply.status !== 200) {
+          notice('the token was not sealed',
+            (reply.body && reply.body.error) || 'the writer refused it');
+          return;
+        }
+        readBots(true);
+      });
+    }));
+    credential.appendChild(credentialActs);
+    serviceCard.appendChild(credential);
     reports.forEach(function (report) {
       var row = node('div', 'bots-row');
       row.dataset.channel = report.name;
@@ -6271,6 +6369,7 @@
       serviceCard.appendChild(row);
     });
     el.botsBoard.appendChild(serviceCard);
+    el.botsBoard.appendChild(devicesCard());
 
     // Waiting at the door: a refusal recorded the peer, so it can be let
     // in from here instead of hunting an id out of a log.
@@ -6751,25 +6850,45 @@
     tiles.appendChild(tile(read.lists.filter(function (e) { return e.kind === 'provider'; }).length,
       'provider overrides'));
     tiles.appendChild(tile(read.lists.filter(function (e) { return e.kind === 'workload'; }).length,
-      'workload preferences'));
+      'workload overrides'));
     tiles.appendChild(tile(read.rules.length, 'remembered rules',
       read.rules.length ? 'live' : null));
     tiles.appendChild(tile(read.cron.length, 'cron jobs',
       read.cron.filter(function (j) { return j.enabled; }).length + ' enabled'));
     el.settingsBoard.appendChild(pageHead('System', 'Settings',
-      'Every knob this home carries, the two lists and the rules, the cron jobs, and the identity slot. ' +
-      'Every write rides the writer the CLI rides, so the two faces cannot disagree about what the file holds.',
+      'The router, the providers, the lanes, the roles, the vault, the spend caps, the rules, ' +
+      'the cron jobs, and the identity slot. Every value is picked from what this home already ' +
+      'knows; every write rides the writer the CLI rides.',
       read.read_at));
     el.settingsBoard.appendChild(statStrip(tiles));
+    el.settingsBoard.appendChild(sectionNav());
 
-    // The knobs, each editable in place: the value box saves through
-    // the one writer, and the source badge says which file answers.
-    var knobs = boardCard(12, 'the knobs', null,
+    el.settingsBoard.appendChild(routerCard());
+    el.settingsBoard.appendChild(providersCard());
+    el.settingsBoard.appendChild(lanesCard());
+    el.settingsBoard.appendChild(rolesCard());
+    el.settingsBoard.appendChild(vaultCard());
+    el.settingsBoard.appendChild(spendCard());
+
+    // The generic knobs. The router's own fields live in the router card,
+    // so they are filtered here rather than rendered twice.
+    var routerKeys = {
+      'pin': true,
+      'gates.min_confidence': true,
+      'gates.default_workload': true,
+      'gates.allow_api_models': true,
+      'FLEET_JUDGE_BUDGET_USD_DAY': true,
+      'FLEET_DELEGATE_BUDGET_USD_DAY': true,
+      'FLEET_EXPLAIN_BUDGET_USD_DAY': true
+    };
+    var knobs = boardCard(12, 'the other knobs', null,
       'the value in the box is what the home holds. A knob sourced from the environment says ' +
       'so \u2014 a file write would not take effect until the env var is unset.');
+    knobs.id = 'settings-knobs';
     var groups = {};
     var order = [];
     (read.scalars || []).forEach(function (knob) {
+      if (routerKeys[knob.key]) return;
       var prefix = knob.key.indexOf('.') > 0
         ? knob.key.split('.')[0]
         : (/^[A-Z0-9_]+$/.test(knob.key) ? 'environment' : 'general');
@@ -6782,7 +6901,9 @@
       calib: 'calibration',
       route_cache: 'route cache',
       skills: 'skills',
-      ui: 'interface'
+      ui: 'interface',
+      channels: 'channels',
+      remote: 'remote'
     };
     order.forEach(function (prefix) {
       knobs.appendChild(node('h3', 'form-section',
@@ -6791,38 +6912,11 @@
     });
     el.settingsBoard.appendChild(knobs);
 
-    // The two list surfaces and the rules, as the third.
-    var providers = (read.lists || []).filter(function (e) { return e.kind === 'provider'; });
-    var providerCard = boardCard(12, 'the providers', null,
-      'config.json\u2019s provider overrides. Removing one that reverts to the compiled-in ' +
-      'roster is the ordinary edit; removing one the file added takes the provider out of ' +
-      'every walk that names it, and the card says which is which.');
-    if (providers.length) {
-      providers.forEach(function (entry) { providerCard.appendChild(listEditor(entry, 'provider')); });
-    } else {
-      providerCard.appendChild(node('p', 'board-empty',
-        'No provider overrides. The compiled-in roster carries every candidate.'));
-    }
-    providerCard.appendChild(addProviderForm());
-    el.settingsBoard.appendChild(providerCard);
-
-    var workloads = (read.lists || []).filter(function (e) { return e.kind === 'workload'; });
-    var workloadCard = boardCard(12, 'the workloads', null,
-      'routing.json\u2019s preference lists. The candidates are the walk order, and an empty ' +
-      'list is refused \u2014 a workload nothing can serve walks into its default.');
-    if (workloads.length) {
-      workloads.forEach(function (entry) { workloadCard.appendChild(listEditor(entry, 'workload')); });
-    } else {
-      workloadCard.appendChild(node('p', 'board-empty',
-        'No workload preferences. The compiled-in table carries every chain.'));
-    }
-    workloadCard.appendChild(addWorkloadForm());
-    el.settingsBoard.appendChild(workloadCard);
-
     var ruleCard = boardCard(12, 'the remembered rules', null,
       'the third list, and the one that makes prompts thin out over time. The always-ask and ' +
       'destructive classes are refused by name \u2014 approval for those happens in the ' +
       'current turn, and a rule cannot waive it.');
+    ruleCard.id = 'settings-rules';
     if (read.rules.length) {
       read.rules.forEach(function (rule) {
         var row = node('div', 'list-row');
@@ -6842,10 +6936,10 @@
     ruleCard.appendChild(addRuleForm());
     el.settingsBoard.appendChild(ruleCard);
 
-    // The cron jobs: the surface they have never had.
     var cronCard = boardCard(12, 'the cron jobs', null,
       'the scheduled runs. A fire is an ordinary headless run in its own session log, and the ' +
       'task is the instruction it is given.');
+    cronCard.id = 'settings-cron';
     if (read.cron.length) {
       read.cron.forEach(function (job) { cronCard.appendChild(cronRow(job)); });
     } else {
@@ -6855,10 +6949,10 @@
     cronCard.appendChild(addCronForm());
     el.settingsBoard.appendChild(cronCard);
 
-    // The identity slot and the env names.
     var soulCard = boardCard(12, 'the identity slot', read.soul.present ? 'SOUL.md is set' : 'absent',
       'the file the model-visible base is read from per run. Absent, the compiled-in voice ' +
       'stands. Writing one replaces the base; the skills and memory frames still append.');
+    soulCard.id = 'settings-soul';
     var soul = node('textarea', 'soul-box');
     soul.value = read.soul.text || '';
     soul.setAttribute('aria-label', 'the SOUL.md identity slot');
@@ -6875,6 +6969,7 @@
     var envCard = boardCard(12, 'the env-var counterparts', null,
       'by name only: whether each resolves right now, and from where. A value never rides ' +
       'this document \u2014 the doctor\u2019s masking rule.');
+    envCard.id = 'settings-env';
     (read.env || []).forEach(function (entry) {
       var row = node('div', 'list-row');
       row.appendChild(node('span', 'list-row-key', entry.name));
@@ -6882,6 +6977,1044 @@
       envCard.appendChild(row);
     });
     el.settingsBoard.appendChild(envCard);
+  }
+
+  // The section chips. Ten surfaces under one page head would be a wall;
+  // a chip is a jump, not a second navigation.
+  function sectionNav() {
+    var nav = node('nav', 'cfg-nav');
+    [
+      ['router', 'router'], ['providers', 'providers'], ['lanes', 'lanes'],
+      ['roles', 'roles'], ['vault', 'vault'], ['spend', 'spend'],
+      ['knobs', 'knobs'], ['rules', 'rules'], ['cron', 'cron'],
+      ['soul', 'identity'], ['env', 'environment']
+    ].forEach(function (pair) {
+      var chip = node('button', 'cfg-chip', pair[1]);
+      chip.type = 'button';
+      chip.dataset.act = 'jump';
+      chip.title = 'jump to ' + pair[1];
+      chip.addEventListener('click', function () {
+        var target = document.getElementById('settings-' + pair[0]);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      nav.appendChild(chip);
+    });
+    return nav;
+  }
+
+  // ------------------------------------------------------------- pickers
+
+  var cfgSeq = 0;
+
+  function cfgOption(option) {
+    return typeof option === 'string' ? { value: option, label: option } : option;
+  }
+
+  function cfgField(label, control, note) {
+    var wrap = node('div', 'cfg-field');
+    wrap.appendChild(node('span', 'cfg-label', label));
+    wrap.appendChild(control);
+    if (note) wrap.appendChild(node('span', 'cfg-note', note));
+    return wrap;
+  }
+
+  // A closed set. The current value is selected; a value the options do
+  // not know stays visible as `(custom)` rather than being dropped.
+  function cfgSelect(value, options, aria) {
+    var select = node('select', 'knob-box');
+    select.setAttribute('aria-label', aria || '');
+    var current = value == null ? '' : String(value);
+    var normalized = (options || []).map(cfgOption);
+    var seen = {};
+    var found = false;
+    // An unset value gets its own selected blank when the set has no
+    // empty entry of its own: the lane's default stands until the owner
+    // picks something, rather than the browser promoting the first
+    // option into a written value.
+    if (current === '' && !normalized.some(function (option) { return option.value === ''; })) {
+      var blank = node('option', null, '\u2014');
+      blank.value = '';
+      blank.selected = true;
+      select.appendChild(blank);
+      seen[''] = true;
+      found = true;
+    }
+    normalized.forEach(function (option) {
+      if (seen[option.value]) return;
+      seen[option.value] = true;
+      var choice = node('option', null, option.label);
+      choice.value = option.value;
+      if (option.value === current) { choice.selected = true; found = true; }
+      select.appendChild(choice);
+    });
+    if (!found && current !== '') {
+      var custom = node('option', null, current + ' (custom)');
+      custom.value = current;
+      custom.selected = true;
+      select.appendChild(custom);
+    }
+    return select;
+  }
+
+  // An open set: the catalog suggests, the input stays free. The caller
+  // reads `wrap.input.value` at save.
+  function cfgCombo(value, options, aria) {
+    var id = 'cfg-list-' + (++cfgSeq);
+    var input = node('input', 'knob-box');
+    input.type = 'text';
+    input.value = value == null ? '' : String(value);
+    input.setAttribute('list', id);
+    input.setAttribute('aria-label', aria || '');
+    var list = node('datalist');
+    list.id = id;
+    var seen = {};
+    (options || []).map(cfgOption).forEach(function (option) {
+      if (seen[option.value]) return;
+      seen[option.value] = true;
+      var choice = node('option');
+      choice.value = option.value;
+      choice.label = option.label;
+      list.appendChild(choice);
+    });
+    var wrap = node('span', 'cfg-combo');
+    wrap.appendChild(input);
+    wrap.appendChild(list);
+    wrap.input = input;
+    return wrap;
+  }
+
+  // An ordered or unordered list of chips. `onChange` receives the whole
+  // next list; the add control is a pick plus an explicit custom entry.
+  function cfgChips(values, options, ordered, onChange, aria) {
+    var wrap = node('div', 'chip-editor');
+    var list = node('div', 'chip-list');
+    var state = (values || []).slice();
+    var addRow = node('div', 'chip-add');
+    var pick = cfgSelect('', options || [], (aria || 'add') + ' pick');
+    if (pick.options.length && pick.options[0].value === '') {
+      pick.options[0].text = 'pick from the list\u2026';
+    }
+    var add = node('button', 'replay-button', 'add');
+    add.type = 'button';
+    add.dataset.act = 'add';
+    var custom = node('input', 'knob-box');
+    custom.type = 'text';
+    custom.placeholder = 'or type a new value';
+    custom.setAttribute('aria-label', (aria || 'value') + ' custom');
+    var customAdd = node('button', 'replay-button', 'add custom');
+    customAdd.type = 'button';
+    customAdd.dataset.act = 'add-custom';
+    // A list with no catalog is a free-text list: the empty pick would be
+    // a control that can never add anything.
+    if (!options || !options.length) {
+      pick.hidden = true;
+      add.hidden = true;
+    }
+
+    function commit() {
+      if (onChange) onChange(state.slice());
+    }
+
+    function render() {
+      list.textContent = '';
+      if (!state.length) {
+        list.appendChild(node('span', 'cfg-note', 'nothing listed'));
+      }
+      state.forEach(function (value, index) {
+        var chip = node('span', 'chip');
+        chip.appendChild(node('span', 'chip-text', value));
+        if (ordered) {
+          var up = node('button', 'chip-act', '\u2191');
+          up.type = 'button';
+          up.dataset.act = 'move-up';
+          up.disabled = index === 0;
+          up.addEventListener('click', function () {
+            var swap = state[index - 1];
+            state[index - 1] = state[index];
+            state[index] = swap;
+            render();
+            commit();
+          });
+          chip.appendChild(up);
+          var down = node('button', 'chip-act', '\u2193');
+          down.type = 'button';
+          down.dataset.act = 'move-down';
+          down.disabled = index === state.length - 1;
+          down.addEventListener('click', function () {
+            var swap = state[index + 1];
+            state[index + 1] = state[index];
+            state[index] = swap;
+            render();
+            commit();
+          });
+          chip.appendChild(down);
+        }
+        var remove = node('button', 'chip-act', '\u00d7');
+        remove.type = 'button';
+        remove.dataset.act = 'remove';
+        remove.addEventListener('click', function () {
+          state.splice(index, 1);
+          render();
+          commit();
+        });
+        chip.appendChild(remove);
+        list.appendChild(chip);
+      });
+    }
+
+    add.addEventListener('click', function () {
+      var value = pick.value;
+      if (!value || state.indexOf(value) >= 0) return;
+      state.push(value);
+      pick.value = '';
+      render();
+      commit();
+    });
+    customAdd.addEventListener('click', function () {
+      var value = custom.value.trim();
+      if (!value || state.indexOf(value) >= 0) return;
+      state.push(value);
+      custom.value = '';
+      render();
+      commit();
+    });
+
+    addRow.appendChild(pick);
+    addRow.appendChild(add);
+    addRow.appendChild(custom);
+    addRow.appendChild(customAdd);
+    wrap.appendChild(list);
+    wrap.appendChild(addRow);
+    wrap.values = function () { return state.slice(); };
+    render();
+    return wrap;
+  }
+
+  function cfgSwitch(label, checked, onChange, note) {
+    var wrap = node('label', 'cfg-switch');
+    var box = node('input');
+    box.type = 'checkbox';
+    box.checked = !!checked;
+    box.addEventListener('change', function () { onChange(box.checked); });
+    wrap.appendChild(box);
+    wrap.appendChild(node('span', null, label));
+    if (note) wrap.appendChild(node('span', 'cfg-note', note));
+    return wrap;
+  }
+
+  // The catalog slices every picker reads.
+  function cfgCatalog() { return (face.settings && face.settings.catalog) || {}; }
+  function cfgModels() { return (cfgCatalog().models || []); }
+  function cfgModelValues() { return cfgModels().map(function (one) { return one.value; }); }
+  function cfgEnvNames() { return (cfgCatalog().env_names || []); }
+  function cfgPaths() { return (cfgCatalog().paths || []); }
+  function cfgWorkloads() { return (cfgCatalog().workloads || []); }
+  function cfgProviders() { return (cfgCatalog().providers || []); }
+
+  function cfgModelOptions() {
+    return cfgModels().map(function (one) {
+      return {
+        value: one.value,
+        label: one.value + (one.known ? (one.key_present || one.kind === 'lane' ? '' : ' \u00b7 no key') : ' \u00b7 unknown')
+      };
+    });
+  }
+
+  // ---------------------------------------------------------- the router
+
+  function routerCard() {
+    var read = face.settings.router || {};
+    var card = boardCard(12, 'the router', read.orchestrator ? 'walks ' + read.orchestrator : null,
+      'The spend gate, the workload tiers, and the judge\u2019s defaults. The resolved column is ' +
+      'the first candidate that would serve now: the gate applied, the provider enabled, its ' +
+      'key present. The orchestrator walks ' + (read.orchestrator || 'hard') +
+      '\u2019s chain whatever the task was judged; calibration can still demote a candidate.');
+    card.id = 'settings-router';
+    if (read.refused && read.refused.length) {
+      card.appendChild(node('p', 'board-empty', read.refused.join(' \u00b7 ')));
+      return card;
+    }
+
+    card.appendChild(cfgSwitch('allow hosted API models', read.spend_guard, function (on) {
+      writeSettings('set', { key: 'gates.allow_api_models', value: on ? 'true' : 'false' });
+    }, 'Off keeps every HTTP candidate out of every order \u2014 even a pin. Vendored lanes still serve.'));
+
+    var grid = node('div', 'tier-grid');
+    ['tier', 'target', 'fallbacks (ordered)', 'resolved now'].forEach(function (head) {
+      grid.appendChild(node('div', 'tier-head', head));
+    });
+    // The remove column has no label; the cell keeps the five-column
+    // grid aligned with every row's five children.
+    grid.appendChild(node('div', 'tier-head'));
+    (read.tiers || []).forEach(function (tier) {
+      grid.appendChild(tierRow(tier, read.orchestrator));
+    });
+    card.appendChild(grid);
+
+    var add = node('div', 'cfg-add');
+    var name = node('input', 'knob-box');
+    name.type = 'text';
+    name.placeholder = 'a new workload name';
+    name.setAttribute('aria-label', 'a new workload name');
+    var target = cfgSelect('', cfgModelOptions(), 'the new workload target');
+    var addButton = node('button', 'replay-button replay-resume', 'add a workload');
+    addButton.type = 'button';
+    addButton.dataset.act = 'add-workload';
+    addButton.addEventListener('click', function () {
+      var workload = name.value.trim();
+      if (!workload || !target.value) return;
+      writeSettings('workload', { workload: workload, candidates: [target.value] });
+    });
+    add.appendChild(name);
+    add.appendChild(target);
+    add.appendChild(addButton);
+    card.appendChild(add);
+
+    var thresholds = node('div', 'cfg-grid');
+    var defaultWorkload = cfgSelect(read.default_workload, cfgWorkloads(), 'the default workload');
+    defaultWorkload.addEventListener('change', function () {
+      writeSettings('set', { key: 'gates.default_workload', value: defaultWorkload.value });
+    });
+    thresholds.appendChild(cfgField('default workload', defaultWorkload,
+      'an absent or below-floor judgment routes here.'));
+    var floor = node('input', 'knob-box');
+    floor.type = 'number';
+    floor.step = '0.01';
+    floor.min = '0';
+    floor.max = '1';
+    floor.value = String(read.min_confidence);
+    floor.setAttribute('aria-label', 'the judgment confidence floor');
+    var saveFloor = node('button', 'replay-button', 'save');
+    saveFloor.type = 'button';
+    saveFloor.addEventListener('click', function () {
+      writeSettings('set', { key: 'gates.min_confidence', value: floor.value });
+    });
+    var floorWrap = node('span', 'cfg-inline');
+    floorWrap.appendChild(floor);
+    floorWrap.appendChild(saveFloor);
+    thresholds.appendChild(cfgField('min confidence', floorWrap,
+      'a verdict below this falls to the default workload.'));
+    var pinOptions = [{ value: '', label: 'no pin' }]
+      .concat(cfgProviders().map(function (provider) {
+        return { value: provider.id, label: provider.id };
+      }))
+      .concat(cfgModelValues().map(function (value) {
+        return { value: value, label: value };
+      }));
+    var pin = cfgSelect(read.pin || '', pinOptions, 'the pin');
+    pin.addEventListener('change', function () {
+      writeSettings('set', { key: 'pin', value: pin.value });
+    });
+    thresholds.appendChild(cfgField('pin', pin,
+      'a provider pin still judges the workload; a provider/model pair skips the judgment.'));
+    thresholds.appendChild(cfgField('orchestrator walks', node('span', 'cfg-readonly', read.orchestrator || 'hard'),
+      'the first model supervises every run, whatever the task was judged.'));
+    card.appendChild(thresholds);
+
+    var roster = node('details', 'cfg-details');
+    var summary = node('summary', 'cfg-summary',
+      'the roster it resolves against (' + (read.roster || []).length + ' providers)');
+    roster.appendChild(summary);
+    (read.roster || []).forEach(function (entry) {
+      var row = node('div', 'cfg-roster-row');
+      row.appendChild(node('span', 'cfg-roster-id', entry.id));
+      row.appendChild(badge(entry.kind, null));
+      row.appendChild(badge(entry.billing, entry.billing === 'payg' ? 'warn' : null));
+      row.appendChild(badge(entry.enabled ? 'enabled' : 'disabled', entry.enabled ? 'ok' : 'warn'));
+      row.appendChild(badge(entry.key_present ? 'key present' : (entry.key_required ? 'no key' : 'no key needed'),
+        entry.key_present || !entry.key_required ? 'ok' : 'warn'));
+      row.appendChild(node('span', 'cfg-note', entry.key_env));
+      roster.appendChild(row);
+    });
+    card.appendChild(roster);
+    return card;
+  }
+
+  function tierRow(tier, orchestrator) {
+    var target = cfgSelect(tier.candidates[0] || '', cfgModelOptions(), tier.workload + ' target');
+    target.addEventListener('change', function () {
+      // A target promoted from the fallbacks leaves the fallback list:
+      // one candidate, one position.
+      saveTier(tier.workload, [target.value].concat(tier.candidates.slice(1)));
+    });
+    var fallbacks = cfgChips(tier.candidates.slice(1), cfgModelValues(), true, function (next) {
+      saveTier(tier.workload, [tier.candidates[0]].concat(next));
+    }, tier.workload + ' fallbacks');
+    var resolved = node('div', 'tier-resolved');
+    if (tier.resolved) {
+      resolved.appendChild(badge(tier.resolved, 'ok'));
+    } else {
+      resolved.appendChild(badge('nothing resolves', 'warn'));
+      if (tier.reason) resolved.appendChild(node('span', 'cfg-note', tier.reason));
+    }
+    if (tier.workload === orchestrator) {
+      resolved.appendChild(badge('walker', 'live'));
+    }
+    var remove = node('button', 'chip-act', '\u00d7');
+    remove.type = 'button';
+    remove.dataset.act = 'remove-workload';
+    remove.title = tier.reverts ? 'remove the override, reverting to the compiled-in chain'
+      : 'remove a workload the file added';
+    remove.addEventListener('click', function () {
+      if (!tier.reverts && !window.confirm(
+        '`' + tier.workload + '` was added by this home. Removing it takes the workload out ' +
+        'of every walk that names it. Do it anyway?')) return;
+      writeSettings('workload-remove', { workload: tier.workload, force: !tier.reverts });
+    });
+    var row = node('div', 'tier-row');
+    row.appendChild(node('div', 'tier-name', tier.workload));
+    row.appendChild(target);
+    row.appendChild(fallbacks);
+    row.appendChild(resolved);
+    row.appendChild(remove);
+    return row;
+  }
+
+  function saveTier(workload, candidates) {
+    var cleaned = [];
+    candidates.forEach(function (value) {
+      if (!value || !value.trim() || cleaned.indexOf(value) >= 0) return;
+      cleaned.push(value);
+    });
+    if (!cleaned.length) return;
+    writeSettings('workload', { workload: workload, candidates: cleaned });
+  }
+
+  // --------------------------------------------------------- the providers
+
+  function providersCard() {
+    var card = boardCard(12, 'the providers', null,
+      'The roster the router walks. Each field is seeded from the roster; the key env is a ' +
+      'name, never a value, and a provider with no override is the compiled-in entry.');
+    card.id = 'settings-providers';
+    var roster = (face.settings.router && face.settings.router.roster) || [];
+    var overrides = {};
+    (face.settings.lists || []).forEach(function (entry) {
+      if (entry.kind === 'provider') overrides[entry.key] = entry;
+    });
+    roster.forEach(function (entry) {
+      card.appendChild(providerEditor(entry, overrides[entry.id]));
+    });
+    card.appendChild(providerAddForm());
+    return card;
+  }
+
+  function providerEditor(entry, override) {
+    var form = node('div', 'cfg-form');
+    var head = node('div', 'cfg-form-head');
+    head.appendChild(node('span', 'list-row-key', entry.id));
+    head.appendChild(badge(entry.kind, null));
+    head.appendChild(badge(entry.billing, entry.billing === 'payg' ? 'warn' : null));
+    head.appendChild(badge(entry.enabled ? 'enabled' : 'disabled', entry.enabled ? 'ok' : 'warn'));
+    head.appendChild(badge(entry.key_present ? 'key present' : (entry.key_required ? 'no key' : 'no key needed'),
+      entry.key_present || !entry.key_required ? 'ok' : 'warn'));
+    form.appendChild(head);
+
+    var grid = node('div', 'cfg-grid');
+    var base = cfgCombo(entry.base_url, [], entry.id + ' base url');
+    grid.appendChild(cfgField('base url', base));
+    var keyEnv = cfgCombo(entry.key_env, cfgEnvNames().map(function (name) {
+      return { value: name.name, label: name.name + (name.present ? ' \u00b7 ' + name.source : ' \u00b7 unset') };
+    }), entry.id + ' key env');
+    grid.appendChild(cfgField('key env', keyEnv, 'a name; the value never rides this page.'));
+    var models = cfgChips(entry.models || [], [], false, null, entry.id + ' models');
+    grid.appendChild(cfgField('models', models, 'the model ids this provider serves.'));
+    var billing = cfgSelect(entry.billing, ['plan', 'payg'], entry.id + ' billing');
+    grid.appendChild(cfgField('billing', billing));
+    var kind = cfgSelect(entry.kind, ['http', 'lane'], entry.id + ' kind');
+    grid.appendChild(cfgField('kind', kind));
+    form.appendChild(grid);
+
+    var switches = node('div', 'cfg-inline');
+    var enabled = cfgSwitch('enabled', entry.enabled, function () { }, null);
+    var keyRequired = cfgSwitch('key required', entry.key_required, function () { }, null);
+    switches.appendChild(enabled);
+    switches.appendChild(keyRequired);
+    form.appendChild(switches);
+    var reason = cfgCombo(entry.disabled_reason || '', [], entry.id + ' disabled reason');
+    form.appendChild(cfgField('disabled reason', reason, 'shown when the provider is off.'));
+
+    var actions = node('div', 'replay-actions');
+    var save = node('button', 'replay-button replay-resume', 'save');
+    save.type = 'button';
+    save.dataset.act = 'save-provider';
+    save.addEventListener('click', function () {
+      var payload = {
+        id: entry.id,
+        base_url: base.input.value.trim(),
+        key_env: keyEnv.input.value.trim(),
+        models: models.values(),
+        billing: billing.value,
+        kind: kind.value,
+        enabled: enabled.querySelector('input').checked,
+        key_required: keyRequired.querySelector('input').checked
+      };
+      var said = reason.input.value.trim();
+      if (said) payload.disabled_reason = said;
+      writeSettings('provider', { entry: JSON.stringify(payload) });
+    });
+    actions.appendChild(save);
+    var pin = node('button', 'replay-button', 'pin this provider');
+    pin.type = 'button';
+    pin.addEventListener('click', function () {
+      writeSettings('set', { key: 'pin', value: entry.id });
+    });
+    actions.appendChild(pin);
+    if (override) {
+      var remove = node('button', 'replay-button',
+        override.reverts ? 'remove the override' : 'remove \u2014 takes it out of every walk');
+      remove.type = 'button';
+      remove.addEventListener('click', function () {
+        if (!override.reverts && !window.confirm(
+          '`' + entry.id + '` was added by this home. Removing it takes the provider out of ' +
+          'every walk that names it. Do it anyway?')) return;
+        writeSettings('provider-remove', { id: entry.id, force: !override.reverts });
+      });
+      actions.appendChild(remove);
+    }
+    form.appendChild(actions);
+    return form;
+  }
+
+  function providerAddForm() {
+    var form = node('div', 'cfg-form');
+    var head = node('div', 'cfg-form-head');
+    head.appendChild(node('span', 'list-row-key', 'add a provider'));
+    form.appendChild(head);
+    var grid = node('div', 'cfg-grid');
+    var id = node('input', 'knob-box'); id.type = 'text'; id.placeholder = 'my-provider';
+    grid.appendChild(cfgField('id', id));
+    var base = cfgCombo('', [], 'a new provider base url');
+    grid.appendChild(cfgField('base url', base));
+    var key = cfgCombo('', cfgEnvNames().map(function (name) {
+      return { value: name.name, label: name.name };
+    }), 'a new provider key env');
+    grid.appendChild(cfgField('key env', key));
+    var model = node('input', 'knob-box'); model.type = 'text'; model.placeholder = 'model-id';
+    grid.appendChild(cfgField('models', model, 'comma-separated.'));
+    var billing = cfgSelect('plan', ['plan', 'payg'], 'a new provider billing');
+    grid.appendChild(cfgField('billing', billing));
+    var kind = cfgSelect('http', ['http', 'lane'], 'a new provider kind');
+    grid.appendChild(cfgField('kind', kind));
+    form.appendChild(grid);
+    var add = node('button', 'replay-button replay-resume', 'add');
+    add.type = 'button';
+    add.addEventListener('click', function () {
+      var models = model.value.split(',').map(function (one) { return one.trim(); })
+        .filter(function (one) { return one.length > 0; });
+      if (!id.value.trim() || !base.input.value.trim() || !key.input.value.trim() || !models.length) return;
+      writeSettings('provider', {
+        entry: JSON.stringify({
+          id: id.value.trim(),
+          base_url: base.input.value.trim(),
+          key_env: key.input.value.trim(),
+          models: models,
+          billing: billing.value,
+          kind: kind.value
+        })
+      });
+    });
+    form.appendChild(add);
+    return form;
+  }
+
+  // ------------------------------------------------------------- the lanes
+
+  function lanesCard() {
+    var read = face.settings.lanes || {};
+    var card = boardCard(12, 'the lanes', null,
+      'The services fleet launches: the judgment, tabular, embeddings, and media lanes beside ' +
+      'the browser and the composer. A value here is the launch environment the lane receives; ' +
+      'the lane\u2019s own repository and TOML are never rewritten. Key presence is a badge, ' +
+      'never a value.');
+    card.id = 'settings-lanes';
+    if (read.refused && read.refused.length) {
+      card.appendChild(node('p', 'board-empty', read.refused.join(' \u00b7 ')));
+      return card;
+    }
+    (read.lanes || []).forEach(function (lane) {
+      card.appendChild(laneBlock(lane));
+    });
+    return card;
+  }
+
+  function laneByKind(lane, kind) {
+    return (lane.choices || []).filter(function (choice) { return choice.kind === kind; });
+  }
+
+  function laneProviders(lane) {
+    var seen = {};
+    var out = [];
+    laneByKind(lane, 'provider').forEach(function (choice) {
+      if (seen[choice.provider]) return;
+      seen[choice.provider] = true;
+      out.push(choice.provider);
+    });
+    return out;
+  }
+
+  function laneOptions(lane, kind, provider) {
+    return laneByKind(lane, kind).filter(function (choice) {
+      return !provider || choice.provider === provider;
+    }).map(function (choice) {
+      return { value: choice.value, label: choice.label };
+    });
+  }
+
+  function envKeyOptions() {
+    return cfgEnvNames().map(function (name) {
+      return { value: name.name, label: name.name + (name.present ? ' \u00b7 ' + name.source : ' \u00b7 unset') };
+    });
+  }
+
+  function sys1EnvFields(lane) {
+    var fields = [
+      { name: 'SYS1_CLASSIFY__PROVIDER', label: 'classify provider', kind: 'select',
+        options: laneOptions(lane, 'classify') },
+      { name: 'SYS1_CLASSIFY__CONFIDENCE_FLOOR', label: 'confidence floor', kind: 'text' },
+      { name: 'SYS1_CLASSIFY__BLOCK_ON_CLASSIFICATION', label: 'block on classification', kind: 'toggle' },
+      { name: 'SYS1_CLASSIFY__ESCALATE_ON_NULL', label: 'escalate on null', kind: 'toggle' },
+      { name: 'SYS1_PROVIDERS__ROUTE__ENABLED', label: 'route enabled', kind: 'toggle' },
+      { name: 'SYS1_PROVIDERS__ROUTE__DEFAULT_CHAIN', label: 'default chain', kind: 'chips',
+        options: laneProviders(lane) },
+      { name: 'SYS1_PROVIDERS__ENABLED', label: 'pool enabled', kind: 'text' },
+      { name: 'SYS1_PROVIDERS__DISABLED', label: 'pool disabled', kind: 'text' }
+    ];
+    return fields;
+  }
+
+  function laneEnvFields(lane) {
+    if (lane.name === 'sys1') return sys1EnvFields(lane);
+    if (lane.name === 'sem1') {
+      return [
+        { name: 'SEM1_ST_VENV', label: 'st venv', kind: 'combo', options: cfgPaths().map(function (path) { return path.value; }) },
+        { name: 'SEM1_VECTORS_DIR', label: 'vectors dir', kind: 'combo' },
+        { name: 'SEM1_LOG_DIR', label: 'log dir', kind: 'combo' }
+      ];
+    }
+    if (lane.name === 'sdm1') {
+      return [
+        { name: 'SDM1_TABPFN_BASE', label: 'TabPFN base', kind: 'combo', options: laneOptions(lane, 'endpoint') },
+        { name: 'SDM1_TABPFN_TIMEOUT', label: 'TabPFN timeout', kind: 'text' },
+        { name: 'SDM1_MODELS_PYTHON', label: 'models python', kind: 'combo', options: cfgPaths().map(function (path) { return path.value; }) },
+        { name: 'SDM1_MODELS_VENV', label: 'models venv', kind: 'combo', options: cfgPaths().map(function (path) { return path.value; }) },
+        { name: 'SDM1_TIMEOUT', label: 'worker timeout', kind: 'text' },
+        { name: 'SDM1_LOG_DIR', label: 'log dir', kind: 'combo' }
+      ];
+    }
+    if (lane.name === 'gen1') {
+      return [
+        { name: 'QWEN_BASE_URL', label: 'qwen base url', kind: 'combo', options: laneOptions(lane, 'endpoint', 'qwen') },
+        { name: 'QWEN_TTS_WS_URL', label: 'qwen tts ws url', kind: 'combo' },
+        { name: 'QWEN_TTS_MODEL', label: 'qwen tts model', kind: 'combo', options: laneOptions(lane, 'model', 'qwen') },
+        { name: 'QWEN_TTS_VOICE', label: 'qwen voice', kind: 'combo', options: laneOptions(lane, 'voice', 'qwen') },
+        { name: 'STEPFUN_BASE_URL', label: 'stepfun base url', kind: 'combo', options: laneOptions(lane, 'endpoint', 'stepfun') },
+        { name: 'STEPFUN_TTS_MODEL', label: 'stepfun tts model', kind: 'combo', options: laneOptions(lane, 'model', 'stepfun') },
+        { name: 'STEPFUN_TTS_VOICE', label: 'stepfun voice', kind: 'combo', options: laneOptions(lane, 'voice', 'stepfun') },
+        { name: 'STEPFUN_ASR_MODEL', label: 'stepfun asr model', kind: 'combo', options: laneOptions(lane, 'model', 'stepfun') },
+        { name: 'DASHSCOPE_BASE_URL', label: 'dashscope base url', kind: 'combo', options: laneOptions(lane, 'endpoint', 'wan') },
+        { name: 'IMAGE_MODEL', label: 'wan image model', kind: 'combo', options: laneOptions(lane, 'model', 'wan') },
+        { name: 'GEN1_KOKORO_MODEL', label: 'kokoro model', kind: 'combo', options: cfgPaths().map(function (path) { return path.value; }) },
+        { name: 'GEN1_KOKORO_VOICES', label: 'kokoro voices', kind: 'combo', options: cfgPaths().map(function (path) { return path.value; }) },
+        { name: 'GEN1_KOKORO_VOICE', label: 'kokoro voice', kind: 'combo', options: laneOptions(lane, 'voice', 'kokoro') },
+        { name: 'GEN1_KOKORO_PYTHON', label: 'kokoro python', kind: 'combo' },
+        { name: 'GEN1_TELEMETRY_FILE', label: 'telemetry file', kind: 'combo' }
+      ];
+    }
+    return [];
+  }
+
+  function laneDefaultFields(lane) {
+    if (lane.name === 'sem1') {
+      return [
+        { tool: 'sem1_embed', arg: 'provider', label: 'embed provider', kind: 'select', options: laneOptions(lane, 'provider') },
+        { tool: 'sem1_embed', arg: 'model', label: 'embed model', kind: 'combo', options: laneOptions(lane, 'model') },
+        { tool: 'sem1_embed', arg: 'endpoint', label: 'embed endpoint', kind: 'combo', options: laneOptions(lane, 'endpoint') }
+      ];
+    }
+    if (lane.name === 'sdm1') {
+      return [
+        { tool: 'sdm1_classify', arg: 'model', label: 'classify provider', kind: 'select',
+          options: laneOptions(lane, 'provider') }
+      ];
+    }
+    if (lane.name === 'gen1') {
+      return [
+        { tool: 'gen1_imagine', arg: 'provider', label: 'imagine provider', kind: 'select',
+          options: laneOptions(lane, 'provider').filter(function (choice) {
+            return choice.value === 'wan';
+          }) }
+      ];
+    }
+    return [];
+  }
+
+  // The sys1 provider pool: three fields per provider, seeded from the
+  // lane catalog. It lives behind its own summary because twelve
+  // providers are a table, not a paragraph.
+  function sys1Pool(lane, configured, controls) {
+    var details = node('details', 'cfg-details');
+    details.appendChild(node('summary', 'cfg-summary', 'the provider pool (' + laneProviders(lane).length + ')'));
+    var grid = node('div', 'pool-grid');
+    ['provider', 'model', 'base url', 'key env'].forEach(function (head) {
+      grid.appendChild(node('div', 'tier-head', head));
+    });
+    laneProviders(lane).forEach(function (provider) {
+      var upper = provider.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+      var modelName = 'SYS1_PROVIDERS__' + upper + '_MODEL';
+      var urlName = provider === 'local'
+        ? 'SYS1_PROVIDERS__LOCAL_SERVER_URL'
+        : 'SYS1_PROVIDERS__' + upper + '_API_URL';
+      var keyName = provider === 'local'
+        ? 'SYS1_PROVIDERS__LOCAL_VENV'
+        : 'SYS1_PROVIDERS__' + upper + '_API_KEY_ENV';
+      var model = cfgCombo(configured[modelName] || '', laneOptions(lane, 'model', provider), provider + ' model');
+      var url = cfgCombo(configured[urlName] || '', laneOptions(lane, 'endpoint', provider), provider + ' url');
+      var key = cfgCombo(configured[keyName] || '',
+        provider === 'local' ? cfgPaths().map(function (path) { return path.value; })
+          : envKeyOptions().concat(laneOptions(lane, 'key_env', provider)),
+        provider + ' key env');
+      controls.push({ name: modelName, control: model, kind: 'combo', tool: null });
+      controls.push({ name: urlName, control: url, kind: 'combo', tool: null });
+      controls.push({ name: keyName, control: key, kind: 'combo', tool: null });
+      grid.appendChild(node('div', 'pool-name', provider));
+      grid.appendChild(model);
+      grid.appendChild(url);
+      grid.appendChild(key);
+    });
+    details.appendChild(grid);
+    return details;
+  }
+
+  function laneBlock(lane) {
+    var configured = lane.configured || {};
+    var env = configured.env || {};
+    var defaults = configured.defaults || {};
+    var details = node('details', 'cfg-details');
+    var summary = node('summary', 'cfg-summary');
+    summary.appendChild(node('span', 'cfg-lane-name', lane.name));
+    summary.appendChild(badge(lane.role, null));
+    if (lane.unavailable) {
+      summary.appendChild(badge('unavailable', 'warn'));
+    } else {
+      summary.appendChild(badge('home \u00b7 ' + (lane.source || 'bundled'), 'ok'));
+    }
+    details.appendChild(summary);
+    if (lane.unavailable) {
+      details.appendChild(node('p', 'cfg-note', lane.unavailable));
+    }
+
+    var controls = [];
+    var home = cfgCombo(configured.home || '', cfgPaths().map(function (path) {
+      return { value: path.value, label: path.value + ' \u00b7 ' + path.label };
+    }), lane.name + ' home');
+    details.appendChild(cfgField('home', home,
+      'an absolute checkout; empty resolves the bundled copy.'));
+
+    var envFields = laneEnvFields(lane);
+    envFields.forEach(function (field) {
+      var value = env[field.name] || '';
+      var control;
+      if (field.kind === 'select') {
+        control = cfgSelect(value, field.options || [], field.label);
+      } else if (field.kind === 'toggle') {
+        control = cfgSwitch(field.label, value === 'true' || value === '1', function () { }, null);
+      } else if (field.kind === 'chips') {
+        control = cfgChips(value ? value.split(',').map(function (one) { return one.trim(); })
+          .filter(function (one) { return one.length > 0; }) : [],
+          field.options || [], true, null, field.label);
+      } else {
+        control = cfgCombo(value, field.options || [], field.label);
+      }
+      controls.push({ name: field.name, control: control, kind: field.kind });
+      details.appendChild(cfgField(field.label, control));
+    });
+
+    if (lane.name === 'sys1') {
+      details.appendChild(sys1Pool(lane, env, controls));
+    }
+
+    var defaultFields = laneDefaultFields(lane);
+    if (defaultFields.length) {
+      details.appendChild(node('h3', 'form-section', 'per-call defaults'));
+      details.appendChild(node('p', 'cfg-note',
+        'the model\u2019s own argument always wins; a default only fills what it left out.'));
+      defaultFields.forEach(function (field) {
+        var current = (defaults[field.tool] || {})[field.arg] || '';
+        var control = field.kind === 'select'
+          ? cfgSelect(current, field.options || [], field.label)
+          : cfgCombo(current, field.options || [], field.label);
+        controls.push({ tool: field.tool, arg: field.arg, control: control, kind: field.kind });
+        details.appendChild(cfgField(field.label, control));
+      });
+    }
+
+    var actions = node('div', 'replay-actions');
+    var save = node('button', 'replay-button replay-resume', 'save the lane');
+    save.type = 'button';
+    save.dataset.act = 'save-lane';
+    save.addEventListener('click', function () {
+      var draft = { home: home.input.value.trim(), env: {}, defaults: {} };
+      controls.forEach(function (field) {
+        var value;
+        if (field.kind === 'toggle') {
+          value = field.control.querySelector('input').checked ? 'true' : 'false';
+        } else if (field.kind === 'chips') {
+          value = field.control.values().join(',');
+        } else if (field.kind === 'combo') {
+          value = field.control.input.value.trim();
+        } else {
+          value = field.control.value.trim();
+        }
+        if (!value) return;
+        if (field.tool) {
+          if (!draft.defaults[field.tool]) draft.defaults[field.tool] = {};
+          draft.defaults[field.tool][field.arg] = value;
+        } else {
+          draft.env[field.name] = value;
+        }
+      });
+      writeSettings('lane', { lane: lane.name, config: draft });
+    });
+    actions.appendChild(save);
+    var reset = node('button', 'replay-button', 'reset this lane');
+    reset.type = 'button';
+    reset.addEventListener('click', function () {
+      if (!window.confirm('Clear every configured value for `' + lane.name + '`?')) return;
+      writeSettings('lane', { lane: lane.name, config: { env: {}, defaults: {} } });
+    });
+    actions.appendChild(reset);
+    details.appendChild(actions);
+    return details;
+  }
+
+  // ------------------------------------------------------------- the roles
+
+  function rolesCard() {
+    var read = face.settings.roles || {};
+    var card = boardCard(12, 'the roles', null,
+      'The named specializations a delegation runs under. A role is a markdown file in the ' +
+      'home; the tools, skills, and shapes are picked from the vocabularies Fleet already ' +
+      'knows, and the overlay is the standing instruction the child carries.');
+    card.id = 'settings-roles';
+    (read.entries || []).forEach(function (entry) {
+      card.appendChild(roleBlock(entry));
+    });
+    card.appendChild(roleAddForm());
+    return card;
+  }
+
+  function roleBlock(entry) {
+    var details = node('details', 'cfg-details');
+    var summary = node('summary', 'cfg-summary');
+    summary.appendChild(node('span', 'cfg-lane-name', entry.name));
+    if (entry.broken) {
+      summary.appendChild(badge('broken', 'down'));
+    } else {
+      summary.appendChild(node('span', 'cfg-note', entry.description));
+      if (entry.modified) summary.appendChild(badge(entry.modified, null));
+    }
+    details.appendChild(summary);
+    if (entry.broken) {
+      details.appendChild(node('p', 'board-empty', entry.broken));
+    }
+    var description = node('input', 'knob-box');
+    description.type = 'text';
+    description.value = entry.description || '';
+    description.setAttribute('aria-label', entry.name + ' description');
+    details.appendChild(cfgField('description', description));
+    var tools = cfgChips(entry.tools || [], cfgCatalog().tools || [], false, null, entry.name + ' tools');
+    details.appendChild(cfgField('tools', tools, 'empty narrows nothing: the brief\'s own set stands.'));
+    var skills = cfgChips(entry.skills || [], cfgCatalog().skills || [], false, null, entry.name + ' skills');
+    details.appendChild(cfgField('skills', skills));
+    var shapes = cfgChips(entry.shapes || [], cfgCatalog().shapes || [], false, null, entry.name + ' shapes');
+    details.appendChild(cfgField('shapes', shapes));
+    var overlay = node('textarea', 'soul-box');
+    overlay.value = entry.overlay || '';
+    overlay.setAttribute('aria-label', entry.name + ' overlay');
+    details.appendChild(cfgField('overlay', overlay));
+    var actions = node('div', 'replay-actions');
+    var save = node('button', 'replay-button replay-resume', 'save the role');
+    save.type = 'button';
+    save.dataset.act = 'save-role';
+    save.addEventListener('click', function () {
+      if (!description.value.trim()) {
+        notice('the role was not written', 'a role needs a description');
+        return;
+      }
+      writeSettings('role', {
+        name: entry.name,
+        description: description.value.trim(),
+        tools: tools.values(),
+        skills: skills.values(),
+        shapes: shapes.values(),
+        overlay: overlay.value
+      });
+    });
+    actions.appendChild(save);
+    var remove = node('button', 'replay-button', 'remove the role');
+    remove.type = 'button';
+    remove.addEventListener('click', function () {
+      if (!window.confirm('Remove the role `' + entry.name + '`?')) return;
+      writeSettings('role-remove', { name: entry.name });
+    });
+    actions.appendChild(remove);
+    details.appendChild(actions);
+    return details;
+  }
+
+  function roleAddForm() {
+    var details = node('details', 'cfg-details');
+    details.appendChild(node('summary', 'cfg-summary', 'add a role'));
+    var name = node('input', 'knob-box');
+    name.type = 'text';
+    name.placeholder = 'auditor';
+    name.setAttribute('aria-label', 'a new role name');
+    details.appendChild(cfgField('name', name, 'a name, not a path; the file is <name>.md.'));
+    var description = node('input', 'knob-box');
+    description.type = 'text';
+    description.placeholder = 'what this role is for';
+    description.setAttribute('aria-label', 'a new role description');
+    details.appendChild(cfgField('description', description));
+    var tools = cfgChips([], cfgCatalog().tools || [], false, null, 'the new role tools');
+    details.appendChild(cfgField('tools', tools));
+    var skills = cfgChips([], cfgCatalog().skills || [], false, null, 'the new role skills');
+    details.appendChild(cfgField('skills', skills));
+    var shapes = cfgChips([], cfgCatalog().shapes || [], false, null, 'the new role shapes');
+    details.appendChild(cfgField('shapes', shapes));
+    var overlay = node('textarea', 'soul-box');
+    overlay.setAttribute('aria-label', 'a new role overlay');
+    details.appendChild(cfgField('overlay', overlay));
+    var add = node('button', 'replay-button replay-resume', 'create the role');
+    add.type = 'button';
+    add.addEventListener('click', function () {
+      if (!name.value.trim() || !description.value.trim()) {
+        notice('the role was not written', 'a name and a description are required');
+        return;
+      }
+      writeSettings('role', {
+        name: name.value.trim(),
+        description: description.value.trim(),
+        tools: tools.values(),
+        skills: skills.values(),
+        shapes: shapes.values(),
+        overlay: overlay.value
+      });
+    });
+    details.appendChild(add);
+    return details;
+  }
+
+  // ------------------------------------------------------------- the vault
+
+  function vaultCard() {
+    var read = face.settings.vault || { names: [], exists: false, passphrase: false };
+    var card = boardCard(12, 'the vault',
+      read.exists ? (read.names.length + ' sealed') : 'no vault',
+      'The sealed credentials. A name is listed; a value is never rendered. Sealing and ' +
+      'removing need this process to hold FLEET_VAULT_PASSPHRASE.');
+    card.id = 'settings-vault';
+    if (!read.passphrase) {
+      card.appendChild(node('p', 'board-empty',
+        'This process has no FLEET_VAULT_PASSPHRASE. Start fleet with it to seal or remove ' +
+        'an entry; the names below are still readable.'));
+    }
+    if (!read.names.length) {
+      card.appendChild(node('p', 'board-empty',
+        read.exists ? 'No entry is sealed yet.' : 'No vault exists yet; the first seal creates one.'));
+    }
+    read.names.forEach(function (name) {
+      var row = node('div', 'list-row');
+      row.appendChild(node('span', 'list-row-key', name));
+      row.appendChild(badge('sealed', 'ok'));
+      if (read.passphrase) {
+        var remove = node('button', 'replay-button', 'remove');
+        remove.type = 'button';
+        remove.addEventListener('click', function () {
+          if (!window.confirm('Remove the sealed entry `' + name + '`?')) return;
+          writeSettings('secret-remove', { name: name });
+        });
+        row.appendChild(remove);
+      }
+      card.appendChild(row);
+    });
+    if (read.passphrase) {
+      var form = node('div', 'cfg-form');
+      var name = node('input', 'knob-box');
+      name.type = 'text';
+      name.placeholder = 'FLEET_TELEGRAM_BOT_TOKEN';
+      name.setAttribute('aria-label', 'a new sealed entry name');
+      var value = node('input', 'knob-box');
+      value.type = 'password';
+      value.autocomplete = 'off';
+      value.placeholder = 'the value';
+      value.setAttribute('aria-label', 'a new sealed entry value');
+      var seal = node('button', 'replay-button replay-resume', 'seal the entry');
+      seal.type = 'button';
+      seal.addEventListener('click', function () {
+        if (!name.value.trim() || !value.value.trim()) return;
+        var secret = value.value;
+        value.value = '';
+        writeSettings('secret', { name: name.value.trim(), value: secret });
+      });
+      form.appendChild(cfgField('name', name));
+      form.appendChild(cfgField('value', value));
+      form.appendChild(seal);
+      card.appendChild(form);
+    }
+    return card;
+  }
+
+  // ------------------------------------------------------------- the spend
+
+  function spendCard() {
+    var caps = {
+      FLEET_JUDGE_BUDGET_USD_DAY: 'judge',
+      FLEET_DELEGATE_BUDGET_USD_DAY: 'delegate',
+      FLEET_EXPLAIN_BUDGET_USD_DAY: 'explain'
+    };
+    var card = boardCard(12, 'the spend caps', null,
+      'The daily cap each judged beat may spend. A cap tightens the compiled ceiling and can ' +
+      'never raise it; a write lands in fleet.env and applies at the next launch. Today\u2019s ' +
+      'spend is on the calibration panel.');
+    card.id = 'settings-spend';
+    (face.settings.scalars || []).forEach(function (knob) {
+      if (!caps[knob.key]) return;
+      var row = node('div', 'cfg-form');
+      var head = node('div', 'cfg-form-head');
+      head.appendChild(node('span', 'list-row-key', caps[knob.key]));
+      head.appendChild(badge(knob.value === 'unset' ? 'compiled default' : '$' + knob.value,
+        knob.value === 'unset' ? null : 'ok'));
+      if (knob.source !== 'default') {
+        head.appendChild(badge(knob.source, knob.source === 'env' ? 'warn' : null));
+      }
+      row.appendChild(head);
+      row.appendChild(node('p', 'knob-summary', knob.summary));
+      var box = node('input', 'knob-box');
+      box.type = 'number';
+      box.step = '0.01';
+      box.min = '0';
+      if (knob.ceiling) box.max = String(knob.ceiling);
+      // The compiled ceiling is the value in force, so the box is seeded
+      // with it; the badge still says it is the default, and saving it
+      // writes the same number explicitly.
+      box.value = knob.value === 'unset'
+        ? (knob.ceiling == null ? '' : String(knob.ceiling))
+        : knob.value;
+      box.setAttribute('aria-label', caps[knob.key] + ' daily cap');
+      var save = node('button', 'replay-button', 'save');
+      save.type = 'button';
+      save.addEventListener('click', function () {
+        writeSettings('set', { key: knob.key, value: box.value });
+      });
+      var line = node('div', 'cfg-inline');
+      line.appendChild(box);
+      line.appendChild(save);
+      if (knob.ceiling) line.appendChild(node('span', 'cfg-note', 'at most ' + knob.ceiling));
+      row.appendChild(line);
+      card.appendChild(row);
+    });
+    return card;
   }
 
   // One knob: its key, its source, and the box that saves. The source
@@ -7402,7 +8535,11 @@
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
       memory: function () { paintMemory(); readMemory(true).then(paintMemory); },
       skills: function () { paintSkills(); readSkills(true).then(paintSkills); },
-      bots: function () { paintBots(); readBots(true).then(paintBots); },
+      bots: function () {
+        paintBots();
+        readBots(true).then(paintBots);
+        readAccess(true).then(paintBots);
+      },
       sessions: function () {
         if (face.focus && face.focus.id) face.replayId = face.focus.id;
         paintSessions();

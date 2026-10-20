@@ -122,6 +122,7 @@ pub const LANES: &[Lane] = &[
             "SDM1_TABPFN_TIMEOUT",
             "SDM1_MODELS_PYTHON",
             "SDM1_MODELS_VENV",
+            "SDM1_TIMEOUT",
             "SDM1_LOG_DIR",
         ],
         health_tools: &["sdm1_health"],
@@ -154,6 +155,16 @@ pub const LANES: &[Lane] = &[
         passthrough: &[
             "DASHSCOPE_API_KEY",
             "STEPFUN_API_KEY",
+            "QWEN_BASE_URL",
+            "QWEN_TTS_WS_URL",
+            "QWEN_TTS_MODEL",
+            "QWEN_TTS_VOICE",
+            "STEPFUN_BASE_URL",
+            "STEPFUN_TTS_MODEL",
+            "STEPFUN_TTS_VOICE",
+            "STEPFUN_ASR_MODEL",
+            "DASHSCOPE_BASE_URL",
+            "IMAGE_MODEL",
             "GEN1_KOKORO_MODEL",
             "GEN1_KOKORO_VOICES",
             "GEN1_KOKORO_VOICE",
@@ -235,11 +246,479 @@ pub const LANES: &[Lane] = &[
     },
 ];
 
+/// The fleet-owned lane configuration file. The GUI writes it through
+/// `settings.rs`; this module only reads it at launch.
+pub const LANES_FILE: &str = "lanes.json";
+
+/// The path the lane configuration lives at.
+pub fn lanes_path(home: &Path) -> PathBuf {
+    home.join(LANES_FILE)
+}
+
+/// The fleet home the configuration lives under, resolved the way every
+/// other surface resolves it.
+pub fn fleet_home_path() -> Option<PathBuf> {
+    let env = std::env::var("FLEET_HOME").ok();
+    let user = std::env::var("HOME").ok();
+    crate::home::fleet_home(env.as_deref(), user.as_deref()).ok()
+}
+
+/// One lane's configured home, environment, and per-tool defaults, as
+/// `lanes.json` carries them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LaneConfig {
+    pub home: Option<String>,
+    pub env: std::collections::BTreeMap<String, String>,
+    /// Tool name → argument name → default value.
+    pub defaults: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+}
+
+/// Read `<FLEET_HOME>/lanes.json` as a value. A missing file is an empty
+/// object; a malformed one is a named error, because a launch that
+/// silently ignored a broken config would hide the reason a lane is
+/// serving the wrong model.
+pub fn read_lanes(home: &Path) -> Result<serde_json::Value, String> {
+    let path = home.join(LANES_FILE);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(serde_json::json!({}));
+        }
+        Err(error) => return Err(format!("{} is unreadable: {error}", path.display())),
+    };
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("{} is not valid JSON: {error}", path.display()))?;
+    if !value.is_object() {
+        return Err(format!("{} is not a JSON object", path.display()));
+    }
+    Ok(value)
+}
+
+/// One lane's configuration, when the file names it.
+pub fn read_lane(home: &Path, name: &str) -> Result<Option<LaneConfig>, String> {
+    let document = read_lanes(home)?;
+    let Some(lane) = document.get("lanes").and_then(|lanes| lanes.get(name)) else {
+        return Ok(None);
+    };
+    let home = lane
+        .get("home")
+        .and_then(serde_json::Value::as_str)
+        .map(|home| home.trim().to_string())
+        .filter(|home| !home.is_empty());
+    let mut env = std::collections::BTreeMap::new();
+    if let Some(map) = lane.get("env").and_then(serde_json::Value::as_object) {
+        for (name, value) in map {
+            if let Some(value) = value.as_str() {
+                env.insert(name.clone(), value.to_string());
+            }
+        }
+    }
+    let mut defaults = std::collections::BTreeMap::new();
+    if let Some(map) = lane.get("defaults").and_then(serde_json::Value::as_object) {
+        for (tool, args) in map {
+            let Some(args) = args.as_object() else {
+                continue;
+            };
+            let mut values = std::collections::BTreeMap::new();
+            for (argument, value) in args {
+                if let Some(value) = value.as_str() {
+                    values.insert(argument.clone(), value.to_string());
+                } else if let Some(number) = value.as_i64() {
+                    values.insert(argument.clone(), number.to_string());
+                }
+            }
+            defaults.insert(tool.clone(), values);
+        }
+    }
+    Ok(Some(LaneConfig {
+        home,
+        env,
+        defaults,
+    }))
+}
+
+/// Whether a name may cross into this lane's child. The rule is the
+/// lane's own passthrough list, plus sys1's `SYS1_` namespace — the same
+/// allowlist `mcp::child_env` applies, so a configured value cannot
+/// widen what the child would accept.
+pub fn lane_allows(lane: &Lane, name: &str) -> bool {
+    if lane.name == "sys1" && name.starts_with("SYS1_") && name.len() > "SYS1_".len() {
+        return true;
+    }
+    lane.passthrough.iter().any(|allowed| {
+        if let Some(prefix) = allowed.strip_suffix('_') {
+            name.starts_with(prefix) && name.len() > prefix.len()
+        } else {
+            *allowed == name
+        }
+    })
+}
+
+/// One lane's launch spec with the home's configuration applied:
+/// `lanes.json` first, the dotenv/vault over it, and the process
+/// environment winning outright. A name the lane does not declare never
+/// crosses, and the spec's own entries (`<SVC>_PYTHONPATH`) still win
+/// last.
+pub fn configured_spec(lane: &Lane, home: &Path) -> Result<ServerSpec, String> {
+    let Some(fleet_home) = fleet_home_path() else {
+        return Ok(launch_spec(lane, home));
+    };
+    configured_spec_at(lane, home, &fleet_home)
+}
+
+/// The same injection over an explicit fleet home, so the precedence is
+/// testable without mutating the process environment.
+pub fn configured_spec_at(
+    lane: &Lane,
+    home: &Path,
+    fleet_home: &Path,
+) -> Result<ServerSpec, String> {
+    let mut spec = launch_spec(lane, home);
+    let config = read_lane(fleet_home, lane.name)?.unwrap_or_default();
+    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let dotenv = crate::home::read_dotenv_with_vault(fleet_home, passphrase.as_deref());
+    let mut values: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    // Low to high: lane config, then the dotenv/vault, then skip the
+    // process environment because it wins over everything below.
+    for (name, value) in &config.env {
+        if lane_allows(lane, name) {
+            values.insert(name.clone(), value.clone());
+        }
+    }
+    for (name, value) in &dotenv {
+        if lane_allows(lane, name) {
+            values.insert(name.clone(), value.clone());
+        }
+    }
+    values.retain(|name, _| std::env::var(name).is_err());
+    for (name, value) in values {
+        if spec.env.iter().any(|(declared, _)| declared == &name) {
+            continue;
+        }
+        spec.env.push((name, value));
+    }
+    Ok(spec)
+}
+
+/// One tool's configured defaults for a lane. The caller merges them
+/// under the model's own arguments, so an explicit value always wins.
+pub fn defaults_for(
+    home: &Path,
+    lane: &str,
+    tool: &str,
+) -> std::collections::BTreeMap<String, String> {
+    read_lane(home, lane)
+        .ok()
+        .flatten()
+        .and_then(|config| config.defaults.get(tool).cloned())
+        .unwrap_or_default()
+}
+
+/// Merge a lane's configured defaults under the arguments the model
+/// supplied. A key the model named always wins; a default only fills an
+/// absent one, so the surface never silently overrides an explicit call.
+pub fn with_defaults(
+    arguments: &serde_json::Value,
+    defaults: &std::collections::BTreeMap<String, String>,
+) -> serde_json::Value {
+    let serde_json::Value::Object(object) = arguments else {
+        return arguments.clone();
+    };
+    if defaults.is_empty() {
+        return arguments.clone();
+    }
+    let mut merged = object.clone();
+    for (name, value) in defaults {
+        merged
+            .entry(name.clone())
+            .or_insert_with(|| serde_json::Value::String(value.clone()));
+    }
+    serde_json::Value::Object(merged)
+}
+
+/// The arguments one lane call should carry: the configured defaults for
+/// that tool with the model's own values laid over them.
+pub fn lane_arguments(
+    home: &Path,
+    lane: &str,
+    tool: &str,
+    arguments: &serde_json::Value,
+) -> serde_json::Value {
+    let defaults = defaults_for(home, lane, tool);
+    with_defaults(arguments, &defaults)
+}
+
+/// One pickable value for a lane form: the value, how it reads, the
+/// provider it belongs to, and which field it feeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneChoice {
+    pub value: String,
+    pub label: String,
+    pub provider: String,
+    pub kind: &'static str,
+}
+
+fn choice(value: &str, label: &str, provider: &str, kind: &'static str) -> LaneChoice {
+    LaneChoice {
+        value: value.to_string(),
+        label: label.to_string(),
+        provider: provider.to_string(),
+        kind,
+    }
+}
+
+/// The values each lane's own defaults publish. This is fleet's
+/// declaration of the lane surfaces, not a live read: a value the lane
+/// adds later is still accepted as a custom entry.
+pub fn choices(lane: &str) -> Vec<LaneChoice> {
+    match lane {
+        "sys1" => {
+            let mut out = vec![
+                choice("decide", "decide", "decide", "provider"),
+                choice(
+                    "fastino/GLiNER2.5-Decide",
+                    "GLiNER2.5-Decide",
+                    "decide",
+                    "model",
+                ),
+                choice(
+                    "https://api.fastino.ai/v1/chat/completions",
+                    "Fastino chat v1",
+                    "decide",
+                    "endpoint",
+                ),
+                choice("FASTINO_API_KEY", "FASTINO_API_KEY", "decide", "key_env"),
+                choice("jev", "jev", "jev", "provider"),
+                choice("jev-1.13.0", "jev-1.13.0", "jev", "model"),
+                choice(
+                    "https://api.typesafe.ai/v1/systemone",
+                    "TypeSafe systemone",
+                    "jev",
+                    "endpoint",
+                ),
+                choice("TYPESAFE_API_KEY", "TYPESAFE_API_KEY", "jev", "key_env"),
+                choice("drex", "drex", "drex", "provider"),
+                choice("drex-v1.5", "drex-v1.5", "drex", "model"),
+                choice(
+                    "https://drex.nace.ai/v1/systemone",
+                    "Nace systemone",
+                    "drex",
+                    "endpoint",
+                ),
+                choice("DREX_API_KEY", "DREX_API_KEY", "drex", "key_env"),
+                choice("glide", "glide", "glide", "provider"),
+                choice("fastino/glide", "GLiDE", "glide", "model"),
+                choice(
+                    "https://api.fastino.ai/v1/systemone",
+                    "Fastino systemone",
+                    "glide",
+                    "endpoint",
+                ),
+                choice("FASTINO_API_KEY", "FASTINO_API_KEY", "glide", "key_env"),
+                choice("julia", "julia", "julia", "provider"),
+                choice("julia-1", "julia-1", "julia", "model"),
+                choice(
+                    "https://api.supersoniclabs.ai/v1/systemone",
+                    "Supersonic systemone",
+                    "julia",
+                    "endpoint",
+                ),
+                choice(
+                    "SUPERSONIC_API_KEY",
+                    "SUPERSONIC_API_KEY",
+                    "julia",
+                    "key_env",
+                ),
+                choice("liquid", "liquid", "liquid", "provider"),
+                choice("d1", "d1", "liquid", "model"),
+                choice(
+                    "https://api.liquid.ai/decisions/v1/systemone",
+                    "Liquid decisions",
+                    "liquid",
+                    "endpoint",
+                ),
+                choice("LIQUID_API_KEY", "LIQUID_API_KEY", "liquid", "key_env"),
+                choice("scaledown", "scaledown", "scaledown", "provider"),
+                choice("classify-1", "classify-1", "scaledown", "model"),
+                choice(
+                    "https://api.scaledown.xyz/v1/scaledown",
+                    "ScaleDown",
+                    "scaledown",
+                    "endpoint",
+                ),
+                choice(
+                    "SCALEDOWN_API_KEY",
+                    "SCALEDOWN_API_KEY",
+                    "scaledown",
+                    "key_env",
+                ),
+                choice("local", "local", "local", "provider"),
+                choice(
+                    "fastino/GLiNER2.5-Decide",
+                    "GLiNER2.5-Decide local",
+                    "local",
+                    "model",
+                ),
+                choice("/private/tmp/gliner-decide", "local venv", "local", "path"),
+                choice("clm", "clm", "clm", "provider"),
+                choice("Contrastive-LM/CLM-v0.1-8B", "CLM-8B", "clm", "model"),
+                choice(
+                    "http://127.0.0.1:8451/v1/systemone",
+                    "CLM loopback",
+                    "clm",
+                    "endpoint",
+                ),
+                choice("CLM_API_KEY", "CLM_API_KEY", "clm", "key_env"),
+                choice("openjev", "openjev", "openjev", "provider"),
+                choice("openjev-k5", "openjev-k5", "openjev", "model"),
+                choice(
+                    "http://127.0.0.1:8452/v1/systemone",
+                    "openjev loopback",
+                    "openjev",
+                    "endpoint",
+                ),
+                choice("OPENJEV_API_KEY", "OPENJEV_API_KEY", "openjev", "key_env"),
+                choice("kev", "kev", "kev", "provider"),
+                choice("kev-4b", "kev-4b", "kev", "model"),
+                choice(
+                    "http://127.0.0.1:8453/v1/chat/completions",
+                    "kev loopback",
+                    "kev",
+                    "endpoint",
+                ),
+                choice("KEV_API_KEY", "KEV_API_KEY", "kev", "key_env"),
+                choice("tev1", "tev1", "tev1", "provider"),
+                choice("TogetherTevalabs/tev1", "tev1", "tev1", "model"),
+                choice(
+                    "https://api.together.xyz/v1/chat/completions",
+                    "Together chat",
+                    "tev1",
+                    "endpoint",
+                ),
+                choice("TOGETHER_API_KEY", "TOGETHER_API_KEY", "tev1", "key_env"),
+                choice("laya", "laya", "laya", "provider"),
+                choice("convai/laya", "laya", "laya", "model"),
+                choice(
+                    "http://127.0.0.1:8454/v1/chat/completions",
+                    "laya loopback",
+                    "laya",
+                    "endpoint",
+                ),
+                choice("LAYA_API_KEY", "LAYA_API_KEY", "laya", "key_env"),
+            ];
+            for (name, label) in [
+                ("decide", "decide"),
+                ("jev", "jev"),
+                ("local", "local"),
+                ("modernbert", "modernbert"),
+                ("both", "both"),
+                ("all", "all"),
+            ] {
+                out.push(choice(name, label, "classify", "classify"));
+            }
+            out
+        }
+        "sem1" => vec![
+            choice("llama-server", "llama-server", "llama-server", "provider"),
+            choice(
+                "embeddinggemma-2-BF16",
+                "EmbeddingGemma-2 BF16",
+                "llama-server",
+                "model",
+            ),
+            choice(
+                "http://127.0.0.1:8901",
+                "llama-server loopback",
+                "llama-server",
+                "endpoint",
+            ),
+            choice("st-worker", "st-worker", "st-worker", "provider"),
+            choice(
+                "google/embeddinggemma-2",
+                "EmbeddingGemma-2",
+                "st-worker",
+                "model",
+            ),
+        ],
+        "sdm1" => vec![
+            choice(
+                "tabpfn-hosted",
+                "tabpfn-hosted",
+                "tabpfn-hosted",
+                "provider",
+            ),
+            choice(
+                "https://api.priorlabs.ai",
+                "Prior Labs",
+                "tabpfn-hosted",
+                "endpoint",
+            ),
+            choice("nvidia-sdm", "nvidia-sdm", "nvidia-sdm", "provider"),
+        ],
+        "gen1" => vec![
+            choice("qwen", "qwen", "qwen", "provider"),
+            choice("qwen-audio-3.0-tts-plus", "qwen TTS plus", "qwen", "model"),
+            choice("longanhuan_v3.6", "longanhuan_v3.6", "qwen", "voice"),
+            choice(
+                "https://token-plan.ap-southeast-1.maas.aliyuncs.com",
+                "DashScope token plan",
+                "qwen",
+                "endpoint",
+            ),
+            choice("stepfun", "stepfun", "stepfun", "provider"),
+            choice("stepaudio-2.5-tts", "stepaudio-2.5-tts", "stepfun", "model"),
+            choice("stepaudio-2.5-asr", "stepaudio-2.5-asr", "stepfun", "model"),
+            choice("lively-girl", "lively-girl", "stepfun", "voice"),
+            choice("https://api.stepfun.ai", "StepFun", "stepfun", "endpoint"),
+            choice("wan", "wan", "wan", "provider"),
+            choice("wan2.7-image-pro", "wan2.7-image-pro", "wan", "model"),
+            choice("kokoro", "kokoro", "kokoro", "provider"),
+            choice("af_heart", "af_heart", "kokoro", "voice"),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// The machine-local paths the pickers offer beside the resolved lane
+/// homes.
+pub fn known_paths() -> Vec<(String, String)> {
+    let Some(user) = std::env::var("HOME").ok() else {
+        return Vec::new();
+    };
+    let user = PathBuf::from(user);
+    [
+        (
+            "/private/tmp/gliner-decide".to_string(),
+            "sys1 local GLiNER venv".to_string(),
+        ),
+        (
+            user.join(".cache/hyperframes/tts/models/kokoro-v1.0.onnx")
+                .display()
+                .to_string(),
+            "kokoro model".to_string(),
+        ),
+        (
+            user.join(".cache/hyperframes/tts/voices/voices-v1.0.bin")
+                .display()
+                .to_string(),
+            "kokoro voices".to_string(),
+        ),
+        (
+            user.join(".cache/gen1/tts").display().to_string(),
+            "gen1 TTS cache".to_string(),
+        ),
+    ]
+    .into_iter()
+    .collect()
+}
+
 /// Where a resolved lane home came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HomeSource {
     /// The per-lane environment override named it.
     Env(String),
+    /// The fleet home's `lanes.json` named it.
+    Config,
     /// The bundled `services/` tree answered.
     Bundled,
 }
@@ -248,6 +727,7 @@ impl std::fmt::Display for HomeSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HomeSource::Env(name) => write!(f, "{name}"),
+            HomeSource::Config => write!(f, "lanes.json"),
             HomeSource::Bundled => write!(f, "bundled"),
         }
     }
@@ -401,6 +881,49 @@ pub fn resolve_home(lane: &Lane) -> LaneHome {
             }
         };
     }
+    // The fleet home's own configuration, after the process override and
+    // before the bundled copy. A configured home that cannot launch is a
+    // named refusal rather than a silent fall-through: the owner asked
+    // for that copy.
+    if let Some(fleet_home) = fleet_home_path() {
+        match read_lane(&fleet_home, lane.name) {
+            Ok(Some(config)) => {
+                if let Some(configured) = config.home {
+                    let configured = PathBuf::from(configured);
+                    if !configured.is_absolute() {
+                        return LaneHome::Unavailable {
+                            reason: format!(
+                                "lanes.json names a relative home for `{}`: {}; an absolute path \
+                                 is required",
+                                lane.name,
+                                configured.display()
+                            ),
+                        };
+                    }
+                    return if looks_like_service_home(&configured) {
+                        LaneHome::Resolved {
+                            home: configured,
+                            source: HomeSource::Config,
+                        }
+                    } else {
+                        LaneHome::Unavailable {
+                            reason: format!(
+                                "lanes.json's home for `{}` ({}) has no service/mcp_server.py and src/",
+                                lane.name,
+                                configured.display()
+                            ),
+                        }
+                    };
+                }
+            }
+            Ok(None) => {}
+            Err(reason) => {
+                return LaneHome::Unavailable {
+                    reason: format!("lanes.json: {reason}"),
+                }
+            }
+        }
+    }
     let root = match services_root() {
         Ok(root) => root,
         Err(RootError::Relative(value)) => {
@@ -548,7 +1071,7 @@ pub fn spec_for(name: &str) -> Result<ServerSpec, String> {
         return Err(format!("no lane named `{name}`"));
     };
     match resolve_home(lane) {
-        LaneHome::Resolved { home, .. } => Ok(launch_spec(lane, &home)),
+        LaneHome::Resolved { home, .. } => configured_spec(lane, &home),
         LaneHome::Unavailable { reason } => Err(reason),
     }
 }
@@ -607,7 +1130,23 @@ pub async fn probe_lane(lane: &Lane) -> LaneHealth {
         }
     };
     let (home, source) = home.expect("a resolved home");
-    let spec = launch_spec(lane, &home);
+    let spec = match configured_spec(lane, &home) {
+        Ok(spec) => spec,
+        Err(reason) => {
+            return LaneHealth {
+                name: lane.name.to_string(),
+                role: lane.role.to_string(),
+                home: Some(home),
+                source: Some(source),
+                state: LaneState::Unavailable,
+                server_version: None,
+                tools: Vec::new(),
+                doctor: Vec::new(),
+                detail: reason,
+                elapsed_ms: started.elapsed().as_millis(),
+            };
+        }
+    };
     let launch = launch_command(lane, &home);
     let mut server = match McpServer::spawn(&spec) {
         Ok(server) => server,
@@ -1661,6 +2200,130 @@ mod tests {
         let rendered = render(&health);
         assert!(rendered.contains("route"), "{rendered}");
         assert!(!rendered.contains("web leg"), "{rendered}");
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-lanes-config-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The configured values reach the child for names the lane declares,
+    /// and a name it does not declare never crosses.
+    #[test]
+    fn lanes_json_values_reach_the_spec_and_only_declared_names_cross() {
+        let home = scratch("reach");
+        std::fs::write(
+            home.join(LANES_FILE),
+            r#"{"lanes":{"sem1":{"env":{"SEM1_ST_VENV":"/opt/venv-st","SEM1_EVIL":"no"}}}}"#,
+        )
+        .unwrap();
+        let spec = configured_spec_at(&lane("sem1"), Path::new("/repo/services/sem1"), &home)
+            .expect("the spec");
+        assert!(
+            spec.env
+                .iter()
+                .any(|(name, value)| name == "SEM1_ST_VENV" && value == "/opt/venv-st"),
+            "{:?}",
+            spec.env
+        );
+        assert!(
+            !spec.env.iter().any(|(name, _)| name == "SEM1_EVIL"),
+            "{:?}",
+            spec.env
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The dotenv sits over lanes.json, and a name the process already
+    /// carries is never rewritten by either.
+    #[test]
+    fn the_dotenv_wins_over_the_lane_config() {
+        let home = scratch("precedence");
+        std::fs::write(
+            home.join(LANES_FILE),
+            r#"{"lanes":{"sem1":{"env":{"SEM1_ST_VENV":"/from/config"}}}}"#,
+        )
+        .unwrap();
+        std::fs::write(home.join(".env"), "SEM1_ST_VENV=/from/dotenv\n").unwrap();
+        let spec = configured_spec_at(&lane("sem1"), Path::new("/repo/services/sem1"), &home)
+            .expect("the spec");
+        let value = spec
+            .env
+            .iter()
+            .find(|(name, _)| name == "SEM1_ST_VENV")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(value, Some("/from/dotenv"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Per-call defaults fill only what the model left out.
+    #[test]
+    fn a_default_fills_only_an_absent_argument() {
+        let mut defaults = std::collections::BTreeMap::new();
+        defaults.insert("provider".to_string(), "llama-server".to_string());
+        defaults.insert("model".to_string(), "embeddinggemma-2-BF16".to_string());
+        let merged = with_defaults(&serde_json::json!({"model": "explicit-model"}), &defaults);
+        assert_eq!(merged["provider"], "llama-server");
+        assert_eq!(merged["model"], "explicit-model");
+        assert_eq!(merged["provider"], "llama-server");
+    }
+
+    /// The lane's configured default is what a call reads when it has no
+    /// explicit value.
+    #[test]
+    fn lane_arguments_read_the_configured_defaults() {
+        let home = scratch("defaults");
+        std::fs::write(
+            home.join(LANES_FILE),
+            r#"{"lanes":{"sem1":{"defaults":{"sem1_embed":{"provider":"st-worker","model":"google/embeddinggemma-2"}}}}}"#,
+        )
+        .unwrap();
+        let merged = lane_arguments(
+            &home,
+            "sem1",
+            "sem1_embed",
+            &serde_json::json!({"provider": "llama-server"}),
+        );
+        assert_eq!(merged["provider"], "llama-server");
+        assert_eq!(merged["model"], "google/embeddinggemma-2");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The lane catalog carries the declared defaults the pickers offer.
+    #[test]
+    fn the_lane_catalog_carries_the_declared_defaults() {
+        let sem1 = choices("sem1");
+        assert!(
+            sem1.iter()
+                .any(|choice| choice.value == "llama-server" && choice.kind == "provider"),
+            "{sem1:?}"
+        );
+        assert!(
+            sem1.iter()
+                .any(|choice| choice.value == "embeddinggemma-2-BF16" && choice.kind == "model"),
+            "{sem1:?}"
+        );
+        let sys1 = choices("sys1");
+        assert!(
+            sys1.iter()
+                .any(|choice| choice.value == "glide" && choice.kind == "provider"),
+            "{sys1:?}"
+        );
+        let gen1 = choices("gen1");
+        assert!(
+            gen1.iter()
+                .any(|choice| choice.value == "qwen-audio-3.0-tts-plus" && choice.kind == "model"),
+            "{gen1:?}"
+        );
     }
 
     #[test]

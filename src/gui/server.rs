@@ -3189,6 +3189,16 @@ mod tests {
         assert!(reply.contains("daily-triage"), "{reply}");
         assert!(reply.contains("\"present\":true"), "{reply}");
         assert!(reply.contains("Be direct."), "{reply}");
+        // The router, the catalog the pickers read, and the lanes.
+        assert!(reply.contains("\"router\""), "{reply}");
+        assert!(reply.contains("\"spend_guard\""), "{reply}");
+        assert!(reply.contains("\"tiers\""), "{reply}");
+        assert!(reply.contains("\"resolved\""), "{reply}");
+        assert!(reply.contains("\"catalog\""), "{reply}");
+        assert!(reply.contains("\"models\""), "{reply}");
+        assert!(reply.contains("\"lanes\""), "{reply}");
+        assert!(reply.contains("\"roles\""), "{reply}");
+        assert!(reply.contains("\"vault\""), "{reply}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3290,6 +3300,69 @@ mod tests {
             r#"{"op":"cron-remove","name":"nightly"}"#,
         );
         assert!(removed.starts_with("HTTP/1.1 200"), "{removed}");
+
+        // A lane write lands in lanes.json through the same writer.
+        let lane = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"lane","lane":"sem1","config":{"env":{"SEM1_ST_VENV":"/opt/venv-st"},"defaults":{}}}"#,
+        );
+        assert!(lane.starts_with("HTTP/1.1 200"), "{lane}");
+        let lanes = std::fs::read_to_string(home.join("lanes.json")).expect("the lanes file");
+        assert!(lanes.contains("SEM1_ST_VENV"), "{lanes}");
+        // A name the lane does not declare is refused by name.
+        let refused_lane = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"lane","lane":"sem1","config":{"env":{"DEEPSEEK_API_KEY":"x"},"defaults":{}}}"#,
+        );
+        assert!(refused_lane.starts_with("HTTP/1.1 409"), "{refused_lane}");
+        assert!(refused_lane.contains("does not cross"), "{refused_lane}");
+
+        // A role write lands through the roles writer, and the surface
+        // reads it back.
+        let role = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"role","name":"auditor","description":"reads a diff","tools":["bash"],"skills":[],"shapes":[],"overlay":"Be terse."}"#,
+        );
+        assert!(role.starts_with("HTTP/1.1 200"), "{role}");
+        let written =
+            std::fs::read_to_string(home.join("roles").join("auditor.md")).expect("the role file");
+        assert!(written.contains("reads a diff"), "{written}");
+        assert!(written.contains("Be terse."), "{written}");
+        let reread = get(port, "/api/settings", &token);
+        assert!(reread.contains("\"auditor\""), "{reread}");
+        let removed = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"role-remove","name":"auditor"}"#,
+        );
+        assert!(removed.starts_with("HTTP/1.1 200"), "{removed}");
+
+        // A secret rides the secret writer, and the read that follows
+        // never carries the value.
+        let secret = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"secret","name":"FLEET_TEST_KEY","value":"never-render-me"}"#,
+        );
+        assert!(secret.starts_with("HTTP/1.1 200"), "{secret}");
+        assert!(!secret.contains("never-render-me"), "{secret}");
+        let after_secret = get(port, "/api/settings", &token);
+        assert!(!after_secret.contains("never-render-me"), "{after_secret}");
+        let unsealed = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"secret-remove","name":"FLEET_TEST_KEY"}"#,
+        );
+        assert!(unsealed.starts_with("HTTP/1.1 200"), "{unsealed}");
 
         // The identity slot writes through the home's own writer.
         let soul = post(
