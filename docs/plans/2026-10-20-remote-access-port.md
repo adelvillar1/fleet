@@ -174,6 +174,39 @@ the task's first line, and the session — because "what have they done"
 is the question the surface exists to answer and nothing records it
 today.
 
+**Landed.** `src/channels/service.rs`. `ChannelService` owns every
+plugin, builds them without binding, and starts them by awaiting each
+one's readiness — which is what closes KI-257. The `Channel` trait gained
+a `ready` sender and a shutdown receiver: a plugin reports `Ok(port)`
+only after the thing that could fail has succeeded (the bind for the
+listener, the first answered poll for the long-poller) and `Err(reason)`
+when it could not. A readiness report that never arrives leaves the
+channel `starting`, never `live`.
+
+`status.json` is written atomically on every transition and refreshed on
+a ten-second heartbeat; `updated_unix` rides beside the human stamp so a
+reader subtracts rather than parses, and a document more than three
+beats old reads stale — and its per-channel phases are labelled "last
+report" rather than believed. The service writes the same document to
+the terminal as it does to disk: a failed bind names the port and the
+errno on both. `activity.jsonl` records delivery, refusal, reply, seat,
+state, and the unpaired-token attempt (the one an owner most needs to
+see, with no token in it), capped at 500 lines.
+
+`channels.enabled` and `channels.webhook_port` join the one settings
+table, so the setting is the door and `--channels` is an override of it.
+One watcher serves every plugin, routed by the channel half of the
+peer's key, so a face hosting Telegram and the webhook sends each peer's
+seat to the transport that can deliver it.
+
+Verified live: `--channels` brings the webhook up and the heartbeat
+moves; `channels.enabled` alone brings it up with no flag; nothing
+configured binds nothing and writes no document; a held port reports
+`failed` with the errno on the terminal and in the document; a stop
+reads `stopped`; 51 seconds after a kill the document reads stale and
+the CLI says so; a delivery and a refusal land in the activity log with
+the peer, the task's first line, and the session.
+
 ### P3 — identity: pending, capability, pairing
 
 The refusal path records a refused peer as *pending*

@@ -67,12 +67,31 @@ impl Webhook {
     async fn serve_inner(
         &self,
         sink: Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync>,
+        ready: tokio::sync::oneshot::Sender<Result<u16, String>>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(), String> {
-        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, self.port))
-            .await
-            .map_err(|error| {
-                format!("the webhook channel cannot bind {port}: {error}", port = self.port)
-            })?;
+        let listener = match tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, self.port)).await
+        {
+            Ok(listener) => listener,
+            Err(error) => {
+                let reason = format!(
+                    "the webhook channel cannot bind 127.0.0.1:{port}: {error}",
+                    port = self.port
+                );
+                // The bind is the thing that could fail, so it is the
+                // thing the supervisor is told about: a face that said
+                // "live" over a socket nothing holds is the defect.
+                let _ = ready.send(Err(reason.clone()));
+                return Err(reason);
+            }
+        };
+        // Bound: now it is a fact, and the port is the one actually held
+        // — which is not `self.port` when that was zero.
+        let held = listener
+            .local_addr()
+            .map(|address| address.port())
+            .unwrap_or(self.port);
+        let _ = ready.send(Ok(held));
         loop {
             tokio::select! {
                 accepted = listener.accept() => match accepted {
@@ -90,7 +109,9 @@ impl Webhook {
                     }
                     Err(error) => eprintln!("fleet channels: a delivery did not arrive: {error}"),
                 },
-                _ = tokio::signal::ctrl_c() => return Ok(()),
+                // The face that hosts the service owns Ctrl-C; a channel
+                // that watched the signal itself would swallow it.
+                _ = shutdown.changed() => return Ok(()),
             }
         }
     }
@@ -104,8 +125,10 @@ impl Channel for Webhook {
     fn serve(
         &self,
         sink: Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync>,
+        ready: tokio::sync::oneshot::Sender<Result<u16, String>>,
+        shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
-        Box::pin(self.serve_inner(sink))
+        Box::pin(self.serve_inner(sink, ready, shutdown))
     }
 
     /// The outcome goes back as a POST to the callback the delivery
@@ -165,6 +188,24 @@ async fn serve_connection(
         Err(error) => return write_reply(&mut stream, error_reply(&error.to_string())).await,
     };
     let Some(peer) = store.peer_for_token(&token) else {
+        // "Who tried to reach me" is the question the activity log
+        // exists to answer, and an unpaired token is the loudest answer
+        // there is — the refusal the owner most needs to see. The token
+        // itself is never logged: only that one arrived and was not
+        // known.
+        crate::channels::service::record(
+            home,
+            crate::channels::service::Activity {
+                at: crate::boards::now_stamp(),
+                kind: "refusal".to_string(),
+                channel: "webhook".to_string(),
+                peer: None,
+                peer_id: None,
+                session: None,
+                task: None,
+                detail: Some("an unpaired token asked for the hook".to_string()),
+            },
+        );
         return write_reply(
             &mut stream,
             error_reply("that peer token is not paired; `fleet channels pair-webhook` starts one"),
@@ -359,8 +400,14 @@ mod tests {
             let channel = Webhook::new(port, home.clone(), Arc::clone(&driver));
             let answering = Arc::clone(&driver);
             tokio::spawn(async move {
+                let (ready, _arrived) = tokio::sync::oneshot::channel();
+                let (_stop, stopped) = tokio::sync::watch::channel(false);
                 let _ = channel
-                    .serve(Arc::new(move |inbound| answering.deliver(&inbound)))
+                    .serve(
+                        Arc::new(move |inbound| answering.deliver(&inbound)),
+                        ready,
+                        stopped,
+                    )
                     .await;
             });
             // The channel is ready when it answers something: a request

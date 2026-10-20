@@ -125,6 +125,20 @@ pub const SETTINGS: &[Setting] = &[
         file: File::Config,
         summary: "Description similarity at or above which curation proposes merging two skills.",
     },
+    Setting {
+        key: "channels.enabled",
+        kind: Kind::Toggle,
+        file: File::Config,
+        summary: "Whether the channel service comes up with the face. Off binds nothing: a \
+                  machine with no channel configured has no socket to reach.",
+    },
+    Setting {
+        key: "channels.webhook_port",
+        kind: Kind::Count,
+        file: File::Config,
+        summary: "The port the webhook channel binds. The service reads it; `--channels` is an \
+                  override of the door, not the only one.",
+    },
     // --- routing.json: the preference table and its gates ---------------
     Setting {
         key: "gates.min_confidence",

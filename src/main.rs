@@ -556,6 +556,45 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
     }
     // The bare command: what is configured, and who may act.
     println!("fleet channels — the channel service");
+    // The service's own state first, from the one document every surface
+    // reads: whether anything is running, whether the heartbeat is still
+    // beating, and what each channel's phase is. Without this the list
+    // answered "who is paired" and left "is it running" to a guess.
+    match fleet::channels::Status::load(&home) {
+        Some(status) => {
+            let stale = status.is_stale(std::time::SystemTime::now());
+            println!(
+                "  service  {pid} · started {started} · {state}",
+                pid = status.pid,
+                started = status.started,
+                state = if stale {
+                    "stale — that process is no longer reporting"
+                } else {
+                    "live"
+                }
+            );
+            for report in &status.channels {
+                let port = match report.port {
+                    Some(port) => format!(" on 127.0.0.1:{port}"),
+                    None => String::new(),
+                };
+                let error = match &report.error {
+                    Some(error) => format!(" · {error}"),
+                    None => String::new(),
+                };
+                // A stale document's phases are the last thing a dead
+                // process knew, so they are labelled as such rather than
+                // read as a live channel's state.
+                let last = if stale { " (last report)" } else { "" };
+                println!(
+                    "    {name}: {phase}{port}{error}{last}",
+                    name = report.name,
+                    phase = report.phase.label()
+                );
+            }
+        }
+        None => println!("  service  no channel service has run in this home"),
+    }
     // Every channel the build ships, not the webhook alone: a Telegram
     // peer the owner paired is as much a way into the service, and a list
     // that named one channel read as if the other had none.
@@ -592,7 +631,9 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
             }
         }
     }
-    println!("  `fleet gui --channels` serves the face these peers reach");
+    println!(
+        "  `channels.enabled` in the settings, or `fleet gui --channels`, serves the face these peers reach"
+    );
     ExitCode::SUCCESS
 }
 

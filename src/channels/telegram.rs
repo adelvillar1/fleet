@@ -90,8 +90,10 @@ impl Channel for Telegram {
     fn serve(
         &self,
         sink: Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync>,
+        ready: tokio::sync::oneshot::Sender<Result<u16, String>>,
+        shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
-        Box::pin(self.serve_inner(sink))
+        Box::pin(self.serve_inner(sink, ready, shutdown))
     }
 
     /// The outcome goes back as a message to the chat the delivery came
@@ -130,10 +132,24 @@ impl Telegram {
     async fn serve_inner(
         &self,
         sink: Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync>,
+        ready: tokio::sync::oneshot::Sender<Result<u16, String>>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(), String> {
+        if self.token.trim().is_empty() {
+            let reason = "the telegram channel has no bot token (FLEET_TELEGRAM_BOT_TOKEN)"
+                .to_string();
+            let _ = ready.send(Err(reason.clone()));
+            return Err(reason);
+        }
         let token = self.token.clone();
         let api_base = self.api_base.clone();
         let offset = Arc::clone(&self.offset);
+        // A long-poller has no port to bind, so "ready" is the first
+        // answered poll: until the platform has heard from this bot,
+        // nothing is listening and saying "live" would be a guess. An
+        // error is not readiness — a bad token or no network must not
+        // read as a live channel.
+        let mut ready = Some(ready);
         loop {
             let polled = {
                 let token = token.clone();
@@ -143,8 +159,15 @@ impl Telegram {
                     poll_updates(&api_base, &token, &offset)
                 })
             };
-            match polled.await {
+            let outcome = tokio::select! {
+                polled = polled => polled,
+                _ = shutdown.changed() => return Ok(()),
+            };
+            match outcome {
                 Ok(Ok(updates)) => {
+                    if let Some(ready) = ready.take() {
+                        let _ = ready.send(Ok(0));
+                    }
                     for update in &updates {
                         if let Some(inbound) = delivery_of(update) {
                             // A refused delivery names its peer: the chat
@@ -162,6 +185,10 @@ impl Telegram {
                     }
                 }
                 Ok(Err(error)) => {
+                    if let Some(ready) = ready.take() {
+                        let _ = ready.send(Err(error.clone()));
+                        return Err(error);
+                    }
                     eprintln!("fleet channels: {error}");
                     // A failed poll is a network that went away: wait a
                     // moment rather than hammering the platform.
@@ -386,7 +413,9 @@ mod tests {
             let sink: Arc<
                 dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync,
             > = Arc::new(move |inbound| sink_holder.deliver(&inbound));
-            let _ = serving.serve(sink).await;
+            let (ready, _arrived) = tokio::sync::oneshot::channel();
+            let (_stop, stopped) = tokio::sync::watch::channel(false);
+            let _ = serving.serve(sink, ready, stopped).await;
         });
 
         // A message arrives, and the run lands in the peer's own session

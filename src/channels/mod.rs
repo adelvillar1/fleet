@@ -45,8 +45,11 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod service;
 pub mod telegram;
 pub mod webhook;
+
+pub use service::{ChannelReport, ChannelService, Config as ServiceConfig, Phase, Status};
 
 use crate::gui::bridge::Bridge;
 
@@ -384,9 +387,17 @@ pub trait Channel: Send + Sync {
     /// first half of a peer's key.
     fn name(&self) -> String;
 
-    /// Serve inbound deliveries until the process stops, handing each to
+    /// Serve inbound deliveries until the shutdown fires, handing each to
     /// `sink`. The plugin owns its own connection, its own reconnect,
     /// and its own authentication — the driver never sees a credential.
+    ///
+    /// `ready` is how "live" becomes a fact rather than a hope: the
+    /// plugin sends `Ok(port)` exactly once, after the thing that could
+    /// fail has succeeded — a bind for a listener, the first answered
+    /// poll for a long-poller — or `Err(reason)` when it could not come
+    /// up at all. A supervisor that cannot tell those apart says "live"
+    /// about a socket nothing is listening on, which is the defect this
+    /// signature exists to make impossible.
     ///
     /// Spawned onto the caller's runtime: a channel is a task of the
     /// face that hosts it, exactly as the consolidator and the scheduler
@@ -397,6 +408,8 @@ pub trait Channel: Send + Sync {
     fn serve(
         &self,
         sink: Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync>,
+        ready: tokio::sync::oneshot::Sender<Result<u16, String>>,
+        shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>;
 
     /// Send an outcome back to the peer.
@@ -520,7 +533,7 @@ impl Driver {
     /// peer arrived on and in the GUI inbox alike — raised once, seen
     /// everywhere. The events name their session, which is what makes
     /// the filtering exact rather than a guess about whose turn it was.
-    pub async fn watch(&self, channel: Arc<dyn Channel>) {
+    pub async fn watch(&self, channels: &[Arc<dyn Channel>]) {
         let mut events = self.bridge.subscribe();
         loop {
             match events.recv().await {
@@ -528,16 +541,31 @@ impl Driver {
                     let Some(session) = event.get("session").and_then(Value::as_str) else {
                         continue;
                     };
-                    let Some((_, reply)) = self
+                    // The key names the channel and the peer, so the
+                    // plugin that carries the reply is the one the
+                    // conversation arrived on — not the only one there
+                    // is. A face hosting two channels routes each peer's
+                    // seats to the transport that can actually deliver
+                    // them.
+                    let Some((key, reply)) = self
                         .sessions
                         .lock()
                         .unwrap_or_else(|poison| poison.into_inner())
                         .iter()
                         .find(|(_, (owned, _))| owned == session)
-                        .map(|(_, pair)| pair.clone())
+                        .map(|(key, (_, reply))| (key.clone(), reply.clone()))
                     else {
                         continue;
                     };
+                    let Some(channel) = peer_of(&key).and_then(|peer| {
+                        channels
+                            .iter()
+                            .find(|channel| channel.name() == peer.channel)
+                            .cloned()
+                    }) else {
+                        continue;
+                    };
+                    let announce = peer_of(&key);
                     match event.get("type").and_then(Value::as_str) {
                         Some("seat") => {
                             let card = SeatCard {
@@ -554,6 +582,14 @@ impl Driver {
                                     .to_string(),
                             };
                             channel.present_seat(&reply, &card);
+                            if let Some(peer) = &announce {
+                                crate::channels::service::note_seat(
+                                    &self.bridge.home_path(),
+                                    &peer.channel,
+                                    &peer.id,
+                                    &card,
+                                );
+                            }
                         }
                         Some("finished") | Some("failed") => {
                             // The outcome is the last thing the session
@@ -562,6 +598,15 @@ impl Driver {
                             // what the run produced.
                             if let Some(text) = self.last_words(session) {
                                 channel.reply(&reply, &text);
+                                if let Some(peer) = &announce {
+                                    crate::channels::service::note_reply(
+                                        &self.bridge.home_path(),
+                                        &peer.channel,
+                                        &peer.id,
+                                        &reply,
+                                        &text,
+                                    );
+                                }
                             }
                         }
                         _ => {}
@@ -630,6 +675,18 @@ impl Driver {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
+}
+
+/// The Telegram bot token, read the way every credential is: the vault
+/// over the dotenv over the environment, resolved once at start and
+/// never carried in a payload. A machine with no token has no Telegram
+/// channel — not a stopped one, an unconfigured one.
+pub fn telegram_token(home: &Path) -> Option<String> {
+    let dotenv = crate::home::read_dotenv_with_vault(home, std::env::var("FLEET_VAULT_PASSPHRASE").ok().as_deref());
+    crate::home::resolve_setting("FLEET_TELEGRAM_BOT_TOKEN", &dotenv)
+        .or_else(|| std::env::var("FLEET_TELEGRAM_BOT_TOKEN").ok())
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
 }
 
 /// Mint a channel peer's token: 32 random bytes, base64url, the same
@@ -729,15 +786,21 @@ mod tests {
     }
 
     impl Channel for Spy {
+        /// The spy stands in for the webhook: the watcher routes a peer's
+        /// seats to the transport its conversation arrived on, so a
+        /// stand-in has to answer to that transport's name.
         fn name(&self) -> String {
-            "spy".to_string()
+            "webhook".to_string()
         }
 
         fn serve(
             &self,
             _sink: Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync>,
+            ready: tokio::sync::oneshot::Sender<Result<u16, String>>,
+            _shutdown: tokio::sync::watch::Receiver<bool>,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>
         {
+            let _ = ready.send(Ok(0));
             Box::pin(async { Ok(()) })
         }
 
@@ -793,7 +856,7 @@ mod tests {
         // The watcher, subscribed to the same stream the browser watches.
         let watching = Arc::clone(&driver);
         let channel: Arc<dyn Channel> = Arc::clone(&spy) as Arc<dyn Channel>;
-        tokio::spawn(async move { watching.watch(channel).await });
+        tokio::spawn(async move { watching.watch(&[channel]).await });
         // The watcher subscribes on its own schedule; a broadcast does
         // not replay, so the seat waits until it is listening.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

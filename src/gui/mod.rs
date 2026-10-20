@@ -165,63 +165,49 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
     };
     println!("  Ctrl-C stops it.");
 
-    // The channel service, opt-in: a transport plugin carrying work from
-    // outside. It runs on the same bridge, so a peer's task is an
-    // ordinary run in that peer's own session — the same agent, the same
-    // log, the same seat — and nothing here is a second path to the core.
-    let _channels = if options.channels {
-        let home = home.clone();
+    // The channel service: a transport plugin carrying work from outside.
+    // It runs on the same bridge, so a peer's task is an ordinary run in
+    // that peer's own session — the same agent, the same log, the same
+    // seat — and nothing here is a second path to the core.
+    //
+    // The service is the supervisor, so the face only says what the
+    // supervisor reports: a channel that could not bind is `failed` on
+    // this terminal and in the document every surface reads, rather than
+    // a "live" line over a socket nothing holds.
+    // The setting is the door and the flag is an override of it: a home
+    // that has configured `channels.enabled` gets the service with no
+    // flag, and a flag starts it on a home that has not. Off either way
+    // means no socket binds.
+    let channel_config = crate::channels::ServiceConfig::from_settings(
+        &home,
+        if options.channels { Some(true) } else { None },
+    );
+    let _channels = if channel_config.enabled {
+        let config = channel_config;
         let policy = crate::channels::Policy::new(home.clone());
-        let driver = Arc::new(crate::channels::Driver::new(
+        let driver = Arc::new(crate::channels::Driver::new(Arc::clone(&bridge), policy));
+        let service = Arc::new(crate::channels::ChannelService::new(
             Arc::clone(&bridge),
-            policy,
+            driver,
+            &config,
         ));
-        let webhook = crate::channels::webhook::Webhook::new(
-            crate::channels::webhook::DEFAULT_PORT,
-            home,
-            Arc::clone(&driver),
-        );
-        // The watcher presents the channel's seats and posts its outcomes,
-        // subscribed to the same stream the browser watches.
-        let channel: Arc<dyn crate::channels::Channel> = Arc::new(webhook);
-        let served = Arc::clone(&channel);
-        let delivering = Arc::clone(&driver);
-        tokio::spawn(async move {
-            let sink: Arc<
-                dyn Fn(crate::channels::Inbound) -> Result<String, crate::channels::Refusal>
-                    + Send
-                    + Sync,
-            > = Arc::new(move |inbound| delivering.deliver(&inbound));
-            let _ = served.serve(sink).await;
-        });
-        let watching = Arc::clone(&driver);
-        tokio::spawn(async move { watching.watch(channel).await });
-        println!(
-            "fleet gui — the webhook channel is live on 127.0.0.1:{}",
-            crate::channels::webhook::DEFAULT_PORT
-        );
-        // The telegram channel, when its bot token is in the environment:
-        // the same masking rule every other credential holds, read once
-        // at start and never carried in a payload.
-        if let Some(token) = telegram_token() {
-            let telegram = crate::channels::telegram::Telegram::new(token);
-            let channel: Arc<dyn crate::channels::Channel> = Arc::new(telegram);
-            let served = Arc::clone(&channel);
-            let delivering = Arc::clone(&driver);
-            tokio::spawn(async move {
-                let sink: Arc<
-                    dyn Fn(crate::channels::Inbound)
-                        -> Result<String, crate::channels::Refusal>
-                        + Send
-                        + Sync,
-                > = Arc::new(move |inbound| delivering.deliver(&inbound));
-                let _ = served.serve(sink).await;
-            });
-            let watching = Arc::clone(&driver);
-            tokio::spawn(async move { watching.watch(channel).await });
-            println!("fleet gui — the telegram channel is live");
+        println!("fleet gui — the channel service is starting");
+        let reports = service.start_all().await;
+        let failed: Vec<&str> = reports
+            .iter()
+            .filter(|report| report.phase == crate::channels::Phase::Failed)
+            .map(|report| report.name.as_str())
+            .collect();
+        if !failed.is_empty() {
+            println!(
+                "  {} channel{} did not start; `fleet channels` says why",
+                failed.len(),
+                if failed.len() == 1 { "" } else { "s" }
+            );
         }
-        Some(driver)
+        service.spawn_watcher();
+        service.spawn_heartbeat();
+        Some(service)
     } else {
         None
     };
@@ -296,17 +282,6 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
 /// The telegram bot token, from the environment or the home's `.env`.
 /// None when neither carries it, which is how the channel stays absent
 /// on a machine that never configured it.
-fn telegram_token() -> Option<String> {
-    let home = crate::home::fleet_home(
-        std::env::var("FLEET_HOME").ok().as_deref(),
-        std::env::var("HOME").ok().as_deref(),
-    )
-    .ok()?;
-    crate::home::resolve_setting("FLEET_TELEGRAM_BOT_TOKEN", &crate::home::read_dotenv(&home))
-        .or_else(|| std::env::var("FLEET_TELEGRAM_BOT_TOKEN").ok())
-        .map(|token| token.trim().to_string())
-        .filter(|token| !token.is_empty())
-}
 
 /// An address as a URL authority: IPv6 bracketed, IPv4 bare.
 fn address_name(address: std::net::IpAddr) -> String {
