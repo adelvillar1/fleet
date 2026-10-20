@@ -91,11 +91,20 @@
   <nav class="surfaces" id="rail" aria-label="surfaces">
     <a class="mark" href="#/chat" aria-label="fleet, the conversation">
       <span class="mark-glyph" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-             stroke-linecap="round">
-          <path d="M4 6.5h11"></path>
-          <path d="M4 12h16"></path>
-          <path d="M4 17.5h8"></path>
+        <svg viewBox="0 0 32 32" focusable="false">
+          <defs>
+            <linearGradient id="fleet-mark-tile" x1="0" y1="0" x2="0.3" y2="1">
+              <stop offset="0" stop-color="#1a1e26"></stop>
+              <stop offset="1" stop-color="#0a0c10"></stop>
+            </linearGradient>
+          </defs>
+          <rect width="32" height="32" rx="7.4" fill="url(#fleet-mark-tile)"></rect>
+          <rect x="0.6" y="0.6" width="30.8" height="30.8" rx="6.9" fill="none"
+                stroke="#ffffff" stroke-opacity="0.10" stroke-width="0.8"></rect>
+          <text x="16" y="23.1" text-anchor="middle"
+                font-family="New York, ui-serif, Georgia, serif" font-size="23.5"
+                font-weight="600" fill="#f2efe7">f</text>
+          <rect x="5.9" y="25.5" width="20.2" height="1" rx="0.5" fill="#5b8def"></rect>
         </svg>
       </span>
       <span class="mark-text">
@@ -597,10 +606,12 @@
         'max-width:520px;width:100%;border:1px solid ' + c.line + ';border-radius:12px;' +
         'padding:22px 24px;box-sizing:border-box;background:inherit';
       card.innerHTML =
-        '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-        'stroke-width="1.6" stroke-linecap="round" aria-hidden="true" ' +
-        'style="display:block;margin:0 0 14px;opacity:.85">' +
-        '<path d="M4 6.5h11"></path><path d="M4 12h16"></path><path d="M4 17.5h8"></path></svg>';
+        '<svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true" ' +
+        'style="display:block;margin:0 0 14px">' +
+        '<rect width="32" height="32" rx="7.4" fill="#12151b"></rect>' +
+        '<text x="16" y="23.1" text-anchor="middle" font-family="New York, ui-serif, Georgia, serif" ' +
+        'font-size="23.5" font-weight="600" fill="#f2efe7">f</text>' +
+        '<rect x="5.9" y="25.5" width="20.2" height="1" rx="0.5" fill="#5b8def"></rect></svg>';
       var title = document.createElement('h1');
       title.style.cssText = 'font-size:20px;line-height:1.25;margin:0 0 10px;letter-spacing:-.01em';
       title.textContent = heading;

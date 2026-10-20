@@ -386,13 +386,12 @@ body[data-dock="overlay"] .dock {
   place-items: center;
   width: 28px;
   height: 28px;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-accent) 26%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--dsw-alias-accent) 8%, var(--dsw-alias-surface));
-  color: var(--dsw-alias-accent);
+  border-radius: 7px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--dsw-alias-ink) 18%, transparent);
 }
 
-.mark-glyph svg { width: 18px; height: 18px; }
+.mark-glyph svg { display: block; width: 28px; height: 28px; }
 
 .mark-text { display: grid; gap: 0; min-width: 0; }
 

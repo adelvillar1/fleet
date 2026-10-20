@@ -95,7 +95,7 @@ function unreachable() {
     '.card{border-color:rgb(255 255 255 / 15%)}a{color:#8fb2ff}}' +
     '.card{max-width:520px;border:1px solid rgb(24 26 29 / 12%);border-radius:12px;padding:22px 24px;' +
     'background:inherit}' +
-    'svg{display:block;margin:0 0 14px;opacity:.85}' +
+    'svg{display:block;margin:0 0 14px}' +
     'h1{font-size:20px;line-height:1.25;margin:0 0 8px;letter-spacing:-.01em}' +
     'p{margin:0 0 16px;opacity:.8}' +
     'code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:rgb(24 26 29 / 6%);' +
@@ -103,9 +103,11 @@ function unreachable() {
     'a{display:inline-block;font-weight:600;color:#1e3e8c;text-decoration:none}' +
     'a:hover{text-decoration:underline}' +
     '</style></head><body><main class="card">' +
-    '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-    'stroke-width="1.6" stroke-linecap="round" aria-hidden="true">' +
-    '<path d="M4 6.5h11"></path><path d="M4 12h16"></path><path d="M4 17.5h8"></path></svg>' +
+    '<svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true">' +
+    '<rect width="32" height="32" rx="7.4" fill="#12151b"></rect>' +
+    '<text x="16" y="23.1" text-anchor="middle" font-family="New York, ui-serif, Georgia, serif" ' +
+    'font-size="23.5" font-weight="600" fill="#f2efe7">f</text>' +
+    '<rect x="5.9" y="25.5" width="20.2" height="1" rx="0.5" fill="#5b8def"></rect></svg>' +
     '<h1>fleet is not reachable</h1>' +
     '<p>The face is not answering on this address. Start it with <code>fleet gui</code>, ' +
     'then reload this page. Nothing you had open was saved in this shell — the conversation ' +
