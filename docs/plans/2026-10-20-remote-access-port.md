@@ -120,6 +120,39 @@ defect and each is fixed here rather than ported.
 | KI-261 | `fleet channels --port` is parsed and ignored | the setting is the truth; the flag overrides it or is removed |
 | KI-262 | No TUI surface | P5's reader |
 
+**Landed.** KI-258, KI-259, KI-260 and KI-261 are fixed; KI-257 is
+P2's supervisor and KI-262 is P5's reader, as the table says.
+
+- KI-258 — `access_read` walks `channels::CHANNELS`, so a paired
+  Telegram chat appears beside a webhook peer, and each row names the
+  channel it arrived on. Pinned by
+  `the_access_read_names_every_channels_peers`.
+- KI-259 — `--capability task|observe` is a parameter of both pair
+  forms, applied after the whole line is read so it may sit on either
+  side of the pairing. `Observe` is now reachable, and a peer paired to
+  listen is refused a task by name and still receives outcomes. Pinned
+  by `channels_pairs_a_peer_with_the_capability_it_asked_for` and the
+  live webhook delivery below.
+- KI-260 — the peer→session mapping persists to
+  `<FLEET_HOME>/channels/sessions.json` (0600, atomic) and every entry
+  is validated on load: the log must exist and carry that peer's own
+  channel record. This required P6's record change early — `Channel`
+  now carries `peer_id` beside the name, because a name is not unique
+  and a scan by name would hand the wrong conversation over. Pinned by
+  `a_peers_conversation_survives_a_restart_and_a_stale_one_is_dropped`
+  (restart, deleted log, and another peer's log).
+- KI-261 — `fleet channels --port` is removed rather than kept as a
+  flag that lies; the port belongs to the process that binds it, and
+  P2's `channels.webhook_port` setting is the truth the service reads.
+  The bare `fleet channels` also walks every channel now, not the
+  webhook alone.
+
+Verified live: an `observe` peer's delivery is refused ("that peer may
+only listen; it cannot hand fleet a task") while an acting peer's task
+is accepted into its own session; the access read names the webhook
+peers and the Telegram chat; and after a restart the same peer's next
+delivery lands in the same session log.
+
 ### P2 — the channel service, supervised
 
 `src/channels/service.rs`: a `ChannelService` owns every plugin and

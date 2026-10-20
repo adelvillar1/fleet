@@ -2,6 +2,7 @@
 //! own flags; there is nothing to forward anywhere.
 
 use crate::api::DEFAULT_MODEL;
+use crate::channels::Capability;
 
 /// Everything `fleet` answers to.
 #[derive(Debug, PartialEq, Eq)]
@@ -1810,37 +1811,54 @@ fn parse_devices(args: &[String]) -> Result<Command, String> {
 /// Options for `fleet channels`.
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct ChannelsOptions {
-    /// Pair a webhook peer: the name it is filed under and the callback
-    /// its outcomes are POSTed to.
-    pub pair_webhook: Option<(String, Option<String>)>,
+    /// Pair a webhook peer: the name it is filed under, the callback its
+    /// outcomes are POSTed to, and what it may do.
+    pub pair_webhook: Option<(String, Option<String>, Capability)>,
     /// Forget a webhook peer by id.
     pub revoke_webhook: Option<String>,
-    /// Pair a telegram peer by the chat id a refusal named.
-    pub allow_telegram: Option<(String, Option<String>)>,
-    /// The port the webhook channel listens on when the service runs.
-    pub port: Option<u16>,
+    /// Pair a telegram peer by the chat id a refusal named, with the name
+    /// it is filed under and what it may do.
+    pub allow_telegram: Option<(String, Option<String>, Capability)>,
 }
 
-/// `fleet channels [pair-webhook <name> [--callback <url>]]
-/// [revoke-webhook <id>] [--port <n>]`: no top-level positionals, and
-/// the two subcommands take one name or id each. A peer is paired with a
-/// minted token printed once, exactly as a device is.
+/// `fleet channels [pair-webhook <name> [--callback <url>]
+/// [--capability task|observe]] [revoke-webhook <id>] [allow-telegram
+/// <chat> [--name <name>] [--capability task|observe]]`: no top-level
+/// positionals, and the two subcommands take one name or id each. A peer
+/// is paired with a minted token printed once, exactly as a device is.
+///
+/// The webhook's port is not here. `--port` used to be parsed and
+/// ignored, which is a flag that lies: the port belongs to the process
+/// that binds it, and `fleet channels` is not that process. It moves to
+/// the `channels.webhook_port` setting the service reads.
 fn parse_channels(args: &[String]) -> Result<Command, String> {
     let mut options = ChannelsOptions::default();
+    let mut capability: Option<Capability> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
         match arg {
             "--help" | "-h" => return Ok(Command::Help),
-            "--port" => {
-                let value = take_value(args, &mut index, "--port")?;
-                let port = value.parse::<u16>().map_err(|_| {
-                    format!("`--port {value}` is not a port; pick a number between 0 and 65535")
-                })?;
-                if options.port.is_some() {
-                    return Err("`--port` takes one number".to_string());
+            // The capability is a parameter of the pairing rather than a
+            // later edit, because a peer that arrives already able to act
+            // is a different thing from one that arrives listening and is
+            // promoted. The default stays `task`: the peer asked to hand
+            // Fleet work, which is what a callback is for.
+            "--capability" => {
+                let value = take_value(args, &mut index, "--capability")?;
+                let asked = match value.trim() {
+                    "task" | "act" => Capability::Task,
+                    "observe" | "listen" => Capability::Observe,
+                    other => {
+                        return Err(format!(
+                            "`--capability {other}` is not a capability; `task` acts, `observe` listens"
+                        ));
+                    }
+                };
+                if capability.is_some() {
+                    return Err("`--capability` takes one value".to_string());
                 }
-                options.port = Some(port);
+                capability = Some(asked);
             }
             "pair-webhook" => {
                 if options.pair_webhook.is_some() {
@@ -1848,11 +1866,11 @@ fn parse_channels(args: &[String]) -> Result<Command, String> {
                 }
                 let name = take_value(args, &mut index, "pair-webhook")?;
                 let mut callback = None;
-                if matches!(args.get(index + 1).map(String::as_str), Some("--callback")) {
+                while matches!(args.get(index + 1).map(String::as_str), Some("--callback")) {
                     index += 1;
                     callback = Some(take_value(args, &mut index, "--callback")?);
                 }
-                options.pair_webhook = Some((name, callback));
+                options.pair_webhook = Some((name, callback, Capability::Task));
             }
             "revoke-webhook" => {
                 if options.revoke_webhook.is_some() {
@@ -1863,25 +1881,42 @@ fn parse_channels(args: &[String]) -> Result<Command, String> {
             "allow-telegram" => {
                 let chat_id = take_value(args, &mut index, "allow-telegram")?;
                 let mut name = None;
-                if matches!(args.get(index + 1).map(String::as_str), Some("--name")) {
+                while matches!(args.get(index + 1).map(String::as_str), Some("--name")) {
                     index += 1;
                     name = Some(take_value(args, &mut index, "--name")?);
                 }
                 if options.allow_telegram.is_some() {
                     return Err("allow-telegram takes one chat id".to_string());
                 }
-                options.allow_telegram = Some((chat_id, name));
+                options.allow_telegram = Some((chat_id, name, Capability::Task));
             }
             other if other.starts_with('-') && other != "-" => {
                 return Err(format!("unknown channels option `{other}`"));
             }
             other => {
                 return Err(format!(
-                    "`{other}` takes no value here; channels takes pair-webhook, revoke-webhook, allow-telegram, and --port"
+                    "`{other}` takes no value here; channels takes pair-webhook, revoke-webhook, allow-telegram, and --capability"
                 ));
             }
         }
         index += 1;
+    }
+    // The capability is applied after the whole line is read, so it may
+    // come before or after the pairing it belongs to. Naming one with no
+    // pairing to attach it to is an owner who meant the other form.
+    if let Some(asked) = capability {
+        let applied = match (&mut options.pair_webhook, &mut options.allow_telegram) {
+            (Some((_, _, slot)), _) | (None, Some((_, _, slot))) => {
+                *slot = asked;
+                true
+            }
+            (None, None) => false,
+        };
+        if !applied {
+            return Err(
+                "`--capability` needs a pairing: pair-webhook or allow-telegram".to_string(),
+            );
+        }
     }
     Ok(Command::Channels(options))
 }
@@ -2302,11 +2337,16 @@ mod tests {
             parse(&args(&["channels"])).unwrap(),
             Command::Channels(ChannelsOptions::default())
         );
-        // A pairing takes a name and an optional callback.
+        // A pairing takes a name and an optional callback, and the
+        // capability defaults to the acting one.
         assert_eq!(
             parse(&args(&["channels", "pair-webhook", "the CI box"])).unwrap(),
             Command::Channels(ChannelsOptions {
-                pair_webhook: Some(("the CI box".to_string(), None)),
+                pair_webhook: Some((
+                    "the CI box".to_string(),
+                    None,
+                    Capability::Task
+                )),
                 ..Default::default()
             })
         );
@@ -2322,7 +2362,8 @@ mod tests {
             Command::Channels(ChannelsOptions {
                 pair_webhook: Some((
                     "the CI box".to_string(),
-                    Some("http://127.0.0.1:8899/callback".to_string())
+                    Some("http://127.0.0.1:8899/callback".to_string()),
+                    Capability::Task
                 )),
                 ..Default::default()
             })
@@ -2335,21 +2376,78 @@ mod tests {
                 ..Default::default()
             })
         );
-        assert_eq!(
-            parse(&args(&["channels", "--port", "3081"])).unwrap(),
-            Command::Channels(ChannelsOptions {
-                port: Some(3081),
-                ..Default::default()
-            })
-        );
         // The refusals: a name that is not there, a second of a kind, a
-        // port that is not a number, a stray word.
+        // stray word, and the port flag that moved to the setting.
         assert!(parse(&args(&["channels", "pair-webhook"])).is_err());
         assert!(parse(&args(&["channels", "pair-webhook", "a", "b"])).is_err());
         assert!(parse(&args(&["channels", "revoke-webhook"])).is_err());
-        assert!(parse(&args(&["channels", "--port", "http"])).is_err());
+        assert!(parse(&args(&["channels", "--port", "3081"])).is_err());
         assert!(parse(&args(&["channels", "stray"])).is_err());
         assert!(parse(&args(&["channels", "--loud"])).is_err());
+    }
+
+    /// The capability is a parameter of the pairing, which is what makes
+    /// `Observe` reachable at all: a peer paired to listen is refused a
+    /// task and still receives its outcomes.
+    #[test]
+    fn channels_pairs_a_peer_with_the_capability_it_asked_for() {
+        assert_eq!(
+            parse(&args(&[
+                "channels",
+                "pair-webhook",
+                "the listener",
+                "--capability",
+                "observe",
+            ]))
+            .unwrap(),
+            Command::Channels(ChannelsOptions {
+                pair_webhook: Some((
+                    "the listener".to_string(),
+                    None,
+                    Capability::Observe
+                )),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            parse(&args(&[
+                "channels",
+                "allow-telegram",
+                "4242",
+                "--capability",
+                "observe",
+            ]))
+            .unwrap(),
+            Command::Channels(ChannelsOptions {
+                allow_telegram: Some((
+                    "4242".to_string(),
+                    None,
+                    Capability::Observe
+                )),
+                ..Default::default()
+            })
+        );
+        // A capability named with no pairing to attach it to, a word that
+        // is not one, and a second of a kind are all refused.
+        assert!(parse(&args(&["channels", "--capability", "observe"])).is_err());
+        assert!(parse(&args(&[
+            "channels",
+            "pair-webhook",
+            "the listener",
+            "--capability",
+            "loud",
+        ]))
+        .is_err());
+        assert!(parse(&args(&[
+            "channels",
+            "pair-webhook",
+            "the listener",
+            "--capability",
+            "observe",
+            "--capability",
+            "task",
+        ]))
+        .is_err());
     }
 
     #[test]
@@ -2357,7 +2455,7 @@ mod tests {
         assert_eq!(
             parse(&args(&["channels", "allow-telegram", "4242"])).unwrap(),
             Command::Channels(ChannelsOptions {
-                allow_telegram: Some(("4242".to_string(), None)),
+                allow_telegram: Some(("4242".to_string(), None, Capability::Task)),
                 ..Default::default()
             })
         );
@@ -2371,7 +2469,11 @@ mod tests {
             ]))
             .unwrap(),
             Command::Channels(ChannelsOptions {
-                allow_telegram: Some(("4242".to_string(), Some("Alejandro".to_string()))),
+                allow_telegram: Some((
+                    "4242".to_string(),
+                    Some("Alejandro".to_string()),
+                    Capability::Task
+                )),
                 ..Default::default()
             })
         );

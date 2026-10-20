@@ -2101,8 +2101,13 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             // Bookkeeping, like start and end — it replays to no message
             // — but it carries the facts the inbox shows, so the replay
             // surfaces it rather than dropping it.
-            session::Record::Channel { channel, peer } => {
-                cards.push(json!({"type": "channel", "channel": channel, "peer": peer}));
+            session::Record::Channel { channel, peer_id, peer } => {
+                cards.push(json!({
+                    "type": "channel",
+                    "channel": channel,
+                    "peer_id": peer_id,
+                    "peer": peer,
+                }));
             }
             session::Record::Rewind {
                 turn,
@@ -2293,25 +2298,35 @@ fn access_read(home: &std::path::Path) -> Value {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let peers = crate::channels::PeerStore::load(home, "webhook")
-        .map(|store| {
-            store
-                .peers
-                .iter()
-                .map(|peer| {
-                    json!({
-                        "id": peer.id,
-                        "name": peer.name,
-                        "capability": match peer.capability {
-                            crate::channels::Capability::Task => "may act",
-                            crate::channels::Capability::Observe => "may only listen",
-                        },
-                        "paired": peer.created_at,
-                    })
+    // Every channel's store, not one of them: a paired Telegram chat is
+    // as much a way into this face as a paired webhook, and a read that
+    // walked only the webhook would tell the owner half the truth about
+    // who can reach them.
+    let peers = crate::channels::CHANNELS
+        .iter()
+        .flat_map(|channel| {
+            crate::channels::PeerStore::load(home, channel)
+                .map(|store| {
+                    store
+                        .peers
+                        .iter()
+                        .map(|peer| {
+                            json!({
+                                "channel": channel,
+                                "id": peer.id,
+                                "name": peer.name,
+                                "capability": match peer.capability {
+                                    crate::channels::Capability::Task => "may act",
+                                    crate::channels::Capability::Observe => "may only listen",
+                                },
+                                "paired": peer.created_at,
+                            })
+                        })
+                        .collect::<Vec<_>>()
                 })
-                .collect::<Vec<_>>()
+                .unwrap_or_default()
         })
-        .unwrap_or_default();
+        .collect::<Vec<_>>();
     json!({
         "type": "access",
         "read_at": crate::boards::now_stamp(),
@@ -3984,6 +3999,58 @@ mod tests {
         assert_eq!(events[0]["role"], "owner");
         assert_eq!(events[0]["text"], "look at the router");
         assert_eq!(state["running"], true);
+    }
+
+    /// "Who can reach this face" walks every channel's store, not the
+    /// webhook's alone: a paired Telegram chat is as much a way in, and
+    /// a read that named one channel told the owner half the truth.
+    #[test]
+    fn the_access_read_names_every_channels_peers() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-access-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+
+        let mut webhook = crate::channels::PeerStore::default();
+        webhook.pair(
+            "wh1",
+            "the CI box",
+            "unused",
+            crate::channels::Capability::Task,
+            "2026-10-20T00:00:00Z",
+        );
+        webhook.save(&home, "webhook").expect("the webhook store");
+        let mut telegram = crate::channels::PeerStore::default();
+        telegram.pair(
+            "4242",
+            "Alejandro",
+            "unused",
+            crate::channels::Capability::Observe,
+            "2026-10-20T00:00:00Z",
+        );
+        telegram.save(&home, "telegram").expect("the telegram store");
+
+        let read = access_read(&home);
+        let peers = read["peers"].as_array().expect("the peer list");
+        assert_eq!(peers.len(), 2, "both channels are walked: {peers:?}");
+        let telegram_peer = peers
+            .iter()
+            .find(|peer| peer["channel"] == "telegram")
+            .expect("the telegram peer is named");
+        assert_eq!(telegram_peer["id"], "4242");
+        assert_eq!(telegram_peer["capability"], "may only listen");
+        let webhook_peer = peers
+            .iter()
+            .find(|peer| peer["channel"] == "webhook")
+            .expect("the webhook peer is named");
+        assert_eq!(webhook_peer["capability"], "may act");
+        std::fs::remove_dir_all(&home).ok();
     }
 
     /// The owner's stop and steer write the file the turn loop reads,

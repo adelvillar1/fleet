@@ -91,14 +91,21 @@ pub enum Record {
         lane: String,
         tools: Vec<crate::tools::LaneTool>,
     },
-    /// The channel this session's peer arrived on, and the peer's name —
-    /// recorded once, when the channel driver creates the session. What
-    /// makes an inbox able to say "via webhook · the CI box" beside a
-    /// conversation, and what tells the owner that a reply here goes to
-    /// that peer rather than into the void. Bookkeeping, like
-    /// `lane_tools`: it replays to no message.
+    /// The channel this session's peer arrived on, the peer's own id on
+    /// it, and the peer's name — recorded once, when the channel driver
+    /// creates the session. What makes an inbox able to say "via webhook ·
+    /// the CI box" beside a conversation, and what tells the owner that a
+    /// reply here goes to that peer rather than into the void. Bookkeeping,
+    /// like `lane_tools`: it replays to no message.
+    ///
+    /// The id rides beside the name because a restart has to be able to
+    /// tell one peer's conversation from another's, and a name is not
+    /// unique: two webhook peers may both be called "the CI box", and a
+    /// scan of the archive for a name would hand the wrong conversation
+    /// to the wrong peer.
     Channel {
         channel: String,
+        peer_id: String,
         peer: String,
     },
     /// The skills one run declared, recorded once at run start. The
@@ -411,7 +418,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
     // conversation says so beside its first line.
     let channel = text.lines().find_map(|line| {
         match serde_json::from_str::<Record>(line.trim()) {
-            Ok(Record::Channel { channel, peer }) => Some((channel, peer)),
+            Ok(Record::Channel { channel, peer_id, peer }) => Some((channel, peer_id, peer)),
             _ => None,
         }
     });
@@ -445,9 +452,11 @@ pub struct SessionSummary {
     /// The working directory this session was born in, or `None` on a log
     /// written before the field existed. The archive groups by it.
     pub workspace: Option<String>,
-    /// The channel this session's peer arrived on and the peer's name,
-    /// or `None` for an ordinary session the owner started themselves.
-    pub channel: Option<(String, String)>,
+    /// The channel this session's peer arrived on, the peer's own id on
+    /// it, and the peer's name — or `None` for an ordinary session the
+    /// owner started themselves. The first and third are what a surface
+    /// shows; the second is what matches a conversation back to a peer.
+    pub channel: Option<(String, String, String)>,
     /// True when the log carries a `compaction` record: the conversation
     /// outgrew the window and was folded at least once. The picker and
     /// `fleet sessions` mark it, because a compacted session's replay is

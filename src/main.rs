@@ -448,7 +448,7 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if let Some((name, callback)) = &options.pair_webhook {
+    if let Some((name, callback, capability)) = &options.pair_webhook {
         let token = match fleet::channels::mint_peer_token() {
             Ok(token) => token,
             Err(error) => {
@@ -468,13 +468,20 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
         };
         let stamp = fleet::session::iso_utc_stamp(std::time::SystemTime::now())
             .unwrap_or_else(|_| String::from("unknown"));
-        store.pair(&id, name, &token, fleet::channels::Capability::Task, &stamp);
+        store.pair(&id, name, &token, *capability, &stamp);
         if let Err(error) = store.save(&home, "webhook") {
             eprintln!("fleet: channels: {error}");
             return ExitCode::FAILURE;
         }
         println!("fleet channels — one webhook peer paired");
         println!("  peer:  {name}  ({id})");
+        println!(
+            "  may:   {}",
+            match capability {
+                fleet::channels::Capability::Task => "hand fleet a task and receive the outcome",
+                fleet::channels::Capability::Observe => "be notified only — it cannot hand fleet a task",
+            }
+        );
         println!("  token: {token}");
         println!("  hook:  POST http://127.0.0.1:{port}/hook", port = fleet::channels::webhook::DEFAULT_PORT);
         println!("         with the header x-fleet-peer: {token}");
@@ -486,7 +493,7 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
         println!("  the token is printed once and stored as its digest only");
         return ExitCode::SUCCESS;
     }
-    if let Some((chat_id, name)) = &options.allow_telegram {
+    if let Some((chat_id, name, capability)) = &options.allow_telegram {
         // The peer is paired by the chat id, with no token to mint: the
         // chat id IS the credential on this platform, and the bot only
         // answers chats it has been told to answer.
@@ -512,12 +519,19 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
         };
         let stamp = fleet::session::iso_utc_stamp(std::time::SystemTime::now())
             .unwrap_or_else(|_| String::from("unknown"));
-        store.pair(chat_id, &name, &token, fleet::channels::Capability::Task, &stamp);
+        store.pair(chat_id, &name, &token, *capability, &stamp);
         if let Err(error) = store.save(&home, "telegram") {
             eprintln!("fleet: channels: {error}");
             return ExitCode::FAILURE;
         }
-        println!("fleet channels — telegram peer {name} ({chat_id}) may act");
+        println!("fleet channels — telegram peer {name} ({chat_id})");
+        println!(
+            "  may:   {}",
+            match capability {
+                fleet::channels::Capability::Task => "hand fleet a task and receive the outcome",
+                fleet::channels::Capability::Observe => "be notified only — it cannot hand fleet a task",
+            }
+        );
         println!("  the bot answers this chat's messages and posts outcomes back to it");
         return ExitCode::SUCCESS;
     }
@@ -542,21 +556,41 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
     }
     // The bare command: what is configured, and who may act.
     println!("fleet channels — the channel service");
-    let webhook = fleet::channels::PeerStore::load(&home, "webhook").unwrap_or_default();
-    println!(
-        "  webhook  {} paired · port {}",
-        webhook.peers.len(),
-        fleet::channels::webhook::DEFAULT_PORT
-    );
-    for peer in &webhook.peers {
-        let capability = match peer.capability {
-            fleet::channels::Capability::Task => "may act",
-            fleet::channels::Capability::Observe => "may only listen",
-        };
-        println!("    {id}  {name} · {capability}", id = peer.id, name = peer.name);
-    }
-    if webhook.peers.is_empty() {
-        println!("    `fleet channels pair-webhook <name> --callback <url>` pairs one");
+    // Every channel the build ships, not the webhook alone: a Telegram
+    // peer the owner paired is as much a way into the service, and a list
+    // that named one channel read as if the other had none.
+    for channel in fleet::channels::CHANNELS {
+        let store = fleet::channels::PeerStore::load(&home, channel).unwrap_or_default();
+        let mut line = format!("  {channel}  {} paired", store.peers.len());
+        if *channel == "webhook" {
+            line.push_str(&format!(
+                " · port {}",
+                fleet::channels::webhook::DEFAULT_PORT
+            ));
+        }
+        println!("{line}");
+        for peer in &store.peers {
+            let capability = match peer.capability {
+                fleet::channels::Capability::Task => "may act",
+                fleet::channels::Capability::Observe => "may only listen",
+            };
+            println!(
+                "    {id}  {name} · {capability}",
+                id = peer.id,
+                name = peer.name
+            );
+        }
+        if store.peers.is_empty() {
+            match *channel {
+                "webhook" => println!(
+                    "    `fleet channels pair-webhook <name> --callback <url>` pairs one"
+                ),
+                "telegram" => println!(
+                    "    `fleet channels allow-telegram <chat-id>` pairs one"
+                ),
+                _ => {}
+            }
+        }
     }
     println!("  `fleet gui --channels` serves the face these peers reach");
     ExitCode::SUCCESS

@@ -50,6 +50,17 @@ pub mod webhook;
 
 use crate::gui::bridge::Bridge;
 
+/// The channels this build ships.
+///
+/// The registry is a list of names rather than a table of the plugins
+/// that happen to be running, because the question "who can reach this
+/// face" has to be answerable by a process that is not hosting the
+/// service: `fleet channels` and the GUI's access read both walk the
+/// stores on disk, and a channel that is stopped still has paired peers
+/// who are still paired. A name here is a promise that a plugin with
+/// that name reads and writes `<channel>-peers.json`.
+pub const CHANNELS: &[&str] = &["webhook", "telegram"];
+
 /// Who is on the far end of a channel: the channel's name, the peer's own
 /// id on it, and the name the peer paired under. A peer is identified by
 /// the channel and the id, because the same human on Telegram and on a
@@ -249,6 +260,92 @@ impl Policy {
     }
 }
 
+/// The peer a mapping key names, or `None` when the key is not a key
+/// this build would have written. The key is `channel:id`, which is the
+/// same string [`Peer::key`] builds; parsing it back is safe because a
+/// channel name is one of [`CHANNELS`] and a peer id carries no colon.
+fn peer_of(key: &str) -> Option<Peer> {
+    let (channel, id) = key.split_once(':')?;
+    if !CHANNELS.contains(&channel) || id.is_empty() {
+        return None;
+    }
+    Some(Peer::new(channel, id, ""))
+}
+
+/// Whether the log at `id` is this peer's own conversation: it exists,
+/// it is readable, and its channel record names this channel and this
+/// peer's id. The name is not checked — a peer may be renamed and the
+/// conversation is still theirs, and two peers may share a name.
+fn log_carries(home: &Path, id: &str, peer: &Peer) -> bool {
+    let path = crate::session::session_path(home, id);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    text.lines().any(|line| {
+        matches!(
+            serde_json::from_str::<crate::session::Record>(line.trim()),
+            Ok(crate::session::Record::Channel { channel, peer_id, .. })
+                if channel == peer.channel && peer_id == peer.id
+        )
+    })
+}
+
+/// The peer→session mapping on disk: `<home>/channels/sessions.json`.
+///
+/// In memory the mapping is a cache; on disk it is the truth, because a
+/// restart that forgot it would start every peer a fresh conversation
+/// and the archive would hold one conversation per restart per peer.
+/// Every entry is validated when it is read back — the log has to exist
+/// and carry that peer's own channel record — so a mapping that has
+/// gone stale is dropped rather than believed.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct SessionMap {
+    #[serde(default)]
+    peers: std::collections::HashMap<String, String>,
+}
+
+impl SessionMap {
+    /// The map's path.
+    pub fn path(home: &Path) -> PathBuf {
+        home.join("channels").join("sessions.json")
+    }
+
+    /// Read the map. A home with no channel directory is an empty map,
+    /// and an unreadable one is an empty map too: the mapping is a
+    /// convenience over a truth the archive already holds, so losing it
+    /// costs a peer its continuity and nothing else.
+    pub fn load(home: &Path) -> SessionMap {
+        match std::fs::read_to_string(Self::path(home)) {
+            Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+            Err(_) => SessionMap::default(),
+        }
+    }
+
+    /// Write the map back, privately and atomically.
+    pub fn save(&self, home: &Path) -> std::io::Result<()> {
+        let path = Self::path(home);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let temp = path.with_extension("json.tmp");
+        let text = serde_json::to_string_pretty(self).map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+        })?;
+        {
+            let mut file = std::fs::File::create(&temp)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            }
+            use std::io::Write;
+            file.write_all(text.as_bytes())?;
+            file.flush()?;
+        }
+        std::fs::rename(&temp, &path)
+    }
+}
+
 /// Where an outcome goes: the channel's own handle for the peer.
 #[derive(Debug, Clone)]
 pub enum Reply {
@@ -317,10 +414,11 @@ pub struct Driver {
     bridge: Arc<Bridge>,
     policy: Policy,
     /// Which session each peer's conversation lives in and where its
-    /// outcomes go, filed under the peer's key. In memory because the
-    /// mapping is derived: a peer's session is found by scanning the
-    /// archive for the channel record, and a peer with no history gets a
-    /// fresh one.
+    /// outcomes go, filed under the peer's key. The disk map is the
+    /// truth and this is its cache: a restart that started every peer a
+    /// fresh conversation would leave the archive holding one
+    /// conversation per restart per peer, which is a history nobody
+    /// asked for.
     sessions: Mutex<HashMap<String, (String, Reply)>>,
     /// Where each peer's outcomes go, filed under the peer's key. The
     /// delivery named the callback; this remembers it so a seat raised
@@ -329,13 +427,40 @@ pub struct Driver {
 }
 
 impl Driver {
-    /// A driver over one bridge and one policy.
+    /// A driver over one bridge and one policy. The peer→session mapping
+    /// is read back from the home and every entry is validated before it
+    /// is believed: the log has to still exist and still carry that
+    /// peer's own channel record, because a mapping that has gone stale
+    /// would hand a peer somebody else's conversation.
     pub fn new(bridge: Arc<Bridge>, policy: Policy) -> Driver {
+        let home = bridge.home_path();
+        let mut sessions = HashMap::new();
+        for (key, id) in SessionMap::load(&home).peers {
+            if let Some(peer) = peer_of(&key) {
+                if log_carries(&home, &id, &peer) {
+                    sessions.insert(key, (id, Reply::None));
+                }
+            }
+        }
         Driver {
             bridge,
             policy,
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(sessions),
             replies: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Remember a peer's session on disk as well as in memory, so the
+    /// next process resumes this conversation.
+    fn remember(&self, key: &str, id: &str) {
+        let home = self.bridge.home_path();
+        let mut map = SessionMap::load(&home);
+        map.peers.insert(key.to_string(), id.to_string());
+        // A disk that will not take the mapping is a continuity lost, not
+        // a delivery refused: the run is already in flight and the peer
+        // is served either way.
+        if let Err(error) = map.save(&home) {
+            eprintln!("fleet channels: the session mapping did not save: {error}");
         }
     }
 
@@ -369,6 +494,7 @@ impl Driver {
         // into the void.
         if let Err(error) = session.record(&crate::session::Record::Channel {
             channel: peer.channel.clone(),
+            peer_id: peer.id.clone(),
             peer: peer.name.clone(),
         }) {
             return Err(format!("could not record the channel: {error}"));
@@ -379,6 +505,8 @@ impl Driver {
             .cloned()
             .unwrap_or(Reply::None);
         sessions.insert(peer.key(), (id.clone(), reply));
+        drop(sessions);
+        self.remember(&peer.key(), &id);
         Ok(id)
     }
 
@@ -788,6 +916,99 @@ mod tests {
         let second = driver.session_for(&peer, None).unwrap();
         assert_eq!(first, second, "the peer's session is stable");
         assert_ne!(first, "session-test", "it is not the bridge's own");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The mapping survives a restart, and a stale one is dropped rather
+    /// than believed: a driver built over the same home resumes the
+    /// peer's conversation, and one whose log was deleted — or whose
+    /// channel record names a different peer — starts fresh.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_peers_conversation_survives_a_restart_and_a_stale_one_is_dropped() {
+        let home = temp_home("continuity");
+        let peer = Peer::new("webhook", "abc", "the CI box");
+        let first = {
+            let (mut bridge, _sources) = Bridge::detached(
+                home.clone(),
+                "deepseek-chat".to_string(),
+                Some("session-test".to_string()),
+            );
+            let _door = bridge.connect();
+            let driver = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
+            driver.session_for(&peer, None).unwrap()
+        };
+        // The map is on disk, and it is private.
+        let map = SessionMap::path(&home);
+        assert!(map.exists(), "the mapping is written");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&map).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "the mapping is private: {mode:o}");
+        }
+
+        // A second driver over the same home reads the same conversation.
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let resumed = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
+        assert_eq!(
+            resumed.session_for(&peer, None).unwrap(),
+            first,
+            "the peer's conversation survives the restart"
+        );
+
+        // A mapping whose log is gone is dropped: the peer gets a fresh
+        // conversation rather than a run that lands in a file nothing
+        // will ever read.
+        std::fs::remove_file(crate::session::session_path(&home, &first)).ok();
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let orphaned = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
+        assert_ne!(
+            orphaned.session_for(&peer, None).unwrap(),
+            first,
+            "a log that is gone is not a conversation"
+        );
+
+        // A mapping that points at another peer's log is dropped too: the
+        // channel record names the peer's id, and a name is not unique.
+        let other = Peer::new("webhook", "someone-else", "the CI box");
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let swapped = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
+        let mine = swapped.session_for(&other, None).unwrap();
+        std::fs::write(
+            SessionMap::path(&home),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "peers": { "webhook:abc": mine }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let (mut bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some("session-test".to_string()),
+        );
+        let _door = bridge.connect();
+        let cross = Driver::new(Arc::new(bridge), Policy::new(home.clone()));
+        assert_ne!(
+            cross.session_for(&peer, None).unwrap(),
+            mine,
+            "another peer's conversation is not handed over"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 
