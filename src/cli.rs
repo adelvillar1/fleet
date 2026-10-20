@@ -467,6 +467,19 @@ usage:
                                 this needs no running face
   fleet devices [--revoke <id>]
                                 the paired devices as cards, or one forgotten
+  fleet channels [pending]      the channel service: whether it is running,
+                                who is paired, and who is waiting at the door.
+                                Pairing from the app is the Bots surface
+  fleet channels pair-webhook <name> [--callback <url>]
+                                pair a webhook peer; the token prints once,
+                                and the callback is where outcomes and seats
+                                go when a delivery names none
+  fleet channels allow-telegram <chat-id> [--name <name>]
+                                pair a Telegram chat the bot refused by name
+  fleet channels revoke-webhook <id>
+                                forget one webhook peer
+  fleet channels capability <channel> <peer> <task|observe>
+                                let a paired peer act, or only listen
   fleet sessions [--recall \"<q>\"] [<id>]
                                 the archive as cards, ranked for an
                                 instruction, or one session opened
@@ -1892,7 +1905,9 @@ fn parse_channels(args: &[String]) -> Result<Command, String> {
             }
             "capability" => {
                 if options.capability.is_some() {
-                    return Err("`capability` takes one channel, one peer, and one value".to_string());
+                    return Err(
+                        "`capability` takes one channel, one peer, and one value".to_string()
+                    );
                 }
                 let channel = take_value(args, &mut index, "capability")?;
                 let peer = take_value(args, &mut index, "capability")?;
@@ -2372,11 +2387,7 @@ mod tests {
         assert_eq!(
             parse(&args(&["channels", "pair-webhook", "the CI box"])).unwrap(),
             Command::Channels(ChannelsOptions {
-                pair_webhook: Some((
-                    "the CI box".to_string(),
-                    None,
-                    Capability::Task
-                )),
+                pair_webhook: Some(("the CI box".to_string(), None, Capability::Task)),
                 ..Default::default()
             })
         );
@@ -2431,11 +2442,7 @@ mod tests {
             ]))
             .unwrap(),
             Command::Channels(ChannelsOptions {
-                pair_webhook: Some((
-                    "the listener".to_string(),
-                    None,
-                    Capability::Observe
-                )),
+                pair_webhook: Some(("the listener".to_string(), None, Capability::Observe)),
                 ..Default::default()
             })
         );
@@ -2449,11 +2456,7 @@ mod tests {
             ]))
             .unwrap(),
             Command::Channels(ChannelsOptions {
-                allow_telegram: Some((
-                    "4242".to_string(),
-                    None,
-                    Capability::Observe
-                )),
+                allow_telegram: Some(("4242".to_string(), None, Capability::Observe)),
                 ..Default::default()
             })
         );
@@ -3381,5 +3384,16 @@ mod tests {
     #[test]
     fn no_command_is_a_usage_error() {
         assert!(parse(&[]).is_err());
+    }
+
+    /// Every command the parser accepts is named in the help: `fleet
+    /// channels` shipped in the code and was absent from `fleet help`,
+    /// which made the terminal door to the service undiscoverable.
+    #[test]
+    fn the_help_names_the_channel_service() {
+        assert!(HELP.contains("fleet channels [pending]"), "{HELP}");
+        assert!(HELP.contains("pair-webhook"), "{HELP}");
+        assert!(HELP.contains("allow-telegram"), "{HELP}");
+        assert!(HELP.contains("fleet channels capability"), "{HELP}");
     }
 }

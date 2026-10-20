@@ -71,6 +71,22 @@ use crate::gui::bridge::Bridge;
 pub(crate) const INDEX: &str = include_str!("assets/index.html");
 pub(crate) const STYLES: &str = include_str!("assets/app.css");
 pub(crate) const SCRIPT: &str = include_str!("assets/app.js");
+/// The install surface: the manifest, the shell worker, and the icons.
+pub(crate) const MANIFEST: &str = include_str!("assets/manifest.webmanifest");
+const WORKER: &str = include_str!("assets/sw.js");
+const ICON_192: &[u8] = include_bytes!("assets/icon-192.png");
+const ICON_512: &[u8] = include_bytes!("assets/icon-512.png");
+
+/// The build stamp `build.rs` computed over every served asset. The page
+/// asks for the two script assets at this address, the worker's cache
+/// name carries it, and only a request naming it is immutable.
+pub(crate) const ASSET_HASH: &str = env!("FLEET_ASSET_HASH");
+
+/// How long an icon may be reused. Icons change only when the binary
+/// does, and they are not the app: a day is long enough to stop the
+/// re-fetch and short enough that a changed mark lands without a
+/// reinstall.
+pub(crate) const ICON_CACHE: &str = "public, max-age=86400";
 
 /// How often the stream says the server is still there. The page counts
 /// the beats, so a silent stream is a dead server the owner can see.
@@ -209,11 +225,35 @@ async fn serve_connection(
     }
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/") => write_reply(&mut stream, page()).await,
+        ("GET", "/manifest.webmanifest") => write_reply(&mut stream, manifest()).await,
+        ("GET", "/sw.js") => write_reply(&mut stream, worker()).await,
+        ("GET", "/icon-192.png") => {
+            write_blob(&mut stream, "image/png", ICON_CACHE, ICON_192).await
+        }
+        ("GET", "/icon-512.png") => {
+            write_blob(&mut stream, "image/png", ICON_CACHE, ICON_512).await
+        }
+        // iOS reads this one rather than the manifest's icons; the 192 is
+        // the size it wants and a second render would be a second asset
+        // to keep in step.
+        ("GET", "/apple-touch-icon.png") => {
+            write_blob(&mut stream, "image/png", ICON_CACHE, ICON_192).await
+        }
         ("GET", "/app.css") => {
-            write_reply(&mut stream, asset("text/css; charset=utf-8", STYLES)).await
+            let reply = if query_value(&request.query, "v") == Some(ASSET_HASH) {
+                versioned_asset("text/css; charset=utf-8", STYLES)
+            } else {
+                asset("text/css; charset=utf-8", STYLES)
+            };
+            write_reply(&mut stream, reply).await
         }
         ("GET", "/app.js") => {
-            write_reply(&mut stream, asset("text/javascript; charset=utf-8", SCRIPT)).await
+            let reply = if query_value(&request.query, "v") == Some(ASSET_HASH) {
+                versioned_asset("text/javascript; charset=utf-8", SCRIPT)
+            } else {
+                asset("text/javascript; charset=utf-8", SCRIPT)
+            };
+            write_reply(&mut stream, reply).await
         }
         ("GET", "/events") => {
             stream_events(&mut stream, base_url, heartbeat, bridge.subscribe()).await
@@ -299,6 +339,10 @@ async fn serve_connection(
             let asked = decode_query(&request.query, "path");
             write_reply(&mut stream, api(200, bridge.file(&asked).await)).await
         }
+        ("POST", "/api/pair/window") => match bridge.pair_window().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
         ("POST", "/api/run") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -353,7 +397,11 @@ async fn serve_connection(
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
             let session = asked_session(bridge, &request);
-            match bridge.answer(&session, &decision, &crate::gui::bridge::AnsweredBy::Desktop) {
+            match bridge.answer(
+                &session,
+                &decision,
+                &crate::gui::bridge::AnsweredBy::Desktop,
+            ) {
                 Ok(answered) => write_reply(&mut stream, api(200, answered)).await,
                 Err(crate::gui::bridge::AnswerError::NoSeat) => {
                     write_reply(
@@ -494,9 +542,7 @@ async fn serve_connection(
         // A loopback read and write only: the remote face's allowlist
         // keeps both closed, because a phone that could revoke devices is
         // a phone that could lock its owner out.
-        ("GET", "/api/access") => {
-            write_reply(&mut stream, api(200, bridge.access().await)).await
-        }
+        ("GET", "/api/access") => write_reply(&mut stream, api(200, bridge.access().await)).await,
         ("POST", "/api/access/revoke") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -504,7 +550,9 @@ async fn serve_connection(
             };
             let parsed: serde_json::Value = match serde_json::from_str(&body) {
                 Ok(parsed) => parsed,
-                Err(message) => return write_reply(&mut stream, bad_request(&message.to_string())).await,
+                Err(message) => {
+                    return write_reply(&mut stream, bad_request(&message.to_string())).await
+                }
             };
             let kind = parsed
                 .get("kind")
@@ -553,7 +601,13 @@ async fn serve_connection(
                 Err(reply) => return write_reply(&mut stream, reply).await,
             };
             match bridge
-                .channel_pair(&body.channel, &body.id, &body.name, &body.capability)
+                .channel_pair(
+                    &body.channel,
+                    &body.id,
+                    &body.name,
+                    &body.capability,
+                    &body.callback,
+                )
                 .await
             {
                 Ok(pairing) => write_reply(&mut stream, api(200, pairing)).await,
@@ -702,7 +756,9 @@ async fn serve_connection(
 /// cannot hold a task forever. The second value is the body bytes that
 /// rode the same read — a browser sends a short POST in one packet, so
 /// discarding them would lose the task the owner just typed.
-pub(crate) async fn read_head(stream: &mut tokio::net::TcpStream) -> Result<(String, Vec<u8>), String> {
+pub(crate) async fn read_head(
+    stream: &mut tokio::net::TcpStream,
+) -> Result<(String, Vec<u8>), String> {
     let mut head: Vec<u8> = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     let end = loop {
@@ -855,6 +911,7 @@ struct ChannelBody {
     id: String,
     name: String,
     capability: String,
+    callback: String,
 }
 
 async fn channel_body(
@@ -883,6 +940,7 @@ async fn channel_body(
         id: text("id"),
         name: text("name"),
         capability: text("capability"),
+        callback: text("callback"),
     })
 }
 
@@ -1062,22 +1120,118 @@ impl Reply {
 
 /// The page. There is no credential in it and none beside it: the
 /// boundary is the machine, and a browser on the machine is the owner.
+/// The page asks for its two script assets at the build's own address, so
+/// a browser can keep them forever and still never serve yesterday's
+/// script after an upgrade. Everything else in the HTML is inline or
+/// fetched at runtime.
+pub(crate) fn index_page() -> String {
+    INDEX
+        .replace(
+            "href=\"/app.css\"",
+            &format!("href=\"/app.css?v={ASSET_HASH}\""),
+        )
+        .replace(
+            "src=\"/app.js\"",
+            &format!("src=\"/app.js?v={ASSET_HASH}\""),
+        )
+}
+
+fn cache_control(value: &str) -> Vec<(String, String)> {
+    vec![("Cache-Control".to_string(), value.to_string())]
+}
+
 fn page() -> Reply {
     Reply {
         status: "200 OK",
         content_type: "text/html; charset=utf-8",
-        extra: Vec::new(),
-        body: INDEX.to_string(),
+        extra: cache_control("no-cache"),
+        body: index_page(),
     }
 }
 
+pub(crate) fn manifest() -> Reply {
+    Reply {
+        status: "200 OK",
+        content_type: "application/manifest+json",
+        extra: cache_control("no-cache"),
+        body: MANIFEST.to_string(),
+    }
+}
+
+/// The worker is re-validated on every load so a new binary's policy is
+/// picked up; the header lets a root-scoped worker be served from a path
+/// that is not itself the scope root.
+pub(crate) fn worker() -> Reply {
+    Reply {
+        status: "200 OK",
+        content_type: "text/javascript; charset=utf-8",
+        extra: vec![
+            ("Cache-Control".to_string(), "no-cache".to_string()),
+            ("Service-Worker-Allowed".to_string(), "/".to_string()),
+            ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
+        ],
+        body: WORKER.replace("__FLEET_ASSET_HASH__", ASSET_HASH),
+    }
+}
+
+/// An unversioned asset revalidates; only the URL carrying the build's
+/// own hash is immutable. A browser that asked the bare path (an old
+/// bookmark, a tool that strips queries) therefore never pins a stale
+/// script.
 fn asset(content_type: &'static str, body: &'static str) -> Reply {
     Reply {
         status: "200 OK",
         content_type,
-        extra: Vec::new(),
+        extra: cache_control("no-cache"),
         body: body.to_string(),
     }
+}
+
+pub(crate) fn versioned_asset(content_type: &'static str, body: &'static str) -> Reply {
+    Reply {
+        status: "200 OK",
+        content_type,
+        extra: cache_control("public, max-age=31536000, immutable"),
+        body: body.to_string(),
+    }
+}
+
+/// The icon a PWA path names. One function, so a path the loopback face
+/// serves cannot 404 on the remote face or the other way round.
+pub(crate) fn icon_for(path: &str) -> Option<&'static [u8]> {
+    match path {
+        "/icon-192.png" | "/apple-touch-icon.png" => Some(ICON_192),
+        "/icon-512.png" => Some(ICON_512),
+        _ => None,
+    }
+}
+
+/// A binary reply (the icons). `Reply` carries a `String` body, which a
+/// PNG cannot be, so this writes the head and the bytes directly rather
+/// than pretending an image is text.
+pub(crate) async fn write_blob(
+    stream: &mut tokio::net::TcpStream,
+    content_type: &'static str,
+    cache: &str,
+    body: &'static [u8],
+) -> Result<(), String> {
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\
+         Connection: close\r\nCache-Control: {cache}\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(head.as_bytes())
+        .await
+        .map_err(|e| format!("fleet gui could not write an asset head: {e}"))?;
+    stream
+        .write_all(body)
+        .await
+        .map_err(|e| format!("fleet gui could not write an asset: {e}"))?;
+    stream
+        .flush()
+        .await
+        .map_err(|e| format!("fleet gui could not flush an asset: {e}"))
 }
 
 /// The web's refusal: the request arrived from somewhere the face does
@@ -1150,7 +1304,10 @@ fn method_not_allowed(method: &str) -> Reply {
     }
 }
 
-pub(crate) async fn write_reply(stream: &mut tokio::net::TcpStream, reply: Reply) -> Result<(), String> {
+pub(crate) async fn write_reply(
+    stream: &mut tokio::net::TcpStream,
+    reply: Reply,
+) -> Result<(), String> {
     stream
         .write_all(&reply.bytes())
         .await
@@ -1631,6 +1788,78 @@ mod tests {
         }
         let js = get(port, "/app.js", &token);
         assert!(js.contains("EventSource"), "{js}");
+    }
+
+    /// The shell is installable and its two assets are content-addressed:
+    /// the page asks for the build's own `?v=`, only that URL is
+    /// immutable, and the worker and manifest carry the types and headers
+    /// an install needs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_face_serves_an_installable_shell() {
+        let (_token, port) = launch().await;
+        let hash = crate::gui::server::ASSET_HASH;
+        let page = ask(port, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", None);
+        assert!(page.starts_with("HTTP/1.1 200"), "{page}");
+        assert!(page.contains(&format!("/app.css?v={hash}")), "{page}");
+        assert!(page.contains(&format!("/app.js?v={hash}")), "{page}");
+        assert!(
+            page.contains("rel=\"manifest\" href=\"/manifest.webmanifest\""),
+            "{page}"
+        );
+        assert!(page.contains("rel=\"apple-touch-icon\""), "{page}");
+        assert!(page.contains("name=\"theme-color\""), "{page}");
+        assert!(page.contains("Cache-Control: no-cache"), "{page}");
+
+        let immutable = ask(
+            port,
+            &format!("GET /app.css?v={hash} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+            None,
+        );
+        assert!(
+            immutable.contains("Cache-Control: public, max-age=31536000, immutable"),
+            "{immutable}"
+        );
+        let bare = ask(
+            port,
+            "GET /app.css HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+        );
+        assert!(bare.contains("Cache-Control: no-cache"), "{bare}");
+        assert!(!bare.contains("immutable"), "{bare}");
+
+        let worker = ask(port, "GET /sw.js HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", None);
+        assert!(worker.starts_with("HTTP/1.1 200"), "{worker}");
+        assert!(worker.contains("Service-Worker-Allowed: /"), "{worker}");
+        assert!(worker.contains("Cache-Control: no-cache"), "{worker}");
+        assert!(
+            worker.contains(hash),
+            "the worker carries the build stamp: {worker}"
+        );
+        assert!(!worker.contains("__FLEET_ASSET_HASH__"), "{worker}");
+
+        let manifest = ask(
+            port,
+            "GET /manifest.webmanifest HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+        );
+        assert!(
+            manifest.contains("Content-Type: application/manifest+json"),
+            "{manifest}"
+        );
+        assert!(manifest.contains("\"start_url\": \"/\""), "{manifest}");
+
+        let icon = ask(
+            port,
+            "GET /icon-192.png HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            None,
+        );
+        assert!(icon.contains("Content-Type: image/png"), "{icon}");
+        let length = icon
+            .lines()
+            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        assert!(length > 500, "the icon is bytes, not an empty 200: {icon}");
     }
 
     #[tokio::test(flavor = "multi_thread")]

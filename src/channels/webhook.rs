@@ -28,13 +28,13 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use crate::channels::PeerStore;
 use crate::channels::{Channel, Driver, Inbound, Peer, Refusal, Reply, SeatCard};
 /// The HTTP reply struct, aliased: this file has two `Reply` names in it
 /// — the channel's outcome handle and the reply a socket is written —
 /// and pretending one is the other is how a seat ends up POSTed to the
 /// browser.
 use crate::gui::server::Reply as HttpReply;
-use crate::channels::PeerStore;
 
 /// The port this channel listens on unless told otherwise. Away from
 /// the browser faces' 3080 and the harness's 8300, so a running fleet
@@ -70,8 +70,7 @@ impl Webhook {
         ready: tokio::sync::oneshot::Sender<Result<u16, String>>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(), String> {
-        let listener = match tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, self.port)).await
-        {
+        let listener = match tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, self.port)).await {
             Ok(listener) => listener,
             Err(error) => {
                 let reason = format!(
@@ -132,8 +131,9 @@ impl Channel for Webhook {
     }
 
     /// The outcome goes back as a POST to the callback the delivery
-    /// named. A channel whose delivery named no callback has nowhere to
-    /// send it, and saying nothing is the honest outcome.
+    /// named, or to the pairing's stored default when it named none. A
+    /// peer with neither has nowhere to send it, and saying nothing is
+    /// the honest outcome.
     fn reply(&self, to: &Reply, text: &str) {
         let Reply::Url(url) = to else { return };
         let body = json!({"type": "reply", "text": text}).to_string();
@@ -143,10 +143,11 @@ impl Channel for Webhook {
             .send_string(&body);
     }
 
-    /// A seat is POSTed to the callback as a card naming the tool, the
-    /// summary, and the session — the answer comes back through
-    /// `/answer` and lands in the same session's seat, so a peer and the
-    /// GUI inbox answer one seat between them.
+    /// A seat is POSTed to the callback (the delivery's own, or the
+    /// pairing's default) as a card naming the tool, the summary, and the
+    /// session — the answer comes back through `/answer` and lands in the
+    /// same session's seat, so a peer and the GUI inbox answer one seat
+    /// between them.
     fn present_seat(&self, to: &Reply, seat: &SeatCard) {
         let Reply::Url(url) = to else { return };
         let body = json!({
@@ -161,6 +162,20 @@ impl Channel for Webhook {
             .set("content-type", "application/json")
             .timeout(std::time::Duration::from_secs(10))
             .send_string(&body);
+    }
+}
+
+/// Where an outcome or a seat goes: the callback the delivery named when
+/// it named one — the more specific instruction wins — and the pairing's
+/// stored default when it did not. A peer with neither asks for nothing
+/// back, which is `Reply::None` rather than a guess.
+fn reply_for(named: Option<String>, stored: Option<&str>) -> Reply {
+    match named {
+        Some(url) => Reply::Url(url),
+        None => match stored {
+            Some(url) => Reply::Url(url.to_string()),
+            None => Reply::None,
+        },
     }
 }
 
@@ -214,6 +229,10 @@ async fn serve_connection(
     };
     let peer_id = peer.id.clone();
     let peer_name = peer.name.clone();
+    // The callback the pairing stored, if any. A delivery that names its
+    // own wins — the per-delivery URL is the more specific instruction —
+    // and this is what an outcome or a seat uses when it does not.
+    let peer_callback = peer.callback.clone();
 
     match (request.method.as_str(), request.path.as_str()) {
         ("POST", "/hook") => {
@@ -223,7 +242,9 @@ async fn serve_connection(
             };
             let parsed: serde_json::Value = match serde_json::from_str(&body) {
                 Ok(parsed) => parsed,
-                Err(message) => return write_reply(&mut stream, error_reply(&message.to_string())).await,
+                Err(message) => {
+                    return write_reply(&mut stream, error_reply(&message.to_string())).await
+                }
             };
             let task = parsed
                 .get("task")
@@ -247,10 +268,7 @@ async fn serve_connection(
                 peer: Peer::new("webhook", &peer_id, &peer_name),
                 session,
                 task,
-                reply: match callback {
-                    Some(url) => Reply::Url(url),
-                    None => Reply::None,
-                },
+                reply: reply_for(callback, peer_callback.as_deref()),
             };
             // The delivery goes to the sink, which is the host's decision
             // about what one means: the driver's answer, with the peer's
@@ -260,7 +278,10 @@ async fn serve_connection(
                 Ok(session) => {
                     write_reply(
                         &mut stream,
-                        api(200, json!({"type": "accepted", "session": session, "peer": peer_name})),
+                        api(
+                            200,
+                            json!({"type": "accepted", "session": session, "peer": peer_name}),
+                        ),
                     )
                     .await
                 }
@@ -274,7 +295,9 @@ async fn serve_connection(
             };
             let parsed: serde_json::Value = match serde_json::from_str(&body) {
                 Ok(parsed) => parsed,
-                Err(message) => return write_reply(&mut stream, error_reply(&message.to_string())).await,
+                Err(message) => {
+                    return write_reply(&mut stream, error_reply(&message.to_string())).await
+                }
             };
             let session = parsed
                 .get("session")
@@ -284,7 +307,11 @@ async fn serve_connection(
                 .get("decision")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
-            match driver.answer(session, decision, &crate::gui::bridge::AnsweredBy::Peer(peer_name.clone())) {
+            match driver.answer(
+                session,
+                decision,
+                &crate::gui::bridge::AnsweredBy::Peer(peer_name.clone()),
+            ) {
                 Ok(()) => {
                     write_reply(
                         &mut stream,
@@ -292,9 +319,7 @@ async fn serve_connection(
                     )
                     .await
                 }
-                Err(message) => {
-                    write_reply(&mut stream, error_reply(&message.to_string())).await
-                }
+                Err(message) => write_reply(&mut stream, error_reply(&message.to_string())).await,
             }
         }
         _ => {
@@ -347,6 +372,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_delivery_naming_no_callback_uses_the_pairings_stored_one() {
+        let named = Some("http://127.0.0.1:9/its-own".to_string());
+        let stored = Some("http://127.0.0.1:9/stored");
+        // The delivery's own callback is the more specific instruction.
+        assert_eq!(
+            reply_for(named.clone(), stored),
+            Reply::Url("http://127.0.0.1:9/its-own".to_string())
+        );
+        // No callback in the body: the pairing's default answers.
+        assert_eq!(
+            reply_for(None, stored),
+            Reply::Url("http://127.0.0.1:9/stored".to_string())
+        );
+        // Neither: nothing is posted, and no URL is invented.
+        assert_eq!(reply_for(None, None), Reply::None);
+    }
+
+    /// A home with one paired peer whose pairing stored a callback.
+    fn paired_home_with_callback(tag: &str, callback: &str) -> (std::path::PathBuf, String) {
+        let home = temp_home(tag);
+        let mut store = PeerStore::default();
+        let token = crate::channels::mint_peer_token().unwrap();
+        store.pair_with(
+            "abc",
+            "the CI box",
+            &token,
+            Capability::Task,
+            "stamp",
+            Some(callback),
+        );
+        store.save(&home, "webhook").unwrap();
+        (home, token)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_delivery_with_no_callback_answers_the_pairings_stored_one() {
+        let (home, token) =
+            paired_home_with_callback("stored-callback", "http://127.0.0.1:9/stored");
+        let (port, driver, _door) = live(home).await;
+        let reply = hook(port, &token, &json!({"task": "run the tests"}).to_string());
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        // The delivery named no callback, so the reply handle the driver
+        // remembered is the pairing's own — the value the CLI used to
+        // print and throw away.
+        assert_eq!(
+            driver.reply_to(&Peer::new("webhook", "abc", "the CI box")),
+            Some(Reply::Url("http://127.0.0.1:9/stored".to_string()))
+        );
     }
 
     /// A home with one paired peer, and the token it paired with.
@@ -451,7 +527,9 @@ mod tests {
         stream
             .set_read_timeout(Some(std::time::Duration::from_secs(3)))
             .expect("a read timeout is settable");
-        stream.write_all(raw.as_bytes()).expect("the request is sent");
+        stream
+            .write_all(raw.as_bytes())
+            .expect("the request is sent");
         let mut reply = String::new();
         let mut chunk = [0u8; 4096];
         loop {
@@ -482,7 +560,8 @@ mod tests {
         let reply = hook(
             port,
             &token,
-            &json!({"task": "run the tests", "callback": "http://127.0.0.1:9/callback"}).to_string(),
+            &json!({"task": "run the tests", "callback": "http://127.0.0.1:9/callback"})
+                .to_string(),
         );
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         let session = reply
@@ -498,7 +577,9 @@ mod tests {
         assert_eq!(state["events"][0]["text"], "run the tests");
         let launch = driver.bridge().state("session-test");
         assert!(
-            launch["events"].as_array().is_none_or(|events| events.is_empty()),
+            launch["events"]
+                .as_array()
+                .is_none_or(|events| events.is_empty()),
             "the launch session is untouched: {launch}"
         );
         std::fs::remove_dir_all(&home).ok();
@@ -509,7 +590,11 @@ mod tests {
         let (home, _token) = paired_home("stranger", Capability::Task);
         let (port, _driver, _door) = live(home.clone()).await;
 
-        let reply = hook(port, "not-a-real-token", &json!({"task": "do it"}).to_string());
+        let reply = hook(
+            port,
+            "not-a-real-token",
+            &json!({"task": "do it"}).to_string(),
+        );
         assert!(reply.starts_with("HTTP/1.1 403"), "{reply}");
         assert!(reply.contains("not paired"), "{reply}");
         std::fs::remove_dir_all(&home).ok();
@@ -537,7 +622,11 @@ mod tests {
         let (home, token) = paired_home("no-task", Capability::Task);
         let (port, driver, _door) = live(home.clone()).await;
 
-        let reply = hook(port, &token, &json!({"callback": "http://127.0.0.1:9"}).to_string());
+        let reply = hook(
+            port,
+            &token,
+            &json!({"callback": "http://127.0.0.1:9"}).to_string(),
+        );
         assert!(reply.starts_with("HTTP/1.1 403"), "{reply}");
         assert!(reply.contains("names a task"), "{reply}");
         assert!(driver

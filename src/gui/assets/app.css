@@ -787,6 +787,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .theme-toggle,
 .pane-open,
 .palette-open,
+.pair-open,
 .aside-toggle {
   display: inline-flex;
   align-items: center;
@@ -809,6 +810,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .theme-toggle:hover,
 .pane-open:hover,
 .palette-open:hover,
+.pair-open:hover,
 .aside-toggle:hover {
   background: var(--dsw-alias-surface-raised);
   color: var(--dsw-alias-ink);
@@ -817,11 +819,12 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .theme-toggle:active,
 .pane-open:active,
 .palette-open:active,
+.pair-open:active,
 .aside-toggle:active { transform: scale(0.96); }
 
 .aside-toggle[aria-pressed="false"] { color: var(--dsw-alias-ink-tertiary); }
 
-.theme-toggle svg, .pane-open svg, .aside-toggle svg { width: 16px; height: 16px; }
+.theme-toggle svg, .pane-open svg, .pair-open svg, .aside-toggle svg { width: 16px; height: 16px; }
 
 .palette-open {
   padding: 0 9px;
@@ -4321,7 +4324,9 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
 
 .bots-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  /* One field per row: the card is five columns, and two 140px fields
+     side by side clipped the id hint and hid the callback entirely. */
+  grid-template-columns: minmax(0, 1fr);
   align-items: end;
   gap: 10px;
   margin-top: 4px;
@@ -4373,6 +4378,20 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   border-bottom: 1px solid var(--dsw-alias-hairline);
 }
 
+.bots-activity[data-act] { cursor: pointer; }
+.bots-activity[data-act]:hover { background: var(--dsw-alias-surface-raised); }
+.bots-activity[data-act]:focus-visible {
+  outline: 2px solid var(--dsw-alias-accent);
+  outline-offset: -2px;
+}
+
+/* A tile that takes the owner to a card says so for a moment, because a
+   smooth scroll on a long board is easy to miss. */
+[data-flash="on"] {
+  border-color: var(--dsw-alias-accent);
+  box-shadow: 0 0 0 2px var(--dsw-alias-accent-wash);
+}
+
 .bots-activity:last-child { border-bottom: 0; }
 
 .bots-activity-at {
@@ -4413,6 +4432,14 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   user-select: all;
 }
 
+.bots-token-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 100%;
+}
+
 @media (max-width: 1180px) {
   .face { grid-template-columns: var(--rail-width) minmax(0, 1fr); }
   body[data-rail="icons"] .face {
@@ -4428,7 +4455,17 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
 
 /* Small tablet: the rail becomes a drawer, the board folds to one column. */
 @media (max-width: 900px) {
-  .face {
+  /* The shell is one column here whatever the rail, dock, or pane state
+     says. A media query adds no specificity, so a bare `.face` cannot
+     answer the base sheet's state rules (`body[data-aside="closed"] .face`,
+     `body[data-rail="icons"] .face`): those stayed at two tracks and the
+     stage — assigned to track 1 by the rule below — landed in the rail's
+     236px column while the rest of the face sat empty. Each state is
+     answered at its own specificity instead. */
+  .face,
+  :is(body[data-rail], body[data-aside], body[data-dock]) .face,
+  :is(body[data-rail][data-aside], body[data-rail][data-dock],
+      body[data-rail][data-pane]) .face {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr);
   }
@@ -4559,4 +4596,149 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   .home-stat:first-child { border-left: 0; }
   .home-stat-value { font-size: 19px; }
   .home-stat-label { font-size: 8px; letter-spacing: 0.05em; }
+}
+
+
+/* ---------------------------------------------------------------- pairing */
+
+/* A focused card rather than the inspector: the QR is the action, and it
+   is the one thing on the face that is read by a camera. */
+.pair-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(14 16 20 / 34%);
+  backdrop-filter: blur(3px);
+}
+
+.pair-card {
+  position: fixed;
+  top: 10vh;
+  left: 50%;
+  z-index: 51;
+  transform: translateX(-50%);
+  width: min(640px, calc(100vw - 32px));
+  max-height: 80vh;
+  overflow: auto;
+  padding: 20px 22px 22px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  border-radius: 14px;
+  background: var(--dsw-alias-surface);
+  box-shadow: var(--shadow-3);
+}
+
+.pair-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.pair-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.pair-body {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.pair-qr svg {
+  display: block;
+  width: 224px;
+  height: 224px;
+  border-radius: 8px;
+}
+
+.pair-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pair-eyebrow {
+  margin: 0;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-accent-lift);
+}
+
+.pair-code {
+  font-family: var(--font-mono);
+  font-size: 21px;
+  letter-spacing: 0.08em;
+  color: var(--dsw-alias-ink);
+}
+
+.pair-url {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--dsw-alias-ink-secondary);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.pair-origin {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--dsw-alias-ink-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.pair-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--dsw-alias-warn);
+}
+
+.pair-ttl {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--dsw-alias-ink-tertiary);
+}
+
+.pair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.pair-loading {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+
+.pair-error h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.pair-error p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--dsw-alias-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .pair-card { top: 6vh; padding: 16px; }
+  .pair-body { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .pair-qr svg { width: 200px; height: 200px; margin: 0 auto; }
 }

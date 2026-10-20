@@ -32,7 +32,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
 use crate::gui::bridge::Bridge;
-use crate::gui::server::{api, decode_query, read_body, read_head, write_reply, Reply, Request};
+use crate::gui::server::{
+    api, decode_query, query_value, read_body, read_head, write_reply, Reply, Request,
+};
 use crate::remote::pairing::{DeviceStore, PairingWindow};
 use crate::remote::RemoteAddress;
 
@@ -57,6 +59,13 @@ const ALLOWED_GET: &[&str] = &[
     "/",
     "/app.css",
     "/app.js",
+    // The install surface. No data in any of them: the manifest names the
+    // app, the worker caches two public assets, the icons are a mark.
+    "/manifest.webmanifest",
+    "/sw.js",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/apple-touch-icon.png",
     "/events",
     "/api/state",
     "/api/sessions",
@@ -176,28 +185,24 @@ async fn serve_connection(
     let (head, rest) = read_head(&mut stream).await?;
     let request = Request::parse(&head)?;
 
-    // The pairing flow is the one unauthenticated pair of routes, and it
-    // is unauthenticated by design: a phone that has not paired yet has
-    // no token to present. The page leaks nothing — it is a form — and
-    // the redemption is gated by the window's own attempt cap.
-    match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/") | ("GET", "/pair") => {
-            return write_reply(&mut stream, pairing_page()).await;
-        }
-        ("POST", "/api/pair") => {
-            let body = match read_body(&mut stream, &request, rest).await {
-                Ok(body) => body,
-                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
-            };
-            return write_reply(&mut stream, redeem(&body, home)).await;
-        }
-        _ => {}
+    // The redemption is the one unauthenticated POST, and it is
+    // unauthenticated by design: a phone that has not paired yet has no
+    // token to present. The page leaks nothing — it is a form — and the
+    // redemption is gated by the window's own attempt cap.
+    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/pair") {
+        let body = match read_body(&mut stream, &request, rest).await {
+            Ok(body) => body,
+            Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+        };
+        return write_reply(&mut stream, redeem(&body, home)).await;
     }
 
-    // Everything else needs a device token. A browser with no cookie
-    // asking for a page is a phone that has not paired: it gets the
-    // pairing page rather than a 401 it cannot act on. An API route with
-    // no token gets the 401.
+    // The token is resolved BEFORE deciding what `/` is. A paired phone
+    // that opens the root gets the face; an unpaired one gets the pairing
+    // page. Resolving after the decision made `/` the pairing page even
+    // for a browser holding a valid cookie, so the redirect a successful
+    // pairing performs (`location.href = '/'`) landed on the pairing page
+    // again — a paired device could never reach the shell at the root.
     let store = match DeviceStore::load(home) {
         Ok(store) => store,
         Err(error) => {
@@ -212,7 +217,11 @@ async fn serve_connection(
         .iter()
         .find_map(|token| store.device_for_token(token).cloned());
     let Some(device) = device else {
-        if request.method == "GET" && is_page(&request.path) {
+        // A browser with no cookie asking for a page is a phone that has
+        // not paired: it gets the pairing page rather than a 401 it cannot
+        // act on. An API route with no token gets the 401. `/pair` is the
+        // page's own address, so it answers the same way.
+        if request.method == "GET" && (is_page(&request.path) || request.path == "/pair") {
             return write_reply(&mut stream, pairing_page()).await;
         }
         return write_reply(&mut stream, unauthorized()).await;
@@ -223,6 +232,21 @@ async fn serve_connection(
     // is a surface that lies about what it checked.
     if !allowed(&request) {
         return write_reply(&mut stream, forbidden(&request.method, &request.path)).await;
+    }
+
+    // The icons carry bytes, not text: `Reply` is a `String` body, so they
+    // are written directly. The allowlist above already admitted them, and
+    // a paired device is the only caller that gets this far.
+    if request.method == "GET" {
+        if let Some(icon) = crate::gui::server::icon_for(&request.path) {
+            return crate::gui::server::write_blob(
+                &mut stream,
+                "image/png",
+                crate::gui::server::ICON_CACHE,
+                icon,
+            )
+            .await;
+        }
     }
 
     let answer = route_with(&request, rest, &mut stream, bridge, &device.name).await;
@@ -245,7 +269,10 @@ pub struct RelayHandler {
 impl RelayHandler {
     /// A handler answering as the named paired device.
     pub fn new(bridge: Arc<Bridge>, device_name: String) -> RelayHandler {
-        RelayHandler { bridge, device_name }
+        RelayHandler {
+            bridge,
+            device_name,
+        }
     }
 }
 
@@ -253,18 +280,16 @@ impl crate::remote::relay::Handler for RelayHandler {
     fn answer(
         &self,
         frame: &crate::remote::relay::Frame,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::remote::relay::Answer> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = crate::remote::relay::Answer> + Send + '_>,
+    > {
         let frame = frame.clone();
         Box::pin(async move {
             let reply = answer_frame(&frame, &self.bridge, &self.device_name).await;
             crate::remote::relay::Answer {
                 id: frame.id,
                 status: status_of(&reply),
-                headers: vec![(
-                    "content-type".to_string(),
-                    reply.content_type.to_string(),
-                )],
+                headers: vec![("content-type".to_string(), reply.content_type.to_string())],
                 body: reply.body,
             }
         })
@@ -320,7 +345,7 @@ async fn answer_frame(
             .map(|(name, value)| format!("{name}: {value}"))
             .collect::<Vec<_>>()
             .join("\r\n"),
-        frame.body.as_bytes().len()
+        frame.body.len()
     );
     let Ok(request) = Request::parse(head.trim_end()) else {
         return bad_request("the relay forwarded a request this face could not read");
@@ -383,7 +408,10 @@ fn asked_session(bridge: &Bridge, request: &Request) -> String {
 fn presented_tokens(request: &Request) -> Vec<String> {
     let mut tokens = Vec::new();
     if let Some(cookie) = request.header("cookie") {
-        for (name, value) in cookie.split(';').filter_map(|pair| pair.trim().split_once('=')) {
+        for (name, value) in cookie
+            .split(';')
+            .filter_map(|pair| pair.trim().split_once('='))
+        {
             if name == DEVICE_COOKIE && !value.is_empty() {
                 tokens.push(value.to_string());
             }
@@ -433,9 +461,27 @@ async fn route_with(
 ) -> Reply {
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/") => page(),
-        ("GET", "/app.css") => asset("text/css; charset=utf-8", crate::gui::server::STYLES),
+        ("GET", "/manifest.webmanifest") => crate::gui::server::manifest(),
+        ("GET", "/sw.js") => crate::gui::server::worker(),
+        ("GET", "/app.css") => {
+            if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
+                crate::gui::server::versioned_asset(
+                    "text/css; charset=utf-8",
+                    crate::gui::server::STYLES,
+                )
+            } else {
+                asset("text/css; charset=utf-8", crate::gui::server::STYLES)
+            }
+        }
         ("GET", "/app.js") => {
-            asset("text/javascript; charset=utf-8", crate::gui::server::SCRIPT)
+            if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
+                crate::gui::server::versioned_asset(
+                    "text/javascript; charset=utf-8",
+                    crate::gui::server::SCRIPT,
+                )
+            } else {
+                asset("text/javascript; charset=utf-8", crate::gui::server::SCRIPT)
+            }
         }
         ("GET", "/events") => {
             // The stream is written straight to the socket rather than
@@ -453,11 +499,11 @@ async fn route_with(
             }
         }
         ("GET", "/api/state") => {
-            let session = asked_session(bridge, &request);
+            let session = asked_session(bridge, request);
             api(200, bridge.state(&session))
         }
         ("GET", "/api/sessions") => {
-            let session = asked_session(bridge, &request);
+            let session = asked_session(bridge, request);
             api(200, bridge.sessions(&session).await)
         }
         ("GET", "/api/session") => {
@@ -465,13 +511,13 @@ async fn route_with(
             api(200, bridge.replay(&asked).await)
         }
         ("GET", "/api/checkpoints") => {
-            let session = asked_session(bridge, &request);
+            let session = asked_session(bridge, request);
             api(200, bridge.checkpoints(&session).await)
         }
         ("GET", "/api/diff") => {
             let asked = decode_query(&request.query, "turn");
             let turn: u64 = asked.trim().parse().unwrap_or(0);
-            let session = asked_session(bridge, &request);
+            let session = asked_session(bridge, request);
             api(200, bridge.diff(&session, turn).await)
         }
         ("POST", "/api/run") => {
@@ -479,7 +525,7 @@ async fn route_with(
                 Ok(body) => body,
                 Err(message) => return bad_request(&message),
             };
-            let session = asked_session(bridge, &request);
+            let session = asked_session(bridge, request);
             match task_of(&body) {
                 Ok(task) => match bridge.run(&session, &task) {
                     Ok(()) => api(
@@ -496,7 +542,7 @@ async fn route_with(
                 Ok(body) => body,
                 Err(message) => return bad_request(&message),
             };
-            let session = asked_session(bridge, &request);
+            let session = asked_session(bridge, request);
             match task_of(&body) {
                 Ok(task) => match bridge.plan(&session, &task) {
                     Ok(()) => api(200, json!({"type": "plan", "task": task})),
@@ -510,7 +556,7 @@ async fn route_with(
                 Ok(body) => body,
                 Err(message) => return bad_request(&message),
             };
-            let session = asked_session(bridge, &request);
+            let session = asked_session(bridge, request);
             match decision_of(&body) {
                 Ok(decision) => {
                     match bridge.answer(
@@ -518,13 +564,13 @@ async fn route_with(
                         &decision,
                         &crate::gui::bridge::AnsweredBy::Device(device_name.to_string()),
                     ) {
-                    Ok(answered) => api(200, answered),
-                    Err(crate::gui::bridge::AnswerError::NoSeat) => {
-                        api(409, json!({"error": "no approval is waiting"}))
-                    }
-                    Err(crate::gui::bridge::AnswerError::Unknown(word)) => {
-                        api(400, json!({"error": word}))
-                    }
+                        Ok(answered) => api(200, answered),
+                        Err(crate::gui::bridge::AnswerError::NoSeat) => {
+                            api(409, json!({"error": "no approval is waiting"}))
+                        }
+                        Err(crate::gui::bridge::AnswerError::Unknown(word)) => {
+                            api(400, json!({"error": word}))
+                        }
                     }
                 }
                 Err(message) => bad_request(&message),
@@ -680,7 +726,10 @@ fn redeem(body: &str, home: &std::path::Path) -> Reply {
             "Set-Cookie".to_string(),
             format!("{DEVICE_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"),
         )],
-        body: format!("{}\n", json!({"type": "paired", "device": id, "name": name})),
+        body: format!(
+            "{}\n",
+            json!({"type": "paired", "device": id, "name": name})
+        ),
     }
 }
 
@@ -701,8 +750,8 @@ fn page() -> Reply {
     Reply {
         status: "200 OK",
         content_type: "text/html; charset=utf-8",
-        extra: Vec::new(),
-        body: crate::gui::server::INDEX.to_string(),
+        extra: vec![("Cache-Control".to_string(), "no-cache".to_string())],
+        body: crate::gui::server::index_page(),
     }
 }
 
@@ -710,7 +759,7 @@ fn asset(content_type: &'static str, body: &'static str) -> Reply {
     Reply {
         status: "200 OK",
         content_type,
-        extra: Vec::new(),
+        extra: vec![("Cache-Control".to_string(), "no-cache".to_string())],
         body: body.to_string(),
     }
 }
@@ -719,9 +768,11 @@ fn asset(content_type: &'static str, body: &'static str) -> Reply {
 /// stops being a threat model.
 fn mint_session() -> Result<String, String> {
     let mut bytes = [0u8; 16];
-    std::io::Read::read_exact(&mut std::fs::File::open("/dev/urandom").map_err(|error| {
-        format!("fleet remote cannot read /dev/urandom: {error}")
-    })?, &mut bytes)
+    std::io::Read::read_exact(
+        &mut std::fs::File::open("/dev/urandom")
+            .map_err(|error| format!("fleet remote cannot read /dev/urandom: {error}"))?,
+        &mut bytes,
+    )
     .map_err(|error| format!("fleet remote cannot read /dev/urandom: {error}"))?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
@@ -937,7 +988,9 @@ mod tests {
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
             .expect("a read timeout is settable");
-        stream.write_all(raw.as_bytes()).expect("the request is sent");
+        stream
+            .write_all(raw.as_bytes())
+            .expect("the request is sent");
         let mut reply = String::new();
         let mut chunk = [0u8; 4096];
         loop {
@@ -953,7 +1006,9 @@ mod tests {
     fn get(port: u16, path: &str, token: &str) -> String {
         ask(
             port,
-            &format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {DEVICE_COOKIE}={token}\r\n\r\n"),
+            &format!(
+                "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {DEVICE_COOKIE}={token}\r\n\r\n"
+            ),
         )
     }
 
@@ -962,7 +1017,11 @@ mod tests {
     /// window holds — the same code the terminal would have printed.
     async fn live(home: std::path::PathBuf) -> (u16, String) {
         let (_window, code) = PairingWindow::mint(&home).expect("a window");
-        let (bridge, _) = Bridge::detached(home.clone(), "deepseek-chat".to_string(), Some("s".to_string()));
+        let (bridge, _) = Bridge::detached(
+            home.clone(),
+            "deepseek-chat".to_string(),
+            Some("s".to_string()),
+        );
         let remote = RemoteAddress {
             address: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             kind: crate::remote::AddressKind::Detected,
@@ -1004,10 +1063,7 @@ mod tests {
 
         // Before pairing: an API route with no token is refused, and the
         // refusal names the way in rather than the token.
-        let refused = ask(
-            port,
-            "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
-        );
+        let refused = ask(port, "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
         assert!(refused.starts_with("HTTP/1.1 401"), "{refused}");
         assert!(refused.contains("fleet pair"), "{refused}");
 
@@ -1024,6 +1080,44 @@ mod tests {
         let state = get(port, "/api/state", &token);
         assert!(state.starts_with("HTTP/1.1 200"), "{state}");
         assert!(state.contains("\"session\""), "{state}");
+
+        // The shell is installable from a paired device: the page asks for
+        // the build's own asset URLs, and the manifest, worker, and icon
+        // are reachable — none of them carries data.
+        let shell = get(port, "/", &token);
+        assert!(
+            shell.contains(&format!("/app.js?v={}", crate::gui::server::ASSET_HASH)),
+            "{shell}"
+        );
+        for (path, content_type) in [
+            (
+                "/manifest.webmanifest",
+                "Content-Type: application/manifest+json",
+            ),
+            ("/sw.js", "Content-Type: text/javascript"),
+            ("/icon-192.png", "Content-Type: image/png"),
+        ] {
+            let reply = get(port, path, &token);
+            assert!(reply.starts_with("HTTP/1.1 200"), "{path}: {reply}");
+            assert!(reply.contains(content_type), "{path}: {reply}");
+        }
+        // The install files are not a pre-pair surface: an unpaired browser
+        // gets the 401 it gets for every non-page route.
+        let unpaired = ask(
+            port,
+            "GET /manifest.webmanifest HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        );
+        assert!(unpaired.starts_with("HTTP/1.1 401"), "{unpaired}");
+
+        // Pairing is a desktop action: a paired phone cannot mint a code
+        // that widens the door it came through.
+        let mint = ask(
+            port,
+            &format!(
+                "POST /api/pair/window HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {DEVICE_COOKIE}={token}\r\nContent-Length: 2\r\n\r\n{{}}"
+            ),
+        );
+        assert!(mint.starts_with("HTTP/1.1 403"), "{mint}");
 
         // A second redemption of the same code has no window left: the
         // code paired exactly one device.
@@ -1095,6 +1189,7 @@ mod tests {
             ("GET", "/api/channels"),
             ("GET", "/api/access"),
             ("POST", "/api/channels/pair"),
+            ("POST", "/api/pair/window"),
             ("POST", "/api/settings"),
         ] {
             let reply = answer_frame(&frame(method, path), &bridge, "a relayed phone").await;
@@ -1176,7 +1271,10 @@ mod tests {
                 format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 2\r\nCookie: {DEVICE_COOKIE}={token}\r\n\r\n{{}}")
             };
             let reply = ask(port, &raw);
-            assert!(reply.starts_with("HTTP/1.1 403"), "{method} {path}: {reply}");
+            assert!(
+                reply.starts_with("HTTP/1.1 403"),
+                "{method} {path}: {reply}"
+            );
             assert!(reply.contains(path), "the refusal names the route: {reply}");
         }
 

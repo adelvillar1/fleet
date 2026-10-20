@@ -416,12 +416,16 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
     });
     // The channel record, when the log carries one: the peer's
     // conversation says so beside its first line.
-    let channel = text.lines().find_map(|line| {
-        match serde_json::from_str::<Record>(line.trim()) {
-            Ok(Record::Channel { channel, peer_id, peer }) => Some((channel, peer_id, peer)),
+    let channel = text
+        .lines()
+        .find_map(|line| match serde_json::from_str::<Record>(line.trim()) {
+            Ok(Record::Channel {
+                channel,
+                peer_id,
+                peer,
+            }) => Some((channel, peer_id, peer)),
             _ => None,
-        }
-    });
+        });
     Some(SessionSummary {
         id,
         model,

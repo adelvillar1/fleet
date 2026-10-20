@@ -459,6 +459,7 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
             "",
             name,
             *capability,
+            callback.as_deref(),
         ) {
             Ok(pairing) => pairing,
             Err(error) => {
@@ -469,22 +470,29 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
         let id = pairing.id.clone();
         // The token is the one copy; the store holds its digest.
         let token = pairing.token.clone().unwrap_or_default();
+        // The port the process will actually bind: the configured one,
+        // not the compiled-in default a flag used to name.
+        let port = fleet::channels::ServiceConfig::from_settings(&home, None).webhook_port;
         println!("fleet channels — one webhook peer paired");
         println!("  peer:  {name}  ({id})");
         println!(
             "  may:   {}",
             match capability {
                 fleet::channels::Capability::Task => "hand fleet a task and receive the outcome",
-                fleet::channels::Capability::Observe => "be notified only — it cannot hand fleet a task",
+                fleet::channels::Capability::Observe =>
+                    "be notified only — it cannot hand fleet a task",
             }
         );
         println!("  token: {token}");
-        println!("  hook:  POST http://127.0.0.1:{port}/hook", port = fleet::channels::webhook::DEFAULT_PORT);
+        println!("  hook:  POST http://127.0.0.1:{port}/hook");
         println!("         with the header x-fleet-peer: {token}");
-        if let Some(callback) = callback {
-            println!("  callback: {callback}");
-        } else {
-            println!("  no callback named — outcomes and seats go nowhere; re-pair with --callback");
+        match &pairing.callback {
+            Some(callback) => println!(
+                "  callback: {callback} — outcomes and seats go here when a delivery names none"
+            ),
+            None => println!(
+                "  callback: none stored — each delivery names its own callback, or its outcomes go nowhere"
+            ),
         }
         println!("  the token is printed once and stored as its digest only");
         return ExitCode::SUCCESS;
@@ -497,7 +505,7 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
             .clone()
             .unwrap_or_else(|| format!("telegram {chat_id}"));
         if let Err(error) =
-            fleet::channels::pair(&home, "telegram", chat_id, &name, *capability)
+            fleet::channels::pair(&home, "telegram", chat_id, &name, *capability, None)
         {
             eprintln!("fleet: channels: {error}");
             return ExitCode::FAILURE;
@@ -507,7 +515,8 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
             "  may:   {}",
             match capability {
                 fleet::channels::Capability::Task => "hand fleet a task and receive the outcome",
-                fleet::channels::Capability::Observe => "be notified only — it cannot hand fleet a task",
+                fleet::channels::Capability::Observe =>
+                    "be notified only — it cannot hand fleet a task",
             }
         );
         println!("  the bot answers this chat's messages and posts outcomes back to it");
@@ -617,14 +626,15 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
     // Every channel the build ships, not the webhook alone: a Telegram
     // peer the owner paired is as much a way into the service, and a list
     // that named one channel read as if the other had none.
+    // The port the process will bind, from the same setting the service
+    // reads — not the compiled-in default, which is what a machine that
+    // configured another port does not use.
+    let configured_port = fleet::channels::ServiceConfig::from_settings(&home, None).webhook_port;
     for channel in fleet::channels::CHANNELS {
         let store = fleet::channels::PeerStore::load(&home, channel).unwrap_or_default();
         let mut line = format!("  {channel}  {} paired", store.peers.len());
         if *channel == "webhook" {
-            line.push_str(&format!(
-                " · port {}",
-                fleet::channels::webhook::DEFAULT_PORT
-            ));
+            line.push_str(&format!(" · port {configured_port}"));
         }
         println!("{line}");
         for peer in &store.peers {
@@ -640,12 +650,10 @@ fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
         }
         if store.peers.is_empty() {
             match *channel {
-                "webhook" => println!(
-                    "    `fleet channels pair-webhook <name> --callback <url>` pairs one"
-                ),
-                "telegram" => println!(
-                    "    `fleet channels allow-telegram <chat-id>` pairs one"
-                ),
+                "webhook" => {
+                    println!("    `fleet channels pair-webhook <name> --callback <url>` pairs one")
+                }
+                "telegram" => println!("    `fleet channels allow-telegram <chat-id>` pairs one"),
                 _ => {}
             }
         }
@@ -694,7 +702,10 @@ fn pair_command() -> ExitCode {
     };
     println!("fleet pair — one pairing code, single use");
     println!("  code:  {}", fleet::remote::pairing::display_code(&code));
-    println!("  open:  http://{}:{port}/pair", format_address(address.address));
+    println!(
+        "  open:  http://{}:{port}/pair",
+        format_address(address.address)
+    );
     println!("  from:  {kind}");
     // The QR: the same URL with the code in the query, so a scan lands
     // on the form with the code already filled.

@@ -3025,7 +3025,11 @@ mod tests {
             .unwrap();
         let mut settings = fresh();
         settings.open_settings(home.clone());
-        let pane = draw(&settings, 80, 24);
+        // Tall enough for every section: the settings table grows with the
+        // product (remote.public_url was the row that pushed Providers
+        // past a 24-line view), and the pane scrolls, so the assertion is
+        // about the sections existing, not about one screen holding all.
+        let pane = draw(&settings, 80, 60);
         assert!(pane.contains("Providers"), "{pane}");
         assert!(pane.contains("Workloads"), "{pane}");
         assert!(pane.contains("stepfun/step-3.7-flash"), "{pane}");
@@ -4570,8 +4574,8 @@ mod tests {
     /// start it could not perform would be a panel that lies.
     #[test]
     fn the_bots_panel_names_the_service_and_says_who_holds_the_port() {
-        use crate::channels::{Capability, PendingStore, PeerStore, Status, ChannelReport, Phase};
         use crate::channels::service;
+        use crate::channels::{Capability, ChannelReport, PeerStore, PendingStore, Phase, Status};
         let home = std::env::temp_dir().join(format!(
             "fleet-tui-bots-{}-{}",
             std::process::id(),
@@ -4583,7 +4587,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         let mut store = PeerStore::default();
-        store.pair("wh1", "the CI box", "unused", Capability::Task, "2026-10-20T00:00:00Z");
+        store.pair(
+            "wh1",
+            "the CI box",
+            "unused",
+            Capability::Task,
+            "2026-10-20T00:00:00Z",
+        );
         store.save(&home, "webhook").unwrap();
         let mut pending = PendingStore::default();
         pending.note("4242", "Alejandro", "2026-10-20T15:00:00Z");
@@ -4606,16 +4616,19 @@ mod tests {
             }],
         };
         status.save(&home).unwrap();
-        let _ = service::record(&home, service::Activity {
-            at: "2026-10-20T15:00:05Z".to_string(),
-            kind: "delivery".to_string(),
-            channel: "webhook".to_string(),
-            peer: Some("the CI box".to_string()),
-            peer_id: Some("wh1".to_string()),
-            session: Some("20261020T150000Z-abc".to_string()),
-            task: Some("check the build".to_string()),
-            detail: None,
-        });
+        service::record(
+            &home,
+            service::Activity {
+                at: "2026-10-20T15:00:05Z".to_string(),
+                kind: "delivery".to_string(),
+                channel: "webhook".to_string(),
+                peer: Some("the CI box".to_string()),
+                peer_id: Some("wh1".to_string()),
+                session: Some("20261020T150000Z-abc".to_string()),
+                task: Some("check the build".to_string()),
+                detail: None,
+            },
+        );
 
         let mut app = fresh();
         let generation = app.open_panel(crate::tui::app::PanelKind::Bots);
@@ -4634,7 +4647,10 @@ mod tests {
         let flat = words(&service_view);
         // The title is one line, so the raw buffer has it whole; the prose
         // is compared as words.
-        assert!(service_view.contains("bots \u{2014} service"), "{service_view}");
+        assert!(
+            service_view.contains("bots \u{2014} service"),
+            "{service_view}"
+        );
         assert!(flat.contains("webhook"), "{service_view}");
         assert!(flat.contains("127 0 0 1 3081"), "{service_view}");
         assert!(

@@ -321,15 +321,24 @@ mod tests {
                     }
                     let text = String::from_utf8_lossy(&head).to_string();
                     let (status, body) = if text.starts_with("POST /join") {
-                        relay.joined.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        relay
+                            .joined
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         ("200 OK", "{}\n".to_string())
                     } else if text.starts_with("GET /poll") {
-                        let flight = relay.in_flight.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                        relay.most_in_flight.fetch_max(flight, std::sync::atomic::Ordering::SeqCst);
+                        let flight = relay
+                            .in_flight
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                            + 1;
+                        relay
+                            .most_in_flight
+                            .fetch_max(flight, std::sync::atomic::Ordering::SeqCst);
                         // Hold the poll the way the real relay does: the
                         // client's own timeout is what ends it.
                         std::thread::sleep(std::time::Duration::from_millis(300));
-                        relay.in_flight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                        relay
+                            .in_flight
+                            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                         let frames = relay
                             .frames
                             .lock()
@@ -341,7 +350,10 @@ mod tests {
                             .lock()
                             .unwrap_or_else(|poison| poison.into_inner())
                             .clear();
-                        ("200 OK", format!("{}\n", serde_json::to_string(&queued).unwrap()))
+                        (
+                            "200 OK",
+                            format!("{}\n", serde_json::to_string(&queued).unwrap()),
+                        )
                     } else if text.starts_with("POST /frame") {
                         let body = text
                             .split("\r\n\r\n")
@@ -370,7 +382,6 @@ mod tests {
         format!("http://127.0.0.1:{port}")
     }
 
-
     /// The serve loop holds one poll at a time. A loop that does not
     /// wait — a dropped shutdown sender answering `changed()` at once,
     /// say — leaks a poll task per iteration: the blocking pool
@@ -380,18 +391,20 @@ mod tests {
     async fn the_serve_loop_holds_one_poll_at_a_time() {
         let relay = FakeRelay::new();
         let base = start(Arc::clone(&relay)).await;
-        let client = Arc::new(Client::new(&base, "sid-rate".to_string(), "hash".to_string()));
-        let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
-        let serving = tokio::spawn(serve(
-            Arc::clone(&client),
-            Arc::new(Echo),
-            shutdown_rx,
+        let client = Arc::new(Client::new(
+            &base,
+            "sid-rate".to_string(),
+            "hash".to_string(),
         ));
+        let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
+        let _serving = tokio::spawn(serve(Arc::clone(&client), Arc::new(Echo), shutdown_rx));
         // The sender stays alive for the loop's life: `let _ =` would
         // drop it at once.
         let _ = shutdown;
         tokio::time::sleep(Duration::from_millis(1500)).await;
-        let most = relay.most_in_flight.load(std::sync::atomic::Ordering::SeqCst);
+        let most = relay
+            .most_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst);
         let seen = relay.joined.load(std::sync::atomic::Ordering::SeqCst);
         assert!(seen >= 1, "the loop never joined the relay: {seen}");
         assert!(most >= 1, "no poll ever reached the relay: {most}");
@@ -399,7 +412,6 @@ mod tests {
             most <= 2,
             "the loop leaked polls: {most} in flight at once (a dropped sender answers changed() at once)"
         );
-        let _ = serving;
     }
 
     /// A poll returns the frames the relay is holding, and the answers go
@@ -408,7 +420,11 @@ mod tests {
     async fn a_poll_hands_out_frames_and_the_answers_go_back() {
         let relay = FakeRelay::new();
         let base = start(Arc::clone(&relay)).await;
-        let client = Arc::new(Client::new(&base, "sid-1".to_string(), "hash-1".to_string()));
+        let client = Arc::new(Client::new(
+            &base,
+            "sid-1".to_string(),
+            "hash-1".to_string(),
+        ));
         client.join().expect("the join lands");
 
         relay.offer(frame("f1", "/api/state"));
@@ -445,14 +461,14 @@ mod tests {
     async fn the_serve_loop_answers_until_it_is_told_to_stop() {
         let relay = FakeRelay::new();
         let base = start(Arc::clone(&relay)).await;
-        let client = Arc::new(Client::new(&base, "sid-2".to_string(), "hash-2".to_string()));
+        let client = Arc::new(Client::new(
+            &base,
+            "sid-2".to_string(),
+            "hash-2".to_string(),
+        ));
         relay.offer(frame("g1", "/api/state"));
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
-        let serving = tokio::spawn(serve(
-            Arc::clone(&client),
-            Arc::new(Echo),
-            shutdown_rx,
-        ));
+        let serving = tokio::spawn(serve(Arc::clone(&client), Arc::new(Echo), shutdown_rx));
         // Wait for the answer to come back against the frame's id.
         for _ in 0..100 {
             if !relay

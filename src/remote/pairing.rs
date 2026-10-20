@@ -16,7 +16,7 @@
 //! the listener reads the window when a code arrives, and the newest
 //! window wins. That file holds a live token, so it is written 0600 and
 //! deleted the moment it is redeemed — the same trust the home's `.env`
-//// already holds, named rather than implied.
+//! already holds, named rather than implied.
 //!
 //! ## Why the primitives are hand-rolled
 //!
@@ -107,8 +107,12 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
             *word = u32::from_be_bytes([block[at], block[at + 1], block[at + 2], block[at + 3]]);
         }
         for index in 16..64 {
-            let s0 = w[index - 15].rotate_right(7) ^ w[index - 15].rotate_right(18) ^ (w[index - 15] >> 3);
-            let s1 = w[index - 2].rotate_right(17) ^ w[index - 2].rotate_right(19) ^ (w[index - 2] >> 10);
+            let s0 = w[index - 15].rotate_right(7)
+                ^ w[index - 15].rotate_right(18)
+                ^ (w[index - 15] >> 3);
+            let s1 = w[index - 2].rotate_right(17)
+                ^ w[index - 2].rotate_right(19)
+                ^ (w[index - 2] >> 10);
             w[index] = w[index - 16]
                 .wrapping_add(s0)
                 .wrapping_add(w[index - 7])
@@ -199,7 +203,7 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 /// base64url without padding. 32 bytes encode to 43 characters, which is
 /// the shape a token carries.
 fn base64url(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity((bytes.len() * 4 + 2) / 3);
+    let mut out = String::with_capacity((bytes.len() * 4).div_ceil(3));
     for chunk in bytes.chunks(3) {
         let group = (chunk[0] as u32) << 16
             | (chunk.get(1).copied().unwrap_or(0) as u32) << 8
@@ -620,7 +624,10 @@ mod tests {
         let typed = display_code(&code).to_lowercase();
         let token = window.redeem(&home, &typed).expect("the code redeems");
         assert_eq!(token.len(), 43);
-        assert!(PairingWindow::load_live(&home).is_none(), "the window burned");
+        assert!(
+            PairingWindow::load_live(&home).is_none(),
+            "the window burned"
+        );
 
         // A second redemption of the same code has no window left.
         let again = PairingWindow::load_live(&home);

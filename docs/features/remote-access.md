@@ -34,6 +34,16 @@ Redeeming the code burns the window and writes a device record whose only
 trace of the token is its SHA-256 — a stolen `devices.json` is a roster
 of names and digests. `fleet devices` lists them; `--revoke` forgets one.
 
+The face has its own door: the topbar's QR icon mints a window and shows
+the URL, the code, and a scannable QR. The URL is `remote.public_url`
+when set, else a detected tailnet HTTPS name that is verified to reach
+the remote face, else this machine's address with the plain-HTTP caveat.
+Over Tailscale that is the intended path — point `tailscale serve` at the
+remote listener, then scan; iOS refuses cleartext to a tailnet address,
+so the HTTPS name matters. The card mints one live window: opening it
+again invalidates the previous code. A paired phone cannot call the mint
+route; it is loopback only.
+
 The remote face is a second listener with a default-deny allowlist: a
 paired device may watch the stream, read state, list and open sessions,
 drive a run or a plan, and answer a seat. Everything else answers 403 by
@@ -41,6 +51,20 @@ name, so a route the loopback face gains later stays closed here until it
 is deliberately added. The access lists are a loopback read and write
 only — a phone that could revoke devices is a phone that could lock its
 owner out.
+
+The cookie is resolved before the root is decided: a paired phone that
+opens `/` gets the face, and an unpaired one gets the pairing page. The
+reverse ordering — pairing page first, cookie second — made the redirect
+a successful pairing performs land back on the pairing form, so a paired
+device could reach every allowlisted API route but never the shell.
+
+The face is installable on a paired device: the manifest, the worker, and
+the icons are allowlisted and carry no data. Installation needs a secure
+context, so an HTTPS remote face (a TLS proxy or Tailscale serve) can be
+added to the home screen while the same face on plain-HTTP LAN cannot;
+the relayed path under `/s/<sid>/` is per-session and is not installable.
+The worker caches only the two versioned script assets and never HTML,
+an API response, or the event stream.
 
 ## The archive is the inbox
 
@@ -72,8 +96,16 @@ same seat.
 
 | Channel | How it arrives | How it pairs |
 |---|---|---|
-| webhook | a POST to `127.0.0.1:3081/hook` (or `channels.webhook_port`) | `fleet channels pair-webhook <name> --callback <url>` mints a token, shown once |
+| webhook | a POST to `127.0.0.1:3081/hook` (or `channels.webhook_port`) | `fleet channels pair-webhook <name> [--callback <url>]` mints a token, shown once |
 | telegram | a private-chat message to the bot | `fleet channels allow-telegram <chat_id>`, or the Bots surface once a refusal recorded it |
+
+The callback is where an outcome or a seat goes. A webhook delivery may
+name its own in the body — the more specific instruction wins — and the
+pairing's stored callback is the default a delivery that names none
+falls back to. Its absence is not a hidden failure: the pairing says
+"none stored", and a delivery with neither gets no reply because there is
+nowhere to send one. Telegram needs no callback; its reply handle is the
+chat id.
 
 Capability is a parameter of the pairing — `--capability task|observe`,
 or a choice in the Bots form — rather than a later edit only. `observe`

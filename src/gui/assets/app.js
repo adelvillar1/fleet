@@ -214,6 +214,11 @@
     paletteRows: document.getElementById('palette-rows'),
     paletteCount: document.getElementById('palette-count'),
     paletteOpen: document.getElementById('palette-open'),
+    pairOpen: document.getElementById('pair-open'),
+    pairScrim: document.getElementById('pair-scrim'),
+    pairCard: document.getElementById('pair-card'),
+    pairBody: document.getElementById('pair-body'),
+    pairClose: document.getElementById('pair-close'),
     pane: document.getElementById('pane'),
     paneOpen: document.getElementById('pane-open'),
     commands: document.getElementById('commands'),
@@ -6108,8 +6113,27 @@
     }).catch(function () { notice('could not reach fleet'); return null; });
   }
 
-  function channelName(report) {
-    return report.name;
+  /// Take the owner to a card without changing what the board shows. The
+  /// door and the activity are their own cards, not filters of the peers
+  /// list, so their tiles navigate instead of pressing an empty chip.
+  function revealCard(id, flash) {
+    var card = document.getElementById(id);
+    if (!card) return;
+    var smooth = !window.matchMedia ||
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' });
+    if (flash) {
+      card.dataset.flash = 'on';
+      window.setTimeout(function () { delete card.dataset.flash; }, 1600);
+    }
+  }
+
+  function revealDoor() {
+    revealCard('bots-door', true);
+  }
+
+  function revealActivity() {
+    revealCard('bots-activity', true);
   }
 
   function phaseTone(phase) {
@@ -6165,11 +6189,6 @@
     }).length;
 
     var filter = face.botsFilter || 'all';
-    // A count of one says so: "1 peers paired" is the kind of number that
-    // makes an owner distrust the rest of the board.
-    var plural = function (count, one, many) {
-      return count === 1 ? '1 ' + one : count + ' ' + many;
-    };
     var tiles = node('div', 'tiles');
     tiles.appendChild(tile(live, live === 1 ? 'channel live' : 'channels live',
       live ? 'ok' : null, function () {
@@ -6180,18 +6199,19 @@
       failed ? 'down' : null));
     tiles.appendChild(tile(peers.length, peers.length === 1 ? 'peer paired' : 'peers paired',
       null, function () {
-      face.botsFilter = 'peers';
+      face.botsFilter = 'all';
       paintBots();
     }));
+    // The door is its own card, so its tile takes the owner there rather
+    // than filtering a list the door is not part of: a "pending" chip
+    // used to empty the peers card and say nothing had matched.
     tiles.appendChild(tile(pending.length, 'waiting at the door', pending.length ? 'warn' : null,
-      function () {
-        face.botsFilter = 'pending';
-        paintBots();
-      }));
+      revealDoor));
     tiles.appendChild(tile(refusedAtTheDoor,
       refusedAtTheDoor === 1 ? 'refusal logged' : 'refusals logged'));
     var waitingSeats = Number(read.waiting_seats || 0);
-    tiles.appendChild(tile(waitingSeats, 'waiting on an answer', waitingSeats ? 'warn' : null));
+    tiles.appendChild(tile(waitingSeats, 'waiting on an answer', waitingSeats ? 'warn' : null,
+      revealActivity));
     el.botsBoard.appendChild(pageHead('System', 'Bots',
       'The channels that carry work in from outside: who is paired, what they may do, ' +
       'whether the service is listening, and what they have asked for.',
@@ -6202,8 +6222,7 @@
       { value: 'acting', label: 'may act',
         count: peers.filter(function (peer) { return peer.capability === 'task'; }).length },
       { value: 'listening', label: 'may only listen',
-        count: peers.filter(function (peer) { return peer.capability === 'observe'; }).length },
-      { value: 'pending', label: 'pending', count: pending.length }
+        count: peers.filter(function (peer) { return peer.capability === 'observe'; }).length }
     ], filter, function (value) {
       face.botsFilter = value;
       paintBots();
@@ -6211,8 +6230,10 @@
 
     // The service: what is listening, and the start/stop that changes it.
     // A stale heartbeat is named rather than rendered as a live service.
+    // The stamp names the heartbeat, not a channel's phase: the process
+    // can be running while every channel in it is stopped.
     var serviceCard = boardCard(12, 'the service',
-      service.running ? 'live' : (service.updated || null),
+      service.stale ? (service.updated || 'last report') : (service.pid ? 'running' : null),
       service.stale
         ? (service.note || 'the heartbeat has stopped')
         : (service.pid
@@ -6258,6 +6279,7 @@
       : null,
       'peers that tried to reach a channel and are not paired. Letting one in mints its ' +
       'credential; turning one away forgets it until it tries again.');
+    doorCard.id = 'bots-door';
     if (!pending.length) {
       doorCard.appendChild(node('p', 'board-empty',
         'Nothing is waiting. A refusal lands here the moment an unpaired peer tries.'));
@@ -6296,8 +6318,9 @@
     // re-read — the store keeps only its digest, so there is nothing to
     // come back to.
     var pairCard = boardCard(5, 'let one in', null,
-      'A webhook peer gets a token minted here and shown once. A Telegram chat is let in by ' +
-      'the id it refused under. The capability is part of the pairing, not a later edit.');
+      'A webhook peer gets a token minted here and shown once, and a callback where its ' +
+      'outcomes go. A Telegram chat is let in by the id it refused under. The capability is ' +
+      'part of the pairing, not a later edit.');
     var form = node('form', 'bots-form');
     var channelPick = node('select', 'bots-input');
     channelPick.name = 'channel';
@@ -6310,13 +6333,20 @@
     var idInput = node('input', 'bots-input');
     idInput.name = 'id';
     idInput.type = 'text';
-    idInput.placeholder = 'a telegram chat id (webhook mints its own)';
-    form.appendChild(labelled('peer id', idInput));
+    idInput.placeholder = 'a telegram chat id';
+    var idField = labelled('peer id', idInput);
+    form.appendChild(idField);
     var nameInput = node('input', 'bots-input');
     nameInput.name = 'name';
     nameInput.type = 'text';
     nameInput.placeholder = 'the CI box';
     form.appendChild(labelled('name', nameInput));
+    var callbackInput = node('input', 'bots-input');
+    callbackInput.name = 'callback';
+    callbackInput.type = 'text';
+    callbackInput.placeholder = 'http://127.0.0.1:9/outcome (optional)';
+    var callbackField = labelled('callback', callbackInput);
+    form.appendChild(callbackField);
     var capPick = node('select', 'bots-input');
     capPick.name = 'capability';
     [['task', 'may act'], ['observe', 'may only listen']].forEach(function (pair) {
@@ -6329,13 +6359,25 @@
     send.type = 'submit';
     send.dataset.act = 'pair';
     form.appendChild(send);
+    // The fields follow the channel: a webhook peer mints its own id and
+    // answers a callback; a Telegram peer is identified by its chat id
+    // and has no callback to name.
+    function syncPairFields() {
+      var webhook = channelPick.value === 'webhook';
+      idField.hidden = webhook;
+      callbackField.hidden = !webhook;
+      idInput.required = !webhook;
+    }
+    channelPick.addEventListener('change', syncPairFields);
+    syncPairFields();
     form.addEventListener('submit', function (event) {
       event.preventDefault();
       writeBots('/api/channels/pair', {
         channel: channelPick.value,
         id: idInput.value,
         name: nameInput.value,
-        capability: capPick.value
+        capability: capPick.value,
+        callback: callbackInput.value
       }, revealPairing);
     });
     pairCard.appendChild(form);
@@ -6346,7 +6388,6 @@
     var shown = peers.filter(function (peer) {
       if (filter === 'acting') return peer.capability === 'task';
       if (filter === 'listening') return peer.capability === 'observe';
-      if (filter === 'pending') return false;
       return true;
     });
     var peersCard = boardCard(7, 'who can reach the fleet', shown.length
@@ -6368,6 +6409,7 @@
       open.type = 'button';
       open.dataset.act = 'inspect-peer';
       open.addEventListener('click', function () {
+        usageRecord('actions', 'bots:inspect-peer', 'uses');
         openPeer(peer, activity, peers, channels);
       });
       head.appendChild(open);
@@ -6396,19 +6438,41 @@
     // What they have done. The bound is the document's, named here: a
     // surface that shows fifty of three hundred silently is lying about
     // what it shows.
-    var fedCard = boardCard(12, 'what they have done', activity.length
-      ? 'newest ' + activity.length + ' of the last ' + bound
-      : null,
+    var fedCard = boardCard(12, 'what they have done',
+      activity.length
+        ? (activity.length >= bound
+          ? 'the newest ' + activity.length + ' \u00b7 the read\u2019s bound'
+          : 'all ' + activity.length + (activity.length === 1 ? ' line' : ' lines'))
+        : null,
       'deliveries, refusals, replies, seats, and state changes, newest last. The log is the ' +
-      'service\u2019s own file; a row names the peer and the session it landed in.');
+      'service\u2019s own file; a row opens the peer, the session, or the channel it names.');
+    fedCard.id = 'bots-activity';
     if (!activity.length) {
       fedCard.appendChild(node('p', 'board-empty',
         'Nothing recorded yet. The log fills as peers deliver, answer, and are refused.'));
     }
+    var activityFilter = face.botsActivityFilter || 'all';
+    var countKind = function (kind) {
+      return activity.filter(function (line) { return line.kind === kind; }).length;
+    };
+    fedCard.appendChild(filterBar([
+      { value: 'all', label: 'all', count: activity.length },
+      { value: 'delivery', label: 'ran', count: countKind('delivery') },
+      { value: 'refusal', label: 'refused', count: countKind('refusal') },
+      { value: 'seat', label: 'seats', count: countKind('seat') }
+    ], activityFilter, function (value) {
+      face.botsActivityFilter = value;
+      paintBots();
+    }));
     var feed = node('div', 'bots-feed');
     activity.slice().reverse().forEach(function (line) {
-      feed.appendChild(activityRow(line));
+      if (activityFilter !== 'all' && line.kind !== activityFilter) return;
+      feed.appendChild(activityRow(line, peers, pending, channels, reports, activity));
     });
+    if (!feed.childNodes.length) {
+      feed.appendChild(node('p', 'board-empty',
+        'No line of this kind is in the read. Clear the filter to see the rest.'));
+    }
     fedCard.appendChild(feed);
     el.botsBoard.appendChild(fedCard);
   }
@@ -6426,9 +6490,33 @@
             'x-fleet-peer, carrying the token below.'
           : 'the bot answers chat ' + doc.id + '; it presents no token.')]
     ];
+    if (doc.callback) {
+      sections.push(['where outcomes go', node('p', 'derivation',
+        doc.callback + ' \u2014 a delivery may name its own callback, and that one wins')]);
+    } else if (doc.channel === 'webhook') {
+      sections.push(['where outcomes go', node('p', 'derivation',
+        'nowhere yet: each delivery names its own callback, and one that names none ' +
+        'gets no reply. Re-pair with a callback to give it a default.')]);
+    }
     if (doc.token) {
       var token = node('code', 'bots-token', doc.token);
-      sections.push(['the token \u2014 shown once', token]);
+      // The token wraps in the dock's narrow column, so a copy button is
+      // the reliable way to move it: reading a broken line back by eye is
+      // how a token gets mistyped.
+      var tokenBox = node('div', 'bots-token-box');
+      tokenBox.appendChild(token);
+      var copy = node('button', 'replay-button', 'copy the token');
+      copy.type = 'button';
+      copy.dataset.act = 'copy-token';
+      copy.addEventListener('click', function () {
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(doc.token).catch(function () { });
+        }
+        copy.textContent = 'copied';
+        window.setTimeout(function () { copy.textContent = 'copy the token'; }, 1200);
+      });
+      tokenBox.appendChild(copy);
+      sections.push(['the token \u2014 shown once', tokenBox]);
       sections.push(['what happens next', node('p', 'derivation',
         doc.reveal || 'this is the only time the token is shown; store it now')]);
     }
@@ -6450,8 +6538,8 @@
     return 'the configured port';
   }
 
-  /// One peer's inspector: what it may do, where its conversation is, and
-  /// what it last did.
+  /// One peer's inspector: what it may do, its id, where its conversation
+  /// is, and what it last did.
   function openPeer(peer, activity, peers, channels) {
     var mine = activity.filter(function (line) {
       return line.peer_id === peer.id && line.channel === peer.channel;
@@ -6467,6 +6555,12 @@
         (peer.capability === 'task'
           ? ' \u2014 it can hand fleet a task and receives the outcome'
           : ' \u2014 it is notified and cannot hand fleet a task'))],
+      ['its id', node('p', 'derivation', peer.channel + ' \u00b7 ' + peer.id)],
+      ['where outcomes go', node('p', 'derivation', peer.callback
+        ? peer.callback + ' \u2014 a delivery may name its own callback, and that one wins'
+        : (peer.channel === 'webhook'
+          ? 'nowhere stored \u2014 each delivery names its own callback, or gets no reply'
+          : 'the chat itself'))],
       ['its conversation', node('p', 'derivation',
         session ? session : 'no delivery has landed yet, so it has no conversation')],
       ['its last delivery', node('p', 'derivation',
@@ -6486,9 +6580,116 @@
     openDrawer(peer.channel + ' \u00b7 ' + (peer.name || peer.id), sections);
   }
 
-  function activityRow(line) {
+  /// A peer at the door: how it asked, and the ways to let it in. The
+  /// door card carries the same buttons; this is the object view of one
+  /// row, so a line in the feed has somewhere to go.
+  function openPending(peer) {
+    var sections = [
+      ['what it is', node('p', 'derivation', peer.channel + ' \u00b7 ' + peer.id)],
+      ['how it asked', node('p', 'derivation',
+        peer.attempts + (peer.attempts === 1 ? ' attempt' : ' attempts') +
+        ' \u00b7 first ' + (peer.first_seen || '\u2014') +
+        ' \u00b7 last ' + (peer.last_seen || '\u2014'))]
+    ];
+    var letIn = function (capability) {
+      writeBots('/api/channels/pair', {
+        channel: peer.channel,
+        id: peer.id,
+        name: peer.name,
+        capability: capability
+      }, revealPairing);
+    };
+    var acts = node('div', 'bots-acts');
+    acts.appendChild(botsButton('let-in-task', 'let it in \u00b7 may act', function () {
+      letIn('task');
+    }));
+    acts.appendChild(botsButton('let-in-listen', 'let it in \u00b7 may only listen', function () {
+      letIn('observe');
+    }));
+    acts.appendChild(botsButton('turn-away', 'turn away', function () {
+      writeBots('/api/channels/forget', { channel: peer.channel, id: peer.id }, function () {
+        closeDrawer();
+      });
+    }));
+    sections.push(['let it in', acts]);
+    openDrawer(peer.name || peer.id, sections);
+  }
+
+  /// A channel's inspector: the phase and port a state line in the feed
+  /// is about.
+  function openChannel(name, reports, peers) {
+    var report = null;
+    (reports || []).forEach(function (row) {
+      if (row.name === name) report = row;
+    });
+    var mine = (peers || []).filter(function (peer) { return peer.channel === name; });
+    var sections = [
+      ['what it is', node('p', 'derivation', report
+        ? report.phase + (report.port ? ' on 127.0.0.1:' + report.port : '')
+        : 'not started in the process this face hosts')],
+      ['since', node('p', 'derivation', report && report.since ? report.since : '\u2014')],
+      ['paired', node('p', 'derivation',
+        mine.length + (mine.length === 1 ? ' peer' : ' peers'))]
+    ];
+    if (report && report.error) {
+      sections.push(['why it stopped', node('p', 'derivation', report.error)]);
+    }
+    openDrawer(name, sections);
+  }
+
+  /// One line of the feed. Every row goes somewhere — the session it
+  /// landed in, the peer it names, the door that peer is waiting at, or
+  /// the channel a state line is about — because a visible row that does
+  /// nothing is the dead end the audit refuses.
+  function activityRow(line, peers, pending, channels, reports, activity) {
     var row = node('div', 'bots-activity');
     row.dataset.kind = line.kind;
+    var paired = null;
+    var atDoor = null;
+    if (line.peer_id) {
+      (peers || []).forEach(function (peer) {
+        if (peer.id === line.peer_id && peer.channel === line.channel) paired = peer;
+      });
+      (pending || []).forEach(function (peer) {
+        if (peer.id === line.peer_id && peer.channel === line.channel) atDoor = peer;
+      });
+    }
+    var destination;
+    if (line.session) {
+      destination = 'the conversation ' + line.session;
+    } else if (paired) {
+      destination = paired.name || paired.id;
+    } else if (atDoor) {
+      destination = (atDoor.name || atDoor.id) + ' at the door';
+    } else {
+      destination = line.channel;
+    }
+    var open = function () {
+      usageRecord('actions', 'bots:open-activity', 'uses');
+      if (line.session) {
+        window.location.hash = '#/sessions/' + encodeURIComponent(line.session);
+      } else if (paired) {
+        openPeer(paired, activity, peers, channels);
+      } else if (atDoor) {
+        openPending(atDoor);
+      } else {
+        openChannel(line.channel, reports, peers);
+      }
+    };
+    row.dataset.act = 'open-activity';
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.title = 'open ' + destination;
+    row.addEventListener('click', function (event) {
+      if (event.target && event.target.closest && event.target.closest('button')) return;
+      open();
+    });
+    row.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
     row.appendChild(node('span', 'bots-activity-at', clock(line.at)));
     row.appendChild(badge(line.kind, line.kind === 'refusal' ? 'down'
       : line.kind === 'delivery' ? 'ok' : null));
@@ -6498,13 +6699,14 @@
     var detail = line.task || line.detail || '';
     if (detail) row.appendChild(node('span', 'bots-row-meta', detail));
     if (line.session) {
-      var open = node('button', 'bots-session', line.session);
-      open.type = 'button';
-      open.dataset.act = 'open-session';
-      open.addEventListener('click', function () {
+      var openSession = node('button', 'bots-session', line.session);
+      openSession.type = 'button';
+      openSession.dataset.act = 'open-session';
+      openSession.title = 'open the conversation';
+      openSession.addEventListener('click', function () {
         window.location.hash = '#/sessions/' + encodeURIComponent(line.session);
       });
-      row.appendChild(open);
+      row.appendChild(openSession);
     }
     return row;
   }
@@ -7966,6 +8168,19 @@
   function setTheme(mode) {
     document.documentElement.dataset.theme = mode;
     el.themeToggle.dataset.theme = mode;
+    // The installed app's browser chrome follows the theme; the manifest
+    // can only carry one colour (paper), so this keeps the top bar from
+    // staying paper under graphite.
+    var chrome = document.querySelector('meta[name="theme-color"]');
+    if (chrome) {
+      var colors = {
+        paper: '#f6f4ef',
+        console: '#0e0f12',
+        graphite: '#0a0c10',
+        contrast: '#ffffff'
+      };
+      chrome.setAttribute('content', colors[mode] || colors.paper);
+    }
     var named = THEMES.filter(function (theme) { return theme[0] === mode; })[0];
     el.themeToggle.setAttribute('aria-label', 'choose a theme \u2014 now ' + (named ? named[1] : mode));
     el.themeToggle.title = 'choose a theme \u2014 now ' + (named ? named[1] : mode);
@@ -8215,12 +8430,131 @@
   // in their learned order, and the exposure was already recorded once.
   readUsage().then(paintOffers);
 
-  load().then(listen).catch(function (error) {
-    if (error && error.message === 'token') {
-      el.empty.hidden = false;
-      el.empty.querySelector('h1').textContent = 'This page is not the one fleet printed.';
-      el.empty.querySelector('p').textContent =
-        'The launch token did not arrive with this request. Open the URL fleet printed.';
+  // ------------------------------------------------------------- pairing
+
+  // The QR card. The icon exists only on the loopback face: a paired
+  // phone does not pair phones, and a relayed page has no origin of its
+  // own to mint a code for. The server mints a fresh window per open, so
+  // the newest code is the live one and an older screenshot stops working.
+  function canPair() {
+    if (window.location.pathname.indexOf('/s/') === 0) return false;
+    var host = window.location.hostname;
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
+  }
+
+  function closePair() {
+    el.pairScrim.hidden = true;
+    el.pairCard.hidden = true;
+    el.pairBody.textContent = '';
+  }
+
+  function pairError(message) {
+    el.pairBody.textContent = '';
+    var card = node('div', 'pair-error');
+    card.appendChild(node('h3', null, 'no code was minted'));
+    card.appendChild(node('p', null, message));
+    el.pairBody.appendChild(card);
+  }
+
+  function paintPair(doc) {
+    el.pairBody.textContent = '';
+    var qr = node('div', 'pair-qr');
+    // Server-generated from the matrix: rects and numbers, no user text.
+    qr.innerHTML = doc.svg;
+    qr.setAttribute('role', 'img');
+    qr.setAttribute('aria-label', 'pairing QR code');
+    var side = node('div', 'pair-side');
+    side.appendChild(node('p', 'pair-eyebrow', 'scan with your phone'));
+    side.appendChild(node('div', 'pair-code', doc.code));
+    side.appendChild(node('p', 'pair-url', doc.url));
+    side.appendChild(node('p', 'pair-origin',
+      'via ' + (doc.origin_label || doc.origin) + ' \u00b7 ' + doc.origin));
+    if (doc.note) {
+      var note = node('p', 'pair-note', doc.note);
+      note.dataset.tone = 'warn';
+      side.appendChild(note);
     }
-  });
+    side.appendChild(node('p', 'pair-ttl',
+      'this code lives ' + doc.ttl_minutes + ' minutes and burns when it is used. ' +
+      'Opening this card again mints a new one; the newest code wins.'));
+    var acts = node('div', 'pair-actions');
+    var copy = node('button', 'replay-button', 'copy the URL');
+    copy.type = 'button';
+    copy.addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(doc.url).catch(function () { });
+      copy.textContent = 'copied';
+      window.setTimeout(function () { copy.textContent = 'copy the URL'; }, 1200);
+    });
+    acts.appendChild(copy);
+    var again = node('button', 'replay-button', 'new code');
+    again.type = 'button';
+    again.addEventListener('click', function () {
+      usageRecord('actions', 'pair:new', 'uses');
+      mintPair();
+    });
+    acts.appendChild(again);
+    var done = node('button', 'replay-button replay-resume', 'done');
+    done.type = 'button';
+    done.addEventListener('click', closePair);
+    acts.appendChild(done);
+    side.appendChild(acts);
+    el.pairBody.appendChild(qr);
+    el.pairBody.appendChild(side);
+  }
+
+  function mintPair() {
+    el.pairBody.textContent = '';
+    el.pairBody.appendChild(node('p', 'pair-loading',
+      'minting a code\u2026 this asks this machine for a new single-use window.'));
+    fetch('/api/pair/window', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    }).then(function (reply) {
+      return reply.json().then(function (doc) { return { ok: reply.ok, doc: doc }; });
+    }).then(function (result) {
+      if (!result.ok) {
+        pairError(result.doc.error || 'the pairing window was refused');
+        return;
+      }
+      paintPair(result.doc);
+    }).catch(function () {
+      pairError('could not reach fleet to mint a code');
+    });
+  }
+
+  function openPair() {
+    usageRecord('actions', 'pair:open', 'uses');
+    el.pairScrim.hidden = false;
+    el.pairCard.hidden = false;
+    mintPair();
+  }
+
+  if (canPair()) {
+    el.pairOpen.hidden = false;
+    el.pairOpen.addEventListener('click', openPair);
+    el.pairClose.addEventListener('click', closePair);
+    el.pairScrim.addEventListener('click', closePair);
+    window.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && !el.pairCard.hidden) closePair();
+    });
+  }
+
+  load()
+    .then(function () {
+      // The boot watchdog reads this: a shell that got this far is not a
+      // failed boot, even if a panel's read is still in flight.
+      document.documentElement.setAttribute('data-fleet-mounted', '1');
+      listen();
+    })
+    .catch(function (error) {
+      document.documentElement.setAttribute('data-fleet-mounted', '1');
+      if (error && error.message === 'token') {
+        el.empty.hidden = false;
+        el.empty.querySelector('h1').textContent = 'This browser is not paired with fleet.';
+        el.empty.querySelector('p').textContent =
+          'Open the address fleet printed and pair this device. A paired device holds a cookie; ' +
+          'a browser without one sees only the pairing page.';
+      }
+    });
 })();

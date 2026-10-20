@@ -135,22 +135,35 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         let (listener, port) =
             listener::Listener::bind(&address, options.port, home.clone(), Arc::clone(&bridge))
                 .await?;
+        bridge.attach_remote(address.address, port);
         let (_window, code) = crate::remote::pairing::PairingWindow::mint(&home)
             .map_err(|error| format!("could not mint a pairing code: {error}"))?;
-        println!("fleet gui — the remote face is live on {}", address_name(address.address));
+        // The explicit public URL is used when the owner has set one; the
+        // in-app card does the Tailscale detection on demand, so launch
+        // stays fast.
+        let public = crate::remote::configured_pair_url(&home);
+        let url = match &public {
+            Some(base) => crate::remote::pairing_url_at(base, &code),
+            None => crate::remote::pairing_url(address.address, port, &code),
+        };
         println!(
-            "  pair:  http://{}:{port}/pair  (code {})",
-            address_name(address.address),
+            "fleet gui — the remote face is live on {}",
+            address_name(address.address)
+        );
+        println!(
+            "  pair:  {url}  (code {})",
             crate::remote::pairing::display_code(&code)
         );
         println!(
             "  {} · the code lives {} minutes and burns on use · `fleet devices` lists what paired",
-            address.kind.label(),
+            if public.is_some() {
+                "the public URL in your settings"
+            } else {
+                address.kind.label()
+            },
             crate::remote::pairing::WINDOW_TTL_MINUTES
         );
-        // The QR: the same URL with the code in the query, so a scan
-        // lands on the pairing form with the code already filled.
-        let url = crate::remote::pairing_url(address.address, port, &code);
+        println!("  the QR icon in the face's topbar finds your Tailscale name");
 
         match crate::remote::qr::encode(&url) {
             Ok(matrix) => {
@@ -238,11 +251,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         // paired.
         let sid = listener.device_session();
         let hash = listener.device_secret();
-        let client = Arc::new(crate::remote::relay::Client::new(
-            relay_url,
-            sid,
-            hash,
-        ));
+        let client = Arc::new(crate::remote::relay::Client::new(relay_url, sid, hash));
         let handler = Arc::new(listener::RelayHandler::new(
             Arc::clone(&bridge),
             "a relayed phone".to_string(),
@@ -250,9 +259,9 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
         _relay_shutdown = Some(shutdown);
         let dialing = Arc::clone(&client);
-        tokio::spawn(async move {
-            crate::remote::relay::serve(dialing, handler, shutdown_rx).await
-        });
+        tokio::spawn(
+            async move { crate::remote::relay::serve(dialing, handler, shutdown_rx).await },
+        );
         println!("fleet gui — dialing the relay at {relay_url}");
         // The entry point as text as well as a QR: a phone that cannot
         // scan (a screenshot, a copy-paste) still has a way in, and the
@@ -282,10 +291,6 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
     println!("fleet gui — stopped.");
     Ok(())
 }
-
-/// The telegram bot token, from the environment or the home's `.env`.
-/// None when neither carries it, which is how the channel stays absent
-/// on a machine that never configured it.
 
 /// An address as a URL authority: IPv6 bracketed, IPv4 bare.
 fn address_name(address: std::net::IpAddr) -> String {

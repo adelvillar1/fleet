@@ -90,7 +90,6 @@ impl Telegram {
     fn api(&self, method: &str) -> String {
         format!("{}/bot{}/{method}", self.api_base, self.token)
     }
-
 }
 
 use serde_json::Value;
@@ -149,8 +148,8 @@ impl Telegram {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(), String> {
         if self.token.trim().is_empty() {
-            let reason = "the telegram channel has no bot token (FLEET_TELEGRAM_BOT_TOKEN)"
-                .to_string();
+            let reason =
+                "the telegram channel has no bot token (FLEET_TELEGRAM_BOT_TOKEN)".to_string();
             let _ = ready.send(Err(reason.clone()));
             return Err(reason);
         }
@@ -168,9 +167,7 @@ impl Telegram {
                 let token = token.clone();
                 let offset = Arc::clone(&offset);
                 let api_base = api_base.clone();
-                tokio::task::spawn_blocking(move || {
-                    poll_updates(&api_base, &token, &offset)
-                })
+                tokio::task::spawn_blocking(move || poll_updates(&api_base, &token, &offset))
             };
             let outcome = tokio::select! {
                 polled = polled => polled,
@@ -384,11 +381,13 @@ mod tests {
         // The outcome goes where the delivery said and nowhere else: a
         // handle from another channel, or none at all, is refused rather
         // than guessed at.
-        assert_eq!(chat_of(&Reply::Url("telegram://chat/99".to_string())), Some(99));
+        assert_eq!(
+            chat_of(&Reply::Url("telegram://chat/99".to_string())),
+            Some(99)
+        );
         assert_eq!(chat_of(&Reply::Url("webhook://other".to_string())), None);
         assert_eq!(chat_of(&Reply::None), None);
     }
-
 
     /// A fake Telegram: one update queued, every send recorded. The
     /// channel under test is the real one, against the real driver.
@@ -440,9 +439,8 @@ mod tests {
         let sink_holder = Arc::clone(&driver);
         let serving = Arc::clone(&served);
         tokio::spawn(async move {
-            let sink: Arc<
-                dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync,
-            > = Arc::new(move |inbound| sink_holder.deliver(&inbound));
+            let sink: Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync> =
+                Arc::new(move |inbound| sink_holder.deliver(&inbound));
             let (ready, _arrived) = tokio::sync::oneshot::channel();
             let (_stop, stopped) = tokio::sync::watch::channel(false);
             let _ = serving.serve(sink, ready, stopped).await;
@@ -459,15 +457,18 @@ mod tests {
         let _session = {
             let mut found = None;
             for _ in 0..500 {
-                let sessions = driver
-                    .sessions
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner());
-                if let Some((id, _)) = sessions.values().next() {
-                    found = Some(id.clone());
+                {
+                    let sessions = driver
+                        .sessions
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner());
+                    if let Some((id, _)) = sessions.values().next() {
+                        found = Some(id.clone());
+                    }
+                }
+                if found.is_some() {
                     break;
                 }
-                drop(sessions);
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
             found.expect("the peer has a session")
@@ -521,9 +522,8 @@ mod tests {
 
         let fake = FakeTelegram::new();
         let base = start_fake(Arc::clone(&fake)).await;
-        let served: Arc<dyn Channel> = Arc::new(
-            Telegram::with_api_base("test-token".to_string(), base).at_home(home.clone()),
-        );
+        let served: Arc<dyn Channel> =
+            Arc::new(Telegram::with_api_base("test-token".to_string(), base).at_home(home.clone()));
         let serving = Arc::clone(&served);
         tokio::spawn(async move {
             let (ready, _arrived) = tokio::sync::oneshot::channel();
@@ -595,7 +595,7 @@ mod tests {
                         .position(|w| w == b"\r\n\r\n")
                         .map(|at| at + 4)
                         .unwrap_or(head.len());
-                    let (head_part, mut body_part) = head.split_at(split);
+                    let (head_part, body_part) = head.split_at(split);
                     let declared = String::from_utf8_lossy(head_part)
                         .lines()
                         .find_map(|line| {
@@ -674,11 +674,18 @@ mod tests {
         // Telegram delivers each update once; asking twice is a loop. The
         // offset is the channel's only state, and it advances past the
         // last update seen whether or not the delivery was accepted.
-        let updates = vec![
+        let updates = [
             json!({"update_id": 7, "message": {"text": "one", "chat": {"id": 1, "type": "private"}}}),
             json!({"update_id": 9, "message": {"text": "two", "chat": {"id": 1, "type": "private"}}}),
         ];
-        let last = updates.last().and_then(|u| u.get("update_id")).and_then(Value::as_i64);
-        assert_eq!(last, Some(9), "the last update is the one the offset passes");
+        let last = updates
+            .last()
+            .and_then(|u| u.get("update_id"))
+            .and_then(Value::as_i64);
+        assert_eq!(
+            last,
+            Some(9),
+            "the last update is the one the offset passes"
+        );
     }
 }

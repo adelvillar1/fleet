@@ -67,8 +67,8 @@ fn tables() -> &'static Tables {
         let mut exp = [0u16; 512];
         let mut log = [0u16; 256];
         let mut value = 1u16;
-        for exponent in 0..255 {
-            exp[exponent] = value;
+        for (exponent, slot) in exp.iter_mut().enumerate().take(255) {
+            *slot = value;
             log[value as usize] = exponent as u16;
             value <<= 1;
             if value & 0x100 != 0 {
@@ -151,31 +151,91 @@ struct VersionSpec {
 /// The level-M structure for versions 1 through 10: the published
 /// table, transcribed.
 const VERSIONS: &[VersionSpec] = &[
-    VersionSpec { groups: &[BlockGroup { blocks: 1, data: 16 }], ecc: 10 },
-    VersionSpec { groups: &[BlockGroup { blocks: 1, data: 28 }], ecc: 16 },
-    VersionSpec { groups: &[BlockGroup { blocks: 1, data: 44 }], ecc: 26 },
-    VersionSpec { groups: &[BlockGroup { blocks: 2, data: 32 }], ecc: 18 },
-    VersionSpec { groups: &[BlockGroup { blocks: 2, data: 43 }], ecc: 24 },
-    VersionSpec { groups: &[BlockGroup { blocks: 4, data: 27 }], ecc: 16 },
-    VersionSpec { groups: &[BlockGroup { blocks: 4, data: 31 }], ecc: 18 },
+    VersionSpec {
+        groups: &[BlockGroup {
+            blocks: 1,
+            data: 16,
+        }],
+        ecc: 10,
+    },
+    VersionSpec {
+        groups: &[BlockGroup {
+            blocks: 1,
+            data: 28,
+        }],
+        ecc: 16,
+    },
+    VersionSpec {
+        groups: &[BlockGroup {
+            blocks: 1,
+            data: 44,
+        }],
+        ecc: 26,
+    },
+    VersionSpec {
+        groups: &[BlockGroup {
+            blocks: 2,
+            data: 32,
+        }],
+        ecc: 18,
+    },
+    VersionSpec {
+        groups: &[BlockGroup {
+            blocks: 2,
+            data: 43,
+        }],
+        ecc: 24,
+    },
+    VersionSpec {
+        groups: &[BlockGroup {
+            blocks: 4,
+            data: 27,
+        }],
+        ecc: 16,
+    },
+    VersionSpec {
+        groups: &[BlockGroup {
+            blocks: 4,
+            data: 31,
+        }],
+        ecc: 18,
+    },
     VersionSpec {
         groups: &[
-            BlockGroup { blocks: 2, data: 38 },
-            BlockGroup { blocks: 2, data: 39 },
+            BlockGroup {
+                blocks: 2,
+                data: 38,
+            },
+            BlockGroup {
+                blocks: 2,
+                data: 39,
+            },
         ],
         ecc: 18,
     },
     VersionSpec {
         groups: &[
-            BlockGroup { blocks: 3, data: 36 },
-            BlockGroup { blocks: 2, data: 37 },
+            BlockGroup {
+                blocks: 3,
+                data: 36,
+            },
+            BlockGroup {
+                blocks: 2,
+                data: 37,
+            },
         ],
         ecc: 22,
     },
     VersionSpec {
         groups: &[
-            BlockGroup { blocks: 4, data: 43 },
-            BlockGroup { blocks: 1, data: 44 },
+            BlockGroup {
+                blocks: 4,
+                data: 43,
+            },
+            BlockGroup {
+                blocks: 1,
+                data: 44,
+            },
         ],
         ecc: 26,
     },
@@ -372,7 +432,11 @@ pub fn encode(payload: &str) -> Result<QrCode, QrError> {
     let version = (1..=VERSIONS.len())
         .find(|version| {
             let spec = &VERSIONS[version - 1];
-            let capacity: usize = spec.groups.iter().map(|group| group.blocks * group.data).sum();
+            let capacity: usize = spec
+                .groups
+                .iter()
+                .map(|group| group.blocks * group.data)
+                .sum();
             build_bits(&segments, *version).len() <= capacity * 8
         })
         .ok_or(QrError::TooLarge {
@@ -469,9 +533,27 @@ fn longest_run(bytes: &[u8], accept: impl Fn(u8) -> bool) -> usize {
 fn count_bits(mode: u8, version: usize) -> usize {
     let small = version < 10;
     match mode {
-        MODE_NUMERIC => if small { 10 } else { 12 },
-        MODE_ALPHANUMERIC => if small { 9 } else { 11 },
-        _ => if small { 8 } else { 16 },
+        MODE_NUMERIC => {
+            if small {
+                10
+            } else {
+                12
+            }
+        }
+        MODE_ALPHANUMERIC => {
+            if small {
+                9
+            } else {
+                11
+            }
+        }
+        _ => {
+            if small {
+                8
+            } else {
+                16
+            }
+        }
     }
 }
 
@@ -483,13 +565,16 @@ fn build_bits(segments: &[Segment], version: usize) -> BitBuffer {
     let mut bits = BitBuffer::default();
     for segment in segments {
         bits.put(segment.mode as u32, 4);
-        bits.put(segment.bytes.len() as u32, count_bits(segment.mode, version));
+        bits.put(
+            segment.bytes.len() as u32,
+            count_bits(segment.mode, version),
+        );
         match segment.mode {
             MODE_NUMERIC => {
                 for group in segment.bytes.chunks(3) {
-                    let value: u32 = group.iter().fold(0u32, |value, byte| {
-                        value * 10 + (*byte - b'0') as u32
-                    });
+                    let value: u32 = group
+                        .iter()
+                        .fold(0u32, |value, byte| value * 10 + (*byte - b'0') as u32);
                     bits.put(value, [4usize, 7, 10][group.len() - 1]);
                 }
             }
@@ -525,7 +610,11 @@ fn build_bits(segments: &[Segment], version: usize) -> BitBuffer {
 /// column by column across the data blocks, then the same across the
 /// recovery blocks.
 fn build_codewords(spec: &VersionSpec, bits: &BitBuffer) -> Vec<u8> {
-    let capacity: usize = spec.groups.iter().map(|group| group.blocks * group.data).sum();
+    let capacity: usize = spec
+        .groups
+        .iter()
+        .map(|group| group.blocks * group.data)
+        .sum();
     let mut bits = bits.clone();
     // The terminator: up to four zero bits, then whatever aligns to a
     // byte boundary, then the alternating pad to the last data codeword.
@@ -601,12 +690,9 @@ impl BitBuffer {
         self.bits
             .chunks(8)
             .map(|chunk| {
-                chunk
-                    .iter()
-                    .enumerate()
-                    .fold(0u8, |byte, (index, dark)| {
-                        byte | ((*dark as u8) << (7 - index))
-                    })
+                chunk.iter().enumerate().fold(0u8, |byte, (index, dark)| {
+                    byte | ((*dark as u8) << (7 - index))
+                })
             })
             .collect()
     }
@@ -660,24 +746,25 @@ impl Matrix {
         // the bottom-left finder runs above its TOP. A separator placed
         // only to the bottom right would leave those two edges open and
         // the data pass would fill them.
-        for (anchor_row, anchor_column) in [
-            (0usize, 0usize),
-            (0, self.size - 7),
-            (self.size - 7, 0),
-        ] {
+        for (anchor_row, anchor_column) in
+            [(0usize, 0usize), (0, self.size - 7), (self.size - 7, 0)]
+        {
             for ring_row in -1isize..8 {
                 for ring_column in -1isize..8 {
                     let row = anchor_row as isize + ring_row;
                     let column = anchor_column as isize + ring_column;
-                    if row < 0 || column < 0 || row >= self.size as isize || column >= self.size as isize
+                    if row < 0
+                        || column < 0
+                        || row >= self.size as isize
+                        || column >= self.size as isize
                     {
                         continue;
                     }
                     let (row, column) = (row as usize, column as usize);
                     if (0..=6).contains(&ring_row) && (0..=6).contains(&ring_column) {
-                        let edge = ring_row == 0 || ring_row == 6 || ring_column == 0 || ring_column == 6;
-                        let centre =
-                            (2..=4).contains(&ring_row) && (2..=4).contains(&ring_column);
+                        let edge =
+                            ring_row == 0 || ring_row == 6 || ring_column == 0 || ring_column == 6;
+                        let centre = (2..=4).contains(&ring_row) && (2..=4).contains(&ring_column);
                         self.set(row, column, edge || centre);
                     } else {
                         self.set(row, column, false);
@@ -960,7 +1047,9 @@ impl Matrix {
         // Rule 4: the dark share away from half, in steps of five per
         // cent.
         let total = self.size * self.size;
-        let darks = (0..total).filter(|&at| self.modules[at] == Some(true)).count();
+        let darks = (0..total)
+            .filter(|&at| self.modules[at] == Some(true))
+            .count();
         let percent = darks as f64 / total as f64 * 100.0;
         let rating = ((percent - 50.0).abs() / 5.0) as u32;
         rating * 10
@@ -1037,14 +1126,8 @@ const FORMAT_GENERATOR: u32 = (1 << 10) | (1 << 8) | (1 << 5) | (1 << 4) | (1 <<
 const FORMAT_MASK: u32 = (1 << 14) | (1 << 12) | (1 << 10) | (1 << 4) | (1 << 1);
 
 /// The version information's generator polynomial, 0b1111100100101.
-const VERSION_GENERATOR: u32 = (1 << 12)
-    | (1 << 11)
-    | (1 << 10)
-    | (1 << 9)
-    | (1 << 8)
-    | (1 << 5)
-    | (1 << 2)
-    | (1 << 0);
+const VERSION_GENERATOR: u32 =
+    (1 << 12) | (1 << 11) | (1 << 10) | (1 << 9) | (1 << 8) | (1 << 5) | (1 << 2) | (1 << 0);
 
 #[cfg(test)]
 mod tests {
@@ -1252,7 +1335,7 @@ mod tests {
         let url = "http://192.168.68.64:3080/?c=XPW7-F8T9-HUVB";
         assert_eq!(encode(url).unwrap().version(), 3);
         assert_eq!(encode(&"x".repeat(200)).unwrap().version(), 10);
-        assert_eq!(encode(&"x".repeat(300)).is_err(), true);
+        assert!(encode(&"x".repeat(300)).is_err());
     }
 
     #[test]
@@ -1348,7 +1431,10 @@ mod tests {
             assert!(!rows[0][column] && !rows[1][column], "no light top margin");
         }
         for row in 0..code.size() {
-            assert!(!rows[row + quiet][0] && !rows[row + quiet][1], "no light left margin");
+            assert!(
+                !rows[row + quiet][0] && !rows[row + quiet][1],
+                "no light left margin"
+            );
             assert!(
                 !rows[row + quiet][code.size() + quiet]
                     && !rows[row + quiet][code.size() + quiet + 1],
@@ -1380,7 +1466,11 @@ mod tests {
         let payload = "x".repeat(62);
         let bits = build_bits(&segments(payload.as_bytes()), 4);
         let flat = bits.bytes();
-        assert!(flat.len() >= 64, "the payload fills both blocks: {}", flat.len());
+        assert!(
+            flat.len() >= 64,
+            "the payload fills both blocks: {}",
+            flat.len()
+        );
         let stream = build_codewords(spec, &bits);
         let data_capacity = 64;
         let ecc_total = 2 * spec.ecc;
@@ -1397,9 +1487,10 @@ mod tests {
         }
         // The recovery codewords interleave the same way, after the data.
         for (index, byte) in stream.iter().skip(data_capacity).enumerate() {
-            assert!(stream.contains(byte) || *byte == 0, "recovery codeword {index}");
+            assert!(
+                stream.contains(byte) || *byte == 0,
+                "recovery codeword {index}"
+            );
         }
     }
 }
-
-

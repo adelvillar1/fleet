@@ -263,6 +263,10 @@ pub struct Bridge {
     /// service leaves it `None`, which is what makes the control plane's
     /// start say "not hosted here" rather than pretend.
     channels: Mutex<Option<Arc<crate::channels::ChannelService>>>,
+    /// The remote face this process hosts: the address a phone reaches
+    /// and the port it reaches it on. Attached at launch, because the
+    /// pairing card has to know whether a code can be redeemed at all.
+    remote: Mutex<Option<(std::net::IpAddr, u16)>>,
 }
 
 impl Bridge {
@@ -312,6 +316,7 @@ impl Bridge {
             events,
             home_cache: Arc::new(Mutex::new(None)),
             channels: Mutex::new(None),
+            remote: Mutex::new(None),
             related,
             usage,
             commands: None,
@@ -799,7 +804,9 @@ impl Bridge {
                     let mut store = crate::channels::PeerStore::load(&home, channel)
                         .map_err(|error| error.to_string())?;
                     if store.revoke(&id) {
-                        store.save(&home, channel).map_err(|error| error.to_string())?;
+                        store
+                            .save(&home, channel)
+                            .map_err(|error| error.to_string())?;
                         let mut pending = crate::channels::PendingStore::load(&home, channel);
                         pending.forget(&id);
                         let _ = pending.save(&home, channel);
@@ -831,10 +838,12 @@ impl Bridge {
         let home = self.home.clone();
         let mut document = tokio::task::spawn_blocking(move || channels_read(&home))
             .await
-            .unwrap_or_else(|_| json!({
-                "type": "channels",
-                "refused": ["the channel read did not land"],
-            }));
+            .unwrap_or_else(|_| {
+                json!({
+                    "type": "channels",
+                    "refused": ["the channel read did not land"],
+                })
+            });
         // A peer waiting on an answer is the thing an owner most needs to
         // notice, and only this process knows it: the seat lives in the
         // live state, not on disk. The activity log names the session
@@ -891,9 +900,7 @@ impl Bridge {
     /// Stop one channel.
     pub async fn channel_stop(&self, name: &str) -> Result<Value, String> {
         let Some(service) = self.hosted_channels() else {
-            return Err(
-                "no channel service is hosted here; there is nothing to stop".to_string(),
-            );
+            return Err("no channel service is hosted here; there is nothing to stop".to_string());
         };
         let report = service.stop(name.trim());
         Ok(json!({
@@ -913,14 +920,27 @@ impl Bridge {
         id: &str,
         name: &str,
         capability: &str,
+        callback: &str,
     ) -> Result<Value, String> {
         let channel = channel.trim().to_string();
         let id = id.trim().to_string();
         let name = name.trim().to_string();
+        let callback = callback.trim().to_string();
         let capability = parse_capability(capability)?;
         let home = self.home.clone();
         tokio::task::spawn_blocking(move || {
-            let pairing = crate::channels::pair(&home, &channel, &id, &name, capability)?;
+            let pairing = crate::channels::pair(
+                &home,
+                &channel,
+                &id,
+                &name,
+                capability,
+                if callback.is_empty() {
+                    None
+                } else {
+                    Some(&callback)
+                },
+            )?;
             Ok(json!({
                 "type": "paired",
                 "channel": pairing.channel,
@@ -933,6 +953,7 @@ impl Bridge {
                 // The one and only copy. A surface that re-reads this
                 // gets `null`, because nothing else has it.
                 "token": pairing.token,
+                "callback": pairing.callback,
                 "reveal": "this is the only time the token is shown; store it now",
             }))
         })
@@ -1001,6 +1022,53 @@ impl Bridge {
     /// reach the process that owns the ports.
     pub fn attach_channels(&self, service: Arc<crate::channels::ChannelService>) {
         *lock(&self.channels) = Some(service);
+    }
+
+    /// Attach the remote face's address and port, so the pairing card can
+    /// mint a code for a listener that actually exists.
+    pub fn attach_remote(&self, address: std::net::IpAddr, port: u16) {
+        *lock(&self.remote) = Some((address, port));
+    }
+
+    /// The remote face this process hosts, when it hosts one.
+    pub fn remote_face(&self) -> Option<(std::net::IpAddr, u16)> {
+        *lock(&self.remote)
+    }
+
+    /// Mint a pairing window and the card's document: the URL on the
+    /// origin that will work from the phone, the code in display form,
+    /// and the QR. Loopback only — the remote listener's allowlist has no
+    /// such route, and a paired phone does not pair phones.
+    pub async fn pair_window(&self) -> Result<Value, String> {
+        let Some((address, port)) = self.remote_face() else {
+            return Err(
+                "the remote face is not running in this process; start `fleet gui --remote`"
+                    .to_string(),
+            );
+        };
+        let home = self.home_path();
+        tokio::task::spawn_blocking(move || {
+            let (_window, code) = crate::remote::pairing::PairingWindow::mint(&home)
+                .map_err(|error| format!("could not mint a pairing code: {error}"))?;
+            let origin = crate::remote::pairing_origin(&home, address, port);
+            let url = crate::remote::pairing_url_at(&origin.base, &code);
+            let svg = crate::remote::qr::encode(&url)
+                .map(|qr| qr.to_svg())
+                .map_err(|error| format!("could not draw the QR: {error}"))?;
+            Ok(json!({
+                "type": "pair-window",
+                "url": url,
+                "code": crate::remote::pairing::display_code(&code),
+                "origin": origin.base,
+                "origin_kind": origin.kind.key(),
+                "origin_label": origin.kind.label(),
+                "note": origin.note,
+                "ttl_minutes": crate::remote::pairing::WINDOW_TTL_MINUTES,
+                "svg": svg,
+            }))
+        })
+        .await
+        .map_err(|_| "the pairing window did not land".to_string())?
     }
 
     /// The sessions panel's document: the archive as the summaries the
@@ -2304,7 +2372,11 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             // Bookkeeping, like start and end — it replays to no message
             // — but it carries the facts the inbox shows, so the replay
             // surfaces it rather than dropping it.
-            session::Record::Channel { channel, peer_id, peer } => {
+            session::Record::Channel {
+                channel,
+                peer_id,
+                peer,
+            } => {
                 cards.push(json!({
                     "type": "channel",
                     "channel": channel,
@@ -2523,6 +2595,9 @@ fn channels_read(home: &std::path::Path) -> Value {
                                 crate::channels::Capability::Observe => "observe",
                             },
                             "paired": peer.created_at,
+                            // A URL, not a secret: the surface says where
+                            // an outcome goes.
+                            "callback": peer.callback,
                         })
                     })
                     .collect::<Vec<_>>()
@@ -3549,12 +3624,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// One event into the ordered log and out to the stream. The log is what
 /// a refresh replays; the broadcast is what a live page reduces. The
 /// two are written from the same value, so they cannot disagree.
-fn record(
-    state: &Mutex<GuiState>,
-    events: &broadcast::Sender<Value>,
-    session: &str,
-    value: Value,
-) {
+fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &str, value: Value) {
     let mut notice = None;
     {
         let mut state = lock(state);
@@ -4247,6 +4317,47 @@ mod tests {
     /// next node (null when no graph is declared). It is cached, so a
     /// second call inside the window is the same document.
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_pairing_card_mints_a_window_and_names_its_origin() {
+        let (bridge, _sources, _door) = bridge().await;
+        let home = bridge.home_path();
+        std::fs::write(
+            home.join("config.json"),
+            r#"{"remote":{"public_url":"https://phone.example/"}}"#,
+        )
+        .unwrap();
+        bridge.attach_remote("192.0.2.10".parse().unwrap(), 3080);
+
+        let document = bridge.pair_window().await.expect("a pairing window");
+        let url = document["url"].as_str().expect("a url");
+        assert!(
+            url.starts_with("https://phone.example/pair?c="),
+            "the configured origin is used: {url}"
+        );
+        assert_eq!(document["origin_kind"], "public_url");
+        assert_eq!(document["origin"], "https://phone.example");
+        assert!(
+            document["code"].as_str().unwrap().contains('-'),
+            "{document}"
+        );
+        let svg = document["svg"].as_str().expect("an svg");
+        assert!(svg.starts_with("<svg"), "{svg}");
+        assert!(svg.contains("viewBox"), "{svg}");
+
+        // Opening the card again mints the newest window; the first code
+        // stops being the live one, which the card says.
+        let again = bridge.pair_window().await.expect("a second window");
+        assert_ne!(document["url"], again["url"]);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pairing_card_without_the_remote_face_names_the_flag() {
+        let (bridge, _sources, _door) = bridge().await;
+        let error = bridge.pair_window().await.expect_err("no remote face");
+        assert!(error.contains("--remote"), "{error}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn home_summarises_the_reads_it_claims() {
         let (bridge, _sources, _door) = bridge().await;
         let first = bridge.home().await;
@@ -4375,7 +4486,9 @@ mod tests {
             crate::channels::Capability::Observe,
             "2026-10-20T00:00:00Z",
         );
-        telegram.save(&home, "telegram").expect("the telegram store");
+        telegram
+            .save(&home, "telegram")
+            .expect("the telegram store");
 
         let read = access_read(&home);
         let peers = read["peers"].as_array().expect("the peer list");
@@ -4539,7 +4652,11 @@ mod tests {
         bridge.run("", "go").expect("the run is accepted");
         // The session event lands, and the state document names the id.
         for _ in 0..100 {
-            if !bridge.state("")["session"].as_str().unwrap_or("").is_empty() {
+            if !bridge.state("")["session"]
+                .as_str()
+                .unwrap_or("")
+                .is_empty()
+            {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -4568,7 +4685,9 @@ mod tests {
     async fn a_run_that_is_already_in_flight_is_refused() {
         let (bridge, _sources, _door) = bridge().await;
         let attached = bridge.launch();
-        bridge.run(&attached, "first").expect("the first run is accepted");
+        bridge
+            .run(&attached, "first")
+            .expect("the first run is accepted");
         let second = bridge.run(&attached, "second");
         assert!(second.is_err(), "{second:?}");
         let state = bridge.state(&attached);
@@ -5000,7 +5119,9 @@ mod tests {
         );
         let launch = bridge.state(&attached);
         assert!(
-            launch["events"].as_array().is_none_or(|events| events.is_empty()),
+            launch["events"]
+                .as_array()
+                .is_none_or(|events| events.is_empty()),
             "the launch session kept its own log: {launch}"
         );
     }
@@ -5064,10 +5185,8 @@ mod tests {
     /// own save — the same one the CLI performs.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_access_document_names_the_paired_and_the_revocation_forgets_one() {
-        let home = std::env::temp_dir().join(format!(
-            "fleet-gui-bridge-access-{}",
-            std::process::id()
-        ));
+        let home =
+            std::env::temp_dir().join(format!("fleet-gui-bridge-access-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a temp home");
         // A paired device and a paired channel peer.
@@ -5097,8 +5216,14 @@ mod tests {
         assert_eq!(document["peers"][0]["name"], "the CI box");
         // The masking rule: names and stamps, never a credential.
         let text = document.to_string();
-        assert!(!text.contains(&device_token), "the device token rode: {text}");
-        assert!(!text.contains("peer-token-xyz"), "the peer token rode: {text}");
+        assert!(
+            !text.contains(&device_token),
+            "the device token rode: {text}"
+        );
+        assert!(
+            !text.contains("peer-token-xyz"),
+            "the peer token rode: {text}"
+        );
         assert!(!text.contains("token_hash"), "a digest rode: {text}");
 
         // The revocation goes through the store's own save, and the
@@ -5120,10 +5245,8 @@ mod tests {
     /// conversations do not disturb each other.
     #[tokio::test(flavor = "multi_thread")]
     async fn two_attached_sessions_are_independent() {
-        let home = std::env::temp_dir().join(format!(
-            "fleet-gui-bridge-two-{}",
-            std::process::id()
-        ));
+        let home =
+            std::env::temp_dir().join(format!("fleet-gui-bridge-two-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a temp home");
         let (mut bridge, _sources) = Bridge::detached(
@@ -5142,14 +5265,20 @@ mod tests {
         bridge.run(&one, "work in one").expect("accepted");
         assert_eq!(bridge.state(&one)["running"], true);
         assert_eq!(bridge.state(&two)["running"], false, "{two} is not running");
-        assert_eq!(bridge.state(&two)["attached"], false, "{two} was never opened");
+        assert_eq!(
+            bridge.state(&two)["attached"],
+            false,
+            "{two} was never opened"
+        );
 
         // The owner's message landed in one's log and not in two's.
-        let events = bridge.state(&one)["events"].as_array().expect("a log").len();
+        let events = bridge.state(&one)["events"]
+            .as_array()
+            .expect("a log")
+            .len();
         assert_eq!(events, 1, "one event in one's log");
         assert_eq!(
-            bridge
-                .state(&two)["events"]
+            bridge.state(&two)["events"]
                 .as_array()
                 .map(Vec::len)
                 .unwrap_or(0),
@@ -5161,7 +5290,10 @@ mod tests {
         // in flight in ITS session — the thread's loop is serial — but the
         // two sessions' flags say so independently.
         let second = bridge.run(&two, "work in two");
-        assert!(second.is_ok(), "the command is accepted; the thread is serial, not blocked: {second:?}");
+        assert!(
+            second.is_ok(),
+            "the command is accepted; the thread is serial, not blocked: {second:?}"
+        );
         assert_eq!(bridge.state(&one)["running"], true);
         assert_eq!(bridge.state(&two)["running"], true);
 

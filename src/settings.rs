@@ -114,6 +114,13 @@ pub const SETTINGS: &[Setting] = &[
                   accepts. Counters only; off is the static order.",
     },
     Setting {
+        key: "remote.public_url",
+        kind: Kind::Text,
+        file: File::Config,
+        summary: "The HTTPS origin a proxy (Tailscale serve) serves the remote face on. Empty \
+                  detects your tailnet name, or falls back to this machine's address.",
+    },
+    Setting {
         key: "skills.retire_after_sessions",
         kind: Kind::Count,
         file: File::Config,

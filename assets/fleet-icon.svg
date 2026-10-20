@@ -1,0 +1,22 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#1a1e26"/>
+      <stop offset="1" stop-color="#0a0c10"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="clip">
+      <rect x="100" y="100" width="824" height="824" rx="185.4"/>
+    </clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" fill="url(#sheen)" clip-path="url(#clip)"/>
+  <rect x="101" y="101" width="822" height="822" rx="184.4" fill="none"
+        stroke="#ffffff" stroke-opacity="0.10" stroke-width="2"/>
+  <text x="512" y="700" font-family="New York, ui-serif, Georgia, serif" font-size="620"
+        font-weight="600" fill="#f2efe7" text-anchor="middle">f</text>
+  <rect x="250" y="768" width="524" height="18" rx="9" fill="#5b8def"/>
+</svg>

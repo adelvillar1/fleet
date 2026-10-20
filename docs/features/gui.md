@@ -206,6 +206,7 @@ Escape clears the object, never the dock.
 | `GET /api/home` | the welcome's bounded read, cached 30s |
 | `GET /events` | the live half of the same ordered log (SSE) |
 | `POST /api/run`, `/api/plan` | hand a task to the agent thread |
+| `POST /api/pair/window` | mint a single-use device pairing window and the QR card document (loopback only) |
 | `POST /api/stop`, `/api/steer` | write the run's control file; 409 when no run or no log |
 | `POST /api/approve` | answer the standing seat |
 | `GET /api/related` | cross-kind related objects for one selected id |
@@ -239,7 +240,7 @@ a maze. The rail's collapsed state is remembered across launches.
 | `#/calibration` | the day's stream rows by op and the judged quality's fit cells, the same computation `fleet calib --calibration` rides |
 | `#/tower` | the control tower — the one console surface: the KPI strip, the hero activity chart, the harness donut, the ranked projects, the claims against the evidence, the report feed |
 | `#/second-brain` | the derived state, quieter: the gates, the inbox, the loops, the harness runs, the maturity week grid |
-| `#/bots` | the channel control plane: the service and its heartbeat, who can reach the fleet with an editable capability, the peers waiting at the door, the pair form with its one-time token reveal, and what they have done. The rail entry carries a count only when something is waiting |
+| `#/bots` | the channel control plane: the service and its heartbeat, who can reach the fleet with an editable capability, the peers waiting at the door, the pair form with its callback and one-time token reveal, and what they have done. The rail entry carries a count only when something is waiting |
 | `#/settings` | every configurable surface: the knobs, both lists, the rules, the cron jobs, the identity slot, the env names — including `channels.enabled` and `channels.webhook_port` |
 
 ## The trust trio
@@ -269,6 +270,12 @@ panel:
 
 ## The reading rules
 
+- Below 900px the shell is one column whatever the rail, dock, or pane
+  state says: the rail becomes a drawer, every board folds to one column,
+  and the stage keeps the full width instead of landing in the rail's
+  track. A media query adds no specificity, so the narrow rules answer
+  the desktop state rules at their own specificity — the failure mode
+  there was a 236px stage beside 664px of empty canvas.
 - A refused read keeps the last good numbers with its reason beside
   them — the console is never a blank screen because a read did not
   land.
@@ -284,6 +291,59 @@ panel:
   widths for rendering, interaction, overflow, console errors, and the
   `data-act` audit. The stub is not the truth about what renders; the
   browser is.
+
+## The install shell
+
+The face is installable. A manifest and two PNG icons (the serif **f** on the graphite console
+ground, with one signal-blue rule) let a browser add it to the home
+screen, and a small service worker keeps the two script assets and gives
+an unreachable face a readable retry page instead of a blank tab.
+
+- **The assets are content-addressed.** `build.rs` hashes the served
+  assets and exposes the stamp; the page asks for `app.css?v=<stamp>` and
+  `app.js?v=<stamp>`, and only those URLs are served `immutable`. The bare
+  paths, the HTML, the manifest, and the worker itself revalidate, so an
+  upgraded binary cannot be hidden behind yesterday's script.
+- **The worker caches exactly two URLs** — the versioned stylesheet and
+  script — and prefetches them at install. Its fetch handler returns
+  early for every non-GET, every cross-origin request, `/api/*`,
+  `/events`, `/pair`, and any request asking for an event stream. The
+  remote face's credential is a cookie, which the browser attaches after
+  the handler sees the request, so the boundary is by path, never by an
+  `Authorization` check.
+- **HTML is never cached.** A navigation is network-first; when the face
+  cannot be reached the worker answers a 503 retry page (themed, with a
+  reload action). An installed face still reads its session live — there
+  is no offline conversation.
+- **Installation needs a secure context.** Loopback and an HTTPS remote
+  face qualify; a phone over plain-HTTP LAN does not, and the relayed
+  face under `/s/<sid>/` is per-session and is not installable. Those
+  paths run as ordinary pages, with no worker and no retry shell.
+- **A failed boot is visible.** An ES5 guard names the browser floor
+  fleet's CSS actually needs (`color-mix` and `100dvh`: Chrome/Edge 111+,
+  Firefox 113+, Safari 16.2+), and a 15-second watchdog shows one themed
+  card with a retry if `app.js` never marks the shell mounted. The
+  browser chrome follows the chosen theme through `theme-color`.
+
+## Pairing from the face
+
+The topbar's QR icon — shown only on the loopback face — mints a fresh
+pairing window and shows the URL, the code, and a QR a phone can scan.
+The URL is chosen in one place, in this order:
+
+1. `remote.public_url`, when the owner has named the HTTPS origin a proxy
+   serves the remote face on.
+2. A detected Tailscale name (`https://<tailnet name>`), **verified** by
+   asking it for `/api/state`: the paired face answers 401 without a
+   cookie, the loopback face answers 200, and a proxy pointed at the
+   loopback face is therefore not offered as a pairing origin.
+3. This machine's remote address, with a note that it is plain HTTP and
+   that iOS refuses cleartext to a tailnet address.
+
+The newest window wins: opening the card again mints a new code and the
+previous one stops working, which the card says. The mint is loopback
+only — the remote allowlist does not carry `/api/pair/window`, and a
+paired phone does not pair phones.
 
 ## The launch
 

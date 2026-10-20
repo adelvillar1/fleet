@@ -330,11 +330,7 @@ impl ChannelService {
     /// A service over one bridge, one driver, and one configuration. The
     /// plugins are built here and not started: building one binds
     /// nothing.
-    pub fn new(
-        bridge: Arc<Bridge>,
-        driver: Arc<Driver>,
-        config: &Config,
-    ) -> ChannelService {
+    pub fn new(bridge: Arc<Bridge>, driver: Arc<Driver>, config: &Config) -> ChannelService {
         let home = config.home.clone();
         let now = crate::boards::now_stamp();
         let webhook: Arc<dyn Channel> = Arc::new(crate::channels::webhook::Webhook::new(
@@ -424,9 +420,14 @@ impl ChannelService {
             let plugins = lock(&self.plugins);
             match plugins.iter().find(|plugin| plugin.name() == name) {
                 Some(plugin) => Arc::clone(plugin),
-                None => return self.note(name, Phase::Failed, None, Some(format!(
-                    "no channel named `{name}` in this build"
-                ))),
+                None => {
+                    return self.note(
+                        name,
+                        Phase::Failed,
+                        None,
+                        Some(format!("no channel named `{name}` in this build")),
+                    )
+                }
             }
         };
         // Starting something already live is a no-op, not a second
@@ -526,9 +527,7 @@ impl ChannelService {
 
     /// The sink every plugin hands its deliveries to: the driver, with
     /// the activity line recorded on both ends of the decision.
-    pub(crate) fn sink(
-        &self,
-    ) -> Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync> {
+    pub(crate) fn sink(&self) -> Arc<dyn Fn(Inbound) -> Result<String, Refusal> + Send + Sync> {
         let driver = Arc::clone(&self.driver);
         let home = self.home.clone();
         Arc::new(move |inbound: Inbound| {
@@ -825,12 +824,14 @@ mod tests {
             crate::channels::Policy::new(home.clone()),
         ));
         let service = ChannelService::new(
-            Arc::new(Bridge::detached(
-                home.clone(),
-                "deepseek-chat".to_string(),
-                Some("session-test".to_string()),
-            )
-            .0),
+            Arc::new(
+                Bridge::detached(
+                    home.clone(),
+                    "deepseek-chat".to_string(),
+                    Some("session-test".to_string()),
+                )
+                .0,
+            ),
             driver,
             &Config {
                 home: home.clone(),
@@ -852,12 +853,19 @@ mod tests {
             .find(|channel| channel.name == "webhook")
             .expect("the webhook is reported");
         assert_eq!(webhook.phase, Phase::Failed);
-        assert!(webhook.error.as_deref().unwrap_or_default().contains("cannot bind"));
+        assert!(webhook
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("cannot bind"));
 
         // And the surface's read names it rather than hiding it.
         let document = document(&home);
         assert_eq!(document["channels"][0]["phase"], "failed");
-        assert!(!document["stale"].as_bool().unwrap_or(true), "it just wrote");
+        assert!(
+            !document["stale"].as_bool().unwrap_or(true),
+            "it just wrote"
+        );
         drop(squatter);
         std::fs::remove_dir_all(&home).ok();
     }
@@ -996,7 +1004,10 @@ mod tests {
         let config = Config::from_settings(&home, None);
         assert!(config.enabled);
         assert_eq!(config.webhook_port, 3999);
-        assert!(!Config::from_settings(&home, Some(false)).enabled, "the flag overrides");
+        assert!(
+            !Config::from_settings(&home, Some(false)).enabled,
+            "the flag overrides"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -1044,8 +1055,16 @@ mod tests {
         assert_eq!(line.kind, "refusal");
         assert_eq!(line.peer.as_deref(), Some("a stranger"));
         assert_eq!(line.peer_id.as_deref(), Some("stranger"));
-        assert_eq!(line.task.as_deref(), Some("do the thing"), "the first line only");
-        assert!(line.detail.as_deref().unwrap_or_default().contains("not paired"));
+        assert_eq!(
+            line.task.as_deref(),
+            Some("do the thing"),
+            "the first line only"
+        );
+        assert!(line
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("not paired"));
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -1055,7 +1074,13 @@ mod tests {
     fn a_peer_paired_to_listen_reads_as_observing() {
         let home = temp_home("observe");
         let mut store = PeerStore::default();
-        store.pair("abc", "the listener", "unused", Capability::Observe, "stamp");
+        store.pair(
+            "abc",
+            "the listener",
+            "unused",
+            Capability::Observe,
+            "stamp",
+        );
         store.save(&home, "webhook").expect("the store");
         let peers = peers(&home, "webhook");
         assert_eq!(peers.len(), 1);

@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fleet</title>
+<meta name="theme-color" content="#f6f4ef">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="192x192" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="fleet">
 <link rel="stylesheet" href="/app.css">
 <script>
   // The theme is set before the first paint, from the same storage the
@@ -17,6 +22,61 @@
   } catch (error) {
     document.documentElement.dataset.theme = 'paper';
   }
+  // The browser chrome follows the theme too: a paper page under a
+  // graphite toolbar reads as a different app.
+  try {
+    var FLEET_THEME_COLORS = {
+      paper: '#f6f4ef',
+      console: '#0e0f12',
+      graphite: '#0a0c10',
+      contrast: '#ffffff'
+    };
+    var fleetThemeMeta = document.querySelector('meta[name="theme-color"]');
+    if (fleetThemeMeta) {
+      fleetThemeMeta.setAttribute(
+        'content',
+        FLEET_THEME_COLORS[document.documentElement.dataset.theme] || FLEET_THEME_COLORS.paper
+      );
+    }
+  } catch (error) {
+    // A browser without the meta is not a browser without the page.
+  }
+</script>
+<script>
+  // fleet's floor is what its CSS actually uses: color-mix() and 100dvh.
+  // An engine below it gets one readable message instead of a page with
+  // half its colours resolved. Kept ES5 so the message can render on the
+  // engines it is for.
+  (function () {
+    try {
+      var ua = navigator.userAgent;
+      var chromium = ua.match(/Chrom(?:e|ium)\/(\d+)/);
+      var firefox = ua.match(/Firefox\/(\d+)/);
+      var safari = !chromium && ua.match(/Version\/(\d+)(?:\.(\d+))?.*Safari\//);
+      var unsupported =
+        (chromium && parseInt(chromium[1], 10) < 111) ||
+        (firefox && parseInt(firefox[1], 10) < 113) ||
+        (safari &&
+          (parseInt(safari[1], 10) < 16 ||
+            (parseInt(safari[1], 10) === 16 &&
+              parseInt(safari[2] || '0', 10) < 2)));
+      if (window.CSS && typeof window.CSS.supports === 'function') {
+        unsupported =
+          unsupported ||
+          !window.CSS.supports('color', 'color-mix(in srgb, red, blue)') ||
+          !window.CSS.supports('height', '100dvh');
+      }
+      if (unsupported) {
+        document.documentElement.setAttribute(
+          'data-fleet-unsupported',
+          'fleet needs Chrome/Edge 111+, Firefox 113+, or Safari 16.2+. Please update your browser.'
+        );
+      }
+    } catch (error) {
+      // An unknown engine may still run the face; the boot watchdog
+      // reports a failure if it does not.
+    }
+  })();
 </script>
 </head>
 <body data-aside="closed" data-dock="closed">
@@ -95,6 +155,16 @@
       <button class="pill process-pill" id="process-pill" type="button" hidden
               aria-label="open the run's process" title="open the run's process">the run</button>
       <div class="topbar-tools">
+        <button class="pair-open" id="pair-open" type="button"
+                aria-label="pair a device" title="pair a device" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" aria-hidden="true">
+            <rect x="3.5" y="3.5" width="6" height="6" rx="1"></rect>
+            <rect x="14.5" y="3.5" width="6" height="6" rx="1"></rect>
+            <rect x="3.5" y="14.5" width="6" height="6" rx="1"></rect>
+            <path d="M15 15h1.5v1.5H15zM18.5 18.5H20V20h-1.5zM15 19.5h1.5V21H15zM19.5 15H21v1.5h-1.5z"></path>
+          </svg>
+        </button>
         <button class="aside-toggle" id="aside-toggle" type="button"
                 aria-label="show the run's process" aria-pressed="true"
                 title="show the run's process">
@@ -153,6 +223,19 @@
       <span><kbd>esc</kbd> dismiss</span>
     </div>
   </div>
+
+  <!-- Pairing: a focused card because the QR is the action. The card is
+       painted by app.js from the server's window document; the icon that
+       opens it exists only on the loopback face. -->
+  <div class="pair-scrim" id="pair-scrim" hidden></div>
+  <section class="pair-card" id="pair-card" role="dialog" aria-modal="true"
+           aria-labelledby="pair-title" hidden>
+    <header class="pair-head">
+      <h2 id="pair-title">pair a device</h2>
+      <button class="ghost" id="pair-close" type="button">close</button>
+    </header>
+    <div class="pair-body" id="pair-body"></div>
+  </section>
 
   <div class="meter" id="context-meter" role="img" aria-label="context used against the compaction budget">
     <span class="meter-fill" id="context-fill"></span>
@@ -468,5 +551,124 @@
 </aside>
 
 <script src="/app.js"></script>
+<script>
+  // The boot watchdog: a script that never loads, or throws before the
+  // first paint, used to leave a blank page with no way to tell whether
+  // fleet was starting or broken. One themed card, a reason, and a retry.
+  // It removes itself if the shell mounts late, unless the browser is the
+  // reason it could not.
+  (function () {
+    var GRACE_MS = 15000;
+
+    function colors() {
+      var theme = document.documentElement.dataset.theme || 'paper';
+      if (theme === 'console') {
+        return { bg: '#0e0f12', ink: '#ebe7e4', muted: '#a6afbc', line: 'rgba(255,255,255,.15)' };
+      }
+      if (theme === 'graphite') {
+        return { bg: '#0a0c10', ink: '#e8eef4', muted: '#a0aab8', line: 'rgba(255,255,255,.15)' };
+      }
+      if (theme === 'contrast') {
+        return { bg: '#ffffff', ink: '#000000', muted: '#262626', line: 'rgba(0,0,0,.22)' };
+      }
+      return { bg: '#f6f4ef', ink: '#181a1d', muted: '#525860', line: 'rgba(24,26,29,.12)' };
+    }
+
+    function mounted() {
+      return !!document.documentElement.getAttribute('data-fleet-mounted');
+    }
+
+    function unsupported() {
+      return document.documentElement.getAttribute('data-fleet-unsupported');
+    }
+
+    function show(heading, reason) {
+      if (document.getElementById('fleet-boot-fallback')) return;
+      var c = colors();
+      var box = document.createElement('div');
+      box.id = 'fleet-boot-fallback';
+      box.setAttribute('role', 'alert');
+      box.style.cssText =
+        'position:fixed;inset:0;z-index:9999;display:grid;place-items:center;' +
+        'background:' + c.bg + ';color:' + c.ink + ';padding:32px;box-sizing:border-box;' +
+        'font:15px/1.55 ui-sans-serif,-apple-system,system-ui,sans-serif';
+      var card = document.createElement('div');
+      card.style.cssText =
+        'max-width:520px;width:100%;border:1px solid ' + c.line + ';border-radius:12px;' +
+        'padding:22px 24px;box-sizing:border-box;background:inherit';
+      card.innerHTML =
+        '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.6" stroke-linecap="round" aria-hidden="true" ' +
+        'style="display:block;margin:0 0 14px;opacity:.85">' +
+        '<path d="M4 6.5h11"></path><path d="M4 12h16"></path><path d="M4 17.5h8"></path></svg>';
+      var title = document.createElement('h1');
+      title.style.cssText = 'font-size:20px;line-height:1.25;margin:0 0 10px;letter-spacing:-.01em';
+      title.textContent = heading;
+      var said = document.createElement('p');
+      said.style.cssText = 'margin:0 0 16px;color:' + c.muted;
+      said.textContent = reason;
+      var retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = 'retry';
+      retry.style.cssText =
+        'font:inherit;font-weight:600;color:inherit;background:transparent;cursor:pointer;' +
+        'border:1px solid ' + c.line + ';border-radius:8px;padding:7px 12px';
+      retry.addEventListener('click', function () {
+        window.location.reload();
+      });
+      card.appendChild(title);
+      card.appendChild(said);
+      card.appendChild(retry);
+      box.appendChild(card);
+      document.body.appendChild(box);
+      if (!unsupported()) {
+        var wait = window.setInterval(function () {
+          if (mounted()) {
+            box.remove();
+            window.clearInterval(wait);
+          }
+        }, 2000);
+      }
+    }
+
+    function arm() {
+      if (unsupported()) {
+        show('Browser update required', unsupported());
+        return;
+      }
+      window.setTimeout(function () {
+        if (!mounted()) {
+          show(
+            'fleet did not start',
+            'The face did not finish starting within 15 seconds. It may still be starting — retry in a moment. If it keeps happening, check that fleet gui is running and reload.'
+          );
+        }
+      }, GRACE_MS);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', arm);
+    } else {
+      arm();
+    }
+  })();
+</script>
+<script>
+  // Installability. A worker needs a secure context: loopback qualifies,
+  // an HTTPS remote face qualifies, and the phone over plain-HTTP LAN does
+  // not — there the face runs as an ordinary page with no offline shell,
+  // which is the honest boundary rather than a silent failure.
+  (function () {
+    if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+    // A relayed page lives under /s/<sid>/: its origin is shared with every
+    // other session on that relay, and its worker could not cache the two
+    // assets anyway (their paths carry the session prefix). No install there.
+    if (window.location.pathname.indexOf('/s/') === 0) return;
+    if (document.documentElement.getAttribute('data-fleet-unsupported')) return;
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () { });
+    });
+  })();
+</script>
 </body>
 </html>

@@ -1997,7 +1997,7 @@ impl App {
                             }
                         ),
                         detail: format!(
-                            "id       {}\npaired   {}\ncapability {}\n\n{}",
+                            "id       {}\npaired   {}\ncapability {}\n{}\n{}",
                             peer.id,
                             peer.created_at,
                             match peer.capability {
@@ -2005,6 +2005,11 @@ impl App {
                                     "may act \u{2014} it can hand fleet a task",
                                 crate::channels::Capability::Observe =>
                                     "may only listen \u{2014} it is told things, and cannot task",
+                            },
+                            match &peer.callback {
+                                Some(callback) =>
+                                    format!("callback {callback}"),
+                                None => "callback none stored".to_string(),
                             },
                             "Throw it out with `fleet channels revoke-webhook <id>`, or from the Bots surface."
                         ),

@@ -120,7 +120,10 @@ impl std::fmt::Display for Refusal {
         match self {
             Refusal::Unknown => write!(out, "that peer is not paired"),
             Refusal::ObserveOnly => {
-                write!(out, "that peer may only listen; it cannot hand fleet a task")
+                write!(
+                    out,
+                    "that peer may only listen; it cannot hand fleet a task"
+                )
             }
         }
     }
@@ -136,6 +139,12 @@ pub struct PairedPeer {
     pub token_hash: String,
     pub capability: Capability,
     pub created_at: String,
+    /// Where outcomes and seats go when a delivery names no callback of
+    /// its own. A webhook client may name the callback per delivery — the
+    /// body's own field wins — and this is the default it falls back to.
+    /// It is a URL, not a credential, so it may be re-read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback: Option<String>,
 }
 
 /// The paired peers of one channel.
@@ -163,9 +172,7 @@ impl PeerStore {
                     format!("{} is not readable: {error}", path.display()),
                 )
             }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(PeerStore::default())
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(PeerStore::default()),
             Err(error) => Err(error),
         }
     }
@@ -177,8 +184,9 @@ impl PeerStore {
             std::fs::create_dir_all(parent)?;
         }
         let temp = path.with_extension("json.tmp");
-        let text = serde_json::to_string_pretty(self)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+        let text = serde_json::to_string_pretty(self).map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+        })?;
         {
             let mut file = std::fs::File::create(&temp)?;
             #[cfg(unix)]
@@ -209,6 +217,22 @@ impl PeerStore {
     /// Pair a peer: the token is hashed here and never stored. The id is
     /// the digest's prefix, which is unique without a second random draw.
     pub fn pair(&mut self, id: &str, name: &str, token: &str, capability: Capability, stamp: &str) {
+        self.pair_with(id, name, token, capability, stamp, None);
+    }
+
+    /// The same pairing, with the peer's default callback. The plain
+    /// `pair` is this with none, so the store has one write path and the
+    /// tests that do not care about callbacks keep their shape.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pair_with(
+        &mut self,
+        id: &str,
+        name: &str,
+        token: &str,
+        capability: Capability,
+        stamp: &str,
+        callback: Option<&str>,
+    ) {
         let token_hash = crate::remote::pairing::hash_hex(token.as_bytes());
         self.peers.retain(|peer| peer.id != id);
         self.peers.push(PairedPeer {
@@ -217,6 +241,7 @@ impl PeerStore {
             token_hash,
             capability,
             created_at: stamp.to_string(),
+            callback: callback.map(str::to_string),
         });
     }
 
@@ -224,9 +249,9 @@ impl PeerStore {
     /// what arrived against every stored one in constant time.
     pub fn peer_for_token(&self, token: &str) -> Option<&PairedPeer> {
         let arrived = crate::remote::pairing::hash_hex(token.as_bytes());
-        self.peers
-            .iter()
-            .find(|peer| crate::remote::pairing::digest_eq(peer.token_hash.as_bytes(), arrived.as_bytes()))
+        self.peers.iter().find(|peer| {
+            crate::remote::pairing::digest_eq(peer.token_hash.as_bytes(), arrived.as_bytes())
+        })
     }
 
     /// Forget a peer by id. True when one was actually removed.
@@ -342,7 +367,8 @@ pub struct PendingStore {
 impl PendingStore {
     /// The store's path: `<home>/channels/<channel>-pending.json`.
     pub fn path(home: &Path, channel: &str) -> PathBuf {
-        home.join("channels").join(format!("{channel}-pending.json"))
+        home.join("channels")
+            .join(format!("{channel}-pending.json"))
     }
 
     /// Read it. A home with nothing pending has an empty store.
@@ -423,6 +449,9 @@ pub struct Pairing {
     /// the platform's own (Telegram's chat id), which has nothing to
     /// reveal.
     pub token: Option<String>,
+    /// The callback stored with the peer, when one was named. Not a
+    /// secret: the surface says where the outcomes will go.
+    pub callback: Option<String>,
 }
 
 /// Pair a peer server-side: mint the token when the channel needs one,
@@ -437,9 +466,26 @@ pub fn pair(
     id: &str,
     name: &str,
     capability: Capability,
+    callback: Option<&str>,
 ) -> Result<Pairing, String> {
     if !CHANNELS.contains(&channel) {
         return Err(format!("`{channel}` is not a channel this build ships"));
+    }
+    // The callback is a URL the service will POST to, so it is checked
+    // here rather than at the first delivery: a typo paired today would
+    // otherwise surface as a failed reply nobody sees. Telegram's reply
+    // goes to the chat id, so a callback there is refused by name
+    // instead of stored and ignored.
+    let callback = callback.map(str::trim).filter(|url| !url.is_empty());
+    if let Some(url) = callback {
+        if channel != "webhook" {
+            return Err(format!(
+                "`{channel}` replies to its own handle; a callback belongs to a webhook peer"
+            ));
+        }
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err("a callback must be an http(s) URL".to_string());
+        }
     }
     let name = name.trim();
     let name = if name.is_empty() { id } else { name };
@@ -460,8 +506,10 @@ pub fn pair(
     } else {
         (asked.clone(), mint_peer_token()?, None)
     };
-    store.pair(&id, name, &credential, capability, &stamp);
-    store.save(home, channel).map_err(|error| error.to_string())?;
+    store.pair_with(&id, name, &credential, capability, &stamp, callback);
+    store
+        .save(home, channel)
+        .map_err(|error| error.to_string())?;
     // A peer that is now paired is no longer pending. The pending entry
     // is filed under the id the caller asked about — the chat id — which
     // is the minted id for every channel but the webhook.
@@ -476,6 +524,7 @@ pub fn pair(
         name: name.to_string(),
         capability,
         token,
+        callback: callback.map(str::to_string),
     })
 }
 
@@ -552,7 +601,7 @@ impl SessionMap {
 }
 
 /// Where an outcome goes: the channel's own handle for the peer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reply {
     /// A URL the outcome is POSTed to.
     Url(String),
@@ -694,7 +743,10 @@ impl Driver {
             }
             return Err(format!("`{asked}` is not a session id"));
         }
-        let mut sessions = self.sessions.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         if let Some((session, _)) = sessions.get(&peer.key()) {
             return Ok(session.clone());
         }
@@ -715,7 +767,10 @@ impl Driver {
             return Err(format!("could not record the channel: {error}"));
         }
         let id = session.id().to_string();
-        let reply = self.replies.lock().unwrap_or_else(|poison| poison.into_inner())
+        let reply = self
+            .replies
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
             .get(&peer.key())
             .cloned()
             .unwrap_or(Reply::None);
@@ -724,7 +779,6 @@ impl Driver {
         self.remember(&peer.key(), &id);
         Ok(id)
     }
-
 
     /// Watch the bridge's stream for this driver's sessions and present
     /// what happens on the channel: a seat when one is raised, the
@@ -892,6 +946,18 @@ impl Driver {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
+
+    /// Test-only: where this peer's outcomes go. It pins the webhook's
+    /// stored-callback default through the delivery path rather than
+    /// only through the pure helper.
+    #[cfg(test)]
+    pub fn reply_to(&self, peer: &Peer) -> Option<Reply> {
+        self.replies
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&peer.key())
+            .cloned()
+    }
 }
 
 /// The Telegram bot token, read the way every credential is: the vault
@@ -899,7 +965,10 @@ impl Driver {
 /// never carried in a payload. A machine with no token has no Telegram
 /// channel — not a stopped one, an unconfigured one.
 pub fn telegram_token(home: &Path) -> Option<String> {
-    let dotenv = crate::home::read_dotenv_with_vault(home, std::env::var("FLEET_VAULT_PASSPHRASE").ok().as_deref());
+    let dotenv = crate::home::read_dotenv_with_vault(
+        home,
+        std::env::var("FLEET_VAULT_PASSPHRASE").ok().as_deref(),
+    );
     crate::home::resolve_setting("FLEET_TELEGRAM_BOT_TOKEN", &dotenv)
         .or_else(|| std::env::var("FLEET_TELEGRAM_BOT_TOKEN").ok())
         .map(|token| token.trim().to_string())
@@ -931,11 +1000,65 @@ mod tests {
     }
 
     #[test]
+    fn a_pairing_stores_the_callback_and_refuses_a_bad_one() {
+        let home = temp_home("callback");
+        let pairing = pair(
+            &home,
+            "webhook",
+            "",
+            "the CI box",
+            Capability::Task,
+            Some("http://127.0.0.1:9/callback"),
+        )
+        .expect("paired");
+        assert_eq!(
+            pairing.callback.as_deref(),
+            Some("http://127.0.0.1:9/callback")
+        );
+        // The store holds it, so a delivery that names none can still
+        // answer — the value the CLI used to print and throw away.
+        let store = PeerStore::load(&home, "webhook").unwrap();
+        assert_eq!(
+            store.peers[0].callback.as_deref(),
+            Some("http://127.0.0.1:9/callback")
+        );
+
+        // A callback the service could not POST to is refused at the
+        // pairing rather than at the first failed reply.
+        assert!(pair(
+            &home,
+            "webhook",
+            "",
+            "x",
+            Capability::Task,
+            Some("file:///etc/passwd")
+        )
+        .is_err());
+        // Telegram replies to its chat id; a callback is not its shape.
+        assert!(pair(
+            &home,
+            "telegram",
+            "42",
+            "x",
+            Capability::Task,
+            Some("http://127.0.0.1:9/callback")
+        )
+        .is_err());
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
     fn a_paired_peers_token_is_stored_as_a_digest_only() {
         let home = temp_home("store");
         let mut store = PeerStore::default();
         let token = mint_peer_token().unwrap();
-        store.pair("abc", "the CI box", &token, Capability::Task, "2026-10-18T00:00:00Z");
+        store.pair(
+            "abc",
+            "the CI box",
+            &token,
+            Capability::Task,
+            "2026-10-18T00:00:00Z",
+        );
         store.save(&home, "webhook").unwrap();
 
         let on_disk = std::fs::read_to_string(PeerStore::path(&home, "webhook")).unwrap();
@@ -963,7 +1086,13 @@ mod tests {
         let actor = mint_peer_token().unwrap();
         let watcher = mint_peer_token().unwrap();
         store.pair("actor", "the actor", &actor, Capability::Task, "stamp");
-        store.pair("watcher", "the watcher", &watcher, Capability::Observe, "stamp");
+        store.pair(
+            "watcher",
+            "the watcher",
+            &watcher,
+            Capability::Observe,
+            "stamp",
+        );
         store.save(&home, "webhook").unwrap();
 
         let policy = Policy::new(home.clone());
@@ -973,10 +1102,7 @@ mod tests {
         let other_channel = Peer::new("telegram", "actor", "the actor");
 
         assert_eq!(policy.authorize(&actor_peer), Ok(Capability::Task));
-        assert_eq!(
-            policy.authorize(&watcher_peer),
-            Err(Refusal::ObserveOnly)
-        );
+        assert_eq!(policy.authorize(&watcher_peer), Err(Refusal::ObserveOnly));
         assert_eq!(policy.authorize(&stranger), Err(Refusal::Unknown));
         // The same id on another channel is a different peer: a peer is
         // identified by the pair, not by the human.
@@ -1230,8 +1356,15 @@ mod tests {
         assert_eq!(pending.peers[0].attempts, 2);
 
         // Letting it in clears the pending entry and mints the pairing.
-        let pairing =
-            pair(&home, "telegram", "4242", "Alejandro", Capability::Observe).expect("paired");
+        let pairing = pair(
+            &home,
+            "telegram",
+            "4242",
+            "Alejandro",
+            Capability::Observe,
+            None,
+        )
+        .expect("paired");
         assert_eq!(pairing.id, "4242");
         assert_eq!(pairing.capability, Capability::Observe);
         assert!(pairing.token.is_none(), "the chat id is the credential");
@@ -1263,7 +1396,7 @@ mod tests {
     fn the_pairing_door_reveals_the_token_once_and_stores_a_digest() {
         let home = temp_home("pairing");
         let pairing =
-            pair(&home, "webhook", "", "the CI box", Capability::Task).expect("paired");
+            pair(&home, "webhook", "", "the CI box", Capability::Task, None).expect("paired");
         let token = pairing.token.clone().expect("a webhook token");
         assert_eq!(token.len(), 43, "32 bytes, base64url");
         assert_eq!(
@@ -1287,7 +1420,7 @@ mod tests {
             );
         }
         // A channel this build does not ship is refused by name.
-        assert!(pair(&home, "slack", "x", "y", Capability::Task).is_err());
+        assert!(pair(&home, "slack", "x", "y", Capability::Task, None).is_err());
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -1298,7 +1431,7 @@ mod tests {
     fn a_paired_peers_capability_is_editable_and_the_policy_follows() {
         let home = temp_home("capability");
         let pairing =
-            pair(&home, "webhook", "", "the actor", Capability::Task).expect("paired");
+            pair(&home, "webhook", "", "the actor", Capability::Task, None).expect("paired");
         let policy = Policy::new(home.clone());
         let peer = Peer::new("webhook", &pairing.id, "the actor");
         assert_eq!(policy.authorize(&peer), Ok(Capability::Task));
@@ -1463,7 +1596,9 @@ mod tests {
         // And the bridge's own session is untouched by the delivery.
         let launch = driver.bridge().state("session-test");
         assert!(
-            launch["events"].as_array().is_none_or(|events| events.is_empty()),
+            launch["events"]
+                .as_array()
+                .is_none_or(|events| events.is_empty()),
             "the launch session kept its own log: {launch}"
         );
         std::fs::remove_dir_all(&home).ok();
@@ -1474,7 +1609,13 @@ mod tests {
         let home = temp_home("observe");
         let mut store = PeerStore::default();
         let token = mint_peer_token().unwrap();
-        store.pair("watcher", "the watcher", &token, Capability::Observe, "stamp");
+        store.pair(
+            "watcher",
+            "the watcher",
+            &token,
+            Capability::Observe,
+            "stamp",
+        );
         store.save(&home, "webhook").unwrap();
 
         let (mut bridge, _sources) = Bridge::detached(
