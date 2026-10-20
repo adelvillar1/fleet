@@ -178,6 +178,12 @@
     railMenu: document.getElementById('rail-menu'),
     railScrim: document.getElementById('rail-scrim'),
     railWhere: document.getElementById('rail-where'),
+    asideToggle: document.getElementById('aside-toggle'),
+    processCard: document.getElementById('process-card'),
+    processState: document.getElementById('process-state'),
+    processBody: document.getElementById('process-body'),
+    processStrip: document.getElementById('process-strip'),
+    processPill: document.getElementById('process-pill'),
     crumbGroup: document.getElementById('crumb-group'),
     crumbPage: document.getElementById('crumb-page'),
     palette: document.getElementById('palette'),
@@ -291,6 +297,9 @@
     // The visit stamp, read before it is overwritten, so the home can
     // say what happened while the owner was away.
     lastVisit: '',
+    // The live process: the run's own stage, turn, tool, and counts,
+    // reduced from the same event log the transcript reads.
+    process: null,
     budget: 0,
     spend: 0,
     context: 0,
@@ -639,7 +648,12 @@
     face.events.push(event);
     switch (event.type) {
       case 'message':
-        if (event.role === 'owner') { ownerRow(event); break; }
+        if (event.role === 'owner') {
+          face.running = true;
+          face.stop = null;
+          ownerRow(event);
+          break;
+        }
         break;
       case 'token':
         if (!face.assistant) face.assistant = assistantRow();
@@ -647,6 +661,7 @@
         schedule();
         break;
       case 'turn':
+        face.running = true;
         if (event.turn !== face.lastTurn) {
           face.lastTurn = event.turn;
           face.turn = event.turn;
@@ -704,6 +719,7 @@
       case 'finished':
       case 'failed':
         face.assistant = null;
+        face.running = false;
         face.stop = event;
         endRow(event);
         // A plan-mode run's answer is a plan: the card it lands in is
@@ -714,6 +730,7 @@
         }
         break;
       case 'seat':
+        face.running = true;
         face.seat = event;
         break;
       case 'seat_cleared':
@@ -729,6 +746,7 @@
       default:
         break;
     }
+    advanceProcess(event);
     paint();
   }
 
@@ -806,6 +824,7 @@
     paintRules();
     paintSeat();
     paintComposer();
+    paintProcess();
     // The router's live decision is the run's own `routed` event, so it
     // is repainted with the stream rather than waiting for the board's
     // clock. The rest of that panel is the board's read and does not move
@@ -910,6 +929,342 @@
     }
   }
 
+  // ------------------------------------------------------------ the process
+
+  // A run is a loop, and the owner is a visual person: route, think, act,
+  // verify, with the current step, the turn, the tool, and the elapsed
+  // time. The state is reduced from the same event log the transcript
+  // reads, so the card cannot claim a step the run did not take.
+  var RUN_STEPS = [
+    ['route', 'Route', 'where the work goes'],
+    ['think', 'Think', 'the model\u2019s turn'],
+    ['act', 'Act', 'tools, memory, lanes'],
+    ['verify', 'Verify', 'the answer and the gate']
+  ];
+  var PLAN_STEPS = [
+    ['plan', 'Plan', 'the run writes nothing'],
+    ['review', 'Review', 'read and edit the plan'],
+    ['build', 'Build', 'post the edited plan']
+  ];
+
+  function resetProcess(mode) {
+    face.process = {
+      mode: mode || 'run',
+      stage: mode === 'plan' ? 'plan' : 'route',
+      active: true,
+      started: Date.now(),
+      ended: 0,
+      turn: 0,
+      tool: '',
+      calls: 0,
+      provider: '',
+      model: '',
+      facts: 0,
+      delegations: 0,
+      lanes: 0,
+      checkpoint: 0,
+      waiting: false,
+      stop: '',
+      last: '',
+      at: 0
+    };
+  }
+
+  function ensureProcess() {
+    if (!face.process) resetProcess(face.planMode ? 'plan' : 'run');
+    return face.process;
+  }
+
+  function advanceProcess(event) {
+    if (event.type === 'message' && event.role === 'owner') {
+      resetProcess(face.planMode ? 'plan' : 'run');
+      face.process.last = 'you sent the task';
+      face.process.at = Date.now();
+      return;
+    }
+    if (!face.process) {
+      // A replayed session can begin at any point. The first run-shaped
+      // event creates the card; a cron or a skills boot event does not.
+      if (['turn', 'routed', 'tool_call', 'tool_result', 'seat', 'memory',
+        'lane', 'delegation', 'plan', 'finished', 'failed'].indexOf(event.type) === -1) {
+        return;
+      }
+      resetProcess(face.planMode ? 'plan' : 'run');
+    }
+    var p = face.process;
+    p.at = Date.now();
+    switch (event.type) {
+      case 'routed':
+        p.provider = event.provider || '';
+        p.model = event.model || '';
+        if (!p.turn) p.stage = 'route';
+        p.last = 'routed to ' + (p.provider || 'a provider') +
+          (p.model ? ' \u00b7 ' + p.model : '');
+        break;
+      case 'turn':
+        p.stage = 'think';
+        p.turn = Number(event.turn) || p.turn;
+        p.last = 'turn ' + p.turn;
+        break;
+      case 'tool_call':
+        p.stage = 'act';
+        p.tool = event.tool || '';
+        p.calls += 1;
+        p.last = p.tool + (event.summary ? ' \u00b7 ' + clip(event.summary, 60) : '');
+        break;
+      case 'tool_result':
+        p.stage = 'act';
+        p.waiting = false;
+        p.last = (event.tool || 'tool') + ' \u00b7 ' +
+          (event.approved ? 'done' : 'refused');
+        break;
+      case 'seat':
+        p.stage = 'act';
+        p.waiting = true;
+        p.last = 'waiting for your approval';
+        break;
+      case 'seat_cleared':
+        p.waiting = false;
+        p.last = 'your answer crossed';
+        break;
+      case 'memory':
+        p.stage = 'act';
+        p.facts = Number(event.facts) || 0;
+        p.last = 'memory \u00b7 ' + p.facts + ' facts' +
+          (event.shape ? ' \u00b7 ' + event.shape : '');
+        break;
+      case 'lane':
+        p.stage = 'act';
+        p.lanes += 1;
+        p.last = 'lane ' + (event.lane || '') + ' \u00b7 ' + (event.tools || 0) + ' tools';
+        break;
+      case 'delegation':
+        p.stage = 'act';
+        p.delegations = Object.keys(face.delegations || {}).length;
+        p.last = 'delegation \u00b7 ' + (event.stage || 'spawned') +
+          (event.detail && event.detail.tool ? ' \u00b7 ' + event.detail.tool : '');
+        break;
+      case 'checkpoint':
+        p.checkpoint = Number(event.turn) || p.checkpoint;
+        p.last = 'checkpoint \u00b7 turn ' + p.checkpoint;
+        break;
+      case 'compacted':
+        p.last = 'compacted \u00b7 ' + (event.turns || 0) + ' turns folded';
+        break;
+      case 'plan':
+        p.mode = 'plan';
+        p.stage = 'review';
+        p.active = false;
+        p.ended = Date.now();
+        p.stop = 'plan';
+        p.last = 'the plan is ready to edit';
+        break;
+      case 'finished':
+        if (p.mode === 'plan' && p.stage === 'review') {
+          p.last = 'the plan is ready to edit';
+          break;
+        }
+        p.stage = 'verify';
+        p.active = false;
+        p.ended = Date.now();
+        p.stop = 'finished';
+        if (event.turns) p.turn = Number(event.turns) || p.turn;
+        p.last = 'finished \u00b7 ' + (event.stop_reason || 'the answer landed');
+        break;
+      case 'failed':
+        p.stage = 'verify';
+        p.active = false;
+        p.ended = Date.now();
+        p.stop = 'failed';
+        p.last = 'failed \u00b7 ' + (event.stop_reason || 'the run stopped');
+        break;
+      default:
+        break;
+    }
+  }
+
+  function elapsedText(start, end) {
+    var seconds = Math.max(0, Math.floor(((end || Date.now()) - start) / 1000));
+    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+  }
+
+  function processSteps(p) {
+    var steps = p.mode === 'plan' ? PLAN_STEPS : RUN_STEPS;
+    var order = steps.map(function (step) { return step[0]; });
+    var at = order.indexOf(p.stage);
+    if (at < 0) at = 0;
+    var wrap = node('div', 'process-steps');
+    steps.forEach(function (step, index) {
+      var state = 'pending';
+      if (!p.active && p.mode === 'plan' && p.stage === 'review') {
+        state = index < at ? 'done' : index === at ? 'current' : 'pending';
+      } else if (!p.active) {
+        state = index <= at ? 'done' : 'pending';
+        if (p.stop === 'failed' && index === at) state = 'down';
+      } else {
+        state = index < at ? 'done' : index === at ? 'current' : 'pending';
+      }
+      var line = node('div', 'process-step');
+      line.dataset.state = state;
+      line.appendChild(node('span', 'process-dot'));
+      var body = node('span', null);
+      body.appendChild(node('span', 'process-label', step[1]));
+      body.appendChild(node('span', 'process-note', processNote(step[0], p)));
+      line.appendChild(body);
+      wrap.appendChild(line);
+    });
+    return wrap;
+  }
+
+  function processNote(key, p) {
+    switch (key) {
+      case 'route':
+        return p.provider ? p.provider + (p.model ? ' \u00b7 ' + p.model : '') : 'waiting for the decision';
+      case 'think':
+        return p.turn ? 'turn ' + p.turn : 'the model\u2019s turn';
+      case 'act':
+        if (p.waiting) return 'waiting for your approval';
+        if (p.tool) return p.tool + (p.calls > 1 ? ' \u00b7 ' + p.calls + ' calls' : '');
+        if (p.calls) return p.calls + ' calls';
+        return p.active ? 'no tool yet' : 'no tool this run';
+      case 'verify':
+        return p.stop === 'failed' ? 'the run stopped' : 'the answer and the gate';
+      case 'plan':
+        return 'the run writes nothing';
+      case 'review':
+        return p.stage === 'review' ? 'ready to edit' : 'read and edit the plan';
+      case 'build':
+        return 'post the edited plan';
+      default:
+        return '';
+    }
+  }
+
+  function paintProcess() {
+    if (!el.processBody) return;
+    var p = face.process;
+    var state = !p ? 'idle'
+      : p.active ? 'running'
+        : p.stop === 'failed' ? 'failed'
+          : p.mode === 'plan' && p.stage === 'review' ? 'review' : 'done';
+    el.processState.textContent = state;
+    el.processState.dataset.state = state === 'review' ? 'running' : state;
+    if (el.processPill) {
+      el.processPill.hidden = !p || (!p.active && !(p.mode === 'plan' && p.stage === 'review'));
+      if (!el.processPill.hidden) {
+        el.processPill.textContent = p.turn ? 'turn ' + p.turn + ' \u00b7 ' + p.stage
+          : p.mode === 'plan' ? 'plan mode' : p.stage;
+        el.processPill.dataset.state = state === 'review' ? 'running' : state;
+      }
+    }
+    el.processBody.textContent = '';
+    if (!p) {
+      el.processBody.appendChild(node('p', 'process-idle',
+        'No run is in flight. The loop starts when you ask for something: route, think, act, verify.'));
+      var start = node('button', 'replay-button replay-resume', 'start with Plan');
+      start.type = 'button';
+      start.addEventListener('click', function () {
+        el.plan.click();
+        el.task.focus();
+      });
+      el.processBody.appendChild(start);
+      paintProcessStrip(null);
+      return;
+    }
+    var head = node('div', 'process-head-row');
+    head.appendChild(node('span', 'process-state',
+      p.mode === 'plan' ? 'plan mode' : p.active ? 'in flight' : p.stop === 'failed' ? 'stopped' : 'done'));
+    head.lastChild.dataset.state = state === 'review' ? 'running' : state;
+    head.appendChild(node('span', 'process-elapsed', elapsedText(p.started, p.ended)));
+    el.processBody.appendChild(head);
+    el.processBody.appendChild(processSteps(p));
+    var meta = node('div', 'process-meta');
+    if (p.turn) meta.appendChild(node('span', null, 'turn ' + p.turn));
+    if (p.calls) meta.appendChild(node('span', null, p.calls + ' calls'));
+    if (p.facts) meta.appendChild(node('span', null, p.facts + ' facts'));
+    if (p.delegations) meta.appendChild(node('span', null, p.delegations + ' delegations'));
+    if (p.lanes) meta.appendChild(node('span', null, p.lanes + ' lanes'));
+    if (p.checkpoint) meta.appendChild(node('span', null, 'checkpoint ' + p.checkpoint));
+    if (meta.children.length) el.processBody.appendChild(meta);
+    if (p.last) {
+      var last = node('p', 'process-last');
+      last.appendChild(node('b', null, 'last'));
+      last.appendChild(document.createTextNode(' \u00b7 ' + p.last));
+      el.processBody.appendChild(last);
+    }
+    paintProcessStrip(p);
+  }
+
+  function paintProcessStrip(p) {
+    if (!el.processStrip) return;
+    var open = document.body.dataset.aside !== 'closed';
+    var narrow = window.innerWidth <= 1180;
+    var show = !!p && (p.active || (p.mode === 'plan' && p.stage === 'review')) && (!open || narrow);
+    el.processStrip.hidden = !show;
+    if (!show) return;
+    el.processStrip.textContent = '';
+    var main = node('button', 'process-strip-main');
+    main.type = 'button';
+    main.title = 'open the run\u2019s process';
+    var dot = node('span', 'process-strip-dot');
+    dot.dataset.state = p.active ? 'running' : p.stop === 'failed' ? 'failed' : 'done';
+    main.appendChild(dot);
+    main.appendChild(node('span', 'process-strip-label',
+      p.turn ? 'turn ' + p.turn : p.mode === 'plan' ? 'plan mode' : 'the run'));
+    main.appendChild(node('span', 'process-strip-note',
+      p.tool || (p.stage === 'review' ? 'the plan is ready' : p.last || '')));
+    var dots = node('span', 'process-strip-dots');
+    var steps = p.mode === 'plan' ? PLAN_STEPS : RUN_STEPS;
+    var order = steps.map(function (step) { return step[0]; });
+    var at = Math.max(0, order.indexOf(p.stage));
+    steps.forEach(function (step, index) {
+      var one = node('span');
+      one.dataset.state = !p.active
+        ? (p.stop === 'failed' && index === at ? 'down' : index <= at ? 'done' : 'pending')
+        : index < at ? 'done' : index === at ? 'current' : 'pending';
+      dots.appendChild(one);
+    });
+    main.appendChild(dots);
+    main.addEventListener('click', openProcess);
+    el.processStrip.appendChild(main);
+  }
+
+  function openProcess() {
+    if (window.innerWidth > 1180 && face.panel === 'chat') {
+      setAside(true);
+      return;
+    }
+    openProcessDrawer();
+  }
+
+  function openProcessDrawer() {
+    var p = face.process;
+    if (!p) {
+      openDrawer('the run', [['process', node('p', 'derivation',
+        'No run is in flight. Ask fleet for something and the loop lands here.')]]);
+      return;
+    }
+    openDrawer('the run', [
+      ['where we are', processSteps(p)],
+      ['the last step', node('p', 'derivation', p.last || 'no step yet')],
+      ['the counts', node('p', 'derivation',
+        'turn ' + p.turn + ' \u00b7 ' + p.calls + ' calls \u00b7 ' + p.facts +
+        ' facts \u00b7 ' + p.delegations + ' delegations \u00b7 ' + p.lanes + ' lanes')]
+    ]);
+  }
+
+  function setAside(open) {
+    document.body.dataset.aside = open ? 'open' : 'closed';
+    if (el.asideToggle) {
+      el.asideToggle.setAttribute('aria-pressed', open ? 'true' : 'false');
+      el.asideToggle.setAttribute('aria-label',
+        open ? 'hide the run\u2019s process' : 'show the run\u2019s process');
+      el.asideToggle.title = open ? 'hide the run\u2019s process' : 'show the run\u2019s process';
+    }
+    try { window.localStorage.setItem('fleet-aside', open ? 'open' : 'closed'); } catch (error) { }
+    paintProcess();
+  }
+
   // ------------------------------------------------------------- the home
 
   // The empty state is the face's welcome, so it speaks in the owner's own
@@ -964,8 +1319,10 @@
       var dot = node('span', 'recent-dot');
       dot.dataset.state = row.ended ? 'done' : 'live';
       line.appendChild(dot);
-      line.appendChild(node('span', 'recent-id',
-        (row.current ? 'this face \u00b7 ' : '') + row.id));
+      var id = node('span', 'recent-id',
+        (row.current ? 'this face \u00b7 ' : '') + sessionLabel(row.id));
+      id.title = row.id;
+      line.appendChild(id);
       var when = String(row.created || '');
       line.appendChild(node('span', 'recent-when',
         when ? when.slice(5, 16).replace('T', ' ') : '\u2014'));
@@ -1155,12 +1512,50 @@
     return tiles;
   }
 
-  function tile(value, label, tone) {
-    var el0 = node('div', 'tile');
+  function tile(value, label, tone, run) {
+    var el0 = run ? node('button', 'tile') : node('div', 'tile');
+    if (run) {
+      el0.type = 'button';
+      el0.title = label + ': open the list it counts';
+      el0.addEventListener('click', run);
+    } else {
+      el0.tabIndex = 0;
+      el0.setAttribute('role', 'button');
+      el0.title = label + ': what this counts and where it comes from';
+      el0.addEventListener('click', function () { metricDrawer(value, label); });
+      el0.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          metricDrawer(value, label);
+        }
+      });
+    }
     if (tone) el0.dataset.tone = tone;
     el0.appendChild(node('div', 'tile-value', String(value)));
     el0.appendChild(node('div', 'tile-label', label));
     return el0;
+  }
+
+  // A count is an object too. Its drawer says what it counts and takes the
+  // owner to the list it belongs to, so no number is a dead end.
+  function metricDrawer(value, label) {
+    var go = node('button', 'replay-button replay-resume');
+    go.type = 'button';
+    go.textContent = 'open the list below';
+    go.addEventListener('click', function () {
+      closeDrawer();
+      var card = document.querySelector('.stage:not([hidden]) .board-card');
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    var actions = node('div', 'replay-actions');
+    actions.appendChild(go);
+    openDrawer('metric \u00b7 ' + label, [
+      ['what it counts', node('p', 'derivation', String(value) + ' ' + label)],
+      ['where it comes from', node('p', 'derivation',
+        'the read that feeds this panel. The number is the read\u2019s own; the panel does not ' +
+        're-derive it. A count with no list is a count the code did not carry.')],
+      ['what you can do', actions]
+    ]);
   }
 
   // The clock a stamp carries, not the stamp: a route row's own time is
@@ -1274,7 +1669,22 @@
         if (index) row.appendChild(node('span', 'chain-arrow', '\u203a'));
         var chip = node('span', 'cand', candidate);
         chip.dataset.role = index === 0 ? 'primary' : 'fallback';
-        chip.title = index === 0 ? 'what a route selects for this workload' : 'the walk\u2019s next candidate';
+        chip.title = index === 0
+          ? 'what a route selects for this workload \u00b7 click to copy'
+          : 'the walk\u2019s next candidate \u00b7 click to copy';
+        chip.tabIndex = 0;
+        chip.setAttribute('role', 'button');
+        chip.addEventListener('click', function () {
+          if (navigator.clipboard) navigator.clipboard.writeText(candidate).catch(function () { });
+          chip.textContent = 'copied';
+          window.setTimeout(function () { chip.textContent = candidate; }, 1000);
+        });
+        chip.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            chip.click();
+          }
+        });
         row.appendChild(chip);
       });
       line.appendChild(row);
@@ -1480,10 +1890,57 @@
       side.lastChild.dataset.ok = entry.ok ? 'yes' : 'no';
       side.appendChild(node('span', 'rrow-ms', entry.ms == null ? '\u2014' : entry.ms + ' ms'));
       line.appendChild(side);
+      line.tabIndex = 0;
+      line.setAttribute('role', 'button');
+      line.title = 'open this call: ' + entry.model + ' \u00b7 ' + entry.outcome;
+      line.addEventListener('click', function () { routeDrawer(entry); });
+      line.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          routeDrawer(entry);
+        }
+      });
       rows.appendChild(line);
     });
     el0.appendChild(rows);
     return el0;
+  }
+
+  // One route row's detail: the call, the walk it took, and the two
+  // actions that make the row useful — copy the model, or hand the
+  // decision to the judge lane for a second opinion.
+  function routeDrawer(entry) {
+    var walk = (entry.providers_used && entry.providers_used.length
+      ? entry.providers_used : [entry.provider]).join(' \u2192 ');
+    var actions = node('div', 'replay-actions');
+    var copy = node('button', 'replay-button');
+    copy.type = 'button';
+    copy.textContent = 'copy the model';
+    copy.addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(entry.model).catch(function () { });
+      copy.textContent = 'copied';
+      window.setTimeout(function () { copy.textContent = 'copy the model'; }, 1200);
+    });
+    actions.appendChild(copy);
+    var judge = node('button', 'replay-button replay-resume');
+    judge.type = 'button';
+    judge.textContent = 'ask sys1 about this call';
+    judge.addEventListener('click', function () {
+      closeDrawer();
+      ask('use the sys1 lane to review the route call to ' + entry.model +
+        (entry.workload ? ' for workload ' + entry.workload : '') +
+        ' and say whether the walk was right');
+    });
+    actions.appendChild(judge);
+    openDrawer('route \u00b7 ' + entry.model, [
+      ['the call', node('p', 'derivation',
+        clock(entry.at) + ' \u00b7 ' + (entry.workload || 'no workload') +
+        ' \u00b7 ' + entry.outcome +
+        (entry.ms == null ? '' : ' \u00b7 ' + entry.ms + ' ms') +
+        (entry.reason ? ' \u00b7 ' + entry.reason : ''))],
+      ['the walk', node('p', 'derivation', walk)],
+      ['what you can do', actions]
+    ]);
   }
 
   // The workload mix and the judged split: where the day's routes went,
@@ -1897,7 +2354,52 @@
       + '\nscore ' + one.score + ' of a peak of ' + one.peak + ', cost ' + one.cost
       + (one.reason ? '\nheld: ' + one.reason : '');
     made.appendChild(svg('title', null, said));
+    made.setAttribute('tabindex', '0');
+    made.setAttribute('role', 'button');
+    made.addEventListener('click', function () { nodeDrawer(one); });
+    made.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        nodeDrawer(one);
+      }
+    });
     return made;
+  }
+
+  // One graph node's detail: the state, the score it carries, the three
+  // unlock conditions, and the one action that turns the model into
+  // work — hand the node to the composer.
+  function nodeDrawer(one) {
+    var unlock = one.unlock || {};
+    var actions = node('div', 'replay-actions');
+    var take = node('button', 'replay-button replay-resume');
+    take.type = 'button';
+    take.textContent = 'take this step';
+    take.addEventListener('click', function () {
+      closeDrawer();
+      ask('work the next ready graph node: ' + one.id + (one.approach ? '. ' + one.approach : ''));
+    });
+    actions.appendChild(take);
+    var copy = node('button', 'replay-button');
+    copy.type = 'button';
+    copy.textContent = 'copy the node id';
+    copy.addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(one.id).catch(function () { });
+      copy.textContent = 'copied';
+      window.setTimeout(function () { copy.textContent = 'copy the node id'; }, 1200);
+    });
+    actions.appendChild(copy);
+    openDrawer('graph \u00b7 ' + one.id, [
+      ['the node', node('p', 'derivation',
+        one.state + ' \u00b7 score ' + one.score + ' of ' + one.peak +
+        ' \u00b7 cost ' + one.cost +
+        (one.approach ? ' \u00b7 ' + one.approach : ''))],
+      ['the unlock conditions', node('p', 'derivation',
+        'score zero: ' + (unlock.score_zero ? 'met' : 'not met') +
+        ' \u00b7 resource free: ' + (unlock.resource_free ? 'met' : 'not met') +
+        ' \u00b7 deps verified: ' + (unlock.deps_verified ? 'met' : 'not met'))],
+      ['what you can do', actions]
+    ]);
   }
 
   function graphCard(graph, wide) {
@@ -2244,6 +2746,24 @@
       badges.appendChild(badge(fact.fact_type, fact.protected ? 'accent' : null));
       badges.appendChild(badge(fact.tier, fact.tier === 'working' ? 'warn' : null));
       if (fact.retired) badges.appendChild(badge('retired', 'down'));
+      Array.prototype.forEach.call(badges.children, function (chip) {
+        chip.classList.add('badge-filter');
+        chip.tabIndex = 0;
+        chip.setAttribute('role', 'button');
+        chip.title = 'filter the corpus by ' + chip.textContent;
+        var filter = function (event) {
+          event.stopPropagation();
+          face.query = chip.textContent;
+          paintMemory();
+        };
+        chip.addEventListener('click', filter);
+        chip.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            filter(event);
+          }
+        });
+      });
       card0.appendChild(badges);
       card0.appendChild(node('p', 'fact-said', fact.description));
       if (fact.shape && fact.shape.length) {
@@ -2260,6 +2780,7 @@
 
   function badge(text, tone) {
     var el0 = node('span', 'badge', String(text));
+    el0.title = String(text);
     if (tone) el0.dataset.tone = tone;
     return el0;
   }
@@ -2364,11 +2885,44 @@
         notice('the fact was not rewritten', 'the server did not answer');
       });
     });
+    var related = node('div', 'replay-actions');
+    var askBtn = node('button', 'replay-button replay-resume');
+    askBtn.type = 'button';
+    askBtn.textContent = 'ask fleet about this fact';
+    askBtn.addEventListener('click', function () {
+      closeDrawer();
+      ask('what do the memories say about ' + fact.name + '? cite the fact and its evidence.');
+    });
+    related.appendChild(askBtn);
+    var copy = node('button', 'replay-button');
+    copy.type = 'button';
+    copy.textContent = 'copy the fact name';
+    copy.addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(fact.name).catch(function () { });
+      copy.textContent = 'copied';
+      window.setTimeout(function () { copy.textContent = 'copy the fact name'; }, 1200);
+    });
+    related.appendChild(copy);
+    if ((fact.shape || []).length) {
+      var filter = node('button', 'replay-button');
+      filter.type = 'button';
+      filter.textContent = 'filter the corpus by ' + fact.shape[0];
+      filter.addEventListener('click', function () {
+        face.query = fact.shape[0];
+        closeDrawer();
+        paintMemory();
+      });
+      related.appendChild(filter);
+    }
     openDrawer(fact.name, [
       ['the fact', node('p', 'derivation',
         'type ' + fact.fact_type + ' \u00b7 tier ' + fact.tier + ' \u00b7 basis ' + fact.basis +
         ' \u00b7 ' + fact.recall_count + ' recalls \u00b7 ' + fact.path)],
-      ['edit in place', form]
+      ['related', relatedFor('fact',
+        [fact.name, fact.description, (fact.shape || []).join(' '), clip(fact.body || '', 300)].join(' '),
+        fact.name)],
+      ['edit in place', form],
+      ['what you can do', related]
     ]);
   }
 
@@ -2623,14 +3177,36 @@
   }
 
   function inspectSkill(skill) {
+    var actions = node('div', 'replay-actions');
+    var copy = node('button', 'replay-button');
+    copy.type = 'button';
+    copy.textContent = 'copy the skill name';
+    copy.addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(skill.name).catch(function () { });
+      copy.textContent = 'copied';
+      window.setTimeout(function () { copy.textContent = 'copy the skill name'; }, 1200);
+    });
+    actions.appendChild(copy);
+    var curator = node('button', 'replay-button replay-resume');
+    curator.type = 'button';
+    curator.textContent = 'ask the curator about it';
+    curator.addEventListener('click', function () {
+      closeDrawer();
+      ask('review the ' + skill.name + ' skill against the sessions that used it and say whether it should change');
+    });
+    actions.appendChild(curator);
     openDrawer(skill.name, [
       ['the skill', node('p', 'derivation',
         skill.uses + ' uses across ' + (face.skills ? face.skills.sessions : 0) + ' scanned sessions' +
         ' \u00b7 ' + skill.path)],
+      ['related', relatedFor('skill',
+        [skill.name, skill.description, clip(skill.body || '', 300)].join(' '),
+        skill.name)],
       ['the body', node('pre', 'drawer-code', skill.body || '')],
       ['what the model sees', node('p', 'derivation',
         'the system prompt carries the name and the one sentence. The body enters context only when ' +
-        'the skill is selected, and then it is already in the log as that call\u2019s result.')]
+        'the skill is selected, and then it is already in the log as that call\u2019s result.')],
+      ['what you can do', actions]
     ]);
   }
 
@@ -2698,7 +3274,13 @@
     el.log.hidden = false;
     var before = face.events.length;
     post('/api/run', { task: task }).then(function (reply) {
-      if (reply.status === 200) return;
+      if (reply.status === 200) {
+        face.running = true;
+        face.stop = null;
+        resetProcess(face.planMode ? 'plan' : 'run');
+        paint();
+        return;
+      }
       // The run did not start. Sometimes the server has already written
       // why — the bridge's no-agent failure lands in the log as its own
       // event — and a note repeating it would be a second answer to one
@@ -2731,6 +3313,159 @@
 
   // ----------------------------------------------------------- inspector
 
+  // ---------------------------------------------------------- related objects
+
+  // Suggestions are the harness's own embedding path, not a second
+  // recommender: the candidates are the corpus and the library, a lexical
+  // pass shortlists the handful worth embedding, and /api/rank compares
+  // them by cosine. A machine with no embedder degrades to "no close
+  // match" rather than inventing an order.
+  function wordsOf(text) {
+    return String(text || '').toLowerCase().split(/[^a-z0-9_]+/)
+      .filter(function (word) { return word.length > 2; });
+  }
+
+  function lexicalScore(queryWords, text) {
+    var words = wordsOf(text);
+    var seen = {};
+    words.forEach(function (word) { seen[word] = 1; });
+    var score = 0;
+    queryWords.forEach(function (word) { if (seen[word]) score += 1; });
+    return score;
+  }
+
+  function shortlist(query, pool, most) {
+    var queryWords = wordsOf(query);
+    var seen = {};
+    var unique = [];
+    pool.forEach(function (item) {
+      var key = item.kind + ':' + item.id;
+      if (seen[key]) return;
+      seen[key] = 1;
+      unique.push(item);
+    });
+    if (!queryWords.length) return unique.slice(0, most || 24);
+    return unique
+      .map(function (item) {
+        return { item: item, score: lexicalScore(queryWords, item.text) };
+      })
+      .sort(function (left, right) { return right.score - left.score; })
+      .slice(0, most || 24)
+      .map(function (entry) { return entry.item; });
+  }
+
+  function relatedBlock(query, pool, onPick) {
+    var wrap = node('div', 'related');
+    var wait = node('p', 'related-wait', 'reading the corpus\u2026');
+    wrap.appendChild(wait);
+    var short = shortlist(query, pool, 12);
+    if (!short.length || !wordsOf(query).length) {
+      wait.textContent = 'nothing close enough to rank yet';
+      return wrap;
+    }
+    post('/api/rank', { asked: query, candidates: short.map(function (item) { return item.text; }) })
+      .then(function (reply) {
+        if (reply.status !== 200) {
+          wait.textContent = 'semantic suggestions are unavailable';
+          return;
+        }
+        var ranked = (reply.body.ranked || []).filter(function (row) {
+          return Number(row.score) > 0.12;
+        }).slice(0, 3);
+        wrap.textContent = '';
+        if (!ranked.length) {
+          wrap.appendChild(node('p', 'related-wait',
+            'no close match in the corpus'));
+          return;
+        }
+        var list = node('div', 'related-list');
+        ranked.forEach(function (row) {
+          var item = short[row.index];
+          if (!item) return;
+          var button = node('button', 'related-row');
+          button.type = 'button';
+          button.title = 'open ' + item.label;
+          button.appendChild(node('span', 'related-kind', item.kind));
+          button.appendChild(node('span', 'related-name', item.label));
+          button.appendChild(node('span', 'related-score',
+            Math.round(Number(row.score) * 100) + '%'));
+          button.addEventListener('click', function () { onPick(item); });
+          list.appendChild(button);
+        });
+        wrap.appendChild(list);
+      })
+      .catch(function () {
+        wait.textContent = 'semantic suggestions are unavailable';
+      });
+    return wrap;
+  }
+
+  function ensureCorpus() {
+    var waits = [];
+    if (!face.memory) waits.push(readMemory(false));
+    if (!face.skills) waits.push(readSkills(false));
+    return Promise.all(waits).catch(function () { });
+  }
+
+  function factPool(except) {
+    return ((face.memory && face.memory.facts) || [])
+      .filter(function (fact) { return !fact.retired && fact.name !== except; })
+      .map(function (fact) {
+        return {
+          kind: 'fact',
+          id: fact.name,
+          label: fact.name,
+          text: [fact.name, fact.description, (fact.shape || []).join(' '),
+            clip(fact.body || '', 240)].join(' '),
+          fact: fact
+        };
+      });
+  }
+
+  function skillPool(except) {
+    return ((face.skills && face.skills.skills) || [])
+      .filter(function (skill) { return skill.name !== except; })
+      .map(function (skill) {
+        return {
+          kind: 'skill',
+          id: skill.name,
+          label: skill.name,
+          text: [skill.name, skill.description, clip(skill.body || '', 200)].join(' '),
+          skill: skill
+        };
+      });
+  }
+
+  function relatedFor(kind, query, except, onPick) {
+    var wrap = node('div', 'related');
+    var wait = node('p', 'related-wait', 'reading the corpus\u2026');
+    wrap.appendChild(wait);
+    ensureCorpus().then(function () {
+      var pool = factPool(except).concat(skillPool(except));
+      wrap.textContent = '';
+      wrap.appendChild(relatedBlock(query, pool, function (item) {
+        if (item.kind === 'fact') inspectFact(item.fact);
+        else inspectSkill(item.skill);
+        if (onPick) onPick(item);
+      }));
+    });
+    return wrap;
+  }
+
+  function projectPool(except) {
+    return ((face.tower && face.tower.projects) || [])
+      .filter(function (row) { return row.name !== except; })
+      .map(function (row) {
+        return {
+          kind: 'project',
+          id: row.name,
+          label: row.name,
+          text: [row.name, row.subject || '', row.branch || ''].join(' '),
+          project: row
+        };
+      });
+  }
+
   function openDrawer(title, sections) {
     el.drawerTitle.textContent = title;
     el.drawerBody.textContent = '';
@@ -2746,7 +3481,11 @@
       }
     });
     el.drawer.hidden = false;
-    el.scrim.hidden = false;
+    // The inspector is a right-hand card, not a modal, on a wide screen:
+    // it stays open while the owner keeps working. On a narrow screen it
+    // takes the whole width, so the scrim stays and the drawer is modal.
+    el.drawer.setAttribute('aria-modal', window.innerWidth > 900 ? 'false' : 'true');
+    el.scrim.hidden = window.innerWidth > 900;
   }
 
   function closeDrawer() {
@@ -2878,6 +3617,7 @@
     face.route = null;
     face.stop = null;
     face.seatKey = '';
+    face.process = null;
 
     el.log.textContent = '';
     face.stream = node('div', 'stream');
@@ -2892,6 +3632,17 @@
     el.log.hidden = !talked;
     el.empty.hidden = talked;
     (state.events || []).forEach(apply);
+    // The log is the truth about what happened; the snapshot is the
+    // truth about now. A replayed log with no end record is an
+    // interrupted run, not a live one, so the process card says so.
+    face.running = !!state.running;
+    if (face.process && !face.running && face.process.active) {
+      face.process.active = false;
+      face.process.ended = Date.now();
+      face.process.stop = 'interrupted';
+      face.process.stage = 'verify';
+      face.process.last = 'the run was interrupted';
+    }
     face.stick = true;
     settle();
     paint();
@@ -3018,6 +3769,22 @@
     if (draft) { el.task.value = draft; grow(); }
   } catch (error) { }
 
+  try {
+    var savedAside = window.localStorage.getItem('fleet-aside');
+    setAside(savedAside !== 'closed');
+  } catch (error) {
+    setAside(true);
+  }
+  if (el.asideToggle) {
+    el.asideToggle.addEventListener('click', function () {
+      setAside(document.body.dataset.aside === 'closed');
+    });
+  }
+  if (el.processPill) {
+    el.processPill.addEventListener('click', openProcess);
+  }
+  window.addEventListener('resize', function () { paintProcess(); });
+
   if (el.railMenu) {
     el.railMenu.addEventListener('click', function () {
       setMobileRail(document.body.dataset.mobileRail !== 'open');
@@ -3030,6 +3797,37 @@
     if (event.key === 'Escape' && document.body.dataset.mobileRail === 'open') {
       setMobileRail(false);
     }
+  });
+
+  // The topbar's chips are not readouts. The route opens the board that
+  // explains it, the state opens the archive at this run, and both
+  // numbers open the derivation the inspector already carries.
+  el.routePill.addEventListener('click', function () { window.location.hash = '#/router'; });
+  el.statePill.addEventListener('click', function () {
+    window.location.hash = face.session ? '#/sessions/' + encodeURIComponent(face.session) : '#/sessions';
+  });
+  [el.routePill, el.statePill].forEach(function (pill) {
+    pill.tabIndex = 0;
+    pill.setAttribute('role', 'button');
+    pill.title = (pill === el.routePill ? 'where this run went' : 'this run\u2019s state') + ' \u00b7 click to open';
+    pill.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        pill.click();
+      }
+    });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.stat'), function (stat) {
+    stat.tabIndex = 0;
+    stat.setAttribute('role', 'button');
+    stat.title = 'open the derivation behind this number';
+    stat.addEventListener('click', function () { inspect(null); });
+    stat.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        inspect(null);
+      }
+    });
   });
 
   el.composer.addEventListener('submit', function (event) {
@@ -3109,6 +3907,11 @@
   el.drawerClose.addEventListener('click', closeDrawer);
   el.scrim.addEventListener('click', closeDrawer);
   el.inspectFace.addEventListener('click', function () { inspect(null); });
+  document.addEventListener('click', function (event) {
+    var line = event.target.closest ? event.target.closest('.stream-line') : null;
+    if (!line || line.dataset.wired || line.closest('.drawer')) return;
+    openDrawer('record', [['this line', node('p', 'derivation', line.textContent)]]);
+  });
   document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape') closeDrawer();
   });
@@ -3199,10 +4002,22 @@
     var compacted = sessions.filter(function (row) { return row.compacted; }).length;
     var open = sessions.filter(function (row) { return !row.ended; }).length;
     var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(sessions.length, 'logs in the archive'));
-    tiles.appendChild(tile(open, 'without an end record', open ? 'warn' : null));
-    tiles.appendChild(tile(children, 'delegated children'));
-    tiles.appendChild(tile(compacted, 'compacted at least once', compacted ? 'warn' : null));
+    tiles.appendChild(tile(sessions.length, 'logs in the archive', null, function () {
+      face.sessionsFilter = 'all';
+      paintSessions();
+    }));
+    tiles.appendChild(tile(open, 'without an end record', open ? 'warn' : null, function () {
+      face.sessionsFilter = 'open';
+      paintSessions();
+    }));
+    tiles.appendChild(tile(children, 'delegated children', null, function () {
+      face.sessionsFilter = 'delegated';
+      paintSessions();
+    }));
+    tiles.appendChild(tile(compacted, 'compacted at least once', compacted ? 'warn' : null, function () {
+      face.sessionsFilter = 'compacted';
+      paintSessions();
+    }));
     el.sessionsBoard.appendChild(pageHead('Work', 'Sessions',
       'Every run under this home, newest first. Select a row to read it beside the list.',
       read.read_at));
@@ -3274,6 +4089,7 @@
   // selected, the replay reads beside it, and the address carries the id
   // so back/forward and a copied link land on the same row.
   function selectSession(id) {
+    closeDrawer();
     face.focus = { panel: 'sessions', id: id };
     if (face.replayId !== id) face.replay = null;
     face.replayId = id;
@@ -3282,6 +4098,10 @@
     }
     readReplay(id, true);
     paintSessions();
+    window.setTimeout(function () {
+      var row = document.querySelector('.session-row[data-id="' + id + '"]');
+      if (row) row.focus();
+    }, 0);
   }
 
   function closeReplay() {
@@ -3295,12 +4115,23 @@
   // One archive row: the id, the model, the markers the summary
   // carries, and a badge when it is the session this face anchors. A
   // click opens the replay; a double purpose needs no second button.
+  // A session id is a timestamp and a hash. The list shows the part the
+  // owner reads — the day, the minute, the hash — and keeps the whole id
+  // in the tooltip and the copy action.
+  function sessionLabel(id) {
+    var text = String(id || '');
+    var parts = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})\d{2}Z-(.+)$/.exec(text);
+    if (!parts) return text;
+    return parts[2] + '-' + parts[3] + ' ' + parts[4] + ':' + parts[5] + ' \u00b7 ' + parts[6];
+  }
+
   function sessionRow(row) {
     var line = node('button', 'session-row');
     line.type = 'button';
     line.dataset.id = row.id;
+    line.title = row.id;
     if (face.replayId === row.id) line.setAttribute('aria-selected', 'true');
-    var name = node('span', 'session-row-id', row.id);
+    var name = node('span', 'session-row-id', sessionLabel(row.id));
     if (row.current) name.appendChild(badge('this face', 'accent'));
     line.appendChild(name);
     // The model that actually served (the end record's, via the read).
@@ -3350,7 +4181,7 @@
       ' \u00b7 ' + (replay.ended
         ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
         : 'no end record \u2014 the run was interrupted');
-    var card = boardCard(5, 'selected replay', replay.created, summary);
+    var card = boardCard(5, 'replay \u00b7 ' + sessionLabel(replay.id), replay.created, summary);
     var actions = node('div', 'replay-actions');
     var back = node('button', 'replay-button');
     back.type = 'button';
@@ -3586,6 +4417,31 @@
         ? ''
         : ' \u00b7 ' + cell.cost_per_right.toFixed(4) + ' per right'));
     card.appendChild(spend);
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.title = 'open this fit cell';
+    card.addEventListener('click', function () {
+      var actions = node('div', 'replay-actions');
+      var judge = node('button', 'replay-button replay-resume');
+      judge.type = 'button';
+      judge.textContent = 'ask sys1 about this cell';
+      judge.addEventListener('click', function () {
+        closeDrawer();
+        ask('use the sys1 lane to review the ' + cell.provider +
+          (cell.workload ? ' \u00b7 ' + cell.workload : '') +
+          ' fit cell and say what is still missing');
+      });
+      actions.appendChild(judge);
+      openDrawer('calibration \u00b7 ' + cell.provider, [
+        ['the cell', node('p', 'derivation',
+          (cell.workload || 'no shape judged') + ' \u00b7 ' + cell.fit +
+          ' \u00b7 ' + cell.judged + ' judged \u00b7 ' + cell.right + ' right \u00b7 ' +
+          cell.wrong + ' wrong \u00b7 span ' + fmtRate(cell.confidence_span))],
+        ['what it still needs', node('p', 'derivation',
+          wants.length ? wants.join(' \u00b7 ') : 'this cell informs the failover')],
+        ['what you can do', actions]
+      ]);
+    });
     return card;
   }
 
@@ -3662,6 +4518,19 @@
       }
     }[op];
     line.appendChild(node('span', 'stream-text', text ? text() : op));
+    line.tabIndex = 0;
+    line.setAttribute('role', 'button');
+    line.title = 'open this record';
+    line.dataset.wired = '1';
+    line.addEventListener('click', function () {
+      openDrawer(op + ' row', [['the record', node('pre', 'raw', JSON.stringify(row, null, 2))]]);
+    });
+    line.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        line.click();
+      }
+    });
     return line;
   }
 
@@ -3776,7 +4645,7 @@
       'The board\u2019s own read is dirtiest-first; this list ranks by the thirty-day count.');
     ranked.forEach(function (row) {
       var health = brain.filter(function (entry) { return entry.name === row.name; })[0];
-      rankCard.appendChild(projectRow(row, health, top));
+      rankCard.appendChild(projectRow(row, health, top, read.root));
     });
     el.towerBoard.appendChild(rankCard);
 
@@ -3920,7 +4789,7 @@
   // One ranked row: the bar and the share, then the facts as read. A
   // `null` fact stays a dash — git could not answer, and a zero nobody
   // measured would be a lie the bar graph tells.
-  function projectRow(row, health, top) {
+  function projectRow(row, health, top, root) {
     var line = node('div', 'rank-row');
     var dot = node('span', 'health-dot');
     var lifecycle = health && health.lifecycle ? health.lifecycle : '';
@@ -3950,7 +4819,59 @@
       });
       line.appendChild(plans);
     }
+    line.tabIndex = 0;
+    line.setAttribute('role', 'button');
+    line.title = 'open ' + row.name + '\u2019s git facts';
+    line.addEventListener('click', function () { projectDrawer(row, health, root); });
+    line.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        projectDrawer(row, health, root);
+      }
+    });
     return line;
+  }
+
+  // One project's detail: the git facts as the read returned them, the
+  // plans the derived state names, and the two actions worth having —
+  // copy the path, or ask the agent to look at the project's next step.
+  function projectDrawer(row, health, root) {
+    var actions = node('div', 'replay-actions');
+    var path = root ? String(root).replace(/\/$/, '') + '/' + row.name : row.name;
+    var copy = node('button', 'replay-button');
+    copy.type = 'button';
+    copy.textContent = 'copy the path';
+    copy.addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(path).catch(function () { });
+      copy.textContent = 'copied';
+      window.setTimeout(function () { copy.textContent = 'copy the path'; }, 1200);
+    });
+    actions.appendChild(copy);
+    var askBtn = node('button', 'replay-button replay-resume');
+    askBtn.type = 'button';
+    askBtn.textContent = 'ask about this project';
+    askBtn.addEventListener('click', function () {
+      closeDrawer();
+      ask('read ' + path + ' and tell me the next feature-sized step, given the plan and the dirty tree');
+    });
+    actions.appendChild(askBtn);
+    var plans = (health && health.plans) || [];
+    openDrawer('project \u00b7 ' + row.name, [
+      ['the git facts', node('p', 'derivation',
+        (row.branch || '\u2014') + ' @ ' + (row.head || '\u2014') +
+        ' \u00b7 ' + row.commits_30d + ' commits in 30 days' +
+        (row.dirty ? ' \u00b7 ' + row.dirty + ' dirty files' : ' \u00b7 clean') +
+        (row.ahead == null ? '' : ' \u00b7 \u2191' + row.ahead + ' \u2193' + row.behind))],
+      ['the plans', node('p', 'derivation',
+        plans.length
+          ? plans.map(function (plan) { return plan.status + ' ' + plan.count; }).join(' \u00b7 ')
+          : 'the derived state names no plan for this project')],
+      ['related', relatedBlock(
+        [row.name, row.subject || '', row.branch || ''].join(' '),
+        projectPool(row.name),
+        function (item) { projectDrawer(item.project, null, root); })],
+      ['what you can do', actions]
+    ]);
   }
 
   // -------------------------------------------------- the second-brain panel
@@ -4186,13 +5107,22 @@
     var groups = {};
     var order = [];
     (read.scalars || []).forEach(function (knob) {
-      var prefix = knob.key.indexOf('.') > 0 ? knob.key.split('.')[0] : 'general';
+      var prefix = knob.key.indexOf('.') > 0
+        ? knob.key.split('.')[0]
+        : (/^[A-Z0-9_]+$/.test(knob.key) ? 'environment' : 'general');
       if (!groups[prefix]) { groups[prefix] = []; order.push(prefix); }
       groups[prefix].push(knob);
     });
+    var groupNames = {
+      general: 'general',
+      environment: 'environment',
+      calib: 'calibration',
+      route_cache: 'route cache',
+      skills: 'skills'
+    };
     order.forEach(function (prefix) {
       knobs.appendChild(node('h3', 'form-section',
-        prefix === 'general' ? 'general' : prefix.replace(/_/g, ' ')));
+        groupNames[prefix] || prefix.replace(/_/g, ' ')));
       groups[prefix].forEach(function (knob) { knobs.appendChild(knobRow(knob)); });
     });
     el.settingsBoard.appendChild(knobs);
@@ -4535,7 +5465,13 @@
     el.log.hidden = false;
     face.planned = true;
     post('/api/plan', { task: task }).then(function (reply) {
-      if (reply.status === 200) return;
+      if (reply.status === 200) {
+        face.running = true;
+        face.stop = null;
+        resetProcess('plan');
+        paint();
+        return;
+      }
       face.planned = false;
       notice('the plan did not start',
         (reply.body && reply.body.error) || 'the face said no without a reason');
@@ -4616,7 +5552,13 @@
       if (!edited || face.running || face.seat) return;
       face.planned = false;
       post('/api/run', { task: edited }).then(function (reply) {
-        if (reply.status === 200) return;
+        if (reply.status === 200) {
+          face.running = true;
+          face.stop = null;
+          resetProcess('run');
+          paint();
+          return;
+        }
         notice('the build did not start',
           (reply.body && reply.body.error) || 'the face said no without a reason');
       }).catch(function () { });
@@ -4759,7 +5701,9 @@
     var focusId = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : '';
     var known = ROUTES.filter(function (route) { return route[0] === which; })[0];
     var address = which === 'chat' || !known ? 'chat' : which;
+    closeDrawer();
     face.panel = address;
+    if (el.asideToggle) el.asideToggle.hidden = address !== 'chat';
     face.focus = focusId ? { panel: address, id: focusId } : null;
     try { window.localStorage.setItem('fleet-panel', address); } catch (error) { }
     markRail();
@@ -4788,6 +5732,8 @@
           if (!face.replayId && face.sessions && (face.sessions.sessions || []).length) {
             face.replayId = face.sessions.sessions[0].id;
             face.focus = { panel: 'sessions', id: face.replayId };
+            window.history.replaceState(null, '',
+              '#/sessions/' + encodeURIComponent(face.replayId));
           }
           paintSessions();
           if (face.replayId) readReplay(face.replayId, true).then(paintSessions);
@@ -4799,6 +5745,15 @@
       settings: function () { paintSettings(); readSettings(true).then(paintSettings); }
     };
     if (arrive[address]) arrive[address]();
+    // The welcome is a read, not a snapshot: returning to the
+    // conversation refreshes its counts after a run or a reload.
+    if (address === 'chat') {
+      readHome(false).then(function () {
+        paintHome();
+        paintRecent();
+        paintSince();
+      }).catch(function () { });
+    }
   }
 
   // ------------------------------------------------------------ the pane
@@ -5719,7 +6674,18 @@
   });
 
   window.addEventListener('hashchange', showRoute);
+  // A returning owner lands where they left off, not on a default page.
+  if (!window.location.hash) {
+    try {
+      var lastPanel = window.localStorage.getItem('fleet-panel');
+      if (lastPanel && PANEL_EL[lastPanel]) window.location.hash = '#/' + lastPanel;
+    } catch (error) { }
+  }
   showRoute();
+
+  window.setInterval(function () {
+    if (face.process && face.process.active) paintProcess();
+  }, 1000);
 
   // The board's read on the panel's own clock, and only while the panel
   // is showing: a day's ledger moves without the log saying anything, and

@@ -7,10 +7,10 @@
 <link rel="stylesheet" href="/app.css">
 <script>
   // The theme is set before the first paint, from the same storage the
-  // toggle writes, so a light-mode owner never sees a dark flash. Dark is
-  // the default: this is a console the owner leaves open beside the work.
-  // It hangs off the document element because that exists in the head,
-  // where a body attribute cannot be set yet.
+  // toggle writes, so an owner who chose a dark theme never sees a paper
+  // flash. Paper is the default: a console read in daylight, beside the
+  // work. It hangs off the document element because that exists in the
+  // head, where a body attribute cannot be set yet.
   try {
     document.documentElement.dataset.theme =
       window.localStorage.getItem('fleet-theme-2') || 'paper';
@@ -92,7 +92,21 @@
         </div>
       </dl>
       <span class="pill" id="state-pill" data-state="idle">idle</span>
+      <button class="pill process-pill" id="process-pill" type="button" hidden
+              aria-label="open the run's process" title="open the run's process">the run</button>
       <div class="topbar-tools">
+        <button class="aside-toggle" id="aside-toggle" type="button"
+                aria-label="show the run's process" aria-pressed="true"
+                title="show the run's process">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" aria-hidden="true">
+            <rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect>
+            <path d="M14.5 4.5v15"></path>
+            <path d="M17 9h1.5"></path>
+            <path d="M17 12.5h1.5"></path>
+            <path d="M17 16h1.5"></path>
+          </svg>
+        </button>
         <button class="theme-toggle" id="theme-toggle" type="button"
                 aria-label="choose a theme" title="choose a theme" data-theme="paper">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -175,8 +189,6 @@
           <p class="next-goal" id="next-goal"></p>
           <button class="next-go" id="next-go" type="button">take this step</button>
         </div>
-        <div class="offers" id="offers"></div>
-        <div class="recent" id="recent" hidden></div>
         <div class="method" aria-label="the working method">
           <span class="method-label">your method</span>
           <ol class="method-steps">
@@ -193,12 +205,19 @@
           <button class="lane" type="button" data-lane="web">web</button>
           <button class="lane" type="button" data-lane="deck">deck</button>
         </div>
+        <div class="offers" id="offers"></div>
+        <div class="recent" id="recent" hidden></div>
         <p class="empty-meta" id="empty-meta">
           Nothing leaves this machine. Every turn is a card you can open.
         </p>
       </div>
 
       <div class="log" id="log" aria-live="polite" aria-relevant="text"></div>
+
+      <!-- The process, compact: the same live card's state in one line
+           when the aside is closed or the screen is narrow. Clicking it
+           opens the process rather than navigating away from the work. -->
+      <div class="process-strip" id="process-strip" hidden></div>
 
       <!-- The seat stands above the composer and never inside the log:
            the prompt is the one thing the owner must not have to scroll
@@ -237,6 +256,18 @@
     </section>
 
     <aside class="rail">
+      <!-- The live process. A run is a loop, and this is where it is:
+           route, think, act, verify, with the current step, the turn,
+           the tool, and the elapsed time. It is the first card in the
+           aside because it answers "where are we" before "what exists". -->
+      <section class="card process-card" id="process-card">
+        <header class="card-head">
+          <h2>the run</h2>
+          <span class="count" id="process-state">idle</span>
+        </header>
+        <div class="process-body" id="process-body"></div>
+      </section>
+
       <section class="card" id="face-card">
         <header class="card-head">
           <h2>this session</h2>

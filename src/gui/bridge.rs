@@ -343,10 +343,14 @@ impl Bridge {
         }
 
         let state = self.state();
-        let sessions = self.sessions().await;
-        let memory = self.memory().await;
-        let skills = self.skills().await;
-        let delegation = self.delegation().await;
+        // The four reads are independent; run them together so the
+        // welcome's first paint pays the slowest one, not their sum.
+        let (sessions, memory, skills, delegation) = tokio::join!(
+            self.sessions(),
+            self.memory(),
+            self.skills(),
+            self.delegation()
+        );
 
         let runs = sessions
             .get("sessions")
@@ -3376,6 +3380,28 @@ mod tests {
         );
         let door = bridge.connect();
         (bridge, sources, door)
+    }
+
+    /// The welcome's one read is assembled from the panel reads and
+    /// carries the four answers the home renders: the workspace, the run
+    /// archive, the corpus summary, the library count, and the graph's
+    /// next node (null when no graph is declared). It is cached, so a
+    /// second call inside the window is the same document.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn home_summarises_the_reads_it_claims() {
+        let (bridge, _sources, _door) = bridge().await;
+        let first = bridge.home().await;
+        assert_eq!(first["type"], "home");
+        assert!(first["workspace"].is_string(), "{first:?}");
+        assert_eq!(first["runs"]["count"], 0, "{first:?}");
+        assert!(first["runs"]["recent"].is_array());
+        assert!(first["memory"]["live"].is_number());
+        assert!(first["memory"]["top"].is_array());
+        assert!(first["skills"]["count"].is_number());
+        assert!(first["next"].is_null() || first["next"]["id"].is_string());
+        assert!(first["refused"].is_array());
+        let second = bridge.home().await;
+        assert_eq!(first, second, "the cached read is the same document");
     }
 
     #[tokio::test(flavor = "multi_thread")]
