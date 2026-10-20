@@ -426,6 +426,19 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
             }) => Some((channel, peer_id, peer)),
             _ => None,
         });
+    // A log written before the start record carried a workspace still
+    // names its project in its own paths: the first `/Projects/<name>`
+    // a tool call or a command mentions is the directory the run was
+    // working in. The summary marks it inferred, so a surface can say
+    // where the grouping came from rather than passing a guess off as a
+    // recorded fact.
+    let (workspace, workspace_inferred) = match workspace {
+        Some(workspace) => (Some(workspace), false),
+        None => match infer_project(&text) {
+            Some(inferred) => (Some(inferred), true),
+            None => (None, false),
+        },
+    };
     Some(SessionSummary {
         id,
         model,
@@ -433,11 +446,47 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         ended,
         kind,
         workspace,
+        workspace_inferred,
         channel,
         compacted,
         served_model,
         path: path.to_path_buf(),
     })
+}
+
+/// The project a log's own paths name: the first `/Projects/<name>` in
+/// the head of the file. Bounded, because a long log's paths repeat and
+/// the first one is the run's own working directory often enough to be
+/// worth naming — and the summary says it was inferred.
+fn infer_project(text: &str) -> Option<String> {
+    const HEAD: usize = 256 * 1024;
+    let head = text.get(..text.len().min(HEAD)).unwrap_or(text);
+    let marker = "/Projects/";
+    let at = head.find(marker)?;
+    let rest = &head[at + marker.len()..];
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
+        .unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    // The workspace is the absolute path the marker sits in, not the
+    // prose before it: walk back to the token boundary and take from
+    // there when what follows is a path.
+    let path_start = head[..at]
+        .rfind(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '(' || c == '[')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let path_start = if head[path_start..].starts_with('/') {
+        path_start
+    } else {
+        at
+    };
+    Some(format!(
+        "{}{}",
+        &head[path_start..at + marker.len()],
+        &rest[..end]
+    ))
 }
 
 /// A summary row for `fleet sessions`.
@@ -456,6 +505,10 @@ pub struct SessionSummary {
     /// The working directory this session was born in, or `None` on a log
     /// written before the field existed. The archive groups by it.
     pub workspace: Option<String>,
+    /// True when `workspace` was inferred from the log's own paths rather
+    /// than recorded by the start record. A surface that groups by
+    /// project says so, because an inference is not a fact the log holds.
+    pub workspace_inferred: bool,
     /// The channel this session's peer arrived on, the peer's own id on
     /// it, and the peer's name — or `None` for an ordinary session the
     /// owner started themselves. The first and third are what a surface
@@ -528,6 +581,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     ended: false,
                     kind: None,
                     workspace: None,
+                    workspace_inferred: false,
                     channel: None,
                     compacted: false,
                     served_model: None,
@@ -873,6 +927,34 @@ mod tests {
         // grouping, never the conversation.
         let records = replay(&path).unwrap();
         assert_eq!(records.len(), 2, "{records:?}");
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_log_without_a_recorded_workspace_infers_one_from_its_paths() {
+        // The archive still groups an older log by the project its own
+        // tool calls name. The flag says the grouping was inferred, so a
+        // surface can name where it came from.
+        let home = temp_home("inferred-workspace");
+        let dir = crate::home::ensure_sessions_dir(&home).unwrap();
+        let path = dir.join("20261013T194909Z-bb2fc12.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                r#"{"type":"start","v":1,"model":"deepseek-chat","created":"2026-10-13T19:49:09Z"}"#,
+                "\n",
+                r#"{"type":"user","content":"read /Users/owner/Projects/demo-repo/docs/plan.md"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let listed = list(&home).unwrap();
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(
+            listed[0].workspace.as_deref(),
+            Some("/Users/owner/Projects/demo-repo")
+        );
+        assert!(listed[0].workspace_inferred);
         fs::remove_dir_all(&home).ok();
     }
 

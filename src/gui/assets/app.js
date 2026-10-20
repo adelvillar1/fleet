@@ -324,6 +324,10 @@
     focus: null,
     // A panel's own filters, held in memory for this visit only.
     sessionsFilter: 'all',
+    // The archive groups by project; a folded group and a query are the
+    // two ways to narrow 147 rows without losing the grouping.
+    sessionFolded: {},
+    sessionQuery: '',
     memoryFilter: 'live',
     skillsFilter: 'all',
     // The library holds 442 rows; the query and the show-all toggle are
@@ -4934,9 +4938,8 @@
     var read = face.sessions;
     el.sessionsBoard.textContent = '';
     if (!read) {
-      el.sessionsBoard.appendChild(pageHead('Work', 'Sessions',
-        'Every run under this home, newest first. A row opens its replay beside the list.',
-        null));
+      el.sessionsBoard.appendChild(surfaceHead('Work', 'Sessions',
+        'Every run under this home, grouped by the project it was born in. A row reads its replay beside the list.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The archive read has not landed yet. It reads the session logs under this home, ' +
@@ -4952,96 +4955,253 @@
     var children = sessions.filter(function (row) { return row.kind === 'subagent'; }).length;
     var compacted = sessions.filter(function (row) { return row.compacted; }).length;
     var open = sessions.filter(function (row) { return !row.ended; }).length;
-    var tiles = node('div', 'tiles');
     var viaChannel = sessions.filter(function (row) { return row.channel && row.channel.length; });
-    tiles.appendChild(tile(sessions.length, 'logs in the archive', null, function () {
-      face.sessionsFilter = 'all';
-      paintSessions();
-    }));
-    tiles.appendChild(tile(viaChannel.length, 'arrived on a channel',
-      viaChannel.length ? 'accent' : null, function () {
-        face.sessionsFilter = 'channel';
-        paintSessions();
-      }));
-    tiles.appendChild(tile(open, 'without an end record', open ? 'warn' : null, function () {
-      face.sessionsFilter = 'open';
-      paintSessions();
-    }));
-    tiles.appendChild(tile(children, 'delegated children', null, function () {
-      face.sessionsFilter = 'delegated';
-      paintSessions();
-    }));
-    tiles.appendChild(tile(compacted, 'compacted at least once', compacted ? 'warn' : null, function () {
-      face.sessionsFilter = 'compacted';
-      paintSessions();
-    }));
-    el.sessionsBoard.appendChild(pageHead('Work', 'Sessions',
-      'Every run under this home, newest first. Select a row to read it beside the list.',
-      read.read_at));
-    el.sessionsBoard.appendChild(statStrip(tiles));
-
-    if (sessions.length) {
-      var shown = sessions.filter(sessionMatches);
-      var bar = node('div', 'filter-bar');
-      [['all', 'all'], ['open', 'open'], ['ended', 'ended'],
-        ['delegated', 'delegated'], ['compacted', 'compacted'],
-        ['channel', 'via a channel']].forEach(function (pair) {
-        var chip = node('button', 'filter-chip', pair[1]);
-        chip.type = 'button';
-        chip.setAttribute('aria-pressed', face.sessionsFilter === pair[0] ? 'true' : 'false');
-        chip.addEventListener('click', function () {
-          face.sessionsFilter = pair[0];
-          paintSessions();
-        });
-        bar.appendChild(chip);
-      });
-      bar.appendChild(node('span', 'filter-count',
-        shown.length + ' of ' + sessions.length));
-      el.sessionsBoard.appendChild(bar);
-
-      // The split is a width decision, not a mode: below a 1000px track
-      // the archive takes the whole board and the replay moves to the
-      // dock (or, with no dock, below the list). It never overflows.
-      var track = el.sessionsBoard.clientWidth || 0;
-      var split = track >= 1000;
-      var docked = !split && window.innerWidth > 1180 &&
-        document.body.dataset.aside === 'open';
-      var list = boardCard(split && face.replayId ? 7 : 12, 'the archive', null,
-        split
-          ? 'the row this face anchors is marked. Selecting a row reads it beside the list.'
-          : docked
-            ? 'the selected run reads in the dock beside the work.'
-            : 'the selected run reads below the list.');
-      var headRow = node('div', 'session-head-row');
-      headRow.appendChild(node('span', null, 'session'));
-      headRow.appendChild(node('span', null, 'served by'));
-      headRow.appendChild(node('span', null, 'state'));
-      headRow.appendChild(node('span', null, 'started'));
-      list.appendChild(headRow);
-      if (!shown.length) {
-        list.appendChild(node('p', 'board-empty',
-          'No run in the archive matches this filter. Clear it to see the whole list.'));
-      }
-      shown.forEach(function (row) { list.appendChild(sessionRow(row)); });
-      el.sessionsBoard.appendChild(list);
-      if (face.replayId) {
-        if (face.replay) {
-          if (split) paintReplayInto(el.sessionsBoard, face.replay, read.current, 5);
-          else if (docked) showSessionObject(face.replay, read.current);
-          else paintReplayInto(el.sessionsBoard, face.replay, read.current, 12);
-        } else {
-          var waitingReplay = boardCard(split ? 5 : 12, 'selected replay', null, null);
-          waitingReplay.appendChild(node('p', 'board-empty', 'Reading this run\u2026'));
-          el.sessionsBoard.appendChild(waitingReplay);
+    var groups = sessionGroups(sessions);
+    var instrument = surfaceInstrument('the archive', sessions.length + ' logs',
+      (read.current ? 'this face anchors ' + sessionLabel(read.current) : 'no session is anchored') +
+      (sessions.length ? ' \u00b7 newest ' + sessionShortDate(sessions[0].created) : ''),
+      [{
+        label: 'ask about the archive',
+        run: function () {
+          ask('review my recent sessions and tell me what work is still unfinished');
         }
+      }]);
+    el.sessionsBoard.appendChild(surfaceHead('Work', 'Sessions',
+      'Every run under this home, grouped by the project it was born in. A row reads its replay beside the list.',
+      instrument));
+    el.sessionsBoard.appendChild(surfaceStrip([
+      [sessions.length, 'logs'],
+      [open, 'open', open ? 'live' : null],
+      [children, 'delegated'],
+      [compacted, 'compacted'],
+      [viaChannel.length, 'via a channel'],
+      [groups.length, 'projects']
+    ], read.current ? 'this face anchors ' + sessionLabel(read.current) : 'no session is anchored'));
+
+    var shown = sessions.filter(function (row) {
+      return sessionMatches(row) && sessionMatchesQuery(row);
+    });
+    var selected = !!face.replayId;
+    var split = (el.sessionsBoard.clientWidth || 0) >= 1000;
+    var docked = !split && window.innerWidth > 1180 &&
+      document.body.dataset.aside === 'open';
+    var listSpan = selected && split ? 7 : (selected ? 12 : 8);
+    var list = boardCard(listSpan, 'the archive',
+      shown.length + ' of ' + sessions.length,
+      selected
+        ? 'the row this face anchors is marked. Selecting a row reads it beside the list.'
+        : 'grouped by the project each run was born in; a group folds from its own header.');
+    list.classList.add('lib-card');
+    var tools = node('div', 'lib-tools');
+    tools.appendChild(sessionSearch());
+    list.appendChild(tools);
+    list.appendChild(filterBar([
+      { value: 'all', label: 'all', count: sessions.length },
+      { value: 'open', label: 'open', count: open },
+      { value: 'ended', label: 'ended', count: sessions.length - open },
+      { value: 'delegated', label: 'delegated', count: children },
+      { value: 'compacted', label: 'compacted', count: compacted },
+      { value: 'channel', label: 'via a channel', count: viaChannel.length }
+    ], face.sessionsFilter || 'all', function (value) {
+      face.sessionsFilter = value;
+      paintSessions();
+    }));
+    var cols = node('div', 'session-cols');
+    ['session', 'served by', 'state', 'actions'].forEach(function (label) {
+      cols.appendChild(node('span', null, label));
+    });
+    list.appendChild(cols);
+
+    var visible = groups.map(function (group) {
+      return {
+        name: group.name,
+        rows: group.rows.filter(function (row) {
+          return sessionMatches(row) && sessionMatchesQuery(row);
+        })
+      };
+    }).filter(function (group) { return group.rows.length; });
+    visible.forEach(function (group) {
+      var folded = !face.sessionQuery && !!face.sessionFolded[group.name];
+      list.appendChild(sessionGroupHeader(group.name, group.rows, folded));
+      if (!folded) group.rows.forEach(function (row) { list.appendChild(sessionRow(row)); });
+    });
+    if (!visible.length) {
+      list.appendChild(node('p', 'board-empty',
+        'No run in the archive matches' +
+        (face.sessionQuery ? ' \u201c' + face.sessionQuery + '\u201d' : ' this filter') +
+        '. The search reads the id, the project, the model, the channel and the kind.'));
+    }
+    el.sessionsBoard.appendChild(list);
+
+    if (selected) {
+      if (face.replay) {
+        if (split) paintReplayInto(el.sessionsBoard, face.replay, read.current, 5);
+        else if (docked) showSessionObject(face.replay, read.current);
+        else paintReplayInto(el.sessionsBoard, face.replay, read.current, 12);
+      } else {
+        var waitingReplay = boardCard(split ? 5 : 12, 'selected replay', null, null);
+        waitingReplay.appendChild(node('p', 'board-empty', 'Reading this run\u2026'));
+        el.sessionsBoard.appendChild(waitingReplay);
       }
     } else {
-      var none = boardCard(12, 'the archive', null, null);
-      none.appendChild(node('p', 'board-empty',
-        'This home holds no session logs yet. A run writes one log per session, whether it ' +
-        'starts here, in the TUI, or headless.'));
-      el.sessionsBoard.appendChild(none);
+      el.sessionsBoard.appendChild(archiveRail(groups, sessions));
     }
+  }
+
+  // The project a run was born in: the workspace's last segment. A run
+  // with no workspace is its own group, named rather than hidden.
+  function sessionProject(workspace) {
+    if (!workspace) return 'no project';
+    var segments = String(workspace).split('/');
+    return segments[segments.length - 1] || 'no project';
+  }
+
+  function sessionGroups(sessions) {
+    var map = {};
+    sessions.forEach(function (row) {
+      var key = sessionProject(row.workspace);
+      (map[key] = map[key] || []).push(row);
+    });
+    var groups = Object.keys(map).map(function (name) {
+      var rows = map[name].slice().sort(function (left, right) {
+        return String(right.created || '').localeCompare(String(left.created || ''));
+      });
+      return {
+        name: name,
+        rows: rows,
+        newest: rows.length ? String(rows[0].created || '') : ''
+      };
+    });
+    groups.sort(function (left, right) {
+      if (left.name === 'no project') return 1;
+      if (right.name === 'no project') return -1;
+      return right.newest.localeCompare(left.newest) || left.name.localeCompare(right.name);
+    });
+    return groups;
+  }
+
+  function sessionShortDate(stamp) {
+    var text = String(stamp || '');
+    return text.length >= 16 ? text.slice(5, 10) + ' ' + text.slice(11, 16) : text;
+  }
+
+  function sessionMatchesQuery(row) {
+    var asked = (face.sessionQuery || '').trim().toLowerCase();
+    if (!asked) return true;
+    var channel = (row.channel || []).join(' ');
+    return [row.id, row.workspace, row.model, row.kind, channel]
+      .join(' ').toLowerCase().indexOf(asked) !== -1;
+  }
+
+  function sessionSearch() {
+    var wrap = node('div', 'panel-search');
+    var box = node('input', 'panel-search-box');
+    box.type = 'search';
+    box.placeholder = 'search the archive \u2014 id, project, model, channel';
+    box.value = face.sessionQuery || '';
+    box.setAttribute('aria-label', 'search the archive');
+    box.addEventListener('input', function () {
+      face.sessionQuery = box.value;
+      paintSessions();
+      var again = el.sessionsBoard.querySelector('.panel-search-box');
+      if (again) {
+        again.focus();
+        again.setSelectionRange(again.value.length, again.value.length);
+      }
+    });
+    wrap.appendChild(box);
+    return wrap;
+  }
+
+  function sessionGroupHeader(name, rows, folded) {
+    var head = node('button', 'session-group');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    head.appendChild(node('span', 'session-group-fold', folded ? '\u25b8' : '\u25be'));
+    head.appendChild(node('span', 'session-group-name', name));
+    head.appendChild(node('span', 'session-group-count',
+      rows.length + (rows.length === 1 ? ' run' : ' runs')));
+    var open = rows.filter(function (row) { return !row.ended; }).length;
+    if (open) head.appendChild(badge(open + ' open', 'live'));
+    var inferred = rows.every(function (row) { return row.workspace_inferred; });
+    if (inferred) {
+      head.appendChild(badge('inferred', null));
+      head.title = 'the project inferred from the runs\u2019 own paths';
+    }
+    head.appendChild(node('span', 'session-group-last',
+      'newest ' + sessionShortDate(rows[0].created)));
+    head.addEventListener('click', function () {
+      face.sessionFolded[name] = !face.sessionFolded[name];
+      paintSessions();
+    });
+    return head;
+  }
+
+  // The rail when no run is selected: which projects the archive holds
+  // and how the last fortnight reads. Selecting a run replaces it with
+  // the replay.
+  function archiveRail(groups, sessions) {
+    var projects = boardCard(12, 'by project', groups.length + ' projects', null);
+    projects.classList.add('lib-card');
+    var list = node('div', 'rail-list');
+    var max = groups.reduce(function (value, group) {
+      return Math.max(value, group.rows.length);
+    }, 0);
+    groups.slice(0, 10).forEach(function (group) {
+      var row = node('div', 'mix-row');
+      var button = node('button', 'mix-name', group.name);
+      button.type = 'button';
+      button.title = 'search the archive for ' + group.name;
+      button.addEventListener('click', function () {
+        face.sessionQuery = group.name;
+        paintSessions();
+      });
+      row.appendChild(button);
+      var bar = node('span', 'mix-bar');
+      var fill = node('i');
+      fill.style.width = Math.round(100 * group.rows.length / max) + '%';
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(node('span', 'rail-em', String(group.rows.length)));
+      list.appendChild(row);
+    });
+    projects.appendChild(list);
+
+    var days = boardCard(12, 'the last fourteen days', null,
+      'one bar per day a run was started, counted from the session logs.');
+    days.classList.add('lib-card');
+    var counts = {};
+    sessions.forEach(function (row) {
+      var day = String(row.created || '').slice(0, 10);
+      if (day) counts[day] = (counts[day] || 0) + 1;
+    });
+    var dates = Object.keys(counts).sort();
+    var newest = dates.length ? dates[dates.length - 1] : '';
+    var end = newest ? new Date(newest + 'T00:00:00Z') : new Date();
+    var strip = node('div', 'commit-bars');
+    var maxDay = 0;
+    var dayRows = [];
+    for (var back = 13; back >= 0; back -= 1) {
+      var at = new Date(end.getTime() - back * 86400000);
+      var key = at.toISOString().slice(0, 10);
+      var count = counts[key] || 0;
+      maxDay = Math.max(maxDay, count);
+      dayRows.push([key, count]);
+    }
+    dayRows.forEach(function (entry) {
+      var bar = node('span', entry[1] ? (entry[1] === maxDay ? 'max' : '') : 'zero');
+      if (entry[1]) {
+        bar.style.height = Math.max(1, Math.round(52 * Math.sqrt(entry[1] / Math.max(1, maxDay)))) + 'px';
+      }
+      bar.title = entry[0] + ': ' + entry[1] + ' runs';
+      strip.appendChild(bar);
+    });
+    days.appendChild(strip);
+    var axis = node('div', 'commit-axis');
+    axis.appendChild(node('span', null, dayRows[0][0].slice(5)));
+    axis.appendChild(node('span', null, dayRows[dayRows.length - 1][0].slice(5)));
+    days.appendChild(axis);
+    return surfaceRail([projects, days]);
   }
 
   // The archive's filter. It is the panel's own state and it never
@@ -5127,40 +5287,49 @@
   }
 
   function sessionRow(row) {
-    var line = node('button', 'session-row');
-    line.type = 'button';
+    var line = node('div', 'session-row');
+    line.tabIndex = 0;
+    line.setAttribute('role', 'button');
     line.dataset.act = 'inspect';
     line.dataset.id = row.id;
     line.title = row.id;
     if (face.replayId === row.id) line.setAttribute('aria-selected', 'true');
-    var name = node('span', 'session-row-id');
+    var name = node('div', 'session-name');
     var top = node('span', 'session-row-top');
-    top.appendChild(node('span', 'session-row-label', sessionLabel(row.id)));
+    top.appendChild(node('b', null, sessionLabel(row.id)));
     if (row.current) top.appendChild(badge('this face', 'accent'));
     name.appendChild(top);
-    // Where the run came from, under its name rather than in a sixth
-    // column: the archive stays four columns wide, and a row that has
-    // something to say about its origin grows one line instead of
-    // dragging the whole table out of alignment.
-    var where = sessionWhere(row);
-    if (where) name.appendChild(where);
+    if (row.channel && row.channel.length) {
+      name.appendChild(node('p', 'session-meta',
+        'via ' + row.channel[0] + ' \u00b7 ' + (row.channel[2] || row.channel[1])));
+    }
     line.appendChild(name);
-    // The model that actually served (the end record's, via the read).
-    // Null while the run is in flight — nothing has served yet — and a
-    // dash on an ended unrouted run. Never a default's name standing in
-    // for a decision nobody made.
-    line.appendChild(node('span', 'session-row-model',
+    line.appendChild(node('span', 'session-model',
       row.model || (row.ended ? '\u2014' : 'routing\u2026')));
-    var marks = node('span', 'session-row-marks');
+    var marks = node('div', 'session-marks');
     if (row.kind) marks.appendChild(badge(row.kind, null));
     if (row.compacted) marks.appendChild(badge('compacted', 'warn'));
     marks.appendChild(badge(row.ended ? 'ended' : 'open', row.ended ? null : 'live'));
     line.appendChild(marks);
-    line.appendChild(node('span', 'session-row-created', row.created || '\u2014'));
+    var current = (face.sessions && face.sessions.current) || '';
+    var acts = node('div', 'row-actions');
+    acts.appendChild(rowAction('open', 'read this replay', function () {
+      selectSession(row.id);
+    }, true));
+    if (row.id !== current && !face.running) {
+      acts.appendChild(rowAction('resume', 'resume this session here', function () {
+        resumeSession(row.id);
+      }));
+    }
+    acts.appendChild(rowAction('copy', 'copy the session id', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(row.id).catch(function () { });
+      notice('the session id is copied', row.id);
+    }));
+    line.appendChild(acts);
     line.addEventListener('click', function () { selectSession(row.id); });
     line.addEventListener('keydown', function (event) {
-      var rows = Array.prototype.slice.call(
-        line.parentNode.querySelectorAll('.session-row'));
+      var card = line.closest('.lib-card') || line.parentNode;
+      var rows = Array.prototype.slice.call(card.querySelectorAll('.session-row'));
       var at = rows.indexOf(line);
       if (event.key === 'ArrowDown' && at < rows.length - 1) {
         event.preventDefault();
@@ -5173,6 +5342,9 @@
       } else if (event.key === 'Escape') {
         event.preventDefault();
         closeReplay();
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectSession(row.id);
       }
     });
     return line;

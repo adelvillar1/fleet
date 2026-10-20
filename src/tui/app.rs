@@ -4338,6 +4338,7 @@ mod tests {
             ended: false,
             kind: None,
             workspace: None,
+            workspace_inferred: false,
             channel: None,
             compacted: false,
             served_model: None,

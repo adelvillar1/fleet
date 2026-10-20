@@ -1622,6 +1622,7 @@ mod tests {
             ended: true,
             kind: None,
             workspace: workspace.map(str::to_string),
+            workspace_inferred: false,
             channel: None,
             compacted: false,
             served_model: None,

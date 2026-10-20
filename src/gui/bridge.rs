@@ -2780,6 +2780,7 @@ fn sessions_read(home: &std::path::Path, current: &str) -> Value {
                 "ended": entry.ended,
                 "kind": entry.kind,
                 "workspace": entry.workspace,
+                "workspace_inferred": entry.workspace_inferred,
                 "channel": entry.channel,
                 "compacted": entry.compacted,
                 "current": entry.id == current,

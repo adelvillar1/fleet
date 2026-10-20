@@ -4001,6 +4001,88 @@ pre.drawer-code {
 
 .mix-row { display: grid; grid-template-columns: 78px minmax(0, 1fr) 26px; gap: 8px; align-items: center; padding: 4px 0; }
 .mix-row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-ink-secondary); font-size: 10px; }
+.mix-name {
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mix-name:hover { color: var(--dsw-alias-accent-lift); }
+
+/* ---- the sessions archive ---------------------------------------------------
+   Grouped by the project each run was born in: a fold header per group,
+   then the runs newest first. The row's actions sit where the eye lands,
+   beside the state, so reading, resuming, and copying do not require
+   opening the replay first. */
+
+.session-cols,
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) 116px 150px 152px;
+  gap: 10px;
+  align-items: center;
+}
+
+.session-cols {
+  padding: 6px 15px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.session-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 15px;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-hairline-strong);
+  background: color-mix(in srgb, var(--dsw-alias-ink) 3.5%, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-group:hover { background: color-mix(in srgb, var(--dsw-alias-ink) 5%, transparent); }
+.session-group-fold { width: 10px; color: var(--dsw-alias-ink-tertiary); font-size: 9px; }
+.session-group-name { font-size: 11.5px; font-weight: 600; }
+.session-group-count { color: var(--dsw-alias-ink-tertiary); font-family: var(--font-mono); font-size: 9px; }
+.session-group-last { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-family: var(--font-mono); font-size: 9px; }
+
+.session-row {
+  padding: 6px 15px 6px 26px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  cursor: pointer;
+}
+
+.session-row:hover { background: color-mix(in srgb, var(--dsw-alias-ink) 3%, transparent); }
+.session-row:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -2px; }
+.session-row[aria-selected="true"] { background: var(--dsw-alias-accent-wash); box-shadow: inset 2px 0 0 var(--dsw-alias-accent); }
+
+.session-name { min-width: 0; }
+.session-name b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; }
+.session-meta { margin-top: 1px; color: var(--dsw-alias-ink-tertiary); font-size: 9.5px; }
+.session-model { overflow: hidden; color: var(--dsw-alias-ink-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.session-marks { display: flex; flex-wrap: wrap; gap: 4px; }
+
+@container (max-width: 620px) {
+  .session-cols { display: none; }
+  .session-row { grid-template-columns: minmax(0, 1fr) auto; padding: 7px 12px 7px 18px; }
+  .session-row > .session-model, .session-row > .session-marks { display: none; }
+  .session-row > .row-actions { grid-column: 1 / -1; justify-content: flex-start; margin-top: 2px; }
+  .session-group-last { display: none; }
+}
 .mix-bar { height: 3px; overflow: hidden; border-radius: 2px; background: var(--dsw-alias-hairline); }
 .mix-bar i { display: block; height: 100%; border-radius: 2px; background: var(--dsw-alias-accent); }
 
