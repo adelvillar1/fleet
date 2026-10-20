@@ -5,15 +5,20 @@ stage 2, its own source. Every change is a proposal: a plan with
 acceptance criteria, a diff, and an expected effect, that applies only
 when the local gate is green, the change is non-destructive or
 explicitly approved in the current turn, and the verdict is recorded
-in the calibration ledger. Every applied change is reversible.
+in the calibration ledger. Every applied change is reversible, and —
+since the adopt-on-contrast increment (2026-10-19) — every source
+change is **measured** before it is kept, and every applied change
+leaves a **lesson** behind.
 
 ```
-src/improve.rs     the proposal, the gate, apply/undo, the surface, the rows
+src/improve.rs     the proposal, the gate, the contrast, the lesson
+                   store, apply/undo, the surface, the rows
+src/eval.rs        the corpus, the score line, the three-outcome probe
 src/tools.rs       the improve declaration (the tool vocabulary's home)
 src/agent.rs       the improve_home option, the declaration, the call path
 src/calib.rs       the propose op: the verdict row with the gate's evidence
 src/route.rs       validate_provider_entry — the roster's own schema, reused
-src/cli.rs         fleet improve: list, apply, undo
+src/cli.rs         fleet improve: list, apply, undo, lessons
 src/main.rs        the command, and the tool's wiring into run/chat/TUI
 ```
 
@@ -114,6 +119,111 @@ them. The failure a step names is its last `error:` line (cargo's
 `help:` advice after it is not the reason), bounded to 240 characters
 in the row.
 
+## The probe: three outcomes, never a zero
+
+For a source change the gate runs the eval corpus as a probe over the
+freshly-built binary. The probe is not a yes/no: `fleet eval` always
+prints one `eval-score: <n>` footer line, and one
+`regressions: <a>, <b>` line when it is red, and the probe grades the
+subprocess into exactly three shapes —
+
+| shape | what happened | the gate |
+|---|---|---|
+| `Green { score }` | every scenario passed | the change may land |
+| `Regressed { score, scenarios }` | the corpus ran and named failures | refused, the scenarios named |
+| `Err(reason)` | the corpus **could not be measured** — the executable did not resolve, the child timed out, a spawn failed, or a nonzero exit printed no verdict (a crash) | refused, named "could not be measured" |
+
+The last row is the rule the contrast rests on, borrowed from
+Harness²'s design and stated the same way: **a judge failure is
+`None`, never a zero**. A crashed probe is not a regression, and it is
+never read as one — the old behavior reported "the eval corpus
+regressed" for any nonzero exit, including the driver-panic exit 101
+the eval module's own docstring names. The gate keeps failing closed
+on an unmeasurable probe (a source self-edit is never waved through
+unmeasured); what changed is that the failure is named for what it is.
+
+## The contrast: adopt on a measurement
+
+Before the apply lands a change, `improve::apply` reads the most
+recent recorded `eval_corpus` row (`eval::latest_row` — today first,
+then the days the stream holds) as the **baseline**. After the probe
+runs, the verdict carries the contrast:
+
+- **after > baseline** — applied, the summary naming both scores:
+  `corpus 0.95 → 1.00 (measured gain)`;
+- **after == baseline** — applied and labeled plainly:
+  `corpus unchanged at 1.00 — no measured gain`. A green-but-inert
+  change is a legitimate outcome, and the summary never implies an
+  improvement it cannot show;
+- **no baseline recorded** — applied with that named, rather than
+  inventing a comparison;
+- **regressed or unmeasured** — refused, per the probe table above.
+
+The scope is stated, never implied: the corpus measures the harness's
+*machinery* (session replay, the tool loop, delegation, recall), so it
+instruments a **source** change and cannot instrument a skill, memory,
+or config change — a superseded memory fact does not move a scripted
+scenario. Those targets keep adopting on the green gate, and the
+verdict says so: `no corpus step — a memory change does not move the
+scripted corpus`. Implying a measurement that cannot exist would be
+worse than having none.
+
+## The lesson store
+
+Every **applied** change writes one lesson under `<FLEET_HOME>/lessons/`
+— the loop's own history, the improvement-harness half of the
+increment:
+
+```markdown
+---
+name: fold-carrying-summary
+target: source
+target-name: src/lib.rs
+created: 2026-10-19
+contrast: corpus 0.90 → 1.00 (measured gain)
+confidence: measured
+---
+
+## Cue
+
+a source proposal for `src/lib.rs`
+
+## Lesson
+
+the fold carries its summary
+
+## Evidence
+
+the corpus named conversation-fold before the fix
+```
+
+- **The evidence rule.** A lesson needs non-empty cue, lesson, and
+  evidence — the cue is the target kind and name, the lesson is the
+  proposal's expected effect (or its change op when the effect is
+  empty), and the evidence is the proposal's recorded justification.
+  A proposal whose justification is empty lands but records **no
+  lesson**, and the summary says why (`no lesson: ... carries no
+  justification`). The store refuses a bare assertion at the write
+  boundary too, exactly as an inferred memory fact needs its recorded
+  justification before it supersedes.
+- **Confidence** is `measured` when the contrast is a corpus
+  comparison, `unmeasured` when the corpus does not instrument the
+  target kind. It records the instrument, not a guess.
+- **Read before the next proposal.** The `improve` declaration is built
+  per run with the home, and its description carries the five most
+  recent lessons — so the model sees what earlier changes learned
+  *before* it forms the arguments. The filing confirmation also names
+  the lessons recorded for the same target kind, which is the narrower
+  per-attempt view.
+- **`fleet improve lessons`** renders the store as house cards, newest
+  first.
+
+The store is a sibling of the proposal store, not a second memory
+corpus: a lesson records a *change the harness made to itself* and the
+contrast that justified it, where a memory fact records what the world
+is. It starts inside `improve.rs` and moves to its own module only if
+it earns one.
+
 ## Apply, revert, and the provenance rule
 
 The honest reading of "applies only with the gate green" for a source
@@ -201,13 +311,24 @@ history it lands in.
   structurally for a repo-side apply, byte-for-byte from the pre-image
   for a home-side one. The status returns to `pending` — the change is
   not in effect, and the ledger keeps the record that it once was.
+- **`fleet improve lessons`** — the lesson store as house cards: one
+  record per applied change, with the contrast it was adopted on, its
+  confidence, and the lesson it carries.
+- **`fleet skills --duplicates`** — the collapse report: pairwise
+  line-Jaccard over the skill bodies at the named threshold
+  (`skills::DUPLICATE_SIMILARITY`, 0.60), most similar first.
+  Report-only — nothing is merged or deleted; the curation proposals
+  stay the only writer. The detector is Harness²'s diversity measure
+  ported as a visibility instrument: a library drifting toward
+  sameness names its own pairs before it becomes a loader problem.
 - **the `improve` tool** — declared on every run that carries a home
   (`run`, `chat`, the TUI; not on an unattended scheduled run, and not
   on a subagent child, which sees nothing of the parent). It files one
-  proposal and returns the confirmation naming where it landed and that
-  applying is `fleet improve apply`. The call crosses the ordinary
-  approval gate like every other tool, and the confirmation rides the
-  same bounded `tool_result` path, so model-visible ⟺ logged holds.
+  proposal and returns the confirmation naming where it landed, that
+  applying is `fleet improve apply`, and the recent lessons recorded
+  for the same target kind. The call crosses the ordinary approval
+  gate like every other tool, and the confirmation rides the same
+  bounded `tool_result` path, so model-visible ⟺ logged holds.
 
 The gate runs in the **working directory as the repository root**, the
 way the memory corpus resolves from the cwd (KI-074's walk): run
@@ -229,3 +350,12 @@ later approved lands two:
 proposal's reason, and its gate line. A `waiting` row carries an empty
 `gate` — the gate never ran — which is what distinguishes "waiting on
 the owner" from "refused by the gate".
+
+An applied row's `reason` is the verdict's summary, and the summary
+carries the contrast — `... · corpus 0.90 → 1.00 (measured gain) ·
+lesson recorded` — so the row is where the adoption's evidence lives.
+A refusal also rides back into the proposal's own frontmatter as
+`last-refusal: <the named failure>` (one line), cleared by any later
+applied stamp; `fleet improve` shows it on the card, so the next
+attempt starts from the failure the gate named instead of
+rediscovering it.

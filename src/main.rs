@@ -558,6 +558,15 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
             }
         };
     }
+    if options.duplicates {
+        // The collapse report is its own surface: deterministic,
+        // report-only, and never a writer — the curation proposals
+        // stay the only path that changes the library.
+        let skills = load_skills(user_home.as_deref());
+        let pairs = fleet::skills::near_duplicates(&skills, fleet::skills::DUPLICATE_SIMILARITY);
+        print!("{}", fleet::skills::render_duplicates(skills.len(), &pairs));
+        return ExitCode::SUCCESS;
+    }
     if options.curate {
         let config = route::skills_config(&home);
         let override_dir = std::env::var("FLEET_SKILLS_DIR").ok();
@@ -1005,6 +1014,13 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
             print!(
                 "{}",
                 fleet::improve::render(&fleet::improve::load_all(&home))
+            );
+            ExitCode::SUCCESS
+        }
+        ImproveAction::Lessons => {
+            print!(
+                "{}",
+                fleet::improve::render_lessons(&fleet::improve::load_lessons(&home))
             );
             ExitCode::SUCCESS
         }

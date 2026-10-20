@@ -1506,6 +1506,108 @@ pub fn render_curation(filed: &[PathBuf]) -> String {
     out
 }
 
+// --- the collapse detector -------------------------------------------------
+
+/// The line-Jaccard a pair of skill bodies must reach before the
+/// surface reports it as a likely duplicate. The measure is Harness²'s
+/// collapse detector, ported as a visibility instrument: report-only,
+/// nothing is merged or deleted here.
+pub const DUPLICATE_SIMILARITY: f64 = 0.6;
+
+/// One reported near-duplicate pair: two skill names and the
+/// line-Jaccard similarity of their bodies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DuplicatePair {
+    pub a: String,
+    pub b: String,
+    pub similarity: f64,
+}
+
+/// Pairwise line-Jaccard over the skills' bodies, reporting every pair
+/// at or above `threshold`, most similar first. Empty bodies are
+/// skipped: two skills that carry no prose share nothing worth naming.
+/// The comparison is deterministic — same corpus, same pairs — so the
+/// surface and its test agree without a model in the loop.
+pub fn near_duplicates(skills: &[Skill], threshold: f64) -> Vec<DuplicatePair> {
+    let bodies: Vec<Option<std::collections::HashSet<String>>> = skills
+        .iter()
+        .map(|skill| {
+            let lines: std::collections::HashSet<String> = skill
+                .body
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect();
+            (!lines.is_empty()).then_some(lines)
+        })
+        .collect();
+    let mut pairs: Vec<DuplicatePair> = Vec::new();
+    for (i, left) in skills.iter().enumerate() {
+        let Some(left_lines) = &bodies[i] else {
+            continue;
+        };
+        for (j, right) in skills.iter().enumerate().skip(i + 1) {
+            let Some(right_lines) = &bodies[j] else {
+                continue;
+            };
+            let union = left_lines.union(right_lines).count();
+            if union == 0 {
+                continue;
+            }
+            let shared = left_lines.intersection(right_lines).count();
+            let similarity = shared as f64 / union as f64;
+            if similarity >= threshold {
+                pairs.push(DuplicatePair {
+                    a: left.name.clone(),
+                    b: right.name.clone(),
+                    similarity,
+                });
+            }
+        }
+    }
+    pairs.sort_by(|left, right| {
+        right
+            .similarity
+            .partial_cmp(&left.similarity)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.a.cmp(&right.a))
+            .then_with(|| left.b.cmp(&right.b))
+    });
+    pairs
+}
+
+/// Render the collapse report: the threshold, every reported pair with
+/// its similarity, and the report-only footer. Never a plain-text table.
+pub fn render_duplicates(skills: usize, pairs: &[DuplicatePair]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{BOLD}fleet skills --duplicates{RESET} {DIM}\u{2014} {skills} skill{} scanned \u{b7} threshold {:.2}{RESET}\n\n",
+        if skills == 1 { "" } else { "s" },
+        DUPLICATE_SIMILARITY,
+    ));
+    if pairs.is_empty() {
+        out.push_str(&format!(
+            "{DIM}no pair reaches the threshold \u{b7} nothing is merged or deleted here{RESET}\n"
+        ));
+        return out;
+    }
+    for pair in pairs {
+        out.push_str(&format!(
+            "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{a}{RESET} {DIM}\u{b7} {b} \u{b7} {similarity:.2}{RESET} {DIM}\u{2510}{RESET}\n",
+            a = pair.a,
+            b = pair.b,
+            similarity = pair.similarity,
+        ));
+    }
+    out.push_str(&format!(
+        "\n{DIM}{} near-duplicate pair{} \u{b7} report-only: the curation proposals stay the only writer{RESET}\n",
+        pairs.len(),
+        if pairs.len() == 1 { "" } else { "s" },
+    ));
+    out
+}
+
 /// Why one proposal could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProposalReadError {
@@ -2678,5 +2780,52 @@ mod tests {
         );
         assert!(proposal_name("bash-recovery").is_ok());
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// One skill for the detector's tests: a name and a body, no disk.
+    fn skill(name: &str, body: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            description: "a test skill".to_string(),
+            body: body.to_string(),
+            path: PathBuf::from(format!("/tmp/{name}/SKILL.md")),
+            modified: None,
+        }
+    }
+
+    #[test]
+    fn the_collapse_detector_reports_a_near_duplicate_pair_and_stays_silent_otherwise() {
+        let shared = "one line\ntwo line\nthree line\nfour line\nfive line\n\
+                      six line\nseven line\neight line\nnine line\nten line";
+        let near = format!("{shared}\nan eleventh differing line");
+        let distinct = "an entirely different body\nwith none of the shared lines";
+        let skills = vec![
+            skill("alpha", shared),
+            skill("beta", &near),
+            skill("gamma", distinct),
+        ];
+        let pairs = near_duplicates(&skills, DUPLICATE_SIMILARITY);
+        assert_eq!(pairs.len(), 1, "{pairs:?}");
+        assert_eq!(pairs[0].a, "alpha");
+        assert_eq!(pairs[0].b, "beta");
+        assert!(pairs[0].similarity >= DUPLICATE_SIMILARITY);
+        // Bodyless skills share nothing worth naming, and a library of
+        // distinct bodies reports nothing.
+        let distinct_only = vec![
+            skill("one", distinct),
+            skill("two", "another body\nwith other lines"),
+            skill("empty", ""),
+        ];
+        assert!(near_duplicates(&distinct_only, DUPLICATE_SIMILARITY).is_empty());
+        // Report-only: the render names the pair and the threshold, and
+        // says it changes nothing.
+        let rendered = render_duplicates(skills.len(), &pairs);
+        assert!(
+            rendered.contains("alpha") && rendered.contains("beta"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("report-only"), "{rendered}");
+        let quiet = render_duplicates(distinct_only.len(), &[]);
+        assert!(quiet.contains("no pair reaches the threshold"), "{quiet}");
     }
 }

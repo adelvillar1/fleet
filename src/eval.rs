@@ -493,6 +493,10 @@ pub enum ScenarioFamily {
     /// four states, the write-time flag and refusal, and the drift
     /// signal a delegation's own log carries (slice 20's D7).
     Nomenclature,
+    /// The improve loop's own record: the lesson store's write, its
+    /// evidence refusal, and its surface (the adopt-on-contrast plan's
+    /// P3).
+    Improve,
 }
 
 impl ScenarioFamily {
@@ -510,6 +514,7 @@ impl ScenarioFamily {
             ScenarioFamily::Delegation => "delegation",
             ScenarioFamily::GroundedLane => "grounded-lane",
             ScenarioFamily::Nomenclature => "nomenclature",
+            ScenarioFamily::Improve => "improve",
         }
     }
 }
@@ -686,6 +691,9 @@ pub fn corpus() -> Vec<Scenario> {
         Scenario::new("delta-replan", ScenarioFamily::Nomenclature, |bin| {
             Box::pin(delta_replan(bin))
         }),
+        Scenario::new("improve-lesson-store", ScenarioFamily::Improve, |bin| {
+            Box::pin(improve_lesson_store(bin))
+        }),
     ]
 }
 
@@ -822,16 +830,107 @@ pub fn last_row(root: &Path) -> Option<calib::ReadRow> {
         .find(|row| row.op == calib::OP_EVAL_CORPUS)
 }
 
+/// The most recent `eval_corpus` row the stream holds, across days —
+/// the baseline an apply's contrast is measured against. Today first
+/// (the common case), then the days under the stream root, newest
+/// first, so a machine whose last corpus run was yesterday still has a
+/// baseline. `None` when the stream has never recorded one; the apply
+/// then names "no baseline" rather than inventing a comparison.
+pub fn latest_row(root: &Path) -> Option<calib::ReadRow> {
+    if let Some(row) = last_row(root) {
+        return Some(row);
+    }
+    let mut days: Vec<String> = Vec::new();
+    let Ok(years) = std::fs::read_dir(root) else {
+        return None;
+    };
+    for year in years.flatten() {
+        let year_path = year.path();
+        let Some(year_name) = year_path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if year_name.len() != 4 || !year_name.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(months) = std::fs::read_dir(&year_path) else {
+            continue;
+        };
+        for month in months.flatten() {
+            let month_path = month.path();
+            let Some(month_name) = month_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if month_name.len() != 2 || !month_name.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            let Ok(day_dirs) = std::fs::read_dir(&month_path) else {
+                continue;
+            };
+            for day in day_dirs.flatten() {
+                let day_path = day.path();
+                let Some(day_name) = day_path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                if day_name.len() != 2 || !day_name.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+                days.push(format!("{year_name}-{month_name}-{day_name}"));
+            }
+        }
+    }
+    days.sort();
+    for day in days.iter().rev() {
+        let rows = calib::read_day(root, day, calib::READ_CAP);
+        if let Some(row) = rows
+            .into_iter()
+            .rev()
+            .find(|row| row.op == calib::OP_EVAL_CORPUS)
+        {
+            return Some(row);
+        }
+    }
+    None
+}
+
 // --- the improve-gate probe ----------------------------------------------
 
-/// The eval-corpus gate probe the slice-12 gate runs for a source
-/// target: `Ok(())` when the corpus is green, `Err` naming the
-/// regressing scenario(s) when it is not. `Send + Sync` so it can ride
-/// the `Apply` context and be shared; a test supplies a stand-in.
-pub type EvalProbe = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+/// What one probe run found — the corpus's own verdict, never a bare
+/// green. `Err` from an [`EvalProbe`] is reserved for "could not be
+/// measured": a child that never resolved, never ran, timed out, or
+/// died without printing its verdict. The distinction is the rule the
+/// contrast rests on — a judge failure is `None`, never a zero — so an
+/// unmeasured run can never read as a regression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProbeOutcome {
+    /// The corpus ran and every scenario passed.
+    Green { score: f64 },
+    /// The corpus ran and named scenarios failed.
+    Regressed { score: f64, scenarios: Vec<String> },
+}
+
+impl ProbeOutcome {
+    /// The aggregate score the run carried.
+    pub fn score(&self) -> f64 {
+        match self {
+            ProbeOutcome::Green { score } | ProbeOutcome::Regressed { score, .. } => *score,
+        }
+    }
+
+    /// Whether every scenario passed.
+    pub fn green(&self) -> bool {
+        matches!(self, ProbeOutcome::Green { .. })
+    }
+}
+
+/// The eval-corpus gate probe the improve gate runs: the corpus's
+/// outcome when it ran, or the reason it could not be measured. The
+/// probe never returns a bare ok — the contrast needs the score, and
+/// "unmeasured" needs its own channel. `Send + Sync` so it can ride the
+/// `Apply` context and be shared; a test supplies a stand-in.
+pub type EvalProbe = Arc<dyn Fn() -> Result<ProbeOutcome, String> + Send + Sync>;
 
 /// The bound the probe's `fleet eval` subprocess runs under: the
-/// corpus is twenty deterministic scenarios across eleven families,
+/// corpus is twenty-one deterministic scenarios across twelve families,
 /// each graded headless against the mock API and, on the lane legs,
 /// over a scripted MCP child — so a child that has not finished
 /// within this many seconds is a hung probe — killed and named,
@@ -851,11 +950,11 @@ const PROBE_EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// The production probe over the gate root: run `fleet eval` as a
 /// **subprocess** so the gate grades the freshly-built binary (the
 /// four cargo steps, `build` among them, have already rebuilt it by
-/// the time the eval step runs), and refuse on a regression naming
-/// the failing scenarios. A subprocess rather than an in-process run
-/// is also what keeps the gate off the async runtime it is called
-/// from — the gate is a sync context, and a `block_on` there would
-/// panic (KI-021).
+/// the time the eval step runs), and return the corpus's outcome —
+/// green or regressed, with the score the contrast needs. A
+/// subprocess rather than an in-process run is also what keeps the
+/// gate off the async runtime it is called from — the gate is a sync
+/// context, and a `block_on` there would panic (KI-021).
 ///
 /// The probe **fails closed**. When the current executable does not
 /// resolve, or resolves outside the gate root's `target/` directory —
@@ -864,7 +963,9 @@ const PROBE_EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// gate records the `eval_corpus` step failed: a source self-edit is
 /// never waved through by an eval step that did not run. The
 /// subprocess is bounded by [`PROBE_TIMEOUT_SECS`], so a hung child
-/// is a named failure rather than a hung gate.
+/// is a named failure rather than a hung gate. A refusal is `Err` —
+/// "could not be measured" — and the gate keeps it distinct from a
+/// measured regression.
 pub fn subprocess_probe(gate_root: &Path) -> EvalProbe {
     let target_root = gate_root.join("target");
     // The binary the probe will grade: the current executable, but
@@ -896,27 +997,55 @@ fn under_target(exe: &Path, target_root: &Path) -> bool {
     exe.starts_with(&root)
 }
 
-/// Grade one `fleet eval` subprocess's output: `Ok(())` when the
-/// corpus is green, `Err` naming the regressing scenario(s) when it
-/// is not. `fleet eval` prints one `regressions: <a>, <b>` line when
-/// it is red; a missing one falls back to a named refusal.
-fn grade_output(output: &std::process::Output) -> Result<(), String> {
-    if output.status.success() {
-        return Ok(());
-    }
+/// Grade one `fleet eval` subprocess's output into the probe's outcome.
+/// `fleet eval` always prints one `eval-score: <n>` footer line, and
+/// one `regressions: <a>, <b>` line when it is red. Three shapes leave
+/// this function: a green run with its score, a red run with its score
+/// and the named scenarios, and `Err` when the child never printed a
+/// verdict at all — a crash, a kill, or a nonzero exit with no
+/// `regressions` line. The last is "could not be measured", never
+/// "regressed": the misattribution the eval module's own docstring
+/// names for exit 101.
+fn grade_output(output: &std::process::Output) -> Result<ProbeOutcome, String> {
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let named = text
+    let score = text
+        .lines()
+        .find_map(|line| line.split_once("eval-score: "))
+        .and_then(|(_, value)| strip_ansi(value).trim().parse::<f64>().ok());
+    let named: Option<Vec<String>> = text
         .lines()
         .find_map(|line| line.split_once("regressions: "))
         .map(|(_, names)| strip_ansi(names).trim().to_string())
+        .filter(|names| !names.is_empty())
+        .map(|names| {
+            names
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
         .filter(|names| !names.is_empty());
-    match named {
-        Some(names) => Err(format!("the eval corpus regressed: {names}")),
-        None => Err("the eval corpus regressed (run `fleet eval` for the detail)".to_string()),
+    match (score, named) {
+        (Some(score), None) if output.status.success() => Ok(ProbeOutcome::Green { score }),
+        (Some(score), Some(scenarios)) => Ok(ProbeOutcome::Regressed { score, scenarios }),
+        _ => Err(format!(
+            "the eval corpus could not be measured: the probe exited {} without printing its verdict (run `fleet eval` for the detail)",
+            exit_word(&output.status)
+        )),
+    }
+}
+
+/// How a subprocess ended, for a named refusal: the exit code, or the
+/// fact that a signal ended it.
+fn exit_word(status: &std::process::ExitStatus) -> String {
+    match status.code() {
+        Some(code) => format!("with code {code}"),
+        None => "on a signal".to_string(),
     }
 }
 
@@ -924,7 +1053,7 @@ fn grade_output(output: &std::process::Output) -> Result<(), String> {
 /// reader thread drains both pipes, so a child that fills its pipe
 /// buffer cannot deadlock the wait; the parent keeps the child so it
 /// can kill it when the bound expires. The corpus is twenty
-/// deterministic scenarios across eleven families — a child that has
+/// deterministic scenarios across twelve families — a child that has
 /// not finished within `timeout` is a hung probe, not a hung gate.
 fn run_eval_subprocess(
     exe: &Path,
@@ -1056,6 +1185,10 @@ pub fn render(report: &EvalReport) -> String {
         plural(report.scenarios.len()),
         report.score(),
     ));
+    // The one machine-readable line the improve gate's subprocess probe
+    // reads back: the run's score, on every run, green or red. The
+    // contrast is only meaningful if the probe never has to guess.
+    out.push_str(&format!("{DIM}eval-score: {:.2}{RESET}\n", report.score()));
     for scenario in &report.scenarios {
         out.push_str(&scenario_card(scenario));
     }
@@ -4804,6 +4937,64 @@ async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
     grade(NAME, family, &checks)
 }
 
+/// The lesson store end to end — the write, the evidence refusal, and
+/// the render — against a scratch home. No mock and no model: the store
+/// is deterministic by construction, which is why the scenario is too.
+async fn improve_lesson_store(_mock_bin: PathBuf) -> ScenarioOutcome {
+    use crate::improve::{load_lessons, render_lessons, write_lesson, Lesson, Target};
+
+    const NAME: &str = "improve-lesson-store";
+    let family = ScenarioFamily::Improve;
+    let home = match scratch_dir("improve-lessons") {
+        Ok(dir) => dir,
+        Err(reason) => return ScenarioOutcome::fail(NAME, family, reason),
+    };
+    let lesson = Lesson {
+        name: "corpus-lesson".to_string(),
+        target: Target::Source,
+        target_name: "src/lib.rs".to_string(),
+        contrast: "corpus 0.90 \u{2192} 1.00 (measured gain)".to_string(),
+        cue: "a source proposal for `src/lib.rs`".to_string(),
+        lesson: "the fold carries its summary".to_string(),
+        evidence: "the corpus named the fold before the fix".to_string(),
+        confidence: "measured".to_string(),
+        created: crate::calib::today(),
+    };
+    if let Err(reason) = write_lesson(&home, &lesson) {
+        return ScenarioOutcome::fail(NAME, family, reason);
+    }
+    let bare = Lesson {
+        name: "bare-assertion".to_string(),
+        evidence: "   ".to_string(),
+        ..lesson.clone()
+    };
+    let bare_refused = match write_lesson(&home, &bare) {
+        Ok(_) => false,
+        Err(reason) => reason.contains("refuses bare assertions"),
+    };
+    let rendered = render_lessons(&load_lessons(&home));
+    let checks = [
+        (
+            "the lesson file is written under the home",
+            crate::improve::lessons_dir(&home)
+                .join("corpus-lesson.md")
+                .exists(),
+        ),
+        (
+            "a lesson without evidence is refused by name and writes nothing",
+            bare_refused
+                && !crate::improve::lessons_dir(&home)
+                    .join("bare-assertion.md")
+                    .exists(),
+        ),
+        (
+            "the surface renders the record and its contrast",
+            rendered.contains("corpus-lesson") && rendered.contains("0.90 \u{2192} 1.00"),
+        ),
+    ];
+    grade(NAME, family, &checks)
+}
+
 /// One hand-written `delegation_judged` row, the shape a writer would
 /// have landed — the ride-back's own fixture.
 fn delegation_judged_line(
@@ -5335,6 +5526,7 @@ mod tests {
                 "nomenclature-guard",
                 "dependency-graph",
                 "delta-replan",
+                "improve-lesson-store",
             ]
         );
     }
@@ -5534,44 +5726,52 @@ mod tests {
     }
 
     #[test]
-    fn a_green_corpus_output_grades_ok_and_a_red_one_names_the_scenarios() {
+    fn a_green_corpus_output_carries_its_score_and_a_red_one_names_the_scenarios() {
         let green = std::process::Output {
             status: exit_status(0),
-            stdout: "fleet eval \u{2014} 6 scenarios, score 1.00\n"
+            stdout: "fleet eval \u{2014} 6 scenarios, score 1.00\n\
+                     eval-score: 1.00\n"
                 .as_bytes()
                 .to_vec(),
             stderr: Vec::new(),
         };
-        assert_eq!(grade_output(&green), Ok(()));
+        assert_eq!(grade_output(&green), Ok(ProbeOutcome::Green { score: 1.0 }));
 
         let red = std::process::Output {
             status: exit_status(1),
-            stdout: format!("{WARN}regressions: conversation-fold, memory-recall{RESET}\n")
-                .into_bytes(),
+            stdout: format!(
+                "eval-score: 0.90\n{WARN}regressions: conversation-fold, memory-recall{RESET}\n"
+            )
+            .into_bytes(),
             stderr: Vec::new(),
         };
         // The names the card carries must reach the gate step without
         // the palette's trailing reset riding along.
-        let refused = grade_output(&red).expect_err("a red corpus refuses");
+        let outcome = grade_output(&red).expect("a red corpus is measured, not unmeasured");
         assert_eq!(
-            refused,
-            "the eval corpus regressed: conversation-fold, memory-recall"
+            outcome,
+            ProbeOutcome::Regressed {
+                score: 0.90,
+                scenarios: vec!["conversation-fold".to_string(), "memory-recall".to_string()],
+            }
         );
-        assert!(!refused.contains('\u{1b}'), "{refused}");
+        assert!(!format!("{outcome:?}").contains('\u{1b}'), "{outcome:?}");
     }
 
     #[test]
-    fn a_red_corpus_without_a_named_line_still_refuses_named() {
+    fn a_red_corpus_without_a_verdict_is_unmeasured_rather_than_regressed() {
+        // Exit 101 with no `regressions:` line — the driver-panic shape
+        // the module docstring names — is "could not be measured", and
+        // must never read as a measured regression.
         let red = std::process::Output {
-            status: exit_status(1),
+            status: exit_status(101),
             stdout: Vec::new(),
-            stderr: b"fleet: no home directory known\n".to_vec(),
+            stderr: b"thread 'main' panicked at src/eval.rs:1:1\n".to_vec(),
         };
-        let refused = grade_output(&red).expect_err("a red corpus refuses");
-        assert!(
-            refused.contains("run `fleet eval` for the detail"),
-            "{refused}"
-        );
+        let refused = grade_output(&red).expect_err("unmeasured");
+        assert!(refused.contains("could not be measured"), "{refused}");
+        assert!(refused.contains("with code 101"), "{refused}");
+        assert!(!refused.contains("regressed"), "{refused}");
     }
 
     #[test]
@@ -5627,5 +5827,19 @@ mod tests {
         );
         assert!(refused.contains("did not finish within"), "{refused}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_scored_exit_without_a_regressions_line_is_unmeasured() {
+        // A score alone is not a verdict: a child that printed its card
+        // and then died before naming any scenario is still unmeasured.
+        let weird = std::process::Output {
+            status: exit_status(2),
+            stdout: b"eval-score: 0.95\n".to_vec(),
+            stderr: b"the mock binary is missing\n".to_vec(),
+        };
+        let refused = grade_output(&weird).expect_err("unmeasured");
+        assert!(refused.contains("could not be measured"), "{refused}");
+        assert!(!refused.contains("regressed"), "{refused}");
     }
 }

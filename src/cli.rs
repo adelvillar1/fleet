@@ -220,6 +220,9 @@ pub struct SkillsOptions {
     pub curate: bool,
     /// Print one proposal's draft verbatim.
     pub show: Option<String>,
+    /// Print the near-duplicate report instead of the cards: pairwise
+    /// line-Jaccard over the skill bodies, report-only.
+    pub duplicates: bool,
 }
 
 /// Options for `fleet memories`. The bare command cards the live facts;
@@ -401,6 +404,10 @@ pub enum ImproveAction {
     /// Revert one applied change: structurally for a repo-side apply,
     /// byte-for-byte from the pre-image for a home-side one.
     Undo { name: String },
+    /// List the lesson store: one record per applied change, newest
+    /// first, with the contrast it was adopted on and the lesson it
+    /// carries.
+    Lessons,
 }
 
 /// Turn cap when `--max-turns` is absent.
@@ -476,10 +483,11 @@ usage:
                                 edges, the critical path, and what is
                                 holding each node — the home's
                                 `graph.json`, or `--file`'s
-  fleet skills [--proposed] [--curate] [--show <name>]
+  fleet skills [--proposed] [--curate] [--show <name>] [--duplicates]
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
-                                proposals, --show prints one draft
+                                proposals, --show prints one draft, --duplicates
+                                reports near-duplicate pairs (report-only)
   fleet memories [--recall \"<instruction>\"] [--shape <name>] [--consolidate] [--archive]
                                 the durable facts as cards; --recall prints the
                                 ranked assembly for one instruction, --shape
@@ -507,6 +515,9 @@ usage:
   fleet improve undo <name>    revert an applied change: structurally for
                                 a repo-side apply, byte-for-byte from the
                                 pre-image for a home-side one
+  fleet improve lessons        the lesson store: one record per applied
+                                change, with the contrast it was adopted
+                                on and the lesson it carries
   fleet remember --name <name> --description \"<fact>\" --basis confirmed-by|inferred
                                 [--type <kind>] [--shape a,b] [--tier working|durable]
                                 [--valid-until <date>] [--body \"<text>\"]
@@ -1128,6 +1139,7 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
 fn parse_skills(args: &[String]) -> Result<Command, String> {
     let mut proposed = false;
     let mut curate = false;
+    let mut duplicates = false;
     let mut show: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
@@ -1136,6 +1148,7 @@ fn parse_skills(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--proposed" => proposed = true,
             "--curate" => curate = true,
+            "--duplicates" => duplicates = true,
             "--show" => show = Some(take_value(args, &mut index, arg)?),
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown skills option `{arg}`"));
@@ -1148,6 +1161,7 @@ fn parse_skills(args: &[String]) -> Result<Command, String> {
         proposed,
         curate,
         show,
+        duplicates,
     }))
 }
 
@@ -1384,6 +1398,18 @@ fn parse_improve(args: &[String]) -> Result<Command, String> {
     }
     let rest = &args[1..];
     let verb = subcommand.as_str();
+    // The lesson store is the one subcommand that names no proposal:
+    // it reads the loop's own history, not one entry in it.
+    if verb == "lessons" {
+        if let Some(extra) = rest.first() {
+            return Err(format!(
+                "`fleet improve lessons` takes no argument; found `{extra}`"
+            ));
+        }
+        return Ok(Command::Improve(ImproveOptions {
+            action: ImproveAction::Lessons,
+        }));
+    }
     let mut name: Option<String> = None;
     let mut approve = false;
     let mut index = 0;
@@ -2430,7 +2456,8 @@ mod tests {
             Command::Skills(SkillsOptions {
                 proposed: false,
                 curate: false,
-                show: None
+                show: None,
+                duplicates: false,
             })
         );
         assert_eq!(
@@ -2438,7 +2465,8 @@ mod tests {
             Command::Skills(SkillsOptions {
                 proposed: true,
                 curate: false,
-                show: None
+                show: None,
+                duplicates: false,
             })
         );
         assert_eq!(
@@ -2446,7 +2474,8 @@ mod tests {
             Command::Skills(SkillsOptions {
                 proposed: true,
                 curate: true,
-                show: None
+                show: None,
+                duplicates: false,
             })
         );
         assert_eq!(
@@ -2455,6 +2484,16 @@ mod tests {
                 proposed: false,
                 curate: false,
                 show: Some("bash-recovery".to_string()),
+                duplicates: false,
+            })
+        );
+        assert_eq!(
+            parse(&args(&["skills", "--duplicates"])).unwrap(),
+            Command::Skills(SkillsOptions {
+                proposed: false,
+                curate: false,
+                show: None,
+                duplicates: true,
             })
         );
         assert!(parse(&args(&["skills", "--json"])).is_err());

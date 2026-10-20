@@ -1064,9 +1064,14 @@ impl<'a> Agent<'a> {
         // only files a proposal — the owner's `fleet improve apply` runs
         // the gate — so a session can propose a change to the harness
         // but never apply one, the way the fork's Creator installs
-        // through Plugin Manager rather than through a model tool.
-        if self.improve_home.is_some() && admitted(tools::IMPROVE_TOOL) {
-            specs.push(tools::improve_spec());
+        // through Plugin Manager rather than through a model tool. The
+        // declaration is built with the home so the lesson store's
+        // recent records ride its description: the model sees what
+        // earlier changes learned before it forms this one.
+        if let Some(home) = &self.improve_home {
+            if admitted(tools::IMPROVE_TOOL) {
+                specs.push(tools::improve_spec_with_lessons(home));
+            }
         }
         // `convention` is declared on every run: the vocabulary it reads
         // is the tree's own, which every run already works in, and the

@@ -942,7 +942,7 @@ pub fn supersede_spec() -> ToolSpec {
 pub fn improve_spec() -> ToolSpec {
     ToolSpec::function(
         IMPROVE_TOOL,
-        "File one self-maintenance proposal: a change to the harness's own skills, memory, or config, with the justification, the acceptance criteria, and the expected effect a reviewer needs. This tool only FILES the proposal into <FLEET_HOME>/proposals/ — it never applies anything. Applying is the owner's `fleet improve apply <name>`, which runs the local gate (fmt, clippy, build, test), asks for approval when the change is destructive, and records the verdict in the calibration ledger. Use it when a session's outcome justifies a change the harness should make to itself; state the evidence in the justification.",
+        "File one self-maintenance proposal: a change to the harness's own skills, memory, or config, with the justification, the acceptance criteria, and the expected effect a reviewer needs. This tool only FILES the proposal into <FLEET_HOME>/proposals/ — it never applies anything. Applying is the owner's `fleet improve apply <name>`, which runs the local gate (fmt, clippy, build, test), asks for approval when the change is destructive, and records the verdict in the calibration ledger; a source edit is also measured against the eval corpus, and the verdict carries the contrast. Use it when a session's outcome justifies a change the harness should make to itself; state the evidence in the justification — an applied change records a lesson from it, and a proposal without evidence records none. The confirmation names the recent lessons recorded for the same target kind, so an earlier change's outcome informs this one.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -984,6 +984,40 @@ pub fn improve_spec() -> ToolSpec {
             "required": ["name", "target", "target-name", "basis", "justification", "acceptance", "effect", "change"],
         }),
     )
+}
+
+/// The improve declaration with the lesson store's recent records
+/// appended to its description — the read-before-propose half: the
+/// model sees what earlier changes learned **before** it forms the
+/// arguments, not after it files. The list is bounded to the five most
+/// recent lessons, one line each; an empty store leaves the
+/// declaration exactly as it was.
+pub fn improve_spec_with_lessons(home: &std::path::Path) -> ToolSpec {
+    let spec = improve_spec();
+    let lessons = crate::improve::load_lessons(home);
+    if lessons.is_empty() {
+        return spec;
+    }
+    let recent: Vec<String> = lessons
+        .iter()
+        .take(5)
+        .map(|lesson| {
+            format!(
+                "`{}` ({} `{}`, {}): {}",
+                lesson.name,
+                lesson.target.label(),
+                lesson.target_name,
+                lesson.confidence,
+                lesson.lesson
+            )
+        })
+        .collect();
+    let description = format!(
+        "{} Lessons already recorded by the improve loop, most recent first: {}. Let them inform this proposal.",
+        spec.description(),
+        recent.join("; ")
+    );
+    spec.with_description(description)
 }
 
 /// The model-visible name of one lane tool. The lane's own name stays

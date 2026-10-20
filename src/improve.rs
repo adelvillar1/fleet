@@ -437,6 +437,11 @@ pub struct Proposal {
     /// The last gate result, stamped at verdict time: `fmt ok · clippy
     /// FAILED · …`. Empty when the gate has not run.
     pub gate: String,
+    /// The last refusal's reason, stamped when the gate refused the
+    /// proposal and cleared when an apply finally lands — so the next
+    /// filing attempt is informed by the named failure instead of
+    /// rediscovering it.
+    pub last_refusal: String,
     /// The target files' content shas as they were when the draft was
     /// filed — the drift guard (slice 17, PS-C). A proposal is written
     /// against the files as they stand; if a target changes before the
@@ -577,6 +582,179 @@ fn preimage_path(home: &Path, proposal: &Proposal) -> PathBuf {
     ))
 }
 
+// --- the lesson store ------------------------------------------------------
+
+/// The directory under `<FLEET_HOME>` holding one lesson per applied
+/// change — the improvement harness in fleet's dialect: read before the
+/// next proposal, appended after each adopted one.
+pub const LESSONS_DIR: &str = "lessons";
+
+/// `<home>/lessons`.
+pub fn lessons_dir(home: &Path) -> PathBuf {
+    home.join(LESSONS_DIR)
+}
+
+/// One applied change's transferable record: what was adopted, why, and
+/// the evidence behind it. The shape is Harness²'s (cue, lesson,
+/// evidence, confidence); the evidence rule is fleet's own provenance
+/// discipline — a lesson without its evidence is refused, never stored
+/// as a bare assertion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lesson {
+    /// The proposal's name; also the file stem.
+    pub name: String,
+    pub target: Target,
+    pub target_name: String,
+    /// The measured contrast the adoption rested on, or the named reason
+    /// no measurement exists.
+    pub contrast: String,
+    /// When this situation arises — the cue a future proposal matches.
+    pub cue: String,
+    /// What was learned: the change's expected effect, or its op when
+    /// the proposal carried no effect text.
+    pub lesson: String,
+    /// Why: the proposal's recorded justification.
+    pub evidence: String,
+    /// `measured` when the contrast is a corpus comparison, `unmeasured`
+    /// when the corpus does not instrument this target kind.
+    pub confidence: String,
+    pub created: String,
+}
+
+impl Lesson {
+    /// Build one lesson from the applied proposal's own record. Every
+    /// field is derived — nothing is asked of the caller — and the
+    /// evidence rule is enforced here: a proposal whose justification is
+    /// empty yields no lesson, refused by name, because the store never
+    /// records a change without the evidence behind it.
+    pub fn from_proposal(
+        proposal: &Proposal,
+        contrast: &str,
+        measured: bool,
+    ) -> Result<Lesson, String> {
+        let evidence = proposal.justification.trim();
+        if evidence.is_empty() {
+            return Err(format!(
+                "`{}` carries no justification, and a lesson needs its evidence",
+                proposal.name
+            ));
+        }
+        let lesson = if proposal.effect.trim().is_empty() {
+            format!("the adopted change: {}", proposal.change.op())
+        } else {
+            proposal.effect.trim().to_string()
+        };
+        let cue = format!(
+            "a {} proposal for `{}`",
+            proposal.target.label(),
+            proposal.target_name
+        );
+        Ok(Lesson {
+            name: proposal.name.clone(),
+            target: proposal.target,
+            target_name: proposal.target_name.clone(),
+            contrast: one_line(contrast),
+            cue,
+            lesson,
+            evidence: evidence.to_string(),
+            confidence: if measured {
+                "measured".to_string()
+            } else {
+                "unmeasured".to_string()
+            },
+            created: calib::today(),
+        })
+    }
+}
+
+/// Write one lesson to the store: `<home>/lessons/<name>.md`, atomically,
+/// in the skills-parser frontmatter shape. The evidence rule is checked
+/// again at the write boundary, so a caller that constructed a `Lesson`
+/// by hand cannot bypass it.
+pub fn write_lesson(home: &Path, lesson: &Lesson) -> Result<PathBuf, String> {
+    if lesson.evidence.trim().is_empty() {
+        return Err(format!(
+            "the lesson for `{}` carries no evidence; the store refuses bare assertions",
+            lesson.name
+        ));
+    }
+    let name = bare_name(&lesson.name)?;
+    let dir = lessons_dir(home);
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
+    let path = dir.join(format!("{name}.md"));
+    write_atomic(&path, &render_lesson(lesson))?;
+    Ok(path)
+}
+
+/// One lesson's file text: the frontmatter the skills parser reads, then
+/// the three body sections.
+fn render_lesson(lesson: &Lesson) -> String {
+    format!(
+        "---\nname: {}\ntarget: {}\ntarget-name: {}\ncreated: {}\ncontrast: {}\nconfidence: {}\n---\n\n## Cue\n\n{}\n\n## Lesson\n\n{}\n\n## Evidence\n\n{}\n",
+        lesson.name,
+        lesson.target.label(),
+        lesson.target_name,
+        lesson.created,
+        one_line(&lesson.contrast),
+        lesson.confidence,
+        lesson.cue.trim(),
+        lesson.lesson.trim(),
+        lesson.evidence.trim(),
+    )
+}
+
+/// Every lesson in the store, newest first (by `created`, then name).
+/// A malformed file is skipped, the way the proposals loader skips one:
+/// a broken lesson never hides the others.
+pub fn load_lessons(home: &Path) -> Vec<Lesson> {
+    let Ok(entries) = fs::read_dir(lessons_dir(home)) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect();
+    files.sort();
+    let mut lessons: Vec<Lesson> = files.iter().filter_map(|path| parse_lesson(path)).collect();
+    lessons.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| a.name.cmp(&b.name)));
+    lessons
+}
+
+fn parse_lesson(path: &Path) -> Option<Lesson> {
+    let text = fs::read_to_string(path).ok()?;
+    let document = skills::parse_document(&text).ok()?;
+    let name = document.required("name").ok()?;
+    let target = document.get("target").and_then(Target::parse)?;
+    Some(Lesson {
+        name,
+        target,
+        target_name: document.get("target-name").unwrap_or("").to_string(),
+        contrast: document.get("contrast").unwrap_or("").to_string(),
+        cue: section(&document.body, "Cue"),
+        lesson: section(&document.body, "Lesson"),
+        evidence: section(&document.body, "Evidence"),
+        confidence: document.get("confidence").unwrap_or("").to_string(),
+        created: document.get("created").unwrap_or("").to_string(),
+    })
+}
+
+/// The lessons recorded for one target kind — what a filing is handed,
+/// most recent first.
+pub fn lessons_for(home: &Path, target: Target) -> Vec<Lesson> {
+    load_lessons(home)
+        .into_iter()
+        .filter(|lesson| lesson.target == target)
+        .collect()
+}
+
+/// Collapse a value to one frontmatter line: the flat `key: value`
+/// parser reads no further.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// One body section's text: everything between its `## <title>` header
 /// and the next `## ` header, trimmed.
 fn section(body: &str, title: &str) -> String {
@@ -655,6 +833,7 @@ fn parse_proposal(text: &str, path: &Path, store: Store) -> Result<Proposal, Str
         .unwrap_or(Status::Pending);
     let commit = document.get("commit").map(str::to_string);
     let gate = document.get("gate").unwrap_or("").to_string();
+    let last_refusal = document.get("last-refusal").unwrap_or("").to_string();
     let target_shas = document
         .get("target-shas")
         .map(TargetSha::parse_list)
@@ -680,6 +859,7 @@ fn parse_proposal(text: &str, path: &Path, store: Store) -> Result<Proposal, Str
         path: path.to_path_buf(),
         commit,
         gate,
+        last_refusal,
         target_shas,
     })
 }
@@ -756,7 +936,9 @@ fn draft_proposal(path: &Path) -> Option<Proposal> {
         gate: String::new(),
         // A slice-7 draft is not filed against the repo's files — the
         // drafter writes a SKILL.md — so it stamps nothing and guards
-        // nothing.
+        // nothing. Its frontmatter is its own shape; the refusal stamp
+        // lives only in the general store's proposals.
+        last_refusal: String::new(),
         target_shas: Vec::new(),
     })
 }
@@ -936,12 +1118,32 @@ pub fn file_from_tool(home: &Path, repo: &Path, arguments: &serde_json::Value) -
     {
         return format!("error: could not file the proposal: {error}");
     }
-    format!(
+    let mut text = format!(
         "filed proposal `{name}` ({} `{target_name}`, {}) at {} \u{2014} applying it is `fleet improve apply {name}`, through the gate",
         target.label(),
         basis.label(),
         path.display()
-    )
+    );
+    // The loop's own history, handed back with the filing: the next
+    // proposal for this target sees what earlier changes learned. The
+    // store is consulted at filing time because the arguments arrive
+    // already formed — the record informs the next attempt, which is
+    // the read-before-propose half in the form this tool architecture
+    // allows.
+    let lessons = lessons_for(home, target);
+    if !lessons.is_empty() {
+        let recent: Vec<String> = lessons
+            .iter()
+            .take(5)
+            .map(|lesson| format!("`{}` ({})", lesson.name, lesson.lesson))
+            .collect();
+        text.push_str(&format!(
+            "\nlessons recorded for {} targets: {}",
+            target.label(),
+            recent.join("; ")
+        ));
+    }
+    text
 }
 
 /// One proposal file's text: the frontmatter the skills parser reads,
@@ -1162,30 +1364,135 @@ fn named_failure(steps: &[GateStep]) -> String {
     }
 }
 
-/// The eval-corpus gate step from one probe run: `ok` when the corpus is
-/// green, and a failure whose detail names the regressing scenario (the
-/// probe's `Err` reason) when it is not. The detail is bounded the way a
-/// cargo step's is — the reason names the failure; the whole report is
-/// `fleet eval`'s, not the ledger's.
-fn eval_gate_step(probe: &eval::EvalProbe) -> GateStep {
-    match probe() {
-        Ok(()) => GateStep {
+/// What the eval step saw, folded into the verdict's summary. The
+/// three-way split is the point: a measured green, a measured
+/// regression, and an unmeasured probe are distinct outcomes, and only
+/// the first can adopt a change.
+enum EvalStep {
+    /// The probe ran: the corpus's outcome, or why it could not be
+    /// measured.
+    Measured(Result<eval::ProbeOutcome, String>),
+    /// The cargo gate refused first, so the corpus was not reached.
+    NotRun,
+}
+
+/// Whether the eval step permits the change to land. A measured green
+/// does; a measured regression and an unmeasured probe do not — the
+/// gate fails closed on both, and the step's detail names which. A
+/// step that never ran cannot land the change because the cargo gate
+/// already refused it. `None` (no probe wired, or a non-source target)
+/// never vetoes.
+fn eval_step_may_apply(step: &Option<EvalStep>) -> bool {
+    match step {
+        None => true,
+        Some(EvalStep::NotRun) => false,
+        Some(EvalStep::Measured(Ok(outcome))) => outcome.green(),
+        Some(EvalStep::Measured(Err(_))) => false,
+    }
+}
+
+/// The eval-corpus gate step from one probe run: `ok` when the corpus
+/// is green, and a failure whose detail names the regressing scenario
+/// (or why the corpus could not be measured) when it is not. The
+/// detail is bounded the way a cargo step's is — the reason names the
+/// failure; the whole report is `fleet eval`'s, not the ledger's. The
+/// baseline, when one exists, rides the detail as the contrast.
+fn eval_gate_step(
+    probe: &eval::EvalProbe,
+    baseline: &Option<calib::ReadRow>,
+) -> (GateStep, EvalStep) {
+    let outcome = probe();
+    let step = match &outcome {
+        Ok(outcome) if outcome.green() => GateStep {
             label: "eval_corpus".to_string(),
             ok: true,
-            detail: "ok".to_string(),
+            detail: bounded_detail(&format!(
+                "green \u{2014} corpus {:.2}{}",
+                outcome.score(),
+                contrast_note(baseline, outcome.score())
+            )),
         },
-        Err(reason) => {
-            let mut bounded: String = reason.chars().take(MAX_DETAIL_CHARS).collect();
-            if reason.chars().count() > MAX_DETAIL_CHARS {
-                bounded.push('\u{2026}');
-            }
-            GateStep {
-                label: "eval_corpus".to_string(),
-                ok: false,
-                detail: bounded,
-            }
-        }
+        Ok(outcome) => GateStep {
+            label: "eval_corpus".to_string(),
+            ok: false,
+            detail: bounded_detail(&format!(
+                "the eval corpus regressed: {}{}",
+                regressed_names(outcome),
+                contrast_note(baseline, outcome.score())
+            )),
+        },
+        Err(reason) => GateStep {
+            label: "eval_corpus".to_string(),
+            ok: false,
+            detail: bounded_detail(reason),
+        },
+    };
+    (step, EvalStep::Measured(outcome))
+}
+
+/// Bound one step's detail the way a cargo step's is bounded: the
+/// failure's name, not the whole log.
+fn bounded_detail(text: &str) -> String {
+    let mut bounded: String = text.chars().take(MAX_DETAIL_CHARS).collect();
+    if text.chars().count() > MAX_DETAIL_CHARS {
+        bounded.push('\u{2026}');
     }
+    bounded
+}
+
+/// The baseline contrast for a step's detail: ` (baseline 0.90 →
+/// 1.00)` when a baseline exists, nothing otherwise.
+fn contrast_note(baseline: &Option<calib::ReadRow>, score: f64) -> String {
+    match baseline {
+        Some(row) => format!(" (baseline {:.2} \u{2192} {:.2})", row.score, score),
+        None => String::new(),
+    }
+}
+
+/// The scenarios a regression named, as one line.
+fn regressed_names(outcome: &eval::ProbeOutcome) -> String {
+    match outcome {
+        eval::ProbeOutcome::Regressed { scenarios, .. } => scenarios.join(", "),
+        eval::ProbeOutcome::Green { .. } => String::new(),
+    }
+}
+
+/// The applied verdict's summary, carrying the measurement the
+/// adoption rested on. The scope is stated, never implied: the corpus
+/// instruments a source edit; a skill, memory, or config change does
+/// not move the scripted scenarios, and the summary says so instead of
+/// implying a measurement that cannot exist.
+fn contrast_summary(
+    landed: &str,
+    proposal: &Proposal,
+    step: &Option<EvalStep>,
+    baseline: &Option<calib::ReadRow>,
+) -> String {
+    let note = match step {
+        Some(EvalStep::Measured(Ok(eval::ProbeOutcome::Green { score }))) => match baseline {
+            Some(row) if *score > row.score => format!(
+                "corpus {:.2} \u{2192} {:.2} (measured gain)",
+                row.score, score
+            ),
+            Some(row) => format!(
+                "corpus unchanged at {:.2} \u{2014} no measured gain",
+                row.score
+            ),
+            None => format!("corpus {:.2} (no baseline recorded)", score),
+        },
+        // Unreachable on an applied verdict — those outcomes refuse —
+        // but stated plainly rather than left as an empty string.
+        Some(EvalStep::Measured(_)) => "no measurement".to_string(),
+        Some(EvalStep::NotRun) => "the corpus was not reached".to_string(),
+        None if matches!(proposal.change, Change::Patch { .. }) => {
+            "no corpus probe wired \u{2014} unmeasured".to_string()
+        }
+        None => format!(
+            "no corpus step \u{2014} a {} change does not move the scripted corpus",
+            proposal.target.label()
+        ),
+    };
+    format!("{landed} \u{b7} {note}")
 }
 
 // --- the verdict -----------------------------------------------------------
@@ -1416,10 +1723,10 @@ pub fn apply(name: &str, ctx: &Apply<'_>) -> Verdict {
     let landed = match stage(&proposal, ctx) {
         Ok(landed) => landed,
         Err(Hold::Waiting(reason)) => {
-            return finish(&proposal, Verdict::Waiting { reason }, &[], ctx)
+            return finish(&proposal, Verdict::Waiting { reason }, &[], ctx, false)
         }
         Err(Hold::Refused(reason)) => {
-            return finish(&proposal, Verdict::Refused { reason }, &[], ctx)
+            return finish(&proposal, Verdict::Refused { reason }, &[], ctx, false)
         }
     };
     let mut steps = ctx.gate.run();
@@ -1427,44 +1734,53 @@ pub fn apply(name: &str, ctx: &Apply<'_>) -> Verdict {
     // The eval-corpus gate step, for a source edit only and only when a
     // probe is wired: the four cargo steps have already rebuilt the
     // binary, so the corpus grades the edited code, and a regression
-    // refuses the apply with the scenario named — the AC that closes the
-    // loop with slice 12. A skill/memory/config target's gate is
-    // unchanged: no corpus step, the same four steps. The signal is the
+    // refuses the apply with the scenario named. A skill/memory/config
+    // target's gate is unchanged: no corpus step, the same four steps —
+    // the corpus measures the harness's machinery, and a fact or a
+    // SKILL.md does not move a scripted scenario. The signal is the
     // change itself — a `patch` is the one change that edits the repo's
     // source — so it holds whatever the frontmatter's `target` word says.
     let is_source_edit = matches!(proposal.change, Change::Patch { .. });
-    let eval_regressed = if is_source_edit {
-        ctx.eval
-            .as_ref()
-            .map(|probe| {
-                if gate_green {
-                    let step = eval_gate_step(probe);
-                    let regressed = !step.ok;
-                    steps.push(step);
-                    regressed
-                } else {
-                    // The cargo gate refused first, so the corpus never
-                    // ran. The step is recorded not-run — `ok: false`, the
-                    // detail naming why — so the row says the corpus was
-                    // not reached rather than leaving the step absent and
-                    // an operator unable to tell "not reached" from
-                    // "passed". The refusal itself names the cargo steps.
-                    steps.push(GateStep {
-                        label: "eval_corpus".to_string(),
-                        ok: false,
-                        detail: "not run \u{2014} the cargo gate refused first".to_string(),
-                    });
-                    false
-                }
-            })
-            .unwrap_or(false)
+    // The baseline: the most recent recorded corpus score before this
+    // apply, read only when a probe will run. Adopting on the contrast
+    // is the difference between "nothing broke" and "this improved" —
+    // and with no baseline the summary says so rather than inventing a
+    // comparison.
+    let baseline = if is_source_edit && ctx.eval.is_some() {
+        ctx.stream
+            .and_then(|stream| eval::latest_row(stream.root()))
     } else {
-        false
+        None
     };
-    let verdict = if gate_green && !eval_regressed {
+    let eval_step = if is_source_edit {
+        ctx.eval.as_ref().map(|probe| {
+            if gate_green {
+                let (step, outcome) = eval_gate_step(probe, &baseline);
+                steps.push(step);
+                outcome
+            } else {
+                // The cargo gate refused first, so the corpus never
+                // ran. The step is recorded not-run — `ok: false`, the
+                // detail naming why — so the row says the corpus was
+                // not reached rather than leaving the step absent and
+                // an operator unable to tell "not reached" from
+                // "passed". The refusal itself names the cargo steps.
+                steps.push(GateStep {
+                    label: "eval_corpus".to_string(),
+                    ok: false,
+                    detail: "not run \u{2014} the cargo gate refused first".to_string(),
+                });
+                EvalStep::NotRun
+            }
+        })
+    } else {
+        None
+    };
+    let measured = matches!(&eval_step, Some(EvalStep::Measured(Ok(_))));
+    let verdict = if gate_green && eval_step_may_apply(&eval_step) {
         match landed.commit(ctx.repo) {
             Ok(commit) => Verdict::Applied {
-                summary: landed.summary.clone(),
+                summary: contrast_summary(&landed.summary, &proposal, &eval_step, &baseline),
                 commit,
             },
             Err(reason) => {
@@ -1480,12 +1796,35 @@ pub fn apply(name: &str, ctx: &Apply<'_>) -> Verdict {
             reason: named_failure(&steps),
         }
     };
-    finish(&proposal, verdict, &steps, ctx)
+    finish(&proposal, verdict, &steps, ctx, measured)
 }
 
 /// Record the verdict's row, stamp the proposal's frontmatter, and
-/// hand the verdict back.
-fn finish(proposal: &Proposal, verdict: Verdict, steps: &[GateStep], ctx: &Apply<'_>) -> Verdict {
+/// hand the verdict back. An applied verdict also writes its lesson:
+/// the loop's own history, one record per adopted change, under the
+/// store's evidence rule.
+fn finish(
+    proposal: &Proposal,
+    verdict: Verdict,
+    steps: &[GateStep],
+    ctx: &Apply<'_>,
+    measured: bool,
+) -> Verdict {
+    let verdict = match verdict {
+        Verdict::Applied { summary, commit } => {
+            let note = match Lesson::from_proposal(proposal, &summary, measured)
+                .and_then(|lesson| write_lesson(ctx.home, &lesson))
+            {
+                Ok(_) => " \u{b7} lesson recorded".to_string(),
+                Err(reason) => format!(" \u{b7} no lesson: {reason}"),
+            };
+            Verdict::Applied {
+                summary: format!("{summary}{note}"),
+                commit,
+            }
+        }
+        other => other,
+    };
     if let Some(stream) = ctx.stream {
         stream.record(calib::Row::Propose(calib::ProposeRow {
             ts: calib::stamp(),
@@ -1506,11 +1845,19 @@ fn finish(proposal: &Proposal, verdict: Verdict, steps: &[GateStep], ctx: &Apply
         Verdict::Applied { commit, .. } => commit.as_deref(),
         _ => None,
     };
+    // The refusal rides back into the proposal's own file; an applied
+    // change clears it, so the next filing starts from the current
+    // state of the world rather than a stale failure.
+    let refusal = match &verdict {
+        Verdict::Refused { reason } => Some(reason.as_str()),
+        _ => None,
+    };
     let _ = stamp(
         &proposal.path,
         verdict.status(),
         commit,
         &gate_summary(steps),
+        refusal,
     );
     verdict
 }
@@ -2024,7 +2371,7 @@ pub fn undo(name: &str, home: &Path, repo: &Path, skills_dir: &Path) -> Result<S
             format!("restored the pre-image of `{}`", proposal.target_name)
         }
     };
-    stamp(&proposal.path, Status::Pending, None, "")?;
+    stamp(&proposal.path, Status::Pending, None, "", None)?;
     Ok(format!("undid `{name}` \u{2014} {summary}"))
 }
 
@@ -2089,7 +2436,13 @@ fn undo_restore(home: &Path, skills_dir: &Path, proposal: &Proposal) -> Option<R
 /// apply's `commit` when it has one, and the last `gate` line when the
 /// gate ran. Every other line is preserved, so the file stays the
 /// diff-able record it was filed as.
-fn stamp(path: &Path, status: Status, commit: Option<&str>, gate: &str) -> Result<(), String> {
+fn stamp(
+    path: &Path,
+    status: Status,
+    commit: Option<&str>,
+    gate: &str,
+    refusal: Option<&str>,
+) -> Result<(), String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
@@ -2113,7 +2466,7 @@ fn stamp(path: &Path, status: Status, commit: Option<&str>, gate: &str) -> Resul
         .iter()
         .filter(|line| {
             let key = line.split(':').next().unwrap_or_default().trim();
-            !matches!(key, "status" | "commit" | "gate")
+            !matches!(key, "status" | "commit" | "gate" | "last-refusal")
         })
         .cloned()
         .collect();
@@ -2124,6 +2477,9 @@ fn stamp(path: &Path, status: Status, commit: Option<&str>, gate: &str) -> Resul
     }
     if !gate.is_empty() {
         stamped.push(format!("gate: {gate}"));
+    }
+    if let Some(refusal) = refusal.filter(|text| !text.trim().is_empty()) {
+        stamped.push(format!("last-refusal: {}", one_line(refusal)));
     }
     stamped.extend(kept);
     lines.splice(open + 1..close, stamped);
@@ -2194,7 +2550,7 @@ mod palette {
     pub const RESET: &str = "\u{1b}[0m";
 }
 
-use palette::{ACCENT, BOLD, DIM, RESET, TEXT};
+use palette::{ACCENT, BOLD, DIM, RESET, TEXT, WARN};
 
 /// The card width, matching `lanes`, `providers`, `skills`, and `calib`.
 const CARD_WIDTH: usize = 72;
@@ -2285,6 +2641,14 @@ fn render_card(proposal: &Proposal) -> String {
         format!("gate: {}", proposal.gate)
     };
     lines.push(format!("{DIM}\u{2502}{RESET} {DIM}{gate}{RESET}"));
+    // The refusal ride-back: the last time the gate refused this
+    // proposal, on the card a reviewer reads before running it again.
+    if !proposal.last_refusal.is_empty() {
+        lines.push(format!(
+            "{DIM}\u{2502}{RESET} {WARN}last refusal: {}{RESET}",
+            proposal.last_refusal
+        ));
+    }
     lines.push(format!(
         "{DIM}\u{2502}{RESET} {DIM}{}{RESET}",
         proposal.path.display()
@@ -2308,6 +2672,64 @@ fn render_card(proposal: &Proposal) -> String {
 fn dashes_for(left: &str, right: &str) -> String {
     let used = left.chars().count() + right.chars().count() + 2;
     "\u{2500}".repeat(CARD_WIDTH.saturating_sub(used + 4).max(1))
+}
+
+/// Render the lesson store as house cards: the name and the confidence
+/// in the header, then the target, the contrast the adoption rested on,
+/// and the transferable lesson. Newest first, the order the store
+/// returns.
+pub fn render_lessons(lessons: &[Lesson]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{BOLD}fleet improve lessons{RESET} {DIM}\u{2014} {} lesson{}{RESET}\n\n",
+        lessons.len(),
+        if lessons.len() == 1 { "" } else { "s" },
+    ));
+    if lessons.is_empty() {
+        out.push_str(&format!(
+            "{DIM}no lessons yet \u{b7} applying a change records one, evidence first{RESET}\n"
+        ));
+        return out;
+    }
+    for lesson in lessons {
+        let (color, word) = if lesson.confidence == "measured" {
+            (palette::OK, "measured")
+        } else {
+            (TEXT, "unmeasured")
+        };
+        let header = format!(
+            "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{name}{RESET} {DIM}{dashes} {color}{word}{RESET} {DIM}\u{2510}{RESET}",
+            name = lesson.name,
+            dashes = dashes_for(&format!(" {} ", lesson.name), word),
+        );
+        let mut card = format!("{header}\n");
+        card.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {TEXT}{} `{}`{RESET}\n",
+            lesson.target.label(),
+            lesson.target_name
+        ));
+        card.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {DIM}cue: {}{RESET}\n",
+            lesson.cue
+        ));
+        card.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {DIM}{}{RESET}\n",
+            lesson.contrast
+        ));
+        card.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {TEXT}{}{RESET}\n",
+            lesson.lesson
+        ));
+        card.push_str(&format!(
+            "{DIM}\u{2514}{}\u{2518}{RESET}\n",
+            "\u{2500}".repeat(CARD_WIDTH - 2)
+        ));
+        out.push_str(&card);
+    }
+    out.push_str(&format!(
+        "\n{DIM}lessons are the improve loop's own history \u{b7} filing a proposal names the recent ones for its target{RESET}\n"
+    ));
+    out
 }
 
 #[cfg(test)]
@@ -3028,8 +3450,12 @@ mod tests {
         let log = tools.join("gate.log");
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
-        let probe: eval::EvalProbe =
-            std::sync::Arc::new(|| Err("the eval corpus regressed: conversation-fold".to_string()));
+        let probe: eval::EvalProbe = std::sync::Arc::new(|| {
+            Ok(eval::ProbeOutcome::Regressed {
+                score: 0.95,
+                scenarios: vec!["conversation-fold".to_string()],
+            })
+        });
         let change =
             r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "break-the-fold", "src/lib.rs", change);
@@ -3103,7 +3529,7 @@ mod tests {
         let seen = std::sync::Arc::clone(&ran);
         let probe: eval::EvalProbe = std::sync::Arc::new(move || {
             seen.store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
+            Ok(eval::ProbeOutcome::Green { score: 1.0 })
         });
         let change =
             r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
@@ -3164,7 +3590,8 @@ mod tests {
         let log = tools.join("gate.log");
         let bin = stand_in(&tools, 0, "", &log);
         let gate = fake_gate(&repo, &bin);
-        let probe: eval::EvalProbe = std::sync::Arc::new(|| Ok(()));
+        let probe: eval::EvalProbe =
+            std::sync::Arc::new(|| Ok(eval::ProbeOutcome::Green { score: 1.0 }));
         let change =
             r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#;
         skill_proposal(&home, "keep-the-fold", "src/lib.rs", change);
@@ -3646,7 +4073,14 @@ mod tests {
         );
         let before = fs::read_to_string(&path).unwrap();
         assert!(before.contains("status: pending"));
-        stamp(&path, Status::Applied, Some("abc123"), "fmt ok · test ok").unwrap();
+        stamp(
+            &path,
+            Status::Applied,
+            Some("abc123"),
+            "fmt ok · test ok",
+            None,
+        )
+        .unwrap();
         let after = fs::read_to_string(&path).unwrap();
         assert!(after.contains("status: applied"), "{after}");
         assert!(after.contains("commit: abc123"), "{after}");
@@ -3658,12 +4092,405 @@ mod tests {
             "{after}"
         );
         // A second stamp replaces, never duplicates.
-        stamp(&path, Status::Pending, None, "").unwrap();
+        stamp(&path, Status::Pending, None, "", None).unwrap();
         let again = fs::read_to_string(&path).unwrap();
         assert_eq!(again.matches("status:").count(), 1, "{again}");
         assert!(!again.contains("commit:"), "{again}");
         assert!(!again.contains("gate:"), "{again}");
         let reloaded = load_one(&home, "stamped").unwrap();
         assert_eq!(reloaded.status, Status::Pending);
+    }
+
+    // --- the contrast, the lesson store, and the refusal ride-back ---
+
+    /// Land one `eval_corpus` row in `stream` with `passed` of `total`
+    /// scenarios green — the baseline an apply's contrast reads back.
+    fn seed_corpus(stream: &calib::Stream, passed: usize, total: usize) {
+        let outcomes: Vec<eval::ScenarioOutcome> = (0..total)
+            .map(|index| eval::ScenarioOutcome {
+                scenario: format!("seed-{index}"),
+                family: "tool-loop".to_string(),
+                passed: index < passed,
+                failure: (index >= passed).then(|| "seeded failure".to_string()),
+            })
+            .collect();
+        let report = eval::EvalReport::from(outcomes);
+        stream.record(calib::Row::EvalCorpus(report.to_row(calib::stamp())));
+    }
+
+    fn source_probe(score: f64) -> eval::EvalProbe {
+        std::sync::Arc::new(move || Ok(eval::ProbeOutcome::Green { score }))
+    }
+
+    fn patch_change() -> &'static str {
+        r#"{"op": "patch", "path": "src/lib.rs", "content": "pub fn one() -> u32 { 2 }\n"}"#
+    }
+
+    fn apply_source(
+        name: &str,
+        home: &Path,
+        repo: &Path,
+        stream: &calib::Stream,
+        probe: eval::EvalProbe,
+    ) -> Verdict {
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 0, "", &log);
+        let gate = fake_gate(repo, &bin);
+        let ctx = Apply {
+            home,
+            skills_dir: home,
+            repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(stream),
+            eval: Some(probe),
+        };
+        apply(name, &ctx)
+    }
+
+    #[test]
+    fn a_source_apply_adopts_on_a_measured_gain_and_records_the_lesson() {
+        let home = scratch("contrast-gain");
+        let repo = scratch_repo("contrast-gain-repo");
+        skill_proposal(&home, "gain-the-fold", "src/lib.rs", patch_change());
+        let stream = calib::Stream::open(scratch("contrast-gain-calib"));
+        seed_corpus(&stream, 19, 20);
+        settle(&stream);
+        let verdict = apply_source("gain-the-fold", &home, &repo, &stream, source_probe(1.0));
+        let Verdict::Applied { summary, .. } = &verdict else {
+            panic!("expected applied, got {verdict:?}")
+        };
+        assert!(summary.contains("0.95 \u{2192} 1.00"), "{summary}");
+        assert!(summary.contains("measured gain"), "{summary}");
+        assert!(summary.contains("lesson recorded"), "{summary}");
+        // The propose row is where the adoption's evidence lives.
+        settle(&stream);
+        let root = stream.root().to_path_buf();
+        let rows = calib::read_day(&root, &calib::today(), 64);
+        let row = rows
+            .iter()
+            .find(|row| row.op == calib::OP_PROPOSE)
+            .expect("the propose row");
+        assert!(row.reason.contains("0.95 \u{2192} 1.00"), "{}", row.reason);
+        assert!(row.reason.contains("lesson recorded"), "{}", row.reason);
+        // The lesson landed, evidence first, with the contrast it rode.
+        let lessons = load_lessons(&home);
+        assert_eq!(lessons.len(), 1, "{lessons:?}");
+        assert_eq!(lessons[0].name, "gain-the-fold");
+        assert_eq!(lessons[0].confidence, "measured");
+        assert!(
+            lessons[0].contrast.contains("0.95"),
+            "{}",
+            lessons[0].contrast
+        );
+        assert!(
+            lessons[0]
+                .evidence
+                .contains("the session corrected a bash failure"),
+            "{}",
+            lessons[0].evidence
+        );
+    }
+
+    #[test]
+    fn an_inert_source_apply_is_labeled_no_measured_gain() {
+        let home = scratch("contrast-inert");
+        let repo = scratch_repo("contrast-inert-repo");
+        skill_proposal(&home, "keep-the-fold", "src/lib.rs", patch_change());
+        let stream = calib::Stream::open(scratch("contrast-inert-calib"));
+        seed_corpus(&stream, 20, 20);
+        settle(&stream);
+        let verdict = apply_source("keep-the-fold", &home, &repo, &stream, source_probe(1.0));
+        let Verdict::Applied { summary, .. } = &verdict else {
+            panic!("expected applied, got {verdict:?}")
+        };
+        assert!(
+            summary.contains("corpus unchanged at 1.00 \u{2014} no measured gain"),
+            "{summary}"
+        );
+    }
+
+    #[test]
+    fn a_source_apply_without_a_baseline_names_that_it_has_none() {
+        let home = scratch("contrast-bare");
+        let repo = scratch_repo("contrast-bare-repo");
+        skill_proposal(&home, "no-baseline", "src/lib.rs", patch_change());
+        let stream = calib::Stream::open(scratch("contrast-bare-calib"));
+        let verdict = apply_source("no-baseline", &home, &repo, &stream, source_probe(1.0));
+        let Verdict::Applied { summary, .. } = &verdict else {
+            panic!("expected applied, got {verdict:?}")
+        };
+        assert!(summary.contains("no baseline recorded"), "{summary}");
+    }
+
+    #[test]
+    fn an_unmeasured_probe_refuses_named_rather_than_reading_as_a_regression() {
+        let home = scratch("contrast-unmeasured");
+        let repo = scratch_repo("contrast-unmeasured-repo");
+        let pre_image = fs::read_to_string(repo.join("src/lib.rs")).unwrap();
+        skill_proposal(&home, "unmeasured-edit", "src/lib.rs", patch_change());
+        let stream = calib::Stream::open(scratch("contrast-unmeasured-calib"));
+        let probe: eval::EvalProbe = std::sync::Arc::new(|| {
+            Err("the eval corpus could not be measured: the probe exited with code 101 without printing its verdict".to_string())
+        });
+        let verdict = apply_source("unmeasured-edit", &home, &repo, &stream, probe);
+        let Verdict::Refused { reason } = &verdict else {
+            panic!("expected refused, got {verdict:?}")
+        };
+        assert!(reason.contains("could not be measured"), "{reason}");
+        assert!(reason.contains("eval_corpus"), "{reason}");
+        assert!(!reason.contains("regressed"), "{reason}");
+        // The gate fails closed: the tree is back to its pre-image.
+        assert_eq!(
+            fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+            pre_image
+        );
+    }
+
+    #[test]
+    fn a_non_source_apply_names_that_the_corpus_does_not_instrument_it() {
+        let home = scratch("contrast-skill");
+        let repo = scratch_repo("contrast-skill-repo");
+        let change = r#"{"op": "write-skill", "content": "---\nname: demo\ndescription: a demo skill\n---\n\nbody\n"}"#;
+        skill_proposal(&home, "write-the-skill", "demo", change);
+        let stream = calib::Stream::open(scratch("contrast-skill-calib"));
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = std::sync::Arc::clone(&ran);
+        let probe: eval::EvalProbe = std::sync::Arc::new(move || {
+            seen.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(eval::ProbeOutcome::Green { score: 1.0 })
+        });
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 0, "", &log);
+        let gate = fake_gate(&repo, &bin);
+        let ctx = Apply {
+            home: &home,
+            skills_dir: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: Some(probe),
+        };
+        let verdict = apply("write-the-skill", &ctx);
+        let Verdict::Applied { summary, .. } = &verdict else {
+            panic!("expected applied, got {verdict:?}")
+        };
+        assert!(
+            summary.contains("a skill change does not move the scripted corpus"),
+            "{summary}"
+        );
+        assert!(
+            !ran.load(std::sync::atomic::Ordering::SeqCst),
+            "the corpus probe ran for a non-source target"
+        );
+    }
+
+    #[test]
+    fn a_refused_proposal_carries_its_last_refusal_and_the_card_shows_it() {
+        let home = scratch("refusal-ride-back");
+        let repo = scratch_repo("refusal-ride-back-repo");
+        let path = skill_proposal(&home, "refused-once", "src/lib.rs", patch_change());
+        let stream = calib::Stream::open(scratch("refusal-ride-back-calib"));
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(
+            &tools,
+            1,
+            "error: test failed: the_ranker_orders_a_corpus",
+            &log,
+        );
+        let gate = fake_gate(&repo, &bin);
+        let ctx = Apply {
+            home: &home,
+            skills_dir: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
+        let verdict = apply("refused-once", &ctx);
+        assert!(matches!(verdict, Verdict::Refused { .. }), "{verdict:?}");
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("last-refusal:"), "{text}");
+        assert!(text.contains("the gate refused the change"), "{text}");
+        // The card a reviewer reads before re-running carries it.
+        let listed = render(&load_all(&home));
+        assert!(listed.contains("last refusal:"), "{listed}");
+        assert!(listed.contains("the gate refused the change"), "{listed}");
+        // An applied verdict clears the key: the stamp is the one place
+        // the line lives, and the apply path with a green gate passes
+        // no refusal.
+        stamp(&path, Status::Applied, None, "fmt ok", None).unwrap();
+        let cleared = fs::read_to_string(&path).unwrap();
+        assert!(!cleared.contains("last-refusal:"), "{cleared}");
+    }
+
+    #[test]
+    fn a_proposal_without_evidence_lands_but_records_no_lesson() {
+        let home = scratch("lesson-no-evidence");
+        let repo = scratch_repo("lesson-no-evidence-repo");
+        // A proposal whose justification is empty: the change may land,
+        // but the store refuses a lesson built from nothing.
+        let text = render_proposal(
+            "no-evidence",
+            Target::Skill,
+            "demo",
+            Basis::Inferred,
+            "",
+            "the skill loads",
+            "the correction is in context next time",
+            r#"{"op": "write-skill", "content": "---\nname: demo\ndescription: a demo skill\n---\n\nbody\n"}"#,
+            &[],
+        );
+        fs::create_dir_all(proposals_dir(&home)).unwrap();
+        fs::write(proposals_dir(&home).join("no-evidence.md"), text).unwrap();
+        let stream = calib::Stream::open(scratch("lesson-no-evidence-calib"));
+        let tools = scratch("apply-tools");
+        let log = tools.join("gate.log");
+        let bin = stand_in(&tools, 0, "", &log);
+        let gate = fake_gate(&repo, &bin);
+        let ctx = Apply {
+            home: &home,
+            skills_dir: &home,
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
+        let verdict = apply("no-evidence", &ctx);
+        let Verdict::Applied { summary, .. } = &verdict else {
+            panic!("expected applied, got {verdict:?}")
+        };
+        assert!(summary.contains("no lesson:"), "{summary}");
+        assert!(summary.contains("carries no justification"), "{summary}");
+        assert!(load_lessons(&home).is_empty());
+    }
+
+    #[test]
+    fn the_lesson_store_refuses_an_empty_evidence_lesson() {
+        let home = scratch("lesson-refusal");
+        let lesson = Lesson {
+            name: "bare-assertion".to_string(),
+            target: Target::Skill,
+            target_name: "demo".to_string(),
+            contrast: "corpus 1.00 (no baseline recorded)".to_string(),
+            cue: "a skill proposal for `demo`".to_string(),
+            lesson: "the correction is in context next time".to_string(),
+            evidence: "   ".to_string(),
+            confidence: "unmeasured".to_string(),
+            created: calib::today(),
+        };
+        let refused = write_lesson(&home, &lesson).expect_err("empty evidence");
+        assert!(refused.contains("refuses bare assertions"), "{refused}");
+        assert!(load_lessons(&home).is_empty());
+        assert!(!lessons_dir(&home).join("bare-assertion.md").exists());
+    }
+
+    #[test]
+    fn the_lesson_surface_renders_the_record_it_carries() {
+        let home = scratch("lesson-surface");
+        let lesson = Lesson {
+            name: "measured-once".to_string(),
+            target: Target::Source,
+            target_name: "src/lib.rs".to_string(),
+            contrast: "corpus 0.90 → 1.00 (measured gain)".to_string(),
+            cue: "a source proposal for `src/lib.rs`".to_string(),
+            lesson: "the fold carries its summary".to_string(),
+            evidence: "the eval corpus regressed before the fix".to_string(),
+            confidence: "measured".to_string(),
+            created: calib::today(),
+        };
+        write_lesson(&home, &lesson).unwrap();
+        let rendered = render_lessons(&load_lessons(&home));
+        assert!(rendered.contains("measured-once"), "{rendered}");
+        assert!(rendered.contains("0.90 → 1.00"), "{rendered}");
+        assert!(
+            rendered.contains("cue: a source proposal for"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("the fold carries its summary"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("measured"), "{rendered}");
+    }
+
+    #[test]
+    fn filing_a_proposal_hands_back_the_recent_lessons_for_its_target() {
+        let home = scratch("lesson-filing");
+        let repo = scratch_repo("lesson-filing-repo");
+        let lesson = Lesson {
+            name: "prior-lesson".to_string(),
+            target: Target::Skill,
+            target_name: "demo".to_string(),
+            contrast: "no corpus step — a skill change does not move the scripted corpus"
+                .to_string(),
+            cue: "a skill proposal for `demo`".to_string(),
+            lesson: "the correction is in context next time".to_string(),
+            evidence: "the session corrected a bash failure".to_string(),
+            confidence: "unmeasured".to_string(),
+            created: calib::today(),
+        };
+        write_lesson(&home, &lesson).unwrap();
+        let arguments = serde_json::json!({
+            "name": "next-skill",
+            "target": "skill",
+            "target-name": "demo",
+            "basis": "inferred",
+            "justification": "the session corrected a second failure",
+            "acceptance": "the skill loads",
+            "effect": "the correction is in context next time",
+            "change": r#"{"op": "write-skill", "content": "---\nname: demo\ndescription: a demo skill\n---\n\nbody\n"}"#,
+        });
+        let result = file_from_tool(&home, &repo, &arguments);
+        assert!(result.contains("filed proposal `next-skill`"), "{result}");
+        assert!(
+            result.contains("lessons recorded for skill targets"),
+            "{result}"
+        );
+        assert!(result.contains("prior-lesson"), "{result}");
+    }
+
+    #[test]
+    fn the_improve_declaration_carries_the_lessons_before_the_call() {
+        // The read-before-propose half in its true form: the tool's
+        // description is built per run with the home, so the model sees
+        // the recorded lessons before it forms the arguments.
+        let home = scratch("lesson-declaration");
+        let lesson = Lesson {
+            name: "prior-lesson".to_string(),
+            target: Target::Skill,
+            target_name: "demo".to_string(),
+            contrast: "no corpus step — a skill change does not move the scripted corpus"
+                .to_string(),
+            cue: "a skill proposal for `demo`".to_string(),
+            lesson: "the correction is in context next time".to_string(),
+            evidence: "the session corrected a bash failure".to_string(),
+            confidence: "unmeasured".to_string(),
+            created: calib::today(),
+        };
+        write_lesson(&home, &lesson).unwrap();
+        let spec = crate::tools::improve_spec_with_lessons(&home);
+        assert!(
+            spec.description().contains("Lessons already recorded"),
+            "{}",
+            spec.description()
+        );
+        assert!(
+            spec.description().contains("prior-lesson"),
+            "{}",
+            spec.description()
+        );
+        // An empty store leaves the declaration exactly as it was.
+        let bare = scratch("lesson-declaration-bare");
+        assert_eq!(
+            crate::tools::improve_spec_with_lessons(&bare).description(),
+            crate::tools::improve_spec().description()
+        );
     }
 }

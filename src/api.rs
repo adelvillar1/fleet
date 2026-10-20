@@ -339,6 +339,19 @@ impl ToolSpec {
             },
         }
     }
+
+    /// The declaration's description.
+    pub fn description(&self) -> &str {
+        &self.function.description
+    }
+
+    /// The declaration with its description replaced — the one seam a
+    /// per-run declaration needs (the improve tool hands its lesson
+    /// store back this way).
+    pub fn with_description(mut self, description: impl Into<String>) -> ToolSpec {
+        self.function.description = description.into();
+        self
+    }
 }
 
 /// One chat-completions request.
