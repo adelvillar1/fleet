@@ -1467,13 +1467,72 @@
         'No run is in flight. Ask fleet for something and the loop lands here.')]]);
       return;
     }
-    openDrawer('the run', [
+    var sections = [
       ['where we are', processSteps(p)],
       ['the last step', node('p', 'derivation', p.last || 'no step yet')],
       ['the counts', node('p', 'derivation',
         'turn ' + p.turn + ' \u00b7 ' + p.calls + ' calls \u00b7 ' + p.facts +
         ' facts \u00b7 ' + p.delegations + ' delegations \u00b7 ' + p.lanes + ' lanes')]
-    ]);
+    ];
+    // Below the dock's breakpoint the drawer is the process card, so it
+    // carries the same two controls. They post the same control file;
+    // the strip above the composer shows where the run then stands.
+    if (p.active) {
+      var form = node('form', 'process-steer');
+      var input = node('input');
+      input.type = 'text';
+      input.placeholder = 'steer the run\u2026';
+      input.autocomplete = 'off';
+      input.setAttribute('aria-label', 'steer this run');
+      var send = node('button', 'ghost', 'steer');
+      send.type = 'submit';
+      form.appendChild(input);
+      form.appendChild(send);
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        var text = input.value.trim();
+        if (!text) return;
+        send.disabled = true;
+        post('/api/steer', { text: text }).then(function (reply) {
+          send.disabled = false;
+          if (reply.status === 200 && face.process === p) {
+            p.last = 'steer sent \u00b7 ' + clip(text, 50);
+            openProcessDrawer();
+            return;
+          }
+          notice('the steer was refused',
+            (reply.body && reply.body.error) || 'the server did not take it');
+        }).catch(function () {
+          send.disabled = false;
+          notice('the steer was refused', 'the server did not answer');
+        });
+      });
+      var stop = node('button', 'process-stop', p.stopping ? 'stopping\u2026' : 'stop');
+      stop.type = 'button';
+      stop.addEventListener('click', function () {
+        if (stop.disabled) return;
+        stop.disabled = true;
+        post('/api/stop', {}).then(function (reply) {
+          if (reply.status === 200 && face.process === p) {
+            p.stopping = true;
+            p.last = 'stopping \u00b7 the run ends at its next step';
+            openProcessDrawer();
+            return;
+          }
+          stop.disabled = false;
+          notice('the stop was refused',
+            (reply.body && reply.body.error) || 'the server did not take it');
+        }).catch(function () {
+          stop.disabled = false;
+          notice('the stop was refused', 'the server did not answer');
+        });
+      });
+      var controls = node('div', 'process-controls');
+      controls.appendChild(form);
+      controls.appendChild(stop);
+      sections.push(['stop or steer', controls]);
+    }
+    openDrawer('the run', sections);
   }
 
   function setAside(open) {
