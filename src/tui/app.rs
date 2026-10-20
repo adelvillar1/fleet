@@ -2730,6 +2730,7 @@ mod tests {
             ended: false,
             kind: None,
             compacted: false,
+            served_model: None,
             path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),
         }
     }

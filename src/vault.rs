@@ -851,7 +851,10 @@ mod tests {
         vault.set("correct horse", "OTHRTEST_API_KEY", "other-key");
         let opened = vault.open_all("correct horse");
         assert_eq!(opened.len(), 2);
-        assert_eq!(opened.get("STEPTEST_API_KEY").map(String::as_str), Some("stepfun-live-key"));
+        assert_eq!(
+            opened.get("STEPTEST_API_KEY").map(String::as_str),
+            Some("stepfun-live-key")
+        );
         // A wrong passphrase opens nothing: the tags fail, and the map
         // comes back empty rather than half-open — the caller's
         // plaintext leg answers instead of a partial vault.

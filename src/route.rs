@@ -425,6 +425,17 @@ pub fn default_preferences() -> Vec<Preference> {
 pub struct Gates {
     pub min_confidence: f64,
     pub default_workload: &'static str,
+    /// Whether the roster's hosted chat models may receive requests at
+    /// all. `false` — routing.json `gates.allow_api_models` — keeps HTTP
+    /// candidates out of every order this module builds: the judged
+    /// chain, the fallback, the head walk, and a pin, which the gate
+    /// outguns (a pin is a run's instruction, the gate is the owner's
+    /// standing one). Fleet's own vendored lanes still serve, and a
+    /// decision with nothing admissible refuses rather than dialing.
+    /// The payg reserve's other half of its protection is structural:
+    /// no default workload targets it, so it serves only as the
+    /// failover tail.
+    pub allow_api_models: bool,
 }
 
 impl Default for Gates {
@@ -432,6 +443,7 @@ impl Default for Gates {
         Gates {
             min_confidence: 0.6,
             default_workload: "standard_code",
+            allow_api_models: true,
         }
     }
 }
@@ -709,6 +721,8 @@ struct GatesEntry {
     min_confidence: Option<f64>,
     #[serde(default)]
     default_workload: Option<String>,
+    #[serde(default)]
+    allow_api_models: Option<bool>,
 }
 
 /// The preference table and gates: the compiled-in defaults, with
@@ -760,6 +774,9 @@ fn load_routing(home: &Path) -> Result<(Vec<Preference>, Gates), ConfigError> {
         }
         if let Some(value) = &entry.default_workload {
             gates.default_workload = leak_str(value);
+        }
+        if let Some(value) = entry.allow_api_models {
+            gates.allow_api_models = value;
         }
     }
     Ok((preferences, gates))
@@ -1130,20 +1147,25 @@ pub async fn select(
     let started = Instant::now();
     let head = head_index(resolved);
     // A pin naming an exact `provider/model` pair is the one pin that
-    // skips the judgment: both halves are already decided.
+    // skips the judgment: both halves are already decided. The disallow
+    // gate outguns it — a pin is a run's instruction, the gate is the
+    // owner's standing one — so a pinned API model falls through to the
+    // filtered normal path, whose refusal names the gate.
     if let Some(pin_id) = pin {
         if let Some((provider, model)) = pin_id.split_once('/') {
-            return (
-                decision_from(
-                    vec![(provider.to_string(), model.to_string())],
-                    How::Pinned,
-                    None,
-                    None,
-                    format!("pinned to {provider}/{model}"),
-                    JudgedFrom::None,
-                ),
-                started.elapsed().as_millis(),
-            );
+            if admissible(resolved, provider, &gates) {
+                return (
+                    decision_from(
+                        vec![(provider.to_string(), model.to_string())],
+                        How::Pinned,
+                        None,
+                        None,
+                        format!("pinned to {provider}/{model}"),
+                        JudgedFrom::None,
+                    ),
+                    started.elapsed().as_millis(),
+                );
+            }
         }
     }
     let provider_pin = pin.filter(|pin_id| {
@@ -1213,15 +1235,25 @@ pub async fn select(
                 .candidates
                 .iter()
                 .filter(|(provider, _)| provider_pin.is_none_or(|pin| pin == *provider))
+                .filter(|(provider, _)| admissible(resolved, provider, &gates))
                 .map(|(provider, model)| (provider.to_string(), model.to_string()))
                 .collect();
-            let (order, reason) = if order.is_empty() {
-                // The walked workload names no candidate from the pinned
-                // provider: the provider's own default model serves,
-                // and the reason says so rather than silently
-                // substituting some other provider.
-                match provider_pin {
-                    Some(pin) => (
+            let (order, reason) =
+                if order.is_empty() {
+                    // The walked workload names no candidate from the pinned
+                    // provider: the provider's own default model serves,
+                    // and the reason says so rather than silently
+                    // substituting some other provider. A provider the gate
+                    // disallows gets no such substitution — the empty order
+                    // falls to the fallback, which is filtered the same way.
+                    match provider_pin {
+                    Some(pin)
+                        if admissible(
+                            resolved,
+                            pin.split_once('/').map(|(provider, _)| provider).unwrap_or(pin),
+                            &gates,
+                        ) =>
+                    (
                         vec![(
                             pin.to_string(),
                             resolved
@@ -1232,16 +1264,22 @@ pub async fn select(
                         )],
                         format!("`{walked}` names no {pin} candidate; using {pin}'s default model"),
                     ),
+                    Some(pin) => (
+                        Vec::new(),
+                        format!(
+                            "pinned to {pin}, but the gates disallow API models; "
+                        ),
+                    ),
                     None => (Vec::new(), format!("`{walked}`'s preference is empty")),
                 }
-            } else {
-                let reason = if let Some(pin) = provider_pin {
-                    format!("pinned to {pin}; sys1 judged `{workload}`; {orchestrator_note}")
                 } else {
-                    format!("sys1 judged `{workload}`; {orchestrator_note}")
+                    let reason = if let Some(pin) = provider_pin {
+                        format!("pinned to {pin}; sys1 judged `{workload}`; {orchestrator_note}")
+                    } else {
+                        format!("sys1 judged `{workload}`; {orchestrator_note}")
+                    };
+                    (order, reason)
                 };
-                (order, reason)
-            };
             let note = format!(
                 "{}{}",
                 unknown_pin.as_deref().unwrap_or_default(),
@@ -1341,6 +1379,7 @@ fn fallback(
             preference
                 .candidates
                 .iter()
+                .filter(|(provider, _)| admissible(resolved, provider, &gates))
                 .map(|(provider, model)| (provider.to_string(), model.to_string()))
                 .collect()
         })
@@ -1368,10 +1407,26 @@ fn fallback(
         decision.start_index = head;
         decision.order = resolved
             .iter()
+            .filter(|entry| admissible(resolved, entry.id(), &gates))
             .map(|entry| (entry.id().to_string(), entry.candidate.model().to_string()))
             .collect();
     }
     decision
+}
+
+/// Whether the named provider may receive requests under the gates.
+/// The disallow gate — routing.json `gates.allow_api_models: false` —
+/// keeps every `Http` candidate out of every order the router builds,
+/// so a set gate means no request leaves for a hosted chat model at
+/// all: not from the judged chain, not from the fallback, not from the
+/// head walk, not from a pin. A provider the roster does not name
+/// stays admissible; the walk fails over past unknowns on its own.
+fn admissible(resolved: &[Resolved], provider: &str, gates: &Gates) -> bool {
+    gates.allow_api_models
+        || resolved
+            .iter()
+            .find(|entry| entry.id() == provider)
+            .is_none_or(|entry| entry.candidate.kind != CandidateKind::Http)
 }
 
 /// Ask sys1 for a routing judgment — or read the recorded one. A hit
@@ -3433,6 +3488,165 @@ mod tests {
             other => panic!("expected a Parse error, got {other:?}"),
         }
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // --- the api-models disallow gate (KI-255's enforcement half) ---
+
+    /// One resolved fixture: an enabled candidate of the given kind that
+    /// needs no key, so a test names exactly the kind it studies.
+    fn resolved_of(id: &str, kind: CandidateKind) -> Resolved {
+        Resolved {
+            candidate: Candidate {
+                id: id.to_string(),
+                base_url: "http://127.0.0.1:1/v1".to_string(),
+                key_env: "STAND_IN_TOKEN".to_string(),
+                models: vec!["auto".to_string()],
+                billing: Billing::Plan,
+                kind,
+                enabled: true,
+                key_required: false,
+                disabled_reason: None,
+            },
+            key: None,
+        }
+    }
+
+    #[test]
+    fn the_disallow_gate_plumbs_from_routing_json() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-route-disallow-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&home);
+        std::fs::write(
+            home.join("routing.json"),
+            r#"{ "gates": { "allow_api_models": false } }"#,
+        )
+        .unwrap();
+        let roster = load_roster(&home).expect("the routing file parses");
+        assert!(!roster.gates.allow_api_models, "the gate reads through");
+        // The open gate is the default: an absent file changes nothing.
+        let bare =
+            std::env::temp_dir().join(format!("fleet-route-disallow0-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&bare);
+        let roster = load_roster(&bare).expect("no routing file is the defaults");
+        assert!(roster.gates.allow_api_models);
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&bare);
+    }
+
+    #[test]
+    fn the_disallow_gate_keeps_http_candidates_out_of_every_order() {
+        let resolved = vec![
+            resolved_of("deepseek", CandidateKind::Http),
+            resolved_of("blend1", CandidateKind::Lane),
+        ];
+        let table = vec![Preference {
+            workload: "standard_code",
+            candidates: vec![("deepseek", "deepseek-chat"), ("blend1", "blend1")],
+        }];
+        // The gate open: today's behaviour, byte for byte.
+        let decision = fallback(
+            &resolved,
+            0,
+            &table,
+            Gates::default(),
+            "reason",
+            JudgedFrom::None,
+        );
+        assert_eq!(
+            decision.order,
+            vec![
+                ("deepseek".to_string(), "deepseek-chat".to_string()),
+                ("blend1".to_string(), "blend1".to_string()),
+            ]
+        );
+        // The gate set: the hosted candidate is out of the order, the
+        // vendored lane still serves.
+        let gates = Gates {
+            allow_api_models: false,
+            ..Gates::default()
+        };
+        let decision = fallback(&resolved, 0, &table, gates, "reason", JudgedFrom::None);
+        assert_eq!(
+            decision.order,
+            vec![("blend1".to_string(), "blend1".to_string())]
+        );
+        // And with no lane at all — a roster whose only candidate is the
+        // disallowed reserve — the order is empty: the named refusal the
+        // run reports, never a dial.
+        let api_only = vec![resolved_of("deepseek", CandidateKind::Http)];
+        let reserve_only = vec![Preference {
+            workload: "standard_code",
+            candidates: vec![("deepseek", "deepseek-chat")],
+        }];
+        let decision = fallback(
+            &api_only,
+            0,
+            &reserve_only,
+            gates,
+            "reason",
+            JudgedFrom::None,
+        );
+        assert!(decision.order.is_empty(), "{:?}", decision.order);
+    }
+
+    #[tokio::test]
+    async fn a_pin_to_a_disallowed_provider_does_not_dial() {
+        // The exact-pair pin is the one route that skips the judgment;
+        // the gate outguns it. Skipped, the filtered normal path lands
+        // on what is still admissible — and names no hosted provider.
+        let resolved = vec![
+            resolved_of("deepseek", CandidateKind::Http),
+            resolved_of("blend1", CandidateKind::Lane),
+        ];
+        let mut specs = HashMap::new();
+        specs.insert(
+            JUDGE_LANE.to_string(),
+            ServerSpec {
+                program: "fleet-test-no-such-lane-program".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                passthrough: Vec::new(),
+                cwd: None,
+            },
+        );
+        let gates = Gates {
+            allow_api_models: false,
+            ..Gates::default()
+        };
+        let (decision, _) = select(
+            &resolved,
+            Some("deepseek/deepseek-chat"),
+            "do a thing",
+            &specs,
+            &default_preferences(),
+            gates,
+            None,
+        )
+        .await;
+        assert!(
+            !decision
+                .order
+                .iter()
+                .any(|(provider, _)| provider == "deepseek"),
+            "the disallowed pin never enters the walk: {:?}",
+            decision.order
+        );
+        // The open gate keeps the pin's fast path: the pinned pair and
+        // nothing else.
+        let (decision, _) = select(
+            &resolved,
+            Some("deepseek/deepseek-chat"),
+            "do a thing",
+            &specs,
+            &default_preferences(),
+            Gates::default(),
+            None,
+        )
+        .await;
+        assert_eq!(
+            decision.order,
+            vec![("deepseek".to_string(), "deepseek-chat".to_string())]
+        );
     }
 
     // --- the decision row ---

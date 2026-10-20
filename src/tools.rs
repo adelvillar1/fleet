@@ -328,9 +328,7 @@ pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
     run_deck_with_event(arguments).map(|run| run.outcome)
 }
 
-pub fn run_deck_with_event(
-    arguments: &serde_json::Value,
-) -> Result<DeckRun, String> {
+pub fn run_deck_with_event(arguments: &serde_json::Value) -> Result<DeckRun, String> {
     // The suggest mode: the vector half of "choose the layout from the
     // content". An intent in, the index ranked out — the planner builds
     // with the match or disagrees with it on content grounds, and a
@@ -352,10 +350,7 @@ pub fn run_deck_with_event(
                 event: None,
             });
         }
-        let ranked = crate::deck::suggest_layouts_with(
-            &*crate::memory::probed_embedder(),
-            &intent,
-        );
+        let ranked = crate::deck::suggest_layouts_with(&*crate::memory::probed_embedder(), &intent);
         if ranked.is_empty() {
             return Ok(DeckRun {
                 outcome: ToolOutcome {
@@ -2319,9 +2314,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
-    #[test]
-    #[test]
     fn the_deck_tool_suggest_mode_ranks_for_an_intent() {
         // Against the machine's own embed endpoint (loopback, fleet's
         // own service): the ranking names layouts, best first.
@@ -2334,9 +2326,14 @@ mod tests {
             "{}",
             outcome.output
         );
-        assert!(outcome.output.contains("metric_callout"), "{}", outcome.output);
+        assert!(
+            outcome.output.contains("metric_callout"),
+            "{}",
+            outcome.output
+        );
     }
 
+    #[test]
     fn the_deck_tool_suggest_mode_names_a_missing_intent() {
         let empty = serde_json::json!({ "suggest": { "intent": "" } });
         let outcome = run_deck(&empty).expect("a refusal is a result, not an error");
@@ -2369,14 +2366,21 @@ mod tests {
         let run = run_deck_with_event(&overfull).expect("a result, not an error");
         let event = run.event.expect("a rendered deck carries its event");
         assert!(!event.faults.is_empty(), "the faults ride the event");
-        assert!(event.fix_deck.contains("slide_01"), "the repair rides as JSON");
-        assert!(event.original_deck.contains("slide_01"), "the original rides for the revert");
+        assert!(
+            event.fix_deck.contains("slide_01"),
+            "the repair rides as JSON"
+        );
+        assert!(
+            event.original_deck.contains("slide_01"),
+            "the original rides for the revert"
+        );
         assert!(!event.fix_actions.is_empty(), "the repairs are named");
         // The pre-baked fix is the honest one: its own review is clean.
         let fixed: crate::deck::Deck = serde_json::from_str(&event.fix_deck).unwrap();
         assert!(crate::deck::review(&fixed).is_empty());
     }
 
+    #[test]
     fn the_deck_tool_auto_fits_an_overfull_deck_and_renders_it() {
         // A deck the grader refuses for overflow is repaired in place —
         // the text compressed to the measured budget, the bolded
@@ -2406,10 +2410,15 @@ mod tests {
             "an overfull deck is auto-fit, not refused: {}",
             &outcome.output[..200.min(outcome.output.len())]
         );
-        assert!(outcome.output.contains("compressed"), "{}", &outcome.output[..300.min(outcome.output.len())]);
+        assert!(
+            outcome.output.contains("compressed"),
+            "{}",
+            &outcome.output[..300.min(outcome.output.len())]
+        );
         assert!(outcome.output.contains("<section class=\"deck\""));
     }
 
+    #[test]
     fn the_deck_tool_refuses_by_naming_the_node_and_the_rule() {
         // A deck that breaks a constraint is a model-visible error, not a
         // panic — the house rule, and the reason a refusal is a fixable

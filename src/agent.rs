@@ -2929,8 +2929,7 @@ async fn run_work(work: Work) -> (String, bool) {
                 .or_else(|| {
                     std::env::var("HOME")
                         .ok()
-                        .map(|user| crate::home::fleet_home(None, Some(&user)).ok())
-                        .flatten()
+                        .and_then(|user| crate::home::fleet_home(None, Some(&user)).ok())
                 });
             let mut cache = match &home {
                 Some(home) => crate::web_cache::WebCache::load(home),
@@ -2940,9 +2939,7 @@ async fn run_work(work: Work) -> (String, bool) {
             if cache.enabled() {
                 if let Some((answer, age)) = cache.get(&key) {
                     let outcome = tools::bound(ToolOutcome {
-                        output: format!(
-                            "(fleet's web cache, {age}s old)\n{answer}"
-                        ),
+                        output: format!("(fleet's web cache, {age}s old)\n{answer}"),
                         truncated: false,
                     });
                     return (outcome.output, outcome.truncated);

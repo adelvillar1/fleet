@@ -41,6 +41,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
+use std::time::Instant;
 
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
@@ -153,6 +154,10 @@ pub struct Bridge {
     state: Arc<Mutex<GuiState>>,
     rules: Arc<Mutex<approvals::Rules>>,
     events: broadcast::Sender<Value>,
+    /// The welcome's one bounded read: the run archive, the corpus
+    /// summary, the skill count, and the graph's next node, cached for
+    /// half a minute so a reload is not a second walk of the machine.
+    home_cache: Arc<Mutex<Option<(Instant, Value)>>>,
     /// The agent thread's command channel. `None` on a detached bridge,
     /// which has no thread to command — so `run` says so rather than
     /// queueing a task nobody will read.
@@ -198,6 +203,7 @@ impl Bridge {
             state,
             rules,
             events,
+            home_cache: Arc::new(Mutex::new(None)),
             commands: None,
             _agent: None,
         };
@@ -298,6 +304,7 @@ impl Bridge {
         json!({
             "session": session,
             "model": self.model,
+            "workspace": self.cwd.display().to_string(),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "running": state.running,
             "dropped": state.dropped,
@@ -312,6 +319,154 @@ impl Bridge {
             }),
             "rules": rules.list().iter().map(rule_value).collect::<Vec<_>>(),
         })
+    }
+
+    /// The welcome's document: the four questions the home answers, in
+    /// one bounded read. It is assembled from the same panel reads, so
+    /// the home and a panel cannot disagree, and cached for half a minute
+    /// so a reload or a return to the conversation does not walk the
+    /// corpus, the library, and every session log again.
+    ///
+    /// Nothing here invents a number. The run archive, the corpus, the
+    /// library, and the graph are the reads they claim to be; a read that
+    /// refused rides its reason in `refused` and the client keeps the
+    /// last good value beside it.
+    pub async fn home(&self) -> Value {
+        const HOME_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+        {
+            let cache = lock(&self.home_cache);
+            if let Some((at, document)) = cache.as_ref() {
+                if at.elapsed() < HOME_TTL {
+                    return document.clone();
+                }
+            }
+        }
+
+        let state = self.state();
+        let sessions = self.sessions().await;
+        let memory = self.memory().await;
+        let skills = self.skills().await;
+        let delegation = self.delegation().await;
+
+        let runs = sessions
+            .get("sessions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let recent: Vec<Value> = runs.iter().take(3).cloned().collect();
+        let timeline: Vec<Value> = runs
+            .iter()
+            .map(|row| {
+                json!({
+                    "id": row.get("id").cloned().unwrap_or(Value::Null),
+                    "created": row.get("created").cloned().unwrap_or(Value::Null),
+                    "kind": row.get("kind").cloned().unwrap_or(Value::Null),
+                    "ended": row.get("ended").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect();
+
+        let facts = memory
+            .get("facts")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let live: Vec<&Value> = facts
+            .iter()
+            .filter(|fact| fact.get("retired").and_then(Value::as_bool) != Some(true))
+            .collect();
+        let protected = live
+            .iter()
+            .filter(|fact| fact.get("protected").and_then(Value::as_bool) == Some(true))
+            .count();
+        let mut named: Vec<&Value> = live.clone();
+        named.sort_by_key(|fact| {
+            std::cmp::Reverse(fact.get("recall_count").and_then(Value::as_u64).unwrap_or(0))
+        });
+        let top: Vec<Value> = named
+            .iter()
+            .take(2)
+            .map(|fact| {
+                json!({
+                    "name": fact.get("name").cloned().unwrap_or(Value::Null),
+                    "recalls": fact.get("recall_count").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect();
+        let dates: Vec<Value> = live
+            .iter()
+            .filter_map(|fact| fact.get("date").cloned())
+            .collect();
+
+        let skill_count = skills
+            .get("skills")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len())
+            .unwrap_or(0);
+        let proposals = skills
+            .get("proposals")
+            .and_then(Value::as_array)
+            .map(|rows| rows.len())
+            .unwrap_or(0);
+
+        let nodes = delegation
+            .get("graph")
+            .and_then(|graph| graph.get("nodes"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut ready: Vec<&Value> = nodes
+            .iter()
+            .filter(|node| node.get("state").and_then(Value::as_str) == Some("ready"))
+            .collect();
+        ready.sort_by_key(|node| node.get("score").and_then(Value::as_i64).unwrap_or(i64::MAX));
+        let running = nodes
+            .iter()
+            .find(|node| node.get("state").and_then(Value::as_str) == Some("running"));
+        let next = running.or_else(|| ready.first().copied());
+        let next = next.map(|node| {
+            json!({
+                "id": node.get("id").cloned().unwrap_or(Value::Null),
+                "state": node.get("state").cloned().unwrap_or(Value::Null),
+                "approach": node.get("approach").cloned().unwrap_or(Value::Null),
+                "score": node.get("score").cloned().unwrap_or(Value::Null),
+                "peak": node.get("peak").cloned().unwrap_or(Value::Null),
+            })
+        });
+
+        let mut refused: Vec<Value> = Vec::new();
+        for document in [&sessions, &memory, &skills, &delegation] {
+            if let Some(rows) = document.get("refused").and_then(Value::as_array) {
+                refused.extend(rows.iter().cloned());
+            }
+        }
+
+        let document = json!({
+            "type": "home",
+            "workspace": state.get("workspace").cloned().unwrap_or(Value::Null),
+            "session": state.get("session").cloned().unwrap_or(Value::Null),
+            "model": state.get("model").cloned().unwrap_or(Value::Null),
+            "runs": {
+                "count": runs.len(),
+                "recent": recent,
+                "timeline": timeline,
+            },
+            "memory": {
+                "live": live.len(),
+                "protected": protected,
+                "top": top,
+                "dates": dates,
+                "day": memory.get("day").cloned().unwrap_or(Value::Null),
+            },
+            "skills": {
+                "count": skill_count,
+                "proposals": proposals,
+            },
+            "next": next,
+            "refused": refused,
+        });
+        *lock(&self.home_cache) = Some((Instant::now(), document.clone()));
+        document
     }
 
     /// The router panel's document: the router board's own reads, shaped
@@ -1614,6 +1769,7 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
     let (cards, omitted) = cards_from_records(&records);
     let (mut model, mut created, mut kind, mut parent) = (String::new(), String::new(), None, None);
     let mut ended = false;
+    let mut served_model: Option<String> = None;
     let mut stop_reason = String::new();
     let mut turns = 0u64;
     let mut compacted = false;
@@ -1634,12 +1790,13 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
             session::Record::End {
                 stop_reason: s,
                 turns: t,
-                served_model: None,
+                served_model: answered,
                 ..
             } => {
                 ended = true;
                 stop_reason = s.clone();
                 turns = *t;
+                served_model = answered.clone();
             }
             session::Record::Compaction { .. } => compacted = true,
             _ => {}
@@ -1648,7 +1805,14 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
     json!({
         "type": "replay",
         "id": id,
-        "model": model,
+        // The model a surface may name: the served one (KI-073), the
+        // nominal stamp only on an ended unrouted run, null in flight —
+        // the same rule the archive row reads.
+        "model": if ended {
+            served_model.as_deref().map(str::to_string).unwrap_or(model)
+        } else {
+            String::new()
+        },
         "created": created,
         "kind": kind,
         "parent": parent,
@@ -1682,7 +1846,11 @@ fn sessions_read(home: &std::path::Path, current: &str) -> Value {
         .map(|entry| {
             json!({
                 "id": entry.id,
-                "model": entry.model,
+                // The model that actually served (KI-073's end record),
+                // or null while the run is in flight — never the start
+                // record's pre-route stamp, which is a default, not a
+                // decision. The face renders a dash for it.
+                "model": entry.serving_model(),
                 "created": entry.created,
                 "ended": entry.ended,
                 "kind": entry.kind,

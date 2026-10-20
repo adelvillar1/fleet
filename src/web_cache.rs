@@ -124,7 +124,13 @@ impl WebCache {
     /// Cache one answer, evicting the oldest entry when the cap is hit.
     pub fn put(&mut self, key: String, answer: String) {
         let now = now_secs();
-        self.entries.insert(key, Entry { stored_at: now, answer });
+        self.entries.insert(
+            key,
+            Entry {
+                stored_at: now,
+                answer,
+            },
+        );
         while self.entries.len() > MAX_ENTRIES {
             let oldest = self
                 .entries
@@ -168,7 +174,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut cache = WebCache::load(&dir);
-        cache.put(key_for("blend1", r#"{"query":"rust crates"}"#), "the answer".to_string());
+        cache.put(
+            key_for("blend1", r#"{"query":"rust crates"}"#),
+            "the answer".to_string(),
+        );
         let (answer, age) = cache
             .get(&key_for("blend1", r#"{"query":"rust crates"}"#))
             .expect("a fresh entry answers");
@@ -183,7 +192,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut cache = WebCache::load(&dir);
-        cache.put(key_for("blend1", r#"{"query":"a"}"#), "answer a".to_string());
+        cache.put(
+            key_for("blend1", r#"{"query":"a"}"#),
+            "answer a".to_string(),
+        );
         assert!(cache.get(&key_for("blend1", r#"{"query":"b"}"#)).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -195,7 +207,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         {
             let mut cache = WebCache::load(&dir);
-            cache.put(key_for("blend1", r#"{"query":"a"}"#), "the answer".to_string());
+            cache.put(
+                key_for("blend1", r#"{"query":"a"}"#),
+                "the answer".to_string(),
+            );
             cache.flush();
         }
         let mut reloaded = WebCache::load(&dir);
@@ -216,10 +231,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let mut cache = WebCache::load(&dir);
         cache.ttl_secs = 0;
-        cache.put(key_for("blend1", r#"{"query":"a"}"#), "the answer".to_string());
+        cache.put(
+            key_for("blend1", r#"{"query":"a"}"#),
+            "the answer".to_string(),
+        );
         assert!(cache.get(&key_for("blend1", r#"{"query":"a"}"#)).is_none());
         cache.flush();
-        assert!(!dir.join(CACHE_FILE).exists(), "a disabled cache writes nothing");
+        assert!(
+            !dir.join(CACHE_FILE).exists(),
+            "a disabled cache writes nothing"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -234,7 +255,7 @@ mod tests {
         }
         assert!(cache.entries.len() <= MAX_ENTRIES);
         assert!(
-            !cache.entries.contains_key(&format!("key-0")),
+            !cache.entries.contains_key("key-0"),
             "the oldest entry is the one that goes"
         );
         let _ = std::fs::remove_dir_all(&dir);

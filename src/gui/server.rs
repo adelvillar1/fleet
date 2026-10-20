@@ -85,9 +85,6 @@ const MAX_HEAD_BYTES: usize = 16 * 1024;
 /// a length and never sends it from holding a task forever.
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
-/// The token's length in bytes before hex encoding: 16 bytes is 128
-/// bits, which is where a guess stops being a threat model.
-
 /// One launch's face: the listener, the token, the address the owner
 /// was given, and the bridge to the agent thread the actions speak to.
 /// A `Server` is deliberately not cloneable — one launch, one token,
@@ -183,10 +180,7 @@ async fn serve_connection(
         )
         .await;
     }
-    if matches!(
-        request.method.as_str(),
-        "POST" | "PUT" | "PATCH" | "DELETE"
-    ) {
+    if matches!(request.method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
         if let Some(origin) = request.header("origin") {
             if !origin_is_loopback(origin) {
                 return write_reply(
@@ -209,6 +203,7 @@ async fn serve_connection(
             stream_events(&mut stream, base_url, heartbeat, bridge.subscribe()).await
         }
         ("GET", "/api/state") => write_reply(&mut stream, api(200, bridge.state())).await,
+        ("GET", "/api/home") => write_reply(&mut stream, api(200, bridge.home().await)).await,
         ("GET", "/api/router") => write_reply(&mut stream, api(200, bridge.router().await)).await,
         ("GET", "/api/delegation") => {
             write_reply(&mut stream, api(200, bridge.delegation().await)).await
@@ -309,11 +304,7 @@ async fn serve_connection(
                 let reply = serde_json::json!({
                     "status": "refused", "refusals": named,
                 });
-                return write_reply(
-                    &mut stream,
-                    api(409, reply),
-                )
-                .await;
+                return write_reply(&mut stream, api(409, reply)).await;
             }
             let review = crate::deck::review(&deck);
             let faults: Vec<serde_json::Value> =
@@ -697,7 +688,7 @@ impl Request {
     /// foreign Host is the rebinding attack: a remote page serving the
     /// local port under a hostname it owns.
     fn host_is_loopback(&self) -> bool {
-        host_is_loopback(&self.header("host").unwrap_or_default())
+        host_is_loopback(self.header("host").unwrap_or_default())
     }
 }
 
@@ -958,7 +949,9 @@ fn host_is_loopback(host: &str) -> bool {
     let host = host.trim();
     let name = if let Some(rest) = host.strip_prefix('[') {
         // a bracketed IPv6 literal, with or without ":port" behind it
-        rest.split_once(']').map(|(inside, _)| inside).unwrap_or(rest)
+        rest.split_once(']')
+            .map(|(inside, _)| inside)
+            .unwrap_or(rest)
     } else if host.matches(':').count() > 1 {
         // a bare IPv6 address carries colons but no port
         host
@@ -966,7 +959,10 @@ fn host_is_loopback(host: &str) -> bool {
         host.split(':').next().unwrap_or(host)
     };
     let name = name.strip_suffix('.').unwrap_or(name);
-    matches!(name.to_ascii_lowercase().as_str(), "127.0.0.1" | "localhost" | "::1")
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
 }
 
 /// Whether an Origin header names this machine. An origin's authority
@@ -1296,8 +1292,6 @@ mod tests {
         );
         assert!(own.starts_with("HTTP/1.1 200"), "{own}");
     }
-
-
 
     #[tokio::test(flavor = "multi_thread")]
     async fn the_assets_ride_behind_the_token() {
@@ -2021,9 +2015,13 @@ mod tests {
             (
                 ids[0].as_str(),
                 vec![
+                    // The start stamp is the pre-route default; the end
+                    // record names the model that actually served
+                    // (KI-073). The archive must show the latter — this
+                    // is KI-255's exact scenario.
                     start("deepseek-chat"),
                     serde_json::json!({"type": "user", "content": "the older conversation"}),
-                    serde_json::json!({"type": "end", "stop_reason": "done", "turns": 1}),
+                    serde_json::json!({"type": "end", "stop_reason": "done", "turns": 1, "served_model": "step-5-preview"}),
                 ],
             ),
             (
@@ -2089,6 +2087,22 @@ mod tests {
         assert!(
             reply.contains("\"ended\":false"),
             "the open log says so: {reply}"
+        );
+        // KI-255: the row names the model that served, never the start
+        // record's pre-route stamp — the archive read `deepseek-chat`
+        // off every row for runs step-5-preview served. An open run
+        // names nothing yet.
+        assert!(
+            reply.contains("\"model\":\"step-5-preview\""),
+            "the ended row names the served model: {reply}"
+        );
+        assert!(
+            reply.contains("\"model\":null"),
+            "the open row names no model: {reply}"
+        );
+        assert!(
+            !reply.contains("deepseek-chat"),
+            "the nominal stamp never renders: {reply}"
         );
     }
 

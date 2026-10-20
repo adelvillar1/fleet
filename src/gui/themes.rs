@@ -25,7 +25,7 @@ pub const MIN_TEXT: f64 = 4.5;
 
 /// The themes the stylesheet declares, in the order the picker shows
 /// them. The first is the default.
-const THEMES: &[&str] = &["console", "paper", "graphite", "contrast"];
+const THEMES: &[&str] = &["paper", "console", "graphite", "contrast"];
 
 /// One theme's declared colours, read off its block.
 #[derive(Debug, Default)]
@@ -124,11 +124,11 @@ fn themes() -> Vec<(String, Theme)> {
         }
     }
 
-    // The `:root` base is the console theme — the pre-JavaScript default,
+    // The `:root` base is the paper theme — the pre-JavaScript default,
     // which is why it carries the values rather than pointing at a block
     // that has not loaded yet. It is prepended as a theme of its own so
     // the guard checks it like any other.
-    let mut all = vec![("console".to_string(), HashMap::new())];
+    let mut all = vec![("paper".to_string(), HashMap::new())];
     all.extend(blocks);
     all.into_iter()
         .map(|(name, own)| {
@@ -314,12 +314,27 @@ mod tests {
     #[test]
     fn the_parser_reads_a_themes_own_overrides() {
         let found = themes();
+        // `paper` is the `:root` base itself — the default ground — so
+        // its ink is the base's near-black.
+        let paper = found
+            .iter()
+            .find(|(name, _)| name == "paper")
+            .map(|(_, theme)| theme)
+            .expect("the paper theme");
+        let ink = paper
+            .text
+            .iter()
+            .find(|(token, _)| token == "--dsw-alias-ink")
+            .map(|(_, colour)| *colour)
+            .expect("the paper ink");
+        assert_eq!(ink, (24, 26, 29));
+        // And `console` overrides the base with its own warm-dark ink,
+        // which is the whole point of a theme block.
         let console = found
             .iter()
             .find(|(name, _)| name == "console")
             .map(|(_, theme)| theme)
             .expect("the console theme");
-        // `console` is the `:root` base itself, so its ink is the base's.
         let ink = console
             .text
             .iter()
@@ -327,8 +342,7 @@ mod tests {
             .map(|(_, colour)| *colour)
             .expect("the console ink");
         assert_eq!(ink, (235, 231, 228));
-        // And `contrast` overrides it to near-black, which is the whole
-        // point of the accessibility theme.
+        // And `contrast` goes to pure black, the accessibility theme.
         let contrast = found
             .iter()
             .find(|(name, _)| name == "contrast")

@@ -813,7 +813,12 @@ const UNBALANCED_RATIO: usize = 3;
 /// re-deriving anything.
 pub fn fault_value(fault: &LayoutFault) -> serde_json::Value {
     match fault {
-        LayoutFault::Overfull { node, component, lines, holds } => serde_json::json!({
+        LayoutFault::Overfull {
+            node,
+            component,
+            lines,
+            holds,
+        } => serde_json::json!({
             "trigger": "overfull", "node": node, "component": component,
             "lines": lines, "holds": holds,
         }),
@@ -937,10 +942,11 @@ fn compress_text(text: &str, budget: usize) -> String {
         return text.to_string();
     }
     let open = text.find("**");
-    let span = match open.and_then(|start| text[start + 2..].find("**").map(|end| (start, start + 2 + end + 2))) {
-        Some((start, end)) => Some((start, end)),
-        None => None,
-    };
+    let span = open.and_then(|start| {
+        text[start + 2..]
+            .find("**")
+            .map(|end| (start, start + 2 + end + 2))
+    });
     if let Some((start, end)) = span {
         if end - start <= budget.saturating_sub(1) {
             let mut out = String::new();
@@ -963,10 +969,16 @@ fn compress_text(text: &str, budget: usize) -> String {
 fn fit_component(component: &mut Component, holds: usize) -> bool {
     let before = crate::deck::component_lines(component);
     let total_budget = holds.saturating_mul(CHARS_PER_LINE);
-    let pad = if matches!(component, Component::Steps { .. }) { 3 } else { 2 };
+    let pad = if matches!(component, Component::Steps { .. }) {
+        3
+    } else {
+        2
+    };
     match component {
         Component::BulletList { items } | Component::Steps { items } => {
-            let per_item = (total_budget / items.len().max(1)).saturating_sub(pad).max(12);
+            let per_item = (total_budget / items.len().max(1))
+                .saturating_sub(pad)
+                .max(12);
             for item in items.iter_mut() {
                 *item = compress_text(item, per_item);
             }
@@ -994,7 +1006,10 @@ fn fit_component(component: &mut Component, holds: usize) -> bool {
             *text = compress_text(text, text_budget);
         }
         Component::Chart { caption, series } => {
-            let series_chars: usize = series.iter().map(|(label, _)| label.chars().count() + 8).sum();
+            let series_chars: usize = series
+                .iter()
+                .map(|(label, _)| label.chars().count() + 8)
+                .sum();
             *caption = compress_text(caption, total_budget.saturating_sub(series_chars).max(16));
         }
         Component::Prose { text } => {
@@ -1041,17 +1056,27 @@ pub fn auto_fit(deck: &Deck) -> AutoFit {
     for _pass in 0..AUTO_FIT_PASSES {
         let faults = review(&deck);
         if faults.is_empty() {
-            return AutoFit { deck, actions, residual: Vec::new() };
+            return AutoFit {
+                deck,
+                actions,
+                residual: Vec::new(),
+            };
         }
         let snapshot = deck.clone();
         let faults = faults.clone();
         let mut changed = false;
         for fault in &faults {
-            let Some(node) = deck.nodes.iter_mut().find(|node| node.id == fault.node_id()) else {
+            let Some(node) = deck
+                .nodes
+                .iter_mut()
+                .find(|node| node.id == fault.node_id())
+            else {
                 continue;
             };
             match fault {
-                LayoutFault::Overfull { component, holds, .. } => {
+                LayoutFault::Overfull {
+                    component, holds, ..
+                } => {
                     let index = *component;
                     let holds = *holds;
                     if let Some(component) = node.components.get_mut(index) {
@@ -1068,8 +1093,13 @@ pub fn auto_fit(deck: &Deck) -> AutoFit {
                     let budget = HEADLINE_HOLDS * CHARS_PER_LINE * 2;
                     let trimmed = compress_text(&node.headline, budget);
                     if trimmed != node.headline {
-                        let candidate = Node { headline: trimmed, ..node.clone() };
-                        if headline_lines(&candidate) <= HEADLINE_HOLDS && is_conclusion(&candidate.headline) {
+                        let candidate = Node {
+                            headline: trimmed,
+                            ..node.clone()
+                        };
+                        if headline_lines(&candidate) <= HEADLINE_HOLDS
+                            && is_conclusion(&candidate.headline)
+                        {
                             actions.push(format!("`{}`: headline trimmed to its box", node.id));
                             *node = candidate;
                             changed = true;
@@ -1115,29 +1145,43 @@ pub fn auto_fit(deck: &Deck) -> AutoFit {
     // deeper than half.
     for node in &mut deck.nodes {
         let faults = review_of_node(node);
-        let overfull = faults.iter().any(|fault| matches!(fault, LayoutFault::Overfull { .. }));
+        let overfull = faults
+            .iter()
+            .any(|fault| matches!(fault, LayoutFault::Overfull { .. }));
         if !overfull {
             continue;
         }
         if let Some(roomier) = node.layout.roomier() {
-            let swapped = Node { layout: roomier.clone(), ..node.clone() };
+            let swapped = Node {
+                layout: roomier,
+                ..node.clone()
+            };
             if review_of_node(&swapped).is_empty() && check_of_node(&swapped) {
                 actions.push(format!(
                     "`{}`: the layout upgraded to {} — the text was not mine to cut",
-                    node.id, roomier.label()
+                    node.id,
+                    roomier.label()
                 ));
                 *node = swapped;
             }
         }
     }
     let residual = review(&deck);
-    AutoFit { deck, actions, residual }
+    AutoFit {
+        deck,
+        actions,
+        residual,
+    }
 }
 
 /// The grader, over one node: the same arithmetic `review` runs, at the
 /// node scope the auto-fit repairs at.
 fn review_of_node(node: &Node) -> Vec<LayoutFault> {
-    let single = Deck { project_type: crate::deck::ProjectType::Infographic, theme: String::new(), nodes: vec![node.clone()] };
+    let single = Deck {
+        project_type: crate::deck::ProjectType::Infographic,
+        theme: String::new(),
+        nodes: vec![node.clone()],
+    };
     review(&single)
         .into_iter()
         .filter(|fault| fault.node_id() == node.id)
@@ -1148,7 +1192,11 @@ fn review_of_node(node: &Node) -> Vec<LayoutFault> {
 /// Deck-level refusals (the type bounds) name no node and are not this
 /// repair's to answer.
 fn check_of_node(node: &Node) -> bool {
-    let single = Deck { project_type: crate::deck::ProjectType::Infographic, theme: String::new(), nodes: vec![node.clone()] };
+    let single = Deck {
+        project_type: crate::deck::ProjectType::Infographic,
+        theme: String::new(),
+        nodes: vec![node.clone()],
+    };
     check(&single)
         .iter()
         .all(|refusal| !refusal.names_node(node.id.as_str()))
@@ -1178,7 +1226,9 @@ const LAYOUT_EXAMPLES: &[(Layout, &str)] = &[
 /// own table still exists: the match refines the classification, it
 /// does not replace it.
 pub fn suggest_layout(intent: &str) -> Option<(Layout, f64)> {
-    suggest_layouts_with(&*crate::memory::probed_embedder(), intent).into_iter().next()
+    suggest_layouts_with(&*crate::memory::probed_embedder(), intent)
+        .into_iter()
+        .next()
 }
 
 /// The whole index ranked against one intent, best first — the tool's
@@ -1197,7 +1247,7 @@ pub fn suggest_layouts_with(
         .filter_map(|(layout, example)| {
             embedder
                 .embed(example)
-                .map(|vector| (layout.clone(), crate::memory::cosine(&query, &vector)))
+                .map(|vector| (*layout, crate::memory::cosine(&query, &vector)))
         })
         .collect();
     ranked.sort_by(|left, right| {
@@ -1220,10 +1270,12 @@ pub fn suggest_layout_with(
         .filter_map(|(layout, example)| {
             embedder
                 .embed(example)
-                .map(|vector| (layout.clone(), crate::memory::cosine(&query, &vector)))
+                .map(|vector| (*layout, crate::memory::cosine(&query, &vector)))
         })
         .max_by(|left, right| {
-            left.1.partial_cmp(&right.1).unwrap_or(std::cmp::Ordering::Equal)
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
 }
 
@@ -1650,8 +1702,12 @@ mod tests {
                 axis("trend") + axis("drawn"),
             ])
         }
-        fn name(&self) -> &'static str { "keyword-stub" }
-        fn serves_vectors(&self) -> bool { true }
+        fn name(&self) -> &'static str {
+            "keyword-stub"
+        }
+        fn serves_vectors(&self) -> bool {
+            true
+        }
     }
 
     #[test]
@@ -1660,39 +1716,46 @@ mod tests {
         // lands on the timeline. The stub's keyword space is crude on
         // purpose: the matcher's job is ordering, not semantics.
         let number_intent = "one single number that carries the whole point of the argument";
-        let (layout, score) = suggest_layout_with(&KeywordStub, number_intent).expect("the stub serves");
+        let (layout, score) =
+            suggest_layout_with(&KeywordStub, number_intent).expect("the stub serves");
         assert_eq!(layout, Layout::MetricCallout, "score {score}");
         assert!(score > 0.9, "{score}");
 
         let sequence_intent = "a sequence in time, step after step, left to right";
-        let (layout, score) = suggest_layout_with(&KeywordStub, sequence_intent).expect("the stub serves");
+        let (layout, score) =
+            suggest_layout_with(&KeywordStub, sequence_intent).expect("the stub serves");
         assert_eq!(layout, Layout::Timeline, "score {score}");
 
         // No backend, no suggestion: the intent skill's table answers,
         // as it always has.
         struct NoneEmbedder;
         impl crate::memory::Embedder for NoneEmbedder {
-            fn box_clone(&self) -> Box<dyn crate::memory::Embedder> { Box::new(NoneEmbedder) }
-            fn embed(&self, _: &str) -> Option<Vec<f32>> { None }
-            fn name(&self) -> &'static str { "none" }
-            fn serves_vectors(&self) -> bool { false }
+            fn box_clone(&self) -> Box<dyn crate::memory::Embedder> {
+                Box::new(NoneEmbedder)
+            }
+            fn embed(&self, _: &str) -> Option<Vec<f32>> {
+                None
+            }
+            fn name(&self) -> &'static str {
+                "none"
+            }
+            fn serves_vectors(&self) -> bool {
+                false
+            }
         }
         assert!(suggest_layout_with(&NoneEmbedder, "anything").is_none());
     }
 
-
     #[test]
     fn auto_fit_compresses_an_overfull_component_and_keeps_the_takeaway() {
         let long_tail = " across three regions by a wide margin, with commentary".repeat(13);
-        let deck = deck(
-            vec![node(
-                "slide_01",
-                "Q3 margins grew by fourteen percent on regional strength",
-                vec![Component::BulletList {
-                    items: vec![format!("**Margins grew 14%**{long_tail}")],
-                }],
-            )],
-        );
+        let deck = deck(vec![node(
+            "slide_01",
+            "Q3 margins grew by fourteen percent on regional strength",
+            vec![Component::BulletList {
+                items: vec![format!("**Margins grew 14%**{long_tail}")],
+            }],
+        )]);
         assert!(!review(&deck).is_empty(), "the fixture must overflow");
         let fitted = auto_fit(&deck);
         assert!(
@@ -1717,16 +1780,18 @@ mod tests {
         // Enough text that holding it in a split column would clip past
         // half of it: the roomier layout is the honest repair.
         let heavy = "one ".repeat(120);
-        let deck = deck(
-            vec![node(
-                "slide_01",
-                "The landscape report names four forces and their directions",
-                vec![
-                    Component::Prose { text: format!("{heavy}with detail") },
-                    Component::BulletList { items: vec!["**Force one** named".to_string()] },
-                ],
-            )],
-        );
+        let deck = deck(vec![node(
+            "slide_01",
+            "The landscape report names four forces and their directions",
+            vec![
+                Component::Prose {
+                    text: format!("{heavy}with detail"),
+                },
+                Component::BulletList {
+                    items: vec!["**Force one** named".to_string()],
+                },
+            ],
+        )]);
         assert!(!review(&deck).is_empty(), "the fixture must overflow");
         let fitted = auto_fit(&deck);
         assert!(
@@ -1738,15 +1803,13 @@ mod tests {
 
     #[test]
     fn auto_fit_leaves_a_clean_deck_untouched() {
-        let deck = deck(
-            vec![node(
-                "slide_01",
-                "Q3 margins grew by fourteen percent on regional strength",
-                vec![Component::BulletList {
-                    items: vec!["**Margins grew 14%** regionally".to_string()],
-                }],
-            )],
-        );
+        let deck = deck(vec![node(
+            "slide_01",
+            "Q3 margins grew by fourteen percent on regional strength",
+            vec![Component::BulletList {
+                items: vec!["**Margins grew 14%** regionally".to_string()],
+            }],
+        )]);
         let fitted = auto_fit(&deck);
         assert_eq!(fitted.deck, deck, "a clean deck is not edited");
         assert!(fitted.actions.is_empty());

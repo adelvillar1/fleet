@@ -362,13 +362,15 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
     };
     let id = path.file_stem().and_then(|s| s.to_str())?.to_string();
     // The tail: the last non-empty line's kind. Bounded by the file's
-    // own size the way `replay` is, but the last line only.
+    // own size the way `replay` is, but the last line only. An `end`
+    // record also carries the model that actually served (KI-073),
+    // which is what surfaces name instead of the head's nominal stamp.
     let text = fs::read_to_string(path).ok()?;
     let last = text.lines().rev().find(|line| !line.trim().is_empty())?;
-    let ended = matches!(
-        serde_json::from_str::<Record>(last.trim()),
-        Ok(Record::End { .. })
-    );
+    let (ended, served_model) = match serde_json::from_str::<Record>(last.trim()) {
+        Ok(Record::End { served_model, .. }) => (true, served_model),
+        _ => (false, None),
+    };
     let compacted = text.lines().any(|line| {
         matches!(
             serde_json::from_str::<Record>(line.trim()),
@@ -382,6 +384,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         ended,
         kind,
         compacted,
+        served_model,
         path: path.to_path_buf(),
     })
 }
@@ -404,7 +407,30 @@ pub struct SessionSummary {
     /// `fleet sessions` mark it, because a compacted session's replay is
     /// a compacted shape and a reader deserves to know before opening it.
     pub compacted: bool,
+    /// The model that actually served, from the log's `end` record
+    /// (KI-073). `None` while the run is in flight, on an unrouted run,
+    /// and on an unreadable log.
+    pub served_model: Option<String>,
     pub path: PathBuf,
+}
+
+impl SessionSummary {
+    /// The model a surface may NAME as the one in use. KI-073's rule,
+    /// extended from the end record to every reader: the start record
+    /// names the NOMINAL model — on a routed run that is a pre-route
+    /// default and never the model that answered (the archive rendered
+    /// `deepseek-chat` for runs step-5-preview served, which is why
+    /// this method exists) — so a surface names the end record's
+    /// served model, falls back to the nominal name only on an ended
+    /// unrouted run (where the nominal model IS the served model), and
+    /// names nothing while the run is still in flight.
+    pub fn serving_model(&self) -> Option<&str> {
+        match (self.ended, &self.served_model) {
+            (true, Some(served)) => Some(served),
+            (true, None) => Some(&self.model),
+            (false, _) => None,
+        }
+    }
 }
 
 /// List every log in `sessions_dir(home)`, oldest first; logs that fail to
@@ -443,6 +469,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     ended: false,
                     kind: None,
                     compacted: false,
+                    served_model: None,
                     path,
                 });
             }
@@ -1215,6 +1242,68 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].kind.as_deref(), Some("subagent"));
         assert!(summaries[0].ended);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_summary_names_the_model_that_served_not_the_start_stamp() {
+        // KI-073 put the model that answered in the end record; KI-255 is
+        // the surfaces reading it. The start record's model is a
+        // pre-route default on a routed run — the archive rendered it as
+        // the model in use for runs step-5-preview served — so the
+        // summary names the served model, nothing while a run is in
+        // flight, and the nominal name only on an ended unrouted run,
+        // where the nominal model IS the served model.
+        let home = temp_home("serving-model");
+        let mut routed = Session::create(&home, "deepseek-chat").unwrap();
+        routed
+            .record(&Record::User {
+                content: "the task".into(),
+            })
+            .unwrap();
+        routed
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+                served_model: Some("step-5-preview".to_string()),
+            })
+            .unwrap();
+        let mut open = Session::create(&home, "deepseek-chat").unwrap();
+        open.record(&Record::User {
+            content: "still running".into(),
+        })
+        .unwrap();
+        let mut unrouted = Session::create(&home, "deepseek-chat").unwrap();
+        unrouted
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+                served_model: None,
+            })
+            .unwrap();
+
+        let summaries = list(&home).unwrap();
+        let by_id = |id: &str| {
+            summaries
+                .iter()
+                .find(|summary| summary.id == id)
+                .unwrap_or_else(|| panic!("no summary for {id}"))
+        };
+        assert_eq!(
+            by_id(routed.id()).serving_model(),
+            Some("step-5-preview"),
+            "the routed run names what answered"
+        );
+        assert_eq!(
+            by_id(open.id()).serving_model(),
+            None,
+            "an open run names nothing — nothing has served yet"
+        );
+        assert_eq!(
+            by_id(unrouted.id()).serving_model(),
+            Some("deepseek-chat"),
+            "an ended unrouted run's nominal model is its served model"
+        );
         fs::remove_dir_all(&home).ok();
     }
 

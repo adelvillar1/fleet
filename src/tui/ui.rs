@@ -2879,6 +2879,7 @@ mod tests {
             ended: true,
             kind: None,
             compacted: false,
+            served_model: None,
             path: std::path::PathBuf::from("/tmp/x.jsonl"),
         }]);
         let picker = draw(&app, 80, 24);
@@ -2899,6 +2900,7 @@ mod tests {
             ended: true,
             kind: Some(crate::session::SUBAGENT_KIND.to_string()),
             compacted: false,
+            served_model: None,
             path: std::path::PathBuf::from("/tmp/child.jsonl"),
         }]);
         let child_picker = draw(&children, 80, 24);
@@ -2918,6 +2920,7 @@ mod tests {
             ended: true,
             kind: None,
             compacted: true,
+            served_model: None,
             path: std::path::PathBuf::from("/tmp/folded.jsonl"),
         }]);
         let folded_picker = draw(&folded, 80, 24);

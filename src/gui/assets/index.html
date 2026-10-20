@@ -13,9 +13,9 @@
   // where a body attribute cannot be set yet.
   try {
     document.documentElement.dataset.theme =
-      window.localStorage.getItem('fleet-theme') || 'console';
+      window.localStorage.getItem('fleet-theme-2') || 'paper';
   } catch (error) {
-    document.documentElement.dataset.theme = 'console';
+    document.documentElement.dataset.theme = 'paper';
   }
 </script>
 </head>
@@ -29,12 +29,23 @@
        name. The mark, the jump row and the collapse switch are static;
        the tree between them is built from GROUPS. -->
   <nav class="surfaces" id="rail" aria-label="surfaces">
-    <a class="mark" href="#/chat">
-      <span class="mark-glyph" aria-hidden="true"></span>
-      <span class="mark-name">fleet</span>
+    <a class="mark" href="#/chat" aria-label="fleet, the conversation">
+      <span class="mark-glyph" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round">
+          <path d="M4 6.5h11"></path>
+          <path d="M4 12h16"></path>
+          <path d="M4 17.5h8"></path>
+        </svg>
+      </span>
+      <span class="mark-text">
+        <span class="mark-name">fleet</span>
+        <span class="mark-tag">local console</span>
+      </span>
     </a>
     <div class="surfaces-tree" id="rail-tree"></div>
     <div class="surfaces-foot">
+      <span class="surfaces-where" id="rail-where">this machine</span>
       <button class="surfaces-palette" id="rail-jump" type="button"
               aria-label="jump to any surface" title="jump to any surface">
         <span class="surfaces-mark" aria-hidden="true">⌘</span>
@@ -49,7 +60,25 @@
     </div>
   </nav>
 
+  <div class="rail-scrim" id="rail-scrim" hidden></div>
+
   <header class="topbar">
+    <div class="topbar-left">
+      <button class="rail-menu" id="rail-menu" type="button"
+              aria-label="open the surfaces rail" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" aria-hidden="true">
+          <path d="M4 7h16"></path>
+          <path d="M4 12h16"></path>
+          <path d="M4 17h10"></path>
+        </svg>
+      </button>
+      <nav class="crumb" aria-label="where you are">
+        <span class="crumb-group" id="crumb-group">work</span>
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <span class="crumb-page" id="crumb-page">conversation</span>
+      </nav>
+    </div>
     <div class="topbar-right">
       <span class="pill" id="route-pill" data-state="idle" title="where this run's work went">no route yet</span>
       <dl class="stats">
@@ -63,21 +92,32 @@
         </div>
       </dl>
       <span class="pill" id="state-pill" data-state="idle">idle</span>
-      <button class="theme-toggle" id="theme-toggle" type="button"
-              aria-label="choose a theme" title="choose a theme" data-theme="dark">
-        <span class="theme-mark" aria-hidden="true">◐</span>
-      </button>
-      <div class="themes" id="themes" hidden role="listbox" aria-label="themes"></div>
-      <button class="pane-open" id="pane-open" type="button"
-              aria-label="open the files and deliverables pane" title="files, code and deliverables">
-        <span class="pane-open-mark" aria-hidden="true">⌷</span>
-      </button>
-      <button class="palette-open" id="palette-open" type="button"
-              aria-label="jump to any surface" title="jump to any surface">
-        <span class="palette-open-mark" aria-hidden="true">⌘</span>K
-      </button>
+      <div class="topbar-tools">
+        <button class="theme-toggle" id="theme-toggle" type="button"
+                aria-label="choose a theme" title="choose a theme" data-theme="paper">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="7"></circle>
+            <path d="M12 5a7 7 0 0 0 0 14z" fill="currentColor" stroke="none"></path>
+          </svg>
+        </button>
+        <button class="pane-open" id="pane-open" type="button"
+                aria-label="open the files and deliverables pane" title="files, code and deliverables">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" aria-hidden="true">
+            <rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect>
+            <path d="M14.5 4.5v15"></path>
+          </svg>
+        </button>
+        <button class="palette-open" id="palette-open" type="button"
+                aria-label="jump to any surface" title="jump to any surface">
+          <span class="palette-open-mark" aria-hidden="true">⌘</span>K
+        </button>
+      </div>
     </div>
   </header>
+
+  <div class="themes" id="themes" hidden role="listbox" aria-label="themes"></div>
 
   <!-- The command palette: every surface and every action, grouped by
        the same destinations the rail shows, so one structure serves
@@ -108,12 +148,54 @@
     <section class="column">
 
       <div class="empty" id="empty">
-        <h1>The conversation.</h1>
-        <p>
-          Every turn, tool call, route, and approval this session makes arrives on one stream.
-          Ask for something and watch it happen.
+        <p class="empty-eyebrow" id="empty-eyebrow">fleet &middot; local console</p>
+        <h1 id="empty-title">What are we building?</h1>
+        <p class="empty-lede" id="empty-lede">
+          Your models, your memory, and your workspace are all here, on this machine.
+          Ask for something and watch the run happen.
         </p>
+        <div class="home-stats" id="home-stats" hidden>
+          <button class="home-stat" type="button" data-go="#/memory">
+            <span class="home-stat-value" id="home-facts">&mdash;</span>
+            <span class="home-stat-label">facts fleet knows</span>
+          </button>
+          <button class="home-stat" type="button" data-go="#/skills">
+            <span class="home-stat-value" id="home-skills">&mdash;</span>
+            <span class="home-stat-label">skills in reach</span>
+          </button>
+          <button class="home-stat" type="button" data-go="#/sessions">
+            <span class="home-stat-value" id="home-runs">&mdash;</span>
+            <span class="home-stat-label">runs under this home</span>
+          </button>
+        </div>
+        <button class="home-known" id="home-known" type="button" hidden></button>
+        <p class="since" id="since" hidden></p>
+        <div class="next" id="next" hidden>
+          <span class="next-eyebrow" id="next-eyebrow">next from the graph</span>
+          <p class="next-goal" id="next-goal"></p>
+          <button class="next-go" id="next-go" type="button">take this step</button>
+        </div>
         <div class="offers" id="offers"></div>
+        <div class="recent" id="recent" hidden></div>
+        <div class="method" aria-label="the working method">
+          <span class="method-label">your method</span>
+          <ol class="method-steps">
+            <li><button class="method-step" type="button" data-step="plan"><b>Plan</b><span>the run writes nothing</span></button></li>
+            <li><button class="method-step" type="button" data-step="delegate"><b>Delegate</b><span>the graph carries the order</span></button></li>
+            <li><button class="method-step" type="button" data-step="verify"><b>Verify</b><span>sys1 grades the evidence</span></button></li>
+          </ol>
+        </div>
+        <div class="lanes" id="lanes" aria-label="the lanes">
+          <span class="lanes-label">lanes</span>
+          <button class="lane" type="button" data-lane="judge">sys1 judge</button>
+          <button class="lane" type="button" data-lane="memory">memory</button>
+          <button class="lane" type="button" data-lane="skills">skills</button>
+          <button class="lane" type="button" data-lane="web">web</button>
+          <button class="lane" type="button" data-lane="deck">deck</button>
+        </div>
+        <p class="empty-meta" id="empty-meta">
+          Nothing leaves this machine. Every turn is a card you can open.
+        </p>
       </div>
 
       <div class="log" id="log" aria-live="polite" aria-relevant="text"></div>

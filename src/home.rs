@@ -179,7 +179,10 @@ mod tests {
             overlaid.get("STEPTEST_API_KEY").map(String::as_str),
             Some("sealed-fresh")
         );
-        assert_eq!(overlaid.get("OTHER_NAME").map(String::as_str), Some("other-value"));
+        assert_eq!(
+            overlaid.get("OTHER_NAME").map(String::as_str),
+            Some("other-value")
+        );
 
         // Without the passphrase the map is the plain dotenv: the stale
         // plaintext answers, and nothing fails.

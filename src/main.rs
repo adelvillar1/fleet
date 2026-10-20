@@ -1751,8 +1751,7 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
     // with a real cost, and pretending it is free would put a lie in
     // the decision row.
     let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
-    let dotenv =
-        fleet::home::read_dotenv_with_vault(&home, passphrase.as_deref());
+    let dotenv = fleet::home::read_dotenv_with_vault(&home, passphrase.as_deref());
     let prepared =
         match fleet::route::prepare(&home, &dotenv, "compact a session", &HashMap::new()).await {
             Ok(prepared) => prepared,

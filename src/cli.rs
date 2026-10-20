@@ -81,7 +81,7 @@ pub enum Command {
     /// `--dry-run` spends nothing.
     Explain(ExplainOptions),
     /// The browser face: a loopback server over the same agent core,
-    /// with the URL and its one-launch token printed to the terminal.
+    /// with the address printed to the terminal.
     Gui(GuiOptions),
     /// Print the version.
     Version,
@@ -96,8 +96,8 @@ pub struct GuiOptions {
     pub host: String,
     /// The port to bind; zero asks the operating system for a free one.
     pub port: u16,
-    /// Open the browser anyway? `true` means do not: the URL and token
-    /// are printed, and the owner opens the page themselves.
+    /// Open the browser anyway? `true` means do not: the address is
+    /// printed, and the owner opens the page themselves.
     pub no_open: bool,
 }
 
@@ -416,7 +416,7 @@ usage:
   fleet gui [--port <n>] [--host <address>] [--no-open]
                                 the browser face: a loopback server over the
                                 same agent core. The URL with its one-launch
-                                token is printed, the browser opens unless
+                                the browser opens unless
                                 --no-open, and the run streams to the page.
                                 --host serves loopback only; a routable
                                 address is refused by name

@@ -96,7 +96,71 @@
   // A short mark per destination, so the collapsed rail still reads at a
   // glance. The house rule for glyphs: a mark is always the surface's own
   // first letter rather than an icon set shipped beside the binary.
+  // The marks. The rail's places and the empty state's offers use the
+  // same 24-unit icon set, drawn here rather than shipped as a second
+  // asset: a stroke icon is geometry, and geometry belongs with the code
+  // that places it. GROUP_MARKS remains the letter fallback the palette
+  // can use when a surface has no icon of its own.
   var GROUP_MARKS = { work: 'w', intelligence: 'i', knowledge: 'k', system: 's' };
+
+  var ICONS = {
+    chat: [['path', { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }]],
+    sessions: [
+      ['circle', { cx: 12, cy: 12, r: 8.5 }],
+      ['path', { d: 'M12 7.5V12l3 1.8' }]
+    ],
+    router: [
+      ['path', { d: 'M4 7h5a4 4 0 0 1 4 4v2a4 4 0 0 0 4 4h3' }],
+      ['circle', { cx: 4, cy: 7, r: 1.6 }],
+      ['circle', { cx: 20, cy: 17, r: 1.6 }]
+    ],
+    delegation: [
+      ['circle', { cx: 6, cy: 6, r: 2 }],
+      ['circle', { cx: 18, cy: 6, r: 2 }],
+      ['circle', { cx: 12, cy: 18, r: 2 }],
+      ['path', { d: 'M7.4 7.3 10.8 16.2' }],
+      ['path', { d: 'M16.6 7.3 13.2 16.2' }],
+      ['path', { d: 'M8 6h8' }]
+    ],
+    memory: [
+      ['path', { d: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20' }],
+      ['path', { d: 'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z' }]
+    ],
+    skills: [
+      ['path', { d: 'M12 2 2 7l10 5 10-5-10-5z' }],
+      ['path', { d: 'M2 12l10 5 10-5' }],
+      ['path', { d: 'M2 17l10 5 10-5' }]
+    ],
+    'second-brain': [
+      ['rect', { x: 3.5, y: 3.5, width: 7, height: 7, rx: 1.5 }],
+      ['rect', { x: 13.5, y: 3.5, width: 7, height: 7, rx: 1.5 }],
+      ['rect', { x: 3.5, y: 13.5, width: 7, height: 7, rx: 1.5 }],
+      ['rect', { x: 13.5, y: 13.5, width: 7, height: 7, rx: 1.5 }]
+    ],
+    settings: [
+      ['path', { d: 'M4 7h10' }],
+      ['path', { d: 'M18 7h2' }],
+      ['circle', { cx: 16, cy: 7, r: 2 }],
+      ['path', { d: 'M4 17h4' }],
+      ['path', { d: 'M12 17h8' }],
+      ['circle', { cx: 10, cy: 17, r: 2 }]
+    ],
+    calibration: [['path', { d: 'M3 12h4l2.5-7 4 14 2.5-7h5' }]],
+    tower: [
+      ['path', { d: 'M5 20V10' }],
+      ['path', { d: 'M12 20V4' }],
+      ['path', { d: 'M19 20v-7' }],
+      ['path', { d: 'M3 20h18' }]
+    ],
+    plan: [
+      ['path', { d: 'M9 4h6v3H9z' }],
+      ['path', { d: 'M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2' }]
+    ],
+    repo: [
+      ['path', { d: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' }]
+    ],
+    dot: [['circle', { cx: 12, cy: 12, r: 6 }]]
+  };
 
   // Which group an address belongs to, and its label in that group —
   // derived once so the rail, the palette and the panel all agree.
@@ -111,6 +175,11 @@
     railToggle: document.getElementById('rail-toggle'),
     railToggleName: document.getElementById('rail-toggle-name'),
     railJump: document.getElementById('rail-jump'),
+    railMenu: document.getElementById('rail-menu'),
+    railScrim: document.getElementById('rail-scrim'),
+    railWhere: document.getElementById('rail-where'),
+    crumbGroup: document.getElementById('crumb-group'),
+    crumbPage: document.getElementById('crumb-page'),
     palette: document.getElementById('palette'),
     paletteScrim: document.getElementById('palette-scrim'),
     paletteInput: document.getElementById('palette-input'),
@@ -166,7 +235,21 @@
     contextFill: document.getElementById('context-fill'),
     log: document.getElementById('log'),
     empty: document.getElementById('empty'),
+    emptyEyebrow: document.getElementById('empty-eyebrow'),
+    emptyTitle: document.getElementById('empty-title'),
+    emptyLede: document.getElementById('empty-lede'),
+    emptyMeta: document.getElementById('empty-meta'),
     offers: document.getElementById('offers'),
+    recent: document.getElementById('recent'),
+    homeStats: document.getElementById('home-stats'),
+    homeFacts: document.getElementById('home-facts'),
+    homeSkills: document.getElementById('home-skills'),
+    homeRuns: document.getElementById('home-runs'),
+    homeKnown: document.getElementById('home-known'),
+    next: document.getElementById('next'),
+    nextEyebrow: document.getElementById('next-eyebrow'),
+    nextGoal: document.getElementById('next-goal'),
+    nextGo: document.getElementById('next-go'),
     seat: document.getElementById('seat'),
     seatLabel: document.getElementById('seat-label'),
     seatSummary: document.getElementById('seat-summary'),
@@ -195,6 +278,19 @@
   var face = {
     session: '',
     model: '',
+    workspace: '',
+    // The welcome's one read and its clock. The panels keep their own
+    // reads; this document is the bounded summary that fills the home.
+    home: null,
+    homeAt: 0,
+    // The selected object, shared by every panel so a repaint does not
+    // lose the row the owner chose. The address mirrors it.
+    focus: null,
+    // A panel's own filters, held in memory for this visit only.
+    sessionsFilter: 'all',
+    // The visit stamp, read before it is overwritten, so the home can
+    // say what happened while the owner was away.
+    lastVisit: '',
     budget: 0,
     spend: 0,
     context: 0,
@@ -301,10 +397,30 @@
   };
 
   var OFFERS = [
-    'walk the router\u2019s chain for a small task and report what it did',
-    'what do the memories say about the fleet router',
-    'read the plan and tell me what the next increment owes',
-    'summarise this repository in five lines'
+    {
+      icon: 'plan',
+      title: 'Read the plan',
+      said: 'Find the next increment and what it still owes.',
+      prompt: 'read the plan and tell me what the next increment owes'
+    },
+    {
+      icon: 'sessions',
+      title: 'Review today\u2019s changes',
+      said: 'See every file the run touched, hunk by hunk, before it lands.',
+      prompt: '/review'
+    },
+    {
+      icon: 'memory',
+      title: 'Ask what fleet knows',
+      said: 'Search the corpus for the decisions you already made.',
+      prompt: 'what do the memories say about the fleet router'
+    },
+    {
+      icon: 'router',
+      title: 'Walk the router',
+      said: 'Send a small task and see the chain it chose, and why.',
+      prompt: 'walk the router\u2019s chain for a small task and report what it did'
+    }
   ];
 
   // ----------------------------------------------------------- formatting
@@ -326,6 +442,27 @@
     var made = document.createElement(name);
     if (className) made.className = className;
     if (text != null) made.textContent = text;
+    return made;
+  }
+
+  // One stroke icon, from the declaration above. A surface's mark is its
+  // own shape, not a letter in a box: the rail and the palette should
+  // read at a glance without inventing a second alphabet.
+  function icon(name, className) {
+    var made = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    made.setAttribute('viewBox', '0 0 24 24');
+    made.setAttribute('fill', 'none');
+    made.setAttribute('stroke', 'currentColor');
+    made.setAttribute('stroke-width', '1.6');
+    made.setAttribute('stroke-linecap', 'round');
+    made.setAttribute('stroke-linejoin', 'round');
+    made.setAttribute('aria-hidden', 'true');
+    if (className) made.setAttribute('class', className);
+    (ICONS[name] || ICONS.dot).forEach(function (part) {
+      var shape = document.createElementNS('http://www.w3.org/2000/svg', part[0]);
+      Object.keys(part[1]).forEach(function (key) { shape.setAttribute(key, part[1][key]); });
+      made.appendChild(shape);
+    });
     return made;
   }
 
@@ -773,6 +910,155 @@
     }
   }
 
+  // ------------------------------------------------------------- the home
+
+  // The empty state is the face's welcome, so it speaks in the owner's own
+  // time and names the place they are standing in. The words are the only
+  // thing that changes; the structure stays still between visits.
+  function greeting() {
+    var hour = new Date().getHours();
+    if (hour < 5) return 'working late';
+    if (hour < 12) return 'good morning';
+    if (hour < 18) return 'good afternoon';
+    return 'good evening';
+  }
+
+  function workspaceName() {
+    var path = String(face.workspace || '');
+    if (!path) return 'this machine';
+    var parts = path.split('/').filter(function (part) { return part.length; });
+    return parts.length ? parts[parts.length - 1] : path;
+  }
+
+  function paintEmpty() {
+    if (!el.emptyEyebrow) return;
+    el.emptyEyebrow.textContent = greeting() + ' \u00b7 ' + workspaceName();
+    if (el.emptyMeta) {
+      el.emptyMeta.textContent = face.workspace
+        ? 'Local to ' + face.workspace + ' \u00b7 nothing leaves this machine.'
+        : 'Nothing leaves this machine. Every turn is a card you can open.';
+    }
+    if (el.railWhere) el.railWhere.textContent = workspaceName();
+  }
+
+  // The last few runs, one click from the welcome. A console that opens
+  // blank after a night of scheduled work is a console that forgot the
+  // owner was there.
+  function paintRecent() {
+    paintHome();
+    var rows = (face.home && face.home.runs && face.home.runs.recent)
+      || ((face.sessions && face.sessions.sessions) || []).slice(0, 3);
+    if (!rows.length) { el.recent.hidden = true; return; }
+    el.recent.hidden = false;
+    el.recent.textContent = '';
+    var head = node('div', 'recent-head');
+    head.appendChild(node('h2', 'recent-title', 'pick up where you left off'));
+    var all = node('button', 'recent-all', 'open the archive');
+    all.type = 'button';
+    all.addEventListener('click', function () { window.location.hash = '#/sessions'; });
+    head.appendChild(all);
+    el.recent.appendChild(head);
+    rows.forEach(function (row) {
+      var line = node('button', 'recent-row');
+      line.type = 'button';
+      var dot = node('span', 'recent-dot');
+      dot.dataset.state = row.ended ? 'done' : 'live';
+      line.appendChild(dot);
+      line.appendChild(node('span', 'recent-id',
+        (row.current ? 'this face \u00b7 ' : '') + row.id));
+      var when = String(row.created || '');
+      line.appendChild(node('span', 'recent-when',
+        when ? when.slice(5, 16).replace('T', ' ') : '\u2014'));
+      line.addEventListener('click', function () {
+        el.recent.hidden = true;
+        window.location.hash = '#/sessions';
+        readReplay(row.id, true);
+      });
+      el.recent.appendChild(line);
+    });
+  }
+
+  // The welcome's three readings: the same memory, skills and sessions
+  // documents the panels read, reduced to what fits in a glance. They
+  // answer "what does this harness know about me and my work" without a
+  // second store and without inventing a number.
+  function paintHome() {
+    if (!el.homeStats) return;
+    var h = face.home || {};
+    var facts = h.memory ? h.memory.live
+      : face.memory
+        ? (face.memory.facts || []).filter(function (fact) { return !fact.retired; }).length
+        : null;
+    var skills = h.skills ? h.skills.count
+      : face.skills ? (face.skills.skills || []).length : null;
+    var runs = h.runs ? h.runs.count
+      : face.sessions ? (face.sessions.sessions || []).length : null;
+    if (facts === null && skills === null && runs === null) {
+      el.homeStats.hidden = true;
+      return;
+    }
+    el.homeStats.hidden = false;
+    el.homeFacts.textContent = facts === null ? '\u2014' : String(facts);
+    el.homeSkills.textContent = skills === null ? '\u2014' : String(skills);
+    el.homeRuns.textContent = runs === null ? '\u2014' : String(runs);
+    if (!el.homeStats.dataset.wired) {
+      el.homeStats.dataset.wired = '1';
+      Array.prototype.forEach.call(el.homeStats.querySelectorAll('[data-go]'), function (button) {
+        button.addEventListener('click', function () {
+          window.location.hash = button.dataset.go;
+        });
+      });
+    }
+
+    // The part a count cannot say: which facts are carrying the most
+    // weight in this corpus. The home read names them; a panel read is
+    // the fallback when the owner arrived before the home landed.
+    if (el.homeKnown) {
+      var named = [];
+      if (h.memory && (h.memory.top || []).length) {
+        named = h.memory.top.map(function (fact) { return { name: fact.name, recalls: fact.recalls }; });
+      } else {
+        named = (face.memory ? face.memory.facts || [] : [])
+          .filter(function (fact) { return !fact.retired; })
+          .sort(function (left, right) { return right.recall_count - left.recall_count; })
+          .slice(0, 2);
+      }
+      el.homeKnown.hidden = !named.length;
+      if (named.length) {
+        el.homeKnown.textContent = '';
+        el.homeKnown.appendChild(document.createTextNode('Most recalled: '));
+        named.forEach(function (fact, at) {
+          if (at) el.homeKnown.appendChild(document.createTextNode(' \u00b7 '));
+          el.homeKnown.appendChild(node('b', null, fact.name));
+        });
+        el.homeKnown.onclick = function () { window.location.hash = '#/memory'; };
+      }
+    }
+
+    // The method's live edge: the graph's next ready node, offered as the
+    // first step of the day. The home read names it, so the welcome and
+    // the graph cannot point at different steps.
+    if (el.next) {
+      var pick = h.next || null;
+      if (!pick && face.delegation && face.delegation.graph) {
+        var nodes = face.delegation.graph.nodes || [];
+        var ready = nodes.filter(function (one) { return one.state === 'ready'; })
+          .sort(function (left, right) { return left.score - right.score; });
+        var running = nodes.filter(function (one) { return one.state === 'running'; });
+        pick = running[0] || ready[0] || null;
+      }
+      el.next.hidden = !pick;
+      if (pick) {
+        el.nextEyebrow.textContent = pick.state === 'running' ? 'running now' : 'next from the graph';
+        el.nextGoal.textContent = pick.id + (pick.approach ? ' \u00b7 ' + pick.approach : '');
+        el.nextGo.onclick = function () {
+          ask('work the next ready graph node: ' + pick.id +
+            (pick.approach ? '. ' + pick.approach : ''));
+        };
+      }
+    }
+  }
+
   // ------------------------------------------------------- the router board
 
   // Two sources feed this panel and the panel names both wherever a
@@ -833,6 +1119,40 @@
       el0.appendChild(said);
     }
     return el0;
+  }
+
+  // The surface announces itself once, above the cards: an eyebrow that
+  // names the group, a title in the display voice, one plain sentence
+  // about what the panel reads, and the read's own stamp on the right.
+  // It is deliberately not a card — ten surfaces should not all open with
+  // the same framed heading.
+  function pageHead(eyebrow, title, note, stamp, action) {
+    var head = node('header', 'page-head');
+    var main = node('div', 'page-main');
+    main.appendChild(node('p', 'page-eyebrow', eyebrow));
+    main.appendChild(node('h1', 'page-title', title));
+    if (note) main.appendChild(node('p', 'page-note', note));
+    head.appendChild(main);
+    if (stamp || action) {
+      var side = node('div', 'page-side');
+      if (stamp) side.appendChild(node('span', 'page-stamp', stamp));
+      if (action) {
+        var button = node('button', 'page-action', action.label);
+        button.type = 'button';
+        button.addEventListener('click', action.run);
+        side.appendChild(button);
+      }
+      head.appendChild(side);
+    }
+    return head;
+  }
+
+  // The KPI strip is the `.tiles` node the panel already built; the
+  // class is kept so the markup stays one shape whether it is a page's
+  // first row or a card's interior.
+  function statStrip(tiles) {
+    if (tiles && !tiles.classList.contains('stats-strip')) tiles.classList.add('stats-strip');
+    return tiles;
   }
 
   function tile(value, label, tone) {
@@ -1253,7 +1573,10 @@
     // an empty grid. The live decision is not in the read and paints
     // either way, so it is drawn first in both cases.
     if (!read) {
-      var waiting = boardCard(12, 'the router', null, null);
+      el.routerBoard.appendChild(pageHead('Intelligence', 'Router',
+        'Where this run\u2019s work went, what it tried first, and what the day has served.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The board\u2019s read has not landed yet. The live decision below is the run\u2019s own event ' +
         'and does not wait for it.'));
@@ -1261,6 +1584,14 @@
       el.routerBoard.appendChild(decisionCard());
       return;
     }
+    el.routerBoard.appendChild(pageHead('Intelligence', 'Router',
+      'Where this run\u2019s work went, what it tried first, and what the day has served.',
+      read.read_at, {
+        label: 'Ask sys1 for a judgment',
+        run: function () {
+          ask('use the sys1 lane to review today\u2019s route decisions and report the fit');
+        }
+      }));
     el.routerBoard.appendChild(decisionCard());
     el.routerBoard.appendChild(cacheCard(read));
     el.routerBoard.appendChild(dayCard(read, wide7));
@@ -1703,7 +2034,10 @@
     var wide = cardWide(el.delegationBoard, 12);
     el.delegationBoard.textContent = '';
     if (!read) {
-      var waiting = boardCard(12, 'delegation', null, null);
+      el.delegationBoard.appendChild(pageHead('Intelligence', 'Delegation',
+        'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The delegation read has not landed yet. It reads the session logs and the graph file, ' +
         'both of which are this machine\u2019s own.'));
@@ -1715,9 +2049,15 @@
     tiles.appendChild(tile(read.live ? countNodes(read.live) : 0, 'in this run'));
     tiles.appendChild(tile(read.history.length, 'recent runs'));
     tiles.appendChild(tile(read.graph ? read.graph.nodes.length : 0, 'graph nodes'));
-    var head = boardCard(12, 'delegation', null, null);
-    head.appendChild(tiles);
-    el.delegationBoard.appendChild(head);
+    el.delegationBoard.appendChild(pageHead('Intelligence', 'Delegation',
+      'The run\u2019s own tree, the runs before it, and the dependency graph the plan declares.',
+      null, {
+        label: 'Ask for the next step',
+        run: function () {
+          ask('read the dependency graph and tell me the next ready node to work');
+        }
+      }));
+    el.delegationBoard.appendChild(statStrip(tiles));
 
     if (read.live) {
       el.delegationBoard.appendChild(treeCard(read.live,
@@ -1790,7 +2130,10 @@
     var read = face.memory;
     el.memoryBoard.textContent = '';
     if (!read) {
-      var waiting = boardCard(12, 'memory', null, null);
+      el.memoryBoard.appendChild(pageHead('Knowledge', 'Memory',
+        'One fact per file: what this run recalled, and what the corpus already knows.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The corpus read has not landed yet. It reads the memories tree and the day\u2019s ' +
         'calibration stream, both of which are this machine\u2019s own.'));
@@ -1807,14 +2150,24 @@
     tiles.appendChild(tile(facts.length - live.length, 'retired'));
     tiles.appendChild(tile(hits.length, 'hits ' + read.day));
     tiles.appendChild(tile(recalls.length, 'recalls this run', recalls.length ? 'live' : null));
-    var head = boardCard(12, 'memory', null, 'the corpus at ' + read.root);
-    head.appendChild(tiles);
-    head.appendChild(memorySearch());
-    el.memoryBoard.appendChild(head);
+    el.memoryBoard.appendChild(pageHead('Knowledge', 'Memory',
+      'One fact per file: what this run recalled, and what the corpus already knows.',
+      'the corpus at ' + read.root, {
+        label: 'Ask what fleet knows',
+        run: function () {
+          ask('summarise what the memories know about my current work and cite the facts');
+        }
+      }));
+    el.memoryBoard.appendChild(statStrip(tiles));
+    el.memoryBoard.appendChild(memorySearch());
 
     var shown = live.filter(function (fact) { return matchesQuery(fact); });
     if (shown.length) {
-      el.memoryBoard.appendChild(factGrid(shown));
+      var corpus = boardCard(12, 'the corpus', shown.length + ' live',
+        'a fact is one file under the memories tree; opening one shows its whole body and its ' +
+        'edit, written through the substrate\u2019s own rewriter.');
+      corpus.appendChild(factGrid(shown));
+      el.memoryBoard.appendChild(corpus);
     } else {
       var none = boardCard(12, 'the corpus', null, null);
       none.appendChild(node('p', 'board-empty',
@@ -2030,6 +2383,54 @@
     return wrap;
   }
 
+  // The welcome's one read. The panels keep their own; this document is
+  // the bounded summary the home renders, cached server-side for half a
+  // minute so a reload or a return to the conversation does not walk the
+  // corpus and every log again.
+  function readHome(force) {
+    var now = Date.now();
+    if (!force && face.home && now - face.homeAt < 30000) return Promise.resolve();
+    face.homeAt = now;
+    return fetch('/api/home', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.home = doc;
+        paintHome();
+        paintRecent();
+        paintSince();
+      })
+      .catch(function () { });
+  }
+
+  // What changed while the owner was away. The stamp is the browser's
+  // own; the counts are the archive's and the corpus's, so the sentence
+  // names real work rather than a streak.
+  function paintSince() {
+    var el0 = document.getElementById('since');
+    if (!el0) return;
+    var since = face.lastVisit;
+    var home = face.home;
+    if (!since || !home) { el0.hidden = true; return; }
+    var at = Date.parse(since);
+    if (isNaN(at)) { el0.hidden = true; return; }
+    var runs = ((home.runs && home.runs.timeline) || []).filter(function (row) {
+      return row.created && Date.parse(row.created) > at;
+    }).length;
+    var day = since.slice(0, 10);
+    var facts = ((home.memory && home.memory.dates) || []).filter(function (date) {
+      return date && date > day;
+    }).length;
+    if (!runs && !facts) { el0.hidden = true; return; }
+    var parts = [];
+    if (runs) parts.push(runs + (runs === 1 ? ' run' : ' runs'));
+    if (facts) parts.push(facts + (facts === 1 ? ' new fact' : ' new facts'));
+    el0.hidden = false;
+    el0.textContent = 'Since your last visit: ' + parts.join(' \u00b7 ');
+  }
+
   function readMemory(force) {
     var now = Date.now();
     if (!force && face.memory && now - face.memoryAt < 4000) return Promise.resolve();
@@ -2055,7 +2456,10 @@
     var read = face.skills;
     el.skillsBoard.textContent = '';
     if (!read) {
-      var waiting = boardCard(12, 'skills', null, null);
+      el.skillsBoard.appendChild(pageHead('Knowledge', 'Skills',
+        'The library the model can reach, the names the loader declined, and the proposals waiting for a decision.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The library read has not landed yet. It reads the canonical skills directory and the ' +
         'home\u2019s own proposals, both of which are this machine\u2019s.'));
@@ -2071,9 +2475,15 @@
     tiles.appendChild(tile(proposals.length, 'awaiting a decision', proposals.length ? 'live' : null));
     tiles.appendChild(tile(read.unused, 'never selected'));
     tiles.appendChild(tile(read.sessions, 'sessions scanned'));
-    var head = boardCard(12, 'skills', null, 'the library at ' + (read.canonical || '\u2014'));
-    head.appendChild(tiles);
-    el.skillsBoard.appendChild(head);
+    el.skillsBoard.appendChild(pageHead('Knowledge', 'Skills',
+      'The library the model can reach, the names the loader declined, and the proposals waiting for a decision.',
+      'the library at ' + (read.canonical || '\u2014'), {
+        label: 'Ask the curator',
+        run: function () {
+          ask('review the skill library and propose the next curation change');
+        }
+      }));
+    el.skillsBoard.appendChild(statStrip(tiles));
 
     if (proposals.length) {
       el.skillsBoard.appendChild(proposalCards(proposals));
@@ -2265,12 +2675,27 @@
     });
   }
 
+  // One way for any surface to hand the agent a task: open the
+  // conversation, put the instruction in the composer, and leave the
+  // send to the owner. The UI never speaks for the owner.
+  function ask(text) {
+    if (window.location.hash !== '#/chat') window.location.hash = '#/chat';
+    el.task.value = text;
+    try { window.localStorage.setItem('fleet-draft', text); } catch (error) { }
+    grow();
+    el.task.focus();
+    el.task.setSelectionRange(text.length, text.length);
+  }
+
   function send() {
     if (face.planMode) { planSend(); return; }
     var task = el.task.value.trim();
     if (!task || face.running || face.seat) return;
     el.task.value = '';
     grow();
+    try { window.localStorage.removeItem('fleet-draft'); } catch (error) { }
+    el.empty.hidden = true;
+    el.log.hidden = false;
     var before = face.events.length;
     post('/api/run', { task: task }).then(function (reply) {
       if (reply.status === 200) return;
@@ -2434,6 +2859,7 @@
   function replay(state) {
     face.session = state.session || '';
     face.model = state.model || '';
+    face.workspace = state.workspace || '';
     face.budget = Number(state.budget) || 0;
     face.running = !!state.running;
     face.dropped = Number(state.dropped) || 0;
@@ -2456,12 +2882,20 @@
     el.log.textContent = '';
     face.stream = node('div', 'stream');
     el.log.appendChild(face.stream);
-    el.log.hidden = false;
-    el.empty.hidden = true;
+    // The empty state is the home when nothing has been said yet. A
+    // boot-time skills event is not a conversation, so it must not push
+    // the owner into a transcript with no words in it.
+    var talked = (state.events || []).some(function (event) {
+      return event.type === 'owner' || event.type === 'assistant' ||
+        event.type === 'tool' || event.type === 'turn';
+    });
+    el.log.hidden = !talked;
+    el.empty.hidden = talked;
     (state.events || []).forEach(apply);
     face.stick = true;
     settle();
     paint();
+    paintEmpty();
   }
 
   // An event recorded between the snapshot and the rebuild rides the
@@ -2517,14 +2951,85 @@
 
   el.offers.textContent = '';
   OFFERS.forEach(function (offer) {
-    var button = node('button', 'offer', offer);
+    var button = node('button', 'offer');
     button.type = 'button';
+    var mark = node('span', 'offer-mark');
+    mark.appendChild(icon(offer.icon));
+    button.appendChild(mark);
+    var body = node('span', 'offer-body');
+    body.appendChild(node('span', 'offer-title', offer.title));
+    body.appendChild(node('span', 'offer-said', offer.said));
+    button.appendChild(body);
     button.addEventListener('click', function () {
-      el.task.value = offer;
+      el.task.value = offer.prompt;
       grow();
       el.task.focus();
     });
     el.offers.appendChild(button);
+  });
+
+  Array.prototype.forEach.call(el.empty.querySelectorAll('[data-step]'), function (button) {
+    button.addEventListener('click', function () {
+      if (button.dataset.step === 'plan') {
+        el.plan.click();
+        el.task.focus();
+      } else if (button.dataset.step === 'delegate') {
+        window.location.hash = '#/delegation';
+      } else {
+        ask('use the sys1 lane to review today\u2019s route decisions and report the fit');
+      }
+    });
+  });
+
+  Array.prototype.forEach.call(el.empty.querySelectorAll('[data-lane]'), function (button) {
+    button.addEventListener('click', function () {
+      var lane = button.dataset.lane;
+      if (lane === 'judge') {
+        ask('use the sys1 lane to review today\u2019s route decisions and report the fit');
+      } else if (lane === 'memory') {
+        window.location.hash = '#/memory';
+      } else if (lane === 'skills') {
+        window.location.hash = '#/skills';
+      } else if (lane === 'web') {
+        openPane();
+        showPaneTab('web');
+      } else if (lane === 'deck') {
+        ask('build a deck that summarises the plan\u2019s next increment');
+      }
+    });
+  });
+
+  try { face.lastVisit = window.localStorage.getItem('fleet-last-visit') || ''; } catch (error) { }
+
+  paintEmpty();
+  // The welcome's one bounded read. It is the only boot-time read of the
+  // corpus, the library, the archive, and the graph; the panels keep
+  // their own reads for when the owner opens them.
+  readHome(false).then(function () {
+    try {
+      window.localStorage.setItem('fleet-last-visit', new Date().toISOString());
+    } catch (error) { }
+  }).catch(function () { });
+
+  // The draft survives a reload. A twelve-hour desk should not lose the
+  // sentence being typed because the face was refreshed.
+  try {
+    var draft = window.localStorage.getItem('fleet-draft');
+    if (draft) { el.task.value = draft; grow(); }
+  } catch (error) { }
+
+  if (el.railMenu) {
+    el.railMenu.addEventListener('click', function () {
+      setMobileRail(document.body.dataset.mobileRail !== 'open');
+    });
+  }
+  if (el.railScrim) {
+    el.railScrim.addEventListener('click', function () { setMobileRail(false); });
+  }
+  window.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && document.body.dataset.mobileRail === 'open') {
+      setMobileRail(false);
+    }
   });
 
   el.composer.addEventListener('submit', function (event) {
@@ -2534,6 +3039,7 @@
 
   el.task.addEventListener('input', function () {
     grow();
+    try { window.localStorage.setItem('fleet-draft', el.task.value); } catch (error) { }
     typeAhead();
   });
   el.task.addEventListener('keydown', function (event) {
@@ -2674,7 +3180,10 @@
     var read = face.sessions;
     el.sessionsBoard.textContent = '';
     if (!read) {
-      var waiting = boardCard(12, 'sessions', null, null);
+      el.sessionsBoard.appendChild(pageHead('Work', 'Sessions',
+        'Every run under this home, newest first. A row opens its replay beside the list.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The archive read has not landed yet. It reads the session logs under this home, ' +
         'which are this machine\u2019s own.'));
@@ -2694,15 +3203,51 @@
     tiles.appendChild(tile(open, 'without an end record', open ? 'warn' : null));
     tiles.appendChild(tile(children, 'delegated children'));
     tiles.appendChild(tile(compacted, 'compacted at least once', compacted ? 'warn' : null));
-    var head = boardCard(12, 'sessions', read.read_at,
-      'the archive under this home \u00b7 the row this face anchors is marked');
-    head.appendChild(tiles);
-    el.sessionsBoard.appendChild(head);
+    el.sessionsBoard.appendChild(pageHead('Work', 'Sessions',
+      'Every run under this home, newest first. Select a row to read it beside the list.',
+      read.read_at));
+    el.sessionsBoard.appendChild(statStrip(tiles));
 
     if (sessions.length) {
-      var list = boardCard(12, 'the archive', null, 'a row opens its replay beside the list');
-      sessions.forEach(function (row) { list.appendChild(sessionRow(row)); });
+      var shown = sessions.filter(sessionMatches);
+      var bar = node('div', 'filter-bar');
+      [['all', 'all'], ['open', 'open'], ['ended', 'ended'],
+        ['delegated', 'delegated'], ['compacted', 'compacted']].forEach(function (pair) {
+        var chip = node('button', 'filter-chip', pair[1]);
+        chip.type = 'button';
+        chip.setAttribute('aria-pressed', face.sessionsFilter === pair[0] ? 'true' : 'false');
+        chip.addEventListener('click', function () {
+          face.sessionsFilter = pair[0];
+          paintSessions();
+        });
+        bar.appendChild(chip);
+      });
+      bar.appendChild(node('span', 'filter-count',
+        shown.length + ' of ' + sessions.length));
+      el.sessionsBoard.appendChild(bar);
+
+      var list = boardCard(face.replayId ? 7 : 12, 'the archive', null,
+        'the row this face anchors is marked. Selecting a row reads it beside the list.');
+      var headRow = node('div', 'session-head-row');
+      headRow.appendChild(node('span', null, 'session'));
+      headRow.appendChild(node('span', null, 'served by'));
+      headRow.appendChild(node('span', null, 'state'));
+      headRow.appendChild(node('span', null, 'started'));
+      list.appendChild(headRow);
+      if (!shown.length) {
+        list.appendChild(node('p', 'board-empty',
+          'No run in the archive matches this filter. Clear it to see the whole list.'));
+      }
+      shown.forEach(function (row) { list.appendChild(sessionRow(row)); });
       el.sessionsBoard.appendChild(list);
+      if (face.replayId) {
+        if (face.replay) paintReplayInto(el.sessionsBoard, face.replay, read.current);
+        else {
+          var waitingReplay = boardCard(5, 'selected replay', null, null);
+          waitingReplay.appendChild(node('p', 'board-empty', 'Reading this run\u2026'));
+          el.sessionsBoard.appendChild(waitingReplay);
+        }
+      }
     } else {
       var none = boardCard(12, 'the archive', null, null);
       none.appendChild(node('p', 'board-empty',
@@ -2710,7 +3255,41 @@
         'starts here, in the TUI, or headless.'));
       el.sessionsBoard.appendChild(none);
     }
-    if (face.replayId) paintReplayInto(el.sessionsBoard, face.replay, read.current);
+  }
+
+  // The archive's filter. It is the panel's own state and it never
+  // survives a relaunch: a list that quietly hides rows on the next
+  // visit is a list the owner cannot trust.
+  function sessionMatches(row) {
+    switch (face.sessionsFilter) {
+      case 'open': return !row.ended;
+      case 'ended': return !!row.ended;
+      case 'delegated': return row.kind === 'subagent';
+      case 'compacted': return !!row.compacted;
+      default: return true;
+    }
+  }
+
+  // Selecting a run is the interaction, not a navigation: the row stays
+  // selected, the replay reads beside it, and the address carries the id
+  // so back/forward and a copied link land on the same row.
+  function selectSession(id) {
+    face.focus = { panel: 'sessions', id: id };
+    if (face.replayId !== id) face.replay = null;
+    face.replayId = id;
+    if (window.location.hash !== '#/sessions/' + encodeURIComponent(id)) {
+      window.history.replaceState(null, '', '#/sessions/' + encodeURIComponent(id));
+    }
+    readReplay(id, true);
+    paintSessions();
+  }
+
+  function closeReplay() {
+    face.replayId = null;
+    face.replay = null;
+    face.focus = null;
+    window.history.replaceState(null, '', '#/sessions');
+    paintSessions();
   }
 
   // One archive row: the id, the model, the markers the summary
@@ -2720,17 +3299,40 @@
     var line = node('button', 'session-row');
     line.type = 'button';
     line.dataset.id = row.id;
+    if (face.replayId === row.id) line.setAttribute('aria-selected', 'true');
     var name = node('span', 'session-row-id', row.id);
     if (row.current) name.appendChild(badge('this face', 'accent'));
     line.appendChild(name);
-    line.appendChild(node('span', 'session-row-model', row.model || 'unreadable'));
+    // The model that actually served (the end record's, via the read).
+    // Null while the run is in flight — nothing has served yet — and a
+    // dash on an ended unrouted run. Never a default's name standing in
+    // for a decision nobody made.
+    line.appendChild(node('span', 'session-row-model',
+      row.model || (row.ended ? '\u2014' : 'routing\u2026')));
     var marks = node('span', 'session-row-marks');
     if (row.kind) marks.appendChild(badge(row.kind, null));
     if (row.compacted) marks.appendChild(badge('compacted', 'warn'));
     marks.appendChild(badge(row.ended ? 'ended' : 'open', row.ended ? null : 'live'));
     line.appendChild(marks);
     line.appendChild(node('span', 'session-row-created', row.created || '\u2014'));
-    line.addEventListener('click', function () { readReplay(row.id, true); });
+    line.addEventListener('click', function () { selectSession(row.id); });
+    line.addEventListener('keydown', function (event) {
+      var rows = Array.prototype.slice.call(
+        line.parentNode.querySelectorAll('.session-row'));
+      var at = rows.indexOf(line);
+      if (event.key === 'ArrowDown' && at < rows.length - 1) {
+        event.preventDefault();
+        rows[at + 1].focus();
+        selectSession(rows[at + 1].dataset.id);
+      } else if (event.key === 'ArrowUp' && at > 0) {
+        event.preventDefault();
+        rows[at - 1].focus();
+        selectSession(rows[at - 1].dataset.id);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeReplay();
+      }
+    });
     return line;
   }
 
@@ -2743,21 +3345,27 @@
       board.appendChild(refusedCard(replay.refused));
       return;
     }
-    var summary = replay.model + (replay.kind ? ' \u00b7 ' + replay.kind : '') +
+    var summary = (replay.model || 'routing\u2026') +
+      (replay.kind ? ' \u00b7 ' + replay.kind : '') +
       ' \u00b7 ' + (replay.ended
         ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
         : 'no end record \u2014 the run was interrupted');
-    var card = boardCard(12, 'replay \u00b7 ' + replay.id, replay.created, summary);
+    var card = boardCard(5, 'selected replay', replay.created, summary);
     var actions = node('div', 'replay-actions');
     var back = node('button', 'replay-button');
     back.type = 'button';
     back.textContent = 'close the replay';
-    back.addEventListener('click', function () {
-      face.replayId = null;
-      face.replay = null;
-      paintSessions();
-    });
+    back.addEventListener('click', closeReplay);
     actions.appendChild(back);
+    var copy = node('button', 'replay-button');
+    copy.type = 'button';
+    copy.textContent = 'copy id';
+    copy.addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(replay.id).catch(function () { });
+      copy.textContent = 'copied';
+      window.setTimeout(function () { copy.textContent = 'copy id'; }, 1200);
+    });
+    actions.appendChild(copy);
     var resume = node('button', 'replay-button replay-resume');
     resume.type = 'button';
     if (replay.id === current) {
@@ -2792,6 +3400,19 @@
   function replayLine(entry) {
     var line = node('div', 'replay-line');
     line.dataset.kind = entry.type;
+    line.tabIndex = 0;
+    line.setAttribute('role', 'button');
+    line.addEventListener('click', function () {
+      openDrawer('replay \u00b7 ' + entry.type, [
+        ['the record', node('pre', 'raw', JSON.stringify(entry, null, 2))]
+      ]);
+    });
+    line.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        line.click();
+      }
+    });
     if (entry.type === 'message') {
       line.dataset.role = entry.role;
       line.appendChild(node('span', 'replay-who', entry.role === 'owner' ? 'you' : 'fleet'));
@@ -2867,7 +3488,10 @@
     var read = face.calibration;
     el.calibrationBoard.textContent = '';
     if (!read) {
-      var waiting = boardCard(12, 'calibration', null, null);
+      el.calibrationBoard.appendChild(pageHead('System', 'Calibration',
+        'The day\u2019s stream, the judged quality of what served, and the gate that decides whether the failover may learn from it.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The stream read has not landed yet. It reads today\u2019s calibration rows, which ' +
         'this machine\u2019s own runs wrote.'));
@@ -2890,12 +3514,15 @@
     tiles.appendChild(tile(informing, 'informing the failover'));
     tiles.appendChild(tile(read.gate && read.gate.informs_failover ? 'on' : 'off',
       'failover gate'));
-    var head = boardCard(12, 'calibration', read.day,
-      'the stream at ' + read.root + ' \u00b7 the gate is ' +
-      (read.gate && read.gate.informs_failover ? 'open' : 'shut') +
-      ' (' + read.gate.name + ')');
-    head.appendChild(tiles);
-    el.calibrationBoard.appendChild(head);
+    el.calibrationBoard.appendChild(pageHead('System', 'Calibration',
+      'The day\u2019s stream, the judged quality of what served, and the gate that decides whether the failover may learn from it.',
+      read.day, {
+        label: 'Run a gate review',
+        run: function () {
+          ask('use the sys1 lane to grade today\u2019s route rows and report the fit');
+        }
+      }));
+    el.calibrationBoard.appendChild(statStrip(tiles));
 
     if (cells.length) {
       var cellCard = boardCard(12, 'the judged quality, per provider and shape', null,
@@ -3074,7 +3701,10 @@
     var read = face.tower;
     el.towerBoard.textContent = '';
     if (!read) {
-      var waiting = boardCard(12, 'tower', null, null);
+      el.towerBoard.appendChild(pageHead('System', 'Tower',
+        'The projects, the claims filed against them, and the evidence behind both.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The tower read has not landed yet. It reads the projects root\u2019s git facts and ' +
         'the second-brain\u2019s derived state, both of which are this machine\u2019s own.'));
@@ -3104,11 +3734,10 @@
     tiles.appendChild(tile(reportsToday(feed), 'reports today'));
     tiles.appendChild(tile(projects.filter(function (row) { return row.dirty > 0; }).length,
       'dirty worktrees'));
-    var head = boardCard(12, 'tower', read.read_at,
-      'the projects root at ' + read.root + ' \u00b7 the derived state\u2019s last build ' +
-      (read.brain_at || '\u2014'));
-    head.appendChild(tiles);
-    el.towerBoard.appendChild(head);
+    el.towerBoard.appendChild(pageHead('System', 'Tower',
+      'The projects, the claims filed against them, and the evidence behind both.',
+      read.read_at));
+    el.towerBoard.appendChild(statStrip(tiles));
 
     // The hero: reports filed per day against commits shipped per day.
     var hero = boardCard(12, 'activity', null,
@@ -3354,7 +3983,10 @@
     var read = face.brain;
     el.brainBoard.textContent = '';
     if (!read) {
-      var waiting = boardCard(12, 'second brain', null, null);
+      el.brainBoard.appendChild(pageHead('Knowledge', 'Second brain',
+        'The derived state, quieter: the gates, the loops, the harness runs, and the maturity signals.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The derived-state read has not landed yet. It reads the six state files under the ' +
         'second-brain home, which is this machine\u2019s own.'));
@@ -3364,7 +3996,6 @@
     if (read.refused && read.refused.length) {
       el.brainBoard.appendChild(refusedCard(read.refused));
     }
-    var head = boardCard(12, 'second brain', read.read_at, 'the derived state at ' + read.home);
     var tiles = node('div', 'tiles');
     var reports = read.reports || {};
     tiles.appendChild(tile(reports.doing_total || 0, 'open tasks'));
@@ -3373,9 +4004,10 @@
     tiles.appendChild(tile(reports.open_conflicts || 0, 'conflicts',
       reports.open_conflicts ? 'down' : null));
     tiles.appendChild(tile(reports.suppressed || 0, 'suppressed rows'));
-    head.appendChild(tiles);
-    el.brainBoard.appendChild(head);
-
+    el.brainBoard.appendChild(pageHead('Knowledge', 'Second brain',
+      'The derived state, quieter: the gates, the loops, the harness runs, and the maturity signals.',
+      read.read_at));
+    el.brainBoard.appendChild(statStrip(tiles));
     // The earned-autonomy gates.
     var gates = read.gates;
     if (gates) {
@@ -3517,7 +4149,10 @@
     var read = face.settings;
     el.settingsBoard.textContent = '';
     if (!read) {
-      var waiting = boardCard(12, 'settings', null, null);
+      el.settingsBoard.appendChild(pageHead('System', 'Settings',
+        'Every knob this home carries, written through the same writer the CLI uses.',
+        null));
+      var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The settings read has not landed yet. It reads this home\u2019s own config, routing, ' +
         'and env files.'));
@@ -3527,10 +4162,6 @@
     if (read.refused && read.refused.length) {
       el.settingsBoard.appendChild(refusedCard(read.refused));
     }
-    var head = boardCard(12, 'settings', read.read_at,
-      'every knob this home carries, the two lists and the rules, the cron jobs, and the ' +
-      'identity slot. Every write rides the writer the CLI rides, so the two faces cannot ' +
-      'disagree about what the file holds.');
     var tiles = node('div', 'tiles');
     tiles.appendChild(tile(read.scalars.length, 'knobs'));
     tiles.appendChild(tile(read.lists.filter(function (e) { return e.kind === 'provider'; }).length,
@@ -3541,16 +4172,28 @@
       read.rules.length ? 'live' : null));
     tiles.appendChild(tile(read.cron.length, 'cron jobs',
       read.cron.filter(function (j) { return j.enabled; }).length + ' enabled'));
-    head.appendChild(tiles);
-    el.settingsBoard.appendChild(head);
+    el.settingsBoard.appendChild(pageHead('System', 'Settings',
+      'Every knob this home carries, the two lists and the rules, the cron jobs, and the identity slot. ' +
+      'Every write rides the writer the CLI rides, so the two faces cannot disagree about what the file holds.',
+      read.read_at));
+    el.settingsBoard.appendChild(statStrip(tiles));
 
     // The knobs, each editable in place: the value box saves through
     // the one writer, and the source badge says which file answers.
     var knobs = boardCard(12, 'the knobs', null,
       'the value in the box is what the home holds. A knob sourced from the environment says ' +
       'so \u2014 a file write would not take effect until the env var is unset.');
+    var groups = {};
+    var order = [];
     (read.scalars || []).forEach(function (knob) {
-      knobs.appendChild(knobRow(knob));
+      var prefix = knob.key.indexOf('.') > 0 ? knob.key.split('.')[0] : 'general';
+      if (!groups[prefix]) { groups[prefix] = []; order.push(prefix); }
+      groups[prefix].push(knob);
+    });
+    order.forEach(function (prefix) {
+      knobs.appendChild(node('h3', 'form-section',
+        prefix === 'general' ? 'general' : prefix.replace(/_/g, ' ')));
+      groups[prefix].forEach(function (knob) { knobs.appendChild(knobRow(knob)); });
     });
     el.settingsBoard.appendChild(knobs);
 
@@ -3887,6 +4530,9 @@
     if (!task || face.running || face.seat) return;
     el.task.value = '';
     grow();
+    try { window.localStorage.removeItem('fleet-draft'); } catch (error) { }
+    el.empty.hidden = true;
+    el.log.hidden = false;
     face.planned = true;
     post('/api/plan', { task: task }).then(function (reply) {
       if (reply.status === 200) return;
@@ -4107,10 +4753,15 @@
   };
 
   function showRoute() {
-    var which = (window.location.hash || '').replace(/^#\/?/, '');
+    var raw = (window.location.hash || '').replace(/^#\/?/, '');
+    var parts = raw.split('/');
+    var which = parts[0] || '';
+    var focusId = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : '';
     var known = ROUTES.filter(function (route) { return route[0] === which; })[0];
     var address = which === 'chat' || !known ? 'chat' : which;
     face.panel = address;
+    face.focus = focusId ? { panel: address, id: focusId } : null;
+    try { window.localStorage.setItem('fleet-panel', address); } catch (error) { }
     markRail();
     Object.keys(PANEL_EL).forEach(function (key) {
       PANEL_EL[key].hidden = key !== address;
@@ -4130,7 +4781,18 @@
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
       memory: function () { paintMemory(); readMemory(true).then(paintMemory); },
       skills: function () { paintSkills(); readSkills(true).then(paintSkills); },
-      sessions: function () { paintSessions(); readSessions(true).then(paintSessions); },
+      sessions: function () {
+        if (face.focus && face.focus.id) face.replayId = face.focus.id;
+        paintSessions();
+        readSessions(true).then(function () {
+          if (!face.replayId && face.sessions && (face.sessions.sessions || []).length) {
+            face.replayId = face.sessions.sessions[0].id;
+            face.focus = { panel: 'sessions', id: face.replayId };
+          }
+          paintSessions();
+          if (face.replayId) readReplay(face.replayId, true).then(paintSessions);
+        });
+      },
       calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
       tower: function () { paintTower(); readTower(true).then(paintTower); },
       'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); },
@@ -4646,49 +5308,29 @@
   // surfaces flat beneath it — built from GROUPS, the same declaration the
   // palette searches, so the two can never disagree about where a surface
   // lives. The merged row names are the approved mockup's own words.
-  var DEST_LABELS = {
-    work: 'conversation',
-    intelligence: 'router & delegation',
-    knowledge: 'memory & skills',
-    system: 'settings & telemetry'
-  };
-
-  // Display-only words for the flat level beneath a destination. The
-  // addresses stay GROUPS' own — the palette and the routing never see
-  // these.
-  var SUB_LABELS = { chat: 'the run in flight' };
-
   function buildRail() {
     el.railTree.textContent = '';
     GROUPS.forEach(function (group) {
       var id = group[0], label = group[1], items = group[2];
-      var head = node('span', 'surfaces-group', label);
-      el.railTree.appendChild(head);
-      var button = node('button', 'surfaces-dest');
-      button.type = 'button';
-      button.dataset.group = id;
-      button.appendChild(node('span', 'surfaces-mark', GROUP_MARKS[id] || label.slice(0, 1)));
-      button.appendChild(node('span', 'surfaces-name', DEST_LABELS[id] || label));
-      // The destination itself opens its first surface — the one an owner
-      // opening the group almost always wants — so a group is one click
-      // rather than two.
-      button.addEventListener('click', function () {
-        window.location.hash = '#/' + items[0][0];
-      });
-      el.railTree.appendChild(button);
-      var sub = node('div', 'surfaces-sub');
+      var section = node('div', 'surfaces-section');
+      section.dataset.group = id;
+      section.appendChild(node('span', 'surfaces-group', label));
       items.forEach(function (item) {
         var address = item[0], name = item[1];
         var link = node('button', 'surfaces-link');
         link.type = 'button';
         link.dataset.address = address;
-        link.textContent = SUB_LABELS[address] || name;
+        link.setAttribute('aria-label', name);
+        link.title = name;
+        link.appendChild(icon(address, 'surfaces-icon'));
+        link.appendChild(node('span', 'surfaces-label', name));
         link.addEventListener('click', function () {
           window.location.hash = '#/' + address;
+          setMobileRail(false);
         });
-        sub.appendChild(link);
+        section.appendChild(link);
       });
-      el.railTree.appendChild(sub);
+      el.railTree.appendChild(section);
     });
   }
 
@@ -4706,14 +5348,22 @@
         link.removeAttribute('aria-current');
       }
     });
-    Array.prototype.forEach.call(el.rail.querySelectorAll('.surfaces-dest'), function (button) {
-      var here = WHERE[which] && WHERE[which][0] === button.dataset.group;
-      if (here) {
-        button.setAttribute('aria-current', 'page');
-      } else {
-        button.removeAttribute('aria-current');
-      }
-    });
+    // The topbar says where you are in the same words the rail uses. The
+    // browser tab follows, so a desk with three fleet windows open is
+    // navigable by name rather than by address.
+    var place = WHERE[which] || ['work', 'conversation'];
+    if (el.crumbGroup) el.crumbGroup.textContent = place[0];
+    if (el.crumbPage) el.crumbPage.textContent = place[1];
+    var title = place[1].replace(/(^|\s)\S/g, function (letter) { return letter.toUpperCase(); });
+    document.title = title + ' \u00b7 fleet';
+  }
+
+  // The mobile rail: a drawer over the work, opened from the topbar and
+  // dismissed by the scrim, the menu button, Escape, or any destination.
+  function setMobileRail(open) {
+    document.body.dataset.mobileRail = open ? 'open' : '';
+    if (el.railScrim) el.railScrim.hidden = !open;
+    if (el.railMenu) el.railMenu.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
   // The rail's collapsed state, remembered across launches: deep in a run
@@ -4767,7 +5417,9 @@
         row.type = 'button';
         row.setAttribute('role', 'option');
         row.dataset.address = item[0];
-        row.appendChild(node('span', 'palette-row-mark', GROUP_MARKS[group[0]] || group[1].slice(0, 1)));
+        var mark = node('span', 'palette-row-mark');
+        mark.appendChild(icon(item[0]));
+        row.appendChild(mark);
         row.appendChild(node('span', 'palette-row-name', item[1]));
         // Whether the surface is live is on the row, not hidden: a later
         // increment says so here rather than opening to a surprise.
@@ -4832,19 +5484,19 @@
   // of its surfaces; the contrast theme is the accessibility one and
   // trades the quiet look for the maximum separation.
   var THEMES = [
-    ['console', 'console', 'warm dark \u00b7 the default, a console left open beside the work'],
-    ['paper', 'paper', 'warm light \u00b7 the same structure over a warm paper ground'],
-    ['graphite', 'graphite', 'cool dark \u00b7 for an owner who finds the warm dark too brown'],
+    ['paper', 'paper', 'warm light \u00b7 the default, a console read in daylight'],
+    ['console', 'console', 'warm dark \u00b7 for a long evening beside the work'],
+    ['graphite', 'graphite', 'cool dark \u00b7 a neutral ground without the warm cast'],
     ['contrast', 'contrast', 'high contrast \u00b7 pure ground, near-black ink, the accessibility theme']
   ];
 
   // The theme. One attribute on the document element is the whole
   // switch — the alias tier re-points under it and every component token
   // follows — so there is one thing to set and nothing else to keep in
-  // step. Console is the default; the choice is remembered.
+  // step. Paper is the default; the choice is remembered.
   function themeNow() {
     var now = document.documentElement.dataset.theme;
-    return THEMES.some(function (theme) { return theme[0] === now; }) ? now : 'console';
+    return THEMES.some(function (theme) { return theme[0] === now; }) ? now : 'paper';
   }
 
   function setTheme(mode) {
@@ -4853,7 +5505,7 @@
     var named = THEMES.filter(function (theme) { return theme[0] === mode; })[0];
     el.themeToggle.setAttribute('aria-label', 'choose a theme \u2014 now ' + (named ? named[1] : mode));
     el.themeToggle.title = 'choose a theme \u2014 now ' + (named ? named[1] : mode);
-    try { window.localStorage.setItem('fleet-theme', mode); } catch (error) { }
+    try { window.localStorage.setItem('fleet-theme-2', mode); } catch (error) { }
   }
 
   setTheme(themeNow());
