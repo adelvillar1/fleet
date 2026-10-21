@@ -2000,10 +2000,23 @@ mod tests {
         )
     }
 
+    /// First offset of `needle` in `haystack`, or none.
+    fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.is_empty() || haystack.len() < needle.len() {
+            return None;
+        }
+        haystack
+            .windows(needle.len())
+            .position(|window| window == needle)
+    }
+
     /// Sends one request and reads the reply, stopping when `needle`
     /// arrives or the reply ends. `None` reads to the end, which is how
     /// a normal reply arrives: the server closes every connection it
-    /// answers.
+    /// answers. A reply whose head declares a `Content-Length` is read
+    /// to exactly that many body bytes — KI-280: breaking on the read
+    /// timeout returned whatever had arrived, and under the full suite's
+    /// load that was a truncated body, which parsed as nothing.
     fn ask(port: u16, raw: &str, needle: Option<&str>) -> String {
         ask_within(port, raw, needle, Duration::from_secs(3))
     }
@@ -2021,15 +2034,34 @@ mod tests {
         stream
             .write_all(raw.as_bytes())
             .expect("the request is sent");
-        let mut reply = String::new();
+        let mut reply: Vec<u8> = Vec::new();
         let mut chunk = [0u8; 4096];
+        // The body length the head declared, once the head has arrived.
+        let mut body_len: Option<usize> = None;
         loop {
-            if needle.is_some_and(|needle| reply.contains(needle)) {
+            if needle.is_some_and(|needle| find(&reply, needle.as_bytes()).is_some()) {
                 break;
+            }
+            if body_len.is_none() {
+                if let Some(head_end) = find(&reply, b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&reply[..head_end]).to_ascii_lowercase();
+                    body_len = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .map(|length| head_end + 4 + length);
+                }
+            }
+            if let Some(total) = body_len {
+                // The declared body is complete: stop, whether or not the
+                // server has closed yet.
+                if reply.len() >= total {
+                    break;
+                }
             }
             match stream.read(&mut chunk) {
                 Ok(0) => break,
-                Ok(read) => reply.push_str(&String::from_utf8_lossy(&chunk[..read])),
+                Ok(read) => reply.extend_from_slice(&chunk[..read]),
                 Err(ref e)
                     if e.kind() == std::io::ErrorKind::WouldBlock
                         || e.kind() == std::io::ErrorKind::TimedOut =>
@@ -2039,7 +2071,7 @@ mod tests {
                 Err(e) => panic!("the reply could not be read: {e}"),
             }
         }
-        reply
+        String::from_utf8_lossy(&reply).into_owned()
     }
 
     /// A GET with the token in the query, which is how the browser's
