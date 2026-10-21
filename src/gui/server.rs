@@ -3778,30 +3778,45 @@ mod tests {
         // the full suite's load can push it past the ordinary three-second
         // read budget.
         let budget = Duration::from_secs(30);
-        let unlocked = post_within(
+        let onboarded = post_within(
             port,
             "/api/settings",
             &token,
-            r#"{"op":"vault-unlock","passphrase":"passphrase"}"#,
+            r#"{"op":"vault-onboard","passphrase":"passphrase"}"#,
             budget,
         );
-        assert!(unlocked.starts_with("HTTP/1.1 200"), "{unlocked}");
-        let after_unlock = get_within(port, "/api/settings", &token, budget);
+        assert!(onboarded.starts_with("HTTP/1.1 200"), "{onboarded}");
+        let after_onboard = get_within(port, "/api/settings", &token, budget);
         assert!(
-            after_unlock.contains("\"passphrase\":true"),
-            "{after_unlock}"
+            after_onboard.contains("\"passphrase\":true"),
+            "{after_onboard}"
         );
-        let created = post_within(
+        assert!(
+            after_onboard.contains("FLEET_TEST_API_KEY"),
+            "{after_onboard}"
+        );
+        assert!(!after_onboard.contains("test-secret"), "{after_onboard}");
+
+        // A started-over vault archives the old one and re-seals the
+        // plaintext copy under the new passphrase.
+        let reset = post_within(
             port,
             "/api/settings",
             &token,
-            r#"{"op":"vault-init"}"#,
+            r#"{"op":"vault-reset","passphrase":"new-passphrase"}"#,
             budget,
         );
-        assert!(created.starts_with("HTTP/1.1 200"), "{created}");
-        let after_init = get_within(port, "/api/settings", &token, budget);
-        assert!(after_init.contains("FLEET_TEST_API_KEY"), "{after_init}");
-        assert!(!after_init.contains("test-secret"), "{after_init}");
+        assert!(reset.starts_with("HTTP/1.1 200"), "{reset}");
+        let after_reset = get_within(port, "/api/settings", &token, budget);
+        assert!(after_reset.contains("FLEET_TEST_API_KEY"), "{after_reset}");
+        assert!(!after_reset.contains("test-secret"), "{after_reset}");
+        let backups: Vec<String> = std::fs::read_dir(&home)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("vault.json.bak-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "{backups:?}");
         let dropped = post(
             port,
             "/api/settings",

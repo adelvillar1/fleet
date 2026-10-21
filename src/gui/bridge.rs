@@ -3886,6 +3886,16 @@ fn settings_apply(
             let migrated = crate::settings::vault_init(home)?;
             Ok(migrated.to_string())
         }
+        "vault-onboard" => {
+            let passphrase = text("passphrase")?;
+            let migrated = crate::settings::vault_onboard(home, &passphrase)?;
+            Ok(migrated.to_string())
+        }
+        "vault-reset" => {
+            let passphrase = text("passphrase")?;
+            let (backup, migrated) = crate::settings::vault_reset(home, &passphrase)?;
+            Ok(format!("{backup}:{migrated}"))
+        }
         "vault-seal-env" => {
             let name = text("name")?;
             crate::settings::vault_seal_env(home, &name)

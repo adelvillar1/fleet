@@ -298,7 +298,11 @@ vault passphrase is a `home`-owned unlock state (launch-time
 again); `vault_verify` refuses a passphrase that does not open the
 existing entries, `vault_init` creates and migrates the credential-shaped
 `.env` names without dropping their plaintext lines, and `vault_seal_env`
-seals one plaintext value server-side.
+seals one plaintext value server-side. `vault_onboard` is the first-run
+path (choose the passphrase, create, migrate, unlock); `vault_reset`
+archives the existing vault as `vault.json.bak-<stamp>` and onboards a
+new one, so a forgotten passphrase loses the sealed copies but never the
+evidence or the plaintext `.env` credentials.
 
 #### `boards.rs`
 The three read-only boards: Fleet's own routing state, the second-brain's

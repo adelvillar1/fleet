@@ -301,18 +301,27 @@ skills, and shapes from the catalog.
 
 **Secrets and the vault.** A secret is write-only: the value is sent
 once, the input is cleared, and no read carries it back. The vault card
-is a working surface, not a status line. A locked process can unlock the
-vault in place: the passphrase is sent once, held in memory by the
-process (never written), and a wrong passphrase is refused by name. Once
-unlocked, the card can create the vault and migrate the credential-shaped
-`.env` entries, seal one plaintext entry at a time (server-side, so the
-value never reaches the page), drop a plaintext line after its value is
-sealed, seal a new entry, remove a sealed one, or lock the process again.
-The `in .env` section marks each credential `plaintext` or `sealed`, so
-the migration has a visible finish. Launching fleet with
-`FLEET_VAULT_PASSPHRASE` remains the way to unlock from the start; the
-in-place unlock is the same passphrase, held the same way, without a
-restart.
+is a working surface, not a status line. With no vault yet, the card is
+the first-run setup: it names the credential-shaped `.env` entries that
+will be sealed, asks for a passphrase and a confirmation, and says
+plainly that there is no recovery — the passphrase keys the vault and is
+never stored, so it belongs in a password manager before anything is
+sealed. One action then creates the vault and migrates those entries.
+
+For an existing vault, a locked process can unlock it in place: the
+passphrase is sent once, held in memory by the process (never written),
+and a wrong passphrase is refused by name. Once unlocked, the card can
+seal one plaintext entry at a time (server-side, so the value never
+reaches the page), drop a plaintext line after its value is sealed, seal
+a new entry, remove a sealed one, or lock the process again. The
+`in .env` section marks each credential `plaintext` or `sealed`, so the
+migration has a visible finish. A forgotten passphrase has its own
+`I do not know the passphrase` path: starting a new vault archives the
+old one as `vault.json.bak-<timestamp>` — never deletes it — and seals
+the plaintext `.env` credentials under the new passphrase. Launching
+fleet with `FLEET_VAULT_PASSPHRASE` remains the way to unlock from the
+start; the in-place unlock is the same passphrase, held the same way,
+without a restart.
 
 **Spend and runtime.** The daily caps (judge, delegate, explain) are
 `Usd` settings that can only tighten the compiled ceiling; the empty box

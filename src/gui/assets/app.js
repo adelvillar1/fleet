@@ -9385,30 +9385,85 @@
 
   // ------------------------------------------------------------- the vault
 
+  function vaultPassword(aria) {
+    var input = node('input', 'knob-box');
+    input.type = 'password';
+    input.autocomplete = 'off';
+    input.setAttribute('aria-label', aria);
+    return input;
+  }
+
   function vaultCard() {
     var read = face.settings.vault || {
       names: [], exists: false, passphrase: false, plaintext: []
     };
     var card = boardCard(12, 'the vault',
       read.exists ? (read.names.length + ' sealed') : 'no vault',
-      'The sealed credentials. A name is listed; a value is never rendered. The passphrase ' +
-      'is held by this process only \u2014 unlock it here without restarting, or launch fleet ' +
-      'with FLEET_VAULT_PASSPHRASE.');
+      read.exists
+        ? 'The sealed credentials. A name is listed; a value is never rendered. The passphrase ' +
+          'is held by this process only \u2014 unlock it here without restarting, or launch fleet ' +
+          'with FLEET_VAULT_PASSPHRASE.'
+        : 'No vault exists yet. Choose a passphrase to create one; it keys the vault and is ' +
+          'never stored. There is no recovery, so store it before sealing anything.');
     card.id = 'settings-vault';
 
     if (!read.passphrase) {
-      // A locked vault is not a dead end: the owner unlocks it for this
-      // process. The passphrase is sent once, held in memory, and never
-      // written to a file or returned by a read.
+      var plaintext = read.plaintext || [];
+      if (!read.exists) {
+        // First run. The passphrase is chosen here, confirmed, and never
+        // stored; the create action seals the .env credentials.
+        var first = node('div', 'cfg-form');
+        first.appendChild(node('p', 'knob-summary',
+          'Choose a passphrase for the new vault. It is sent once, held in memory by this ' +
+          'process, and never written. There is no recovery: store it in your password ' +
+          'manager before you seal anything.'));
+        var passphrase = vaultPassword('the new vault passphrase');
+        var confirm = vaultPassword('confirm the new vault passphrase');
+        var create = node('button', 'replay-button replay-resume',
+          'create the vault' + (plaintext.length
+            ? ' and seal ' + plaintext.length + ' .env '
+              + (plaintext.length === 1 ? 'credential' : 'credentials')
+            : ''));
+        create.type = 'button';
+        create.addEventListener('click', function () {
+          if (!passphrase.value) {
+            notice('the vault was not created', 'a passphrase is required');
+            return;
+          }
+          if (passphrase.value !== confirm.value) {
+            notice('the vault was not created', 'the two passphrases do not match');
+            return;
+          }
+          var value = passphrase.value;
+          passphrase.value = '';
+          confirm.value = '';
+          writeSettings('vault-onboard', { passphrase: value });
+        });
+        first.appendChild(cfgField('passphrase', passphrase));
+        first.appendChild(cfgField('confirm', confirm));
+        first.appendChild(node('p', 'cfg-note',
+          'The plaintext .env lines stay after migration; the card lets you drop each one ' +
+          'once it is sealed.'));
+        first.appendChild(create);
+        card.appendChild(first);
+        if (plaintext.length) {
+          card.appendChild(node('h3', 'form-section', 'will be sealed'));
+          plaintext.forEach(function (entry) {
+            var row = node('div', 'list-row');
+            row.appendChild(node('span', 'list-row-key', entry.name));
+            row.appendChild(badge('plaintext', 'warn'));
+            card.appendChild(row);
+          });
+        }
+        return card;
+      }
+
+      // An existing vault, locked for this process.
       var unlockForm = node('div', 'cfg-form');
       unlockForm.appendChild(node('p', 'knob-summary',
         'The vault is locked for this process. Unlocking holds the passphrase in memory until ' +
         'fleet exits or you lock it again; it is never written.'));
-      var passphrase = node('input', 'knob-box');
-      passphrase.type = 'password';
-      passphrase.autocomplete = 'off';
-      passphrase.placeholder = 'FLEET_VAULT_PASSPHRASE';
-      passphrase.setAttribute('aria-label', 'the vault passphrase');
+      var passphrase = vaultPassword('the vault passphrase');
       var unlock = node('button', 'replay-button replay-resume', 'unlock the vault');
       unlock.type = 'button';
       unlock.addEventListener('click', function () {
@@ -9430,6 +9485,40 @@
           card.appendChild(row);
         });
       }
+      // The recovery path for a forgotten passphrase.
+      var forgot = node('details', 'cfg-details');
+      forgot.appendChild(node('summary', 'cfg-summary', 'I do not know the passphrase'));
+      forgot.appendChild(node('p', 'board-empty',
+        'Starting a new vault archives the old one (vault.json.bak-<timestamp>); its entries ' +
+        'cannot be opened without the old passphrase. The plaintext .env credentials are ' +
+        'sealed into the new vault.'));
+      var newPass = vaultPassword('a new vault passphrase');
+      var newConfirm = vaultPassword('confirm the new vault passphrase');
+      var reset = node('button', 'replay-button', 'start a new vault');
+      reset.type = 'button';
+      reset.addEventListener('click', function () {
+        if (!newPass.value) {
+          notice('the vault was not reset', 'a passphrase is required');
+          return;
+        }
+        if (newPass.value !== newConfirm.value) {
+          notice('the vault was not reset', 'the two passphrases do not match');
+          return;
+        }
+        if (!window.confirm(
+          'Archive the old vault and start a new one? Its entries stay sealed and unreadable ' +
+          'without the old passphrase.')) {
+          return;
+        }
+        var value = newPass.value;
+        newPass.value = '';
+        newConfirm.value = '';
+        writeSettings('vault-reset', { passphrase: value });
+      });
+      forgot.appendChild(cfgField('new passphrase', newPass));
+      forgot.appendChild(cfgField('confirm', newConfirm));
+      forgot.appendChild(reset);
+      card.appendChild(forgot);
       return card;
     }
 

@@ -1551,6 +1551,28 @@ mod vault_tests {
             .any(|entry| entry.name == "NEW_KEY" && entry.sealed));
         let _ = fs::remove_dir_all(&home);
     }
+
+    /// The first run creates the vault from a chosen passphrase, and a
+    /// reset archives the old vault instead of deleting it.
+    #[test]
+    fn the_first_run_onboards_and_the_reset_archives() {
+        let home = scratch("onboard");
+        fs::write(
+            home.join(".env"),
+            "A_KEY=one\nFLEET_EMBEDDING_ENDPOINT=http://x\n",
+        )
+        .unwrap();
+        let migrated = vault_onboard_with(&home, "passphrase").unwrap();
+        assert_eq!(migrated, 1);
+        assert!(vault_verify(&home, "passphrase").is_ok());
+        let (backup, migrated) = vault_reset_with(&home, "new-passphrase").unwrap();
+        assert_eq!(migrated, 1);
+        assert!(home.join(&backup).exists(), "{backup}");
+        assert!(vault_verify(&home, "new-passphrase").is_ok());
+        assert!(vault_verify(&home, "passphrase").is_err());
+        assert!(vault_state(&home).names.iter().any(|name| name == "A_KEY"));
+        let _ = fs::remove_dir_all(&home);
+    }
 }
 
 #[cfg(test)]
@@ -2642,6 +2664,69 @@ pub fn vault_seal_env_with(home: &Path, name: &str, passphrase: &str) -> Result<
 /// sealed.
 pub fn vault_remove_env(home: &Path, name: &str) -> Result<(), String> {
     remove_env(&home.join(".env"), name)
+}
+
+/// The first-run path: choose the passphrase, create the vault, migrate
+/// the credential-shaped `.env` entries, and unlock the process. A
+/// non-empty vault is refused — this is not the reset path.
+pub fn vault_onboard(home: &Path, passphrase: &str) -> Result<usize, String> {
+    let migrated = vault_onboard_with(home, passphrase)?;
+    crate::home::unlock_vault(passphrase.trim());
+    Ok(migrated)
+}
+
+/// The same first run without touching the process unlock, so the write
+/// is testable on its own.
+pub fn vault_onboard_with(home: &Path, passphrase: &str) -> Result<usize, String> {
+    let passphrase = passphrase.trim();
+    if passphrase.is_empty() {
+        return Err("a passphrase is required".to_string());
+    }
+    let path = home.join(crate::vault::VAULT_FILE);
+    if let Ok(text) = fs::read_to_string(&path) {
+        if let Ok(vault) = crate::vault::Vault::from_json(&text) {
+            if !vault.is_empty() {
+                return Err("a vault already exists; unlock it, or start a new one".to_string());
+            }
+        }
+    }
+    vault_init_with(home, passphrase)
+}
+
+/// Start over with a new passphrase. The old vault is archived, never
+/// deleted: its entries are unreadable without the old passphrase, and
+/// the archive is the only evidence of what was sealed. The plaintext
+/// `.env` credentials are migrated into the new vault.
+pub fn vault_reset(home: &Path, passphrase: &str) -> Result<(String, usize), String> {
+    let (backup, migrated) = vault_reset_with(home, passphrase)?;
+    crate::home::unlock_vault(passphrase.trim());
+    Ok((backup, migrated))
+}
+
+/// The same reset without touching the process unlock.
+pub fn vault_reset_with(home: &Path, passphrase: &str) -> Result<(String, usize), String> {
+    let passphrase = passphrase.trim();
+    if passphrase.is_empty() {
+        return Err("a passphrase is required".to_string());
+    }
+    let path = home.join(crate::vault::VAULT_FILE);
+    let backup = if path.exists() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
+        let backup = home.join(format!("{}.bak-{stamp}", crate::vault::VAULT_FILE));
+        fs::rename(&path, &backup)
+            .map_err(|error| format!("{} cannot be archived: {error}", path.display()))?;
+        backup
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let migrated = vault_onboard_with(home, passphrase)?;
+    Ok((backup, migrated))
 }
 
 /// Seal one credential. The vault is preferred when this process holds
