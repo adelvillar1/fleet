@@ -823,9 +823,33 @@ impl Bridge {
             .unwrap_or(false);
         let home = self.home.clone();
         let cwd = self.cwd.clone();
-        tokio::task::spawn_blocking(move || attach_document(&home, &cwd, &asked, consent))
+        let decision = tokio::task::spawn_blocking(move || attach_local(&cwd, &asked, consent))
             .await
-            .map_err(|_| "the attach did not land".to_string())?
+            .map_err(|_| "the attach did not land".to_string())??;
+        match decision {
+            Attachment::Ready(value) | Attachment::Needs(value) => Ok(value),
+            Attachment::Escalate { path, name, reason } => {
+                // The lane holds the credential and runs the vendor flow;
+                // fleet only hands it the path.
+                let spec = crate::lanes::spec_for("sys1")
+                    .map_err(|error| format!("the sys1 lane cannot start: {error}"))?;
+                let parsed = crate::perception::parse_via_lane(&path, &name, &home, spec).await?;
+                Ok(json!({
+                    "type": "attachment",
+                    "name": name,
+                    "text": parsed.markdown,
+                    "parser": parsed.parser,
+                    "pages": parsed.pages,
+                    "units": parsed.units,
+                    "job_id": parsed.job_id,
+                    "reason": reason,
+                    "truncated": parsed.truncated.map(|(original, retained)| json!({
+                        "original": original,
+                        "retained": retained,
+                    })),
+                }))
+            }
+        }
     }
 
     /// The skills panel's document: the library with its skips, the
@@ -2734,19 +2758,27 @@ fn tree_read(root: &std::path::Path, asked: &str) -> Value {
     })
 }
 
+/// What one attach decision is: a local read, a question about the hosted
+/// parser, or the escalation the caller may take after consent.
+#[derive(Debug)]
+enum Attachment {
+    Ready(Value),
+    Needs(Value),
+    Escalate {
+        path: PathBuf,
+        name: String,
+        reason: String,
+    },
+}
+
 /// One attachment, from the workspace path the browser asked for.
 ///
 /// Local extraction runs first for every format it owns. A PDF with no
 /// text layer, and every format local extraction does not read, is the
 /// hosted parser's case; the first call without `consent` answers with
-/// what would be sent and why, and only a second call with consent
-/// touches the network. A keyless home refuses that second call by name.
-fn attach_document(
-    home: &std::path::Path,
-    cwd: &std::path::Path,
-    asked: &str,
-    consent: bool,
-) -> Result<Value, String> {
+/// what would be sent and why, and only a second call with consent hands
+/// the path to sys1 — the lane that holds the credential.
+fn attach_local(cwd: &std::path::Path, asked: &str, consent: bool) -> Result<Attachment, String> {
     let full = pane_path(cwd, asked).map_err(|reason| format!("the path was refused: {reason}"))?;
     let metadata = std::fs::metadata(&full)
         .map_err(|error| format!("{} could not be read: {error}", full.display()))?;
@@ -2771,7 +2803,7 @@ fn attach_document(
                 .map_err(|_| "the documents lane is not installed".to_string())?;
             match crate::documents::extract(&full, &services) {
                 crate::documents::Outcome::Extracted(text) => {
-                    return Ok(json!({
+                    return Ok(Attachment::Ready(json!({
                         "type": "attachment",
                         "name": name,
                         "text": text.markdown,
@@ -2780,7 +2812,7 @@ fn attach_document(
                         "units": null,
                         "job_id": null,
                         "truncated": null,
-                    }));
+                    })));
                 }
                 crate::documents::Outcome::Escalate { reason } => reason,
                 crate::documents::Outcome::Refused { code, reason } => {
@@ -2801,45 +2833,19 @@ fn attach_document(
             return Err(format!("no parser for .{extension}"));
         }
     };
-    let reason = escalation;
     if !consent {
-        return Ok(json!({
+        return Ok(Attachment::Needs(json!({
             "type": "attach_needs",
             "name": name,
             "parser": "nace",
-            "reason": reason,
-        }));
+            "reason": escalation,
+        })));
     }
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
-    let mut dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
-    // The settings surface writes its env names to fleet.env, beside the
-    // hand-edited .env; a key in either is the key.
-    for (name, value) in crate::home::read_fleet_env(home) {
-        dotenv.entry(name).or_insert(value);
-    }
-    let Some(key) = crate::perception::key(&dotenv) else {
-        return Err(
-            "this document needs Perception, but this home has no NACE_API_KEY or \
-             DREX_API_KEY; add the key in Settings, or convert the document locally"
-                .to_string(),
-        );
-    };
-    let client = crate::perception::Client::new(crate::perception::base(&dotenv), key);
-    let parsed = client.parse(&full, &name, home)?;
-    Ok(json!({
-        "type": "attachment",
-        "name": name,
-        "text": parsed.markdown,
-        "parser": parsed.parser,
-        "pages": parsed.pages,
-        "units": parsed.units,
-        "job_id": parsed.job_id,
-        "reason": reason,
-        "truncated": parsed.truncated.map(|(original, retained)| json!({
-            "original": original,
-            "retained": retained,
-        })),
-    }))
+    Ok(Attachment::Escalate {
+        path: full,
+        name,
+        reason: escalation,
+    })
 }
 
 /// One file's text, its language, and whether the read was cut. A file
@@ -6562,122 +6568,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// A scripted Perception flow for the bridge's escalation test: a
-    /// grant, an upload, a queued parse, and one finished job.
-    fn serve_nace() -> (
-        u16,
-        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-        std::thread::JoinHandle<()>,
-    ) {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
-        let port = listener.local_addr().expect("the port").port();
-        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let recorded = std::sync::Arc::clone(&paths);
-        let handle = std::thread::spawn(move || {
-            for _ in 0..4 {
-                let (mut stream, _) = listener.accept().expect("a connection");
-                let mut buffer = Vec::new();
-                let mut chunk = [0u8; 2048];
-                loop {
-                    let read = stream.read(&mut chunk).unwrap_or(0);
-                    if read == 0 {
-                        break;
-                    }
-                    buffer.extend_from_slice(&chunk[..read]);
-                    if let Some(at) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-                        let head = String::from_utf8_lossy(&buffer[..at]).to_string();
-                        let length = head
-                            .lines()
-                            .filter_map(|line| {
-                                let (name, value) = line.split_once(':')?;
-                                name.eq_ignore_ascii_case("content-length")
-                                    .then(|| value.trim().parse::<usize>().unwrap_or(0))
-                            })
-                            .next()
-                            .unwrap_or(0);
-                        if buffer.len() >= at + 4 + length {
-                            break;
-                        }
-                    }
-                }
-                let head = String::from_utf8_lossy(&buffer).to_string();
-                let path = head
-                    .lines()
-                    .next()
-                    .and_then(|line| line.split_whitespace().nth(1))
-                    .unwrap_or("")
-                    .to_string();
-                recorded.lock().expect("the paths").push(path.clone());
-                let (status, body) = if path.contains("upload-grants") {
-                    (
-                        "200 OK",
-                        r#"{"workspace_id":"ws","upload_url":"URL","token":"tok"}"#.to_string(),
-                    )
-                } else if path.ends_with("/URL") {
-                    (
-                        "200 OK",
-                        r#"{"result":{"file":{"file_id":"file1"}}}"#.to_string(),
-                    )
-                } else if path.contains("/v1/documents/parse") {
-                    (
-                        "202 Accepted",
-                        r#"{"status":"queued","job_id":"job1"}"#.to_string(),
-                    )
-                } else if path.contains("/v1/documents/jobs/job1") {
-                    ("200 OK", r#"{"status":"succeeded","result":{"document":{"markdown":"hosted text","page_count":96},"units":96,"disclosures":[]}}"#.to_string())
-                } else {
-                    ("404 Not Found", "{}".to_string())
-                };
-                let reply = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(reply.as_bytes());
-            }
-        });
-        (port, paths, handle)
-    }
-
     #[test]
-    fn an_escalated_document_goes_through_perception_with_the_owners_consent() {
-        let (port, paths, handle) = serve_nace();
-        let home = std::env::temp_dir().join(format!(
-            "fleet-attach-nace-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("the clock")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&home).expect("the home");
-        std::fs::write(
-            home.join("fleet.env"),
-            format!("NACE_API_KEY=nace_sk_test\nNACE_BASE_URL=http://127.0.0.1:{port}\n"),
-        )
-        .expect("the dotenv");
+    fn the_attach_decision_is_local_ready_or_a_question() {
         let cwd = std::env::current_dir().expect("the cwd");
-        // Without consent the bridge answers with what it would send and
-        // touches no network.
-        let asked = attach_document(&home, &cwd, "services/documents/fixtures/blank.pdf", false)
-            .expect("the question");
-        assert_eq!(asked["type"], "attach_needs");
-        assert!(paths.lock().expect("the paths").is_empty());
-        // With consent it reads through the scripted vendor.
-        let attached = attach_document(&home, &cwd, "services/documents/fixtures/blank.pdf", true)
-            .expect("the parse");
-        let _ = handle.join();
-        assert_eq!(attached["type"], "attachment");
-        assert_eq!(attached["parser"], "nace");
-        assert_eq!(attached["job_id"], "job1");
-        assert_eq!(attached["pages"], 96);
-        assert_eq!(attached["text"], "hosted text");
-        assert!(
-            attached["reason"].as_str().unwrap_or("").contains("scan"),
-            "{attached}"
-        );
-        assert_eq!(paths.lock().expect("the paths").len(), 4);
-        let _ = std::fs::remove_dir_all(&home);
+        match attach_local(&cwd, "services/documents/fixtures/simple.docx", false)
+            .expect("the local decision")
+        {
+            Attachment::Ready(value) => {
+                assert_eq!(value["type"], "attachment");
+                assert_eq!(value["parser"], "local:docx");
+            }
+            other => panic!("{other:?}"),
+        }
+        match attach_local(&cwd, "services/documents/fixtures/blank.pdf", false)
+            .expect("the question")
+        {
+            Attachment::Needs(value) => {
+                assert_eq!(value["type"], "attach_needs");
+                assert!(
+                    value["reason"].as_str().unwrap_or("").contains("scan"),
+                    "{value}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        match attach_local(&cwd, "services/documents/fixtures/pixel.png", true)
+            .expect("the escalation")
+        {
+            Attachment::Escalate { name, .. } => assert_eq!(name, "pixel.png"),
+            other => panic!("{other:?}"),
+        }
     }
 }

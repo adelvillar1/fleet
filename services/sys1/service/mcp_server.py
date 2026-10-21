@@ -26,6 +26,7 @@ def main() -> None:
     _add_sys1_src_to_path()
     from sys1.api import classify  # noqa: E402  (import after path patch)
     from sys1.config import load_config  # noqa: E402
+    from sys1.perception import parse_document  # noqa: E402
 
     cfg = load_config()
 
@@ -86,6 +87,25 @@ def main() -> None:
                             },
                             "required": ["text"],
                         },
+                    },
+                    {
+                        "name": "sys1_perceive_document",
+                        "description": (
+                            "Parse one local document through Nace Perception, using the "
+                            "provider credential sys1 already holds. Returns markdown, pages, "
+                            "units, job id, and any content_truncated disclosure. A scan or a "
+                            "format local extraction cannot read is this tool's case."
+                        ),
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "description": "Absolute path to the document on this machine.",
+                                },
+                            },
+                            "required": ["path"],
+                        },
                     }
                 ],
             })
@@ -93,6 +113,19 @@ def main() -> None:
             tool_name = params.get("name")
             arguments = params.get("arguments", {}) or {}
 
+            if tool_name == "sys1_perceive_document":
+                path = arguments.get("path")
+                if not isinstance(path, str) or not path.strip():
+                    error(req_id, -32602, "`path` must be a non-empty string.")
+                    continue
+                try:
+                    result = parse_document(path, cfg)
+                except Exception as exc:  # pragma: no cover — transport boundary
+                    result = {"ok": False, "code": "internal", "reason": str(exc)}
+                respond(req_id, {
+                    "content": [{"type": "text", "text": json.dumps(result)}],
+                })
+                continue
             if tool_name != "sys1_classify":
                 error(req_id, -32601, f"Unknown tool: {tool_name}")
                 continue

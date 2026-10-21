@@ -1703,28 +1703,22 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn an_escalation_waits_for_consent_and_a_keyless_home_refuses_it() {
-        if std::env::var("NACE_API_KEY").is_ok() || std::env::var("DREX_API_KEY").is_ok() {
-            return;
-        }
+    async fn an_escalation_asks_before_it_sends() {
         let (token, port) = launch().await;
-        let asked = post(
-            port,
-            "/api/attach",
-            &token,
-            r#"{"path":"services/documents/fixtures/pixel.png"}"#,
-        );
-        assert!(asked.starts_with("HTTP/1.1 200"), "{asked}");
-        assert!(asked.contains(r#""type":"attach_needs""#), "{asked}");
-        assert!(asked.contains("nace"), "{asked}");
-        let refused = post(
-            port,
-            "/api/attach",
-            &token,
-            r#"{"path":"services/documents/fixtures/pixel.png","consent":true}"#,
-        );
-        assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
-        assert!(refused.contains("NACE_API_KEY"), "{refused}");
+        for path in [
+            "services/documents/fixtures/pixel.png",
+            "services/documents/fixtures/blank.pdf",
+        ] {
+            let asked = post(
+                port,
+                "/api/attach",
+                &token,
+                &format!(r#"{{"path":"{path}"}}"#),
+            );
+            assert!(asked.starts_with("HTTP/1.1 200"), "{asked}");
+            assert!(asked.contains(r#""type":"attach_needs""#), "{asked}");
+            assert!(asked.contains("nace"), "{asked}");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

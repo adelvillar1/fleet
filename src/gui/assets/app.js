@@ -1717,8 +1717,8 @@
     el.emptyEyebrow.textContent = greeting() + ' \u00b7 ' + workspaceName();
     if (el.emptyMeta) {
       el.emptyMeta.textContent = face.workspace
-        ? 'Local to ' + face.workspace + ' \u00b7 the archive stays here; turns go to the providers that serve them.'
-        : 'Your archive stays on this machine. Every turn is a card you can open; the providers that serve it are named in the route bar and the lanes.';
+        ? 'Local to ' + face.workspace + ' \u00b7 the archive stays here; turns go to the providers that serve them; a document escalated to Perception goes to Nace.'
+        : 'Your archive stays on this machine. Every turn is a card you can open; the providers that serve it are named in the route bar and the lanes. A document escalated to Perception goes to Nace.';
     }
     if (el.railWhere) el.railWhere.textContent = workspaceName();
   }
@@ -5203,6 +5203,35 @@
     });
   }
 
+  // What the local lane will do with this path, named before the read:
+  // the picker states the parser, not only the chip after it.
+  function docParserHint(rel) {
+    var name = String(rel || '').split('/').pop().toLowerCase();
+    var ext = name.indexOf('.') === -1 ? '' : name.split('.').pop();
+    if (ext === 'docx' || ext === 'docm') {
+      return 'reading locally \u00b7 OOXML document (parser: local:docx)';
+    }
+    if (ext === 'pptx' || ext === 'pptm') {
+      return 'reading locally \u00b7 OOXML slides (parser: local:pptx)';
+    }
+    if (ext === 'xlsx' || ext === 'xlsm') {
+      return 'reading locally \u00b7 OOXML sheets (parser: local:xlsx)';
+    }
+    if (ext === 'csv') return 'reading locally \u00b7 csv (parser: local:csv)';
+    if (ext === 'html' || ext === 'htm') return 'reading locally \u00b7 html (parser: local:html)';
+    if (ext === 'doc' || ext === 'xls' || ext === 'ppt') {
+      return 'reading locally with LibreOffice, safe mode (parser: local:libreoffice)';
+    }
+    if (ext === 'pdf') {
+      return 'reading locally with pdftotext (parser: local:pdftotext) \u00b7 if it is a scan, ' +
+        'Nace will be asked before anything is sent';
+    }
+    if (ext === 'md' || ext === 'txt' || ext === 'log' || ext === 'xml' || ext === 'json') {
+      return 'reading locally (parser: local:text)';
+    }
+    return 'this format needs Nace perception; you will be asked before it is sent';
+  }
+
   function attachDocument(rel, consent) {
     if (face.attachments.length >= 5) {
       notice('at most five attachments', 'remove one before adding another');
@@ -5212,41 +5241,46 @@
     el.docPopNote.hidden = false;
     el.docPopNote.textContent = consent
       ? 'reading with Nace perception\u2026'
-      : 'reading the document\u2026';
-    post('/api/attach', { path: rel, consent: !!consent }).then(function (reply) {
-      if (reply.status !== 200) {
-        notice('the document was refused',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
+      : docParserHint(rel);
+    var run = function () {
+      post('/api/attach', { path: rel, consent: !!consent }).then(function (reply) {
+        if (reply.status !== 200) {
+          notice('the document was refused',
+            (reply.body && reply.body.error) || 'the face said no without a reason');
+          el.docPopNote.hidden = true;
+          return;
+        }
+        var doc = reply.body || {};
+        if (doc.type === 'attach_needs') {
+          docPending = rel;
+          el.docPopNote.hidden = false;
+          el.docPopNote.textContent = (doc.reason || 'this file needs a hosted parser') +
+            ' \u2014 sending it to Nace perception sends the document to a second party.';
+          docConsent(true);
+          return;
+        }
+        if (doc.type === 'attachment') {
+          face.attachments.push({
+            name: doc.name,
+            text: doc.text,
+            parser: doc.parser || '',
+            pages: doc.pages,
+            units: doc.units,
+            job_id: doc.job_id || '',
+            reason: doc.reason || '',
+            truncated: doc.truncated || null
+          });
+          paintAttachments();
+          toggleDocPop(false);
+        }
+      }).catch(function () {
+        notice('the document was refused', 'the face did not answer');
         el.docPopNote.hidden = true;
-        return;
-      }
-      var doc = reply.body || {};
-      if (doc.type === 'attach_needs') {
-        docPending = rel;
-        el.docPopNote.hidden = false;
-        el.docPopNote.textContent = (doc.reason || 'this file needs a hosted parser') +
-          ' \u2014 sending it to Nace perception sends the document to a second party.';
-        docConsent(true);
-        return;
-      }
-      if (doc.type === 'attachment') {
-        face.attachments.push({
-          name: doc.name,
-          text: doc.text,
-          parser: doc.parser || '',
-          pages: doc.pages,
-          units: doc.units,
-          job_id: doc.job_id || '',
-          reason: doc.reason || '',
-          truncated: doc.truncated || null
-        });
-        paintAttachments();
-        toggleDocPop(false);
-      }
-    }).catch(function () {
-      notice('the document was refused', 'the face did not answer');
-      el.docPopNote.hidden = true;
-    });
+      });
+    };
+    // The parser statement is painted before the read starts; starting in
+    // the same task would show it only after the answer.
+    window.requestAnimationFrame(function () { window.setTimeout(run, 0); });
   }
 
   if (el.docOpen) {
