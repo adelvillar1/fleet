@@ -86,7 +86,10 @@ tests/integration.rs    end-to-end tests: parser, client, tool loop, log, real s
 docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice records + dashboards record inherited from the fork)
 docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
 docs/known-issues.md    the ledger: every error/warning encountered, with evidence
-docs/architecture/      deep-dive-2026-10-15.md (current state), overview.md (slice-1 snapshot), ecosystem.md (the repos Fleet absorbs)
+docs/architecture/      deep-dive-2026-10-15.md (current state), overview.md (slice-1 snapshot), ecosystem.md (the repos Fleet absorbs), surfaces.md (the what and why of all eleven destinations), lanes.md (why five specialized services stand between the owner and the LLM)
+README.md                the product's front door: the arc, what ships, what is next (product-manager register)
+TECHNICAL-DOCUMENTATION.md   the system of record: interface contracts, environments, runbooks, verification, risk, sequencing (technical-program-manager register)
+FUNCTIONAL-SPECIFICATIONS.md   what the product does, surface by surface (product-manager register)
 docs/features/          feature docs as they land
 docs/harness-orientation.md  the harness's own orientation: the session cycle, the knowledge seams, the house rules
 CLAUDE.local.md         gitignored: env var names, machine paths, local quirks (no values)

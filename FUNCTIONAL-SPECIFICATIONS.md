@@ -1,150 +1,202 @@
 # Functional specifications
 
-This file is the project's user-facing behavior reference. It aggregates the
-existing sources: `docs/features/*.md`, `docs/architecture/*.md`,
-`src/cli.rs`, `src/tui/`, and the eval corpus in `src/eval.rs`.
+This file is the project's user-facing behavior reference, written in
+the product's terms: what each surface is for, what you do there, and
+what Fleet tells you when. It aggregates the existing sources —
+[docs/architecture/surfaces.md](docs/architecture/surfaces.md) (the what
+and why of every destination), the `docs/features/*.md` files (the how),
+and the surfaces' own copy. When behavior changes, follow the feature
+doc first and re-aggregate here.
 
-If a command or surface has no entry here, it is either covered in a feature
-doc above or missing. The "Source" column points to the file whose claims were
-aggregated here; when behavior changes, follow that file.
+If a command or surface has no entry here, it is either covered in a
+feature doc or missing; the last section names the gaps as a backlog.
 
-## Command reference
+## What Fleet is for
 
-| Command | Source |
+Fleet is a coding agent that runs on your machine, under your own keys,
+inside the folder you point it at. You ask for something; it plans,
+acts with tools, verifies, and reports — and everything it did is in a
+session log you can read, replay, and search. It remembers what it
+learned across sessions, delegates the work that decomposes, schedules
+what repeats, and routes each piece of work to the model your plans
+already pay for. The language model speaks last: five specialized
+services decide, measure, index, and render before it
+([docs/architecture/lanes.md](docs/architecture/lanes.md)).
+
+## The surfaces
+
+Eleven destinations in four groups, one flat level, reachable from the
+rail or the ⌘K palette. Every destination shares the grammar: a
+one-sentence purpose, an identity card with **ask** buttons, a strip of
+counts, a column of substance, and a rail of secondary reads. The ask
+buttons are the point — every surface is an entry into the conversation
+about the thing it shows.
+
+**Work — conversation.** The workbench. Type the task; choose how much
+Fleet asks first — *Ask before*, *Autonomous*, *Full access* — and, if
+you want, which provider serves it and which folder the work happens
+in. Attach a document from the workspace or a file from the machine.
+Plan instead of build. The run renders as cards in the same
+conversation: the route it took and why, the facts recalled, the skill
+loaded, the child spawned, the approval awaited. The home state names
+the counts (facts known, skills in reach, runs under this home), the
+method in three words — plan, delegate, verify — and where a run's work
+goes: local to the machine, turns to the providers that serve them, a
+document escalated to Perception to Nace.
+
+**Work — sessions.** Every run under this home, grouped by the project
+it was born in, with its replay readable beside the list. Search by id,
+project, model or channel; filter by state; open, resume, or copy.
+Scheduled runs land here as ordinary logs.
+
+**Intelligence — router.** Where this run's work went, what it tried
+first, and what the day has served: the live decision, the declared
+chain per workload, today's ledger, the model and workload mix, and the
+decision cache. Ask sys1 for a judgment on any task to see how it would
+be classified. Open settings to change the chains or pin a provider.
+
+**Intelligence — delegation.** The run's own tree of children, the runs
+before it, and the dependency graph the plan declares. Depth cap, nodes
+in this run, past runs, graph nodes, reads refused — the tree is rebuilt
+from the logs' own parent ids, and the graph is a file the plan's work
+writes; nothing is inferred from what a run did.
+
+**Knowledge — memory.** One fact per file: what this run recalled and
+what the corpus already knows. Search the corpus; open a fact with its
+whole body and edit it in place; ask fleet what it knows; see today's
+recalls and their scores.
+
+**Knowledge — skills.** The library the model can reach, the names the
+loader declined and why, and the proposals waiting for a decision.
+Open a skill, ask the curator about it, approve or read a proposal the
+harness drafted from session evidence.
+
+**Knowledge — second brain.** The owner's control tower, read as an
+atlas: every project's six-week pulse, the plans it keeps open, and the
+one line its last session left behind, with the decisions that need a
+person kept beside them. Fleet surfaces what the tool publishes and
+forwards its actions; it does not reimplement the tool.
+
+**System — bots.** The channels that carry work in from outside: who is
+paired, what they may do, whether the service is listening, and what
+they have asked for. Let a peer in — capability fixed at pairing, token
+stored as a digest — or turn one away; revoke a device.
+
+**System — vault.** The credentials Fleet seals and the passphrase that
+keys them. Ten names sealed in this home; a value is never rendered.
+Unlock for this process, lock again, or start a new vault if the
+passphrase is lost.
+
+**System — settings.** Every knob the home has: the router (spend gate,
+workload tiers with a resolved-now column, thresholds, pin), the
+provider roster as field editors, the lanes, the roles, the vault, the
+spend caps, the remembered rules, the cron jobs, and the identity slot.
+Every value is picked from what this home already knows; every write
+rides the one writer the CLI rides.
+
+**System — calibration.** The day's stream, the judged quality of what
+served, and the gate that decides whether the failover may learn from
+it. Read the day's routes, turns, eval runs, recall hits and tool
+screens; run a gate review; see which (provider × workload) cells are
+fit enough to move the failover.
+
+The terminal surface (`fleet` with no subcommand) is the same agent core,
+keyboard-first and denser: the conversation at the center, a tabbed right
+pane (run, router, brain, tower), the knowledge panels, the checkpoint
+store and its diff, and a command palette over every pane and panel
+(`docs/features/tui.md`).
+
+## The commands as verbs
+
+| You want to | Say |
 |---|---|
-| `fleet run "<task>"` | `docs/architecture/overview.md`; `docs/architecture/deep-dive-2026-10-15.md`; `docs/features/subagents.md` |
-| `fleet chat` | `docs/architecture/overview.md`; `docs/architecture/deep-dive-2026-10-15.md` |
-| `fleet sessions` | `docs/features/memory.md`; `docs/features/subagents.md` |
-| `fleet sessions --recall <query>` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md` |
-| `fleet sessions --consolidate` | `docs/features/memory.md` |
-| `fleet sessions --archive` | `docs/features/memory.md` |
-| `fleet lanes` | `docs/architecture/overview.md`; `docs/features/install.md` |
-| `fleet providers` | `docs/features/routing.md`; `docs/architecture/ecosystem.md` |
-| `fleet calib` | `docs/features/calibration.md`; `docs/features/calibration-loop.md` |
-| `fleet judge` | `docs/features/calibration-loop.md` |
-| `fleet delegate` | `docs/features/calibration-loop.md` |
-| `fleet explain` | `docs/features/explain.md` |
-| `fleet eval` | `docs/features/eval.md` |
-| `fleet eval --last` | `docs/features/eval.md` |
-| `fleet settings set <key> <value>` | `src/cli.rs`; `docs/architecture/deep-dive-2026-10-15.md` |
-| `fleet skills` | `docs/features/skills.md` |
-| `fleet skills --proposed` | `docs/features/skills.md` |
-| `fleet skills --curate` | `docs/features/skills.md` |
-| `fleet skills --show <name>` | `docs/features/skills.md` |
-| `fleet improve` | `docs/features/self-maintenance.md` |
-| `fleet improve apply <name> [--approve]` | `docs/features/self-maintenance.md` |
-| `fleet improve undo <name>` | `docs/features/self-maintenance.md` |
-| `fleet remember ...` | `docs/features/memory.md` |
-| `fleet doctor` | `docs/architecture/overview.md`; `docs/architecture/deep-dive-2026-10-15.md` |
-| `fleet doctor --diagnose <session>` | `docs/features/eval.md` |
-| `fleet install` | `docs/features/install.md` |
-| `fleet install --lanes` | `docs/features/install.md` |
-| `fleet compact` | `docs/features/compaction.md` |
-| `fleet cron` | `docs/features/cron.md` |
-| `fleet graph` | `docs/architecture/deep-dive-2026-10-15.md` |
-| `fleet roles` | `docs/features/subagents.md` |
-| `fleet convention <concept>` | `docs/features/skills.md`; `docs/features/memory.md` |
-
-## The browser face
-
-`fleet gui [--port N] [--no-open] [--host H]` serves the app's own
-interface on loopback: the conversation first, the intelligence
-surfaces one flat level beneath four destinations, and the second brain
-as the project landscape's atlas. The face is light-first (warm paper by default) and the
-address alone opens it; a non-loopback host is refused by name. A run
-can be stopped or steered from its process card, its delegation branches
-open beside the live conversation, and every panel's filters, chart
-segments, and related objects are interactive. The run bar carries the
-chat's standing choices — permissions, the route pin, and its working
-folder. A chat's folder is the agent's root: `bash` starts there and the
-file tools resolve under it, a path that leaves the run's folder is
-refused by name, a reload restores the choice, a deleted folder falls
-back to no folder in the run's first transcript line, and a subagent
-inherits the parent's access. A chat with no folder has no filesystem
-access at all — all four built-in tools are refused by name, with the
-refusal asking the owner for a folder — and full access is not offered
-until a folder is set. The CLI, the TUI, and headless runs are launched
-from a directory and keep the unrestricted root they always had. The
-surfaces, the home briefing, the endpoints, and the interaction layer
-are documented in `docs/features/gui.md`.
+| one task, start to finish | `fleet run "<task>"` |
+| a working session, many tasks | `fleet chat` |
+| the browser console | `fleet gui` |
+| the archive of runs | `fleet sessions` (add `--recall <query>` to rank it, `--consolidate`, `--archive`) |
+| what the lanes are doing | `fleet lanes` |
+| the routing roster | `fleet providers` |
+| the day's calibration stream | `fleet calib` (then `fleet judge`, `fleet delegate` for the grading beats) |
+| why a verdict stood | `fleet explain` |
+| the harness's own performance | `fleet eval` (`--last` for the last run) |
+| the knobs | `fleet settings` (`set <key> <value>` writes one; `provider add`/`remove`, `workload set` edit the roster and the tiers) |
+| the skills | `fleet skills` (`--proposed` for drafts awaiting the gate) |
+| a fact remembered | `fleet remember` |
+| the scheduled jobs | `fleet cron` (add/enable/disable/remove by name) |
+| the declared graph | `fleet graph` |
+| the roles | `fleet roles` |
+| the self-maintenance proposals | `fleet improve` (`apply`, `undo`) |
+| what this project calls a concept | `fleet convention <concept>` |
+| the machine checked | `fleet install` (then `fleet doctor`, with `--diagnose <session>` and `--open`) |
+| the context folded now | `fleet compact` |
 
 ## Run behavior
 
-- A pinned provider routes every shape through that provider's own models.
-- Without a pin, sys1_classify judges the workload and the preference table
-  walks the declared chain.
-- The default workload can be promoted as `Fallback` when confidence is below
-  the gate threshold.
-- DeepSeek is the only pay-as-you-go candidate and is declared in no workload's
-  chain; it serves only when pinned.
+- A pinned provider routes every shape through that provider's own
+  models; a bare model id on `--model` resolves to the one provider that
+  serves it, refused by name when none or several do.
+- Without a pin, the router decides: sys1 judges the workload, the
+  preference table names the chain, and every order the router builds
+  closes on the deepseek-flash failover tail. The leading session walks
+  the `hard` chain whatever its task was judged; a delegated child is
+  routed over its own brief.
+- A verdict below the confidence gate promotes the default workload,
+  and the row says so — a gated route is a fallback, not a judgment.
 - A mid-stream failure is fatal rather than a failover.
-- A run that stops after tool work with no message — or a bare "done" — is asked once for its closing report; the ask is visible on every surface, and a second silent stop ends with the stop reason `completed without a report`. A run that executed no tools is never repaired.
-- Every tool call goes through the approval gate one call at a time; a denial
-  is a model-visible result, not a panic.
-- Lane children are spawned lazily and closed on every exit path; a dead lane
-  fails fast for the rest of the run without killing it.
+- A run that stops after tool work with no message — or a bare "done" —
+  is asked once for its closing report; the ask is visible on every
+  surface, and a second silent stop ends with the stop reason
+  `completed without a report`. A run that executed no tools is never
+  repaired.
+- Every tool call goes through the approval gate one call at a time; a
+  denial is a model-visible result, not a panic.
+- Lane children are spawned lazily and closed on every exit path; a dead
+  lane fails fast for the rest of the run without killing it.
+- A chat's folder is the agent's root: `bash` starts there and the file
+  tools resolve under it, a path that leaves the folder is refused by
+  name, a reload restores the choice, a deleted folder falls back with a
+  line in the run's first transcript event, and a subagent inherits the
+  access. A chat with no folder has no filesystem access at all — the
+  four built-ins are refused by name — and full access is not offered
+  until a folder is set. The folder picker browses the whole hierarchy
+  and takes a typed path; the choice applies to the next run, never the
+  one in flight.
+- Compaction folds the context under a token budget between turns, and
+  the fold is logged; consolidation runs on its hourly timer in chat and
+  the TUI; cron jobs fire on schedule, catch up exactly one missed
+  window, and run through the same loop with their own session log.
+- Exit codes: `0` completed, `1` runtime failure, `2` usage or
+  configuration, `3` the turn cap was reached (resume with
+  `--session <id>`).
 
-## TUI modes
+## What Fleet tells you when
 
-| Mode | Behavior | Source |
-|---|---|---|
-| Chat | Streamed tokens, approval prompt, tool-call progress, plan card | `docs/features/tui.md` |
-| Run | Stop/steer controls and the live delegation-branch cursor | `docs/features/tui.md` |
-| Steer | One-line steer editor inside the run controls | `docs/features/tui.md` |
-| Palette | Filtered command list for every pane, panel, and action (Ctrl+P) | `docs/features/tui.md` |
-| Pane | Run/router/brain/tower tabs; the router and tower compose charts and bars (Ctrl+B) | `docs/features/boards.md`; `docs/features/tui.md` |
-| Sessions | Styled table, `f` filter, Enter resumes | `docs/features/subagents.md`; `docs/features/tui.md` |
-| Approval | Keyboard-driven approve/deny | `docs/architecture/overview.md` |
-| Lanes | Health table for each vendored lane core, with blend1's doctor rows | `docs/features/install.md`; `docs/features/tui.md` |
-| Checkpoints | Turn table, Enter arms a rewind, `d` opens the diff (Ctrl+K) | `docs/features/tui.md` |
-| Diff | File/hunk review, `r` rejects the hunk, `R` the file | `docs/features/tui.md` |
-| Confirm | `y` lands an armed rewind/reject; any other key walks away | `docs/features/tui.md` |
-| Panel | Memory/skills/calibration/delegation list + detail, `f` filters | `docs/features/tui.md` |
-| Settings | The TUI: scalar knobs (including the spend guard and the spend/runtime env knobs) and both lists, as cards. The GUI: router, providers, lanes, roles, vault, spend, and the remaining knobs, with catalog-backed pickers | `docs/features/gui.md`; `docs/architecture/deep-dive-2026-10-15.md` |
-| Explain | Today's explanation card | `docs/features/explain.md` |
-
-## Background jobs
-
-- Compaction runs between turns when the assembled prompt exceeds the budget.
-- Consolidation runs on an hourly timer in chat and the TUI, and on demand.
-- Cron jobs fire on schedule, catch up exactly one missed window, and run
-  through the same agent loop with their own session log.
-
-## Eval corpus families
-
-- Session-corpus replay
-- Agent-continuation
-- Conversation-fold
-- Two-turn tool loop
-- Subagent delegation
-- Memory recall
-- Delegation-loop closes
-
-The corpus is fixed and deterministic; `fleet eval` prints house cards and
-lands one `eval_corpus` row.
-
-## Error vocabulary
-
-| Class | Meaning |
+| It says | Meaning |
 |---|---|
-| `credentials` | Key or base URL missing or invalid |
-| `balance` | 402 from the provider |
-| `rate limit` | 429 from the provider |
-| `network` | TCP/HTTP failure before a response |
-| `decode` | Response could not be parsed |
-| `tool` | Built-in or lane tool returned an `error:` result |
-| `approval` | The user denied a tool call |
-| `max-turns` | The turn cap was reached |
-| `failed` | Unclassified terminal failure |
+| `credentials` | a key or base URL is missing or invalid |
+| `balance` | the provider answered 402 |
+| `rate limit` | the provider answered 429 |
+| `network` | the request failed before a response |
+| `decode` | the response could not be parsed |
+| `tool` | a built-in or lane tool returned an `error:` result |
+| `approval` | a tool call was denied |
+| `max-turns` | the turn cap was reached |
+| `completed without a report` | the run ended silently after tool work and the one repair ask did not land |
+| `failed` | an unclassified terminal failure |
 
-## Known functional gaps
+The eval corpus is fixed and deterministic — session-corpus replay,
+agent continuation, conversation fold, two-turn tool loop, subagent
+delegation, memory recall, delegation-loop close — and `fleet eval`
+prints house cards and lands one `eval_corpus` row (`docs/features/eval.md`).
 
-| Area | Status | Likely source |
+## Known gaps
+
+| Area | Status | Source |
 |---|---|---|
-| TUI settings list surfaces | Partially implemented | `src/settings.rs`, `src/tui/app.rs`, `docs/architecture/deep-dive-2026-10-15.md` |
-| Structured provider editor | Implemented: field editor over the roster, key presence by name, pin, add/remove | `src/gui/assets/app.js`; `src/settings.rs` |
+| TUI settings list surfaces | Partially implemented | `src/settings.rs`, `src/tui/app.rs` |
 | Human TUI open | Unclosed | `docs/architecture/deep-dive-2026-10-15.md` |
+| Structured provider editor | Implemented: field editor over the roster, key presence by name, pin, add/remove | `src/gui/assets/app.js`, `src/settings.rs` |
 
-These gaps are noted here as missing coverage, not as defects in code. When
-this file falls out of sync with the sources above, prefer fixing the source
-feature doc or command implementation and then re-aggregating this file.
+These gaps are noted as missing coverage, not as defects in code. When
+this file falls out of sync with the sources, fix the source feature doc
+or the implementation first, then re-aggregate here.

@@ -1,36 +1,183 @@
 # Technical documentation
 
-This file is the project's module-by-module technical reference. It
-aggregates the existing sources: `docs/architecture/overview.md`,
-`docs/architecture/deep-dive-2026-10-15.md`, `docs/architecture/ecosystem.md`,
-`docs/features/*.md`, and the module doc comments in `src/*.rs`.
+The system of record for running this project: what the boundaries are,
+what the environment needs, how to operate it, how work is verified and
+released, what is at risk, and what is next. It aggregates the module
+doc comments in `src/*.rs`, the architecture notes
+([docs/architecture/surfaces.md](docs/architecture/surfaces.md),
+[docs/architecture/lanes.md](docs/architecture/lanes.md),
+`ecosystem.md`, `deep-dive-2026-10-15.md`), and the feature docs.
 
-If a module or surface has no entry here, it is either covered in one of the
-architecture docs above or missing. The "Source" column points to the file
-whose claims were aggregated here; when the code changes, follow that file.
+If a module or boundary has no entry here, it is either covered in the
+sources above or missing; the module reference's Source column points to
+the file whose claims were aggregated, and when the code changes, follow
+that file.
 
-## Crate contract
+## System overview and boundaries
 
-- One static Rust binary; no Node runtime, no checkout dependency.
-- Tested with zero real network by design: the integration suite drives
-  `src/bin/mock-server.rs` as a child process and `src/bin/mock-mcp.rs` for
-  MCP edge cases.
-- The live-API end-to-end test is `#[ignore]`d and self-skips without a key.
-- Credentials never print; `fleet doctor` masks to the last four characters.
-- Model-visible output is never a panic: every tool failure is a model-visible
-  `error:` result, and the session log reconstructs exactly what the model saw.
-- The local gate is the only gate while CI is disarmed by budget:
-  `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo build --release`, `cargo test`.
+One static Rust binary, no Node runtime and no checkout dependency; the
+crate is the whole install. Dependencies are `tokio`, `ureq` (HTTP),
+`serde`/`serde_json`, and `ratatui`/`crossterm` (the TUI); everything
+else is standard library. Five subsystems, each with a boundary:
 
-## Environment contract
+- **The agent core** (`agent.rs`, `tools.rs`, `approvals.rs`,
+  `compaction.rs`, `session.rs`) — the tool loop, the closed built-in
+  set, the approval gate, the fold, and the append-only log. Its
+  boundary promise: every tool failure is a model-visible `error:`
+  result, never a panic, and the log reconstructs exactly what the model
+  saw.
+- **Routing** (`route.rs`, `route_cache.rs`) — the roster, the workload
+  preference table, selection, and failover. Its boundary promise:
+  nothing is hardcoded; the router decides unless the owner pins, and
+  routing never blocks a run.
+- **The lanes** (`lanes.rs`, `mcp.rs`, `lane_client.rs`) — the five
+  vendored Python services driven over the hand-rolled MCP stdio client.
+  Their boundary promise: a lane is launched, probed, and closed by
+  fleet, and a dead lane fails fast by name without killing the run.
+  What the lanes are for, and why a specialized model beats a language
+  model at each job, is [docs/architecture/lanes.md](docs/architecture/lanes.md).
+- **Knowledge** (`memory.rs`, `session_recall.rs`, `skills.rs`,
+  `nomenclature.rs`) — facts, the archive as synthetic facts, the skills
+  library, and the vocabulary. Their boundary promise: memory is a
+  git-tracked folder of markdown files anyone can read, and a proposal
+  never applies silently.
+- **The surfaces** (`gui/`, `tui/`, `cli.rs`) — three faces over the one
+  core. Their boundary promise: every read the browser performs is
+  spawn_blocking off the async worker, and every write rides the module
+  the CLI rides — the browser has no second truth.
+- **The evidence spine** (`calib.rs`, `eval.rs`, `judge.rs`,
+  `delegate.rs`, `explain.rs`) — recording, grading, and the gates that
+  decide whether evidence may change behavior.
 
-- `FLEET_HOME` defaults to `~/.fleet`.
-- Roster keys resolve from the process environment then `<FLEET_HOME>/.env` only.
-  Fleet never reads another harness's credential store.
-- `DEEPSEEK_API_KEY` may live in either leg; the machine's local quirks are
-  recorded in `CLAUDE.local.md` (gitignored).
-- Session logs live under `<FLEET_HOME>/sessions/`.
+## Interface contracts
+
+Four boundaries carry every fact in the system; each is documented by
+its contract, and the implementation is the module reference.
+
+**The CLI.** `fleet <verb>` with flags anywhere before the task words;
+usage errors name the offending flag. Exit codes: `0` completed,
+`1` runtime failure, `2` usage or configuration, `3` the turn cap was
+reached (resume with `--session <id>`). The authoritative list of
+headless entry points is the subcommand surface (`fleet help`).
+
+**The face's HTTP surface.** Hand-rolled HTTP/1.1 on loopback
+(`127.0.0.1:3080` by default); the address alone opens it and a
+non-loopback host is refused by name. The routes: `/api/run`,
+`/api/folder`, `/api/tree` (the pane's contained listing, and
+`abs=1` for the folder picker's whole-hierarchy listing),
+`/api/file`, `/api/attach`, `/api/settings`, `/api/state`,
+`/api/rank`, `/api/related`, `/api/pair/*`, and `/events` — the ordered
+event stream the transcript is built from. A paired device reaches the
+allowlisted routes with its cookie; the device token is stored as a
+digest; `Host`/`Origin` are checked. Every write rides `settings.rs`.
+
+**The MCP lane contract.** stdio, newline-delimited JSON-RPC 2.0
+(2024-11-05), spawn → initialize → tools/list → tools/call → teardown,
+id-keys pending waiters, per-op timeouts, and named errors only — a
+`-32602` reply names the offending field, never a traceback.
+
+**The home's files.** `config.json` (pin, provider overrides, the calib
+and skills knobs), `routing.json` (the workload tiers and the gates),
+`lanes.json` (per-lane configuration), `vault.json` (the sealed
+credentials), `sessions/` (the logs), `sessions-workdirs.json` (the
+chats' folders), `route-cache.json` (one recorded judgment per task,
+keyed to the judging lane), `ui.json` (the browser's counters), and the
+calibration day-files under
+`~/.local/share/dev-decisions/logs/YYYY/MM/DD/events.jsonl` unless
+`config.json`'s `calib.log_root` names another root.
+
+## Environments and dependencies
+
+- **Home.** `FLEET_HOME`, else `~/.fleet`; created by `fleet install`
+  with `sessions/`, `memories/`, `skills/`, `cron/`, `proposals/`.
+- **Keys.** Each roster candidate names an env var; values resolve from
+  the process environment then `<FLEET_HOME>/.env` only — fleet reads
+  its own home and nothing else (the owner's 2026-10-16 ruling). Keys
+  never print; `fleet doctor` masks to the last four characters. Sealed
+  values live in the vault, unlocked per process.
+- **The lanes.** Five vendored services under `services/`; heavy
+  dependencies (GLiNER, the tabular models, sentence-transformers,
+  kokoro, blend1's union) are per-lane venvs under
+  `<home>/venvs/<lane>/`, built by `fleet install --lanes`, each skipped
+  by name when it cannot be built.
+- **The embedding server.** A local llama-server on `127.0.0.1:8901`
+  (`FLEET_EMBEDDING_ENDPOINT` overrides), probed once per process; its
+  absence degrades recall and ranking to the lexical path by name.
+- **The face as a service.** The `com.fleet.gui` LaunchAgent runs the
+  binary with `--remote`; restart it with
+  `launchctl kickstart -k gui/$(id -u)/com.fleet.gui` after a rebuild.
+- **Toolchain.** `cargo` is not on PATH on the owner's machine; the
+  toolchain bin is exported first (recorded in `CLAUDE.local.md`,
+  gitignored). CI is disarmed by budget: the local gate is the only
+  gate.
+- **Documents.** Local extraction runs `services/documents/extract.py`
+  under a 120-second bound (Office via OOXML parts, legacy via
+  LibreOffice, PDFs via `pdftotext`); the hosted parser is the
+  escalation, keyed by `NACE_API_KEY` falling back to `DREX_API_KEY`.
+
+## Operational runbooks
+
+- **The gate.** `cargo fmt --all --check`, `cargo clippy --all-targets --
+  -D warnings`, `cargo build --release`, `cargo test` — read by exit
+  code, never through a status-losing pipe. 1,489 tests at the last
+  increment; one live-API e2e is `#[ignore]`d and runs on demand with
+  the key set.
+- **Rebuild and restart.** `cargo build --release` puts the binary at
+  `target/release/fleet` (`~/.local/bin/fleet` is a symlink to it); the
+  running face must be kickstarted or it keeps serving the old embedded
+  assets. Verify with a grep of the served page for the change.
+- **The cache sweep.** `scripts/cache-sweep.sh` prunes stale
+  `target/debug` artifacts (age first, a 15 GiB tiered backstop second,
+  `target/release` never touched) and declines while a build runs; it
+  ends the recap step.
+- **Pairing.** `fleet channels pair-webhook` or the face's pairing card
+  mints a device credential; the webhook token is shown once. Tailscale
+  `serve` is the account-gated TLS path; without it the pairing QR
+  points at plain-HTTP LAN.
+- **The vault.** Unlock per process (`FLEET_VAULT_PASSPHRASE` or the
+  face), lock again, or `vault_reset` (archives the old vault, onboards
+  a new one — the sealed copies are lost, the plaintext `.env` is not).
+- **Cron.** `fleet cron` lists the jobs; the nightly corpus-refresh jobs
+  carry their task string in the store, and a job whose stored task
+  diverges from the manifest's is reconciled on the next seed (KI-277).
+
+## Verification and release
+
+Work flows plan → build → recap → document, and each stage has a gate:
+`plan-surface` precomputes the criterion-to-module map and the
+dependency order; `plan-gate` checks criterion coverage, verifiability,
+and scope; `evidence-gate` checks that each criterion's evidence exists;
+`arch-gate` checks plan claims against this document; `docs-gate` checks
+linked-artifact coverage and staleness. The Rust gate is the four
+commands above. `fleet eval` is the fixed corpus, and the improve gate
+refuses a source self-edit that regresses it. Release is a commit on
+`master` (the only branch), pushed, with the face restarted — a change
+is not shipped until it is rebuilt, restarted, committed, and pushed.
+
+## Risk register
+
+Drawn from the open ledger (`docs/known-issues.md`); severity as
+recorded there.
+
+| Risk | State |
+|---|---|
+| Windows support unverified — anticipated in code, no build run (KI-011) | open |
+| The nightly corpus-refresh jobs fail in place; the task-string reconciliation is the named fix (KI-277) | open |
+| A scheduled run's child still inherits the parent's client — `improve_home` doubles as the route home (KI-278) | open |
+| The face serves no `/favicon.ico`; Chrome logs one 404 per load (KI-282) | open |
+| Tests write calibration rows into the machine's real stream — the rows pollute the boards until a test home carries its own root | open, proposed |
+| `docs/architecture/ecosystem.md` routing rows dated in places | open, doc |
+
+## Sequencing
+
+In flight, named with its reason: effort levels per workload (the
+router's third dimension; research recorded 2026-10-21); the `composed`
+workload's reachability by judgment (sys1's label set is upstream's);
+the bot-first phone shell (the owner's 2026-10-20 ruling; the plan is
+drafted); the cron children routing fix (KI-278). Landed this week: the
+failover tail and the router rulings (`4bd2f18`), the folder picker's
+whole-hierarchy browsing (`c40319d`), the context-window table and the
+`deepseek-flash` rename (`9c72bbb`).
 
 ## Module reference
 
@@ -58,7 +205,7 @@ the offending flag. The subcommand surface is the authoritative list of
 headless entry points.
 
 #### `api.rs`
-The DeepSeek chat-completions client: typed request/response, streaming SSE
+The chat-completions client: typed request/response, streaming SSE
 parse, tool declarations, and the `ApiError`/`ClientError` taxonomy. The
 taxonomy includes 401 credentials, 402 balance, 429 rate limit, network, and
 decode failures.
@@ -130,11 +277,12 @@ only when existing logs cannot be read safely.
 
 #### `route.rs`
 The roster, the workload preference table, route selection, and failover.
-Selection: pin wins, otherwise sys1_classify judges the workload, the
-preference table walks the declared chain, and gates can promote the default
-workload as `Fallback`. The 2026-10-16 ruling removed the precursor from the
-roster; the chain starts at `zai-coding-plan` and DeepSeek serves only when
-pinned.
+Selection: an exact pair pin wins, otherwise sys1_classify judges the
+workload; the leader walks the `hard` chain and every other route walks
+the judged workload's own; gates can promote the default workload as
+`Fallback`; every order closes on the deepseek-flash failover tail. The
+2026-10-16 ruling removed the precursor from the roster; the chain
+starts at `zai-coding-plan`.
 
 #### `route_cache.rs`
 One recorded judgment per task, keyed to the judging lane. The cache prevents
@@ -208,9 +356,12 @@ project's established terms and warns on drift.
 | `cron.rs` | `docs/features/cron.md`; `docs/architecture/deep-dive-2026-10-15.md` |
 
 #### `subagents.rs`
-Delegation to depth 2. A child runs on the parent's own routed client and
-model; scope is declarative; approval is forwarded with calls renamed
-`subagent -> <tool>`; the result is never silence.
+Delegation to depth 2. A child is routed by the router over its own brief
+(`route::prepare_child`, `Walk::Judged`) under the parent's pin, and runs on
+its own routed client; a parent on a direct, unrouted client — every test
+double — hands the child the same client. Scope is declarative; approval is
+forwarded with calls renamed `subagent -> <tool>`; the result is never
+silence.
 
 #### `delegate.rs`
 The delegation judgment beat: `fleet delegate` grades a day's delegations
@@ -343,10 +494,11 @@ spawn_blocking off the async worker; every write rides the module the
 CLI rides. The trust trio's floor is `checkpoints.rs`; the deck pipeline
 renders through `deck.rs`; the run's stop and steer ride the agent's own
 control-file protocol in `delegate.rs`. A chat's working folder is the
-bridge's state, persisted in `<home>/sessions-workdirs.json` and
-resolved against the launch directory when the run is accepted; the
-checkpoint store stays under the home and only its capture root follows
-the folder.
+bridge's state, persisted in `<home>/sessions-workdirs.json` and resolved
+against the launch directory when the run is accepted; the folder picker
+browses the whole hierarchy through the `abs` listing and commits through
+the same writer; the checkpoint store stays under the home and only its
+capture root follows the folder.
 
 ### Integration harness
 

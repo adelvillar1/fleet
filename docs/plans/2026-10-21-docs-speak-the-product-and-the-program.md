@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-21
 updated: 2026-10-21
 slug: docs-speak-the-product-and-the-program
@@ -135,7 +135,7 @@ recap of this work walks C0–C4 against the committed files.
 
 ## Linked artifacts
 
-`docs/architecture/surfaces.md`, `docs/architecture/lanes.md` (the
-substrate). `CLAUDE.md`'s housekeeping protocol (one home per fact).
-The owner's rulings of 2026-10-21 (registers; what and why; goal, intent,
-solution; no growing pains).
+- `docs/architecture/surfaces.md` — will be linked from all three rewritten documents and cited by the functional spec's surfaces section.
+- `docs/architecture/lanes.md` — will be linked from all three rewritten documents and cited by the README's solution and the functional spec's purpose.
+- `CLAUDE.md` — the "Where to find things" pointer index will name the three documents' new homes.
+- `docs/harness-orientation.md` — the knowledge-seams table's docs row will name the three public documents.

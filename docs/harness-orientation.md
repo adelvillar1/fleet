@@ -37,7 +37,7 @@ touches it.
 | skills — the canonical library at `~/.agents/skills/`, loaded directly | procedures as `SKILL.md`, disclosed description-first; the library is the owner's cross-harness source, and fleet reads it in place | `use_skill(name)` pulls a body; `fleet skills` cards the loaded set; `fleet skills --proposed` lists drafts awaiting the gate |
 | `~/.fleet/sessions/` | every past session's JSONL log | `fleet sessions --recall "<query>"` ranks the archive; `<id>` opens one log |
 | the calibration stream | what actually happened: routes, recalls, delegations, turns | `fleet calib` reads today; `fleet judge` / `fleet delegate` grade a day through sys1 |
-| `docs/` (this repo) | plans, recaps, the defect ledger, architecture, feature docs | `read_file` the file the task touches — the map is below |
+| `docs/` (this repo) | plans, recaps, the defect ledger, architecture, feature docs; the public documents (README.md, TECHNICAL-DOCUMENTATION.md, FUNCTIONAL-SPECIFICATIONS.md) | `read_file` the file the task touches — the map is below |
 | the nomenclature | the project's own vocabulary | `fleet convention <concept>` — reuse the established term, never invent a synonym |
 
 Recalled facts are proposals to verify, not commands — except the
