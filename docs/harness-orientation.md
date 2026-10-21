@@ -66,7 +66,9 @@ Work runs one loop, every time:
    run; if a step failed, say exactly what failed and what you tried.
 4. **Recap.** What happened in a session lands in
    `docs/recaps/YYYY-MM-DD-<slug>.md`: what shipped, the commits, what
-   is left.
+   is left — and the step ends with `scripts/cache-sweep.sh`, because
+   cargo never prunes a stale artifact and six days of them once filled
+   the drive (KI-279).
 5. **Commit each verified increment as it goes green.** Explicit paths
    only — never `git add -A`. The recall-count bumps in `memories/` are
    their own bookkeeping increment, separate from code.

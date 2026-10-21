@@ -81,6 +81,7 @@ src/bin/mock-server.rs  the scripted mock API the integration tests drive
 src/bin/mock-mcp.rs     the scripted fake MCP stdio server the integration tests drive
 memories/               the repo's own fact corpus: one markdown file per fact; the recall-count bump and the lifecycle stamps are its runtime edits
 services/               the five vendored Python lane cores with VENDOR.json; services/README.md documents the launch
+scripts/cache-sweep.sh  the recap step's sweep: stale target/debug artifacts pruned by age (7d), a 15 GiB tiered backstop, target/release never touched
 tests/integration.rs    end-to-end tests: parser, client, tool loop, log, real sem1 lane via MCP
 docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice records + dashboards record inherited from the fork)
 docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
@@ -120,6 +121,7 @@ cargo run --bin fleet -- convention # what this project already calls a concept
 cargo run --bin fleet -- graph      # the declared dependency graph as cards
 cargo run --bin fleet -- install    # the home layout and lane venvs
 DEEPSEEK_API_KEY=sk-... cargo test --test integration -- --ignored   # live e2e; #[ignore]d by default, runs on demand
+scripts/cache-sweep.sh [--all] [--dry-run]   # the recap step's sweep: stale debug artifacts pruned by age, 15 GiB backstop
 ```
 
 ## Branch and environment topology
@@ -134,7 +136,7 @@ Single branch `master` → `origin/master`. No staging/production split: solo to
 
 ## Session protocol
 
-warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/`) → commit with explicit paths.
+warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/`, then `scripts/cache-sweep.sh` — the recap step ends by pruning stale build artifacts, because cargo never does: KI-279, 159 GiB of dead test binaries) → commit with explicit paths.
 
 ## Ecosystem at a glance
 
