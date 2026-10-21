@@ -1611,9 +1611,15 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 /* --------------------------------------------------------------- composer */
 
 .composer {
+  /* One control geometry for the whole card. The run bar and the send
+     row both read these, so a select is never shorter than a segment
+     and a button never taller than the field beside it. */
+  --ctl-h: 30px;
+  --ctl-radius: 8px;
+  --ctl-font: 11.5px;
   width: min(820px, calc(100% - 64px));
   margin: 0 auto;
-  padding: 9px 10px 9px 14px;
+  padding: 10px 12px;
   border: var(--card-hairline);
   border-radius: var(--composer-radius);
   background: var(--composer-bg);
@@ -1645,7 +1651,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .composer textarea::placeholder { color: var(--dsw-alias-ink-tertiary); }
 
 /* Attachments: the files the turn carries, named above the run bar. */
-.attach-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
+.attach-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 2px 0; }
 .attach-chip {
   display: inline-flex;
   align-items: center;
@@ -1656,66 +1662,72 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   background: var(--dsw-alias-surface);
   color: var(--dsw-alias-ink-secondary);
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10px;
 }
 .attach-drop { padding: 0 2px; border: 0; background: none; color: var(--dsw-alias-ink-tertiary); font: inherit; cursor: pointer; }
 .attach-drop:hover { color: var(--dsw-alias-down); }
-.send-attach { color: var(--dsw-alias-ink-secondary); }
 
-/* The run bar: this chat's two standing choices, above the send row.
-   The destructive class still asks under Autonomous; Full access is the
-   one label that colours red, because it is the one that should. */
-.runbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px 0; }
-.runbar-perms { display: inline-flex; overflow: hidden; border: 1px solid var(--dsw-alias-hairline); border-radius: 7px; }
-.runbar-perms button {
-  padding: 5px 9px;
+/* The run bar: the route and the folder, above the send row. Every
+   control is one height. The permission mode lives at the bottom of the
+   card with the send row, so this line carries only what a run needs
+   besides how far it may go. */
+.runbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 2px 0; }
+.runbar-note { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-size: 10.5px; }
+
+/* A run-bar field is one bordered control holding its icon and value:
+   no free-floating caption, no second border inside the first. */
+.runbar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--ctl-h);
+  padding: 0 9px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--ctl-radius);
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink-secondary);
+  font-size: var(--ctl-font);
+}
+.runbar-field:hover { border-color: var(--dsw-alias-ink-tertiary); }
+.runbar-field svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--dsw-alias-ink-tertiary); }
+.runbar-field select {
+  height: 100%;
+  padding: 0 2px;
   border: 0;
-  background: none;
-  color: var(--dsw-alias-ink-tertiary);
+  background: transparent;
+  color: var(--dsw-alias-ink);
   font: inherit;
-  font-size: 10.5px;
+  font-size: var(--ctl-font);
   cursor: pointer;
 }
-.runbar-perms button:hover { color: var(--dsw-alias-ink); }
-.runbar-perms button:disabled { color: var(--dsw-alias-ink-tertiary); opacity: 0.45; cursor: not-allowed; }
-.runbar-perms button[aria-pressed="true"] { background: var(--dsw-alias-ink); color: var(--dsw-alias-page); }
-.runbar[data-mode="full"] .runbar-perms button[aria-pressed="true"] { background: var(--dsw-alias-down); color: #fff; }
-.runbar-route { display: inline-flex; align-items: center; gap: 6px; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
-.runbar-route select {
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-hairline);
-  border-radius: 6px;
-  background: var(--dsw-alias-surface);
-  color: inherit;
-  font: inherit;
-  font-size: 10.5px;
-}
-.runbar-note { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
-.runbar[data-mode="full"] .runbar-note { color: var(--dsw-alias-down); font-weight: 600; }
+.runbar-field select:disabled { color: var(--dsw-alias-ink-tertiary); cursor: default; }
+
+/* The permission mode keeps its one red state: the field reads full
+   access in the destructive colour, and nothing else on the card does. */
+.perm-field[data-mode="full"],
+.perm-field[data-mode="full"] select { border-color: var(--dsw-alias-down); color: var(--dsw-alias-down); }
+.perm-field[data-mode="full"] svg { color: var(--dsw-alias-down); }
+.perm-field[data-mode="full"] select { font-weight: 600; }
 
 /* The chat's working folder: a word-wide control in the run bar, and
    the picker that opens above the composer. The picker browses the
    launch directory one level at a time, so its list is small and its
    position fixed to the composer rather than to a page corner. */
-.runbar-folder { display: inline-flex; align-items: center; gap: 6px; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
 .runbar-folder button {
-  height: 26px;
+  height: 100%;
   max-width: 20ch;
-  padding: 0 8px;
-  border: 1px solid var(--dsw-alias-hairline);
-  border-radius: 6px;
-  background: transparent;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--dsw-alias-ink);
   font: inherit;
-  font-size: 10.5px;
+  font-size: var(--ctl-font);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
 }
-.runbar-folder button:hover { border-color: var(--dsw-alias-ink-tertiary); }
-.runbar-folder button[data-state="set"] { border-color: var(--dsw-alias-ink-tertiary); font-weight: 600; }
+.runbar-folder button[data-state="set"] { font-weight: 600; }
 .folder-pop {
   position: absolute;
   left: 12px;
@@ -1750,8 +1762,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .folder-entry:disabled { color: var(--dsw-alias-ink-tertiary); cursor: default; }
 .folder-empty { padding: 4px 6px; font-size: 10px; color: var(--dsw-alias-ink-tertiary); }
 .folder-entry.file { color: var(--dsw-alias-ink); }
-.doc-note { margin: 6px 2px; color: var(--dsw-alias-ink-secondary); font-size: 10.5px; line-height: 1.5; }
-.send-doc { color: var(--dsw-alias-ink-secondary); }
+.doc-note { margin: 6px 2px; color: var(--dsw-alias-ink-secondary); font-size: 11px; line-height: 1.5; }
 .folder-pop-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .folder-pop-actions button {
   padding: 4px 8px;
@@ -1767,9 +1778,11 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 .composer-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0 2px;
 }
 
 .composer-hint {
@@ -1782,29 +1795,59 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   white-space: nowrap;
 }
 
-.send {
-  min-height: 32px;
-  padding: 6px 15px;
+/* The actions are one unit: when the row runs out of room they wrap
+   together and stay right-aligned, never leaving Send alone. */
+.foot-actions { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+
+/* The send row's controls: quiet by default, one filled button. The two
+   attachment actions are icons with names read by the screen reader and
+   the tooltip; Plan is a toggle; Send is the only primary. */
+.foot-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--ctl-h);
+  padding: 0 11px;
   border: 0;
-  border-radius: 9px;
-  background: var(--dsw-alias-gradient);
-  color: #fff;
-  font-size: 12.5px;
+  border-radius: var(--ctl-radius);
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: var(--ctl-font);
   font-weight: 600;
   cursor: pointer;
-  transition: filter var(--fast) var(--ease), transform var(--fast) var(--ease);
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease),
+    filter var(--fast) var(--ease), transform var(--fast) var(--ease);
 }
-
-.send:hover { filter: brightness(1.06); }
-.send:active { transform: scale(0.96); }
-.send[disabled] { opacity: 0.45; cursor: default; filter: none; transform: none; }
-
-.send-plan { background: transparent; color: var(--dsw-alias-ink-secondary); }
-.send-plan:hover { background: var(--dsw-alias-surface-raised); filter: none; }
-
-.send-plan[aria-pressed="true"] {
+.foot-btn svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.foot-btn:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
+.foot-btn:active { transform: scale(0.96); }
+.foot-btn.icon { width: var(--ctl-h); padding: 0; }
+.foot-btn.plan[aria-pressed="true"],
+.foot-btn.plan[aria-pressed="true"]:hover {
   background: var(--dsw-alias-accent-wash);
   color: var(--dsw-alias-accent-lift);
+}
+.foot-btn.send {
+  padding: 0 14px;
+  background: var(--dsw-alias-gradient);
+  color: #fff;
+  font-size: 12px;
+}
+.foot-btn.send:hover { background: var(--dsw-alias-gradient); filter: brightness(1.06); }
+.foot-btn.send svg { width: 14px; height: 14px; }
+.foot-btn.send[disabled] { opacity: 0.45; cursor: default; filter: none; transform: none; }
+
+.composer :is(button, select):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsw-alias-accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
+/* On a narrow face the note has no room on the run bar and repeats what
+   the route control already says. */
+@media (max-width: 560px) {
+  .runbar-note { display: none; }
 }
 
 /* ------------------------------------------------------- the chat aside */
@@ -5525,6 +5568,8 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   .process-pill { display: none; }
   .composer-hint { display: none; }
   .composer-foot { justify-content: flex-end; }
+  .composer-foot .perm-field { margin-right: auto; }
+  .composer-foot .foot-actions { margin-left: auto; }
   .tile-label { letter-spacing: 0.06em; }
   .home-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .home-stat { border-left: 1px solid var(--dsw-alias-hairline); border-top: 0; padding: 10px 9px; }

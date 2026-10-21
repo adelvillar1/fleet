@@ -342,16 +342,14 @@
         <textarea id="task" rows="1" placeholder="Ask fleet for something&hellip;" spellcheck="false"></textarea>
         <div class="attach-chips" id="attach-chips" hidden></div>
         <div class="runbar" id="runbar" data-mode="ask">
-          <div class="runbar-perms" id="run-perms" role="group" aria-label="permissions">
-            <button type="button" data-mode="ask" aria-pressed="true"
-                    title="every tool call asks, except the rules you have remembered">Ask before</button>
-            <button type="button" data-mode="auto" aria-pressed="false"
-                    title="everything runs except the destructive class, which still asks">Autonomous</button>
-            <button type="button" data-mode="full" aria-pressed="false"
-                    title="nothing asks except the always-ask class — a standing risk">Full access</button>
-          </div>
-          <label class="runbar-route">
-            <span>route</span>
+          <label class="runbar-field runbar-route" title="pin a provider for this chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h3.5l9 10H20"></path>
+              <path d="M4 17h3.5l9-10H20"></path>
+              <path d="M17.5 4.5 20 7l-2.5 2.5"></path>
+              <path d="M17.5 14.5 20 17l-2.5 2.5"></path>
+            </svg>
             <select id="run-provider" aria-label="pin a provider for this chat">
               <option value="">Auto</option>
             </select>
@@ -359,12 +357,15 @@
           <!-- The third standing choice: where this chat's runs work. No
                folder means no filesystem access at all — the grant is
                the choice, and nothing is implicit. -->
-          <label class="runbar-folder">
-            <span>folder</span>
+          <span class="runbar-field runbar-folder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3.5 7.5a2 2 0 0 1 2-2h3.7l1.8 2h7.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path>
+            </svg>
             <button type="button" id="run-folder" aria-haspopup="dialog"
                     aria-expanded="false" aria-controls="folder-pop"
                     title="no working folder: the filesystem tools are unavailable">no folder</button>
-          </label>
+          </span>
           <span class="runbar-note" id="run-route-note">the router decides</span>
         </div>
         <!-- The folder picker. It browses only inside the launch
@@ -400,15 +401,64 @@
           </div>
         </div>
         <footer class="composer-foot">
+          <!-- The run's permissions: one collapsed field showing the mode
+               in force. The other two are a list behind it, so the bar
+               stays quiet until the owner changes it. -->
+          <label class="runbar-field perm-field" id="run-perms" data-mode="ask">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3.5l7 3V12c0 4.3-3 7.4-7 8.5-4-1.1-7-4.2-7-8.5V6.5z"></path>
+              <path d="M9 12l2 2 4-4"></path>
+            </svg>
+            <select id="run-mode" aria-label="how much runs before asking">
+              <option value="ask">Ask before</option>
+              <option value="auto">Autonomous</option>
+              <option value="full">Full access</option>
+            </select>
+          </label>
           <span class="composer-hint" id="hint">Enter sends &middot; Shift+Enter is a newline</span>
-          <button type="button" class="send send-doc" id="doc-open"
-                  aria-haspopup="dialog" aria-expanded="false" aria-controls="doc-pop"
-                  title="attach a document from the workspace">Document</button>
-          <button type="button" class="send send-attach" id="attach"
-                  aria-label="attach text files">Attach</button>
-          <input type="file" id="attach-input" multiple hidden>
-          <button type="button" class="send send-plan" id="plan" aria-pressed="false">Plan</button>
-          <button type="submit" class="send" id="send">Send</button>
+          <span class="foot-actions">
+            <button type="button" class="foot-btn icon" id="doc-open"
+                    aria-label="attach a document from the workspace"
+                    aria-haspopup="dialog" aria-expanded="false" aria-controls="doc-pop"
+                    title="attach a document from the workspace">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 3.5h7l5 5v12H6z"></path>
+                <path d="M13 3.5v5h5"></path>
+                <path d="M12 12.5v6"></path>
+                <path d="M9 15.5h6"></path>
+              </svg>
+            </button>
+            <button type="button" class="foot-btn icon" id="attach"
+                    aria-label="attach files from this machine"
+                    title="attach files from this machine">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M8.5 12.6l5.7-5.7a3 3 0 1 1 4.2 4.2l-7.2 7.2a5 5 0 0 1-7.1-7.1l6.6-6.6"></path>
+              </svg>
+            </button>
+            <input type="file" id="attach-input" multiple hidden>
+            <button type="button" class="foot-btn plan" id="plan" aria-pressed="false"
+                    title="plan the work before running it">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 3.5h12v17H6z"></path>
+                <path d="M9 8h6"></path>
+                <path d="M9 12h6"></path>
+                <path d="M9 16h3"></path>
+              </svg>
+              Plan
+            </button>
+            <button type="submit" class="foot-btn send" id="send">
+              Send
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 12h13"></path>
+                <path d="M13 7l5 5-5 5"></path>
+              </svg>
+            </button>
+          </span>
         </footer>
       </form>
 

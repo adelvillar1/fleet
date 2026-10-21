@@ -298,6 +298,7 @@
     hint: document.getElementById('hint'),
     runbar: document.getElementById('runbar'),
     runPerms: document.getElementById('run-perms'),
+    runMode: document.getElementById('run-mode'),
     runProvider: document.getElementById('run-provider'),
     runRouteNote: document.getElementById('run-route-note'),
     runFolder: document.getElementById('run-folder'),
@@ -4936,30 +4937,31 @@
   // autonomous.
   function paintRunbar() {
     if (!el.runbar) return;
-    // Full access is a grant only a working folder can bound: a chat
-    // with no folder does not offer it, and a mode left on full from
-    // before the folder was cleared falls back to ask rather than
-    // arming a run the server would refuse.
-    var full = el.runPerms ? el.runPerms.querySelector('button[data-mode="full"]') : null;
-    if (full) {
-      full.disabled = !face.folder;
-      full.title = face.folder
-        ? 'nothing asks except the always-ask class \u2014 a standing risk'
-        : 'full access needs a working folder: choose one first';
-    }
+    // Full access is a grant only a working folder can bound: the option
+    // is disabled without one, and a mode left on full from before the
+    // folder was cleared falls back to ask rather than arming a run the
+    // server would refuse.
+    var full = el.runMode ? el.runMode.querySelector('option[value="full"]') : null;
+    if (full) full.disabled = !face.folder;
     if (!face.folder && face.permissions === 'full') face.permissions = 'ask';
-    Array.prototype.forEach.call(el.runPerms.querySelectorAll('button[data-mode]'), function (button) {
-      button.setAttribute('aria-pressed',
-        button.dataset.mode === face.permissions ? 'true' : 'false');
-    });
+    if (el.runMode) el.runMode.value = face.permissions;
+    var modes = {
+      ask: 'every tool call asks, except the rules you have remembered',
+      auto: 'everything runs except the destructive class, which still asks',
+      full: 'nothing asks except the always-ask class \u2014 a standing risk'
+    };
+    if (el.runPerms) {
+      el.runPerms.dataset.mode = face.permissions;
+      el.runPerms.title = modes[face.permissions] || 'how much runs before asking';
+      if (!face.folder) el.runPerms.title += '; full access needs a working folder';
+    }
     el.runbar.dataset.mode = face.permissions;
     if (el.runProvider) {
       el.runProvider.value = face.providerPin || '';
       el.runProvider.disabled = !face.providers;
     }
     var route = face.providerPin ? 'pinned to ' + face.providerPin : 'the router decides';
-    el.runRouteNote.textContent =
-      (face.permissions === 'full' ? 'full access \u00b7 ' : '') + route;
+    el.runRouteNote.textContent = route;
     paintFolder();
   }
 
@@ -5004,11 +5006,9 @@
       .catch(function () { });
   }
 
-  if (el.runPerms) {
-    el.runPerms.addEventListener('click', function (event) {
-      var button = event.target.closest('button[data-mode]');
-      if (!button) return;
-      face.permissions = button.dataset.mode;
+  if (el.runMode) {
+    el.runMode.addEventListener('change', function () {
+      face.permissions = el.runMode.value;
       paintRunbar();
     });
   }
