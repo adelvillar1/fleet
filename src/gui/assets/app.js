@@ -27,7 +27,6 @@
     ['sessions', 'sessions'],
     ['calibration', 'calibration'],
     ['settings', 'settings'],
-    ['tower', 'tower'],
     ['second-brain', 'second brain'],
     ['bots', 'bots']
   ];
@@ -58,8 +57,7 @@
     ['system', 'system', [
       ['bots', 'bots'],
       ['settings', 'settings'],
-      ['calibration', 'calibration'],
-      ['tower', 'tower']
+      ['calibration', 'calibration']
     ]]
   ];
 
@@ -246,7 +244,6 @@
     panelSkills: document.getElementById('panel-skills'),
     panelSessions: document.getElementById('panel-sessions'),
     panelCalibration: document.getElementById('panel-calibration'),
-    panelTower: document.getElementById('panel-tower'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelBots: document.getElementById('panel-bots'),
     panelSettings: document.getElementById('panel-settings'),
@@ -259,7 +256,6 @@
     skillsBoard: document.getElementById('skills-board'),
     sessionsBoard: document.getElementById('sessions-board'),
     calibrationBoard: document.getElementById('calibration-board'),
-    towerBoard: document.getElementById('tower-board'),
     brainBoard: document.getElementById('brain-board'),
     botsBoard: document.getElementById('bots-board'),
     settingsBoard: document.getElementById('settings-board'),
@@ -6781,6 +6777,42 @@
     return card;
   }
 
+  // The evidence the retired tower console held that the atlas did not:
+  // the report feed, newest first, and each harness's claim precision.
+  // The scan, the ranked projects, and the activity chart are covered by
+  // the atlas itself, so they did not move.
+  function brainEvidence(read) {
+    var reports = read.reports || {};
+    var feed = reports.feed || [];
+    var trust = reports.trust || [];
+    if (!feed.length && !trust.length) return null;
+    var card = boardCard(12, 'the report feed', feed.length + ' filed',
+      'every report filed to the tower\u2019s ledger, newest first \u2014 the evidence the atlas '
+      + 'reads its conflicts and its coverage from.');
+    card.classList.add('lib-card');
+    var list = node('div', 'rail-list');
+    feed.slice(0, 12).forEach(function (row) {
+      var line = node('div', 'rail-row');
+      var body = node('div');
+      body.appendChild(node('b', null, row.project + ' \u00b7 ' + row.kind));
+      body.appendChild(node('p', null, row.summary));
+      line.appendChild(body);
+      line.appendChild(node('span', 'rail-em', String(row.ts || '').slice(5, 16)));
+      list.appendChild(line);
+    });
+    card.appendChild(list);
+    if (feed.length > 12) {
+      card.appendChild(node('p', 'rail-more',
+        (feed.length - 12) + ' more filings in the ledger'));
+    }
+    trust.forEach(function (row) {
+      card.appendChild(node('p', 'rail-note',
+        row.harness + ' \u00b7 ' + row.evidenced + ' of ' + row.claimed +
+        ' claims carried evidence \u00b7 precision ' + Math.round(row.precision * 100) + '%'));
+    });
+    return card;
+  }
+
   function brainMethod(read) {
     var band = node('section', 'brain-method');
     band.dataset.span = '12';
@@ -6970,6 +7002,8 @@
     el.brainBoard.appendChild(brainAtlas(read));
     el.brainBoard.appendChild(brainAttention(read));
     if ((read.commits || []).length) el.brainBoard.appendChild(brainRibbon(read));
+    var evidence = brainEvidence(read);
+    if (evidence) el.brainBoard.appendChild(evidence);
     el.brainBoard.appendChild(brainMethod(read));
   }
 
@@ -9490,7 +9524,6 @@
     skills: el.panelSkills,
     sessions: el.panelSessions,
     calibration: el.panelCalibration,
-    tower: el.panelTower,
     'second-brain': el.panelSecondBrain,
     bots: el.panelBots,
     settings: el.panelSettings
@@ -9547,7 +9580,6 @@
         });
       },
       calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
-      tower: function () { paintTower(); readTower(true).then(paintTower); },
       'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); readPlugin(true); },
       settings: function () { paintSettings(); readSettings(true).then(paintSettings); }
     };

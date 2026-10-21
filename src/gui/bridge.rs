@@ -3968,6 +3968,20 @@ fn brain_read(home: &std::path::Path) -> Value {
                 "suppressed": reports.suppressed,
                 "malformed": reports.malformed,
                 "events_total": reports.events_total,
+                "feed": reports.feed.iter().map(|row| json!({
+                    "ts": row.ts,
+                    "kind": row.kind,
+                    "project": row.project,
+                    "harness": row.harness,
+                    "summary": row.summary,
+                    "commit": row.commit,
+                })).collect::<Vec<_>>(),
+                "trust": reports.trust.iter().map(|row| json!({
+                    "harness": row.harness,
+                    "claimed": row.claimed,
+                    "evidenced": row.evidenced,
+                    "precision": row.precision,
+                })).collect::<Vec<_>>(),
             }),
         );
     } else if let Some(reason) = snapshot.reports.reason() {
