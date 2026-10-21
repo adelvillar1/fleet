@@ -159,12 +159,13 @@ Live: the picker lists the workspace's PDFs; the disclosure is visible before se
 
 ## Evidence
 
-- `cargo test --lib` — 1,346 passed. The new modules: `documents::tests`
-  (8: fixtures for docx/pptx/xlsx/csv/html, text and blank PDFs, macro
-  reading, oversize, missing lane, the copy pin) and `perception::tests`
-  (8: grant → upload → parse → poll, cache, truncation, timeout, 422,
-  409, failed job, key fallback), plus the bridge's escalation test and
-  the server's attach-route tests.
+- `cargo test --lib` — 1,347 passed (six consecutive runs after one
+  uncaptured timing flake). The new modules: `documents::tests` (9:
+  fixtures for docx/pptx/xlsx/csv/html, text and blank PDFs, macro
+  reading, oversize, missing lane, missing `pdftotext`, the copy pin)
+  and `perception::tests` (8: grant → upload → parse → poll, cache,
+  truncation, timeout, 422, 409, failed job, key fallback), plus the
+  bridge's PDF escalation test and the server's attach-route tests.
 - Live: the document picker attached `simple.docx` as `local:docx`, and
   `pixel.png` answered with the consent question and refused the keyless
   send by name.

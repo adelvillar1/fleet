@@ -6660,12 +6660,12 @@ mod tests {
         let cwd = std::env::current_dir().expect("the cwd");
         // Without consent the bridge answers with what it would send and
         // touches no network.
-        let asked = attach_document(&home, &cwd, "services/documents/fixtures/pixel.png", false)
+        let asked = attach_document(&home, &cwd, "services/documents/fixtures/blank.pdf", false)
             .expect("the question");
         assert_eq!(asked["type"], "attach_needs");
         assert!(paths.lock().expect("the paths").is_empty());
         // With consent it reads through the scripted vendor.
-        let attached = attach_document(&home, &cwd, "services/documents/fixtures/pixel.png", true)
+        let attached = attach_document(&home, &cwd, "services/documents/fixtures/blank.pdf", true)
             .expect("the parse");
         let _ = handle.join();
         assert_eq!(attached["type"], "attachment");
@@ -6674,10 +6674,7 @@ mod tests {
         assert_eq!(attached["pages"], 96);
         assert_eq!(attached["text"], "hosted text");
         assert!(
-            attached["reason"]
-                .as_str()
-                .unwrap_or("")
-                .contains("Perception"),
+            attached["reason"].as_str().unwrap_or("").contains("scan"),
             "{attached}"
         );
         assert_eq!(paths.lock().expect("the paths").len(), 4);

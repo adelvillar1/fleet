@@ -270,6 +270,21 @@ mod tests {
         fixtures_dir().join(name)
     }
 
+    /// The interpreter's absolute path, resolved before a test empties
+    /// PATH: the child's lookup is what must fail, not the spawn.
+    fn python3() -> PathBuf {
+        if let Ok(value) = std::env::var("FLEET_DOCUMENTS_PYTHON") {
+            return PathBuf::from(value);
+        }
+        for directory in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+            let candidate = directory.join("python3");
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+        PathBuf::from("python3")
+    }
+
     #[test]
     fn clean_office_formats_extract_locally() {
         let cases = [
@@ -354,6 +369,27 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_missing_pdftotext_is_a_named_refusal() {
+        let lane = lane().join("documents/extract.py");
+        let output = std::process::Command::new(python3())
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .arg(&lane)
+            .arg("--path")
+            .arg(fixture("text.pdf"))
+            .env("PATH", "")
+            .output()
+            .unwrap_or_else(|error| panic!("the lane runs with {}: {error}", python3().display()));
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("the lane's JSON");
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["code"], "missing_tool");
+        assert!(
+            value["reason"].as_str().unwrap_or("").contains("pdftotext"),
+            "{value}"
+        );
     }
 
     #[test]
