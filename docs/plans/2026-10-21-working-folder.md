@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 created: 2026-10-21
 updated: 2026-10-21
 slug: working-folder
@@ -32,24 +32,24 @@ High-level steps:
 
 ## Use cases
 
-- [ ] A: A chat's runs must operate in the owner's chosen folder, and the tools — not a prompt line — must enforce it.
-- [ ] B: The choice must be per chat and survive a reload; a chat with no choice keeps the launch folder.
-- [ ] C: A folder outside the launch boundary, a symlink that escapes it, or a folder that no longer exists must be refused or named, never silently used.
-- [ ] D: Delegated work must land in the same folder: a subagent's tools inherit the parent's.
+- [x] A: A chat's runs must operate in the owner's chosen folder, and the tools — not a prompt line — must enforce it.
+- [x] B: The choice must be per chat and survive a reload; a chat with no choice keeps the launch folder.
+- [x] C: A folder outside the launch boundary, a symlink that escapes it, or a folder that no longer exists must be refused or named, never silently used.
+- [x] D: Delegated work must land in the same folder: a subagent's tools inherit the parent's.
 
 ## Acceptance criteria
 
 These are the contract. Each one is a verifiable assertion. The work is "done" when every box is checked.
 
-- [ ] C0: With no folder set, bash `pwd`, a relative read, a relative write, a list, and a checkpoint are unchanged from today's launch-cwd behaviour.
-- [ ] C1: With a folder set, bash runs with that folder as cwd (`pwd` prints it), and a relative read, write and list resolve under it.
-- [ ] C2: `checkpoint_turn` captures the tree rooted at the chat's folder, not the process cwd.
-- [ ] C3: A relative path that escapes the folder (`../x`), an absolute path outside it, and a symlink resolving outside it are each refused with a reason that names the class.
-- [ ] C4: A chat's folder is stored per session, restored after a page reload, and a second chat starts at the launch folder.
-- [ ] C5: `POST /api/run` with a folder outside the launch root returns 400 with the pane's containment reason; a path that does not exist returns 400 naming it; a valid folder is accepted.
-- [ ] C6: When the stored folder no longer exists at run time, `POST /api/run` falls back to the launch folder and the run's first event names the fallback; a test creates a chat folder, deletes it, and asserts both the launch path used and the named notice.
-- [ ] C7: The run bar shows the current folder (its basename, or "launch folder"), and changing it adds one line to the transcript; the change applies to the next run, never the one in flight.
-- [ ] C8: A subagent spawned by a run uses the parent's folder for its built-in tools.
+- [x] C0: With no folder set, bash `pwd`, a relative read, a relative write, a list, and a checkpoint are unchanged from today's launch-cwd behaviour.
+- [x] C1: With a folder set, bash runs with that folder as cwd (`pwd` prints it), and a relative read, write and list resolve under it.
+- [x] C2: `checkpoint_turn` captures the tree rooted at the chat's folder, not the process cwd.
+- [x] C3: A relative path that escapes the folder (`../x`), an absolute path outside it, and a symlink resolving outside it are each refused with a reason that names the class.
+- [x] C4: A chat's folder is stored per session, restored after a page reload, and a second chat starts at the launch folder.
+- [x] C5: `POST /api/run` with a folder outside the launch root returns 400 with the pane's containment reason; a path that does not exist returns 400 naming it; a valid folder is accepted.
+- [x] C6: When the stored folder no longer exists at run time, `POST /api/run` falls back to the launch folder and the run's first event names the fallback; a test creates a chat folder, deletes it, and asserts both the launch path used and the named notice.
+- [x] C7: The run bar shows the current folder (its basename, or "launch folder"), and changing it adds one line to the transcript; the change applies to the next run, never the one in flight.
+- [x] C8: A subagent spawned by a run uses the parent's folder for its built-in tools.
 
 ## Files to be touched
 
@@ -133,3 +133,9 @@ Decisions taken while drafting:
 - **Containment inside the launch directory.** This is the same rule the files pane enforces, so a browser-driven run cannot be pointed at `~/.ssh`; an allowlist for outside folders is a later decision, not a free-text field.
 - **A sidecar, not a session record.** The session format would need a version bump for a new record type; the folder is a surface setting, so `<FLEET_HOME>/sessions-workdirs.json` keeps it out of the conversation format.
 - **The root already exists.** `Work::Builtin.root` is currently only the vocabulary guard's root; filling it from the run is the smallest seam that makes the folder real.
+
+Decisions taken while building:
+
+- **The boundary exists only when a folder is set.** C0 says a chat with no folder is unchanged, and "unchanged" includes absolute paths outside the launch directory, which the tools accept today (and which the crate's own tests rely on). So `Tool::execute` stays the unrestricted run and `Tool::execute_in` is the boundary; `Work::Builtin.root` became `Option<PathBuf>` with `None` meaning the process cwd.
+- **A separate `/api/folder` write.** C7's "changing it adds one line to the transcript" needs a change that is not a run; the run bar posts the choice there and the server records the line. `/api/run` also accepts `folder` for C5, validated strictly before dispatch.
+- **The picker browses a relative path.** The folder document carries `path`, `name`, and `rel` (relative to the launch root, `""` for the root) because the launch directory has two spellings on macOS (`/var` and `/private/var`) and the pane's `/api/tree` takes the rooted form.

@@ -1345,6 +1345,7 @@ async fn drive_over(
         skills: Vec::new(),
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
         role_overlay: None,
         memory,

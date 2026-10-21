@@ -1303,6 +1303,7 @@ pub async fn execute(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let gate = Gate::for_job(job);

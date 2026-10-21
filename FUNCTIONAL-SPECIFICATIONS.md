@@ -54,9 +54,16 @@ one console. The face is light-first (warm paper by default) and the
 address alone opens it; a non-loopback host is refused by name. A run
 can be stopped or steered from its process card, its delegation branches
 open beside the live conversation, and every panel's filters, chart
-segments, and related objects are interactive. The surfaces, the home
-briefing, the endpoints, and the interaction layer are documented in
-`docs/features/gui.md`.
+segments, and related objects are interactive. The run bar carries the
+chat's standing choices — permissions, the route pin, and its working
+folder. A chat's folder is the agent's root: `bash` starts there and the
+file tools resolve under it, a path that leaves the run's folder is
+refused by name, a reload restores the choice, a deleted folder falls
+back to the launch folder in the run's first transcript line, and a
+subagent inherits the parent's folder. A run with no folder works in the
+directory the face was launched from, as it always has. The surfaces,
+the home briefing, the endpoints, and the interaction layer are
+documented in `docs/features/gui.md`.
 
 ## Run behavior
 

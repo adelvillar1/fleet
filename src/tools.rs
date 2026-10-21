@@ -9,7 +9,7 @@ use crate::mcp::ToolInfo;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -1237,12 +1237,40 @@ impl Tool {
     /// Execute the tool with a parsed arguments object. `Ok` carries the
     /// bounded outcome; `Err` is a user-readable argument failure the agent
     /// relays to the model verbatim.
+    ///
+    /// This is the unrestricted run: `bash` starts in the process's
+    /// working directory and a path the model names is used as named —
+    /// the run this crate has always had, for a chat with no folder.
     pub fn execute(self, arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+        self.execute_without_folder(arguments)
+    }
+
+    /// Execute the tool bounded by `root`: `bash` spawns with it as its
+    /// working directory, and the three file tools resolve a relative
+    /// path against it and refuse a path that leaves it. This is the
+    /// chat's working folder. [`Tool::execute`] is the same call with no
+    /// boundary, so a run that names no folder behaves exactly as
+    /// before.
+    pub fn execute_in(
+        self,
+        arguments: &serde_json::Value,
+        root: &Path,
+    ) -> Result<ToolOutcome, String> {
         let outcome = match self {
-            Tool::Bash => run_bash(&string_arg(arguments, "command")?)?,
-            Tool::ReadFile => run_read_file(&string_arg(arguments, "path")?)?,
-            Tool::WriteFile => run_write_file(arguments)?,
-            Tool::ListDir => run_list_dir(&string_arg(arguments, "path")?)?,
+            Tool::Bash => run_bash_in(&string_arg(arguments, "command")?, Some(root))?,
+            Tool::ReadFile => run_read_file(&string_arg(arguments, "path")?, Some(root))?,
+            Tool::WriteFile => run_write_file(arguments, Some(root))?,
+            Tool::ListDir => run_list_dir(&string_arg(arguments, "path")?, Some(root))?,
+        };
+        Ok(bound(outcome))
+    }
+
+    fn execute_without_folder(self, arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+        let outcome = match self {
+            Tool::Bash => run_bash_in(&string_arg(arguments, "command")?, None)?,
+            Tool::ReadFile => run_read_file(&string_arg(arguments, "path")?, None)?,
+            Tool::WriteFile => run_write_file(arguments, None)?,
+            Tool::ListDir => run_list_dir(&string_arg(arguments, "path")?, None)?,
         };
         Ok(bound(outcome))
     }
@@ -1312,14 +1340,44 @@ enum DrainEvent {
 /// reaped — by exiting or by the deadline — each pipe gets [`DRAIN_GRACE`]
 /// to deliver the rest: a background process that inherited the pipe can
 /// keep it, but it cannot keep the call (KI-211).
-fn run_bash(command: &str) -> Result<ToolOutcome, String> {
-    run_bash_within(command, BASH_TIMEOUT)
+fn run_bash_in(command: &str, root: Option<&Path>) -> Result<ToolOutcome, String> {
+    run_bash_within_root(command, root, BASH_TIMEOUT)
 }
 
-/// [`run_bash`] with the deadline made explicit — the seam the tests
-/// drive, so the timeout path does not cost a real `BASH_TIMEOUT`.
+/// [`run_bash_in`] with the deadline made explicit — the seam the tests
+/// drive, so the timeout path does not cost a real `BASH_TIMEOUT`. The
+/// unrestricted root is the process's own working directory, the
+/// unchanged run.
+#[cfg(test)]
 fn run_bash_within(command: &str, timeout: Duration) -> Result<ToolOutcome, String> {
+    run_bash_within_root(command, None, timeout)
+}
+
+/// One shell call spawned in `root`, or in the process's working
+/// directory when the run names no folder. The shell is not sandboxed:
+/// a command can still `cd` wherever it likes, and the note on
+/// [`resolve_in_root`] says so. This is the folder the command *starts*
+/// in, not a boundary around it.
+fn run_bash_within_root(
+    command: &str,
+    root: Option<&Path>,
+    timeout: Duration,
+) -> Result<ToolOutcome, String> {
+    let root = match root {
+        Some(root) => root.to_path_buf(),
+        None => std::env::current_dir().unwrap_or_default(),
+    };
+    if !root.is_dir() {
+        // A chat whose folder was deleted between acceptance and the
+        // call names the missing root rather than reporting the shell's
+        // spawn error, which says nothing about which directory.
+        return Err(format!(
+            "the working folder {} does not exist",
+            root.display()
+        ));
+    }
     let mut child = shell_command(command)
+        .current_dir(&root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1468,8 +1526,120 @@ fn collect_stream(
     }
 }
 
-fn run_read_file(path: &str) -> Result<ToolOutcome, String> {
-    let bytes = fs::read(path).map_err(|error| format!("{path}: {error}"))?;
+/// Resolve one path a tool was given against the run's root, or name why
+/// it cannot be used.
+///
+/// A relative path is joined to the root and canonicalized first, so a
+/// symlink that points out of the folder is refused as one — a lexical
+/// `..` check alone cannot see it. An absolute path is accepted when it
+/// resolves inside the folder and refused when it does not. The two
+/// refusals name different classes: a path that walks out with `..`, an
+/// absolute path outside the folder, and a symlink that resolves outside
+/// it are three different mistakes and the model can only correct the
+/// one it is told about.
+///
+/// This is a boundary on the file tools, not on `bash`: a subprocess can
+/// still reach anything the owner's account can read. The folder is
+/// where a run works, not a sandbox around it.
+fn resolve_in_root(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let asked = path.trim();
+    if asked.is_empty() {
+        return Ok(root.to_path_buf());
+    }
+    let given = Path::new(asked);
+    let candidate = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        if escapes_with_parent_dir(given) {
+            return Err(format!("{path}: `..` escapes the working folder"));
+        }
+        root.join(given)
+    };
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|error| format!("{path}: {error}"))?;
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", root.display()))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(match given.is_absolute() {
+            true => format!("{path}: outside the working folder"),
+            false => format!("{path}: a symlink resolves outside the working folder"),
+        });
+    }
+    Ok(canonical)
+}
+
+/// The same boundary for a write, where the target itself may not exist
+/// yet: the parent is canonicalized and must resolve inside the root,
+/// and the file's own name is appended to it. Writing through a
+/// directory symlink that points out is therefore refused, which is the
+/// half a lexical check misses.
+fn resolve_write_in_root(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let asked = path.trim();
+    let given = Path::new(asked);
+    let candidate = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        if escapes_with_parent_dir(given) {
+            return Err(format!("{path}: `..` escapes the working folder"));
+        }
+        root.join(given)
+    };
+    let Some(parent) = candidate.parent() else {
+        return Err(format!("{path}: has no parent directory"));
+    };
+    if !parent.as_os_str().is_empty() && !parent.is_dir() {
+        return Err(format!(
+            "{path}: parent directory does not exist; create it with bash first"
+        ));
+    }
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|error| format!("{path}: {error}"))?;
+    let name = candidate.file_name().unwrap_or_default();
+    let target = canonical_parent.join(name);
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", root.display()))?;
+    if !target.starts_with(&canonical_root) {
+        return Err(match given.is_absolute() {
+            true => format!("{path}: outside the working folder"),
+            false => format!("{path}: a symlink resolves outside the working folder"),
+        });
+    }
+    Ok(target)
+}
+
+/// True when a relative path's `..` components take it above the root
+/// before any symlink is considered. The walk is lexical on purpose: it
+/// must refuse the class even when the paths involved do not exist.
+fn escapes_with_parent_dir(path: &Path) -> bool {
+    let mut depth: i64 = 0;
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return true;
+                }
+            }
+            Component::Normal(_) => depth += 1,
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    false
+}
+
+fn run_read_file(path: &str, root: Option<&Path>) -> Result<ToolOutcome, String> {
+    // `None` is the unrestricted run: the path is used as it was named,
+    // which is how the tool has always read a file.
+    let resolved = match root {
+        Some(root) => resolve_in_root(root, path)?,
+        None => PathBuf::from(path),
+    };
+    let bytes = fs::read(&resolved).map_err(|error| format!("{path}: {error}"))?;
     let text = String::from_utf8(bytes)
         .map_err(|_| format!("{path}: not valid UTF-8; use bash to inspect binary files"))?;
     Ok(ToolOutcome {
@@ -1478,17 +1648,26 @@ fn run_read_file(path: &str) -> Result<ToolOutcome, String> {
     })
 }
 
-fn run_write_file(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+fn run_write_file(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<ToolOutcome, String> {
     let path = string_arg(arguments, "path")?;
     let content = string_arg(arguments, "content")?;
-    let target = Path::new(&path);
-    if let Some(parent) = target.parent() {
-        if !parent.as_os_str().is_empty() && !parent.is_dir() {
-            return Err(format!(
-                "{path}: parent directory does not exist; create it with bash first"
-            ));
+    let target = match root {
+        Some(root) => resolve_write_in_root(root, &path)?,
+        None => {
+            let target = Path::new(&path);
+            if let Some(parent) = target.parent() {
+                if !parent.as_os_str().is_empty() && !parent.is_dir() {
+                    return Err(format!(
+                        "{path}: parent directory does not exist; create it with bash first"
+                    ));
+                }
+            }
+            target.to_path_buf()
         }
-    }
+    };
     // P0: an exclusive per-path lock, held across the write. Two fleet
     // processes writing one path otherwise race with no coordination at
     // all — the one-writer discipline the docs describe is per-turn and
@@ -1508,17 +1687,22 @@ fn run_write_file(arguments: &serde_json::Value) -> Result<ToolOutcome, String> 
     // write anything, so two sessions both writing one file through
     // bash still race. The lock makes the path that has a schema safe;
     // it cannot make an arbitrary subprocess safe.
-    let _guard = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(target));
+    let _guard =
+        crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(target.as_path()));
     let length = content.len();
-    fs::write(target, content).map_err(|error| format!("{path}: {error}"))?;
+    fs::write(&target, content).map_err(|error| format!("{path}: {error}"))?;
     Ok(ToolOutcome {
         output: format!("wrote {length} bytes to {path}\n"),
         truncated: false,
     })
 }
 
-fn run_list_dir(path: &str) -> Result<ToolOutcome, String> {
-    let mut names: Vec<String> = fs::read_dir(path)
+fn run_list_dir(path: &str, root: Option<&Path>) -> Result<ToolOutcome, String> {
+    let resolved = match root {
+        Some(root) => resolve_in_root(root, path)?,
+        None => PathBuf::from(path),
+    };
+    let mut names: Vec<String> = fs::read_dir(resolved)
         .map_err(|error| format!("{path}: {error}"))?
         .map(|entry| {
             let entry = entry.map_err(|error| format!("{path}: {error}"))?;
@@ -1845,6 +2029,122 @@ mod tests {
         assert!(error.contains("parent directory"));
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// C1: with a chat folder set, `bash` starts there and the three
+    /// file tools resolve a relative path against it.
+    #[test]
+    fn a_folder_roots_bash_and_the_file_tools() {
+        let root = scratch("folder-root");
+        fs::create_dir_all(root.join("nested")).unwrap();
+
+        let pwd = Tool::Bash
+            .execute_in(&serde_json::json!({ "command": "pwd -P" }), &root)
+            .unwrap();
+        let canonical = root.canonicalize().unwrap();
+        assert!(
+            pwd.output.contains(&canonical.display().to_string()),
+            "{}",
+            pwd.output
+        );
+
+        Tool::WriteFile
+            .execute_in(
+                &serde_json::json!({ "path": "nested/note.txt", "content": "hello" }),
+                &root,
+            )
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("nested").join("note.txt")).unwrap(),
+            "hello"
+        );
+        let read = Tool::ReadFile
+            .execute_in(&serde_json::json!({ "path": "nested/note.txt" }), &root)
+            .unwrap();
+        assert_eq!(read.output, "hello");
+        let listed = Tool::ListDir
+            .execute_in(&serde_json::json!({ "path": "nested" }), &root)
+            .unwrap();
+        assert!(listed.output.contains("note.txt"), "{}", listed.output);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// C0: with no folder, the run is the one this crate has always had
+    /// — the process's working directory and paths taken as named.
+    #[test]
+    fn no_folder_keeps_the_process_directory_and_named_paths() {
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let pwd = Tool::Bash
+            .execute(&serde_json::json!({ "command": "pwd -P" }))
+            .unwrap();
+        assert!(
+            pwd.output.contains(&cwd.display().to_string()),
+            "{}",
+            pwd.output
+        );
+        // `src` is this crate's own tree, and it is reachable because the
+        // test binary runs from the crate root.
+        let listed = Tool::ListDir
+            .execute(&serde_json::json!({ "path": "src" }))
+            .unwrap();
+        assert!(listed.output.contains("tools.rs"), "{}", listed.output);
+    }
+
+    /// C3: the folder is enforced by the tools, and each refusal names
+    /// its own class — a `..` walk, an absolute path outside, and a
+    /// symlink that resolves outside.
+    #[test]
+    fn the_folder_refuses_the_three_escapes() {
+        let root = scratch("folder-escape");
+        let outside = scratch("folder-outside");
+        fs::write(outside.join("secret.txt"), "no").unwrap();
+
+        let error = Tool::ReadFile
+            .execute_in(&serde_json::json!({ "path": "../x" }), &root)
+            .unwrap_err();
+        assert!(error.contains("`..` escapes the working folder"), "{error}");
+
+        let absolute = outside.join("secret.txt").display().to_string();
+        let error = Tool::ReadFile
+            .execute_in(&serde_json::json!({ "path": absolute }), &root)
+            .unwrap_err();
+        assert!(error.contains("outside the working folder"), "{error}");
+        let error = Tool::WriteFile
+            .execute_in(
+                &serde_json::json!({ "path": absolute, "content": "x" }),
+                &root,
+            )
+            .unwrap_err();
+        assert!(error.contains("outside the working folder"), "{error}");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+            let error = Tool::ReadFile
+                .execute_in(&serde_json::json!({ "path": "link/secret.txt" }), &root)
+                .unwrap_err();
+            assert!(
+                error.contains("a symlink resolves outside the working folder"),
+                "{error}"
+            );
+            // The same escape on the write path: the parent is the
+            // symlink, and the canonical parent is outside.
+            let error = Tool::WriteFile
+                .execute_in(
+                    &serde_json::json!({ "path": "link/new.txt", "content": "x" }),
+                    &root,
+                )
+                .unwrap_err();
+            assert!(
+                error.contains("a symlink resolves outside the working folder"),
+                "{error}"
+            );
+            assert!(!outside.join("new.txt").exists(), "nothing was written");
+        }
+
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&outside).ok();
     }
 
     /// P0 C1/C2: the write path takes an exclusive per-path lock, held

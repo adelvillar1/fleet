@@ -72,13 +72,16 @@ const BROADCAST_DEPTH: usize = 256;
 /// TUI's picker always did. The view side reseeds before the command is
 /// sent, so a resumed face never shows the old conversation's tail.
 pub(crate) enum Command {
-    /// Run this task in this session. The session is part of the command
-    /// because the thread drives more than one: a phone and a desktop
-    /// may each be working in a different conversation.
-    Run(String, String),
+    /// Run this task in this session, working in `folder` when the
+    /// chat names one. The session is part of the command because the
+    /// thread drives more than one: a phone and a desktop may each be
+    /// working in a different conversation. The folder rides here
+    /// rather than being read when the thread wakes, so a choice made
+    /// while the run was being accepted cannot move under it.
+    Run(String, String, Option<PathBuf>),
     /// Plan this task: the run plans and does not write, and its final
     /// message records as a plan the owner edits and builds.
-    Plan(String, String),
+    Plan(String, String, Option<PathBuf>),
     /// Re-anchor to this archived session's log. The next task replays
     /// it and continues it; the route is judged fresh, because the
     /// conversation the judgment serves is not the one that was judged.
@@ -162,6 +165,14 @@ struct GuiState {
     /// loop is serial, so one pair is the whole state.
     permissions: crate::approvals::Mode,
     provider_pin: Option<String>,
+    /// Each attached chat's working folder, keyed the way sessions are:
+    /// the launch session's pending key is the empty string until the
+    /// thread names the log, then it moves with it (see
+    /// [`GuiState::name_launch`]). The value is the canonical absolute
+    /// path the run's tools work in; an absent entry is the launch
+    /// folder. Persisted in `<FLEET_HOME>/sessions-workdirs.json`, so a
+    /// reload restores the choice.
+    workdirs: std::collections::HashMap<String, String>,
 }
 
 impl GuiState {
@@ -204,12 +215,34 @@ impl GuiState {
 
     /// The thread named the launch session's id: the pending log moves to
     /// the real key, so a face that was reading the pending key reads the
-    /// same events under the id it will show.
-    fn name_launch(&mut self, id: &str) {
+    /// same events under the id it will show. A folder chosen before the
+    /// first task moves with it and is returned, because the sidecar is
+    /// keyed by session id and the caller is the one that owns the home.
+    fn name_launch(&mut self, id: &str) -> Option<String> {
         if let Some(pending) = self.sessions.remove("") {
             self.sessions.insert(id.to_string(), pending);
         }
         self.launch = Some(id.to_string());
+        let folder = self.workdirs.remove("");
+        if let Some(folder) = &folder {
+            self.workdirs.insert(id.to_string(), folder.clone());
+        }
+        folder
+    }
+
+    /// The folder this chat's runs work in, when the owner set one.
+    fn workdir_of(&self, session: &str) -> Option<String> {
+        self.workdirs.get(&self.key(session)).cloned()
+    }
+
+    /// Set or clear a chat's folder. `None` is the launch folder, which
+    /// is the absence of an entry rather than an entry naming it.
+    fn set_workdir(&mut self, session: &str, folder: Option<&str>) -> Option<String> {
+        let key = self.key(session);
+        match folder {
+            Some(folder) => self.workdirs.insert(key, folder.to_string()),
+            None => self.workdirs.remove(&key),
+        }
     }
 }
 
@@ -303,9 +336,20 @@ impl Bridge {
             driving: None,
             permissions: crate::approvals::Mode::Ask,
             provider_pin: None,
+            workdirs: load_workdirs(&home),
         }));
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
-        tokio::spawn(fan_out(ui_rx, seat_rx, Arc::clone(&state), events.clone()));
+        // The fan-out persists a folder that was chosen before the
+        // launch session had an id, so it needs the home the sidecar
+        // lives in.
+        let fan_home = home.clone();
+        tokio::spawn(fan_out(
+            ui_rx,
+            seat_rx,
+            Arc::clone(&state),
+            events.clone(),
+            fan_home,
+        ));
         let cwd = std::env::current_dir().unwrap_or_default();
         let memories = crate::memory::resolve_root(&cwd);
         let related = Arc::new(crate::gui::related::RelatedIndex::new(
@@ -484,6 +528,7 @@ impl Bridge {
                 "session": key,
                 "model": self.model,
                 "workspace": self.cwd.display().to_string(),
+                "folder": folder_value(state.workdir_of(session).as_deref(), &self.cwd),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
                 "gate": {
                     "name": "sys1",
@@ -501,6 +546,7 @@ impl Bridge {
             "session": key,
             "model": self.model,
             "workspace": self.cwd.display().to_string(),
+            "folder": folder_value(state.workdir_of(session).as_deref(), &self.cwd),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "gate": {
                 "name": "sys1",
@@ -1568,8 +1614,9 @@ impl Bridge {
     /// first, exactly as a run's does, so a refresh replays what was
     /// asked.
     pub fn plan(&self, session: &str, task: &str) -> Result<(), String> {
+        let folder = self.run_folder(session, None)?;
         self.dispatch(session, task, |session, task| {
-            Command::Plan(session.to_string(), task.to_string())
+            Command::Plan(session.to_string(), task.to_string(), folder)
         })
     }
 
@@ -1577,29 +1624,154 @@ impl Bridge {
     /// lands in the log first, so a refresh replays what was asked and
     /// the header's running flag moves on the same event.
     pub fn run(&self, session: &str, task: &str) -> Result<(), String> {
+        let folder = self.run_folder(session, None)?;
         self.dispatch(session, task, |session, task| {
-            Command::Run(session.to_string(), task.to_string())
+            Command::Run(session.to_string(), task.to_string(), folder)
         })
     }
 
-    /// The same run, with the face's two standing choices: how this
-    /// run's tool calls are approved, and the provider its route is
-    /// pinned to (`None` is `auto`). Both are read by the agent thread
-    /// when it prepares the run, so they apply to this run and not to
-    /// the face's other sessions.
+    /// The same run, with the face's standing choices: how this run's
+    /// tool calls are approved, the provider its route is pinned to
+    /// (`None` is `auto`), and this chat's working folder (`None` uses
+    /// the stored choice). The mode and the pin are read by the agent
+    /// thread when it prepares the run; the folder is resolved here,
+    /// before the command is sent, so the run's root cannot move under
+    /// it. Both apply to this run and not to the face's other sessions.
     pub fn run_with(
         &self,
         session: &str,
         task: &str,
         mode: crate::approvals::Mode,
         pin: Option<String>,
+        folder: Option<&str>,
     ) -> Result<(), String> {
+        let folder = self.run_folder(session, folder)?;
         {
             let mut state = lock(&self.state);
             state.permissions = mode;
             state.provider_pin = pin;
         }
-        self.run(session, task)
+        self.dispatch(session, task, |session, task| {
+            Command::Run(session.to_string(), task.to_string(), folder)
+        })
+    }
+
+    /// Resolve one folder the browser named against the launch
+    /// directory: the pane's containment rule for a relative path, and
+    /// the same boundary for an absolute one, canonicalized so a
+    /// symlink out is refused. Public because the server refuses a bad
+    /// folder with a 400 naming the reason before a run is dispatched.
+    pub fn chat_folder(&self, asked: &str) -> Result<PathBuf, String> {
+        resolve_folder(&self.cwd, asked)
+    }
+
+    /// Set or clear this chat's working folder from the run bar. The
+    /// choice is stored for the chat, persisted in the sidecar, and
+    /// recorded as one line in its transcript. A run in flight is
+    /// untouched: the folder it accepted rides its own command, so a
+    /// change applies to the next run.
+    pub fn set_folder(&self, session: &str, asked: Option<&str>) -> Result<Value, String> {
+        let folder = self.store_folder(session, asked)?;
+        Ok(self.folder_event(session, folder.as_deref(), None))
+    }
+
+    /// The folder this run will use. An explicit choice is validated
+    /// and stored, then used. With none, the stored choice is used when
+    /// it still resolves; a stored folder that has gone missing is
+    /// cleared, falls back to the launch folder, and names the fallback
+    /// as the run's first event.
+    fn run_folder(&self, session: &str, asked: Option<&str>) -> Result<Option<PathBuf>, String> {
+        if asked.is_some() {
+            let folder = self.store_folder(session, asked)?;
+            self.folder_event(session, folder.as_deref(), None);
+            return Ok(folder);
+        }
+        let Some(stored) = lock(&self.state).workdir_of(session) else {
+            return Ok(None);
+        };
+        match resolve_folder(&self.cwd, &stored) {
+            Ok(path) => Ok(Some(path)),
+            Err(reason) => {
+                {
+                    let mut state = lock(&self.state);
+                    state.set_workdir(session, None);
+                }
+                self.persist_workdirs();
+                self.folder_event(session, None, Some((&stored, &reason)));
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store one chosen folder (or clear it) and persist the sidecar.
+    /// `None` is the launch folder, which is the absence of an entry.
+    fn store_folder(&self, session: &str, asked: Option<&str>) -> Result<Option<PathBuf>, String> {
+        let asked = asked.map(str::trim).filter(|asked| !asked.is_empty());
+        let folder = match asked {
+            Some(asked) => {
+                let path = self.chat_folder(asked)?;
+                // Choosing the launch folder is choosing nothing: an
+                // absent entry says "launch folder" without pretending
+                // the owner picked the directory the process started in.
+                let launch = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
+                Some(path).filter(|path| path != &launch)
+            }
+            None => None,
+        };
+        let stored = folder.as_ref().map(|path| path.display().to_string());
+        {
+            let mut state = lock(&self.state);
+            state.set_workdir(session, stored.as_deref());
+        }
+        self.persist_workdirs();
+        Ok(folder)
+    }
+
+    fn persist_workdirs(&self) {
+        let map = lock(&self.state).workdirs.clone();
+        save_workdirs(&self.home, &map);
+    }
+
+    /// One transcript line for a folder that was chosen, cleared, or
+    /// fallen back from. `fallback` is the stored path and the reason
+    /// it could not be used.
+    fn folder_event(
+        &self,
+        session: &str,
+        folder: Option<&std::path::Path>,
+        fallback: Option<(&str, &str)>,
+    ) -> Value {
+        let workspace = self.cwd.display().to_string();
+        let event = match (folder, fallback) {
+            (Some(path), _) => json!({
+                "type": "folder",
+                "path": path.display().to_string(),
+                "name": folder_name(path),
+                "rel": rel_to_root(&self.cwd, path),
+                "workspace": workspace,
+                "note": format!("this chat works in {}", folder_name(path)),
+            }),
+            (None, Some((missing, reason))) => json!({
+                "type": "folder",
+                "path": null,
+                "name": null,
+                "fallback": true,
+                "missing": missing,
+                "workspace": workspace,
+                "note": format!(
+                    "the folder {missing} is no longer usable ({reason}); this run works in the launch folder"
+                ),
+            }),
+            (None, None) => json!({
+                "type": "folder",
+                "path": null,
+                "name": null,
+                "workspace": workspace,
+                "note": "this chat works in the launch folder",
+            }),
+        };
+        record(&self.state, &self.events, session, event.clone());
+        event
     }
 
     /// The owner's one instruction to the run in flight, through the
@@ -2313,6 +2485,118 @@ fn pane_path(root: &std::path::Path, asked: &str) -> Result<std::path::PathBuf, 
         return Err("outside the working directory".to_string());
     }
     Ok(canonical)
+}
+
+/// Resolve one chat folder against the launch directory. A relative
+/// path is the pane's own rooted form and uses the pane's rule, which
+/// catches `..` and a symlink out. An absolute path is accepted when it
+/// canonicalizes inside the launch directory and refused when it does
+/// not. The reply is canonical, so the sidecar stores one spelling of a
+/// folder and two chats that name the same tree agree about it.
+fn resolve_folder(root: &std::path::Path, asked: &str) -> Result<PathBuf, String> {
+    let asked = asked.trim();
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", root.display()))?;
+    if asked.is_empty() {
+        return Ok(canonical_root);
+    }
+    let given = std::path::Path::new(asked);
+    if !given.is_absolute() {
+        return pane_path(root, asked);
+    }
+    let canonical = given
+        .canonicalize()
+        .map_err(|error| format!("{asked}: {error}"))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err("outside the working directory".to_string());
+    }
+    Ok(canonical)
+}
+
+/// A folder as the state document and the transcript carry it: its
+/// canonical path, the basename the run bar shows, and its path
+/// relative to the launch directory (the form the picker browses and
+/// the browser sends back). `None` is the launch folder and rides as
+/// JSON null.
+fn folder_value(path: Option<&str>, root: &std::path::Path) -> Value {
+    match path {
+        Some(path) => {
+            let path = std::path::Path::new(path);
+            json!({
+                "path": path.display().to_string(),
+                "name": folder_name(path),
+                "rel": rel_to_root(root, path),
+            })
+        }
+        None => Value::Null,
+    }
+}
+
+/// One folder's path relative to the launch directory, in the pane's
+/// rooted form: `""` for the root itself, `docs` for a child. The two
+/// sides are canonicalized because a launch directory can have two
+/// spellings on macOS (`/var` and `/private/var`), and a prefix check
+/// on the wrong one would report every folder as outside.
+fn rel_to_root(root: &std::path::Path, path: &std::path::Path) -> String {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    path.strip_prefix(&root)
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default()
+}
+
+/// The name a folder is shown by: its basename, or the whole path when
+/// it has none (a filesystem root).
+fn folder_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// The sidecar each chat's folder is stored in. It is a surface
+/// setting, so it lives beside the other fleet-owned sidecars rather
+/// than in the session log's format, which is the conversation.
+const WORKDIRS_FILE: &str = "sessions-workdirs.json";
+
+fn workdirs_path(home: &std::path::Path) -> PathBuf {
+    home.join(WORKDIRS_FILE)
+}
+
+/// Read the per-chat folders. An entry whose session log is gone is
+/// dropped: a folder nothing will ever run in is noise, and the next
+/// save writes the pruned map.
+fn load_workdirs(home: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let text = match std::fs::read_to_string(workdirs_path(home)) {
+        Ok(text) => text,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let stored: std::collections::HashMap<String, String> =
+        serde_json::from_str(&text).unwrap_or_default();
+    stored
+        .into_iter()
+        .filter(|(id, _)| session::session_path(home, id).exists())
+        .collect()
+}
+
+/// Write the per-chat folders, atomically and with a writer-unique
+/// temp name. Best-effort: a sidecar that cannot be written leaves the
+/// in-memory choice working for this process, and the failure is not
+/// worth failing a run over — the transcript line already told the
+/// owner what the chat is doing.
+fn save_workdirs(home: &std::path::Path, workdirs: &std::collections::HashMap<String, String>) {
+    let path = workdirs_path(home);
+    if workdirs.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let Ok(text) = serde_json::to_string_pretty(workdirs) else {
+        return;
+    };
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&temp, text).is_err() {
+        return;
+    }
+    let _ = std::fs::rename(&temp, &path);
 }
 
 /// The viewer's language for one file, from its extension — the handful
@@ -4386,6 +4670,7 @@ async fn fan_out(
     mut seat_rx: UnboundedReceiver<ApprovalRequest>,
     state: Arc<Mutex<GuiState>>,
     events: broadcast::Sender<Value>,
+    home: PathBuf,
 ) {
     let mut ui_done = false;
     let mut seat_done = false;
@@ -4397,9 +4682,14 @@ async fn fan_out(
                     // becomes this face's launch session: the pending log
                     // moves to the id, so a face that was reading the
                     // pending key reads the same events under the id it
-                    // shows (KI-022).
+                    // shows (KI-022). A folder chosen before that first
+                    // task moves with it and lands in the sidecar under
+                    // the id it will be read back by.
                     if let UiEvent::Session { id } = &event {
-                        lock(&state).name_launch(id);
+                        if lock(&state).name_launch(id).is_some() {
+                            let map = lock(&state).workdirs.clone();
+                            save_workdirs(&home, &map);
+                        }
                     }
                     // The event belongs to the session the thread is
                     // driving, which is exact because the thread's
@@ -4625,9 +4915,9 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                 // Which arm this task arrived on, read before the match
                 // consumes it: the two share one body, and the flag is
                 // the only difference between a run and a plan.
-                let plan_mode = matches!(command, Command::Plan(_, _));
+                let plan_mode = matches!(command, Command::Plan(_, _, _));
                 match command {
-                    Command::Run(driving, task) | Command::Plan(driving, task) => {
+                    Command::Run(driving, task, folder) | Command::Plan(driving, task, folder) => {
                         // The session this task drives. An empty name is
                         // the face's own launch session, which is created
                         // on this first task: a face that is opened and
@@ -4757,6 +5047,11 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             // store, so a run can be rewound from the
                             // browser and diffed against a turn.
                             checkpoints: Some(home.join("checkpoints")),
+                            // The chat's working folder, resolved when
+                            // the run was accepted: the built-ins work
+                            // there and the checkpoint captures that
+                            // tree. `None` is the launch directory.
+                            workdir: folder,
                             plan_mode,
                         };
                         let mode = lock(&state).permissions;
@@ -4973,6 +5268,145 @@ mod tests {
         assert_eq!(events[0]["role"], "owner");
         assert_eq!(events[0]["text"], "look at the router");
         assert_eq!(state["running"], true);
+    }
+
+    /// A scratch tree for a test's launch directory, unique per call.
+    fn tree(tag: &str) -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir =
+            std::env::temp_dir().join(format!("fleet-gui-{tag}-{}-{serial}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch tree");
+        dir
+    }
+
+    /// C4: a chat's folder is kept per session, persisted in the
+    /// sidecar, and restored after a reload; a second chat starts at the
+    /// launch folder.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_chat_folder_is_per_session_and_survives_a_reload() {
+        let (mut bridge, _sources, _door) = bridge().await;
+        let root = tree("folder-per-session");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        bridge.cwd = root.clone();
+        let home = bridge.home_path();
+        let session = Session::create(&home, "m").unwrap();
+        let id = session.id().to_string();
+
+        bridge
+            .set_folder(&id, Some("docs"))
+            .expect("a folder inside the launch directory");
+        let state = bridge.state(&id);
+        assert_eq!(state["folder"]["name"], "docs", "{state}");
+        assert_eq!(
+            state["folder"]["path"],
+            root.join("docs")
+                .canonicalize()
+                .unwrap()
+                .display()
+                .to_string()
+        );
+        let sidecar = std::fs::read_to_string(home.join(WORKDIRS_FILE)).expect("the sidecar");
+        assert!(sidecar.contains(&id), "{sidecar}");
+
+        // A second face over the same home restores the choice; another
+        // chat has none and therefore starts at the launch folder.
+        let (reloaded, _sources) =
+            Bridge::detached(home.clone(), "m".to_string(), Some(id.clone()));
+        let state = reloaded.state(&id);
+        assert_eq!(state["folder"]["name"], "docs", "{state}");
+        let other = Session::create(&home, "m").unwrap();
+        assert!(
+            reloaded.state(other.id())["folder"].is_null(),
+            "a second chat starts at the launch folder"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// C5, at the bridge seam: a folder outside the launch directory, a
+    /// symlinked way out, and a path that does not exist are each
+    /// refused by name and nothing is stored.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_folder_outside_the_launch_directory_is_refused_by_name() {
+        let (mut bridge, _sources, _door) = bridge().await;
+        let root = tree("folder-refuse");
+        bridge.cwd = root.clone();
+        let attached = bridge.launch();
+
+        let error = bridge.chat_folder("../").unwrap_err();
+        assert!(error.contains("outside the working directory"), "{error}");
+        bridge
+            .set_folder(&attached, Some("../"))
+            .expect_err("a `..` walk is refused");
+        assert!(bridge.state(&attached)["folder"].is_null());
+
+        let outside = tree("folder-refuse-outside");
+        let error = bridge
+            .chat_folder(&outside.display().to_string())
+            .unwrap_err();
+        assert!(error.contains("outside the working directory"), "{error}");
+
+        let error = bridge.chat_folder("no-such-dir").unwrap_err();
+        assert!(error.contains("no-such-dir"), "{error}");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+            let error = bridge.chat_folder("link").unwrap_err();
+            assert!(error.contains("outside the working directory"), "{error}");
+        }
+
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&outside).ok();
+    }
+
+    /// C6: a stored folder that has gone missing falls back to the
+    /// launch folder, and the fallback is the run's first event.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_deleted_folder_falls_back_and_names_itself() {
+        let (mut bridge, _sources, _door) = bridge().await;
+        let root = tree("folder-fallback");
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        bridge.cwd = root.clone();
+        let home = bridge.home_path();
+        let attached = bridge.launch();
+        bridge.set_folder(&attached, Some("docs")).expect("stored");
+        std::fs::remove_dir_all(&docs).unwrap();
+
+        bridge
+            .run_with(&attached, "work", crate::approvals::Mode::Ask, None, None)
+            .expect("the run is accepted");
+        let state = bridge.state(&attached);
+        let events = state["events"].as_array().expect("an event log");
+        let last = events.len() - 1;
+        assert_eq!(events[last]["type"], "message", "{events:?}");
+        assert_eq!(events[last - 1]["type"], "folder", "{events:?}");
+        assert_eq!(events[last - 1]["fallback"], true, "{events:?}");
+        assert!(
+            events[last - 1]["missing"]
+                .as_str()
+                .unwrap_or_default()
+                .ends_with("docs"),
+            "{events:?}"
+        );
+        assert!(
+            events[last - 1]["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("launch folder"),
+            "{events:?}"
+        );
+        assert!(state["folder"].is_null(), "the stale choice is cleared");
+        let sidecar = std::fs::read_to_string(home.join(WORKDIRS_FILE)).unwrap_or_default();
+        assert!(
+            !sidecar.contains("docs"),
+            "the stale entry is gone: {sidecar}"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// The control plane's document names every channel, its paired and

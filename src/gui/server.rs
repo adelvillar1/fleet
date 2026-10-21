@@ -360,8 +360,20 @@ async fn serve_connection(
                 Ok(policy) => policy,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
+            let folder = match folder_of(&body) {
+                Ok(folder) => folder,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            // A folder the run names is validated before anything is
+            // stored or dispatched: the pane's containment rule, and a
+            // path that does not exist named as itself.
+            if let Some(asked) = folder.as_deref() {
+                if let Err(message) = bridge.chat_folder(asked) {
+                    return write_reply(&mut stream, bad_request(&message)).await;
+                }
+            }
             let session = asked_session(bridge, &request);
-            match bridge.run_with(&session, &task, mode, pin) {
+            match bridge.run_with(&session, &task, mode, pin, folder.as_deref()) {
                 Ok(()) => {
                     write_reply(
                         &mut stream,
@@ -370,6 +382,24 @@ async fn serve_connection(
                     .await
                 }
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        // The chat's working folder, changed from the run bar without a
+        // run. It applies to the next run and lands in the transcript as
+        // one line; a run in flight already carries its own root.
+        ("POST", "/api/folder") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let folder = match folder_choice_of(&body) {
+                Ok(folder) => folder,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let session = asked_session(bridge, &request);
+            match bridge.set_folder(&session, folder.as_deref()) {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, bad_request(&message)).await,
             }
         }
         // The owner's two instructions to the run in flight. Both write
@@ -940,6 +970,35 @@ fn task_of(body: &str) -> Result<String, String> {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "a run's body is a JSON object with a task string".to_string())
+}
+
+/// The folder a run's body names, when it names one. Absent or null
+/// means "whatever this chat already chose"; the empty string is the
+/// reset to the launch folder; anything that is not a string is
+/// malformed.
+fn folder_of(body: &str) -> Result<Option<String>, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
+    match parsed.get("folder") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(folder)) => Ok(Some(folder.clone())),
+        Some(_) => Err("a run's `folder` is a string when it is present".to_string()),
+    }
+}
+
+/// The folder a `/api/folder` body carries: the field is required, and
+/// null is the launch folder. Keeping this separate from [`folder_of`]
+/// is the difference between "leave the chat's choice alone" (a run
+/// that did not name one) and "clear it" (the reset control).
+fn folder_choice_of(body: &str) -> Result<Option<String>, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the folder's body: {e}"))?;
+    match parsed.get("folder") {
+        None => Err("a folder change carries a `folder` (a path, or null to reset)".to_string()),
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(folder)) => Ok(Some(folder.clone())),
+        Some(_) => Err("a folder change carries a string or null".to_string()),
+    }
 }
 
 /// One usage event's three words. The store validates their closed
@@ -2756,6 +2815,61 @@ mod tests {
         assert!(state.contains("\"type\":\"message\""), "{state}");
         assert!(state.contains("\"text\":\"say hello\""), "{state}");
         assert!(state.contains("\"type\":\"failed\""), "{state}");
+    }
+
+    /// C5: the run route validates a named folder before dispatch — an
+    /// escape and a missing path are 400s that name the class, and a
+    /// valid folder is accepted and stored for the chat. C7's control:
+    /// the folder route changes the choice without a run and answers
+    /// with the transcript line it recorded.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_refuses_a_bad_folder_and_a_good_one_is_stored() {
+        let (token, port) = launch().await;
+        let escaped = post(
+            port,
+            "/api/run",
+            &token,
+            r#"{"task":"work","folder":"../"}"#,
+        );
+        assert!(escaped.starts_with("HTTP/1.1 400"), "{escaped}");
+        assert!(
+            escaped.contains("outside the working directory"),
+            "{escaped}"
+        );
+        let missing = post(
+            port,
+            "/api/run",
+            &token,
+            r#"{"task":"work","folder":"definitely-not-here"}"#,
+        );
+        assert!(missing.starts_with("HTTP/1.1 400"), "{missing}");
+        assert!(missing.contains("definitely-not-here"), "{missing}");
+        let malformed = post(port, "/api/run", &token, r#"{"task":"work","folder":7}"#);
+        assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+
+        // A real folder is accepted; the detached bridge then refuses
+        // the run itself for having no agent, which is not this test's
+        // question. The choice is stored either way.
+        let valid = post(
+            port,
+            "/api/run",
+            &token,
+            r#"{"task":"work","folder":"docs"}"#,
+        );
+        assert!(!valid.starts_with("HTTP/1.1 400"), "{valid}");
+        let state = get(port, "/api/state", &token);
+        assert!(state.contains("\"name\":\"docs\""), "{state}");
+
+        // The run bar's own control: set, then reset to the launch folder.
+        let changed = post(port, "/api/folder", &token, r#"{"folder":"src"}"#);
+        assert!(changed.starts_with("HTTP/1.1 200"), "{changed}");
+        assert!(changed.contains("\"type\":\"folder\""), "{changed}");
+        assert!(changed.contains("\"name\":\"src\""), "{changed}");
+        let reset = post(port, "/api/folder", &token, r#"{"folder":null}"#);
+        assert!(reset.starts_with("HTTP/1.1 200"), "{reset}");
+        assert!(reset.contains("\"path\":null"), "{reset}");
+        let bare = post(port, "/api/folder", &token, r#"{}"#);
+        assert!(bare.starts_with("HTTP/1.1 400"), "{bare}");
     }
 
     /// The seat round-trips: the bridge stands a seat, the browser

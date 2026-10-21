@@ -1618,6 +1618,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   border-radius: var(--composer-radius);
   background: var(--composer-bg);
   box-shadow: var(--shadow-1);
+  position: relative;
   transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
 }
 
@@ -1691,6 +1692,74 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .runbar-note { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
 .runbar[data-mode="full"] .runbar-note { color: var(--dsw-alias-down); font-weight: 600; }
+
+/* The chat's working folder: a word-wide control in the run bar, and
+   the picker that opens above the composer. The picker browses the
+   launch directory one level at a time, so its list is small and its
+   position fixed to the composer rather than to a page corner. */
+.runbar-folder { display: inline-flex; align-items: center; gap: 6px; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
+.runbar-folder button {
+  height: 26px;
+  max-width: 20ch;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.runbar-folder button:hover { border-color: var(--dsw-alias-ink-tertiary); }
+.runbar-folder button[data-state="set"] { border-color: var(--dsw-alias-ink-tertiary); font-weight: 600; }
+.folder-pop {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% - 34px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 460px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 10px;
+  background: var(--dsw-alias-surface);
+  box-shadow: var(--shadow-1);
+}
+.folder-pop-head { display: flex; align-items: baseline; gap: 8px; font-size: 10px; color: var(--dsw-alias-ink-tertiary); }
+.folder-pop-head code { color: var(--dsw-alias-ink); font-size: 11px; overflow-wrap: anywhere; }
+.folder-pop-list { display: flex; flex-direction: column; max-height: 220px; overflow: auto; }
+.folder-entry {
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.folder-entry:hover { background: var(--dsw-alias-accent-wash); }
+.folder-entry:disabled { color: var(--dsw-alias-ink-tertiary); cursor: default; }
+.folder-empty { padding: 4px 6px; font-size: 10px; color: var(--dsw-alias-ink-tertiary); }
+.folder-pop-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.folder-pop-actions button {
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.folder-pop-actions button:first-child { background: var(--dsw-alias-ink); color: var(--dsw-alias-page); border-color: var(--dsw-alias-ink); }
 
 .composer-foot {
   display: flex;

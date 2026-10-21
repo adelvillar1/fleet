@@ -1524,6 +1524,12 @@ pub struct Delegation<'a> {
     /// run plans too, because a delegation that could write would be a
     /// hole in the read-only promise the parent made.
     pub plan_mode: bool,
+    /// The parent's working folder, inherited the way the model and the
+    /// voice are: a child's built-ins work in the chat's folder, not
+    /// wherever the process was launched. `None` is a parent with no
+    /// folder, and the child works in the process's working directory
+    /// exactly as it did before.
+    pub workdir: Option<PathBuf>,
 }
 
 /// Run one delegated task to a stop and return what it produced.
@@ -1563,6 +1569,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         home,
         depth,
         plan_mode,
+        workdir,
     } = delegation;
 
     // The brief, read back out of the message the caller composed. The
@@ -1722,6 +1729,10 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         // child plans, and the parent's checkpoint store keys the
         // child's captures by the child's own session id.
         checkpoints: None,
+        // The chat's folder rides down with the rest of the run's
+        // identity: a child that worked somewhere else would be the one
+        // hole in the folder a parent promised its owner.
+        workdir,
         plan_mode,
     };
     let gate = InheritedApprover {

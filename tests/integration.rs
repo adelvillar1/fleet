@@ -389,6 +389,7 @@ async fn run_on(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -419,6 +420,7 @@ async fn run_on_probe(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let mut agent = Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
@@ -452,6 +454,7 @@ async fn run_with_lanes(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
@@ -1135,6 +1138,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
@@ -1223,6 +1227,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
@@ -1270,6 +1275,7 @@ async fn a_denied_call_reports_its_result_event() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
@@ -1341,6 +1347,7 @@ async fn a_failed_run_reports_a_failure_event() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
@@ -2456,6 +2463,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let report = {
@@ -2859,6 +2867,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -3271,6 +3280,7 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let report = {
@@ -3397,6 +3407,7 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let report = {
@@ -3546,6 +3557,7 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let report = {
@@ -3624,6 +3636,7 @@ async fn an_unknown_role_is_refused_by_name_and_the_child_never_runs() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let report = {
@@ -3743,6 +3756,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let report = {
@@ -3813,6 +3827,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let outcome = {
@@ -3872,6 +3887,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let report = {
@@ -3927,6 +3943,7 @@ async fn a_run_without_a_stream_records_nothing() {
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         },
         &mut session,
@@ -4079,6 +4096,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let report = {
@@ -4190,6 +4208,7 @@ async fn run_with_skills(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -5042,6 +5061,7 @@ async fn run_with_memory(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -5537,6 +5557,7 @@ async fn run_with_improve(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -5865,6 +5886,71 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
     std::fs::remove_dir_all(&home).ok();
 }
 
+/// C8: a child's built-in tools work in the parent chat's folder. The
+/// child prints its own working directory, and the path in its log is
+/// the folder, not the process's launch directory.
+#[tokio::test]
+async fn a_subagents_builtins_work_in_the_parents_folder() {
+    let folder = temp_home("subagent-workdir");
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("print the working directory"),
+        ),
+        tool_call_stream("child-1", "bash", r#"{"command":"pwd -P"}"#),
+        assistant_stream("printed it"),
+        assistant_stream("the child printed the folder"),
+    ]);
+    let home = temp_home("subagent-workdir-home");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 6,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        workdir: Some(folder.clone()),
+        plan_mode: false,
+    };
+    let mut progress = Vec::new();
+    let mut agent = Agent::new(
+        &client,
+        options,
+        &mut session,
+        Box::new(ApproveAll),
+        &mut progress,
+    )
+    .unwrap();
+    agent.run("show the folder").await.unwrap();
+
+    let child = child_summary(&home);
+    let records = session::replay(&child.path).unwrap();
+    let (output, _) = tool_result(&records, "bash");
+    let canonical = folder.canonicalize().unwrap();
+    assert!(
+        output.contains(&canonical.display().to_string()),
+        "the child's pwd is the parent's folder: {output}"
+    );
+    assert!(
+        !output.contains(&std::env::current_dir().unwrap().display().to_string()),
+        "the child did not work in the process's directory: {output}"
+    );
+
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&folder).ok();
+}
+
 /// A routed parent's child runs on the routed candidate's model: the
 /// never-downgrade rule in its strongest form, because the child
 /// inherits the roster's choice rather than the nominal one.
@@ -5911,6 +5997,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -6394,6 +6481,7 @@ async fn run_capturing(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
+        workdir: None,
         plan_mode: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();

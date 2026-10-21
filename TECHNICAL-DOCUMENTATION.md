@@ -68,13 +68,20 @@ The tool loop, turn cap, `UiEvent` stream, and run-scoped `LaneRoster`. One
 turn reads the owner's control file, assembles the memory block once at run
 start, streams the request with dynamic declarations, gates approvals one call
 at a time, executes tool waves, logs every message, and checks the window
-between turns.
+between turns. `AgentOptions::workdir` is the run's root: the four built-ins
+work under it, the turn checkpoint captures it, and a subagent inherits it.
+`None` is the process's working directory — the run every other surface has
+always had.
 
 #### `tools.rs`
 The closed built-in tool set. Every failure is a model-visible result, never a
 panic. This module also declares the tool vocabulary the dynamic surfaces
 assemble: built-ins, `mcp__<svc>__<tool>`, skills, memory tools, `subagent`,
-and `web`.
+and `web`. [`Tool::execute`] is the unrestricted run (the process's working
+directory, paths as named); [`Tool::execute_in`] is a chat folder, where
+`bash` starts in the folder and a relative path resolves under it. The folder
+is a boundary on the three file tools and the shell's starting directory, not
+a sandbox: a subprocess can still `cd` wherever the owner's account can.
 
 #### `approvals.rs`
 The three-mode approval gate: ask, yes, yes-guarded. The class checks are
@@ -305,7 +312,11 @@ theme set, and `assets/` the embedded page. Every read is a
 spawn_blocking off the async worker; every write rides the module the
 CLI rides. The trust trio's floor is `checkpoints.rs`; the deck pipeline
 renders through `deck.rs`; the run's stop and steer ride the agent's own
-control-file protocol in `delegate.rs`.
+control-file protocol in `delegate.rs`. A chat's working folder is the
+bridge's state, persisted in `<home>/sessions-workdirs.json` and
+resolved against the launch directory when the run is accepted; the
+checkpoint store stays under the home and only its capture root follows
+the folder.
 
 ### Integration harness
 

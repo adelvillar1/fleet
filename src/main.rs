@@ -2007,6 +2007,9 @@ async fn drive(
         gui_prompt: None,
         compact_now,
         checkpoints,
+        // The headless CLI has no per-session folder: it works in the
+        // directory the owner launched it from.
+        workdir: None,
         plan_mode,
     };
     // Every non-interactive mode rides the Gate, never `ApproveAll`:

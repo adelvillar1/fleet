@@ -146,9 +146,18 @@ pub struct AgentOptions {
     /// The checkpoint store's root, when this run checkpoints its file
     /// state per turn. `None` is the silent path — a test, or a
     /// surface that does not offer the trust trio. The tree the store
-    /// captures is the process's own working directory, the same root
-    /// the tools write to.
+    /// captures is [`AgentOptions::workdir`] when the run names a
+    /// folder, else the process's own working directory — the same root
+    /// the tools work in.
     pub checkpoints: Option<std::path::PathBuf>,
+    /// The chat's working folder, when this run has one. `Some` makes
+    /// the four built-ins run there — `bash` spawns with it as its cwd,
+    /// and a relative read, write or list resolves against it and may
+    /// not leave it — and moves the turn checkpoint's capture root with
+    /// them. `None` is the run this crate has always had: the process's
+    /// working directory, unrestricted. A subagent inherits the
+    /// parent's folder, the way it inherits the model and the voice.
+    pub workdir: Option<std::path::PathBuf>,
     /// Plan mode: the run plans and does not write. The write-class
     /// tools are refused by name at the gate, and the run's final
     /// message records as a `plan` the owner can edit and build.
@@ -232,6 +241,7 @@ impl Default for AgentOptions {
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         }
     }
@@ -977,6 +987,7 @@ impl<'a> Agent<'a> {
             && memory_block.is_none()
             && self.options.role_overlay.is_none()
             && self.options.gui_prompt.is_none()
+            && self.options.workdir.is_none()
         {
             return base.to_string();
         }
@@ -1019,6 +1030,15 @@ impl<'a> Agent<'a> {
         if let Some(line) = &self.options.gui_prompt {
             prompt.push_str("\n\n");
             prompt.push_str(line);
+        }
+        // The chat's working folder rides last, and it is the tools'
+        // own rule stated to the model: a boundary the prompt does not
+        // name is one the model discovers by being refused.
+        if let Some(folder) = &self.options.workdir {
+            prompt.push_str(&format!(
+                "\n\n## Working folder\n\nThis run works in `{}`. Every relative path you read, write, or list resolves there, and `bash` starts there. A path that leaves it \u{2014} a `..` walk, an absolute path outside, or a symlink resolving outside \u{2014} is refused by the tools, so name what you need relative to the folder.",
+                folder.display()
+            ));
         }
         prompt
     }
@@ -2048,7 +2068,14 @@ impl<'a> Agent<'a> {
         let Some(store) = self.checkpoints.clone() else {
             return;
         };
-        let root = std::env::current_dir().unwrap_or_default();
+        // The capture root is the chat's folder when the run names one,
+        // else the process's working directory — the same root the
+        // built-ins work in, so a snapshot is the tree the turn changed.
+        let root = self
+            .options
+            .workdir
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         let session = self.session_id.clone();
         let turn = self.turns;
         match std::thread::spawn(move || crate::checkpoints::capture(&root, &store, &session, turn))
@@ -2332,10 +2359,11 @@ impl<'a> Agent<'a> {
                 Ok(arguments) => Ok(Prepared::Ready(Work::Builtin {
                     tool,
                     arguments,
-                    // The project root the write-time guard reads the
-                    // vocabulary from: the working directory this run
-                    // works in.
-                    root: std::env::current_dir().unwrap_or_default(),
+                    // The chat's working folder, when one is set: the
+                    // tools work there and the write-time guard reads
+                    // the vocabulary from that tree. `None` is the
+                    // process's working directory — today's run.
+                    root: self.options.workdir.clone(),
                 })),
             },
         }
@@ -2511,6 +2539,7 @@ impl<'a> Agent<'a> {
             home,
             depth,
             plan_mode: self.plan_mode,
+            workdir: self.options.workdir.clone(),
         })
         .await;
         let outcome = crate::subagents::bound_result(&result);
@@ -2641,12 +2670,15 @@ fn settled(output: String) -> Prepared {
 /// one-writer discipline asks for.
 #[derive(Debug, Clone)]
 enum Work {
-    /// A built-in tool's execution, against `root` for the write-time
-    /// guard.
+    /// A built-in tool's execution. `root` is the chat's working folder
+    /// when the run names one: the tools work there, the write-time
+    /// guard reads its vocabulary there, and paths may not leave it.
+    /// `None` is the unrestricted run — the process's working
+    /// directory, which is also where the guard reads.
     Builtin {
         tool: Tool,
         arguments: serde_json::Value,
-        root: std::path::PathBuf,
+        root: Option<std::path::PathBuf>,
     },
     /// A skill's body, fetched from this run's declared list.
     UseSkill {
@@ -2736,6 +2768,12 @@ async fn run_work(work: Work) -> (String, bool) {
             arguments,
             root,
         } => {
+            // The write-time guard reads the vocabulary of the tree the
+            // run works in: the chat's folder when it has one, else the
+            // process's working directory.
+            let guard_root = root
+                .clone()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
             if tool == Tool::WriteFile {
                 // The write-time guard runs before the write, and it
                 // runs on the blocking pool: reading the vocabulary and
@@ -2743,7 +2781,7 @@ async fn run_work(work: Work) -> (String, bool) {
                 // a tool's own execution leaves the async context
                 // (KI-017).
                 let guard = {
-                    let root = root.clone();
+                    let root = guard_root.clone();
                     let arguments = arguments.clone();
                     match tokio::task::spawn_blocking(move || write_guard(&root, &arguments)).await
                     {
@@ -2773,14 +2811,14 @@ async fn run_work(work: Work) -> (String, bool) {
                 // reported as novel, or a drift as clean, for the rest
                 // of the process (KI-232). The guard is the one caller
                 // that knows the tree changed.
-                crate::nomenclature::invalidate(&root);
-                let (output, truncated) = run_builtin(tool, arguments).await;
+                crate::nomenclature::invalidate(&guard_root);
+                let (output, truncated) = run_builtin(tool, arguments, root).await;
                 return match note {
                     Some(note) => (format!("{output}\n{note}"), truncated),
                     None => (output, truncated),
                 };
             }
-            run_builtin(tool, arguments).await
+            run_builtin(tool, arguments, root).await
         }
         Work::UseSkill { skills, arguments } => {
             let outcome = tools::bound(ToolOutcome {
@@ -3019,11 +3057,23 @@ async fn run_work(work: Work) -> (String, bool) {
 }
 
 /// One built-in tool's execution, on the blocking pool.
-async fn run_builtin(tool: Tool, arguments: serde_json::Value) -> (String, bool) {
+async fn run_builtin(
+    tool: Tool,
+    arguments: serde_json::Value,
+    root: Option<std::path::PathBuf>,
+) -> (String, bool) {
     // KI-017: tool execution is blocking work (a `bash` child can run
     // for minutes), so it leaves the async context on the blocking pool
     // instead of stalling the runtime's worker thread.
-    match tokio::task::spawn_blocking(move || tool.execute(&arguments)).await {
+    match tokio::task::spawn_blocking(move || match root {
+        // A chat's folder is a boundary: relative paths resolve under
+        // it and a path that leaves it is refused.
+        Some(root) => tool.execute_in(&arguments, &root),
+        // No folder: the process's working directory, unrestricted.
+        None => tool.execute(&arguments),
+    })
+    .await
+    {
         Err(error) => (format!("error: the tool task failed: {error}"), false),
         Ok(Ok(outcome)) => (outcome.output, outcome.truncated),
         Ok(Err(message)) => (format!("error: {message}"), false),
@@ -4522,6 +4572,7 @@ mod tests {
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let mut progress = Vec::new();
@@ -4823,6 +4874,7 @@ mod tests {
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         Agent::new(
@@ -4895,6 +4947,7 @@ mod tests {
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let mut progress = Vec::new();
@@ -4967,6 +5020,7 @@ mod tests {
                 gui_prompt: None,
                 compact_now: false,
                 checkpoints: None,
+                workdir: None,
                 plan_mode: false,
             };
             Agent::new(
@@ -5025,6 +5079,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let mut progress = Vec::new();
@@ -5057,6 +5112,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let mut progress = Vec::new();
@@ -5098,6 +5154,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: Some(line.clone()),
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let mut progress = Vec::new();
@@ -5132,6 +5189,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let mut progress = Vec::new();
@@ -5145,6 +5203,116 @@ You are auditing a change. Read the diff before you judge it.
         .unwrap();
         assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_chat_folder_names_itself_in_the_system_prompt() {
+        // The boundary is the tools' own rule stated to the model: a
+        // prompt that did not name the folder would leave the model to
+        // discover it by being refused.
+        let home = scratch("workdir-prompt");
+        let folder = scratch("workdir-prompt-folder");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let options = AgentOptions {
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            workdir: Some(folder.clone()),
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        let prompt = agent.system_prompt(None);
+        assert!(prompt.starts_with(SYSTEM_PROMPT), "{prompt}");
+        assert!(prompt.contains("## Working folder"), "{prompt}");
+        assert!(
+            prompt.contains(&folder.display().to_string()),
+            "the folder is named: {prompt}"
+        );
+        assert!(
+            prompt.contains("refused"),
+            "the refusal is stated, not discovered: {prompt}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_turn_checkpoint_captures_the_chat_folder() {
+        // C2: the capture root moves with the run. The folder holds
+        // exactly one file, so a capture of the process's working
+        // directory would be hundreds — the count is the assertion.
+        let home = scratch("workdir-checkpoint");
+        let folder = scratch("workdir-checkpoint-folder");
+        std::fs::write(folder.join("note.txt"), "the folder's own file").unwrap();
+        let store = home.join("checkpoints");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let id = session.id().to_string();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let options = AgentOptions {
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: Some(store.clone()),
+            workdir: Some(folder.clone()),
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.checkpoint_turn();
+        let snapshots = crate::checkpoints::list(&store, &id);
+        assert_eq!(snapshots.len(), 1, "{snapshots:?}");
+        assert_eq!(
+            snapshots[0].files, 1,
+            "only the folder's own file: {:?}",
+            snapshots[0]
+        );
+        let captured = crate::checkpoints::session_dir(&store, &id)
+            .join(snapshots[0].turn.to_string())
+            .join("files")
+            .join("note.txt");
+        assert_eq!(
+            std::fs::read_to_string(&captured).unwrap(),
+            "the folder's own file"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[tokio::test]
@@ -5197,6 +5365,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
@@ -5330,6 +5499,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
@@ -5843,6 +6013,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: true,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let mut progress = Vec::new();
@@ -5898,6 +6069,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
@@ -5962,6 +6134,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let mut progress = Vec::new();
@@ -6015,6 +6188,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let mut plain_session = crate::session::Session::create(&home, "m").unwrap();
@@ -6172,6 +6346,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
@@ -6303,7 +6478,7 @@ You are auditing a change. Read the diff before you judge it.
         Prepared::Ready(Work::Builtin {
             tool,
             arguments,
-            root: std::path::PathBuf::from("/root"),
+            root: Some(std::path::PathBuf::from("/root")),
         })
     }
 
@@ -6564,6 +6739,7 @@ You are auditing a change. Read the diff before you judge it.
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
+            workdir: None,
             plan_mode: false,
         };
         Agent::new(client, options, session, approver, progress).unwrap()
@@ -7016,7 +7192,7 @@ You are auditing a change. Read the diff before you judge it.
                 "path": refused.display().to_string(),
                 "content": "let judgeRoute = 1;"
             }),
-            root: root.clone(),
+            root: Some(root.clone()),
         })
         .await;
         assert!(output.contains("write_file` refused"), "{output}");
@@ -7029,7 +7205,7 @@ You are auditing a change. Read the diff before you judge it.
                 "path": flagged.display().to_string(),
                 "content": "let route_judge = 1;"
             }),
-            root: root.clone(),
+            root: Some(root.clone()),
         })
         .await;
         assert_eq!(
@@ -7056,7 +7232,7 @@ You are auditing a change. Read the diff before you judge it.
                 "path": plan.display().to_string(),
                 "content": "# The Plan\n\n## Context\n\nThe judge route is stable. Approach: reuse it.\n"
             }),
-            root: root.clone(),
+            root: Some(root.clone()),
         })
         .await;
         assert!(

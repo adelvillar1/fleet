@@ -864,6 +864,10 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             // rewound from the browser face too — one
                             // store, one conversation, two surfaces.
                             checkpoints: Some(home.join("checkpoints")),
+                            // The TUI has no per-session folder: it
+                            // works in the directory it was launched
+                            // from, as it always has.
+                            workdir: None,
                             plan_mode,
                         };
                         let approver: Box<dyn Approver> =

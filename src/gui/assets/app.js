@@ -296,6 +296,12 @@
     runPerms: document.getElementById('run-perms'),
     runProvider: document.getElementById('run-provider'),
     runRouteNote: document.getElementById('run-route-note'),
+    runFolder: document.getElementById('run-folder'),
+    folderPop: document.getElementById('folder-pop'),
+    folderPopPath: document.getElementById('folder-pop-path'),
+    folderPopList: document.getElementById('folder-pop-list'),
+    folderUse: document.getElementById('folder-use'),
+    folderReset: document.getElementById('folder-reset'),
     attach: document.getElementById('attach'),
     attachInput: document.getElementById('attach-input'),
     attachChips: document.getElementById('attach-chips'),
@@ -395,6 +401,10 @@
     // the next run and never a global config write.
     permissions: 'ask',
     providerPin: '',
+    // Where this chat's runs work: `{path, name, rel}` when the owner
+    // chose a folder, null for the launch folder. Rel is the pane's
+    // rooted form the picker browses and the server accepts.
+    folder: null,
     // The files this turn carries, as text. A browser can read the file
     // the owner picked; the content rides the run and clears when the
     // server takes it.
@@ -733,6 +743,17 @@
     return row(el0, event);
   }
 
+  // The chat's working folder, as a line in the transcript: a chosen
+  // folder, a reset to the launch folder, or the fallback a run took
+  // when the stored folder had gone missing. The note is the server's
+  // own sentence, so the page does not paraphrase a reason it did not
+  // measure.
+  function folderRow(event) {
+    var el0 = card('folder', '\u2302', event.fallback ? 'folder fell back' : 'working folder',
+      event.note, null, null);
+    return row(el0, event);
+  }
+
   // A row the client owes the owner and the server never sent: a run
   // the route refused, a rule the writer would not take. It is not in
   // the log the server replays and the inspector counts only what the
@@ -814,6 +835,16 @@
         break;
       case 'checkpoint':
         checkpointRow(event);
+        break;
+      case 'folder':
+        // The chat's working folder changed: one line, and the run bar
+        // now says where the next run works. The event is the truth in
+        // both directions, so a change made from a phone lands here too.
+        face.folder = event.path
+          ? { path: event.path, name: event.name, rel: event.rel || '' }
+          : null;
+        folderRow(event);
+        paintRunbar();
         break;
       case 'rewound':
         rewoundRow(event);
@@ -1665,8 +1696,8 @@
     el.emptyEyebrow.textContent = greeting() + ' \u00b7 ' + workspaceName();
     if (el.emptyMeta) {
       el.emptyMeta.textContent = face.workspace
-        ? 'Local to ' + face.workspace + ' \u00b7 the archive stays here; turns go to the provider that serves them.'
-        : 'Your archive stays on this machine. Every turn is a card you can open; the provider that serves it is named in the route bar.';
+        ? 'Local to ' + face.workspace + ' \u00b7 the archive stays here; turns go to the providers that serve them.'
+        : 'Your archive stays on this machine. Every turn is a card you can open; the providers that serve it are named in the route bar and the lanes.';
     }
     if (el.railWhere) el.railWhere.textContent = workspaceName();
   }
@@ -4142,13 +4173,18 @@
     el.empty.hidden = true;
     el.log.hidden = false;
     var before = face.events.length;
-    post('/api/run', {
-      task: task,
-      mode: face.permissions,
-      pin: face.providerPin || null,
-      attachments: face.attachments.map(function (file) {
-        return { name: file.name, text: file.text };
-      })
+    // A folder change in flight lands first: the run reads the stored
+    // choice, and a run that overtook its own folder would work in the
+    // old one.
+    Promise.resolve(folderSync).then(function () {
+      return post('/api/run', {
+        task: task,
+        mode: face.permissions,
+        pin: face.providerPin || null,
+        attachments: face.attachments.map(function (file) {
+          return { name: file.name, text: file.text };
+        })
+      });
     }).then(function (reply) {
       if (reply.status === 200) {
         face.running = true;
@@ -4586,6 +4622,7 @@
     face.session = state.session || '';
     face.model = state.model || '';
     face.workspace = state.workspace || '';
+    face.folder = state.folder || null;
     face.budget = Number(state.budget) || 0;
     face.running = !!state.running;
     face.dropped = Number(state.dropped) || 0;
@@ -4635,6 +4672,7 @@
     settle();
     paint();
     paintEmpty();
+    paintRunbar();
   }
 
   // An event recorded between the snapshot and the rebuild rides the
@@ -4876,6 +4914,20 @@
     var route = face.providerPin ? 'pinned to ' + face.providerPin : 'the router decides';
     el.runRouteNote.textContent =
       (face.permissions === 'full' ? 'full access \u00b7 ' : '') + route;
+    paintFolder();
+  }
+
+  // The working folder is the run bar's third standing choice: its
+  // basename when the chat has one, "launch folder" when it does not.
+  // The full path rides the title, because the button is one word wide
+  // in a crowded bar.
+  function paintFolder() {
+    if (!el.runFolder) return;
+    el.runFolder.textContent = face.folder ? face.folder.name : 'launch folder';
+    el.runFolder.dataset.state = face.folder ? 'set' : 'default';
+    el.runFolder.title = face.folder
+      ? 'this chat works in ' + face.folder.path
+      : 'this chat works in the folder the face was launched from';
   }
 
   // The pin's choices are the roster's enabled providers, read once off
@@ -4922,6 +4974,107 @@
   }
   paintRunbar();
   readProviders(false);
+
+  // The folder picker. It browses the launch directory one level at a
+  // time — the pane's own containment rule — and applies the choice to
+  // the next run only: a run in flight already accepted the folder it
+  // is working in. A change is one line in the transcript, recorded by
+  // the server and replayed like any other event.
+  var folderBrowse = { rel: '' };
+  // The change in flight, so a send that follows a click waits for the
+  // server to have the choice rather than racing it on a second
+  // connection.
+  var folderSync = Promise.resolve();
+
+  function chooseFolder(rel) {
+    var body = { folder: rel || null };
+    if (face.session) body.session = face.session;
+    folderSync = post('/api/folder', body).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the folder was refused',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+        return;
+      }
+      // The recorded event rides the stream and is the authority; this
+      // reply is the same line, used at once so the button does not
+      // wait for the stream to catch up.
+      if (reply.body && reply.body.type === 'folder') {
+        face.folder = reply.body.path
+          ? { path: reply.body.path, name: reply.body.name, rel: reply.body.rel || '' }
+          : null;
+      }
+      paintFolder();
+      toggleFolderPop(false);
+    }).catch(function () {
+      notice('the folder was refused', 'the face did not answer');
+    });
+    return folderSync;
+  }
+
+  function browseFolder(rel) {
+    folderBrowse.rel = rel || '';
+    el.folderPopPath.textContent = folderBrowse.rel || 'the launch folder';
+    fetch('/api/tree?path=' + encodeURIComponent(folderBrowse.rel), {
+      headers: { accept: 'application/json' }
+    }).then(function (reply) {
+      return reply.json();
+    }).then(function (doc) {
+      var list = el.folderPopList;
+      list.textContent = '';
+      var up = node('button', 'folder-entry', '\u2191 up');
+      up.type = 'button';
+      up.disabled = !folderBrowse.rel;
+      up.addEventListener('click', function () {
+        var parts = folderBrowse.rel.split('/').filter(Boolean);
+        parts.pop();
+        browseFolder(parts.join('/'));
+      });
+      list.appendChild(up);
+      if (doc.refused) {
+        list.appendChild(node('span', 'folder-empty', (doc.refused || []).join('; ')));
+        return;
+      }
+      var dirs = (doc.entries || []).filter(function (entry) {
+        return entry.kind === 'dir';
+      });
+      dirs.forEach(function (entry) {
+        var button = node('button', 'folder-entry', entry.name + '/');
+        button.type = 'button';
+        button.addEventListener('click', function () {
+          browseFolder(folderBrowse.rel ? folderBrowse.rel + '/' + entry.name : entry.name);
+        });
+        list.appendChild(button);
+      });
+      if (!dirs.length) list.appendChild(node('span', 'folder-empty', 'no subfolders'));
+    }).catch(function () {
+      notice('the folder could not be read', 'the face did not answer');
+    });
+  }
+
+  function toggleFolderPop(open) {
+    if (!el.folderPop) return;
+    var showing = open === undefined ? el.folderPop.hidden : open;
+    el.folderPop.hidden = !showing;
+    el.runFolder.setAttribute('aria-expanded', showing ? 'true' : 'false');
+    if (showing) browseFolder(face.folder ? (face.folder.rel || '') : '');
+  }
+
+  if (el.runFolder) {
+    el.runFolder.addEventListener('click', function (event) {
+      event.preventDefault();
+      toggleFolderPop();
+    });
+  }
+  if (el.folderUse) {
+    el.folderUse.addEventListener('click', function () { chooseFolder(folderBrowse.rel); });
+  }
+  if (el.folderReset) {
+    el.folderReset.addEventListener('click', function () { chooseFolder(''); });
+  }
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && el.folderPop && !el.folderPop.hidden) toggleFolderPop(false);
+  });
+  paintFolder();
 
   // Attachments: text only, five at most, each 256 KB — the same bounds
   // the server enforces, said here so a refused file is named before it
@@ -9360,7 +9513,9 @@
     el.empty.hidden = true;
     el.log.hidden = false;
     face.planned = true;
-    post('/api/plan', { task: task }).then(function (reply) {
+    Promise.resolve(folderSync).then(function () {
+      return post('/api/plan', { task: task });
+    }).then(function (reply) {
       if (reply.status === 200) {
         face.running = true;
         face.stop = null;

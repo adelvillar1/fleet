@@ -205,7 +205,8 @@ Escape clears the object, never the dock.
 | `GET /api/state` | the session, model, gate, budget, ordered log, seat, and remembered rules |
 | `GET /api/home` | the welcome's bounded read, cached 30s |
 | `GET /events` | the live half of the same ordered log (SSE) |
-| `POST /api/run`, `/api/plan` | hand a task to the agent thread |
+| `POST /api/run`, `/api/plan` | hand a task to the agent thread; the body may carry `folder`, which is validated and stored for the chat before dispatch |
+| `POST /api/folder` | set or clear a chat's working folder without a run; the reply is the transcript line it recorded |
 | `POST /api/pair/window` | mint a single-use device pairing window and the QR card document (loopback only) |
 | `POST /api/stop`, `/api/steer` | write the run's control file; 409 when no run or no log |
 | `POST /api/approve` | answer the standing seat |
@@ -338,6 +339,42 @@ panel:
   renders each file's changes as hunks; a reject puts that hunk's
   checkpoint lines back and re-reads the diff rather than pretending the
   file is now clean.
+
+## The working folder
+
+The composer's run bar carries three standing choices for the chat: how
+its tool calls are approved, the provider its route is pinned to, and
+where it works. The first two ride the next run; the third is a folder
+the agent's own tools enforce.
+
+- **The choice is per chat.** A folder is stored against the session in
+  `<FLEET_HOME>/sessions-workdirs.json` — a surface sidecar, not a new
+  session-log record — so a reload restores it and a second chat keeps
+  the launch folder. A pending launch session's choice moves to the id
+  when the log is created.
+- **The tools, not the prompt, enforce it.** With a folder set, `bash`
+  spawns with it as its working directory, and a relative `read_file`,
+  `write_file`, or `list_dir` resolves under it. A `..` walk, an
+  absolute path outside, and a symlink that resolves outside are each
+  refused with a reason naming its class. A run with no folder is
+  byte-for-byte the run the crate has always had: the process's working
+  directory, paths taken as named.
+- **The boundary is the launch directory.** The picker browses it one
+  level at a time through `/api/tree`; a folder outside it needs a
+  settings allowlist and is out of scope. Choosing the launch folder is
+  choosing nothing, so the bar says "launch folder" rather than naming
+  the directory the process happened to start in.
+- **A run captures its own root.** The folder is resolved when the run
+  is accepted and rides the command, so a change made during a run
+  applies to the next one. The turn checkpoint captures the chat's
+  folder, not the process cwd, and a subagent inherits the parent's
+  folder the way it inherits the model.
+- **A stored folder that has gone missing** falls back to the launch
+  folder at run time, and the run's first event is a transcript line
+  naming the missing folder and the fallback. The stale entry is
+  cleared. A folder named in a request is validated strictly instead:
+  an escape or a missing path is a 400 naming the reason, never a
+  silent fallback.
 
 ## The reading rules
 
