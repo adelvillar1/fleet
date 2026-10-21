@@ -312,6 +312,7 @@
     folderPopList: document.getElementById('folder-pop-list'),
     folderUse: document.getElementById('folder-use'),
     folderReset: document.getElementById('folder-reset'),
+    folderPopInput: document.getElementById('folder-pop-input'),
     attach: document.getElementById('attach'),
     attachInput: document.getElementById('attach-input'),
     attachChips: document.getElementById('attach-chips'),
@@ -5021,12 +5022,14 @@
   paintRunbar();
   readProviders(false);
 
-  // The folder picker. It browses the launch directory one level at a
-  // time — the pane's own containment rule — and applies the choice to
-  // the next run only: a run in flight already accepted the folder it
-  // is working in. A change is one line in the transcript, recorded by
-  // the server and replayed like any other event.
-  var folderBrowse = { rel: '' };
+  // The folder picker. It browses the whole hierarchy through the
+  // picker's own absolute listing — not the pane's contained tree —
+  // opening at the chat's folder, ascending to the filesystem root, and
+  // taking a typed path whose existing subfolders are the suggestions.
+  // The choice applies to the next run only: a run in flight already
+  // accepted the folder it is working in. A change is one line in the
+  // transcript, recorded by the server and replayed like any other event.
+  var folderBrowse = { path: '' };
   // The change in flight, so a send that follows a click waits for the
   // server to have the choice rather than racing it on a second
   // connection.
@@ -5060,44 +5063,105 @@
     return folderSync;
   }
 
-  function browseFolder(rel) {
-    folderBrowse.rel = rel || '';
-    el.folderPopPath.textContent = folderBrowse.rel || 'the launch folder';
-    fetch('/api/tree?path=' + encodeURIComponent(folderBrowse.rel), {
+  function parentOf(path) {
+    if (!path || path === '/') return '/';
+    var trimmed = path.replace(/\/+$/, '');
+    var cut = trimmed.lastIndexOf('/');
+    return cut <= 0 ? '/' : trimmed.slice(0, cut);
+  }
+
+  function joinPath(dir, name) {
+    return dir === '/' ? '/' + name : dir.replace(/\/+$/, '') + '/' + name;
+  }
+
+  function listFolders(path) {
+    return fetch('/api/tree?abs=1&path=' + encodeURIComponent(path), {
       headers: { accept: 'application/json' }
     }).then(function (reply) {
       return reply.json();
-    }).then(function (doc) {
-      var list = el.folderPopList;
-      list.textContent = '';
-      var up = node('button', 'folder-entry', '\u2191 up');
-      up.type = 'button';
-      up.disabled = !folderBrowse.rel;
-      up.addEventListener('click', function () {
-        var parts = folderBrowse.rel.split('/').filter(Boolean);
-        parts.pop();
-        browseFolder(parts.join('/'));
+    });
+  }
+
+  // Paint one listing: where it is, the way up, and its folders — only
+  // those starting with `prefix` when completion asked for a subset.
+  function paintFolderList(doc, prefix) {
+    var list = el.folderPopList;
+    list.textContent = '';
+    var here = doc.path || folderBrowse.path || '/';
+    folderBrowse.path = here;
+    el.folderPopPath.textContent = here;
+    var up = node('button', 'folder-entry', '\u2191 up');
+    up.type = 'button';
+    up.disabled = here === '/';
+    up.addEventListener('click', function () {
+      browseFolder(parentOf(here));
+    });
+    list.appendChild(up);
+    if (doc.refused) {
+      list.appendChild(node('span', 'folder-empty', (doc.refused || []).join('; ')));
+      return;
+    }
+    var wanted = (prefix || '').toLowerCase();
+    var dirs = (doc.entries || []).filter(function (entry) {
+      return entry.kind === 'dir' && (!wanted || entry.name.toLowerCase().indexOf(wanted) === 0);
+    });
+    dirs.forEach(function (entry) {
+      var button = node('button', 'folder-entry', entry.name + '/');
+      button.type = 'button';
+      button.addEventListener('click', function () {
+        browseFolder(joinPath(here, entry.name));
       });
-      list.appendChild(up);
-      if (doc.refused) {
-        list.appendChild(node('span', 'folder-empty', (doc.refused || []).join('; ')));
-        return;
-      }
-      var dirs = (doc.entries || []).filter(function (entry) {
-        return entry.kind === 'dir';
-      });
-      dirs.forEach(function (entry) {
-        var button = node('button', 'folder-entry', entry.name + '/');
-        button.type = 'button';
-        button.addEventListener('click', function () {
-          browseFolder(folderBrowse.rel ? folderBrowse.rel + '/' + entry.name : entry.name);
-        });
-        list.appendChild(button);
-      });
-      if (!dirs.length) list.appendChild(node('span', 'folder-empty', 'no subfolders'));
+      list.appendChild(button);
+    });
+    if (!dirs.length) {
+      list.appendChild(node('span', 'folder-empty',
+        wanted ? 'no folder here starts with that' : 'no subfolders'));
+    }
+  }
+
+  function browseFolder(path) {
+    var target = path || face.workspace || '/';
+    folderBrowse.path = target;
+    el.folderPopPath.textContent = target;
+    if (el.folderPopInput) {
+      el.folderPopInput.value = target === '/' ? '/' : target.replace(/\/+$/, '') + '/';
+    }
+    listFolders(target).then(function (doc) {
+      paintFolderList(doc, '');
     }).catch(function () {
       notice('the folder could not be read', 'the face did not answer');
     });
+  }
+
+  // Completion from what was typed: the typed path's own subfolders when
+  // it exists (a trailing slash asks for exactly that), else the nearest
+  // existing ancestor's subfolders that start with the first segment the
+  // disk does not have. One listing per keystroke at most — the fetch is
+  // debounced and every keystroke re-arms it (KI-244's lesson), and a
+  // listing that lands after a newer keystroke is dropped.
+  var folderTypeTimer = null;
+  var folderTypeSeq = 0;
+  function suggestFolders(typed) {
+    var seq = ++folderTypeSeq;
+    var text = (typed || '').trim();
+    if (!text) {
+      browseFolder('/');
+      return;
+    }
+    if (text.charAt(0) !== '/') text = '/' + text;
+    var exact = text.length > 1 && /\/$/.test(text);
+    var base = exact ? (text.replace(/\/+$/, '') || '/') : parentOf(text);
+    var prefix = exact ? '' : text.slice(text.lastIndexOf('/') + 1);
+    (function attempt(dir, want, depth) {
+      listFolders(dir).then(function (doc) {
+        if (seq !== folderTypeSeq) return;
+        if (doc.refused && dir !== '/' && depth < 16) {
+          attempt(parentOf(dir), dir.slice(dir.lastIndexOf('/') + 1), depth + 1);
+          return;
+        }
+        paintFolderList(doc, want);
+      }).catch(function () { });
+    })(base, prefix, 0);
   }
 
   function toggleFolderPop(open) {
@@ -5105,7 +5169,18 @@
     var showing = open === undefined ? el.folderPop.hidden : open;
     el.folderPop.hidden = !showing;
     el.runFolder.setAttribute('aria-expanded', showing ? 'true' : 'false');
-    if (showing) browseFolder(face.folder ? (face.folder.rel || '') : '');
+    if (showing) {
+      browseFolder(face.folder && face.folder.path ? face.folder.path : (face.workspace || '/'));
+      if (el.folderPopInput) el.folderPopInput.focus();
+    }
+  }
+
+  // The typed path wins when there is one; a trailing slash is the
+  // browsing form, not part of the folder's name.
+  function useTypedFolder() {
+    var typed = el.folderPopInput ? el.folderPopInput.value.trim() : '';
+    var chosen = typed ? (typed === '/' ? '/' : typed.replace(/\/+$/, '')) : folderBrowse.path;
+    chooseFolder(chosen || face.workspace);
   }
 
   if (el.runFolder) {
@@ -5114,10 +5189,23 @@
       toggleFolderPop();
     });
   }
-  if (el.folderUse) {
-    el.folderUse.addEventListener('click', function () {
-      chooseFolder(folderBrowse.rel || face.workspace);
+  if (el.folderPopInput) {
+    el.folderPopInput.addEventListener('input', function () {
+      if (folderTypeTimer) clearTimeout(folderTypeTimer);
+      var typed = el.folderPopInput.value;
+      folderTypeTimer = setTimeout(function () {
+        suggestFolders(typed);
+      }, 200);
     });
+    el.folderPopInput.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        useTypedFolder();
+      }
+    });
+  }
+  if (el.folderUse) {
+    el.folderUse.addEventListener('click', useTypedFolder);
   }
   if (el.folderReset) {
     el.folderReset.addEventListener('click', function () { chooseFolder(null); });

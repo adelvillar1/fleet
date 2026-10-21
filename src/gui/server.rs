@@ -276,7 +276,14 @@ async fn serve_connection(
         // where one would leak.
         ("GET", "/api/tree") => {
             let asked = decode_query(&request.query, "path");
-            write_reply(&mut stream, api(200, bridge.tree(&asked).await)).await
+            // `abs=1` is the folder picker's listing — directories under
+            // any absolute path — beside the pane's contained tree.
+            let document = if decode_query(&request.query, "abs") == "1" {
+                bridge.tree_abs(&asked).await
+            } else {
+                bridge.tree(&asked).await
+            };
+            write_reply(&mut stream, api(200, document)).await
         }
         // The inspector's related suggestions. The kind is a closed set
         // — an unknown one is a 400, not an empty list that could mean
@@ -2906,7 +2913,11 @@ mod tests {
     async fn the_rank_route_orders_candidates_by_what_was_typed() {
         let (token, port) = launch().await;
         let body = r#"{"asked":"make the screen darker","candidates":["theme dark light mode switch between the light and dark themes","pane files code preview explore open or close the files and deliverables pane","compact fold summarise fold the conversation now"]}"#;
-        let reply = post(port, "/api/rank", &token, body);
+        // KI-280: the route embeds over HTTP to the machine's shared
+        // backend, which a live face can keep busy; the request gets its
+        // own budget, the way the vault's slow PBKDF2 path does, instead
+        // of the ordinary three seconds that once returned nothing at all.
+        let reply = post_within(port, "/api/rank", &token, body, Duration::from_secs(30));
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         let document: serde_json::Value = serde_json::from_str(
             reply
@@ -2993,6 +3004,108 @@ mod tests {
     /// valid folder is accepted and stored for the chat. C7's control:
     /// the folder route changes the choice without a run and answers
     /// with the transcript line it recorded.
+    /// The folder picker's listing browses the whole hierarchy —
+    /// directories only, dot-directories included, files filtered — and
+    /// the choice may land anywhere in it, while the pane's own tree
+    /// keeps its launch-directory cage (the 2026-10-21 plan).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_picker_lists_directories_anywhere_and_the_pane_keeps_its_cage() {
+        let (token, port) = launch().await;
+        let scratch = std::env::temp_dir().join(format!("fleet-picker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("alpha")).expect("a subfolder");
+        std::fs::create_dir_all(scratch.join(".hidden")).expect("a dot folder");
+        std::fs::write(scratch.join("note.txt"), "a file").expect("a file");
+        let encoded = |path: &std::path::Path| path.display().to_string().replace('/', "%2F");
+
+        let listing = ask(
+            port,
+            &format!(
+                "GET /api/tree?abs=1&path={}&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                encoded(&scratch)
+            ),
+            None,
+        );
+        assert!(listing.starts_with("HTTP/1.1 200"), "{listing}");
+        let document: serde_json::Value = serde_json::from_str(
+            listing
+                .split("\r\n\r\n")
+                .nth(1)
+                .expect("a body past the head"),
+        )
+        .expect("a JSON document");
+        assert_eq!(document["abs"], true, "{document}");
+        let entries = document["entries"].as_array().expect("the entries");
+        let names: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry["name"].as_str().expect("a name"))
+            .collect();
+        // Directories only, the dot folder among them, sorted; the file
+        // is not listed.
+        assert_eq!(names, vec![".hidden", "alpha"], "{document}");
+        assert!(
+            entries.iter().all(|entry| entry["kind"] == "dir"),
+            "{document}"
+        );
+
+        // A file is refused as not a directory, by name.
+        let file = ask(
+            port,
+            &format!(
+                "GET /api/tree?abs=1&path={}&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                encoded(&scratch.join("note.txt"))
+            ),
+            None,
+        );
+        assert!(file.contains("is not a directory"), "{file}");
+        // The picker's mode takes absolute paths only.
+        let relative = ask(
+            port,
+            &format!(
+                "GET /api/tree?abs=1&path=src&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+            ),
+            None,
+        );
+        assert!(relative.contains("is not an absolute path"), "{relative}");
+        // The pane's own tree is unchanged: a walk out is still refused.
+        let caged = ask(
+            port,
+            &format!(
+                "GET /api/tree?path=..%2F..&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+            ),
+            None,
+        );
+        assert!(caged.contains("outside the working directory"), "{caged}");
+
+        // The choice may land outside the launch directory, and comes back
+        // canonical with its basename.
+        let alpha = scratch.join("alpha");
+        let chosen = post(
+            port,
+            "/api/folder",
+            &token,
+            &format!(r#"{{"folder":"{}"}}"#, alpha.display()),
+        );
+        assert!(chosen.starts_with("HTTP/1.1 200"), "{chosen}");
+        assert!(chosen.contains("\"name\":\"alpha\""), "{chosen}");
+        let canonical = alpha
+            .canonicalize()
+            .expect("canonical")
+            .display()
+            .to_string();
+        assert!(chosen.contains(&canonical), "{chosen}");
+        // A missing absolute path is still refused by name.
+        let missing = post(
+            port,
+            "/api/folder",
+            &token,
+            &format!(r#"{{"folder":"{}"}}"#, scratch.join("nowhere").display()),
+        );
+        assert!(missing.starts_with("HTTP/1.1 400"), "{missing}");
+        assert!(missing.contains("nowhere"), "{missing}");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_run_refuses_a_bad_folder_and_a_good_one_is_stored() {
         let (token, port) = launch().await;

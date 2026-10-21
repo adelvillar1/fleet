@@ -351,6 +351,11 @@
             <span class="folder-pop-label">browse</span>
             <code id="folder-pop-path"></code>
           </div>
+          <!-- Type a path: its existing subfolders are the suggestions;
+               Enter or "use this folder" takes it. -->
+          <input type="text" class="folder-pop-input" id="folder-pop-input"
+                 autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="type a folder path" aria-label="working folder path">
           <div class="folder-pop-list" id="folder-pop-list"></div>
           <div class="folder-pop-actions">
             <button type="button" id="folder-use">use this folder</button>

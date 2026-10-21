@@ -1651,6 +1651,19 @@ impl Bridge {
         }
     }
 
+    /// The folder picker's listing: the directories under one absolute
+    /// path, anywhere the process can read. Not the pane's tree — that
+    /// one serves content and is contained to the launch directory by
+    /// design; this one serves names to a chooser whose choice
+    /// `resolve_folder` validates on its own.
+    pub async fn tree_abs(&self, asked: &str) -> Value {
+        let asked = asked.to_string();
+        match tokio::task::spawn_blocking(move || tree_abs_read(&asked)).await {
+            Ok(document) => document,
+            Err(_) => json!({"type": "tree", "abs": true, "refused": ["the listing did not land"]}),
+        }
+    }
+
     /// The pane's file read, off the working directory.
     pub async fn file(&self, asked: &str) -> Value {
         let root = self.cwd.clone();
@@ -1738,11 +1751,11 @@ impl Bridge {
         Ok(())
     }
 
-    /// Resolve one folder the browser named against the launch
-    /// directory: the pane's containment rule for a relative path, and
-    /// the same boundary for an absolute one, canonicalized so a
-    /// symlink out is refused. Public because the server refuses a bad
-    /// folder with a 400 naming the reason before a run is dispatched.
+    /// Resolve one folder the browser named: the pane's containment
+    /// rule for a relative path, and any existing directory for an
+    /// absolute one, canonicalized. Public because the server refuses a
+    /// bad folder with a 400 naming the reason before a run is
+    /// dispatched.
     pub fn chat_folder(&self, asked: &str) -> Result<PathBuf, String> {
         resolve_folder(&self.cwd, asked)
     }
@@ -2591,12 +2604,15 @@ fn pane_path(root: &std::path::Path, asked: &str) -> Result<std::path::PathBuf, 
     Ok(canonical)
 }
 
-/// Resolve one chat folder against the launch directory. A relative
-/// path is the pane's own rooted form and uses the pane's rule, which
-/// catches `..` and a symlink out. An absolute path is accepted when it
-/// canonicalizes inside the launch directory and refused when it does
-/// not. The reply is canonical, so the sidecar stores one spelling of a
-/// folder and two chats that name the same tree agree about it.
+/// Resolve one chat folder. A relative path is the pane's own rooted
+/// form and uses the pane's rule, which catches `..` and a symlink out.
+/// An absolute path may name any existing directory on the disk (the
+/// owner's 2026-10-21 ruling: the picker browses the whole hierarchy and
+/// the choice may land anywhere in it) — the tools' own cage still holds
+/// inside whatever folder is chosen. A path that does not exist, or is
+/// not a directory, is refused by name. The reply is canonical, so the
+/// sidecar stores one spelling of a folder and two chats that name the
+/// same tree agree about it.
 fn resolve_folder(root: &std::path::Path, asked: &str) -> Result<PathBuf, String> {
     let asked = asked.trim();
     let canonical_root = root
@@ -2612,8 +2628,8 @@ fn resolve_folder(root: &std::path::Path, asked: &str) -> Result<PathBuf, String
     let canonical = given
         .canonicalize()
         .map_err(|error| format!("{asked}: {error}"))?;
-    if !canonical.starts_with(&canonical_root) {
-        return Err("outside the working directory".to_string());
+    if !canonical.is_dir() {
+        return Err(format!("{asked} is not a directory"));
     }
     Ok(canonical)
 }
@@ -2755,6 +2771,50 @@ fn tree_read(root: &std::path::Path, asked: &str) -> Value {
             "kind": if *is_dir { "dir" } else { "file" },
             "size": size,
         })).collect::<Vec<_>>(),
+    })
+}
+
+/// The picker's listing under one absolute path: directories only —
+/// dot-directories included, since they are real folders an owner may
+/// mean — files filtered out, sorted without regard to case, capped like
+/// the pane's tree. An empty path is the filesystem root. A relative
+/// path, a non-directory and an unreadable directory are each refused by
+/// name; nothing here is contained, because the choice this feeds is
+/// validated by [`resolve_folder`] when it is made.
+fn tree_abs_read(asked: &str) -> Value {
+    let asked = asked.trim();
+    let directory = if asked.is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(asked)
+    };
+    if !directory.is_absolute() {
+        return json!({"type": "tree", "abs": true, "refused": [format!("{asked} is not an absolute path")]});
+    }
+    if !directory.is_dir() {
+        return json!({"type": "tree", "abs": true, "refused": [format!("{} is not a directory", directory.display())]});
+    }
+    let read = match std::fs::read_dir(&directory) {
+        Ok(read) => read,
+        Err(error) => {
+            return json!({"type": "tree", "abs": true, "refused": [format!("{} could not be read: {error}", directory.display())]});
+        }
+    };
+    let mut names: Vec<String> = read
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort_by_key(|name| name.to_lowercase());
+    let total = names.len();
+    names.truncate(TREE_ENTRY_CAP);
+    let shown = directory.canonicalize().unwrap_or(directory);
+    json!({
+        "type": "tree",
+        "abs": true,
+        "path": shown.display().to_string(),
+        "truncated": total > TREE_ENTRY_CAP,
+        "entries": names.iter().map(|name| json!({"name": name, "kind": "dir"})).collect::<Vec<_>>(),
     })
 }
 
@@ -5565,11 +5625,13 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// C5, at the bridge seam: a folder outside the launch directory, a
-    /// symlinked way out, and a path that does not exist are each
-    /// refused by name and nothing is stored.
+    /// At the bridge seam: a relative `..` walk and a relative symlink
+    /// out keep the pane's refusal, a path that does not exist is refused
+    /// by name, and — since the 2026-10-21 ruling — an absolute folder
+    /// outside the launch directory is accepted, canonical: the picker
+    /// browses the whole hierarchy and the choice may land anywhere in it.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_folder_outside_the_launch_directory_is_refused_by_name() {
+    async fn a_relative_escape_is_refused_and_an_absolute_folder_anywhere_is_accepted() {
         let (mut bridge, _sources, _door) = bridge().await;
         let root = tree("folder-refuse");
         bridge.cwd = root.clone();
@@ -5583,10 +5645,10 @@ mod tests {
         assert!(bridge.state(&attached)["folder"].is_null());
 
         let outside = tree("folder-refuse-outside");
-        let error = bridge
+        let accepted = bridge
             .chat_folder(&outside.display().to_string())
-            .unwrap_err();
-        assert!(error.contains("outside the working directory"), "{error}");
+            .expect("an absolute folder anywhere is the owner's grant");
+        assert_eq!(accepted, outside.canonicalize().expect("canonical"));
 
         let error = bridge.chat_folder("no-such-dir").unwrap_err();
         assert!(error.contains("no-such-dir"), "{error}");
@@ -5955,12 +6017,22 @@ mod tests {
         });
         bridge.run("", "go").expect("the run is accepted");
         // The session event lands, and the state document names the id.
-        for _ in 0..100 {
-            if !bridge.state("")["session"]
-                .as_str()
-                .unwrap_or("")
-                .is_empty()
-            {
+        // The wait is on the event the assertion below reads, not on the
+        // state field alone: the field is set on the run's thread while
+        // the event rides the broadcast queue, and under a loaded suite
+        // the queue lags the field past a one-second poll (the skills
+        // load alone reads hundreds of files on this machine).
+        let has_session_event = |state: &serde_json::Value| {
+            let id = state["session"].as_str().unwrap_or("");
+            !id.is_empty()
+                && state["events"].as_array().is_some_and(|events| {
+                    events
+                        .iter()
+                        .any(|event| event["type"] == "session" && event["id"] == id)
+                })
+        };
+        for _ in 0..600 {
+            if has_session_event(&bridge.state("")) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;

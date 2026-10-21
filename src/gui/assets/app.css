@@ -1754,6 +1754,19 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .folder-pop-head { display: flex; align-items: baseline; gap: 8px; font-size: 10px; color: var(--dsw-alias-ink-tertiary); }
 .folder-pop-head code { color: var(--dsw-alias-ink); font-size: 11px; overflow-wrap: anywhere; }
+.folder-pop-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.folder-pop-input:focus { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
 .folder-pop-list { display: flex; flex-direction: column; max-height: 220px; overflow: auto; }
 .folder-entry {
   padding: 4px 6px;
@@ -1898,6 +1911,11 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   }
   .composer .foot-btn.plan { width: var(--ctl-h); padding: 0; }
   .composer .foot-btn.plan .foot-label { display: none; }
+  /* The folder picker goes full-bleed on a phone, its actions stacked;
+     the suggestion rows stay one line each. */
+  .folder-pop { left: 6px; right: 6px; max-width: none; }
+  .folder-pop-actions { flex-direction: column; align-items: stretch; }
+  .folder-pop-actions button { width: 100%; }
 }
 
 /* Below 360 the whole row cannot fit; the fields keep the left edge and
