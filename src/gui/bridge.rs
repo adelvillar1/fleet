@@ -2372,7 +2372,7 @@ fn router_read(home: &std::path::Path) -> Value {
     // The vault laid over the dotenv: a sealed key answers here exactly
     // where a plaintext key would have, so the router and the agent see
     // the same credentials either way.
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let sources = crate::boards::resolve_sources(home, &dotenv);
     let snapshot = crate::boards::read_router(&sources.router, &crate::calib::today());
@@ -3541,7 +3541,7 @@ fn settings_read(home: &std::path::Path) -> Value {
     // The vault laid over the dotenv: a sealed key answers here exactly
     // where a plaintext key would have, so the router and the agent see
     // the same credentials either way.
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let fleet_env = crate::home::read_fleet_env(home);
     let env = crate::settings::env_keys()
@@ -3576,7 +3576,7 @@ fn settings_read(home: &std::path::Path) -> Value {
     let catalog = crate::settings::catalog(home, &dotenv);
     let lanes = lanes_document(home);
     let roles = roles_document(home);
-    let (vault_names, vault_exists, vault_passphrase) = crate::settings::vault_state(home);
+    let vault = crate::settings::vault_state(home);
     let (telegram_present, telegram_source) =
         crate::settings::secret_state(home, "FLEET_TELEGRAM_BOT_TOKEN");
     json!({
@@ -3596,9 +3596,13 @@ fn settings_read(home: &std::path::Path) -> Value {
         "lanes": lanes,
         "roles": roles,
         "vault": {
-            "names": vault_names,
-            "exists": vault_exists,
-            "passphrase": vault_passphrase,
+            "names": vault.names,
+            "exists": vault.exists,
+            "passphrase": vault.unlocked,
+            "plaintext": vault.plaintext.iter().map(|entry| json!({
+                "name": entry.name,
+                "sealed": entry.sealed,
+            })).collect::<Vec<_>>(),
         },
         "telegram": {
             "present": telegram_present,
@@ -3869,6 +3873,28 @@ fn settings_apply(
             let name = text("name")?;
             crate::settings::remove_secret(home, &name)
         }
+        "vault-unlock" => {
+            let passphrase = text("passphrase")?;
+            crate::settings::vault_unlock(home, &passphrase)?;
+            Ok("unlocked".to_string())
+        }
+        "vault-lock" => {
+            crate::settings::vault_lock();
+            Ok("locked".to_string())
+        }
+        "vault-init" => {
+            let migrated = crate::settings::vault_init(home)?;
+            Ok(migrated.to_string())
+        }
+        "vault-seal-env" => {
+            let name = text("name")?;
+            crate::settings::vault_seal_env(home, &name)
+        }
+        "vault-remove-env" => {
+            let name = text("name")?;
+            crate::settings::vault_remove_env(home, &name)?;
+            Ok(name)
+        }
         "rule" => {
             // The browser sends the file's own shape; the call is
             // synthesized so `allow_tool` derives the rule the way the
@@ -3973,7 +3999,7 @@ fn tower_read(home: &std::path::Path) -> Value {
     // The vault laid over the dotenv: a sealed key answers here exactly
     // where a plaintext key would have, so the router and the agent see
     // the same credentials either way.
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let sources = crate::boards::resolve_sources(home, &dotenv);
     let mut refused: Vec<String> = Vec::new();
@@ -4191,7 +4217,7 @@ fn second_brain_port(dotenv: &std::collections::HashMap<String, String>) -> u16 
 fn second_brain_resolve(
     home: &std::path::Path,
 ) -> (Option<crate::plugins::second_brain::SecondBrain>, u16) {
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let sources = crate::boards::resolve_sources(home, &dotenv);
     let port = second_brain_port(&dotenv);
@@ -4337,7 +4363,7 @@ fn brain_read(home: &std::path::Path) -> Value {
     // The vault laid over the dotenv: a sealed key answers here exactly
     // where a plaintext key would have, so the router and the agent see
     // the same credentials either way.
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let sources = crate::boards::resolve_sources(home, &dotenv);
     let mut refused: Vec<String> = Vec::new();

@@ -570,7 +570,7 @@ fn skill_entries(home: &Path) -> Vec<Source> {
 /// the git facts without the paths or the counts, which say where a
 /// project is, not what it is about.
 fn project_entries(home: &Path) -> Vec<Source> {
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let sources = crate::boards::resolve_sources(home, &dotenv);
     let Ok(snapshot) = crate::boards::read_tower(&sources.tower_root, &sources.bounds) else {
@@ -598,7 +598,7 @@ fn project_entries(home: &Path) -> Vec<Source> {
 /// the corpus build rather than the startup warm. The caller passes
 /// the rows the panels already read.
 pub fn route_sources(home: &Path) -> Vec<Source> {
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     let dotenv = crate::home::read_dotenv_with_vault(home, passphrase.as_deref());
     let sources = crate::boards::resolve_sources(home, &dotenv);
     let snapshot = crate::boards::read_router(&sources.router, &crate::calib::today());

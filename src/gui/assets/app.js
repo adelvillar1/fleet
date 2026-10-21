@@ -9386,26 +9386,87 @@
   // ------------------------------------------------------------- the vault
 
   function vaultCard() {
-    var read = face.settings.vault || { names: [], exists: false, passphrase: false };
+    var read = face.settings.vault || {
+      names: [], exists: false, passphrase: false, plaintext: []
+    };
     var card = boardCard(12, 'the vault',
       read.exists ? (read.names.length + ' sealed') : 'no vault',
-      'The sealed credentials. A name is listed; a value is never rendered. Sealing and ' +
-      'removing need this process to hold FLEET_VAULT_PASSPHRASE.');
+      'The sealed credentials. A name is listed; a value is never rendered. The passphrase ' +
+      'is held by this process only \u2014 unlock it here without restarting, or launch fleet ' +
+      'with FLEET_VAULT_PASSPHRASE.');
     card.id = 'settings-vault';
+
     if (!read.passphrase) {
-      card.appendChild(node('p', 'board-empty',
-        'This process has no FLEET_VAULT_PASSPHRASE. Start fleet with it to seal or remove ' +
-        'an entry; the names below are still readable.'));
+      // A locked vault is not a dead end: the owner unlocks it for this
+      // process. The passphrase is sent once, held in memory, and never
+      // written to a file or returned by a read.
+      var unlockForm = node('div', 'cfg-form');
+      unlockForm.appendChild(node('p', 'knob-summary',
+        'The vault is locked for this process. Unlocking holds the passphrase in memory until ' +
+        'fleet exits or you lock it again; it is never written.'));
+      var passphrase = node('input', 'knob-box');
+      passphrase.type = 'password';
+      passphrase.autocomplete = 'off';
+      passphrase.placeholder = 'FLEET_VAULT_PASSPHRASE';
+      passphrase.setAttribute('aria-label', 'the vault passphrase');
+      var unlock = node('button', 'replay-button replay-resume', 'unlock the vault');
+      unlock.type = 'button';
+      unlock.addEventListener('click', function () {
+        if (!passphrase.value) return;
+        var value = passphrase.value;
+        passphrase.value = '';
+        writeSettings('vault-unlock', { passphrase: value });
+      });
+      unlockForm.appendChild(passphrase);
+      unlockForm.appendChild(unlock);
+      card.appendChild(unlockForm);
+      if (read.names.length) {
+        card.appendChild(node('p', 'cfg-note',
+          'The sealed names are still readable; their values are not.'));
+        read.names.forEach(function (name) {
+          var row = node('div', 'list-row');
+          row.appendChild(node('span', 'list-row-key', name));
+          row.appendChild(badge('sealed', 'ok'));
+          card.appendChild(row);
+        });
+      }
+      return card;
     }
-    if (!read.names.length) {
-      card.appendChild(node('p', 'board-empty',
-        read.exists ? 'No entry is sealed yet.' : 'No vault exists yet; the first seal creates one.'));
+
+    var status = node('div', 'cfg-inline');
+    status.appendChild(badge('unlocked for this process', 'ok'));
+    var lock = node('button', 'replay-button', 'lock the vault');
+    lock.type = 'button';
+    lock.addEventListener('click', function () {
+      writeSettings('vault-lock', {});
+    });
+    status.appendChild(lock);
+    card.appendChild(status);
+
+    if (!read.exists || !read.names.length) {
+      var unsealed = (read.plaintext || []).filter(function (entry) {
+        return !entry.sealed;
+      });
+      var create = node('button', 'replay-button replay-resume',
+        'create the vault' + (unsealed.length
+          ? ' and seal ' + unsealed.length + ' .env '
+            + (unsealed.length === 1 ? 'entry' : 'entries')
+          : ''));
+      create.type = 'button';
+      create.addEventListener('click', function () {
+        if (unsealed.length && !window.confirm(
+          'Create the vault and seal the ' + unsealed.length + ' credential-shaped .env ' +
+          'entries? The plaintext lines stay; the card lets you drop each one after.')) return;
+        writeSettings('vault-init', {});
+      });
+      card.appendChild(create);
     }
-    read.names.forEach(function (name) {
-      var row = node('div', 'list-row');
-      row.appendChild(node('span', 'list-row-key', name));
-      row.appendChild(badge('sealed', 'ok'));
-      if (read.passphrase) {
+
+    if (read.names.length) {
+      read.names.forEach(function (name) {
+        var row = node('div', 'list-row');
+        row.appendChild(node('span', 'list-row-key', name));
+        row.appendChild(badge('sealed', 'ok'));
         var remove = node('button', 'replay-button', 'remove');
         remove.type = 'button';
         remove.addEventListener('click', function () {
@@ -9413,33 +9474,69 @@
           writeSettings('secret-remove', { name: name });
         });
         row.appendChild(remove);
-      }
-      card.appendChild(row);
-    });
-    if (read.passphrase) {
-      var form = node('div', 'cfg-form');
-      var name = node('input', 'knob-box');
-      name.type = 'text';
-      name.placeholder = 'FLEET_TELEGRAM_BOT_TOKEN';
-      name.setAttribute('aria-label', 'a new sealed entry name');
-      var value = node('input', 'knob-box');
-      value.type = 'password';
-      value.autocomplete = 'off';
-      value.placeholder = 'the value';
-      value.setAttribute('aria-label', 'a new sealed entry value');
-      var seal = node('button', 'replay-button replay-resume', 'seal the entry');
-      seal.type = 'button';
-      seal.addEventListener('click', function () {
-        if (!name.value.trim() || !value.value.trim()) return;
-        var secret = value.value;
-        value.value = '';
-        writeSettings('secret', { name: name.value.trim(), value: secret });
+        card.appendChild(row);
       });
-      form.appendChild(cfgField('name', name));
-      form.appendChild(cfgField('value', value));
-      form.appendChild(seal);
-      card.appendChild(form);
+    } else if (read.exists) {
+      card.appendChild(node('p', 'board-empty', 'No entry is sealed yet.'));
     }
+
+    // The .env side: seal a plaintext credential, then drop the line. Both
+    // actions are server-side, so the value never reaches this page.
+    if ((read.plaintext || []).length) {
+      card.appendChild(node('h3', 'form-section', 'in .env'));
+      card.appendChild(node('p', 'cfg-note',
+        'A sealed name overrides its plaintext line. Seal first, then drop the line.'));
+      read.plaintext.forEach(function (entry) {
+        var row = node('div', 'list-row');
+        row.appendChild(node('span', 'list-row-key', entry.name));
+        row.appendChild(badge(entry.sealed ? 'sealed' : 'plaintext',
+          entry.sealed ? 'ok' : 'warn'));
+        var actions = node('div', 'replay-actions');
+        if (entry.sealed) {
+          var drop = node('button', 'replay-button', 'drop the .env line');
+          drop.type = 'button';
+          drop.addEventListener('click', function () {
+            if (!window.confirm('Remove the plaintext `' + entry.name + '` line from .env?')) {
+              return;
+            }
+            writeSettings('vault-remove-env', { name: entry.name });
+          });
+          actions.appendChild(drop);
+        } else {
+          var seal = node('button', 'replay-button', 'seal it');
+          seal.type = 'button';
+          seal.addEventListener('click', function () {
+            writeSettings('vault-seal-env', { name: entry.name });
+          });
+          actions.appendChild(seal);
+        }
+        row.appendChild(actions);
+        card.appendChild(row);
+      });
+    }
+
+    var form = node('div', 'cfg-form');
+    var name = node('input', 'knob-box');
+    name.type = 'text';
+    name.placeholder = 'FLEET_TELEGRAM_BOT_TOKEN';
+    name.setAttribute('aria-label', 'a new sealed entry name');
+    var value = node('input', 'knob-box');
+    value.type = 'password';
+    value.autocomplete = 'off';
+    value.placeholder = 'the value';
+    value.setAttribute('aria-label', 'a new sealed entry value');
+    var seal = node('button', 'replay-button replay-resume', 'seal the entry');
+    seal.type = 'button';
+    seal.addEventListener('click', function () {
+      if (!name.value.trim() || !value.value.trim()) return;
+      var secret = value.value;
+      value.value = '';
+      writeSettings('secret', { name: name.value.trim(), value: secret });
+    });
+    form.appendChild(cfgField('name', name));
+    form.appendChild(cfgField('value', value));
+    form.appendChild(seal);
+    card.appendChild(form);
     return card;
   }
 

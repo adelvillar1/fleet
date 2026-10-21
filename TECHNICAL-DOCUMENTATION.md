@@ -292,7 +292,13 @@ draws from: roster models plus the current table's values, provider states,
 env names with presence/source and never a value, paths, tools, skills, and
 shapes. `set_lane` validates a lane object against the lane registry and
 writes it atomically; `set_secret` seals into the vault when the process
-holds the passphrase, else writes one atomic `.env` line.
+holds the passphrase, else writes one atomic `.env` line. The process's
+vault passphrase is a `home`-owned unlock state (launch-time
+`FLEET_VAULT_PASSPHRASE`, overridable in place by the GUI and lockable
+again); `vault_verify` refuses a passphrase that does not open the
+existing entries, `vault_init` creates and migrates the credential-shaped
+`.env` names without dropping their plaintext lines, and `vault_seal_env`
+seals one plaintext value server-side.
 
 #### `boards.rs`
 The three read-only boards: Fleet's own routing state, the second-brain's

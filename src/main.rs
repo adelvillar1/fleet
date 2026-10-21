@@ -228,7 +228,7 @@ fn vault_get(name: &str) -> Option<String> {
     let path = home.join(fleet::vault::VAULT_FILE);
     let text = std::fs::read_to_string(&path).ok()?;
     let vault = fleet::vault::Vault::from_json(&text).ok()?;
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok()?;
+    let passphrase = home::vault_passphrase()?;
     vault.get(&passphrase, name).ok()
 }
 
@@ -240,10 +240,7 @@ fn read_dotenv() -> std::collections::HashMap<String, String> {
     fleet_home()
         .ok()
         .as_deref()
-        .map(|home| {
-            let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
-            home::read_dotenv_with_vault(home, passphrase.as_deref())
-        })
+        .map(home::read_dotenv_with_process_vault)
         .unwrap_or_default()
 }
 
@@ -1252,14 +1249,11 @@ fn vault_command(options: &cli::VaultOptions) -> ExitCode {
                 eprintln!("fleet: vault: no home is known");
                 return ExitCode::FAILURE;
             };
-            let passphrase = match std::env::var("FLEET_VAULT_PASSPHRASE") {
-                Ok(passphrase) if !passphrase.is_empty() => passphrase,
-                _ => {
-                    eprintln!(
-                        "fleet: vault: FLEET_VAULT_PASSPHRASE is not set — the vault is keyed by it"
-                    );
-                    return ExitCode::FAILURE;
-                }
+            let Some(passphrase) = home::vault_passphrase() else {
+                eprintln!(
+                    "fleet: vault: FLEET_VAULT_PASSPHRASE is not set — the vault is keyed by it"
+                );
+                return ExitCode::FAILURE;
             };
             let path = home.join(fleet::vault::VAULT_FILE);
             let mut vault = match std::fs::read_to_string(&path) {
@@ -1284,7 +1278,7 @@ fn vault_command(options: &cli::VaultOptions) -> ExitCode {
                 eprintln!("fleet: vault: no home is known");
                 return ExitCode::FAILURE;
             };
-            let Ok(passphrase) = std::env::var("FLEET_VAULT_PASSPHRASE") else {
+            let Some(passphrase) = home::vault_passphrase() else {
                 eprintln!("fleet: vault: FLEET_VAULT_PASSPHRASE is not set");
                 return ExitCode::FAILURE;
             };
@@ -1344,14 +1338,11 @@ fn vault_command(options: &cli::VaultOptions) -> ExitCode {
                 eprintln!("fleet: vault: no home is known");
                 return ExitCode::FAILURE;
             };
-            let passphrase = match std::env::var("FLEET_VAULT_PASSPHRASE") {
-                Ok(passphrase) if !passphrase.is_empty() => passphrase,
-                _ => {
-                    eprintln!(
-                        "fleet: vault: FLEET_VAULT_PASSPHRASE is not set — it is the vault's key, so set it once and keep it"
-                    );
-                    return ExitCode::FAILURE;
-                }
+            let Some(passphrase) = home::vault_passphrase() else {
+                eprintln!(
+                    "fleet: vault: FLEET_VAULT_PASSPHRASE is not set — it is the vault's key, so set it once and keep it"
+                );
+                return ExitCode::FAILURE;
             };
             let path = home.join(fleet::vault::VAULT_FILE);
             let mut vault = fleet::vault::Vault::init();
@@ -2153,7 +2144,7 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
     // compaction request is judged like any other: it is a real call
     // with a real cost, and pretending it is free would put a lie in
     // the decision row.
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = home::vault_passphrase();
     let dotenv = fleet::home::read_dotenv_with_vault(&home, passphrase.as_deref());
     let prepared =
         match fleet::route::prepare(&home, &dotenv, "compact a session", &HashMap::new()).await {

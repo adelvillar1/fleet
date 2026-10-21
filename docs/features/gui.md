@@ -300,11 +300,19 @@ loader's own frontmatter, preserves unknown keys, and picks tools,
 skills, and shapes from the catalog.
 
 **Secrets and the vault.** A secret is write-only: the value is sent
-once, the input is cleared, and no read carries it back. It is sealed
-into the vault when the process holds `FLEET_VAULT_PASSPHRASE`, else it
-lands as one line in the home's `.env`. The vault card lists names and
-whether a passphrase is present; sealing and removing need the
-passphrase.
+once, the input is cleared, and no read carries it back. The vault card
+is a working surface, not a status line. A locked process can unlock the
+vault in place: the passphrase is sent once, held in memory by the
+process (never written), and a wrong passphrase is refused by name. Once
+unlocked, the card can create the vault and migrate the credential-shaped
+`.env` entries, seal one plaintext entry at a time (server-side, so the
+value never reaches the page), drop a plaintext line after its value is
+sealed, seal a new entry, remove a sealed one, or lock the process again.
+The `in .env` section marks each credential `plaintext` or `sealed`, so
+the migration has a visible finish. Launching fleet with
+`FLEET_VAULT_PASSPHRASE` remains the way to unlock from the start; the
+in-place unlock is the same passphrase, held the same way, without a
+restart.
 
 **Spend and runtime.** The daily caps (judge, delegate, explain) are
 `Usd` settings that can only tighten the compiled ceiling; the empty box

@@ -375,7 +375,7 @@ pub fn configured_spec_at(
 ) -> Result<ServerSpec, String> {
     let mut spec = launch_spec(lane, home);
     let config = read_lane(fleet_home, lane.name)?.unwrap_or_default();
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     let dotenv = crate::home::read_dotenv_with_vault(fleet_home, passphrase.as_deref());
     let mut values: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     // Low to high: lane config, then the dotenv/vault, then skip the

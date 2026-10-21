@@ -98,6 +98,70 @@ pub fn read_dotenv_with_vault(home: &Path, passphrase: Option<&str>) -> HashMap<
     map
 }
 
+/// The process's vault unlock. The environment variable is the
+/// launch-time source; the GUI's unlock (or lock) overrides it for this
+/// process only. The passphrase is held in memory and never written.
+#[derive(Debug)]
+enum VaultUnlock {
+    Unset,
+    Locked,
+    Unlocked(String),
+}
+
+static VAULT_UNLOCK: std::sync::OnceLock<std::sync::Mutex<VaultUnlock>> =
+    std::sync::OnceLock::new();
+
+fn vault_unlock_state() -> &'static std::sync::Mutex<VaultUnlock> {
+    VAULT_UNLOCK.get_or_init(|| std::sync::Mutex::new(VaultUnlock::Unset))
+}
+
+/// The passphrase this process would use to open the vault: an explicit
+/// runtime unlock first, otherwise `FLEET_VAULT_PASSPHRASE`.
+pub fn vault_passphrase() -> Option<String> {
+    let state = vault_unlock_state()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    match &*state {
+        VaultUnlock::Unlocked(passphrase) => Some(passphrase.clone()),
+        VaultUnlock::Locked => None,
+        VaultUnlock::Unset => std::env::var("FLEET_VAULT_PASSPHRASE")
+            .ok()
+            .filter(|passphrase| !passphrase.is_empty()),
+    }
+}
+
+/// Hold `passphrase` for this process until it exits or [`lock_vault`].
+pub fn unlock_vault(passphrase: &str) {
+    let mut state = vault_unlock_state()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    *state = VaultUnlock::Unlocked(passphrase.to_string());
+}
+
+/// Stop using the vault for this process, even when the environment
+/// variable is present.
+pub fn lock_vault() {
+    let mut state = vault_unlock_state()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    *state = VaultUnlock::Locked;
+}
+
+/// Put the process back on the launch-time source. Tests use this so one
+/// global unlock does not leak into the next test.
+#[cfg(test)]
+pub fn reset_vault_unlock() {
+    let mut state = vault_unlock_state()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    *state = VaultUnlock::Unset;
+}
+
+/// The dotenv with this process's own vault unlock laid over it.
+pub fn read_dotenv_with_process_vault(home: &Path) -> HashMap<String, String> {
+    read_dotenv_with_vault(home, vault_passphrase().as_deref())
+}
+
 /// Read `<home>/fleet.env` into a map: the env-var counterparts the
 /// settings writer owns, beside `.env` rather than inside it. Same
 /// KEY=VALUE grammar as [`read_dotenv`], because the two files are the

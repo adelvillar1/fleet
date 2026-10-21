@@ -965,10 +965,7 @@ impl Driver {
 /// never carried in a payload. A machine with no token has no Telegram
 /// channel — not a stopped one, an unconfigured one.
 pub fn telegram_token(home: &Path) -> Option<String> {
-    let dotenv = crate::home::read_dotenv_with_vault(
-        home,
-        std::env::var("FLEET_VAULT_PASSPHRASE").ok().as_deref(),
-    );
+    let dotenv = crate::home::read_dotenv_with_process_vault(home);
     crate::home::resolve_setting("FLEET_TELEGRAM_BOT_TOKEN", &dotenv)
         .or_else(|| std::env::var("FLEET_TELEGRAM_BOT_TOKEN").ok())
         .map(|token| token.trim().to_string())

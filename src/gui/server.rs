@@ -2052,6 +2052,18 @@ mod tests {
         )
     }
 
+    /// A GET with its own read budget. The settings read assembles the
+    /// catalog (the skills library and the router), so a loaded suite can
+    /// push it past the ordinary three seconds.
+    fn get_within(port: u16, path: &str, token: &str, budget: Duration) -> String {
+        ask_within(
+            port,
+            &format!("GET {path}?token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+            None,
+            budget,
+        )
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn the_address_alone_opens_the_face_and_the_web_is_refused() {
         let (_token, port) = launch().await;
@@ -3734,11 +3746,12 @@ mod tests {
 
         // A secret rides the secret writer, and the read that follows
         // never carries the value.
-        let secret = post(
+        let secret = post_within(
             port,
             "/api/settings",
             &token,
             r#"{"op":"secret","name":"FLEET_TEST_KEY","value":"never-render-me"}"#,
+            Duration::from_secs(30),
         );
         assert!(secret.starts_with("HTTP/1.1 200"), "{secret}");
         assert!(!secret.contains("never-render-me"), "{secret}");
@@ -3751,6 +3764,58 @@ mod tests {
             r#"{"op":"secret-remove","name":"FLEET_TEST_KEY"}"#,
         );
         assert!(unsealed.starts_with("HTTP/1.1 200"), "{unsealed}");
+
+        // The vault surface: unlock, create from the plaintext .env,
+        // read the names without the value, drop the plaintext, lock.
+        // A fresh vault makes the test independent of any ambient
+        // passphrase the test process happens to carry.
+        let _ = std::fs::remove_file(home.join("vault.json"));
+        crate::home::reset_vault_unlock();
+        let mut env_text = std::fs::read_to_string(home.join(".env")).unwrap_or_default();
+        env_text.push_str("FLEET_TEST_API_KEY=test-secret\n");
+        std::fs::write(home.join(".env"), env_text).unwrap();
+        // The vault's KDF (210k PBKDF2 iterations) is deliberately slow;
+        // the full suite's load can push it past the ordinary three-second
+        // read budget.
+        let budget = Duration::from_secs(30);
+        let unlocked = post_within(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"vault-unlock","passphrase":"passphrase"}"#,
+            budget,
+        );
+        assert!(unlocked.starts_with("HTTP/1.1 200"), "{unlocked}");
+        let after_unlock = get_within(port, "/api/settings", &token, budget);
+        assert!(
+            after_unlock.contains("\"passphrase\":true"),
+            "{after_unlock}"
+        );
+        let created = post_within(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"vault-init"}"#,
+            budget,
+        );
+        assert!(created.starts_with("HTTP/1.1 200"), "{created}");
+        let after_init = get_within(port, "/api/settings", &token, budget);
+        assert!(after_init.contains("FLEET_TEST_API_KEY"), "{after_init}");
+        assert!(!after_init.contains("test-secret"), "{after_init}");
+        let dropped = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"vault-remove-env","name":"FLEET_TEST_API_KEY"}"#,
+        );
+        assert!(dropped.starts_with("HTTP/1.1 200"), "{dropped}");
+        let env_after = std::fs::read_to_string(home.join(".env")).unwrap_or_default();
+        assert!(!env_after.contains("FLEET_TEST_API_KEY"), "{env_after}");
+        let locked = post(port, "/api/settings", &token, r#"{"op":"vault-lock"}"#);
+        assert!(locked.starts_with("HTTP/1.1 200"), "{locked}");
+        let after_lock = get_within(port, "/api/settings", &token, budget);
+        assert!(after_lock.contains("\"passphrase\":false"), "{after_lock}");
+        crate::home::reset_vault_unlock();
 
         // The identity slot writes through the home's own writer.
         let soul = post(

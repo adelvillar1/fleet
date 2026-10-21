@@ -1408,11 +1408,12 @@ mod router_tests {
         )
         .unwrap();
         assert_eq!(store, "vault");
-        let (names, exists, _) = vault_state(&home);
-        assert!(exists);
+        let state = vault_state(&home);
+        assert!(state.exists);
         assert!(
-            names.iter().any(|name| name == "FLEET_TEST_TOKEN"),
-            "{names:?}"
+            state.names.iter().any(|name| name == "FLEET_TEST_TOKEN"),
+            "{:?}",
+            state.names
         );
         let (present, source) = secret_state(&home, "FLEET_TEST_TOKEN");
         assert!(present);
@@ -1426,7 +1427,7 @@ mod router_tests {
         assert!(vault.get("wrong", "FLEET_TEST_TOKEN").is_err());
         remove_secret_with(&home, "FLEET_TEST_TOKEN", Some("passphrase")).unwrap();
         assert!(!vault_state(&home)
-            .0
+            .names
             .iter()
             .any(|name| name == "FLEET_TEST_TOKEN"));
         let _ = fs::remove_dir_all(&home);
@@ -1481,6 +1482,73 @@ mod router_tests {
         )
         .unwrap();
         assert!(crate::lanes::read_lane(&home, "sem1").unwrap().is_none());
+        let _ = fs::remove_dir_all(&home);
+    }
+}
+
+#[cfg(test)]
+mod vault_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-settings-vault-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Create, seal, and drop the plaintext through the explicit-passphrase
+    /// writers, so the test does not touch the process's unlock state.
+    #[test]
+    fn the_vault_surface_creates_seals_and_drops() {
+        let home = scratch("surface");
+        fs::write(
+            home.join(".env"),
+            "STEPFUN_API_KEY=one\nFLEET_EMBEDDING_ENDPOINT=http://x\n",
+        )
+        .unwrap();
+        let state = vault_state(&home);
+        assert!(!state.exists);
+        assert_eq!(state.plaintext.len(), 1, "only the credential-shaped name");
+        assert!(!state.plaintext[0].sealed);
+
+        let migrated = vault_init_with(&home, "passphrase").unwrap();
+        assert_eq!(migrated, 1, "the non-secret .env line stays put");
+        let state = vault_state(&home);
+        assert!(state.exists);
+        assert_eq!(state.names, vec!["STEPFUN_API_KEY"]);
+        assert!(state.plaintext[0].sealed);
+
+        // A second init refuses rather than orphaning the sealed value.
+        let error = vault_init_with(&home, "passphrase").unwrap_err();
+        assert!(error.contains("already exists"), "{error}");
+        assert!(vault_verify(&home, "passphrase").is_ok());
+        assert!(vault_verify(&home, "wrong").is_err());
+
+        // Drop the plaintext copy after it is sealed.
+        vault_remove_env(&home, "STEPFUN_API_KEY").unwrap();
+        assert!(vault_state(&home).plaintext.is_empty());
+
+        // Seal a new plaintext entry server-side; the value never rides a
+        // read or the GUI.
+        fs::write(home.join(".env"), "NEW_KEY=two\n").unwrap();
+        assert_eq!(
+            vault_seal_env_with(&home, "NEW_KEY", "passphrase").unwrap(),
+            "vault"
+        );
+        let state = vault_state(&home);
+        assert!(state.names.iter().any(|name| name == "NEW_KEY"));
+        assert!(state
+            .plaintext
+            .iter()
+            .any(|entry| entry.name == "NEW_KEY" && entry.sealed));
         let _ = fs::remove_dir_all(&home);
     }
 }
@@ -2429,14 +2497,151 @@ pub fn secret_state(home: &Path, name: &str) -> (bool, &'static str) {
     (false, "unset")
 }
 
-/// The vault's names, whether the file exists, and whether this process
-/// holds a passphrase. No value is read.
-pub fn vault_state(home: &Path) -> (Vec<String>, bool, bool) {
-    (
-        vault_names(home),
-        home.join(crate::vault::VAULT_FILE).is_file(),
-        std::env::var("FLEET_VAULT_PASSPHRASE").is_ok_and(|passphrase| !passphrase.is_empty()),
-    )
+/// The vault as the surface reads it: the sealed names, whether the file
+/// exists, whether this process holds the passphrase, and the plaintext
+/// credential-shaped names in `.env` that are not sealed yet. No value is
+/// read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaintextCredential {
+    pub name: String,
+    /// True when the vault already holds a sealed copy. The `.env` line
+    /// may still be there; dropping it is the separate housekeeping action.
+    pub sealed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultState {
+    pub names: Vec<String>,
+    pub exists: bool,
+    pub unlocked: bool,
+    pub plaintext: Vec<PlaintextCredential>,
+}
+
+pub fn vault_state(home: &Path) -> VaultState {
+    let names = vault_names(home);
+    let mut plaintext: Vec<PlaintextCredential> = crate::home::read_dotenv(home)
+        .into_keys()
+        .filter(|name| is_secret_name(name))
+        .map(|name| PlaintextCredential {
+            sealed: names.iter().any(|sealed| sealed == &name),
+            name,
+        })
+        .collect();
+    plaintext.sort_by(|left, right| left.name.cmp(&right.name));
+    VaultState {
+        names,
+        exists: home.join(crate::vault::VAULT_FILE).is_file(),
+        unlocked: crate::home::vault_passphrase().is_some(),
+        plaintext,
+    }
+}
+
+/// Whether `passphrase` opens the home's vault. A missing or empty vault
+/// accepts any passphrase: there is nothing to fail to open, and the
+/// first seal derives the key from it.
+pub fn vault_verify(home: &Path, passphrase: &str) -> Result<(), String> {
+    let path = home.join(crate::vault::VAULT_FILE);
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let vault = crate::vault::Vault::from_json(&text)
+        .map_err(|error| format!("{} is not a vault: {error}", path.display()))?;
+    let names = vault.names();
+    if names.is_empty() {
+        return Ok(());
+    }
+    if vault.open_all(passphrase).len() == names.len() {
+        Ok(())
+    } else {
+        Err("that passphrase does not open this vault".to_string())
+    }
+}
+
+/// Unlock the vault for this process. The passphrase is held in memory
+/// by `home`, never written; a later run in this process reads the
+/// sealed values exactly as it would read a launch-time passphrase.
+pub fn vault_unlock(home: &Path, passphrase: &str) -> Result<(), String> {
+    let passphrase = passphrase.trim();
+    if passphrase.is_empty() {
+        return Err("a passphrase is required".to_string());
+    }
+    vault_verify(home, passphrase)?;
+    crate::home::unlock_vault(passphrase);
+    Ok(())
+}
+
+/// Stop using the vault for this process.
+pub fn vault_lock() {
+    crate::home::lock_vault();
+}
+
+/// Create the vault and migrate the plaintext `.env` entries into it.
+/// A vault that already holds entries is refused rather than replaced:
+/// the CLI's `vault init` starts over, and a surface must not silently
+/// orphan sealed values. The plaintext lines stay; removing one is the
+/// separate housekeeping action.
+pub fn vault_init(home: &Path) -> Result<usize, String> {
+    let passphrase = crate::home::vault_passphrase()
+        .ok_or_else(|| "the vault is locked; unlock it first".to_string())?;
+    vault_init_with(home, &passphrase)
+}
+
+/// The same creation over an explicit passphrase, so the write is
+/// testable without touching the process's unlock state.
+pub fn vault_init_with(home: &Path, passphrase: &str) -> Result<usize, String> {
+    let passphrase = passphrase.trim();
+    if passphrase.is_empty() {
+        return Err("a passphrase is required".to_string());
+    }
+    let path = home.join(crate::vault::VAULT_FILE);
+    if let Ok(text) = fs::read_to_string(&path) {
+        if let Ok(vault) = crate::vault::Vault::from_json(&text) {
+            if !vault.is_empty() {
+                return Err(format!(
+                    "a vault already exists with {} entries; seal new entries instead",
+                    vault.names().len()
+                ));
+            }
+        }
+    }
+    let mut vault = crate::vault::Vault::init();
+    let mut migrated = 0;
+    for (name, value) in crate::home::read_dotenv(home) {
+        // The vault is for credentials; a non-secret setting in `.env` is
+        // configuration and stays where it is.
+        if name.is_empty() || value.is_empty() || !is_secret_name(&name) {
+            continue;
+        }
+        vault.set(passphrase, &name, &value);
+        migrated += 1;
+    }
+    write_atomic(&path, &vault.to_json())?;
+    Ok(migrated)
+}
+
+/// Seal one plaintext `.env` credential into the vault, server-side: the
+/// value never leaves the process. The plaintext line remains until the
+/// owner drops it.
+pub fn vault_seal_env(home: &Path, name: &str) -> Result<String, String> {
+    let passphrase = crate::home::vault_passphrase()
+        .ok_or_else(|| "the vault is locked; unlock it first".to_string())?;
+    vault_seal_env_with(home, name, &passphrase)
+}
+
+/// The same seal over an explicit passphrase.
+pub fn vault_seal_env_with(home: &Path, name: &str, passphrase: &str) -> Result<String, String> {
+    let value = crate::home::read_dotenv(home)
+        .get(name)
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .ok_or_else(|| format!("`{name}` is not a plaintext credential in .env"))?;
+    set_secret_with(home, name, &value, Some(passphrase))
+}
+
+/// Drop one plaintext credential line from `.env`, after its value is
+/// sealed.
+pub fn vault_remove_env(home: &Path, name: &str) -> Result<(), String> {
+    remove_env(&home.join(".env"), name)
 }
 
 /// Seal one credential. The vault is preferred when this process holds
@@ -2444,7 +2649,7 @@ pub fn vault_state(home: &Path) -> (Vec<String>, bool, bool) {
 /// own `.env`, preserving every other line. The returned word names the
 /// store, never the value.
 pub fn set_secret(home: &Path, name: &str, value: &str) -> Result<String, String> {
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     set_secret_with(home, name, value, passphrase.as_deref())
 }
 
@@ -2486,7 +2691,7 @@ pub fn set_secret_with(
 
 /// Forget one credential, through the store that holds it.
 pub fn remove_secret(home: &Path, name: &str) -> Result<String, String> {
-    let passphrase = std::env::var("FLEET_VAULT_PASSPHRASE").ok();
+    let passphrase = crate::home::vault_passphrase();
     remove_secret_with(home, name, passphrase.as_deref())
 }
 
