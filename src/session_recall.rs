@@ -1617,7 +1617,7 @@ mod tests {
     fn row(id: &str, workspace: Option<&str>) -> crate::session::SessionSummary {
         crate::session::SessionSummary {
             id: id.to_string(),
-            model: "deepseek-chat".to_string(),
+            model: "deepseek-flash".to_string(),
             created: "2026-10-15T00:00:00Z".to_string(),
             ended: true,
             kind: None,

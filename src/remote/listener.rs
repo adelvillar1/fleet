@@ -1019,7 +1019,7 @@ mod tests {
         let (_window, code) = PairingWindow::mint(&home).expect("a window");
         let (bridge, _) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("s".to_string()),
         );
         let remote = RemoteAddress {
@@ -1137,7 +1137,7 @@ mod tests {
         let home = fresh_home();
         let (bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let bridge = Arc::new(bridge);

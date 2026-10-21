@@ -3105,7 +3105,7 @@ fn calibration_roster() -> Vec<route::Resolved> {
             "deepseek",
             "https://api.deepseek.com",
             "DEEPSEEK_API_KEY",
-            &["deepseek-chat"],
+            &["deepseek-flash"],
         ),
         candidate(
             "zai-coding-plan",

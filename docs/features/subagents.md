@@ -83,7 +83,7 @@ ordinary `Session`:
 The child's `start` record, verbatim from a real run:
 
 ```json
-{"type":"start","v":1,"model":"deepseek-chat","created":"2026-10-14T01:46:02Z","kind":"subagent","parent":"20261014T014602Z-b3be8297"}
+{"type":"start","v":1,"model":"deepseek-flash","created":"2026-10-14T01:46:02Z","kind":"subagent","parent":"20261014T014602Z-b3be8297"}
 ```
 
 An ordinary session's `start` record carries neither field, so an

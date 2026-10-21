@@ -11,7 +11,7 @@ use crate::route::{RouteDecision, Router};
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
 
 /// Default chat model.
-pub const DEFAULT_MODEL: &str = "deepseek-chat";
+pub const DEFAULT_MODEL: &str = "deepseek-flash";
 
 /// One tool call issued by the assistant. `arguments` stays the JSON text
 /// the API issued; decoding is the agent's job so decode failures are

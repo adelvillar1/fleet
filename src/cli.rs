@@ -623,7 +623,7 @@ usage:
   fleet help                     print this help
 
 options for run and chat:
-  --model <name>      model to use (default deepseek-chat)
+  --model <name>      model to use (default deepseek-flash)
   --max-turns <n>     tool-loop turn cap for run (default 25)
   --yes, -y           approve every tool call without prompting
 --compact-now       fold the context on the next turn boundary, whatever
@@ -2224,7 +2224,7 @@ mod tests {
             panic!("not a run")
         };
         assert_eq!(options.task, "fix the bug");
-        assert_eq!(options.model, "deepseek-chat");
+        assert_eq!(options.model, "deepseek-flash");
         assert_eq!(options.max_turns, DEFAULT_MAX_TURNS);
         assert!(!options.yes);
         assert_eq!(options.session, None);

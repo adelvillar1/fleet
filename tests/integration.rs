@@ -4997,7 +4997,7 @@ async fn live_api_completes_a_tool_task() {
         return;
     };
     let home = temp_home("live");
-    let mut session = Session::create(&home, "deepseek-chat").unwrap();
+    let mut session = Session::create(&home, "deepseek-flash").unwrap();
     let client = Client::new(DEFAULT_BASE_URL, key);
     let mut progress = std::io::stderr().lock();
     let mut agent = Agent::new(

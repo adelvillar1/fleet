@@ -1176,7 +1176,7 @@ mod tests {
 
         let (mut bridge, sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let door = bridge.connect();
@@ -1298,7 +1298,7 @@ mod tests {
         let home = temp_home("sessions");
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();
@@ -1332,7 +1332,7 @@ mod tests {
         let home = temp_home("pending");
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();
@@ -1452,7 +1452,7 @@ mod tests {
         let first = {
             let (mut bridge, _sources) = Bridge::detached(
                 home.clone(),
-                "deepseek-chat".to_string(),
+                "deepseek-flash".to_string(),
                 Some("session-test".to_string()),
             );
             let _door = bridge.connect();
@@ -1472,7 +1472,7 @@ mod tests {
         // A second driver over the same home reads the same conversation.
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();
@@ -1489,7 +1489,7 @@ mod tests {
         std::fs::remove_file(crate::session::session_path(&home, &first)).ok();
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();
@@ -1505,7 +1505,7 @@ mod tests {
         let other = Peer::new("webhook", "someone-else", "the CI box");
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();
@@ -1521,7 +1521,7 @@ mod tests {
         .unwrap();
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();
@@ -1539,7 +1539,7 @@ mod tests {
         let home = temp_home("refused");
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();
@@ -1570,7 +1570,7 @@ mod tests {
 
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();
@@ -1617,7 +1617,7 @@ mod tests {
 
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();

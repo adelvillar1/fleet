@@ -5040,7 +5040,7 @@ mod tests {
         write_log(
             &sessions,
             root,
-            "deepseek-chat",
+            "deepseek-flash",
             None,
             None,
             "revamp the delegation panel",
@@ -5069,7 +5069,7 @@ mod tests {
         write_log(
             &sessions,
             "20261016T090300Z-great",
-            "deepseek-chat",
+            "deepseek-flash",
             Some(crate::session::SUBAGENT_KIND),
             Some("20261016T090200Z-grandchild"),
             "a run that could not have happened",
@@ -5144,7 +5144,7 @@ mod tests {
 
         let live = snapshot.live.as_ref().expect("the live tree");
         assert_eq!(live.id, root);
-        assert_eq!(live.model, "deepseek-chat");
+        assert_eq!(live.model, "deepseek-flash");
         assert_eq!(live.depth, 0);
         // The root's log has no `end` record, so it is still running: the
         // distinction the session module itself draws.
@@ -5300,7 +5300,7 @@ mod tests {
         write_log(
             &sessions,
             "20261016T090000Z-root",
-            "deepseek-chat",
+            "deepseek-flash",
             None,
             None,
             "a run that delegated nothing",
@@ -5360,7 +5360,7 @@ mod tests {
         write_log(
             &sessions,
             past,
-            "deepseek-chat",
+            "deepseek-flash",
             None,
             None,
             "the run before this one",

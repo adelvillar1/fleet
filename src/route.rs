@@ -81,11 +81,14 @@ const JUDGE_TASK: &str = "route";
 ///
 /// Fleet's own table, because the own-home ruling forbids reading another
 /// harness's config at runtime — these values were taken once from the
-/// owner's own provider config and are declared here rather than
-/// mirrored, so a drift between the two is a declaration to update and
-/// not a second truth to reconcile. A model the roster does not declare
-/// has no window, and the compaction budget falls back to its floor,
-/// which is the behaviour every run had before windows were declared.
+/// owner's own provider config, or from the provider's own declaration
+/// where one is published (ollama-cloud answers `POST /api/show` with
+/// each model's `context_length`; the OpenAI-compatible `/v1/models`
+/// carries no such fact), and are declared here rather than mirrored,
+/// so a drift between the two is a declaration to update and not a
+/// second truth to reconcile. A model the roster does not declare has
+/// no window, and the compaction budget falls back to its floor, which
+/// is the behaviour every run had before windows were declared.
 const CONTEXT_WINDOWS: &[(&str, &str, u64)] = &[
     ("zai-coding-plan", "GLM-5.3-Flash", 1_000_000),
     ("xiaomi-mimo", "mimo-v2.6-flash", 1_000_000),
@@ -97,7 +100,34 @@ const CONTEXT_WINDOWS: &[(&str, &str, u64)] = &[
     ("stepfun", "step-3.5-flash-2603", 262_144),
     ("stepfun", "step-5-preview", 1_024_000),
     ("token-plan", "qwen3.8-flash", 1_000_000),
-    ("deepseek", crate::api::DEFAULT_MODEL, 128_000),
+    // The old name is kept by the provider so no caller has to rename,
+    // and what it serves is now the V4.1 flash generation — the window
+    // is the served model's, not the retired one's.
+    ("deepseek", crate::api::DEFAULT_MODEL, 1_000_000),
+    ("liquid", "lfm2.5-24b-a2b", 131_072),
+    ("ollama-cloud", "gemma4:31b", 262_144),
+    ("ollama-cloud", "beam", 1_048_576),
+    ("ollama-cloud", "clef:27b", 65_536),
+    ("ollama-cloud", "deepseek-v4-pro:0813", 1_048_576),
+    ("ollama-cloud", "deepseek-v4.1-flash", 1_048_576),
+    ("ollama-cloud", "deepseek-v4.1-flash:1017", 1_048_576),
+    ("ollama-cloud", "glm-5.2", 1_048_576),
+    ("ollama-cloud", "glm-5.3", 1_048_576),
+    ("ollama-cloud", "glm-5.3-flash", 1_048_576),
+    ("ollama-cloud", "gpt-oss:120b", 131_072),
+    ("ollama-cloud", "gpt-oss:20b", 131_072),
+    ("ollama-cloud", "kimi-k2.6", 262_144),
+    ("ollama-cloud", "kimi-k2.7-code", 262_144),
+    ("ollama-cloud", "kimi-k3", 1_048_576),
+    ("ollama-cloud", "minimax-m2.7", 196_608),
+    ("ollama-cloud", "minimax-m3", 512_000),
+    ("ollama-cloud", "minimax-m3.1-flash", 1_000_000),
+    ("ollama-cloud", "mistral-large-3:675b", 262_144),
+    ("ollama-cloud", "mistral-large-4", 1_048_576),
+    ("ollama-cloud", "muse-spark-open", 1_048_576),
+    ("ollama-cloud", "nemotron-3-nano:30b", 262_144),
+    ("ollama-cloud", "nemotron-3-super", 262_144),
+    ("ollama-cloud", "nemotron-3-ultra", 262_144),
 ];
 
 /// The declared context window for one model, or `None` when the roster
@@ -184,7 +214,7 @@ pub enum CandidateKind {
 /// The compiled-in defaults, in the owner's declared chain order. Every
 /// endpoint, key env-var name, and model id is sourced from the fork's
 /// `agnostic-router-kit` `roster.json` (the spec), except DeepSeek's model,
-/// which stays Fleet's own `deepseek-chat` default for consistency with the
+/// which stays Fleet's own `deepseek-flash` default for consistency with the
 /// existing client and credential resolution.
 ///
 /// The chain is the owner's standing directive, and the owner's
@@ -2761,20 +2791,14 @@ mod tests {
                 context_window(provider, model).is_none()
             })
             .collect();
-        // The vendored lane and the providers whose windows are not
-        // declared: a lane's window is the grounding provider's, not
-        // fleet's to state, and an undeclared one keeps the floor.
-        // gemma4's window is not declared by Ollama Cloud in a form
-        // verified here, so it keeps the floor rather than being given a
-        // number nobody has checked — and a vision model's compaction
-        // budget matters less than a text model's in any case.
+        // The vendored lane: a lane's window is the grounding provider's,
+        // not fleet's to state. Every HTTP model the compiled roster
+        // serves is declared — liquid from its release coverage and
+        // ollama-cloud's models from the provider's own `/api/show`
+        // declaration, read 2026-10-21.
         assert_eq!(
             undeclared,
-            vec![
-                "liquid/lfm2.5-24b-a2b".to_string(),
-                "blend1/blend1".to_string(),
-                "ollama-cloud/gemma4:31b".to_string()
-            ],
+            vec!["blend1/blend1".to_string()],
             "{undeclared:?}"
         );
     }
@@ -3568,7 +3592,7 @@ mod tests {
         ];
         let table = vec![Preference {
             workload: "standard_code",
-            candidates: vec![("deepseek", "deepseek-chat"), ("blend1", "blend1")],
+            candidates: vec![("deepseek", "deepseek-flash"), ("blend1", "blend1")],
         }];
         // The gate open: today's behaviour, byte for byte.
         let decision = fallback(
@@ -3582,7 +3606,7 @@ mod tests {
         assert_eq!(
             decision.order,
             vec![
-                ("deepseek".to_string(), "deepseek-chat".to_string()),
+                ("deepseek".to_string(), "deepseek-flash".to_string()),
                 ("blend1".to_string(), "blend1".to_string()),
             ]
         );
@@ -3603,7 +3627,7 @@ mod tests {
         let api_only = vec![resolved_of("deepseek", CandidateKind::Http)];
         let reserve_only = vec![Preference {
             workload: "standard_code",
-            candidates: vec![("deepseek", "deepseek-chat")],
+            candidates: vec![("deepseek", "deepseek-flash")],
         }];
         let decision = fallback(
             &api_only,
@@ -3642,7 +3666,7 @@ mod tests {
         };
         let (decision, _) = select(
             &resolved,
-            Some("deepseek/deepseek-chat"),
+            Some("deepseek/deepseek-flash"),
             "do a thing",
             &specs,
             &default_preferences(),
@@ -3662,7 +3686,7 @@ mod tests {
         // nothing else.
         let (decision, _) = select(
             &resolved,
-            Some("deepseek/deepseek-chat"),
+            Some("deepseek/deepseek-flash"),
             "do a thing",
             &specs,
             &default_preferences(),
@@ -3672,7 +3696,7 @@ mod tests {
         .await;
         assert_eq!(
             decision.order,
-            vec![("deepseek".to_string(), "deepseek-chat".to_string())]
+            vec![("deepseek".to_string(), "deepseek-flash".to_string())]
         );
     }
 
@@ -4259,7 +4283,7 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("model step-3.7-flash"), "{rendered}");
-        assert!(rendered.contains("model deepseek-chat"), "{rendered}");
+        assert!(rendered.contains("model deepseek-flash"), "{rendered}");
         // No plain-text table.
         assert!(!rendered.contains("| id |"), "{rendered}");
     }

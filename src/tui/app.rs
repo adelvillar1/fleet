@@ -3093,7 +3093,7 @@ mod tests {
     use super::*;
 
     fn app() -> App {
-        App::new("deepseek-chat", "session-1")
+        App::new("deepseek-flash", "session-1")
     }
 
     /// A scratch home the settings pane can read and write.
@@ -3790,7 +3790,7 @@ mod tests {
             summary: "count the files".to_string(),
         });
         // Spawned with no open card still belongs on screen.
-        let mut fresh = crate::tui::app::App::new("deepseek-chat", "session-1");
+        let mut fresh = crate::tui::app::App::new("deepseek-flash", "session-1");
         fresh.apply_ui_event(UiEvent::Subagent {
             goal: "count the files".to_string(),
             session: "child-1".to_string(),
@@ -4341,7 +4341,7 @@ mod tests {
     fn summary(id: &str) -> SessionSummary {
         SessionSummary {
             id: id.to_string(),
-            model: "deepseek-chat".to_string(),
+            model: "deepseek-flash".to_string(),
             created: "2026-10-13T00:00:00Z".to_string(),
             ended: false,
             kind: None,

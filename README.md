@@ -66,7 +66,7 @@ Create the home layout (`sessions/`, `memories/`, `skills/`, `cron/`, `proposals
 
 ### `fleet run "<task>" [options]`
 
-Run one task to completion through the tool loop. Options: `--model <name>` (default `deepseek-chat`), `--max-turns <n>` (default `25`), `--yes`/`-y` (approve every tool call without prompting), `--session <id>` (resume a saved session; see `fleet sessions`).
+Run one task to completion through the tool loop. Options: `--model <name>` (default `deepseek-flash`), `--max-turns <n>` (default `25`), `--yes`/`-y` (approve every tool call without prompting), `--session <id>` (resume a saved session; see `fleet sessions`).
 
 Each tool call prints for approval (except with `--yes`): `y` approves, `n` or Enter denies, `a` approves this and every later call in the run. Denied calls are returned to the model as `denied: …`; tool errors, unknown tools, and malformed arguments are returned as `error: …` so the model can recover.
 

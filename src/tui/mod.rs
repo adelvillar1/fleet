@@ -148,7 +148,7 @@ pub fn run(config: Config) -> Result<(), String> {
         route::calibration_config(&config.home).informs_failover,
     ));
     // The status bar names the routing mode, never the compiled-in
-    // default: `deepseek-chat` is the fallback seed and the reserve, and
+    // default: `deepseek-flash` is the fallback seed and the reserve, and
     // naming it as the model in use is the exact misdirection the route
     // surfacing exists to prevent (KI-217). The mode reads `auto`, and a
     // pin names its PROVIDER — `stepfun`, not `stepfun/step-5-preview` —

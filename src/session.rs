@@ -531,7 +531,7 @@ impl SessionSummary {
     /// extended from the end record to every reader: the start record
     /// names the NOMINAL model — on a routed run that is a pre-route
     /// default and never the model that answered (the archive rendered
-    /// `deepseek-chat` for runs step-5-preview served, which is why
+    /// `deepseek-flash` for runs step-5-preview served, which is why
     /// this method exists) — so a surface names the end record's
     /// served model, falls back to the nominal name only on an ended
     /// unrouted run (where the nominal model IS the served model), and
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn create_records_start_and_round_trips() {
         let home = temp_home("create");
-        let mut session = Session::create(&home, "deepseek-chat").unwrap();
+        let mut session = Session::create(&home, "deepseek-flash").unwrap();
         session
             .record(&Record::User {
                 content: "hello".into(),
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(records.len(), 3);
         assert!(matches!(
             &records[0],
-            Record::Start { v: 1, model, .. } if model == "deepseek-chat"
+            Record::Start { v: 1, model, .. } if model == "deepseek-flash"
         ));
         fs::remove_dir_all(&home).ok();
     }
@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn a_new_log_records_the_workspace_it_was_born_in() {
         let home = temp_home("workspace");
-        let mut session = Session::create(&home, "deepseek-chat").unwrap();
+        let mut session = Session::create(&home, "deepseek-flash").unwrap();
         session
             .record(&Record::End {
                 stop_reason: "completed".into(),
@@ -912,7 +912,7 @@ mod tests {
         fs::write(
             &path,
             concat!(
-                r#"{"type":"start","v":1,"model":"deepseek-chat","created":"2026-10-13T10:10:10Z"}"#,
+                r#"{"type":"start","v":1,"model":"deepseek-flash","created":"2026-10-13T10:10:10Z"}"#,
                 "\n",
                 r#"{"type":"end","stop_reason":"completed","turns":1}"#,
                 "\n",
@@ -941,7 +941,7 @@ mod tests {
         fs::write(
             &path,
             concat!(
-                r#"{"type":"start","v":1,"model":"deepseek-chat","created":"2026-10-13T19:49:09Z"}"#,
+                r#"{"type":"start","v":1,"model":"deepseek-flash","created":"2026-10-13T19:49:09Z"}"#,
                 "\n",
                 r#"{"type":"user","content":"read /Users/owner/Projects/demo-repo/docs/plan.md"}"#,
                 "\n",
@@ -961,7 +961,7 @@ mod tests {
     #[test]
     fn a_torn_trailing_record_is_tolerated_and_the_session_survives() {
         let home = temp_home("torn-tail");
-        let mut session = Session::create(&home, "deepseek-chat").unwrap();
+        let mut session = Session::create(&home, "deepseek-flash").unwrap();
         session
             .record(&Record::User {
                 content: "hello".into(),
@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn a_malformed_mid_log_line_still_fails_loud() {
         let home = temp_home("mid-log-garbage");
-        let mut session = Session::create(&home, "deepseek-chat").unwrap();
+        let mut session = Session::create(&home, "deepseek-flash").unwrap();
         session
             .record(&Record::User {
                 content: "hello".into(),
@@ -1020,7 +1020,7 @@ mod tests {
     #[test]
     fn a_final_line_that_parses_is_kept_even_without_its_newline() {
         let home = temp_home("untorn-final");
-        let mut session = Session::create(&home, "deepseek-chat").unwrap();
+        let mut session = Session::create(&home, "deepseek-flash").unwrap();
         session
             .record(&Record::User {
                 content: "hello".into(),
@@ -1461,7 +1461,7 @@ mod tests {
         // flight, and the nominal name only on an ended unrouted run,
         // where the nominal model IS the served model.
         let home = temp_home("serving-model");
-        let mut routed = Session::create(&home, "deepseek-chat").unwrap();
+        let mut routed = Session::create(&home, "deepseek-flash").unwrap();
         routed
             .record(&Record::User {
                 content: "the task".into(),
@@ -1474,12 +1474,12 @@ mod tests {
                 served_model: Some("step-5-preview".to_string()),
             })
             .unwrap();
-        let mut open = Session::create(&home, "deepseek-chat").unwrap();
+        let mut open = Session::create(&home, "deepseek-flash").unwrap();
         open.record(&Record::User {
             content: "still running".into(),
         })
         .unwrap();
-        let mut unrouted = Session::create(&home, "deepseek-chat").unwrap();
+        let mut unrouted = Session::create(&home, "deepseek-flash").unwrap();
         unrouted
             .record(&Record::End {
                 stop_reason: "completed".into(),
@@ -1507,7 +1507,7 @@ mod tests {
         );
         assert_eq!(
             by_id(unrouted.id()).serving_model(),
-            Some("deepseek-chat"),
+            Some("deepseek-flash"),
             "an ended unrouted run's nominal model is its served model"
         );
         fs::remove_dir_all(&home).ok();

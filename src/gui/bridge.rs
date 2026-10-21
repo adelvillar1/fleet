@@ -5424,7 +5424,7 @@ mod tests {
         std::fs::create_dir_all(&home).expect("a temp home");
         let (mut bridge, sources) = Bridge::detached(
             home,
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let door = bridge.connect();
@@ -5724,7 +5724,7 @@ mod tests {
 
         let (bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let document = bridge.channels_read().await;
@@ -5825,7 +5825,7 @@ mod tests {
                 .contains("no run is in flight"),
             "an idle face refuses a control"
         );
-        let log = Session::create(&bridge.home, "deepseek-chat").expect("the log");
+        let log = Session::create(&bridge.home, "deepseek-flash").expect("the log");
         let id = log.id().to_string();
         drop(log);
         bridge.drive(&id);
@@ -5887,17 +5887,17 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a temp home");
-        let log = Session::create(&home, "deepseek-chat").expect("the log");
+        let log = Session::create(&home, "deepseek-flash").expect("the log");
         let id = log.id().to_string();
         drop(log);
         let control = crate::home::sessions_dir(&home).join(format!("{id}.control"));
         std::fs::write(&control, "{\"stop\":true}\n").expect("the standing control");
         let (mut bridge, sources) =
-            Bridge::detached(home.clone(), "deepseek-chat".to_string(), Some(id.clone()));
+            Bridge::detached(home.clone(), "deepseek-flash".to_string(), Some(id.clone()));
         let door = bridge.connect();
         let _thread = spawn_agent(AgentInputs {
             home: home.clone(),
-            model: "deepseek-chat".to_string(),
+            model: "deepseek-flash".to_string(),
             session_id: Some(id.clone()),
             ui_tx: sources.ui,
             approval_tx: sources.seat,
@@ -5939,12 +5939,12 @@ mod tests {
         std::fs::create_dir_all(&home).expect("a temp home");
         // The launch state: no session, because none exists yet.
         let (mut bridge, sources) =
-            Bridge::detached(home.clone(), "deepseek-chat".to_string(), None);
+            Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
         assert_eq!(bridge.state("")["session"], "", "{:?}", bridge.state(""));
         let door = bridge.connect();
         let _thread = spawn_agent(AgentInputs {
             home: home.clone(),
-            model: "deepseek-chat".to_string(),
+            model: "deepseek-flash".to_string(),
             session_id: None,
             ui_tx: sources.ui,
             approval_tx: sources.seat,
@@ -6012,7 +6012,7 @@ mod tests {
         std::fs::create_dir_all(&home).expect("a temp home");
         let (bridge, _sources) = Bridge::detached(
             home,
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let attached = bridge.launch();
@@ -6378,7 +6378,7 @@ mod tests {
             std::env::temp_dir().join(format!("fleet-gui-resume-{}-{serial}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a temp home");
-        let mut log = Session::create(&home, "deepseek-chat").expect("the log");
+        let mut log = Session::create(&home, "deepseek-flash").expect("the log");
         let id = log.id().to_string();
         log.record(&session::Record::User {
             content: "carry me over".to_string(),
@@ -6386,7 +6386,7 @@ mod tests {
         .expect("the record");
         let (mut bridge, _sources) = Bridge::detached(
             home,
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let attached = bridge.launch();
@@ -6510,7 +6510,7 @@ mod tests {
 
         let (bridge, _) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let document = bridge.access().await;
@@ -6555,7 +6555,7 @@ mod tests {
         std::fs::create_dir_all(&home).expect("a temp home");
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-one".to_string()),
         );
         // The door stands open with no thread behind it, so the commands

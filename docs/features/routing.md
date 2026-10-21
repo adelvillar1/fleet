@@ -19,7 +19,7 @@ absorbed; the roster is Fleet's own now, and no key value is ever stored.
 | 2 | `xiaomi-mimo` | `https://token-plan-sgp.xiaomimimo.com/v1` | `XIAOMI_MIMO_API_KEY` | `mimo-v2.6-flash` |
 | 3 | `stepfun` | `https://api.stepfun.ai/step_plan/v1` | `STEPFUN_API_KEY` | `step-5-preview` |
 | 4 | `token-plan` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `TOKEN_PLAN_API_KEY` | `qwen3.8-flash` |
-| 5 | `deepseek` (reserve) | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| 5 | `deepseek` (reserve) | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek-flash` |
 | 6 | `liquid` | `https://api.liquid.ai/openai/v1` | `LIQUID_API_KEY` | `lfm2.5-24b-a2b` |
 | 7 | `blend1` (lane) | `http://127.0.0.1:8420` | `BLEND1_BEARER_TOKEN` (optional) | `blend1` |
 

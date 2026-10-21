@@ -1809,7 +1809,7 @@ mod tests {
             let mut start = serde_json::json!({
                 "type": "start",
                 "v": crate::session::SESSION_FORMAT_VERSION,
-                "model": "deepseek-chat",
+                "model": "deepseek-flash",
                 "created": "2026-10-16T09:00:00Z",
             });
             if let Some(kind) = kind {
@@ -1924,7 +1924,7 @@ mod tests {
     async fn launch_over(home: std::path::PathBuf, corpus: std::path::PathBuf) -> (String, u16) {
         let (mut bridge, _sources) = Bridge::detached(
             home,
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         bridge.point_at_memories(corpus);
@@ -1956,7 +1956,7 @@ mod tests {
     async fn launch_at(home: std::path::PathBuf) -> (String, u16) {
         let (bridge, _sources) = Bridge::detached(
             home,
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -2251,7 +2251,7 @@ mod tests {
         std::fs::create_dir_all(&home).expect("a temp home");
         let (bridge, _sources) = Bridge::detached(
             home,
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         Arc::new(bridge)
@@ -2308,7 +2308,7 @@ mod tests {
         assert!(state.starts_with("HTTP/1.1 200"), "{state}");
         assert!(state.contains("application/json"), "{state}");
         assert!(state.contains("\"session\":\"session-test\""), "{state}");
-        assert!(state.contains("\"model\":\"deepseek-chat\""), "{state}");
+        assert!(state.contains("\"model\":\"deepseek-flash\""), "{state}");
         assert!(state.contains("\"budget\""), "{state}");
         assert!(state.contains("\"running\":false"), "{state}");
         assert!(state.contains("\"events\":[]"), "{state}");
@@ -2334,11 +2334,11 @@ mod tests {
 
         // A face with a run in flight and a log beside it.
         let home = fresh_home();
-        let log = crate::session::Session::create(&home, "deepseek-chat").expect("the log");
+        let log = crate::session::Session::create(&home, "deepseek-flash").expect("the log");
         let id = log.id().to_string();
         drop(log);
         let (mut bridge, _sources) =
-            Bridge::detached(home.clone(), "deepseek-chat".to_string(), Some(id.clone()));
+            Bridge::detached(home.clone(), "deepseek-flash".to_string(), Some(id.clone()));
         let _door = bridge.connect();
         bridge.run(&id, "go").expect("the run is accepted");
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -3093,7 +3093,7 @@ mod tests {
                     // record names the model that actually served
                     // (KI-073). The archive must show the latter — this
                     // is KI-255's exact scenario.
-                    start("deepseek-chat"),
+                    start("deepseek-flash"),
                     serde_json::json!({"type": "user", "content": "the older conversation"}),
                     serde_json::json!({"type": "end", "stop_reason": "done", "turns": 1, "served_model": "step-5-preview"}),
                 ],
@@ -3125,7 +3125,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn the_archive_lists_the_logs_newest_first_and_names_the_anchor() {
         let (home, ids) = archive_home();
-        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), Some(ids[0].clone()));
+        let (bridge, _) =
+            Bridge::detached(home, "deepseek-flash".to_string(), Some(ids[0].clone()));
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
             .expect("bind");
@@ -3163,7 +3164,7 @@ mod tests {
             "the open log says so: {reply}"
         );
         // KI-255: the row names the model that served, never the start
-        // record's pre-route stamp — the archive read `deepseek-chat`
+        // record's pre-route stamp — the archive read `deepseek-flash`
         // off every row for runs step-5-preview served. An open run
         // names nothing yet.
         assert!(
@@ -3175,7 +3176,7 @@ mod tests {
             "the open row names no model: {reply}"
         );
         assert!(
-            !reply.contains("deepseek-chat"),
+            !reply.contains("deepseek-flash"),
             "the nominal stamp never renders: {reply}"
         );
     }
@@ -3192,7 +3193,7 @@ mod tests {
                 serde_json::json!({
                     "type": "start",
                     "v": crate::session::SESSION_FORMAT_VERSION,
-                    "model": "deepseek-chat",
+                    "model": "deepseek-flash",
                     "created": "2026-10-17T09:10:00Z",
                 }),
                 serde_json::json!({"type": "user", "content": "hello"}),
@@ -3210,7 +3211,7 @@ mod tests {
         .expect("the session log");
         let (bridge, _) = Bridge::detached(
             home,
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -3258,7 +3259,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_reseeds_the_face_and_names_its_refusals() {
         let (home, ids) = archive_home();
-        let (bridge, _) = Bridge::detached(home, "deepseek-chat".to_string(), Some(ids[0].clone()));
+        let (bridge, _) =
+            Bridge::detached(home, "deepseek-flash".to_string(), Some(ids[0].clone()));
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
             .await
             .expect("bind");
@@ -3428,7 +3430,7 @@ mod tests {
         let home = tower_home();
         let (bridge, _) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -3549,7 +3551,7 @@ mod tests {
         let home = settings_home();
         let (bridge, _) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -3606,7 +3608,7 @@ mod tests {
         let home = settings_home();
         let (bridge, _) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
@@ -3885,7 +3887,7 @@ mod tests {
                 serde_json::json!({
                     "type": "start",
                     "v": crate::session::SESSION_FORMAT_VERSION,
-                    "model": "deepseek-chat",
+                    "model": "deepseek-flash",
                     "created": "2026-10-18T09:00:00Z",
                 }),
                 serde_json::json!({"type": "user", "content": "do the work"}),
@@ -3905,7 +3907,7 @@ mod tests {
         // other test in this binary reads.
         let (mut bridge, _) = Bridge::detached(
             home,
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         bridge.point_at_cwd(tree);
@@ -4065,7 +4067,7 @@ mod tests {
         .expect("the day's rows");
         let (bridge, _) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))

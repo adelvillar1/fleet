@@ -425,7 +425,7 @@ mod tests {
 
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();
@@ -500,7 +500,7 @@ mod tests {
 
         let (mut bridge, _sources) = Bridge::detached(
             home.clone(),
-            "deepseek-chat".to_string(),
+            "deepseek-flash".to_string(),
             Some("session-test".to_string()),
         );
         let _door = bridge.connect();

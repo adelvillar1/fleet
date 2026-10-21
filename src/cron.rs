@@ -3573,7 +3573,7 @@ mod tests {
         let record = serde_json::json!({
             "type": "start",
             "v": 1,
-            "model": "deepseek-chat",
+            "model": "deepseek-flash",
             "created": "2026-10-14T12:00:00Z",
             "kind": session::SCHEDULED_KIND,
         });
@@ -3640,7 +3640,7 @@ mod tests {
         let sessions = crate::home::sessions_dir(&home);
         fs::write(
             sessions.join("20261014T120200Z-ddd444.jsonl"),
-            "{\"type\":\"start\",\"v\":1,\"model\":\"deepseek-chat\",\"created\":\"c\"}\n\
+            "{\"type\":\"start\",\"v\":1,\"model\":\"deepseek-flash\",\"created\":\"c\"}\n\
              {\"type\":\"user\",\"content\":\"a task the owner typed\"}\n",
         )
         .unwrap();
@@ -3687,7 +3687,7 @@ mod tests {
         let start = serde_json::json!({
             "type": "start",
             "v": 1,
-            "model": "deepseek-chat",
+            "model": "deepseek-flash",
             "created": "c",
         });
         let user = serde_json::json!({"type": "user", "content": framed});

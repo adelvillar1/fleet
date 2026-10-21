@@ -1791,7 +1791,7 @@ mod tests {
         assert!(total < 20_000, "all declarations total {total} bytes");
         // Against the budgets: ~1020 tokens is 0.1% of step-5-preview's
         // 1M window and ~1.1% of the roster's smallest budget
-        // (deepseek-chat's 128k window, edge-held at 96k). The
+        // (deepseek-flash's 128k window, edge-held at 96k). The
         // measurement says the cost is real but not the dominant one,
         // which is the answer the row asked for.
         let cost = (bytes / 4) as f64;

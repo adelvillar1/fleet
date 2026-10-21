@@ -2646,7 +2646,7 @@ mod tests {
         let home = std::env::temp_dir().join(format!("fleet-tui-render-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        let mut app = App::new("deepseek-chat", "session-1");
+        let mut app = App::new("deepseek-flash", "session-1");
         app.open_settings(home.clone());
         let backend = TestBackend::new(100, 40);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -2744,7 +2744,7 @@ mod tests {
     #[test]
     fn the_settings_pane_renders_the_lists_as_cards_and_never_a_table() {
         let home = list_home("cards");
-        let mut app = App::new("deepseek-chat", "session-1");
+        let mut app = App::new("deepseek-flash", "session-1");
         app.open_settings(home.clone());
         let interior = settings_interior(&draw(&app, 120, 60));
         // The scalars are still there, beside the lists.
@@ -2798,7 +2798,7 @@ mod tests {
             std::env::temp_dir().join(format!("fleet-tui-empty-lists-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        let mut app = App::new("deepseek-chat", "session-1");
+        let mut app = App::new("deepseek-flash", "session-1");
         app.open_settings(home.clone());
         let interior = settings_interior(&draw(&app, 120, 60));
         assert!(interior.contains("Providers"), "{interior}");
@@ -2820,7 +2820,7 @@ mod tests {
     #[test]
     fn the_destructive_confirmation_names_what_it_will_remove() {
         let home = list_home("confirm");
-        let mut app = App::new("deepseek-chat", "session-1");
+        let mut app = App::new("deepseek-flash", "session-1");
         app.open_settings(home.clone());
         let row = app
             .settings_rows()
@@ -2880,7 +2880,7 @@ mod tests {
     }
 
     fn fresh() -> App {
-        App::new("deepseek-chat", "20261013T101010Z-abcdef")
+        App::new("deepseek-flash", "20261013T101010Z-abcdef")
     }
 
     #[test]
@@ -2902,7 +2902,7 @@ mod tests {
         let chat = draw(&app, 80, 24);
         assert!(chat.contains("conversation"), "{chat}");
         assert!(chat.contains("board"), "{chat}");
-        assert!(chat.contains("deepseek-chat"), "{chat}");
+        assert!(chat.contains("deepseek-flash"), "{chat}");
         assert!(chat.contains("thinking out loud"), "{chat}");
         assert!(chat.contains("do the thing"), "{chat}");
         assert!(chat.contains("ls -la"), "{chat}");
@@ -2912,12 +2912,12 @@ mod tests {
         // The bar names the routing mode, never the default model (KI-217):
         // at launch the mode is the home's own state — `auto`, or the
         // owner's pin naming its PROVIDER — and the compiled-in
-        // `deepseek-chat` never renders.
+        // `deepseek-flash` never renders.
         let mut routed_launch = fresh();
         routed_launch.status.routing = Some("auto".to_string());
         let chat = draw(&routed_launch, 80, 24);
         assert!(chat.contains("route auto"), "{chat}");
-        assert!(!chat.contains("deepseek-chat"), "{chat}");
+        assert!(!chat.contains("deepseek-flash"), "{chat}");
 
         // A pin names the provider (`stepfun`, not `stepfun/step-5-preview`):
         // the model is the router's business, the provider is the owner's.
@@ -2925,7 +2925,7 @@ mod tests {
         pinned_launch.status.routing = Some("pinned \u{b7} stepfun".to_string());
         let chat = draw(&pinned_launch, 80, 24);
         assert!(chat.contains("pinned \u{b7} stepfun"), "{chat}");
-        assert!(!chat.contains("deepseek-chat"), "{chat}");
+        assert!(!chat.contains("deepseek-flash"), "{chat}");
 
         // After a run reports, the route event refines the label — a pinned
         // run names the provider that served, an auto run stays `auto`.
@@ -2945,7 +2945,7 @@ mod tests {
         // The picker overlay.
         app.open_sessions(vec![SessionSummary {
             id: "20261013T101010Z-abcdef".to_string(),
-            model: "deepseek-chat".to_string(),
+            model: "deepseek-flash".to_string(),
             created: "2026-10-13T10:10:10Z".to_string(),
             ended: true,
             kind: None,
@@ -2969,7 +2969,7 @@ mod tests {
         let mut children = fresh();
         children.open_sessions(vec![SessionSummary {
             id: "20261013T111111Z-fedcba".to_string(),
-            model: "deepseek-chat".to_string(),
+            model: "deepseek-flash".to_string(),
             created: "2026-10-13T11:11:11Z".to_string(),
             ended: true,
             kind: Some(crate::session::SUBAGENT_KIND.to_string()),
@@ -2989,7 +2989,7 @@ mod tests {
         let mut folded = fresh();
         folded.open_sessions(vec![SessionSummary {
             id: "20261013T121212Z-cabbag".to_string(),
-            model: "deepseek-chat".to_string(),
+            model: "deepseek-flash".to_string(),
             created: "2026-10-13T12:12:12Z".to_string(),
             ended: true,
             kind: None,
@@ -3888,7 +3888,7 @@ mod tests {
             (0..40)
                 .map(|index| crate::session::SessionSummary {
                     id: format!("20261013T1010{index:02}Z-{index:06x}"),
-                    model: "deepseek-chat".to_string(),
+                    model: "deepseek-flash".to_string(),
                     created: "2026-10-13T10:10:10Z".to_string(),
                     ended: index % 3 == 0,
                     kind: None,
@@ -4395,7 +4395,7 @@ mod tests {
         // has no session id to show. The bar says so with a dash rather
         // than naming an id that does not exist, and the id the first run
         // creates is what appears.
-        let mut app = App::new("deepseek-chat", "");
+        let mut app = App::new("deepseek-flash", "");
         let bar = draw(&app, 120, 24);
         assert!(
             bar.contains("session \u{2014}"),
