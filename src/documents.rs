@@ -410,6 +410,10 @@ mod tests {
             js.contains("providers that serve them"),
             "app.js does not name the recipients"
         );
+        assert!(
+            js.contains("escalated to Perception") && html.contains("escalated to Perception"),
+            "the empty state does not name the Perception recipient"
+        );
     }
 
     #[test]
