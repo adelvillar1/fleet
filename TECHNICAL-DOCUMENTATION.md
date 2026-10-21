@@ -357,6 +357,25 @@ The scripted mock API the integration suite drives as a child process.
 The scripted fake MCP stdio server for deterministic paths the real lanes
 cannot reproduce.
 
+### Documents and Perception
+
+`src/documents.rs` decides the local route by extension and runs
+`services/documents/extract.py` under a 120-second bound. Office files are
+read as their OOXML parts, legacy binaries convert through LibreOffice
+`--safe-mode`, PDFs through `pdftotext`, and a PDF with no text layer is
+the escalation case. Macros are never executed and embedded objects are
+never opened.
+
+`src/perception.rs` is the hosted client: an upload grant, a multipart
+upload, `POST /v1/documents/parse`, and `GET /v1/documents/jobs/{id}`
+polling to a terminal status (`queued`, `running`, then `succeeded`,
+`failed` or `cancelled`), with results cached by FNV-1a content hash under
+`<FLEET_HOME>/perception-cache`. The key is `NACE_API_KEY`, falling back
+to `DREX_API_KEY`, read through the vault/dotenv readers; the API is
+server-side only (the `/v1` routes carry no CORS header). The attach
+route is `POST /api/attach`; the browser never sees the key or the upload
+token.
+
 ## Known documentation gaps
 
 | Area | Status | Likely source |

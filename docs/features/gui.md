@@ -87,7 +87,7 @@ uses its own three-step loop (plan, review, build).
   end the next run in the same session.
 
 The topbar carries a compact process chip on every panel, so a run is
-visible while the owner is reading the router or the tower. The dock is
+visible while the owner is reading the router or a board. The dock is
 collapsible from the topbar; when it is closed, the same state becomes
 one line above the composer.
 
@@ -173,7 +173,7 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   filter, and the chosen chip is the only one pressed.
 - **Chart segments filter.** A router hour column narrows the route
   rows to that hour; a donut segment (or its legend row) narrows them to
-  that model; a tower activity day narrows the report feed to that day.
+  that model.
   Each leaves a removable chip above the narrowed list.
 - **Route rows** open their walk and offer a sys1 second opinion;
   chain candidates copy the model id.
@@ -240,8 +240,7 @@ a maze. The rail's collapsed state is remembered across launches.
 | `#/skills` | the library with its loaded/skipped split, the proposals, the curation candidates |
 | `#/sessions` | the archive newest-first; a row opens its replay, and the replay's resume re-anchors the face to that log. A row also names the project it was born in and, when a channel started it, `via <channel> · <peer>`; `via a channel` is a filter chip |
 | `#/calibration` | the day's stream rows by op and the judged quality's fit cells, the same computation `fleet calib --calibration` rides |
-| `#/tower` | the control tower — the one console surface: the KPI strip, the hero activity chart, the harness donut, the ranked projects, the claims against the evidence, the report feed |
-| `#/second-brain` | the derived state, quieter: the gates, the inbox, the loops, the harness runs, the maturity week grid |
+| `#/second-brain` | the project atlas: the attention queue, the six-week pulse, the commit ribbon, the report feed with the harness trust lines, and the method band (gates, loops, harness, maturity) |
 | `#/bots` | the channel control plane: the service and its heartbeat, the write-only Telegram token, the paired devices with revoke, who can reach the fleet with an editable capability, the peers waiting at the door, the pair form with its callback and one-time token reveal, and what they have done. The rail entry carries a count only when something is waiting |
 | `#/settings` | every configurable surface: the router (spend guard, tiers with resolved-now, thresholds, pin), the providers as field editors, the four lane cards, the roles editor, the vault, the spend caps, the remaining knobs, the rules, the cron jobs, the identity slot, and the env names |
 
@@ -385,6 +384,40 @@ all** — access is granted by choosing a folder and by nothing else.
 - **The other surfaces are unchanged.** The CLI, the TUI, and headless
   runs are launched from a directory; that launch is the owner's
   explicit choice, so they keep the unrestricted root they always had.
+
+## Documents
+
+The composer's Document control attaches a document from the workspace,
+not from the desktop: the picker walks `/api/tree` one level at a time,
+the same containment the working folder uses.
+
+**Local first.** A clean `.docx`, `.xlsx`, `.pptx`, `.csv`, `.html` or
+text file is read on this machine by the documents lane
+(`services/documents/extract.py`): Office formats as their OOXML parts,
+legacy binaries through LibreOffice `--safe-mode`, PDFs through
+`pdftotext`, with MarkItDown used when its package is installed. No key,
+no upload, no bill. A PDF whose text layer is empty is the escalation
+case, not an error.
+
+**Perception second.** A scan, an image, an email, audio/video, or a local
+failure is read by Nace Perception's Parse (`POST /v1/documents/parse`).
+The first request answers with what would be sent and why; the document
+leaves the machine only when the owner presses "send to Nace". The key is
+`NACE_API_KEY`, falling back to `DREX_API_KEY`, read from the vault or the
+home's env files and never sent to the browser. The parse is cached by
+content hash under `<FLEET_HOME>/perception-cache`, so attaching the same
+file twice makes one billed call.
+
+**The record.** The chip and the framed turn name the parser, the pages,
+the units where Perception billed, the job id, and a truncated preview's
+`retained X of Y`. The turn, and the parsed text, go to the model
+provider that serves it — the same egress every turn has; a document that
+went through Perception names that second recipient too.
+
+**Bounds.** Five attachments a turn, 64 MB a document, a 120-second local
+extraction and a 300-second job budget. A missing lane or tool is a named
+refusal; macros are never executed and embedded objects are never opened.
+The lane's tools and licences are listed in `services/documents/README.md`.
 
 ## The reading rules
 

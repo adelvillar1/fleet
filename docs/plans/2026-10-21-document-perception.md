@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-21
 updated: 2026-10-21
 slug: document-perception
@@ -38,27 +38,27 @@ High-level steps:
 
 ## Use cases
 
-- [ ] A: The owner can attach a PDF or Word document and the agent reads its text without a manual conversion.
-- [ ] B: A clean Office or text file is extracted locally and costs nothing; only the hard documents — scans, complex layouts, media — go to the vendor.
-- [ ] C: No key, an unsupported type, a credit refusal, a corrupt file, or a timeout is named with the vendor's code and a next step, never a silent empty attachment.
-- [ ] D: Before a document is sent, the owner sees that it goes to Perception as well as to the model provider, and after the parse the conversation records what was sent and what it cost.
+- [x] A: The owner can attach a PDF or Word document and the agent reads its text without a manual conversion.
+- [x] B: A clean Office or text file is extracted locally and costs nothing; only the hard documents — scans, complex layouts, media — go to the vendor.
+- [x] C: No key, an unsupported type, a credit refusal, a corrupt file, or a timeout is named with the vendor's code and a next step, never a silent empty attachment.
+- [x] D: Before a document is sent, the owner sees that it goes to Perception as well as to the model provider, and after the parse the conversation records what was sent and what it cost.
 
 ## Acceptance criteria
 
 These are the contract. Each one is a verifiable assertion. The work is "done" when every box is checked.
 
-- [ ] C0: A text attachment takes the existing local path: no Perception call, no key required, and the framed task is byte-identical to today.
-- [ ] C1: With `NACE_API_KEY` present, attaching a PDF under the workspace issues an upload grant, uploads the file, starts `POST /v1/documents/parse` with `output.formats` `["markdown"]`, and frames the returned Markdown as the attachment.
-- [ ] C2: A `202` from Parse is polled by job id until a terminal result or a named timeout; a timeout produces a refusal naming the job id, never an empty attachment.
-- [ ] C3: When Parse returns a preview whose `disclosures` contains `content_truncated` with `original_size` and `retained_size`, the attachment carries the retained Markdown and both the chip and the transcript record say `truncated · retained X of Y`; a scripted response with that disclosure asserts both strings.
-- [ ] C4: The same file content attached twice makes one billed call: the cache key is the content hash and the second attach returns the cached Markdown and job id.
-- [ ] C5: A missing key, `unsupported_file_type`, `corrupt_file`, a `409`, and a failed job are each refused with the vendor's code and a named next step.
-- [ ] C6: The attach UI offers a document picker for the workspace's binary formats, states before sending which parser will handle the file (`local`, or `Nace` and what it receives), and the transcript records the parser, file name, pages, units where billed, and job id where one exists.
-- [ ] C7: The key is read from `NACE_API_KEY`, falling back to `DREX_API_KEY`, through the vault/dotenv readers; no surface prints it, and a keyless home keeps text-only attachments.
-- [ ] C8: The empty state and the feature doc state the recipients truthfully — the archive stays on the machine, every turn goes to the providers that serve it (the serving model and any lane providers it calls), and a document escalated to Perception also goes to Nace — and a grep test pins the absence of the unqualified "nothing leaves this machine" sentence.
-- [ ] C9: A clean `.docx`, `.xlsx`, `.pptx`, `.csv` or `.html` file is extracted by the local documents lane with no Nace request, and the attachment is framed from its Markdown; a scripted no-network test asserts the vendor is never called.
-- [ ] C10: A scanned PDF, an image, an email/audio/video file, or a local extraction that returns empty or an error escalates to Perception; when the key is absent it is refused with a named reason, and the attachment record says which path ran and why.
-- [ ] C11: The local extractor runs under a bounded timeout and size, never executes macros or embedded objects, and lists its tools and licenses in the feature doc; a missing `soffice`, `pdftotext` or `tesseract` is a named refusal, not a crash.
+- [x] C0: A text attachment takes the existing local path: no Perception call, no key required, and the framed task is byte-identical to today.
+- [x] C1: With `NACE_API_KEY` present, attaching a PDF under the workspace issues an upload grant, uploads the file, starts `POST /v1/documents/parse` with `output.formats` `["markdown"]`, and frames the returned Markdown as the attachment.
+- [x] C2: A `202` from Parse is polled by job id until a terminal result or a named timeout; a timeout produces a refusal naming the job id, never an empty attachment.
+- [x] C3: When Parse returns a preview whose `disclosures` contains `content_truncated` with `original_size` and `retained_size`, the attachment carries the retained Markdown and both the chip and the transcript record say `truncated · retained X of Y`; a scripted response with that disclosure asserts both strings.
+- [x] C4: The same file content attached twice makes one billed call: the cache key is the content hash and the second attach returns the cached Markdown and job id.
+- [x] C5: A missing key, `unsupported_file_type`, `corrupt_file`, a `409`, and a failed job are each refused with the vendor's code and a named next step.
+- [x] C6: The attach UI offers a document picker for the workspace's binary formats, states before sending which parser will handle the file (`local`, or `Nace` and what it receives), and the transcript records the parser, file name, pages, units where billed, and job id where one exists.
+- [x] C7: The key is read from `NACE_API_KEY`, falling back to `DREX_API_KEY`, through the vault/dotenv readers; no surface prints it, and a keyless home keeps text-only attachments.
+- [x] C8: The empty state and the feature doc state the recipients truthfully — the archive stays on the machine, every turn goes to the providers that serve it (the serving model and any lane providers it calls), and a document escalated to Perception also goes to Nace — and a grep test pins the absence of the unqualified "nothing leaves this machine" sentence.
+- [x] C9: A clean `.docx`, `.xlsx`, `.pptx`, `.csv` or `.html` file is extracted by the local documents lane with no Nace request, and the attachment is framed from its Markdown; a scripted no-network test asserts the vendor is never called.
+- [x] C10: A scanned PDF, an image, an email/audio/video file, or a local extraction that returns empty or an error escalates to Perception; when the key is absent it is refused with a named reason, and the attachment record says which path ran and why.
+- [x] C11: The local extractor runs under a bounded timeout and size, never executes macros or embedded objects, and lists its tools and licenses in the feature doc; a missing `soffice`, `pdftotext` or `tesseract` is a named refusal, not a crash.
 
 ## Files to be touched
 
@@ -156,3 +156,15 @@ Live: the picker lists the workspace's PDFs; the disclosure is visible before se
 - Perception shares the account key and billing credit with `/v1/systemone`, which is the provider fleet already carries; `DREX_API_KEY` is the fallback name.
 - Already installed here: `pandoc`, `pdftotext`, LibreOffice (`soffice`) and `tesseract`; MarkItDown/Docling and the Office Python libraries are not, so the lane owns its venv.
 - On this machine the only local models are embedding and lane infrastructure: EmbeddingGemma-2 on `127.0.0.1:8901` for embeddings, sem1's local sentence-transformer worker, Kokoro for speech, and the browser lane. The lanes are local processes that abstract providers rather than local-only: sys1 fans out to Fastino, TypeSafe, Drex, Supersonic, Liquid, CLM, OpenJev, Kev, Together and Laya; sdm1 to TabPFN; gen1 to DashScope and StepFun; blend1 on 8420 is a lane surface, not a chat model. Every chat turn is therefore hosted, and a turn can reach several providers through its lanes, so the attach disclosure names the serving model and any lane providers the turn calls.
+
+## Evidence
+
+- `cargo test --lib` — 1,346 passed. The new modules: `documents::tests`
+  (8: fixtures for docx/pptx/xlsx/csv/html, text and blank PDFs, macro
+  reading, oversize, missing lane, the copy pin) and `perception::tests`
+  (8: grant → upload → parse → poll, cache, truncation, timeout, 422,
+  409, failed job, key fallback), plus the bridge's escalation test and
+  the server's attach-route tests.
+- Live: the document picker attached `simple.docx` as `local:docx`, and
+  `pixel.png` answered with the consent question and refused the keyless
+  send by name.

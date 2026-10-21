@@ -382,8 +382,27 @@
             <button type="button" id="folder-reset">remove the folder</button>
           </div>
         </div>
+        <!-- The document picker: the workspace tree, files that a parser
+             owns. A local parser runs on this machine; a scan or a media
+             file asks before Perception receives it. -->
+        <div class="folder-pop doc-pop" id="doc-pop" role="dialog" aria-modal="false"
+             aria-label="attach a document from the workspace" hidden>
+          <div class="folder-pop-head">
+            <span class="folder-pop-label">documents</span>
+            <code id="doc-pop-path"></code>
+          </div>
+          <div class="folder-pop-list" id="doc-pop-list"></div>
+          <p class="doc-note" id="doc-pop-note" hidden></p>
+          <div class="folder-pop-actions">
+            <button type="button" id="doc-consent-send" hidden>send to Nace</button>
+            <button type="button" id="doc-consent-cancel" hidden>cancel</button>
+          </div>
+        </div>
         <footer class="composer-foot">
           <span class="composer-hint" id="hint">Enter sends &middot; Shift+Enter is a newline</span>
+          <button type="button" class="send send-doc" id="doc-open"
+                  aria-haspopup="dialog" aria-expanded="false" aria-controls="doc-pop"
+                  title="attach a document from the workspace">Document</button>
           <button type="button" class="send send-attach" id="attach"
                   aria-label="attach text files">Attach</button>
           <input type="file" id="attach-input" multiple hidden>

@@ -49,8 +49,8 @@ aggregated here; when behavior changes, follow that file.
 
 `fleet gui [--port N] [--no-open] [--host H]` serves the app's own
 interface on loopback: the conversation first, the intelligence
-surfaces one flat level beneath four destinations, and the tower as the
-one console. The face is light-first (warm paper by default) and the
+surfaces one flat level beneath four destinations, and the second brain
+as the project landscape's atlas. The face is light-first (warm paper by default) and the
 address alone opens it; a non-loopback host is refused by name. A run
 can be stopped or steered from its process card, its delegation branches
 open beside the live conversation, and every panel's filters, chart

@@ -1749,6 +1749,9 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .folder-entry:hover { background: var(--dsw-alias-accent-wash); }
 .folder-entry:disabled { color: var(--dsw-alias-ink-tertiary); cursor: default; }
 .folder-empty { padding: 4px 6px; font-size: 10px; color: var(--dsw-alias-ink-tertiary); }
+.folder-entry.file { color: var(--dsw-alias-ink); }
+.doc-note { margin: 6px 2px; color: var(--dsw-alias-ink-secondary); font-size: 10.5px; line-height: 1.5; }
+.send-doc { color: var(--dsw-alias-ink-secondary); }
 .folder-pop-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .folder-pop-actions button {
   padding: 4px 8px;

@@ -297,6 +297,13 @@
     runProvider: document.getElementById('run-provider'),
     runRouteNote: document.getElementById('run-route-note'),
     runFolder: document.getElementById('run-folder'),
+    docOpen: document.getElementById('doc-open'),
+    docPop: document.getElementById('doc-pop'),
+    docPopPath: document.getElementById('doc-pop-path'),
+    docPopList: document.getElementById('doc-pop-list'),
+    docPopNote: document.getElementById('doc-pop-note'),
+    docConsentSend: document.getElementById('doc-consent-send'),
+    docConsentCancel: document.getElementById('doc-consent-cancel'),
     folderPop: document.getElementById('folder-pop'),
     folderPopPath: document.getElementById('folder-pop-path'),
     folderPopList: document.getElementById('folder-pop-list'),
@@ -4196,7 +4203,16 @@
         mode: face.permissions,
         pin: face.providerPin || null,
         attachments: face.attachments.map(function (file) {
-          return { name: file.name, text: file.text };
+          return {
+          name: file.name,
+          text: file.text,
+          parser: file.parser || '',
+          pages: file.pages == null ? null : file.pages,
+          units: file.units == null ? null : file.units,
+          job_id: file.job_id || '',
+          reason: file.reason || '',
+          truncated: file.truncated || null
+        };
         })
       });
     }).then(function (reply) {
@@ -5107,6 +5123,154 @@
   });
   paintFolder();
 
+  // The document picker: the workspace tree, files a parser owns, one
+  // level at a time. A clean Office file is read locally; a scan or a
+  // media file answers with what would be sent and asks first.
+  var docBrowse = { rel: '' };
+  var docPending = null;
+  var DOC_RE = /\.(docx?|docm|pptx?|pptm|xlsx?|xlsm|csv|html?|pdf|png|jpe?g|tiff?|webp|bmp|eml|msg|oft|mp3|wav|m4a|flac|mpga|oga|ogg|mp4|mov|avi|mkv|vsdx?|vsd|parquet)$/i;
+
+  function docConsent(open) {
+    if (!el.docConsentSend) return;
+    el.docConsentSend.hidden = !open;
+    el.docConsentCancel.hidden = !open;
+  }
+
+  function toggleDocPop(open) {
+    if (!el.docPop) return;
+    var showing = open === undefined ? el.docPop.hidden : open;
+    el.docPop.hidden = !showing;
+    el.docOpen.setAttribute('aria-expanded', showing ? 'true' : 'false');
+    if (showing) {
+      docConsent(false);
+      el.docPopNote.hidden = true;
+      browseDocs(face.folder ? (face.folder.rel || '') : '');
+    }
+  }
+
+  function docPath(rel, name) {
+    return rel ? rel + '/' + name : name;
+  }
+
+  function browseDocs(rel) {
+    docBrowse.rel = rel || '';
+    el.docPopPath.textContent = docBrowse.rel || 'the workspace root';
+    fetch('/api/tree?path=' + encodeURIComponent(docBrowse.rel), {
+      headers: { accept: 'application/json' }
+    }).then(function (reply) {
+      return reply.json();
+    }).then(function (doc) {
+      var list = el.docPopList;
+      list.textContent = '';
+      var up = node('button', 'folder-entry', '\u2191 up');
+      up.type = 'button';
+      up.disabled = !docBrowse.rel;
+      up.addEventListener('click', function () {
+        var parts = docBrowse.rel.split('/').filter(Boolean);
+        parts.pop();
+        browseDocs(parts.join('/'));
+      });
+      list.appendChild(up);
+      if (doc.refused) {
+        list.appendChild(node('span', 'folder-empty', (doc.refused || []).join('; ')));
+        return;
+      }
+      var entries = doc.entries || [];
+      entries.filter(function (entry) { return entry.kind === 'dir'; }).forEach(function (entry) {
+        var button = node('button', 'folder-entry', entry.name + '/');
+        button.type = 'button';
+        button.addEventListener('click', function () { browseDocs(docPath(docBrowse.rel, entry.name)); });
+        list.appendChild(button);
+      });
+      entries.filter(function (entry) {
+        return entry.kind === 'file' && DOC_RE.test(entry.name);
+      }).forEach(function (entry) {
+        var button = node('button', 'folder-entry file', entry.name);
+        button.type = 'button';
+        button.title = 'attach ' + entry.name;
+        button.addEventListener('click', function () {
+          attachDocument(docPath(docBrowse.rel, entry.name));
+        });
+        list.appendChild(button);
+      });
+      if (!entries.some(function (entry) {
+        return entry.kind === 'dir' || (entry.kind === 'file' && DOC_RE.test(entry.name));
+      })) {
+        list.appendChild(node('span', 'folder-empty', 'no documents or subfolders here'));
+      }
+    }).catch(function () {
+      notice('the workspace could not be read', 'the face did not answer');
+    });
+  }
+
+  function attachDocument(rel, consent) {
+    if (face.attachments.length >= 5) {
+      notice('at most five attachments', 'remove one before adding another');
+      return;
+    }
+    docConsent(false);
+    el.docPopNote.hidden = false;
+    el.docPopNote.textContent = consent
+      ? 'reading with Nace perception\u2026'
+      : 'reading the document\u2026';
+    post('/api/attach', { path: rel, consent: !!consent }).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the document was refused',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+        el.docPopNote.hidden = true;
+        return;
+      }
+      var doc = reply.body || {};
+      if (doc.type === 'attach_needs') {
+        docPending = rel;
+        el.docPopNote.hidden = false;
+        el.docPopNote.textContent = (doc.reason || 'this file needs a hosted parser') +
+          ' \u2014 sending it to Nace perception sends the document to a second party.';
+        docConsent(true);
+        return;
+      }
+      if (doc.type === 'attachment') {
+        face.attachments.push({
+          name: doc.name,
+          text: doc.text,
+          parser: doc.parser || '',
+          pages: doc.pages,
+          units: doc.units,
+          job_id: doc.job_id || '',
+          reason: doc.reason || '',
+          truncated: doc.truncated || null
+        });
+        paintAttachments();
+        toggleDocPop(false);
+      }
+    }).catch(function () {
+      notice('the document was refused', 'the face did not answer');
+      el.docPopNote.hidden = true;
+    });
+  }
+
+  if (el.docOpen) {
+    el.docOpen.addEventListener('click', function (event) {
+      event.preventDefault();
+      toggleDocPop();
+    });
+  }
+  if (el.docConsentSend) {
+    el.docConsentSend.addEventListener('click', function () {
+      if (docPending) attachDocument(docPending, true);
+    });
+  }
+  if (el.docConsentCancel) {
+    el.docConsentCancel.addEventListener('click', function () {
+      docPending = null;
+      docConsent(false);
+      el.docPopNote.hidden = true;
+    });
+  }
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && el.docPop && !el.docPop.hidden) toggleDocPop(false);
+  });
+
   // Attachments: text only, five at most, each 256 KB — the same bounds
   // the server enforces, said here so a refused file is named before it
   // is read rather than after the run is refused.
@@ -5116,7 +5280,16 @@
     el.attachChips.hidden = !face.attachments.length;
     face.attachments.forEach(function (file, index) {
       var chip = node('span', 'attach-chip');
-      chip.appendChild(node('span', null, file.name + ' \u00b7 ' + bytes(file.text.length)));
+      var meta = [bytes(file.text.length)];
+      if (file.parser) meta.unshift(file.parser);
+      if (file.pages) meta.push(file.pages + ' pages');
+      if (file.units) meta.push(file.units + ' units');
+      if (file.job_id) meta.push('job ' + file.job_id);
+      if (file.truncated) {
+        meta.push('truncated \u00b7 retained ' + file.truncated.retained +
+          ' of ' + file.truncated.original);
+      }
+      chip.appendChild(node('span', null, file.name + ' \u00b7 ' + meta.join(' \u00b7 ')));
       var drop = node('button', 'attach-drop', '\u00d7');
       drop.type = 'button';
       drop.title = 'remove ' + file.name;

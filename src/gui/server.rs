@@ -343,6 +343,16 @@ async fn serve_connection(
             Ok(document) => write_reply(&mut stream, api(200, document)).await,
             Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
         },
+        ("POST", "/api/attach") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.attach(&body).await {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("POST", "/api/run") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -937,7 +947,48 @@ fn with_attachments(body: &str, task: &str) -> Result<String, String> {
             return Err(format!("{name} is larger than the 256 KB attachment bound"));
         }
         total += text.len();
-        framed.push_str(&format!("\n--- {name} ---\n{text}\n"));
+        // The parser is part of the record: a local read and a hosted
+        // parse are different provenance, and a truncated preview says
+        // so in the same line.
+        let mut meta: Vec<String> = Vec::new();
+        if let Some(parser) = row.get("parser").and_then(serde_json::Value::as_str) {
+            if !parser.trim().is_empty() {
+                meta.push(format!("parser {}", parser.trim()));
+            }
+        }
+        if let Some(pages) = row.get("pages").and_then(serde_json::Value::as_u64) {
+            meta.push(format!("{pages} pages"));
+        }
+        if let Some(units) = row.get("units").and_then(serde_json::Value::as_u64) {
+            meta.push(format!("{units} units"));
+        }
+        if let Some(job) = row.get("job_id").and_then(serde_json::Value::as_str) {
+            if !job.trim().is_empty() {
+                meta.push(format!("job {}", job.trim()));
+            }
+        }
+        if let Some(reason) = row.get("reason").and_then(serde_json::Value::as_str) {
+            if !reason.trim().is_empty() {
+                meta.push(format!("escalated: {}", reason.trim()));
+            }
+        }
+        if let Some(truncated) = row.get("truncated").and_then(serde_json::Value::as_object) {
+            let original = truncated
+                .get("original")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let retained = truncated
+                .get("retained")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            meta.push(format!("truncated · retained {retained} of {original}"));
+        }
+        let head = if meta.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name} ({})", meta.join(" · "))
+        };
+        framed.push_str(&format!("\n--- {head} ---\n{text}\n"));
     }
     if total > 512 * 1024 {
         return Err("the attachments together are larger than the 512 KB bound".to_string());
@@ -1627,6 +1678,66 @@ mod tests {
         assert!(with_attachments(r#"{"task":"x"}"#, "x")
             .expect("plain")
             .eq("x"));
+        let framed = with_attachments(
+            r#"{"task":"x","attachments":[{"name":"scan.pdf","text":"page","parser":"nace","pages":96,"units":96,"job_id":"job1","reason":"the PDF is probably a scan","truncated":{"original":1000,"retained":65536}}]}"#,
+            "x",
+        )
+        .expect("a framed task");
+        assert!(framed.contains("--- scan.pdf (parser nace · 96 pages · 96 units · job job1 · escalated: the PDF is probably a scan · truncated · retained 65536 of 1000) ---"), "{framed}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_attach_route_reads_office_files_locally() {
+        let (token, port) = launch().await;
+        let reply = post_within(
+            port,
+            "/api/attach",
+            &token,
+            r#"{"path":"services/documents/fixtures/simple.docx"}"#,
+            Duration::from_secs(30),
+        );
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains(r#""parser":"local:"#), "{reply}");
+        assert!(reply.contains("Ada"), "{reply}");
+        assert!(reply.contains(r#""type":"attachment""#), "{reply}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_escalation_waits_for_consent_and_a_keyless_home_refuses_it() {
+        if std::env::var("NACE_API_KEY").is_ok() || std::env::var("DREX_API_KEY").is_ok() {
+            return;
+        }
+        let (token, port) = launch().await;
+        let asked = post(
+            port,
+            "/api/attach",
+            &token,
+            r#"{"path":"services/documents/fixtures/pixel.png"}"#,
+        );
+        assert!(asked.starts_with("HTTP/1.1 200"), "{asked}");
+        assert!(asked.contains(r#""type":"attach_needs""#), "{asked}");
+        assert!(asked.contains("nace"), "{asked}");
+        let refused = post(
+            port,
+            "/api/attach",
+            &token,
+            r#"{"path":"services/documents/fixtures/pixel.png","consent":true}"#,
+        );
+        assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
+        assert!(refused.contains("NACE_API_KEY"), "{refused}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_attach_outside_the_workspace_is_refused() {
+        let (token, port) = launch().await;
+        let refused = post(
+            port,
+            "/api/attach",
+            &token,
+            r#"{"path":"../../Cargo.toml"}"#,
+        );
+        assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
+        assert!(refused.contains("outside"), "{refused}");
     }
 
     #[test]
@@ -1878,6 +1989,20 @@ mod tests {
                 body.len()
             ),
             None,
+        )
+    }
+
+    /// The attach route may run a local extractor (a Python process), so
+    /// its tests read with a budget that a loaded suite cannot eat.
+    fn post_within(port: u16, path: &str, token: &str, body: &str, budget: Duration) -> String {
+        ask_within(
+            port,
+            &format!(
+                "POST {path}?token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{body}",
+                body.len()
+            ),
+            None,
+            budget,
         )
     }
 
