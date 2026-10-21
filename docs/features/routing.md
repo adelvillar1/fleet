@@ -64,13 +64,51 @@ An owner override of `hard`'s candidates in `routing.json` governs the
 walk, which is what "whatever is assigned to the hard category" means.
 The route-decision cache's key names the walked workload, so a cache
 written under an older rule serves nothing: the key format changed, the
-cache invalidates whole, and the first run re-judges. Delegation
-children inherit the parent's model (CLAUDE.md hard rule 9), so the
-strengthened head is the whole run's.
+cache invalidates whole, and the first run re-judges.
+
+## Children
+
+The orchestrator's chain is the **leader's** (the owner's 2026-10-21
+narrowing of the 2026-10-16 ruling). A delegated child is routed by the
+router over its own composed brief: `subagents::run` calls
+`route::prepare_child`, which judges the brief, walks the *judged*
+workload's chain (`Walk::Judged` — no orchestrator override), and runs the
+child on its own routed client under the parent's pin. A brief sys1 judges
+`quick` heads `quick`'s chain while its parent plans on `hard`'s. The
+child's decision row lands in the same calibration stream, so its
+judgment is graded like any other. A parent on a direct, unrouted client (a test
+double pointed at a mock) or a run with no home hands the child the same client.
+
+## The failover tail
+
+Every order the router builds — judged, fallback, provider-pinned,
+pair-pinned, and the vision side-route — ends on the reserve:
+`deepseek/deepseek-flash`, the roster's deepseek entry with its own
+default model (`route::with_tail`). No workload targets it; it serves
+only after every routed candidate has failed with a failover class, and
+the decision row then says `; served by the failover tail deepseek-flash`
+rather than reading like a route that chose it. A `routing.json` workload
+that places the reserve deliberately keeps the owner's position — the
+tail appears once. The `allow_api_models: false` gate keeps it out like
+every hosted model, and a disabled reserve adds nothing, in which case an
+exhausted walk fails by name as it did before the ruling.
+
+## Pins and the nominal model
+
+No surface seeds a provider's model as a default. `AgentOptions::default`
+and every launcher carry `route::AUTO_MODEL` (`auto`) until the route
+answers; `fleet run` opens its session with the decision's model, a
+`fleet chat` log (opened before its first message exists) starts as `auto`
+and its end records name what served. `--model <id>` is a **pin**, resolved
+by name before the judgment (`route::resolve_model_pin`): `provider/model`
+is the exact pair; a bare id maps to the one roster provider serving it,
+in the roster's own spelling; the refusal names every `provider/model`
+spelling when none or several do (`glm-5.3-flash` is on both
+`zai-coding-plan` and `ollama-cloud`).
 
 ## Failover
 
-`Router::chat_stream` walks the declared chain from the selected candidate.
+`Router::chat_stream` walks the decision's order from the selected candidate.
 401/402/403/408/429/5xx, network errors, timeouts, and decode failures all
 advance to the next usable candidate (400/404 do not — every candidate would
 fail them). A candidate that starts streaming is committed: a mid-stream

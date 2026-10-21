@@ -190,7 +190,7 @@ fn tui_command() -> ExitCode {
     };
     match fleet::tui::run(fleet::tui::Config {
         home,
-        model: fleet::api::DEFAULT_MODEL.to_string(),
+        model: fleet::route::AUTO_MODEL.to_string(),
     }) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
@@ -284,11 +284,33 @@ async fn run_command(options: &RunOptions) -> ExitCode {
             return ExitCode::from(2);
         }
     }
+    // `--model` is a pin, resolved by name against the roster before the
+    // route is judged: a `provider/model` pair as written, a bare id to
+    // the one provider that serves it, and a refusal naming every
+    // spelling otherwise. No `--model` is the router's own choice.
+    let pin = match options.model.as_deref() {
+        Some(id) => match route::resolve_model_pin(&home, id) {
+            Ok(pin) => Some(pin),
+            Err(message) => {
+                eprintln!("fleet: {message}");
+                return ExitCode::from(2);
+            }
+        },
+        None => None,
+    };
     // The route is prepared before the session exists: the session's
     // first record and the first line the owner reads name the route
     // that will actually serve, not the CLI's requested default — and
     // a failed route no longer leaves an empty session behind.
-    let prepared = match route::prepare(&home, &dotenv, &options.task, &HashMap::new()).await {
+    let prepared = match route::prepare_with_pin(
+        &home,
+        &dotenv,
+        &options.task,
+        &HashMap::new(),
+        pin.as_deref(),
+    )
+    .await
+    {
         Ok(prepared) => prepared,
         Err(error) => {
             eprintln!("fleet: {error}");
@@ -359,7 +381,26 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         }
     };
     let dotenv = read_dotenv();
-    let mut session = match open_session(&home, options.session.as_deref(), &options.model) {
+    // `--model` is the same pin `fleet run` takes. A chat's log opens
+    // before its first message exists, so the start record names the
+    // pinned pair's model when there is one and the router's `auto`
+    // otherwise; every end record names what actually served.
+    let pin = match options.model.as_deref() {
+        Some(id) => match route::resolve_model_pin(&home, id) {
+            Ok(pin) => Some(pin),
+            Err(message) => {
+                eprintln!("fleet: {message}");
+                return ExitCode::from(2);
+            }
+        },
+        None => None,
+    };
+    let start_model = pin
+        .as_deref()
+        .and_then(|pin| pin.split_once('/'))
+        .map(|(_, model)| model.to_string())
+        .unwrap_or_else(|| route::AUTO_MODEL.to_string());
+    let mut session = match open_session(&home, options.session.as_deref(), &start_model) {
         Ok(session) => session,
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -407,7 +448,9 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
             break;
         }
         if prepared.is_none() {
-            match route::prepare(&home, &dotenv, trimmed, &HashMap::new()).await {
+            match route::prepare_with_pin(&home, &dotenv, trimmed, &HashMap::new(), pin.as_deref())
+                .await
+            {
                 Ok(fresh) => {
                     eprintln!(
                         "route: {} ({}) · model {}",

@@ -10,8 +10,10 @@ use crate::route::{RouteDecision, Router};
 /// Public DeepSeek API base.
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
 
-/// Default chat model.
-pub const DEFAULT_MODEL: &str = "deepseek-flash";
+/// The reserve's model: what the roster's deepseek entry serves and the
+/// failover tail every walk closes on. Not a default for anything else —
+/// a run's model is the router's (`route::AUTO_MODEL` until it answers).
+pub const DEEPSEEK_MODEL: &str = "deepseek-flash";
 
 /// One tool call issued by the assistant. `arguments` stays the JSON text
 /// the API issued; decoding is the agent's job so decode failures are

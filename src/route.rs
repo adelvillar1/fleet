@@ -30,10 +30,13 @@
 //!   slice-4 MCP client for a workload verdict and maps it to a candidate;
 //!   an unusable/absent/failed verdict, or a mapped candidate with no key,
 //!   falls back to the declared HEAD. Routing never blocks a run.
-//! - **Failover** ([`Router::chat_stream`]) walks the declared chain from
-//!   the selected candidate on the failure classes in [`failure_class`];
-//!   a candidate that starts streaming is committed and a mid-stream
-//!   failure fails the run typed — no silent restart.
+//! - **Failover** ([`Router::chat_stream`]) walks the decision's order —
+//!   the workload's own list — from the selected candidate on the failure
+//!   classes in [`failure_class`]; every order closes on the reserve tail
+//!   ([`with_tail`]), so the walk reaches deepseek only after every routed
+//!   candidate failed, and the row names it when it serves. A candidate
+//!   that starts streaming is committed and a mid-stream failure fails the
+//!   run typed — no silent restart.
 //! - **The decision row** ([`calib::RouteRow`]) is appended to the
 //!   calibration stream (`src/calib.rs`) once per session, best-effort, so
 //!   a full disk never fails a run. Slice 6 also reads that stream back:
@@ -103,7 +106,7 @@ const CONTEXT_WINDOWS: &[(&str, &str, u64)] = &[
     // The old name is kept by the provider so no caller has to rename,
     // and what it serves is now the V4.1 flash generation — the window
     // is the served model's, not the retired one's.
-    ("deepseek", crate::api::DEFAULT_MODEL, 1_000_000),
+    ("deepseek", crate::api::DEEPSEEK_MODEL, 1_000_000),
     ("liquid", "lfm2.5-24b-a2b", 131_072),
     ("ollama-cloud", "gemma4:31b", 262_144),
     ("ollama-cloud", "beam", 1_048_576),
@@ -165,9 +168,10 @@ pub struct Candidate {
     /// through this provider's own models.
     pub models: Vec<String>,
     /// How this provider is billed. The plan providers are the
-    /// preference; a pay-as-you-go provider is declared and targeted by
-    /// no default workload, which is what makes the reserve unable to
-    /// serve silently.
+    /// preference; the pay-as-you-go provider is targeted by no
+    /// workload and closes every walk as its failover tail, so it serves
+    /// only after every routed candidate failed — and never silently: the
+    /// row names it.
     pub billing: Billing,
     /// How a request reaches this provider: an OpenAI-compatible HTTP
     /// endpoint, or a vendored lane driven over fleet's own MCP client
@@ -193,7 +197,7 @@ impl Candidate {
 }
 
 /// How a provider is billed. The preference of execution targets plan
-/// providers; a payg one is the declared reserve a pin can still reach.
+/// providers; the payg one is the reserve every walk ends on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Billing {
@@ -296,7 +300,7 @@ pub fn default_roster() -> Vec<Candidate> {
             id: "deepseek".into(),
             base_url: crate::api::DEFAULT_BASE_URL.into(),
             key_env: "DEEPSEEK_API_KEY".into(),
-            models: vec![crate::api::DEFAULT_MODEL.into()],
+            models: vec![crate::api::DEEPSEEK_MODEL.into()],
             billing: Billing::Payg,
             kind: CandidateKind::Http,
             enabled: true,
@@ -366,8 +370,9 @@ pub fn default_roster() -> Vec<Candidate> {
 /// One workload's preference of execution: the ordered (provider, model)
 /// candidates — the target first, then the fallbacks in preference order.
 /// The walk is THIS list, not a global chain: a failure advances to the
-/// workload's own next candidate, and an exhausted list fails the run by
-/// name rather than falling through to a candidate no workload asked for.
+/// workload's own next candidate, the list is closed by the reserve tail
+/// (the one candidate every walk carries, by the owner's ruling), and an
+/// exhausted list fails the run by name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preference {
     pub workload: &'static str,
@@ -378,8 +383,8 @@ pub struct Preference {
 /// `routing.workloads` (verified 2026-10-15) — the owner's tuned state,
 /// at (provider, model) granularity. Two divergences from the source,
 /// both deliberate: `quick`'s duplicated stepfun entry is deduped, and no
-/// workload targets deepseek (the payg reserve, kept as policy so the
-/// reserve cannot serve unless the owner pins it).
+/// workload targets deepseek — the payg reserve reaches every walk as its
+/// appended tail instead, after the workload's own candidates.
 pub fn default_preferences() -> Vec<Preference> {
     vec![
         Preference {
@@ -483,13 +488,41 @@ pub fn preference_for<'a>(table: &'a [Preference], workload: &str) -> Option<&'a
     table.iter().find(|entry| entry.workload == workload)
 }
 
-/// The workload whose chain the orchestrator walks. The first model a
-/// run loads is the planner — it assigns the work and supervises it —
-/// so it is whatever the table assigns to the owner's strong category,
-/// whatever the task itself was judged (the owner's 2026-10-16 ruling).
-/// A `routing.json` override of that workload's candidates governs the
-/// walk the same way it governs the judgment's own.
+/// The workload whose chain the leading session walks. The first model a
+/// run loads is the planner — it assigns the work and supervises it — so
+/// the leading session is whatever the table assigns to the owner's strong
+/// category, whatever the task itself was judged (the owner's 2026-10-16
+/// ruling, narrowed 2026-10-21: the *leader* walks this chain, and every
+/// other route — a delegated child, a side-route — walks the judged
+/// workload's own). A `routing.json` override of that workload's
+/// candidates governs the walk the same way it governs the judgment's own.
 pub const ORCHESTRATOR_WORKLOAD: &str = "hard";
+
+/// What a run's own model is when the router has not answered yet: no
+/// provider's name, the router's word for "the judgment decides". Surfaces
+/// seed it so no provider's model is ever a hardcoded default; the run's
+/// route decision replaces it, and the session's `start` record carries
+/// the decision's model.
+pub const AUTO_MODEL: &str = "auto";
+
+/// The reserve that closes every walk: when every routed candidate fails,
+/// the deepseek candidate is the failover tail (the owner's 2026-10-21
+/// ruling). The tail is the roster's deepseek entry — its own default
+/// model — filtered by the same admissibility gate as every candidate,
+/// present exactly once per order, and named on the decision row when it
+/// serves.
+pub const TAIL_PROVIDER: &str = "deepseek";
+
+/// Which session's chain a `select` walks. The leading session — the run
+/// that assigns work and supervises it — walks [`ORCHESTRATOR_WORKLOAD`]'s
+/// chain whatever its task was judged. Everything else walks the judged
+/// workload's own chain: that is what makes the judgment load-bearing for
+/// the routes it serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Walk {
+    Leader,
+    Judged,
+}
 
 /// A roster plus its optional pin. The chain order is the compiled-in
 /// declared order; the config file overrides entries per-field, never the
@@ -1159,7 +1192,7 @@ pub fn workload_decision(workload: &str) -> Option<RouteDecision> {
         .map(|(provider, model)| (provider.to_string(), model.to_string()))
         .collect();
     Some(decision_from(
-        order,
+        with_default_tail(order),
         How::Judged,
         Some(workload.to_string()),
         None,
@@ -1173,7 +1206,8 @@ pub fn workload_decision(workload: &str) -> Option<RouteDecision> {
 /// workload's own preference list is the walk. Never fails and never
 /// blocks a run — every failure path is a named fallback. Returns the
 /// decision and how long the judgment took (for the decision row's
-/// `latency_ms`).
+/// `latency_ms`). This is the leading session's selection; a child's
+/// route goes through [`select_walk`] with [`Walk::Judged`].
 pub async fn select(
     resolved: &[Resolved],
     pin: Option<&str>,
@@ -1182,6 +1216,33 @@ pub async fn select(
     table: &[Preference],
     gates: Gates,
     cache: Option<&mut crate::route_cache::Cache>,
+) -> (RouteDecision, u128) {
+    select_walk(
+        resolved,
+        pin,
+        task,
+        specs,
+        table,
+        gates,
+        cache,
+        Walk::Leader,
+    )
+    .await
+}
+
+/// [`select`] for either session: the leader walks the orchestrator's
+/// chain, everything else the judged workload's. Every order either
+/// returns ends on the failover tail (see [`with_tail`]).
+#[allow(clippy::too_many_arguments)]
+pub async fn select_walk(
+    resolved: &[Resolved],
+    pin: Option<&str>,
+    task: &str,
+    specs: &HashMap<String, ServerSpec>,
+    table: &[Preference],
+    gates: Gates,
+    cache: Option<&mut crate::route_cache::Cache>,
+    walk: Walk,
 ) -> (RouteDecision, u128) {
     let started = Instant::now();
     let head = head_index(resolved);
@@ -1195,7 +1256,11 @@ pub async fn select(
             if admissible(resolved, provider, &gates) {
                 return (
                     decision_from(
-                        vec![(provider.to_string(), model.to_string())],
+                        with_tail(
+                            vec![(provider.to_string(), model.to_string())],
+                            resolved,
+                            &gates,
+                        ),
                         How::Pinned,
                         None,
                         None,
@@ -1249,15 +1314,18 @@ pub async fn select(
         ),
     };
 
-    // The orchestrator's ruling: the walk leaves the judged workload
-    // here. The first model a run loads is the planner, so the walked
-    // chain is `ORCHESTRATOR_WORKLOAD`'s; the judgment still ran, the
-    // row still records its label, and a table without the orchestrator
-    // workload falls back to the judged chain.
-    let walked = if preference_for(table, ORCHESTRATOR_WORKLOAD).is_some() {
-        ORCHESTRATOR_WORKLOAD
-    } else {
-        workload.as_str()
+    // The orchestrator's ruling, narrowed to the leader: the leading
+    // session's walk leaves the judged workload here, because the first
+    // model a run loads is the planner, so its chain is
+    // `ORCHESTRATOR_WORKLOAD`'s; the judgment still ran and the row still
+    // records its label. Every other route walks the judged workload's
+    // own chain — the judgment decides what serves. A table without the
+    // orchestrator workload falls back to the judged chain either way.
+    let walked = match walk {
+        Walk::Leader if preference_for(table, ORCHESTRATOR_WORKLOAD).is_some() => {
+            ORCHESTRATOR_WORKLOAD
+        }
+        Walk::Leader | Walk::Judged => workload.as_str(),
     };
     let orchestrator_note = if walked == workload {
         String::new()
@@ -1342,7 +1410,7 @@ pub async fn select(
                     How::Judged
                 };
                 decision_from(
-                    order,
+                    with_tail(order, resolved, &gates),
                     how,
                     Some(workload.clone()),
                     verdict.clone(),
@@ -1403,8 +1471,10 @@ fn decision_from(
 }
 
 /// A fallback decision: the gates' default workload's preference, named
-/// with `reason`. There is no silent fall-through to a candidate no
-/// workload asked for — the default workload's list IS the fallback.
+/// with `reason`, closed by the failover tail. There is no silent
+/// fall-through to a candidate no workload asked for — the default
+/// workload's list IS the fallback, and the tail is the one candidate
+/// every walk asks for by the owner's ruling.
 fn fallback(
     resolved: &[Resolved],
     head: usize,
@@ -1413,7 +1483,7 @@ fn fallback(
     reason: &str,
     judged_from: JudgedFrom,
 ) -> RouteDecision {
-    let order = preference_for(table, gates.default_workload)
+    let preferred: Vec<(String, String)> = preference_for(table, gates.default_workload)
         .map(|preference| {
             preference
                 .candidates
@@ -1423,32 +1493,38 @@ fn fallback(
                 .collect()
         })
         .unwrap_or_default();
+    // An empty table (a config that named no workloads) still has to
+    // walk something: the declared chain's head, as the pre-slice
+    // behavior did. Every candidate on that chain is Fleet's own — the
+    // precursor's entry is not in the roster at all, so there is nothing
+    // to walk past and nothing to dial. Decided before the tail is
+    // appended: a tail alone is not a chain, and the reserve must not
+    // become the head of a walk nobody declared.
+    let head_walk = preferred.is_empty();
+    let order = if head_walk {
+        resolved
+            .iter()
+            .filter(|entry| admissible(resolved, entry.id(), &gates))
+            .map(|entry| (entry.id().to_string(), entry.candidate.model().to_string()))
+            .collect()
+    } else {
+        preferred
+    };
     let mut decision = decision_from(
-        order,
+        with_tail(order, resolved, &gates),
         How::Fallback,
         None,
         None,
         reason.to_string(),
         judged_from,
     );
-    // An empty table (a config that named no workloads) still has to
-    // walk something: the declared chain's head, as the pre-slice
-    // behavior did. Every candidate on that chain is Fleet's own — the
-    // precursor's entry is not in the roster at all, so there is nothing
-    // to walk past and nothing to dial.
-    if decision.order.is_empty() {
-        let provider = resolved
+    if head_walk && !decision.order.is_empty() {
+        decision.provider = resolved
             .get(head)
             .map(Resolved::id)
             .unwrap_or(HEAD_ID)
             .to_string();
-        decision.provider = provider.clone();
         decision.start_index = head;
-        decision.order = resolved
-            .iter()
-            .filter(|entry| admissible(resolved, entry.id(), &gates))
-            .map(|entry| (entry.id().to_string(), entry.candidate.model().to_string()))
-            .collect();
     }
     decision
 }
@@ -1466,6 +1542,109 @@ pub(crate) fn admissible(resolved: &[Resolved], provider: &str, gates: &Gates) -
             .iter()
             .find(|entry| entry.id() == provider)
             .is_none_or(|entry| entry.candidate.kind != CandidateKind::Http)
+}
+
+/// Close one walk order with the failover tail: the roster's deepseek
+/// entry and its own default model, appended last when the entry is
+/// enabled and the gates admit it. An order that already names the
+/// provider — a `routing.json` workload that placed it deliberately —
+/// is left exactly as the owner wrote it, so the tail appears once and
+/// the owner's position wins. A disabled or gate-refused reserve adds
+/// nothing, and the walk fails by name as it did before the ruling.
+pub fn with_tail(
+    mut order: Vec<(String, String)>,
+    resolved: &[Resolved],
+    gates: &Gates,
+) -> Vec<(String, String)> {
+    if order.iter().any(|(provider, _)| provider == TAIL_PROVIDER) {
+        return order;
+    }
+    let Some(entry) = resolved.iter().find(|entry| entry.id() == TAIL_PROVIDER) else {
+        return order;
+    };
+    if !entry.candidate.enabled || !admissible(resolved, TAIL_PROVIDER, gates) {
+        return order;
+    }
+    order.push((
+        TAIL_PROVIDER.to_string(),
+        entry.candidate.model().to_string(),
+    ));
+    order
+}
+
+/// [`with_tail`] for a route built without a resolved roster — the
+/// compiled-in reserve entry, which is what [`workload_decision`] reads
+/// the rest of its table from.
+fn with_default_tail(order: Vec<(String, String)>) -> Vec<(String, String)> {
+    let roster = default_roster();
+    let resolved: Vec<Resolved> = roster
+        .into_iter()
+        .map(|candidate| Resolved {
+            candidate,
+            key: None,
+        })
+        .collect();
+    with_tail(order, &resolved, &Gates::default())
+}
+
+/// Resolve `--model <id>` into a route pin: `provider/model` is the exact
+/// pair, a bare model id is the one roster provider that serves it. The
+/// two refusals are named: no provider serves the id, or more than one
+/// does (the same model id can live on two providers — `glm-5.3-flash`
+/// is on zai and on ollama-cloud), in which case every `provider/model`
+/// spelling is listed so the owner picks one. The roster's own spelling
+/// of the model is what the pin carries, so a differently-cased id still
+/// resolves to the declared one and nothing is silently dropped.
+pub fn resolve_model_pin(home: &Path, id: &str) -> Result<String, String> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("--model names no model".to_string());
+    }
+    let roster = load_roster(home).map_err(|error| error.to_string())?;
+    if let Some((provider, model)) = id.split_once('/') {
+        if !roster
+            .candidates
+            .iter()
+            .any(|candidate| candidate.id == provider)
+        {
+            return Err(format!(
+                "`{id}` names no roster provider; `fleet providers` lists them"
+            ));
+        }
+        if model.is_empty() {
+            return Err(format!("`{id}` names a provider but no model"));
+        }
+        return Ok(id.to_string());
+    }
+    let serving: Vec<(String, String)> = roster
+        .candidates
+        .iter()
+        .filter_map(|candidate| {
+            candidate
+                .models
+                .iter()
+                .find(|model| model.eq_ignore_ascii_case(id))
+                .map(|model| (candidate.id.clone(), model.clone()))
+        })
+        .collect();
+    match serving.as_slice() {
+        [] => Err(format!(
+            "no roster provider serves `{id}`; `fleet providers` lists the roster, or name \
+             `provider/model`"
+        )),
+        [(provider, model)] => Ok(format!("{provider}/{model}")),
+        many => {
+            let spellings: Vec<String> = many
+                .iter()
+                .map(|(provider, model)| format!("{provider}/{model}"))
+                .collect();
+            Err(format!(
+                "`{id}` is served by {} providers — name one: {}",
+                many.len(),
+                spellings.join(", ")
+            ))
+        }
+    }
 }
 
 /// Ask sys1 for a routing judgment — or read the recorded one. A hit
@@ -1837,12 +2016,21 @@ pub struct Router {
     /// another. Empty when the gate is off, which restores the pre-slice
     /// behavior exactly.
     calibration_skips: Vec<calib::CalibrationCell>,
+    /// The pin this route was prepared under, when the run has one. A
+    /// delegated child reads it off the parent's client and routes
+    /// under the same standing choice.
+    pin: Option<String>,
 }
 
 impl Router {
     /// A router over `resolved`, starting its walk at the decision's index.
     pub fn new(resolved: Vec<Resolved>, decision: RouteDecision) -> Router {
-        Router::build(resolved, decision, Vec::new(), &HashMap::new())
+        Router::build(resolved, decision, Vec::new(), &HashMap::new(), None)
+    }
+
+    /// The pin this route was prepared under, when the run has one.
+    pub fn pin(&self) -> Option<&str> {
+        self.pin.as_deref()
     }
 
     /// A router over `resolved` whose walk passes over the calibration's
@@ -1861,6 +2049,7 @@ impl Router {
         decision: RouteDecision,
         calibration_skips: Vec<calib::CalibrationCell>,
         lane_specs: &HashMap<String, ServerSpec>,
+        pin: Option<String>,
     ) -> Router {
         let endpoints = resolved
             .iter()
@@ -1922,6 +2111,7 @@ impl Router {
                 lane_failure: None,
             }),
             calibration_skips,
+            pin,
         }
     }
 
@@ -2021,6 +2211,12 @@ impl Router {
         // words, so the row says why the walk advanced.
         if let Some(failure) = &state.lane_failure {
             reason.push_str(&format!("; {failure}"));
+        }
+        // The reserve served as the tail — every routed candidate before
+        // it failed — and the row says so, rather than reading like a
+        // route that chose it.
+        if provider == TAIL_PROVIDER && self.decision.provider != TAIL_PROVIDER {
+            reason.push_str(&format!("; served by the failover tail {model}"));
         }
         let ts = session::iso_utc_stamp(SystemTime::now()).unwrap_or_default();
         calib::RouteRow {
@@ -2279,12 +2475,40 @@ pub async fn prepare(
 /// standing choice, never a write to the owner's config. A pinned
 /// provider that is not in the roster is the same named fallback a
 /// `routing.json` pin gets — the decision says why it did not serve.
+/// This is the leading session's route; a child's is [`prepare_child`].
 pub async fn prepare_with_pin(
     home: &Path,
     dotenv: &HashMap<String, String>,
     task: &str,
     specs: &HashMap<String, ServerSpec>,
     pin: Option<&str>,
+) -> Result<Prepared, ConfigError> {
+    prepare_walk(home, dotenv, task, specs, pin, Walk::Leader).await
+}
+
+/// A delegated child's route: the same roster, the same pin the parent
+/// runs under, judged over the child's own brief — and walked as the
+/// judged workload's chain, not the leader's. The router rules the child
+/// (the owner's 2026-10-21 ruling); the parent's committed candidate is
+/// not inherited. The home's `.env` is read here because a child spawns
+/// mid-run, where no caller holds the map the launch read.
+pub async fn prepare_child(
+    home: &Path,
+    brief: &str,
+    specs: &HashMap<String, ServerSpec>,
+    pin: Option<&str>,
+) -> Result<Prepared, ConfigError> {
+    let dotenv = crate::home::read_dotenv(home);
+    prepare_walk(home, &dotenv, brief, specs, pin, Walk::Judged).await
+}
+
+async fn prepare_walk(
+    home: &Path,
+    dotenv: &HashMap<String, String>,
+    task: &str,
+    specs: &HashMap<String, ServerSpec>,
+    pin: Option<&str>,
+    walk: Walk,
 ) -> Result<Prepared, ConfigError> {
     let mut roster = load_roster(home)?;
     if let Some(pin) = pin {
@@ -2296,7 +2520,7 @@ pub async fn prepare_with_pin(
     // through. The cache never blocks a route — every failure path
     // inside it costs a recompute and nothing else.
     let mut decision_cache = crate::route_cache::Cache::load(home);
-    let (mut decision, latency_ms) = select(
+    let (mut decision, latency_ms) = select_walk(
         &resolved,
         roster.pin.as_deref(),
         task,
@@ -2304,6 +2528,7 @@ pub async fn prepare_with_pin(
         &roster.preferences,
         roster.gates,
         Some(&mut decision_cache),
+        walk,
     )
     .await;
     // The calibration stream, and its first read: today's graded rows
@@ -2374,7 +2599,13 @@ pub async fn prepare_with_pin(
         .iter()
         .position(|(provider, _)| provider == &decision.provider)
         .unwrap_or(0);
-    let router = Arc::new(Router::build(resolved, decision.clone(), skips, specs));
+    let router = Arc::new(Router::build(
+        resolved,
+        decision.clone(),
+        skips,
+        specs,
+        roster.pin.clone(),
+    ));
     Ok(Prepared {
         router,
         decision,
@@ -2807,13 +3038,18 @@ mod tests {
     fn the_vision_workloads_chain_reaches_gemma4_on_ollama_cloud() {
         let decision = workload_decision("vision").expect("the vision workload exists");
         // The order is the chain: GLM first, stepfun second, gemma4 third
-        // as the hosted multimodal reserve.
+        // as the hosted multimodal reserve — and the walk closes on the
+        // failover tail like every order the router builds.
         assert_eq!(
             decision.order,
             vec![
                 ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
                 ("stepfun".to_string(), "step-5-preview".to_string()),
                 ("ollama-cloud".to_string(), "gemma4:31b".to_string()),
+                (
+                    TAIL_PROVIDER.to_string(),
+                    crate::api::DEEPSEEK_MODEL.to_string()
+                ),
             ],
             "{decision:?}"
         );
@@ -3332,9 +3568,16 @@ mod tests {
         assert_eq!(decision.how, How::Pinned);
         assert_eq!(decision.provider, "stepfun");
         assert_eq!(decision.model, "step-5-preview");
+        // The pair, and the failover tail that closes every walk.
         assert_eq!(
             decision.order,
-            vec![("stepfun".to_string(), "step-5-preview".to_string())]
+            vec![
+                ("stepfun".to_string(), "step-5-preview".to_string()),
+                (
+                    TAIL_PROVIDER.to_string(),
+                    crate::api::DEEPSEEK_MODEL.to_string()
+                ),
+            ]
         );
     }
 
@@ -4234,7 +4477,7 @@ mod tests {
             spend_usd: 0.0016,
             cost_per_right: None,
         };
-        let router = Router::build(resolved, decision, vec![cell], &HashMap::new());
+        let router = Router::build(resolved, decision, vec![cell], &HashMap::new(), None);
         // The head is the walk's start, so it is never skipped; zai is
         // skipped, and the clause names the cell that did it.
         assert_eq!(router.calibration_skip(0, 0), None);
@@ -4326,5 +4569,333 @@ mod tests {
         assert_eq!(roster[6].id, "blend1");
         assert_eq!(roster[6].kind, CandidateKind::Lane);
         assert!(!roster[6].key_required);
+    }
+
+    /// The compiled roster with every key present, so every candidate is
+    /// usable and the only thing deciding an order is the router.
+    fn keyed_default_roster() -> Vec<Resolved> {
+        let roster = default_roster();
+        let dotenv: HashMap<String, String> = roster
+            .iter()
+            .map(|candidate| (candidate.key_env.clone(), "sk-fake".to_string()))
+            .collect();
+        resolve(&roster, &dotenv)
+    }
+
+    fn tail_of(order: &[(String, String)]) -> Option<(&str, &str)> {
+        order
+            .last()
+            .map(|(provider, model)| (provider.as_str(), model.as_str()))
+    }
+
+    /// A judge spec that cannot spawn, so a test's selection never
+    /// reaches a lane on the machine: every verdict is "none" and the
+    /// fallback path is what runs.
+    fn dead_judge() -> HashMap<String, ServerSpec> {
+        let mut specs = HashMap::new();
+        specs.insert(
+            JUDGE_LANE.to_string(),
+            ServerSpec {
+                program: "fleet-test-no-such-lane-program".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                passthrough: Vec::new(),
+                cwd: None,
+            },
+        );
+        specs
+    }
+
+    #[tokio::test]
+    async fn every_order_the_router_builds_ends_on_the_reserve_tail() {
+        let resolved = keyed_default_roster();
+        let table = default_preferences();
+        let gates = Gates::default();
+        let specs = dead_judge();
+        let tail = Some((TAIL_PROVIDER, crate::api::DEEPSEEK_MODEL));
+
+        // No judge answers (no spec, no keys for one): the fallback's
+        // order — the default workload's chain — closes on the tail.
+        let (fallback, _) = select(&resolved, None, "a task", &specs, &table, gates, None).await;
+        assert_eq!(fallback.how, How::Fallback);
+        assert_eq!(tail_of(&fallback.order), tail, "{:?}", fallback.order);
+        assert_eq!(
+            fallback
+                .order
+                .iter()
+                .filter(|(p, _)| p == TAIL_PROVIDER)
+                .count(),
+            1
+        );
+
+        // A provider pin filters the chain to that provider and still
+        // ends on the tail — a pin narrows the router, the reserve stays.
+        let (pinned, _) = select(
+            &resolved,
+            Some("stepfun"),
+            "a task",
+            &specs,
+            &table,
+            gates,
+            None,
+        )
+        .await;
+        assert_eq!(pinned.how, How::Pinned);
+        assert_eq!(pinned.order[0].0, "stepfun");
+        assert_eq!(tail_of(&pinned.order), tail, "{:?}", pinned.order);
+
+        // An exact pair pin skips the judgment and is still closed.
+        let (pair, _) = select(
+            &resolved,
+            Some("xiaomi-mimo/mimo-v2.6-pro"),
+            "a task",
+            &specs,
+            &table,
+            gates,
+            None,
+        )
+        .await;
+        assert_eq!(pair.order.len(), 2, "{:?}", pair.order);
+        assert_eq!(tail_of(&pair.order), tail);
+
+        // A side-route built from the compiled table: the vision chain.
+        let vision = workload_decision("vision").expect("vision");
+        assert_eq!(tail_of(&vision.order), tail, "{:?}", vision.order);
+
+        // The gate that keeps hosted models out keeps the reserve out too:
+        // no order carries it, and the reserve is never a way around the
+        // owner's standing instruction.
+        let closed = Gates {
+            allow_api_models: false,
+            ..Gates::default()
+        };
+        let (gated, _) = select(&resolved, None, "a task", &specs, &table, closed, None).await;
+        assert!(
+            gated.order.iter().all(|(p, _)| p != TAIL_PROVIDER),
+            "{:?}",
+            gated.order
+        );
+        let (gated_pin, _) = select(
+            &resolved,
+            Some("deepseek/deepseek-flash"),
+            "a task",
+            &specs,
+            &table,
+            closed,
+            None,
+        )
+        .await;
+        assert!(gated_pin.order.iter().all(|(p, _)| p != TAIL_PROVIDER));
+
+        // A disabled reserve adds nothing: the walk fails by name as it
+        // did before the ruling.
+        let mut disabled = keyed_default_roster();
+        disabled
+            .iter_mut()
+            .find(|entry| entry.id() == TAIL_PROVIDER)
+            .expect("deepseek")
+            .candidate
+            .enabled = false;
+        let (without, _) = select(&disabled, None, "a task", &specs, &table, gates, None).await;
+        assert!(without.order.iter().all(|(p, _)| p != TAIL_PROVIDER));
+    }
+
+    #[test]
+    fn a_workload_that_already_places_the_reserve_keeps_the_owners_position() {
+        let resolved = keyed_default_roster();
+        let gates = Gates::default();
+        let owners = vec![
+            ("deepseek".to_string(), "deepseek-flash".to_string()),
+            ("stepfun".to_string(), "step-3.7-flash".to_string()),
+        ];
+        let closed = with_tail(owners.clone(), &resolved, &gates);
+        // Exactly once, and where the owner wrote it — the tail does not
+        // move a deliberately placed entry to the end.
+        assert_eq!(closed, owners);
+    }
+
+    #[test]
+    fn the_tail_is_named_on_the_row_only_when_it_served_as_the_tail() {
+        let resolved = keyed_default_roster();
+        let gates = Gates::default();
+        let order = with_tail(
+            vec![
+                ("stepfun".to_string(), "step-5-preview".to_string()),
+                ("xiaomi-mimo".to_string(), "mimo-v2.6-pro".to_string()),
+            ],
+            &resolved,
+            &gates,
+        );
+        let decision = decision_from(
+            order,
+            How::Judged,
+            Some("hard".to_string()),
+            None,
+            "sys1 judged `hard`; ".to_string(),
+            JudgedFrom::Fresh,
+        );
+        let router = Router::new(resolved.clone(), decision);
+        // Every routed candidate failed, the reserve served: the walk's
+        // state as `chat_stream` would leave it.
+        {
+            let mut state = lock(&router.state);
+            state.attempts = vec![
+                Attempt {
+                    provider: "stepfun".to_string(),
+                    outcome: "failed",
+                    class: Some("rate-limit"),
+                },
+                Attempt {
+                    provider: "xiaomi-mimo".to_string(),
+                    outcome: "failed",
+                    class: Some("server"),
+                },
+                Attempt {
+                    provider: TAIL_PROVIDER.to_string(),
+                    outcome: "served",
+                    class: None,
+                },
+            ];
+            state.served = Some(2);
+            state.committed = true;
+        }
+        let row = router.row("a task", 7);
+        assert_eq!(row.provider, TAIL_PROVIDER);
+        assert_eq!(row.model, crate::api::DEEPSEEK_MODEL);
+        assert!(
+            row.reason
+                .ends_with("; served by the failover tail deepseek-flash"),
+            "{}",
+            row.reason
+        );
+
+        // The reserve chosen by a pin is a route, not a tail — no clause.
+        let pinned = decision_from(
+            vec![(TAIL_PROVIDER.to_string(), "deepseek-flash".to_string())],
+            How::Pinned,
+            None,
+            None,
+            "pinned to deepseek/deepseek-flash".to_string(),
+            JudgedFrom::None,
+        );
+        let router = Router::new(resolved, pinned);
+        {
+            let mut state = lock(&router.state);
+            state.attempts = vec![Attempt {
+                provider: TAIL_PROVIDER.to_string(),
+                outcome: "served",
+                class: None,
+            }];
+            state.served = Some(0);
+        }
+        let row = router.row("a task", 0);
+        assert!(!row.reason.contains("failover tail"), "{}", row.reason);
+    }
+
+    #[tokio::test]
+    async fn the_leader_walks_hard_and_a_child_walks_what_was_judged() {
+        // Without a judge, the judged workload is the gates' default;
+        // the leader still walks the orchestrator's chain, the child
+        // walks the default workload's own — the two heads differ, which
+        // is the whole of the 2026-10-21 narrowing.
+        let resolved = keyed_default_roster();
+        let table = default_preferences();
+        let gates = Gates::default();
+        let specs = dead_judge();
+        let (leader, _) = select_walk(
+            &resolved,
+            None,
+            "a task",
+            &specs,
+            &table,
+            gates,
+            None,
+            Walk::Leader,
+        )
+        .await;
+        let (child, _) = select_walk(
+            &resolved,
+            None,
+            "a task",
+            &specs,
+            &table,
+            gates,
+            None,
+            Walk::Judged,
+        )
+        .await;
+        let hard_head = preference_for(&table, ORCHESTRATOR_WORKLOAD)
+            .expect("hard")
+            .candidates[0];
+        let default_head = preference_for(&table, gates.default_workload)
+            .expect("default")
+            .candidates[0];
+        assert_eq!(
+            (leader.order[0].0.as_str(), leader.order[0].1.as_str()),
+            hard_head
+        );
+        assert_eq!(
+            (child.order[0].0.as_str(), child.order[0].1.as_str()),
+            default_head
+        );
+        assert_ne!(leader.order[0], child.order[0]);
+        assert!(
+            leader.reason.contains("the orchestrator walks"),
+            "{}",
+            leader.reason
+        );
+        assert!(
+            !child.reason.contains("the orchestrator walks"),
+            "{}",
+            child.reason
+        );
+        // Both are closed by the reserve.
+        assert_eq!(tail_of(&leader.order).map(|(p, _)| p), Some(TAIL_PROVIDER));
+        assert_eq!(tail_of(&child.order).map(|(p, _)| p), Some(TAIL_PROVIDER));
+    }
+
+    #[test]
+    fn a_model_flag_resolves_to_a_pin_or_is_refused_by_name() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-route-pin-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&home).expect("a scratch home");
+        // The owner's config can put one model id on two providers (the
+        // live home does: ollama-cloud serves glm-5.3-flash beside zai's
+        // GLM-5.3-Flash) — the ambiguity the refusal exists for.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{"providers":[{"id":"ollama-cloud","models":["gemma4:31b","glm-5.3-flash"]}]}"#,
+        )
+        .expect("a config");
+        // One provider serves it: the pair, in the roster's spelling.
+        assert_eq!(
+            resolve_model_pin(&home, "step-3.7-flash").as_deref(),
+            Ok("stepfun/step-3.7-flash")
+        );
+        // A differently-cased id resolves to the declared spelling rather
+        // than being dropped or pinned as typed.
+        assert_eq!(
+            resolve_model_pin(&home, "STEP-3.7-FLASH").as_deref(),
+            Ok("stepfun/step-3.7-flash")
+        );
+        let two = resolve_model_pin(&home, "glm-5.3-flash").expect_err("two providers");
+        assert!(two.contains("zai-coding-plan/GLM-5.3-Flash"), "{two}");
+        assert!(two.contains("ollama-cloud/glm-5.3-flash"), "{two}");
+        // An exact pair is taken as written; an unknown provider is named.
+        assert_eq!(
+            resolve_model_pin(&home, "ollama-cloud/kimi-k3").as_deref(),
+            Ok("ollama-cloud/kimi-k3")
+        );
+        let unknown = resolve_model_pin(&home, "nowhere/model").expect_err("no such provider");
+        assert!(unknown.contains("names no roster provider"), "{unknown}");
+        let nobody = resolve_model_pin(&home, "no-such-model").expect_err("nobody serves it");
+        assert!(nobody.contains("no roster provider serves"), "{nobody}");
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

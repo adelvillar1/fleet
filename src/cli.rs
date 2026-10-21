@@ -1,7 +1,6 @@
 //! Command-line grammar: parse argv into commands. The parser owns Fleet's
 //! own flags; there is nothing to forward anywhere.
 
-use crate::api::DEFAULT_MODEL;
 use crate::channels::Capability;
 
 /// Everything `fleet` answers to.
@@ -135,7 +134,10 @@ pub struct GuiOptions {
 pub struct RunOptions {
     /// The task text: all non-flag words, joined.
     pub task: String,
-    pub model: String,
+    /// `--model`, when given: a route pin — `provider/model`, or a model
+    /// id that exactly one roster provider serves. `None` is the
+    /// router's own choice; no provider's model is a default.
+    pub model: Option<String>,
     pub max_turns: usize,
     /// Approve every tool call without prompting.
     pub yes: bool,
@@ -149,7 +151,8 @@ pub struct RunOptions {
 /// Options for `fleet chat`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ChatOptions {
-    pub model: String,
+    /// `--model`, when given: the same route pin `fleet run` takes.
+    pub model: Option<String>,
     pub yes: bool,
     pub session: Option<String>,
 }
@@ -623,7 +626,9 @@ usage:
   fleet help                     print this help
 
 options for run and chat:
-  --model <name>      model to use (default deepseek-flash)
+  --model <id>        pin the run to a model: provider/model, or a model id
+                      that one roster provider serves (default: the router
+                      decides; `fleet providers` lists the roster)
   --max-turns <n>     tool-loop turn cap for run (default 25)
   --yes, -y           approve every tool call without prompting
 --compact-now       fold the context on the next turn boundary, whatever
@@ -707,7 +712,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
 
 fn parse_run(args: &[String]) -> Result<Command, String> {
     let mut words: Vec<&str> = Vec::new();
-    let mut model = DEFAULT_MODEL.to_string();
+    let mut model: Option<String> = None;
     let mut max_turns = DEFAULT_MAX_TURNS;
     let mut yes = false;
     let mut session: Option<String> = None;
@@ -719,7 +724,7 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--yes" | "-y" => yes = true,
             "--compact-now" => compact_now = true,
-            "--model" => model = take_value(args, &mut index, arg)?,
+            "--model" => model = Some(take_value(args, &mut index, arg)?),
             "--max-turns" => {
                 let value = take_value(args, &mut index, arg)?;
                 max_turns = value
@@ -748,7 +753,7 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
 }
 
 fn parse_chat(args: &[String]) -> Result<Command, String> {
-    let mut model = DEFAULT_MODEL.to_string();
+    let mut model: Option<String> = None;
     let mut yes = false;
     let mut session: Option<String> = None;
     let mut index = 0;
@@ -757,7 +762,7 @@ fn parse_chat(args: &[String]) -> Result<Command, String> {
         match arg {
             "--help" | "-h" => return Ok(Command::Help),
             "--yes" | "-y" => yes = true,
-            "--model" => model = take_value(args, &mut index, arg)?,
+            "--model" => model = Some(take_value(args, &mut index, arg)?),
             "--session" => session = Some(take_value(args, &mut index, arg)?),
             _ => return Err(format!("unknown chat option `{arg}`")),
         }
@@ -2224,7 +2229,7 @@ mod tests {
             panic!("not a run")
         };
         assert_eq!(options.task, "fix the bug");
-        assert_eq!(options.model, "deepseek-flash");
+        assert_eq!(options.model, None, "no --model is the router's choice");
         assert_eq!(options.max_turns, DEFAULT_MAX_TURNS);
         assert!(!options.yes);
         assert_eq!(options.session, None);
@@ -2248,7 +2253,7 @@ mod tests {
             panic!("not a run")
         };
         assert_eq!(options.task, "do it");
-        assert_eq!(options.model, "m2");
+        assert_eq!(options.model.as_deref(), Some("m2"));
         assert_eq!(options.max_turns, 3);
         assert!(options.yes);
         assert_eq!(options.session.as_deref(), Some("abc"));
@@ -2274,7 +2279,7 @@ mod tests {
         assert_eq!(
             command,
             Command::Chat(ChatOptions {
-                model: "m".to_string(),
+                model: Some("m".to_string()),
                 yes: true,
                 session: None,
             })

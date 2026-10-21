@@ -302,7 +302,7 @@ pub struct AgentOptions {
 impl Default for AgentOptions {
     fn default() -> AgentOptions {
         AgentOptions {
-            model: crate::api::DEFAULT_MODEL.to_string(),
+            model: crate::route::AUTO_MODEL.to_string(),
             max_turns: DEFAULT_MAX_TURNS,
             identity: None,
             ui_tx: None,
@@ -2691,6 +2691,12 @@ impl<'a> Agent<'a> {
         let home = self.options.improve_home.clone();
         let result = crate::subagents::run(crate::subagents::Delegation {
             client,
+            // The parent's standing choice rides down; the child's own
+            // route is judged under it.
+            pin: client
+                .router()
+                .and_then(|router| router.pin().map(str::to_string)),
+            lane_specs: self.options.lane_specs.clone().unwrap_or_default(),
             route,
             model,
             sessions_dir,

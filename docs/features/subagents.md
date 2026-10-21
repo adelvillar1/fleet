@@ -95,24 +95,30 @@ still deserializes: the vocabulary grew mid-format-version, the way
 ## Same model, structurally
 
 The child runs on the **same routed client** the parent is using and
-takes its model from the parent's own options, so "never downgrades"
-(directive 2, hard rule 9) is a property of the construction rather than
-a rule the model is asked to follow. There is no `model` parameter in the
-schema and none in the request; the only place a child could resolve a
-different model is `subagents::child_route`, and it does not — it returns
-the parent's model and carries the parent's active provider decision
-beside it, to be named in the progress line.
+takes its model from its **own route**: since the owner's 2026-10-21
+ruling ("the orchestrator, the session that leads, should be set to hard;
+everything else the router rules"), `subagents::run` prepares the child's
+route with `route::prepare_child` — the brief is judged, the judged
+workload's own chain is walked (no orchestrator override), the parent's
+pin is inherited, and the child runs on its own routed client. There is no
+`model` parameter in the schema and none in the request; the child's
+model is whatever its route decided, and the progress line names the
+provider that route selected. A parent on a direct, unrouted client (a test
+double pointed at a mock) or a run with no home hands the child the same client — the old
+"inherited" shape and the one the smoke below recorded.
 
-This is the in-product form of the fork's model-selection preflight: the
-fork checks a child's requested route against an allowed list before
-creating it (`assertAllowedModelSelection`, `preflightChildLlmRoute` in
-`packages/subagent/tool-subagent/src/model-selection.ts`), and Fleet's
-equivalent is that there is nothing to check — the route is inherited,
-not chosen.
+The fork's model-selection preflight checks a child's requested route
+against an allowed list before creating it (`assertAllowedModelSelection`,
+`preflightChildLlmRoute` in
+`packages/subagent/tool-subagent/src/model-selection.ts`); Fleet's
+equivalent is the router itself — the child's route is judged, gated, and
+pinned by the same code the leader's is, and its decision row lands in the
+same calibration stream.
 
-The smoke's recorded requests prove it on the wire: all four (the
-parent's two and the child's two) carried the roster candidate's model,
-not the nominal one the options named.
+The smoke's recorded requests (taken under the earlier inherit rule) prove
+the shape on the wire: all four (the parent's two and the child's two)
+carried the roster candidate's model, not the nominal one the options
+named.
 
 ## The same approver
 

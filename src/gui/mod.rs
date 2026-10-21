@@ -108,7 +108,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
     let base_url = format!("http://{}:{}", options.host, options.port);
     let bridge = Arc::new(bridge::Bridge::spawn(
         home.clone(),
-        crate::api::DEFAULT_MODEL.to_string(),
+        crate::route::AUTO_MODEL.to_string(),
         None,
         base_url,
     ));

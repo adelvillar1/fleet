@@ -1465,10 +1465,19 @@ impl SubagentResult {
 /// borrow of the parent's approver and progress sink is explicit rather
 /// than implicit.
 pub struct Delegation<'a> {
-    /// The parent's own client, routed or not. The child shares it, so
-    /// the child's requests cross the same roster with the same
-    /// failover — that is what makes "same model" structural.
+    /// The parent's own client, routed or not. The child uses it only
+    /// when the run has no home to route from (a test double); a run
+    /// with a home gives the child its own route, judged over its brief
+    /// — the router rules the child (the owner's 2026-10-21 ruling).
     pub client: &'a Client,
+    /// The parent's route pin, when its run has one: the child routes
+    /// under the same standing choice, narrowed to that provider's
+    /// models the way the parent was.
+    pub pin: Option<String>,
+    /// The parent's lane specs, so the child's judge spawns the way the
+    /// parent's would — a test's injected fake, or the vendored lane
+    /// when the map is empty.
+    pub lane_specs: std::collections::HashMap<String, crate::mcp::ServerSpec>,
     /// The parent's active route decision, when its client is routed.
     pub route: Option<RouteDecision>,
     /// The parent's model, from its own options.
@@ -1553,6 +1562,8 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     }
     let Delegation {
         client,
+        pin,
+        lane_specs,
         route,
         model,
         sessions_dir,
@@ -1668,6 +1679,39 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // take the parent's handle.
     let stream = calib.clone();
     let started = Instant::now();
+
+    // The router rules the child: its route is judged over its own brief
+    // and walked as the judged workload's chain, under the parent's pin
+    // — never the parent's committed candidate. That needs a router to
+    // rule it and a home to route from: a parent on a direct, unrouted
+    // client (a test double, pointed at a mock) or a run with no home
+    // hands the child the same client, which is the shape every test
+    // double has always had. A route that cannot be prepared is a named
+    // refusal, the way a parent's would have failed its startup.
+    let own_route = match (home.as_deref(), client.router().is_some()) {
+        (Some(home), true) => {
+            match crate::route::prepare_child(home, &message, &lane_specs, pin.as_deref()).await {
+                Ok(prepared) => Some(prepared),
+                Err(error) => {
+                    return SubagentResult::refused(format!(
+                        "the child's route could not be prepared: {error}"
+                    ))
+                }
+            }
+        }
+        _ => None,
+    };
+    let own_client = own_route
+        .as_ref()
+        .map(|prepared| Client::routed(prepared.router.clone()));
+    let client: &Client = own_client.as_ref().unwrap_or(client);
+    let (model, route) = match &own_route {
+        Some(prepared) => (
+            prepared.decision.model.clone(),
+            Some(prepared.decision.clone()),
+        ),
+        None => (model, route),
+    };
 
     let child_route = child_route(&model, route.as_ref());
     // KI-072: every constructor takes a home. A run with no home of its
@@ -1793,6 +1837,12 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         };
         agent.run(&message).await
     };
+    // The child's own decision row, with every attempt its walk made:
+    // the same stream the parent's row lands in, so the judgment that
+    // routed the child is graded like any other.
+    if let Some(prepared) = &own_route {
+        prepared.record_route(&message);
+    }
 
     let records = crate::session::replay(&log).unwrap_or_default();
     let mut result = match outcome {

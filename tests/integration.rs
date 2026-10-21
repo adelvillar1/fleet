@@ -3071,6 +3071,120 @@ async fn the_orchestrator_walks_hard_whatever_the_task_was_judged() {
     );
 }
 
+/// The 2026-10-21 narrowing: the orchestrator's chain is the *leader's*.
+/// A child's route — [`fleet::route::Walk::Judged`], which is what
+/// `prepare_child` walks — follows the judged workload, so a brief sys1
+/// judges `quick` heads `quick`'s own chain while the same verdict
+/// plans the leader on `hard`'s. Both orders close on the reserve.
+#[tokio::test]
+async fn a_child_walks_the_judged_workload_while_the_leader_keeps_hard() {
+    let quick_verdict = || {
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": { "content": [{ "type": "text",
+                "text": r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"quick","confidence":0.93}}}}"# }],
+                "isError": false }
+        }})
+    };
+    let preferences = vec![
+        fleet::route::Preference {
+            workload: "quick",
+            candidates: vec![
+                ("stand-in", "weak-model"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+            ],
+        },
+        fleet::route::Preference {
+            workload: "hard",
+            candidates: vec![("zai-coding-plan", "GLM-5.3-Flash"), ("stand-in", "auto")],
+        },
+    ];
+    let resolved = vec![
+        resolved(
+            "stand-in",
+            "http://127.0.0.1:8400/v1".to_string(),
+            false,
+            None,
+        ),
+        resolved(
+            "zai-coding-plan",
+            "https://api.z.ai".to_string(),
+            true,
+            Some("sk-fake-test"),
+        ),
+        resolved(
+            "deepseek",
+            "https://api.deepseek.com".to_string(),
+            true,
+            Some("sk-fake-reserve"),
+        ),
+    ];
+
+    let leader_judge = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        quick_verdict(),
+    ]);
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), leader_judge.spec());
+    let (leader, _) = fleet::route::select_walk(
+        &resolved,
+        None,
+        "a one-line question",
+        &specs,
+        &preferences,
+        fleet::route::Gates::default(),
+        None,
+        fleet::route::Walk::Leader,
+    )
+    .await;
+
+    let child_judge = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        quick_verdict(),
+    ]);
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), child_judge.spec());
+    let (child, _) = fleet::route::select_walk(
+        &resolved,
+        None,
+        "a one-line question",
+        &specs,
+        &preferences,
+        fleet::route::Gates::default(),
+        None,
+        fleet::route::Walk::Judged,
+    )
+    .await;
+
+    // Same verdict on both rows.
+    assert_eq!(leader.workload.as_deref(), Some("quick"));
+    assert_eq!(child.workload.as_deref(), Some("quick"));
+    // The leader plans on `hard`'s head; the child works on `quick`'s.
+    assert_eq!(leader.provider, "zai-coding-plan");
+    assert_eq!(child.provider, "stand-in");
+    assert_eq!(child.model, "weak-model");
+    assert!(
+        leader.reason.contains("the orchestrator walks"),
+        "{}",
+        leader.reason
+    );
+    assert!(
+        !child.reason.contains("the orchestrator walks"),
+        "{}",
+        child.reason
+    );
+    // Every walk the router builds closes on the reserve, which the
+    // resolved roster carries this time — with the reserve entry's own
+    // default model.
+    let tail = ("deepseek".to_string(), "deepseek-model".to_string());
+    assert_eq!(leader.order.last(), Some(&tail), "{:?}", leader.order);
+    assert_eq!(child.order.last(), Some(&tail), "{:?}", child.order);
+    assert_eq!(
+        child.order.iter().filter(|(p, _)| p == "deepseek").count(),
+        1
+    );
+}
+
 /// The owner's override of `hard` governs the orchestrator's walk: the
 /// merged table's `hard` list is what the walk consumes.
 #[tokio::test]

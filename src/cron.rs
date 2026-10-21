@@ -40,7 +40,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::agent::{
     Agent, AgentError, AgentOptions, Approver, FileAccess, RunReport, UiEvent, DEFAULT_MAX_TURNS,
 };
-use crate::api::{Client, DEFAULT_MODEL};
+use crate::api::Client;
 use crate::route;
 use crate::session::{self, Session};
 
@@ -1267,11 +1267,19 @@ pub async fn execute(
     memory_root: &Path,
 ) -> Result<RunOutcome, AgentError> {
     let task = frame_task(job, minute, catch_up);
+    // The session's model is the route's own: the client was prepared
+    // before this run, so the start record names what will serve rather
+    // than a provider's default. An unrouted client — a test's double —
+    // has no route, and the record reads `auto`.
+    let model = client
+        .route_decision()
+        .map(|decision| decision.model)
+        .unwrap_or_else(|| crate::route::AUTO_MODEL.to_string());
     // A scheduled run's log is an ordinary session log marked
     // `kind: scheduled`: the picker, `fleet sessions`, and replay treat
     // it as real work in a real session, and the marker is what says a
     // job started it rather than the owner.
-    let mut session = Session::create_scheduled(home, DEFAULT_MODEL).map_err(AgentError::Io)?;
+    let mut session = Session::create_scheduled(home, &model).map_err(AgentError::Io)?;
     let skills = crate::skills::load(home);
     // The corpus is loaded per run, off the async worker, from the root
     // the caller resolved — exactly the way `fleet run` wires it: the
@@ -1284,7 +1292,7 @@ pub async fn execute(
     .await
     .ok();
     let options = AgentOptions {
-        model: DEFAULT_MODEL.to_string(),
+        model: model.clone(),
         max_turns: DEFAULT_MAX_TURNS,
         identity: crate::home::read_soul(home),
         ui_tx: None,
