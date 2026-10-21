@@ -355,30 +355,31 @@
               <option value="">Auto</option>
             </select>
           </label>
-          <!-- The third standing choice: where this chat's runs work. A
-               chat with no choice works in the folder the face was
-               launched from, which is what today's runs already do. -->
+          <!-- The third standing choice: where this chat's runs work. No
+               folder means no filesystem access at all — the grant is
+               the choice, and nothing is implicit. -->
           <label class="runbar-folder">
             <span>folder</span>
             <button type="button" id="run-folder" aria-haspopup="dialog"
                     aria-expanded="false" aria-controls="folder-pop"
-                    title="where this chat's runs work">launch folder</button>
+                    title="no working folder: the filesystem tools are unavailable">no folder</button>
           </label>
           <span class="runbar-note" id="run-route-note">the router decides</span>
         </div>
         <!-- The folder picker. It browses only inside the launch
              directory, one level at a time, and applies to the next run:
-             a run in flight already carries the root it accepted. -->
+             a run in flight already carries the root it accepted. Choosing
+             the launch directory itself is a grant like any other. -->
         <div class="folder-pop" id="folder-pop" role="dialog" aria-modal="false"
              aria-label="the chat's working folder" hidden>
           <div class="folder-pop-head">
-            <span class="folder-pop-label">works in</span>
+            <span class="folder-pop-label">browse</span>
             <code id="folder-pop-path"></code>
           </div>
           <div class="folder-pop-list" id="folder-pop-list"></div>
           <div class="folder-pop-actions">
             <button type="button" id="folder-use">use this folder</button>
-            <button type="button" id="folder-reset">reset to the launch folder</button>
+            <button type="button" id="folder-reset">remove the folder</button>
           </div>
         </div>
         <footer class="composer-foot">

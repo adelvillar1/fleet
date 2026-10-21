@@ -4902,6 +4902,18 @@
   // autonomous.
   function paintRunbar() {
     if (!el.runbar) return;
+    // Full access is a grant only a working folder can bound: a chat
+    // with no folder does not offer it, and a mode left on full from
+    // before the folder was cleared falls back to ask rather than
+    // arming a run the server would refuse.
+    var full = el.runPerms ? el.runPerms.querySelector('button[data-mode="full"]') : null;
+    if (full) {
+      full.disabled = !face.folder;
+      full.title = face.folder
+        ? 'nothing asks except the always-ask class \u2014 a standing risk'
+        : 'full access needs a working folder: choose one first';
+    }
+    if (!face.folder && face.permissions === 'full') face.permissions = 'ask';
     Array.prototype.forEach.call(el.runPerms.querySelectorAll('button[data-mode]'), function (button) {
       button.setAttribute('aria-pressed',
         button.dataset.mode === face.permissions ? 'true' : 'false');
@@ -4923,11 +4935,11 @@
   // in a crowded bar.
   function paintFolder() {
     if (!el.runFolder) return;
-    el.runFolder.textContent = face.folder ? face.folder.name : 'launch folder';
-    el.runFolder.dataset.state = face.folder ? 'set' : 'default';
+    el.runFolder.textContent = face.folder ? face.folder.name : 'no folder';
+    el.runFolder.dataset.state = face.folder ? 'set' : 'none';
     el.runFolder.title = face.folder
       ? 'this chat works in ' + face.folder.path
-      : 'this chat works in the folder the face was launched from';
+      : 'no working folder: the filesystem tools are unavailable until one is set';
   }
 
   // The pin's choices are the roster's enabled providers, read once off
@@ -4986,8 +4998,11 @@
   // connection.
   var folderSync = Promise.resolve();
 
-  function chooseFolder(rel) {
-    var body = { folder: rel || null };
+  // `folder` is the pane's rooted form of the grant, null removes it,
+  // and the launch directory itself is sent by its own path because
+  // choosing it is a grant like any other.
+  function chooseFolder(folder) {
+    var body = { folder: folder || null };
     if (face.session) body.session = face.session;
     folderSync = post('/api/folder', body).then(function (reply) {
       if (reply.status !== 200) {
@@ -5066,10 +5081,12 @@
     });
   }
   if (el.folderUse) {
-    el.folderUse.addEventListener('click', function () { chooseFolder(folderBrowse.rel); });
+    el.folderUse.addEventListener('click', function () {
+      chooseFolder(folderBrowse.rel || face.workspace);
+    });
   }
   if (el.folderReset) {
-    el.folderReset.addEventListener('click', function () { chooseFolder(''); });
+    el.folderReset.addEventListener('click', function () { chooseFolder(null); });
   }
   document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape' && el.folderPop && !el.folderPop.hidden) toggleFolderPop(false);

@@ -76,7 +76,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::agent::{Agent, AgentError, AgentOptions, ApproveAll, Approver, RunReport, StopReason};
+use crate::agent::{
+    Agent, AgentError, AgentOptions, ApproveAll, Approver, FileAccess, RunReport, StopReason,
+};
 use crate::api::{Client, Message};
 use crate::calib::{self, EvalCorpusRow, EvalScenarioRow, Row, Stream};
 use crate::memory::{self, Memory};
@@ -1345,7 +1347,7 @@ async fn drive_over(
         skills: Vec::new(),
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
         role_overlay: None,
         memory,

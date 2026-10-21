@@ -59,11 +59,14 @@ chat's standing choices — permissions, the route pin, and its working
 folder. A chat's folder is the agent's root: `bash` starts there and the
 file tools resolve under it, a path that leaves the run's folder is
 refused by name, a reload restores the choice, a deleted folder falls
-back to the launch folder in the run's first transcript line, and a
-subagent inherits the parent's folder. A run with no folder works in the
-directory the face was launched from, as it always has. The surfaces,
-the home briefing, the endpoints, and the interaction layer are
-documented in `docs/features/gui.md`.
+back to no folder in the run's first transcript line, and a subagent
+inherits the parent's access. A chat with no folder has no filesystem
+access at all — all four built-in tools are refused by name, with the
+refusal asking the owner for a folder — and full access is not offered
+until a folder is set. The CLI, the TUI, and headless runs are launched
+from a directory and keep the unrestricted root they always had. The
+surfaces, the home briefing, the endpoints, and the interaction layer
+are documented in `docs/features/gui.md`.
 
 ## Run behavior
 

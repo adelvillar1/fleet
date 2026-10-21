@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::{
-    Agent, AgentError, AgentOptions, Approver, RunReport, UiEvent, DEFAULT_MAX_TURNS,
+    Agent, AgentError, AgentOptions, Approver, FileAccess, RunReport, UiEvent, DEFAULT_MAX_TURNS,
 };
 use crate::api::{Client, DEFAULT_MODEL};
 use crate::route;
@@ -1303,7 +1303,7 @@ pub async fn execute(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let gate = Gate::for_job(job);

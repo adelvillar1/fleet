@@ -1677,6 +1677,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   cursor: pointer;
 }
 .runbar-perms button:hover { color: var(--dsw-alias-ink); }
+.runbar-perms button:disabled { color: var(--dsw-alias-ink-tertiary); opacity: 0.45; cursor: not-allowed; }
 .runbar-perms button[aria-pressed="true"] { background: var(--dsw-alias-ink); color: var(--dsw-alias-page); }
 .runbar[data-mode="full"] .runbar-perms button[aria-pressed="true"] { background: var(--dsw-alias-down); color: #fff; }
 .runbar-route { display: inline-flex; align-items: center; gap: 6px; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }

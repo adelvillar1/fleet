@@ -235,8 +235,9 @@ impl GuiState {
         self.workdirs.get(&self.key(session)).cloned()
     }
 
-    /// Set or clear a chat's folder. `None` is the launch folder, which
-    /// is the absence of an entry rather than an entry naming it.
+    /// Set or clear a chat's folder. `None` is no folder — and
+    /// therefore no filesystem access — which is the absence of an
+    /// entry rather than an entry naming one.
     fn set_workdir(&mut self, session: &str, folder: Option<&str>) -> Option<String> {
         let key = self.key(session);
         match folder {
@@ -1615,6 +1616,7 @@ impl Bridge {
     /// asked.
     pub fn plan(&self, session: &str, task: &str) -> Result<(), String> {
         let folder = self.run_folder(session, None)?;
+        self.full_access_floor(folder.as_deref(), lock(&self.state).permissions)?;
         self.dispatch(session, task, |session, task| {
             Command::Plan(session.to_string(), task.to_string(), folder)
         })
@@ -1625,6 +1627,7 @@ impl Bridge {
     /// the header's running flag moves on the same event.
     pub fn run(&self, session: &str, task: &str) -> Result<(), String> {
         let folder = self.run_folder(session, None)?;
+        self.full_access_floor(folder.as_deref(), lock(&self.state).permissions)?;
         self.dispatch(session, task, |session, task| {
             Command::Run(session.to_string(), task.to_string(), folder)
         })
@@ -1636,7 +1639,9 @@ impl Bridge {
     /// the stored choice). The mode and the pin are read by the agent
     /// thread when it prepares the run; the folder is resolved here,
     /// before the command is sent, so the run's root cannot move under
-    /// it. Both apply to this run and not to the face's other sessions.
+    /// it. Both apply to this run and not to the face's other sessions,
+    /// and a full-access run without a folder is a 400: the mode is a
+    /// grant only a working folder can bound.
     pub fn run_with(
         &self,
         session: &str,
@@ -1644,8 +1649,12 @@ impl Bridge {
         mode: crate::approvals::Mode,
         pin: Option<String>,
         folder: Option<&str>,
-    ) -> Result<(), String> {
-        let folder = self.run_folder(session, folder)?;
+    ) -> Result<(), RunError> {
+        let folder = self
+            .run_folder(session, folder)
+            .map_err(RunError::BadRequest)?;
+        self.full_access_floor(folder.as_deref(), mode)
+            .map_err(RunError::BadRequest)?;
         {
             let mut state = lock(&self.state);
             state.permissions = mode;
@@ -1654,6 +1663,28 @@ impl Bridge {
         self.dispatch(session, task, |session, task| {
             Command::Run(session.to_string(), task.to_string(), folder)
         })
+        .map_err(RunError::Refused)
+    }
+
+    /// Full access is never permitted on a chat with no working folder:
+    /// the mode is "nothing asks", and a chat with no folder has no
+    /// filesystem access to bound. A run that somehow reaches here with
+    /// both — a stored mode from before the folder was cleared, a
+    /// remote caller that named no folder — is refused by name rather
+    /// than quietly downgraded.
+    fn full_access_floor(
+        &self,
+        folder: Option<&std::path::Path>,
+        mode: crate::approvals::Mode,
+    ) -> Result<(), String> {
+        if mode == crate::approvals::Mode::Yes && folder.is_none() {
+            return Err(
+                "full access needs a working folder: choose one in the run bar, or use \
+                 autonomous or ask"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     /// Resolve one folder the browser named against the launch
@@ -1678,8 +1709,9 @@ impl Bridge {
     /// The folder this run will use. An explicit choice is validated
     /// and stored, then used. With none, the stored choice is used when
     /// it still resolves; a stored folder that has gone missing is
-    /// cleared, falls back to the launch folder, and names the fallback
-    /// as the run's first event.
+    /// cleared, falls back to no folder, and names the fallback as the
+    /// run's first event. A run with no folder has no filesystem
+    /// access.
     fn run_folder(&self, session: &str, asked: Option<&str>) -> Result<Option<PathBuf>, String> {
         if asked.is_some() {
             let folder = self.store_folder(session, asked)?;
@@ -1704,18 +1736,14 @@ impl Bridge {
     }
 
     /// Store one chosen folder (or clear it) and persist the sidecar.
-    /// `None` is the launch folder, which is the absence of an entry.
+    /// `None` is no folder — and therefore no filesystem access. A
+    /// folder is a grant, so choosing the launch directory grants it
+    /// exactly like any other: the owner's explicit choice is the only
+    /// thing that opens access.
     fn store_folder(&self, session: &str, asked: Option<&str>) -> Result<Option<PathBuf>, String> {
         let asked = asked.map(str::trim).filter(|asked| !asked.is_empty());
         let folder = match asked {
-            Some(asked) => {
-                let path = self.chat_folder(asked)?;
-                // Choosing the launch folder is choosing nothing: an
-                // absent entry says "launch folder" without pretending
-                // the owner picked the directory the process started in.
-                let launch = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
-                Some(path).filter(|path| path != &launch)
-            }
+            Some(asked) => Some(self.chat_folder(asked)?),
             None => None,
         };
         let stored = folder.as_ref().map(|path| path.display().to_string());
@@ -1759,7 +1787,7 @@ impl Bridge {
                 "missing": missing,
                 "workspace": workspace,
                 "note": format!(
-                    "the folder {missing} is no longer usable ({reason}); this run works in the launch folder"
+                    "the folder {missing} is no longer usable ({reason}); this chat now has no working folder, so the filesystem tools are unavailable until one is set"
                 ),
             }),
             (None, None) => json!({
@@ -1767,7 +1795,7 @@ impl Bridge {
                 "path": null,
                 "name": null,
                 "workspace": workspace,
-                "note": "this chat works in the launch folder",
+                "note": "this chat has no working folder: the filesystem tools are unavailable until one is set",
             }),
         };
         record(&self.state, &self.events, session, event.clone());
@@ -2250,6 +2278,31 @@ impl std::fmt::Display for AnswerError {
 
 impl std::error::Error for AnswerError {}
 
+/// Why a run did not start, with the answer the browser gives: a
+/// request that breaks one of the face's rules is a 400, and a face
+/// that cannot take the run itself is a 409. The distinction matters to
+/// the page — a 400 is the owner's choice to correct, a 409 is the
+/// face's state to wait on.
+#[derive(Debug)]
+pub enum RunError {
+    /// The request breaks a rule: a folder outside the launch
+    /// directory, or full access with no folder.
+    BadRequest(String),
+    /// The face cannot take the run: one is in flight, or this face has
+    /// no agent behind it.
+    Refused(String),
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunError::BadRequest(message) | RunError::Refused(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for RunError {}
+
 /// One rule as the trust surface reads it. The label is derived here
 /// rather than stored, so the rule the file holds and the line the page
 /// shows cannot drift.
@@ -2517,8 +2570,7 @@ fn resolve_folder(root: &std::path::Path, asked: &str) -> Result<PathBuf, String
 /// A folder as the state document and the transcript carry it: its
 /// canonical path, the basename the run bar shows, and its path
 /// relative to the launch directory (the form the picker browses and
-/// the browser sends back). `None` is the launch folder and rides as
-/// JSON null.
+/// the browser sends back). `None` is no folder and rides as JSON null.
 fn folder_value(path: Option<&str>, root: &std::path::Path) -> Value {
     match path {
         Some(path) => {
@@ -5048,10 +5100,15 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             // browser and diffed against a turn.
                             checkpoints: Some(home.join("checkpoints")),
                             // The chat's working folder, resolved when
-                            // the run was accepted: the built-ins work
-                            // there and the checkpoint captures that
-                            // tree. `None` is the launch directory.
-                            workdir: folder,
+                            // the run was accepted. A chat that never
+                            // chose one has no filesystem access at
+                            // all: the four built-ins are refused by
+                            // name, and the refusal tells the model to
+                            // ask for a folder.
+                            file_access: match folder {
+                                Some(root) => crate::agent::FileAccess::Folder(root),
+                                None => crate::agent::FileAccess::None,
+                            },
                             plan_mode,
                         };
                         let mode = lock(&state).permissions;
@@ -5281,9 +5338,9 @@ mod tests {
         dir
     }
 
-    /// C4: a chat's folder is kept per session, persisted in the
-    /// sidecar, and restored after a reload; a second chat starts at the
-    /// launch folder.
+    /// C4 (as amended): a chat's folder is kept per session, persisted
+    /// in the sidecar, and restored after a reload; a second chat starts
+    /// with no folder, and therefore no filesystem access.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_chat_folder_is_per_session_and_survives_a_reload() {
         let (mut bridge, _sources, _door) = bridge().await;
@@ -5311,7 +5368,7 @@ mod tests {
         assert!(sidecar.contains(&id), "{sidecar}");
 
         // A second face over the same home restores the choice; another
-        // chat has none and therefore starts at the launch folder.
+        // chat has none and therefore no filesystem access.
         let (reloaded, _sources) =
             Bridge::detached(home.clone(), "m".to_string(), Some(id.clone()));
         let state = reloaded.state(&id);
@@ -5319,7 +5376,7 @@ mod tests {
         let other = Session::create(&home, "m").unwrap();
         assert!(
             reloaded.state(other.id())["folder"].is_null(),
-            "a second chat starts at the launch folder"
+            "a second chat starts with no folder"
         );
 
         std::fs::remove_dir_all(&root).ok();
@@ -5362,8 +5419,9 @@ mod tests {
         std::fs::remove_dir_all(&outside).ok();
     }
 
-    /// C6: a stored folder that has gone missing falls back to the
-    /// launch folder, and the fallback is the run's first event.
+    /// C6 (as amended): a stored folder that has gone missing falls back
+    /// to no folder — not to the launch directory — and the fallback is
+    /// the run's first event.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_deleted_folder_falls_back_and_names_itself() {
         let (mut bridge, _sources, _door) = bridge().await;
@@ -5396,7 +5454,7 @@ mod tests {
             events[last - 1]["note"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("launch folder"),
+                .contains("no working folder"),
             "{events:?}"
         );
         assert!(state["folder"].is_null(), "the stale choice is cleared");
@@ -5404,6 +5462,50 @@ mod tests {
         assert!(
             !sidecar.contains("docs"),
             "the stale entry is gone: {sidecar}"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// C10: full access is a grant only a folder can bound. The run
+    /// route refuses it by name, and a stored full mode from before the
+    /// folder was cleared refuses the next run through the other door
+    /// too rather than arming it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn full_access_is_refused_without_a_folder() {
+        let (mut bridge, _sources, _door) = bridge().await;
+        let root = tree("full-access");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        bridge.cwd = root.clone();
+        let attached = bridge.launch();
+
+        let refused = bridge
+            .run_with(&attached, "work", crate::approvals::Mode::Yes, None, None)
+            .expect_err("full access with no folder");
+        match refused {
+            RunError::BadRequest(message) => assert!(
+                message.contains("full access needs a working folder"),
+                "{message}"
+            ),
+            other => panic!("expected a 400, got {other:?}"),
+        }
+
+        // Stored full + a folder, then the folder is cleared: the
+        // stored-mode door refuses too.
+        bridge
+            .run_with(
+                &attached,
+                "work",
+                crate::approvals::Mode::Yes,
+                None,
+                Some("docs"),
+            )
+            .expect("a folder bounds full access");
+        bridge.set_folder(&attached, None).expect("cleared");
+        let refused = bridge.run(&attached, "again").expect_err("refused");
+        assert!(
+            refused.contains("full access needs a working folder"),
+            "{refused}"
         );
 
         std::fs::remove_dir_all(&root).ok();

@@ -381,7 +381,16 @@ async fn serve_connection(
                     )
                     .await
                 }
-                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+                // A rule the owner's own choices broke — full access
+                // with no folder, a folder that is not there — is the
+                // page's to correct; a face that cannot take the run is
+                // the page's to wait on.
+                Err(crate::gui::bridge::RunError::BadRequest(message)) => {
+                    write_reply(&mut stream, bad_request(&message)).await
+                }
+                Err(crate::gui::bridge::RunError::Refused(message)) => {
+                    write_reply(&mut stream, api(409, json!({"error": message}))).await
+                }
             }
         }
         // The chat's working folder, changed from the run bar without a
@@ -974,8 +983,7 @@ fn task_of(body: &str) -> Result<String, String> {
 
 /// The folder a run's body names, when it names one. Absent or null
 /// means "whatever this chat already chose"; the empty string is the
-/// reset to the launch folder; anything that is not a string is
-/// malformed.
+/// reset to no folder; anything that is not a string is malformed.
 fn folder_of(body: &str) -> Result<Option<String>, String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
@@ -987,7 +995,7 @@ fn folder_of(body: &str) -> Result<Option<String>, String> {
 }
 
 /// The folder a `/api/folder` body carries: the field is required, and
-/// null is the launch folder. Keeping this separate from [`folder_of`]
+/// null is no folder. Keeping this separate from [`folder_of`]
 /// is the difference between "leave the chat's choice alone" (a run
 /// that did not name one) and "clear it" (the reset control).
 fn folder_choice_of(body: &str) -> Result<Option<String>, String> {
@@ -2846,6 +2854,15 @@ mod tests {
         assert!(missing.contains("definitely-not-here"), "{missing}");
         let malformed = post(port, "/api/run", &token, r#"{"task":"work","folder":7}"#);
         assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+
+        // C10: full access is a grant only a folder can bound, so a
+        // no-folder chat is refused the mode by name.
+        let full = post(port, "/api/run", &token, r#"{"task":"work","mode":"full"}"#);
+        assert!(full.starts_with("HTTP/1.1 400"), "{full}");
+        assert!(
+            full.contains("full access needs a working folder"),
+            "{full}"
+        );
 
         // A real folder is accepted; the detached bridge then refuses
         // the run itself for having no agent, which is not this test's

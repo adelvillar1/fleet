@@ -58,7 +58,7 @@
 //!    delegation beat's judge does. A claimed deviation the log does not
 //!    show is a false report, and it is named as one.
 
-use crate::agent::{Agent, AgentOptions, Approver, SubagentStage, UiEvent};
+use crate::agent::{Agent, AgentOptions, Approver, FileAccess, SubagentStage, UiEvent};
 use crate::api::{Client, FunctionCall, ToolCall};
 use crate::calib::{self, DelegatedRunRow, Stream};
 use crate::route::RouteDecision;
@@ -1524,12 +1524,12 @@ pub struct Delegation<'a> {
     /// run plans too, because a delegation that could write would be a
     /// hole in the read-only promise the parent made.
     pub plan_mode: bool,
-    /// The parent's working folder, inherited the way the model and the
-    /// voice are: a child's built-ins work in the chat's folder, not
-    /// wherever the process was launched. `None` is a parent with no
-    /// folder, and the child works in the process's working directory
-    /// exactly as it did before.
-    pub workdir: Option<PathBuf>,
+    /// The parent's file access, inherited the way the model and the
+    /// voice are: a child's built-ins work in the chat's folder, and a
+    /// child of a chat that never chose one has no filesystem access
+    /// either. A child that worked somewhere else would be the one hole
+    /// in the boundary the parent promised its owner.
+    pub file_access: FileAccess,
 }
 
 /// Run one delegated task to a stop and return what it produced.
@@ -1569,7 +1569,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         home,
         depth,
         plan_mode,
-        workdir,
+        file_access,
     } = delegation;
 
     // The brief, read back out of the message the caller composed. The
@@ -1729,10 +1729,10 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         // child plans, and the parent's checkpoint store keys the
         // child's captures by the child's own session id.
         checkpoints: None,
-        // The chat's folder rides down with the rest of the run's
-        // identity: a child that worked somewhere else would be the one
-        // hole in the folder a parent promised its owner.
-        workdir,
+        // The parent's access rides down with the rest of the run's
+        // identity: the folder when there is one, and the refusal when
+        // there is not.
+        file_access,
         plan_mode,
     };
     let gate = InheritedApprover {

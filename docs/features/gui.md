@@ -344,37 +344,47 @@ panel:
 
 The composer's run bar carries three standing choices for the chat: how
 its tool calls are approved, the provider its route is pinned to, and
-where it works. The first two ride the next run; the third is a folder
-the agent's own tools enforce.
+where it works. The first two ride the next run; the third is a grant
+the agent's own tools enforce. **No folder means no filesystem access at
+all** — access is granted by choosing a folder and by nothing else.
 
 - **The choice is per chat.** A folder is stored against the session in
   `<FLEET_HOME>/sessions-workdirs.json` — a surface sidecar, not a new
-  session-log record — so a reload restores it and a second chat keeps
-  the launch folder. A pending launch session's choice moves to the id
-  when the log is created.
+  session-log record — so a reload restores it and a second chat starts
+  with none. A pending launch session's choice moves to the id when the
+  log is created.
 - **The tools, not the prompt, enforce it.** With a folder set, `bash`
   spawns with it as its working directory, and a relative `read_file`,
   `write_file`, or `list_dir` resolves under it. A `..` walk, an
   absolute path outside, and a symlink that resolves outside are each
-  refused with a reason naming its class. A run with no folder is
-  byte-for-byte the run the crate has always had: the process's working
-  directory, paths taken as named.
+  refused with a reason naming its class. With no folder, the four are
+  refused by name before the approval gate — nothing is read, written,
+  or executed — and the refusal tells the model to ask the owner for a
+  folder. The prompt says the same thing before a call is made.
+- **Full access needs a folder.** The mode is "nothing asks", and only a
+  working folder can bound it, so the control is disabled on a no-folder
+  chat, a mode left on full falls back to ask, and the run route refuses
+  `mode: full` with no folder as a 400 naming the rule.
 - **The boundary is the launch directory.** The picker browses it one
   level at a time through `/api/tree`; a folder outside it needs a
-  settings allowlist and is out of scope. Choosing the launch folder is
-  choosing nothing, so the bar says "launch folder" rather than naming
-  the directory the process happened to start in.
+  settings allowlist and is out of scope. Choosing the launch directory
+  itself is a real grant — the bar shows its name like any other — and
+  "remove the folder" is the only thing that clears access.
 - **A run captures its own root.** The folder is resolved when the run
   is accepted and rides the command, so a change made during a run
   applies to the next one. The turn checkpoint captures the chat's
-  folder, not the process cwd, and a subagent inherits the parent's
-  folder the way it inherits the model.
-- **A stored folder that has gone missing** falls back to the launch
-  folder at run time, and the run's first event is a transcript line
-  naming the missing folder and the fallback. The stale entry is
+  folder; a no-folder chat owns no tree and captures nothing, and a
+  subagent inherits the parent's access the way it inherits the model.
+- **A stored folder that has gone missing** falls back to *no folder*
+  at run time — never to the launch directory — and the run's first
+  event is a transcript line naming the missing folder and saying the
+  filesystem tools are unavailable until one is set. The stale entry is
   cleared. A folder named in a request is validated strictly instead:
   an escape or a missing path is a 400 naming the reason, never a
   silent fallback.
+- **The other surfaces are unchanged.** The CLI, the TUI, and headless
+  runs are launched from a directory; that launch is the owner's
+  explicit choice, so they keep the unrestricted root they always had.
 
 ## The reading rules
 

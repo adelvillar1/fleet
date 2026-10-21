@@ -68,10 +68,14 @@ The tool loop, turn cap, `UiEvent` stream, and run-scoped `LaneRoster`. One
 turn reads the owner's control file, assembles the memory block once at run
 start, streams the request with dynamic declarations, gates approvals one call
 at a time, executes tool waves, logs every message, and checks the window
-between turns. `AgentOptions::workdir` is the run's root: the four built-ins
-work under it, the turn checkpoint captures it, and a subagent inherits it.
-`None` is the process's working directory — the run every other surface has
-always had.
+between turns. `AgentOptions::file_access` is the run's access, one of
+three states: `Unrestricted` (the process's working directory — the CLI,
+the TUI, and headless runs, launched from a directory), `Folder` (a
+chat's working folder: the built-ins work under it, the turn checkpoint
+captures it, and a subagent inherits it), and `None` (a chat with no
+folder: the four built-ins are refused by name before the approval
+gate, no checkpoint is captured, and the refusal asks the owner for a
+folder).
 
 #### `tools.rs`
 The closed built-in tool set. Every failure is a model-visible result, never a

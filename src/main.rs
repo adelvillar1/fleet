@@ -5,7 +5,7 @@ use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
 use fleet::agent::{
-    Agent, AgentError, AgentOptions, Approver, ConsoleApprover, RunReport, StopReason,
+    Agent, AgentError, AgentOptions, Approver, ConsoleApprover, FileAccess, RunReport, StopReason,
     DEFAULT_MAX_TURNS,
 };
 use fleet::api::{Client, DEFAULT_BASE_URL};
@@ -2009,7 +2009,7 @@ async fn drive(
         checkpoints,
         // The headless CLI has no per-session folder: it works in the
         // directory the owner launched it from.
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode,
     };
     // Every non-interactive mode rides the Gate, never `ApproveAll`:

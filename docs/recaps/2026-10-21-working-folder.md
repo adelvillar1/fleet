@@ -66,6 +66,38 @@ became an `Option` to say which one a call is.
   horizontal overflow at either width and no console errors. The live
   run route answered `../` and a missing path with 400s naming each.
 
+## Amendment: no folder, no access (owner ruling)
+
+The same day, the owner corrected the first cut's reading of C0: a
+no-folder chat must not reach any folder. The split is now explicit and
+enforced in the agent, not the prompt:
+
+- `AgentOptions.file_access` is one of `Unrestricted` (the CLI, the TUI,
+  and headless runs, launched from a directory), `Folder` (a chat's
+  grant), or `None`. A `None` run refuses `bash`, `read_file`,
+  `write_file`, and `list_dir` by name **before** the approval gate —
+  nothing is asked of the owner for a call that cannot run — and the
+  refusal tells the model to ask for a folder. The prompt says the same
+  before the first call. The turn captures no checkpoint of a tree the
+  chat was not given.
+- Full access is a grant only a folder can bound: the control is
+  disabled on a no-folder chat, a mode left on full falls back to ask,
+  and `POST /api/run` with `mode: full` and no folder is a 400 naming
+  the rule. The stored-mode door (a remote caller) refuses it too.
+- The consequences the ruling implies for the labels and the fallback:
+  a chat starts at **"no folder"**, not "launch folder"; choosing the
+  launch directory in the picker is a real grant rather than a reset;
+  and a stored folder that has gone missing falls back to no folder
+  and says the filesystem tools are unavailable until one is set —
+  never to the launch directory.
+
+New tests: all four refusals with an approver that panics if asked (the
+gate is never reached), the no-checkpoint assertion, an integration run
+whose `write_file` lands nothing on disk, the full-access 400 at the
+route, and the stored-full refusal. Live: the Full control renders
+disabled and reads "full access needs a working folder" until a folder
+is chosen, then enables.
+
 ## What is left
 
 The plan's own out-of-scope list stands: the files pane still roots at

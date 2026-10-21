@@ -15,7 +15,8 @@
 use std::path::{Path, PathBuf};
 
 use fleet::agent::{
-    Agent, AgentError, AgentOptions, ApproveAll, Approver, DenyAll, RunReport, StopReason, UiEvent,
+    Agent, AgentError, AgentOptions, ApproveAll, Approver, DenyAll, FileAccess, RunReport,
+    StopReason, UiEvent,
 };
 use fleet::api::{
     ChatRequest, Client, ClientError, Message, Role, StreamEvent, ToolCall, Usage, DEFAULT_BASE_URL,
@@ -389,7 +390,7 @@ async fn run_on(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -420,7 +421,7 @@ async fn run_on_probe(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let mut agent = Agent::new(&client, options, session, Box::new(ApproveAll), probe).unwrap();
@@ -454,7 +455,7 @@ async fn run_with_lanes(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();
@@ -1138,7 +1139,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
@@ -1227,7 +1228,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
@@ -1275,7 +1276,7 @@ async fn a_denied_call_reports_its_result_event() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
@@ -1347,7 +1348,7 @@ async fn a_failed_run_reports_a_failure_event() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let client = Client::new(mock.url(), "test-key");
@@ -2463,7 +2464,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
-            workdir: None,
+            file_access: FileAccess::Unrestricted,
             plan_mode: false,
         };
         let report = {
@@ -2867,7 +2868,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -3280,7 +3281,7 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let report = {
@@ -3407,7 +3408,7 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let report = {
@@ -3557,7 +3558,7 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let report = {
@@ -3636,7 +3637,7 @@ async fn an_unknown_role_is_refused_by_name_and_the_child_never_runs() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let report = {
@@ -3756,7 +3757,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let report = {
@@ -3827,7 +3828,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let outcome = {
@@ -3887,7 +3888,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let report = {
@@ -3943,7 +3944,7 @@ async fn a_run_without_a_stream_records_nothing() {
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
-            workdir: None,
+            file_access: FileAccess::Unrestricted,
             plan_mode: false,
         },
         &mut session,
@@ -4096,7 +4097,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let report = {
@@ -4208,7 +4209,7 @@ async fn run_with_skills(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -5061,7 +5062,7 @@ async fn run_with_memory(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -5557,7 +5558,7 @@ async fn run_with_improve(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -5920,7 +5921,7 @@ async fn a_subagents_builtins_work_in_the_parents_folder() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: Some(folder.clone()),
+        file_access: FileAccess::Folder(folder.clone()),
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -5949,6 +5950,74 @@ async fn a_subagents_builtins_work_in_the_parents_folder() {
 
     std::fs::remove_dir_all(&home).ok();
     std::fs::remove_dir_all(&folder).ok();
+}
+
+/// C9: a chat with no working folder cannot touch the filesystem. The
+/// model's write is refused with the rule stated, and the file is not
+/// created — the refusal is the tool's answer, not a prompt line.
+#[tokio::test]
+async fn a_chat_with_no_folder_cannot_touch_the_filesystem() {
+    let target = std::env::temp_dir().join(format!(
+        "fleet-no-folder-{}-{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_file(&target);
+    let arguments = serde_json::json!({
+        "path": target.display().to_string(),
+        "content": "the chat was never given a folder"
+    })
+    .to_string();
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "write_file", &arguments),
+        assistant_stream("I need a working folder before I can write."),
+    ]);
+    let home = temp_home("no-folder-refusal");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 4,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::None,
+        plan_mode: false,
+    };
+    let mut progress = Vec::new();
+    {
+        // The agent borrows the session for the run; the replay reads
+        // the log after the borrow ends.
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("write a file").await.unwrap();
+    }
+
+    let records = session::replay(session.path()).unwrap();
+    let (output, _) = tool_result(&records, "write_file");
+    assert!(output.contains("no working folder"), "{output}");
+    assert!(output.contains("Ask the owner"), "{output}");
+    assert!(!target.exists(), "nothing was written: {output}");
+
+    std::fs::remove_dir_all(&home).ok();
 }
 
 /// A routed parent's child runs on the routed candidate's model: the
@@ -5997,7 +6066,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let mut progress = Vec::new();
@@ -6481,7 +6550,7 @@ async fn run_capturing(
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,
-        workdir: None,
+        file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
     let mut agent = Agent::new(&client, options, session, approver, progress).unwrap();

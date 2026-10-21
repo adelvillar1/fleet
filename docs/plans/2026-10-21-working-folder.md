@@ -19,7 +19,7 @@ The owner asked for this directly: "we need to be able to attach files to chat a
 
 Thread one root through the run: the agent's built-ins, their relative paths, and the checkpoints read the chat's folder instead of the process cwd.
 
-The root already exists at the right seam — `Work::Builtin.root` — so the change is to fill it from `AgentOptions.workdir` and pass it to `run_builtin(tool, arguments, root)`. Bash spawns with `Command::current_dir(root)`; read/write/list resolve a relative path against root and canonicalize it; checkpoints capture from root. The default is the process cwd, so a chat with no folder behaves exactly as today.
+The root already exists at the right seam — `Work::Builtin.root` — so the change is to fill it from the run's file access and pass it to `run_builtin(tool, arguments, access)`. Bash spawns with `Command::current_dir(root)`; read/write/list resolve a relative path against root and canonicalize it; checkpoints capture from root. The CLI/TUI default is the process cwd; the chat surface's default is no folder at all (see the amendment).
 
 The folder is per session, chosen in the run bar, validated by the server with the pane's own `pane_path` containment rule (canonicalized, symlinks resolved), and persisted in a fleet-owned sidecar keyed by session id. The session log does not change: it is the conversation, and a surface setting does not belong in its format.
 
@@ -33,7 +33,7 @@ High-level steps:
 ## Use cases
 
 - [x] A: A chat's runs must operate in the owner's chosen folder, and the tools — not a prompt line — must enforce it.
-- [x] B: The choice must be per chat and survive a reload; a chat with no choice keeps the launch folder.
+- [x] B: The choice must be per chat and survive a reload; a chat with no choice starts with no folder (amended).
 - [x] C: A folder outside the launch boundary, a symlink that escapes it, or a folder that no longer exists must be refused or named, never silently used.
 - [x] D: Delegated work must land in the same folder: a subagent's tools inherit the parent's.
 
@@ -47,9 +47,22 @@ These are the contract. Each one is a verifiable assertion. The work is "done" w
 - [x] C3: A relative path that escapes the folder (`../x`), an absolute path outside it, and a symlink resolving outside it are each refused with a reason that names the class.
 - [x] C4: A chat's folder is stored per session, restored after a page reload, and a second chat starts at the launch folder.
 - [x] C5: `POST /api/run` with a folder outside the launch root returns 400 with the pane's containment reason; a path that does not exist returns 400 naming it; a valid folder is accepted.
-- [x] C6: When the stored folder no longer exists at run time, `POST /api/run` falls back to the launch folder and the run's first event names the fallback; a test creates a chat folder, deletes it, and asserts both the launch path used and the named notice.
-- [x] C7: The run bar shows the current folder (its basename, or "launch folder"), and changing it adds one line to the transcript; the change applies to the next run, never the one in flight.
+- [x] C6 (amended): When the stored folder no longer exists at run time, `POST /api/run` falls back to no folder — never to the launch directory — and the run's first event names the fallback; a test creates a chat folder, deletes it, and asserts the cleared choice, no filesystem access, and the named notice.
+- [x] C7: The run bar shows the current folder (its basename, or "no folder"), and changing it adds one line to the transcript; the change applies to the next run, never the one in flight.
 - [x] C8: A subagent spawned by a run uses the parent's folder for its built-in tools.
+
+## Amendment: no folder means no filesystem access (owner ruling, 2026-10-21)
+
+The first cut read C0 as "a no-folder chat is today's unrestricted run".
+The owner corrected it: a no-folder chat must not reach any folder at
+all. Access is granted by choosing a working folder and by nothing else;
+Full access is not permitted until one is set. This also amends C4's
+second chat and C6's fallback: both are *no folder*, not the launch
+directory, and choosing the launch directory in the picker is a real
+grant rather than a reset.
+
+- [x] C9: A GUI run with no folder refuses all four built-in tools by name, with a model-visible reason telling the model to ask the owner for a folder; nothing is read, written, or executed in any directory. The CLI, TUI, and headless runs are launched from a directory and keep today's unrestricted behavior — they are not chat cards.
+- [x] C10: Full access is not selectable on a no-folder chat (the control is disabled), `POST /api/run` with `mode: full` and no folder is a 400 naming the rule, and a stored Full mode never applies to a no-folder run.
 
 ## Files to be touched
 

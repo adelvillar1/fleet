@@ -28,7 +28,8 @@ use ratatui::Terminal;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent::{
-    Agent, AgentOptions, ApprovalRequest, Approver, TuiApprover, UiEvent, DEFAULT_MAX_TURNS,
+    Agent, AgentOptions, ApprovalRequest, Approver, FileAccess, TuiApprover, UiEvent,
+    DEFAULT_MAX_TURNS,
 };
 use crate::api::Client;
 use crate::boards::{self, BoardUpdate};
@@ -867,7 +868,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             // The TUI has no per-session folder: it
                             // works in the directory it was launched
                             // from, as it always has.
-                            workdir: None,
+                            file_access: FileAccess::Unrestricted,
                             plan_mode,
                         };
                         let approver: Box<dyn Approver> =
