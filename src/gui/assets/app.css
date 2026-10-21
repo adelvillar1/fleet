@@ -1643,6 +1643,24 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .composer textarea:focus { outline: none; }
 .composer textarea::placeholder { color: var(--dsw-alias-ink-tertiary); }
 
+/* Attachments: the files the turn carries, named above the run bar. */
+.attach-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 999px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+.attach-drop { padding: 0 2px; border: 0; background: none; color: var(--dsw-alias-ink-tertiary); font: inherit; cursor: pointer; }
+.attach-drop:hover { color: var(--dsw-alias-down); }
+.send-attach { color: var(--dsw-alias-ink-secondary); }
+
 /* The run bar: this chat's two standing choices, above the send row.
    The destructive class still asks under Autonomous; Full access is the
    one label that colours red, because it is the one that should. */

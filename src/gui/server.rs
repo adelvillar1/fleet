@@ -352,6 +352,10 @@ async fn serve_connection(
                 Ok(task) => task,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
+            let task = match with_attachments(&body, &task) {
+                Ok(task) => task,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
             let (mode, pin) = match run_policy_of(&body) {
                 Ok(policy) => policy,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
@@ -852,6 +856,58 @@ pub(crate) async fn read_body(
 /// The task a run's body carries. Anything that is not a JSON object
 /// with a `task` string is a malformed request, and saying so is the
 /// whole reply.
+/// The turn's attached files, framed ahead of the task. The browser read
+/// the text the owner picked; the server owns the bounds — five files,
+/// 256 KB each, 512 KB together — and refuses a name that is a path.
+fn with_attachments(body: &str, task: &str) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
+    let Some(rows) = parsed
+        .get("attachments")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(task.to_string());
+    };
+    if rows.is_empty() {
+        return Ok(task.to_string());
+    }
+    if rows.len() > 5 {
+        return Err("at most five files can be attached to one turn".to_string());
+    }
+    let mut framed = String::from("Attached files, provided by the owner for this turn:\n");
+    let mut total = 0usize;
+    for row in rows {
+        let name = row
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        if name.is_empty()
+            || name.contains('/')
+            || name.contains('\\')
+            || name == "."
+            || name == ".."
+        {
+            return Err("an attachment needs a file name, not a path".to_string());
+        }
+        let text = row
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if text.len() > 256 * 1024 {
+            return Err(format!("{name} is larger than the 256 KB attachment bound"));
+        }
+        total += text.len();
+        framed.push_str(&format!("\n--- {name} ---\n{text}\n"));
+    }
+    if total > 512 * 1024 {
+        return Err("the attachments together are larger than the 512 KB bound".to_string());
+    }
+    framed.push_str("\n--- end of attachments ---\n\n");
+    framed.push_str(task);
+    Ok(framed)
+}
+
 /// The run's two standing choices: how its tool calls are approved, and
 /// the provider its route is pinned to. A body that names neither is the
 /// safe pair — `ask` and `auto` — so an older page keeps working.
@@ -1486,6 +1542,25 @@ fn origin_is_loopback(origin: &str) -> bool {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    fn attachments_are_framed_ahead_of_the_task_and_their_names_bound() {
+        let framed = with_attachments(
+            r#"{"task":"read it","attachments":[{"name":"a.md","text":"hello"}]}"#,
+            "read it",
+        )
+        .expect("a framed task");
+        assert!(framed.contains("--- a.md ---"), "{framed}");
+        assert!(framed.ends_with("read it"), "{framed}");
+        assert!(with_attachments(
+            r#"{"task":"x","attachments":[{"name":"../etc/passwd","text":"x"}]}"#,
+            "x"
+        )
+        .is_err());
+        assert!(with_attachments(r#"{"task":"x"}"#, "x")
+            .expect("plain")
+            .eq("x"));
+    }
 
     #[test]
     fn the_run_policy_names_its_two_choices() {

@@ -296,6 +296,9 @@
     runPerms: document.getElementById('run-perms'),
     runProvider: document.getElementById('run-provider'),
     runRouteNote: document.getElementById('run-route-note'),
+    attach: document.getElementById('attach'),
+    attachInput: document.getElementById('attach-input'),
+    attachChips: document.getElementById('attach-chips'),
     facts: document.getElementById('facts'),
     rules: document.getElementById('rules'),
     ruleCount: document.getElementById('rule-count'),
@@ -392,6 +395,10 @@
     // the next run and never a global config write.
     permissions: 'ask',
     providerPin: '',
+    // The files this turn carries, as text. A browser can read the file
+    // the owner picked; the content rides the run and clears when the
+    // server takes it.
+    attachments: [],
     providers: null,
     providersAt: 0,
     planned: false,
@@ -4138,11 +4145,16 @@
     post('/api/run', {
       task: task,
       mode: face.permissions,
-      pin: face.providerPin || null
+      pin: face.providerPin || null,
+      attachments: face.attachments.map(function (file) {
+        return { name: file.name, text: file.text };
+      })
     }).then(function (reply) {
       if (reply.status === 200) {
         face.running = true;
         face.stop = null;
+        face.attachments = [];
+        paintAttachments();
         resetProcess(face.planMode ? 'plan' : 'run');
         paint();
         return;
@@ -4910,6 +4922,62 @@
   }
   paintRunbar();
   readProviders(false);
+
+  // Attachments: text only, five at most, each 256 KB — the same bounds
+  // the server enforces, said here so a refused file is named before it
+  // is read rather than after the run is refused.
+  function paintAttachments() {
+    if (!el.attachChips) return;
+    el.attachChips.textContent = '';
+    el.attachChips.hidden = !face.attachments.length;
+    face.attachments.forEach(function (file, index) {
+      var chip = node('span', 'attach-chip');
+      chip.appendChild(node('span', null, file.name + ' \u00b7 ' + bytes(file.text.length)));
+      var drop = node('button', 'attach-drop', '\u00d7');
+      drop.type = 'button';
+      drop.title = 'remove ' + file.name;
+      drop.addEventListener('click', function () {
+        face.attachments.splice(index, 1);
+        paintAttachments();
+      });
+      chip.appendChild(drop);
+      el.attachChips.appendChild(chip);
+    });
+  }
+
+  function attachFiles(files) {
+    Array.prototype.forEach.call(files, function (file) {
+      if (face.attachments.length >= 5) {
+        notice('at most five files can be attached', file.name + ' was not added');
+        return;
+      }
+      if (file.size > 256 * 1024) {
+        notice('the file is larger than the 256 KB bound', file.name + ' was not added');
+        return;
+      }
+      if (!/\.(md|txt|rs|js|json|toml|yaml|yml|css|html|py|sh|ts|tsx|jsx)$/i.test(file.name)) {
+        notice('only text files can be attached', file.name + ' was not added');
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function () {
+        face.attachments.push({ name: file.name, text: String(reader.result || '') });
+        paintAttachments();
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  if (el.attach) {
+    el.attach.addEventListener('click', function () { el.attachInput.click(); });
+  }
+  if (el.attachInput) {
+    el.attachInput.addEventListener('change', function () {
+      attachFiles(el.attachInput.files);
+      el.attachInput.value = '';
+    });
+  }
+  paintAttachments();
 
   el.task.addEventListener('input', function () {
     grow();

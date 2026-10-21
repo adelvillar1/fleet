@@ -338,6 +338,7 @@
       <form class="composer" id="composer" autocomplete="off">
         <label class="sr-only" for="task">the task</label>
         <textarea id="task" rows="1" placeholder="Ask fleet for something&hellip;" spellcheck="false"></textarea>
+        <div class="attach-chips" id="attach-chips" hidden></div>
         <div class="runbar" id="runbar" data-mode="ask">
           <div class="runbar-perms" id="run-perms" role="group" aria-label="permissions">
             <button type="button" data-mode="ask" aria-pressed="true"
@@ -357,6 +358,9 @@
         </div>
         <footer class="composer-foot">
           <span class="composer-hint" id="hint">Enter sends &middot; Shift+Enter is a newline</span>
+          <button type="button" class="send send-attach" id="attach"
+                  aria-label="attach text files">Attach</button>
+          <input type="file" id="attach-input" multiple hidden>
           <button type="button" class="send send-plan" id="plan" aria-pressed="false">Plan</button>
           <button type="submit" class="send" id="send">Send</button>
         </footer>
