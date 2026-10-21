@@ -300,7 +300,8 @@
         <div class="offers" id="offers"></div>
         <div class="recent" id="recent" hidden></div>
         <p class="empty-meta" id="empty-meta">
-          Nothing leaves this machine. Every turn is a card you can open.
+          Your archive stays on this machine. Every turn is a card you can open; the provider
+          that serves it is named in the route bar.
         </p>
       </div>
 
@@ -354,7 +355,31 @@
               <option value="">Auto</option>
             </select>
           </label>
+          <!-- The third standing choice: where this chat's runs work. A
+               chat with no choice works in the folder the face was
+               launched from, which is what today's runs already do. -->
+          <label class="runbar-folder">
+            <span>folder</span>
+            <button type="button" id="run-folder" aria-haspopup="dialog"
+                    aria-expanded="false" aria-controls="folder-pop"
+                    title="where this chat's runs work">launch folder</button>
+          </label>
           <span class="runbar-note" id="run-route-note">the router decides</span>
+        </div>
+        <!-- The folder picker. It browses only inside the launch
+             directory, one level at a time, and applies to the next run:
+             a run in flight already carries the root it accepted. -->
+        <div class="folder-pop" id="folder-pop" role="dialog" aria-modal="false"
+             aria-label="the chat's working folder" hidden>
+          <div class="folder-pop-head">
+            <span class="folder-pop-label">works in</span>
+            <code id="folder-pop-path"></code>
+          </div>
+          <div class="folder-pop-list" id="folder-pop-list"></div>
+          <div class="folder-pop-actions">
+            <button type="button" id="folder-use">use this folder</button>
+            <button type="button" id="folder-reset">reset to the launch folder</button>
+          </div>
         </div>
         <footer class="composer-foot">
           <span class="composer-hint" id="hint">Enter sends &middot; Shift+Enter is a newline</span>

@@ -1665,8 +1665,8 @@
     el.emptyEyebrow.textContent = greeting() + ' \u00b7 ' + workspaceName();
     if (el.emptyMeta) {
       el.emptyMeta.textContent = face.workspace
-        ? 'Local to ' + face.workspace + ' \u00b7 nothing leaves this machine.'
-        : 'Nothing leaves this machine. Every turn is a card you can open.';
+        ? 'Local to ' + face.workspace + ' \u00b7 the archive stays here; turns go to the provider that serves them.'
+        : 'Your archive stays on this machine. Every turn is a card you can open; the provider that serves it is named in the route bar.';
     }
     if (el.railWhere) el.railWhere.textContent = workspaceName();
   }
