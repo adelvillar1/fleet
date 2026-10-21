@@ -15,7 +15,7 @@ Nace's Perception API solves that. Its document tools sit at `POST https://conso
 
 Fleet already carries Nace as a provider (`drex.nace.ai/v1/systemone`), and the docs say Perception shares the account key and billing credit. The key is not assumed: `NACE_API_KEY` (`nace_sk_…`) is the name this plan reads, with `DREX_API_KEY` as the existing fallback.
 
-What this changes in the product's promise: a hosted parse means a document **leaves this machine**. The empty state says "Nothing leaves this machine"; that sentence must become scoped, and the attach UI must say so before the file is sent.
+The product's egress was already real before this: fleet's roster points at hosted providers, so every turn — and every file the agent reads — goes to whichever model serves it. Perception is a **second recipient**, not the first egress. What the empty state's "Nothing leaves this machine" actually got wrong is the archive-versus-model distinction: the archive stays, the turn does not. That sentence is corrected independently of this plan, and this plan's attach UI names the second recipient before a document is sent.
 
 ## Approach
 
@@ -38,7 +38,7 @@ High-level steps:
 - [ ] A: The owner can attach a PDF or Word document and the agent reads its text without a manual conversion.
 - [ ] B: A plain text file stays local and costs nothing; only binary documents go to the vendor.
 - [ ] C: No key, an unsupported type, a credit refusal, a corrupt file, or a timeout is named with the vendor's code and a next step, never a silent empty attachment.
-- [ ] D: Before a document is sent, the owner sees that it leaves the machine, and after the parse the conversation records what was sent and what it cost.
+- [ ] D: Before a document is sent, the owner sees that it goes to Perception as well as to the model provider, and after the parse the conversation records what was sent and what it cost.
 
 ## Acceptance criteria
 
@@ -52,7 +52,7 @@ These are the contract. Each one is a verifiable assertion. The work is "done" w
 - [ ] C5: A missing key, `unsupported_file_type`, `corrupt_file`, a `409`, and a failed job are each refused with the vendor's code and a named next step.
 - [ ] C6: The attach UI offers a document picker for the workspace's binary formats, states that the file is sent to Nace before it is sent, and the transcript records file name, pages, units, and job id.
 - [ ] C7: The key is read from `NACE_API_KEY`, falling back to `DREX_API_KEY`, through the vault/dotenv readers; no surface prints it, and a keyless home keeps text-only attachments.
-- [ ] C8: The empty state and the feature doc no longer claim that nothing leaves the machine without qualification; the scoped sentence names Perception and what it receives.
+- [ ] C8: The empty state and the feature doc state the recipients truthfully — the archive stays on the machine, every turn goes to the model provider that serves it, and an attached document also goes to Perception — and a grep test pins the absence of the unqualified "nothing leaves this machine" sentence.
 
 ## Files to be touched
 
@@ -121,7 +121,7 @@ Live: the picker lists the workspace's PDFs; the disclosure is visible before se
 
 ## Risks
 
-- **Data egress.** The first hosted parse contradicts the current empty-state sentence; the copy change is part of the work, not a follow-up.
+- **Data egress.** The turn already leaves to the model provider; Perception adds a second recipient and receives the document before the model does. The disclosure must name both, and the empty state's corrected sentence is part of the work.
 - **Cost.** Parse bills by units; the cache and the per-attach transcript line are the guard. No automatic retry that could double-bill.
 - **Multipart construction.** ureq has no built-in multipart; the body is assembled with a boundary and the grant's token, and a mock tests the exact bytes.
 - **Long jobs.** `wait_seconds` is bounded and polling is capped; a timeout names the job rather than hanging the composer.
