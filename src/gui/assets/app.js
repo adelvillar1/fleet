@@ -5677,32 +5677,26 @@
     var fit = cells.filter(function (cell) { return cell.fit === 'fit'; }).length;
     var informing = cells.filter(function (cell) { return cell.informs_failover; }).length;
     var filter = face.calibrationFilter || 'all';
-    var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(read.rows_read, 'rows, the day\u2019s last ' + read.cap));
-    tiles.appendChild(tile(judged, 'judged rows'));
-    tiles.appendChild(tile(cells.length, 'fit cells', null, function () {
-      face.calibrationFilter = 'all';
-      paintCalibration();
-    }));
-    tiles.appendChild(tile(fit, 'fit', fit ? 'live' : null, function () {
-      face.calibrationFilter = 'fit';
-      paintCalibration();
-    }));
-    tiles.appendChild(tile(informing, 'informing the failover', null, function () {
-      face.calibrationFilter = 'informing';
-      paintCalibration();
-    }));
-    tiles.appendChild(tile(read.gate && read.gate.informs_failover ? 'on' : 'off',
-      'failover gate'));
-    el.calibrationBoard.appendChild(pageHead('System', 'Calibration',
-      'The day\u2019s stream, the judged quality of what served, and the gate that decides whether the failover may learn from it.',
-      read.day, {
-        label: 'Run a gate review',
+    var instrument = surfaceInstrument('the stream', read.rows_read + ' rows',
+      read.day + ' \u00b7 failover gate ' +
+      (read.gate && read.gate.informs_failover ? 'on' : 'off'),
+      [{
+        label: 'run a gate review',
         run: function () {
           ask('use the sys1 lane to grade today\u2019s route rows and report the fit');
         }
-      }));
-    el.calibrationBoard.appendChild(statStrip(tiles));
+      }]);
+    el.calibrationBoard.appendChild(surfaceHead('System', 'Calibration',
+      'The day\u2019s stream, the judged quality of what served, and the gate that decides whether the failover may learn from it.',
+      instrument));
+    el.calibrationBoard.appendChild(surfaceStrip([
+      [read.rows_read, 'rows, the day\u2019s last ' + read.cap],
+      [judged, 'judged'],
+      [cells.length, 'fit cells'],
+      [fit, 'fit', fit ? 'live' : null],
+      [informing, 'informing the failover'],
+      [read.gate && read.gate.informs_failover ? 'on' : 'off', 'failover gate']
+    ], read.day));
     el.calibrationBoard.appendChild(filterBar([
       { value: 'all', label: 'all', count: cells.length },
       { value: 'fit', label: 'fit', count: fit },
@@ -7277,34 +7271,29 @@
     }).length;
 
     var filter = face.botsFilter || 'all';
-    var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(live, live === 1 ? 'channel live' : 'channels live',
-      live ? 'ok' : null, function () {
-      face.botsFilter = 'all';
-      paintBots();
-    }));
-    tiles.appendChild(tile(failed, failed === 1 ? 'channel failed' : 'channels failed',
-      failed ? 'down' : null));
-    tiles.appendChild(tile(peers.length, peers.length === 1 ? 'peer paired' : 'peers paired',
-      null, function () {
-      face.botsFilter = 'all';
-      paintBots();
-    }));
-    // The door is its own card, so its tile takes the owner there rather
-    // than filtering a list the door is not part of: a "pending" chip
-    // used to empty the peers card and say nothing had matched.
-    tiles.appendChild(tile(pending.length, 'waiting at the door', pending.length ? 'warn' : null,
-      revealDoor));
-    tiles.appendChild(tile(refusedAtTheDoor,
-      refusedAtTheDoor === 1 ? 'refusal logged' : 'refusals logged'));
     var waitingSeats = Number(read.waiting_seats || 0);
-    tiles.appendChild(tile(waitingSeats, 'waiting on an answer', waitingSeats ? 'warn' : null,
-      revealActivity));
-    el.botsBoard.appendChild(pageHead('System', 'Bots',
+    var instrument = surfaceInstrument('the service',
+      live + ' of ' + reports.length + ' live',
+      service.stale
+        ? (service.note || 'the heartbeat has stopped')
+        : (service.pid
+          ? 'pid ' + service.pid + ' \u00b7 started ' + (service.started || '\u2014')
+          : (service.note || 'no channel service has run in this home')),
+      [{
+        label: 'open settings',
+        run: function () { window.location.hash = '#/settings'; }
+      }]);
+    el.botsBoard.appendChild(surfaceHead('System', 'Bots',
       'The channels that carry work in from outside: who is paired, what they may do, ' +
-      'whether the service is listening, and what they have asked for.',
-      read.read_at));
-    el.botsBoard.appendChild(statStrip(tiles));
+      'whether the service is listening, and what they have asked for.', instrument));
+    el.botsBoard.appendChild(surfaceStrip([
+      [live, 'channels live'],
+      [failed, 'failed', failed ? 'down' : null],
+      [peers.length, 'peers paired'],
+      [pending.length, 'waiting at the door', pending.length ? 'warn' : null],
+      [refusedAtTheDoor, 'refusals logged'],
+      [waitingSeats, 'waiting on an answer']
+    ], read.read_at));
     el.botsBoard.appendChild(filterBar([
       { value: 'all', label: 'all', count: peers.length },
       { value: 'acting', label: 'may act',
@@ -7871,22 +7860,26 @@
     if (read.refused && read.refused.length) {
       el.settingsBoard.appendChild(refusedCard(read.refused));
     }
-    var tiles = node('div', 'tiles');
-    tiles.appendChild(tile(read.scalars.length, 'knobs'));
-    tiles.appendChild(tile(read.lists.filter(function (e) { return e.kind === 'provider'; }).length,
-      'provider overrides'));
-    tiles.appendChild(tile(read.lists.filter(function (e) { return e.kind === 'workload'; }).length,
-      'workload overrides'));
-    tiles.appendChild(tile(read.rules.length, 'remembered rules',
-      read.rules.length ? 'live' : null));
-    tiles.appendChild(tile(read.cron.length, 'cron jobs',
-      read.cron.filter(function (j) { return j.enabled; }).length + ' enabled'));
-    el.settingsBoard.appendChild(pageHead('System', 'Settings',
+    var instrument = surfaceInstrument('the home', read.scalars.length + ' knobs',
+      'every write rides the writer the CLI rides',
+      [{
+        label: 'open the router',
+        run: function () { window.location.hash = '#/router'; }
+      }]);
+    el.settingsBoard.appendChild(surfaceHead('System', 'Settings',
       'The router, the providers, the lanes, the roles, the vault, the spend caps, the rules, ' +
       'the cron jobs, and the identity slot. Every value is picked from what this home already ' +
-      'knows; every write rides the writer the CLI rides.',
-      read.read_at));
-    el.settingsBoard.appendChild(statStrip(tiles));
+      'knows; every write rides the writer the CLI rides.', instrument));
+    el.settingsBoard.appendChild(surfaceStrip([
+      [read.scalars.length, 'knobs'],
+      [read.lists.filter(function (e) { return e.kind === 'provider'; }).length,
+        'provider overrides'],
+      [read.lists.filter(function (e) { return e.kind === 'workload'; }).length,
+        'workload overrides'],
+      [read.rules.length, 'remembered rules', read.rules.length ? 'live' : null],
+      [read.cron.length, 'cron jobs'],
+      [read.cron.filter(function (job) { return job.enabled; }).length, 'cron enabled']
+    ], read.read_at));
     el.settingsBoard.appendChild(sectionNav());
 
     el.settingsBoard.appendChild(routerCard());
