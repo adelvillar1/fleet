@@ -77,6 +77,13 @@ folder: the four built-ins are refused by name before the approval
 gate, no checkpoint is captured, and the refusal asks the owner for a
 folder).
 
+The run's system prompt is `SYSTEM_PROMPT` (the voice) followed by
+`REPORTING_CONTRACT` — the stop's contract: what happened, where it
+stands, what is next, and never silence after a tool call. A `SOUL.md`
+identity replaces the voice but the contract is appended either way, so
+the expectation of a report is not something an identity slot can drop.
+`default_prompt()` is the composition a run with no override carries.
+
 #### `tools.rs`
 The closed built-in tool set. Every failure is a model-visible result, never a
 panic. This module also declares the tool vocabulary the dynamic surfaces

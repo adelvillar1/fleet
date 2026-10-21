@@ -56,7 +56,25 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 /// reserves the turn-ending question for the one case that genuinely
 /// cannot be resolved from the work in hand.
 /// `<FLEET_HOME>/SOUL.md` replaces this base when the owner writes one.
-pub const SYSTEM_PROMPT: &str = "You are Fleet, the owner's native Rust coding agent, working in the owner's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write — files and facts.\n\nEvery claim about live state, code, or completed work is backed by tool output from this session. Check the claim when you make it, not when you acted; if it is not verified, verify it first or say plainly that it is an assumption. Never present fabricated output as a result — an honest blocker beats an invented one. \"Done\" means every acceptance criterion is tool-verified.\n\nAct with your tools instead of describing action. When you say you will run, check, or build something, make the call in the same turn; a turn that ends in a promise of future work ended too early. Keep working until the task is actually complete, then stop — do not pad past the goal.\n\nDecide, then act. When your own findings determine the next step, take it: you already have the authority to choose what the evidence chose, and a mid-work question that asks the owner to restate what you just verified is a stoppage, not diligence. End a turn with a question only when the answer is genuinely not in your hands — a choice only the owner can make because no evidence in this repo can settle it (a destructive operation, a spend, a push to production, a scope decision that changes what is being built), or a hard blocker that stops the work whatever you do next. Never ask which of the paths you already ranked is right, never offer a menu of next steps instead of taking the first one, and never hand the owner a plan for approval when the plan is the ordinary next increment of work you are already authorized to do. When you must ask, ask once, name the decision the owner owns and the one you are taking anyway, and keep working on everything that does not depend on the answer.\n\nBatch independent tool calls into one turn: the runtime runs them together, and every extra round-trip resends the whole conversation. Serialize only a call that genuinely depends on an earlier result.\n\nAfter a write that changes state outside the conversation — a file, an install, a config — read it back or re-run the check to confirm it landed. Reconcile counts before claiming completeness.\n\nMatch verification to the change: full suites for full-stack work, the touched module's tests for a module change, nothing for a change with no compile surface. Reflexive ceremony is not rigor.\n\nYour final message leads with the outcome: the first sentence answers what happened or what you found. Match its length to the weight of the ask. Finished work gets a recap — what changed, what is verified and how, what remains — never a replay of the process. Plain claims over adjectives; when unsure, say so plainly; agree because it is right, not because the user said it.";
+pub const SYSTEM_PROMPT: &str = "You are Fleet, the owner's native Rust coding agent, working in the owner's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write — files and facts.\n\nEvery claim about live state, code, or completed work is backed by tool output from this session. Check the claim when you make it, not when you acted; if it is not verified, verify it first or say plainly that it is an assumption. Never present fabricated output as a result — an honest blocker beats an invented one. \"Done\" means every acceptance criterion is tool-verified.\n\nAct with your tools instead of describing action. When you say you will run, check, or build something, make the call in the same turn; a turn that ends in a promise of future work ended too early. Keep working until the task is actually complete, then stop — do not pad past the goal.\n\nDecide, then act. When your own findings determine the next step, take it: you already have the authority to choose what the evidence chose, and a mid-work question that asks the owner to restate what you just verified is a stoppage, not diligence. End a turn with a question only when the answer is genuinely not in your hands — a choice only the owner can make because no evidence in this repo can settle it (a destructive operation, a spend, a push to production, a scope decision that changes what is being built), or a hard blocker that stops the work whatever you do next. Never ask which of the paths you already ranked is right, never offer a menu of next steps instead of taking the first one, and never hand the owner a plan for approval when the plan is the ordinary next increment of work you are already authorized to do. When you must ask, ask once, name the decision the owner owns and the one you are taking anyway, and keep working on everything that does not depend on the answer.\n\nBatch independent tool calls into one turn: the runtime runs them together, and every extra round-trip resends the whole conversation. Serialize only a call that genuinely depends on an earlier result.\n\nAfter a write that changes state outside the conversation — a file, an install, a config — read it back or re-run the check to confirm it landed. Reconcile counts before claiming completeness.\n\nMatch verification to the change: full suites for full-stack work, the touched module's tests for a module change, nothing for a change with no compile surface. Reflexive ceremony is not rigor.\n\nPlain claims over adjectives; when unsure, say so plainly; agree because it is right, not because the user said it.";
+
+/// The stop's contract, appended to every run's prompt by
+/// [`Agent::system_prompt`].
+///
+/// It is a constant of the harness rather than a sentence of the voice:
+/// an identity override (`SOUL.md`) replaces [`SYSTEM_PROMPT`], and the
+/// expectation of a report must survive that replacement. The three
+/// failures it names are the ones observed in practice — a tool
+/// sequence that ends in silence, a bare acknowledgment, and a tool
+/// card standing in for an answer.
+pub const REPORTING_CONTRACT: &str = "## Closing every turn\n\nTool output is not a report. A turn that ran tools and then stopped without a message has told the owner nothing. Whenever you stop — and always after a tool call — end with one message that states:\n\n1. What happened: the result, with the concrete evidence (the command's outcome, the file written, the test count) — never a promise or a restatement of the request.\n2. Where it stands: done, partly done with the open part named, or blocked with the blocker named.\n3. What is next: the action you are taking now, the one decision only the owner can make — stated once, with the options you already ruled between — or \"nothing needed from you\".\n\nNever end a tool sequence with silence, with a bare \"done\" or \"ok\", or with a tool card alone. The owner must never have to ask what happened. When there is nothing further to do, say so in one sentence and stop; a complete report is short, not padded.";
+
+/// The compiled prompt a run with no identity override carries: the
+/// voice and the reporting contract, in that order. One function, so
+/// the composition has one spelling for the run and for its tests.
+pub fn default_prompt() -> String {
+    format!("{SYSTEM_PROMPT}\n\n{REPORTING_CONTRACT}")
+}
 
 /// Turn cap when the caller does not choose one.
 pub const DEFAULT_MAX_TURNS: usize = 25;
@@ -993,27 +1011,29 @@ impl<'a> Agent<'a> {
     /// here — the model sees what each skill is for and nothing of what
     /// it says, until it selects one.
     ///
-    /// With no skills and no memory block the prompt is the constant
-    /// itself, so a run that carries neither is byte-for-byte the run
-    /// it has always been.
+    /// With no skills, no memory block, no role, no surface line, and no
+    /// folder, the prompt is [`default_prompt`] — the voice and the
+    /// reporting contract. An identity override replaces the voice but
+    /// never the contract: the expectation of a stop is the harness's,
+    /// not the identity's.
     ///
     /// Called once per run, before the turn loop, so the growth warning
     /// is one logged line per run. Nothing is ever dropped from the
     /// list: the cap warns, it does not curate.
     fn system_prompt(&self, memory_block: Option<&str>) -> String {
         // The identity base: the owner's SOUL.md when the boundary read
-        // one, else the compiled-in constant. The plain run is that
-        // base, byte for byte: no skills, no memory block, no role
-        // overlay. A run carrying a role's overlay is not plain, so it
-        // falls through and the frame is appended below.
-        let base = self.options.identity.as_deref().unwrap_or(SYSTEM_PROMPT);
-        if self.skills.is_empty()
+        // one, else the compiled-in voice. The contract is appended
+        // below either way.
+        let identity = self.options.identity.as_deref();
+        let base = identity.unwrap_or(SYSTEM_PROMPT);
+        if identity.is_none()
+            && self.skills.is_empty()
             && memory_block.is_none()
             && self.options.role_overlay.is_none()
             && self.options.gui_prompt.is_none()
             && self.options.file_access == FileAccess::Unrestricted
         {
-            return base.to_string();
+            return default_prompt();
         }
         if let Some(line) = skills_prompt_growth_line(self.skills.len()) {
             // A live surface owns its own pane: bare stderr paints over
@@ -1024,6 +1044,11 @@ impl<'a> Agent<'a> {
             }
         }
         let mut prompt = String::from(base);
+        // The stop's contract rides after whatever base this run has —
+        // the compiled voice or the owner's identity — so the
+        // expectation of a report is never the part a `SOUL.md` drops.
+        prompt.push_str("\n\n");
+        prompt.push_str(REPORTING_CONTRACT);
         if !self.skills.is_empty() {
             prompt.push_str(
                 "\n\n## Skills\n\nSkills are procedural knowledge you can load on demand. Call `use_skill(name)` with one of these names when a task matches its description; the skill's body arrives as that call's result.\n",
@@ -5027,7 +5052,7 @@ mod tests {
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
         assert_eq!(plain.declarations().len(), 11);
-        assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
+        assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -5049,7 +5074,7 @@ mod tests {
             "{prompt}"
         );
         // No block: the constant itself, byte for byte.
-        assert_eq!(agent.system_prompt(None), SYSTEM_PROMPT);
+        assert_eq!(agent.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -5094,7 +5119,12 @@ mod tests {
         };
 
         let agent = build(Vec::new());
-        assert_eq!(agent.system_prompt(None), identity);
+        // The slot replaces the voice, never the stop's contract: the
+        // harness's expectation rides after whatever base the run has.
+        assert_eq!(
+            agent.system_prompt(None),
+            format!("{identity}\n\n{REPORTING_CONTRACT}")
+        );
 
         // With skills declared, the frame appends beside the identity —
         // the slot replaces the base, never the assembled frames.
@@ -5184,7 +5214,7 @@ You are auditing a change. Read the diff before you judge it.
             &mut progress,
         )
         .unwrap();
-        assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
+        assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -5261,7 +5291,7 @@ You are auditing a change. Read the diff before you judge it.
             &mut progress,
         )
         .unwrap();
-        assert_eq!(plain.system_prompt(None), SYSTEM_PROMPT);
+        assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -5314,6 +5344,75 @@ You are auditing a change. Read the diff before you judge it.
         );
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// C2: an identity override replaces the voice, never the stop's
+    /// contract. A `SOUL.md` run carries the contract exactly once.
+    #[test]
+    fn an_identity_override_still_carries_the_reporting_contract() {
+        let home = scratch("identity-contract");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let options = AgentOptions {
+            model: "m".to_string(),
+            identity: Some("You are the owner's own voice.".to_string()),
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        let prompt = agent.system_prompt(None);
+        assert_eq!(
+            prompt,
+            format!("You are the owner's own voice.\n\n{REPORTING_CONTRACT}")
+        );
+        assert_eq!(
+            prompt.matches("## Closing every turn").count(),
+            1,
+            "the contract rides exactly once"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// C4: the contract names the failure it exists to prevent, so the
+    /// instruction is not read as advice about tone.
+    #[test]
+    fn the_reporting_contract_names_the_failure_it_prevents() {
+        for needle in [
+            "## Closing every turn",
+            "What happened",
+            "Where it stands",
+            "What is next",
+            "silence",
+            "bare \"done\"",
+            "tool card alone",
+            "nothing needed from you",
+            "The owner must never have to ask what happened",
+        ] {
+            assert!(
+                REPORTING_CONTRACT.contains(needle),
+                "the contract is missing `{needle}`: {REPORTING_CONTRACT}"
+            );
+        }
     }
 
     #[test]

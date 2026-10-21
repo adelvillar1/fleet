@@ -5272,7 +5272,7 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
     let bodies = mock.bodies();
     assert_eq!(
         bodies[0]["messages"][0]["content"],
-        fleet::agent::SYSTEM_PROMPT
+        fleet::agent::default_prompt()
     );
     assert_eq!(
         declared_tools(&bodies[0]),
@@ -5321,7 +5321,7 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
     let bodies = mock.bodies();
     assert_eq!(
         bodies[0]["messages"][0]["content"],
-        fleet::agent::SYSTEM_PROMPT
+        fleet::agent::default_prompt()
     );
     assert_eq!(
         declared_tools(&bodies[0]),
@@ -5843,7 +5843,7 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
     }
     assert_eq!(
         bodies[1]["messages"][0]["content"],
-        fleet::agent::SYSTEM_PROMPT
+        fleet::agent::default_prompt()
     );
     // The child's first user message is the goal, whole.
     assert_eq!(
@@ -7178,7 +7178,8 @@ async fn the_compaction_request_is_reconstructable_from_the_log() {
     );
     assert_eq!(
         wanted[0].content.as_deref(),
-        Some(fleet::agent::SYSTEM_PROMPT)
+        Some(fleet::agent::default_prompt().as_str()),
+        "the fold carries the run's own prompt, the reporting contract included"
     );
     assert_eq!(
         wanted[wanted.len() - 1].content.as_deref(),
