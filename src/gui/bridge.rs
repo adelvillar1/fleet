@@ -4690,6 +4690,12 @@ fn describe(event: &UiEvent) -> Value {
         UiEvent::Finished { stop_reason } => {
             json!({"type": "finished", "reason": stop_reason})
         }
+        // The harness asked for the report it was owed. The page shows
+        // it as a line, so the extra model call is visible rather than
+        // a turn that seemed to do nothing.
+        UiEvent::ReportRepair { attempt } => {
+            json!({"type": "repair", "attempt": attempt})
+        }
         UiEvent::Failed(reason) => json!({"type": "failed", "reason": reason}),
     }
 }

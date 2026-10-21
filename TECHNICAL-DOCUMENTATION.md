@@ -84,6 +84,15 @@ identity replaces the voice but the contract is appended either way, so
 the expectation of a report is not something an identity slot can drop.
 `default_prompt()` is the composition a run with no override carries.
 
+The stop is also enforced, not only instructed. When a run that put tool
+calls through the gate stops with an empty message — or a bare "done" —
+the loop asks once (`is_silent_stop` + `REPORT_INSTRUCTION` appended to
+that one request's system prompt). The silent turn is not pushed to the
+conversation, the report it returns is logged as the ordinary assistant
+turn, and the ask is emitted as a `ReportRepair` event so the extra
+model call is visible. One ask per run; a second silent stop ends with
+the stop reason `completed without a report` rather than `completed`.
+
 #### `tools.rs`
 The closed built-in tool set. Every failure is a model-visible result, never a
 panic. This module also declares the tool vocabulary the dynamic surfaces

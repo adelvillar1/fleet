@@ -283,6 +283,12 @@ fn assistant_stream(content: &str) -> ScriptedResponse {
     ])
 }
 
+/// The final line a tool-running script ends with: a report, not an
+/// acknowledgment. The harness's report repair owns the silent-stop
+/// cases, and a fixture that ends "done" after a tool call is a run
+/// with no answer as far as the loop is concerned.
+const TOOL_REPORT: &str = "The run's commands ran and returned their output; the work is complete and nothing needed from you.";
+
 /// A complete streamed answer requesting one tool call, delivered in
 /// fragments the way the real API splits a call.
 fn tool_call_stream(id: &str, name: &str, arguments: &str) -> ScriptedResponse {
@@ -707,7 +713,7 @@ async fn client_chat_stream_derives_stop_when_the_stream_closes_with_calls() {
 async fn run_completes_a_two_turn_tool_loop() {
     let mock = MockApi::start(vec![
         tool_call_stream("call-1", "bash", r#"{"command":"echo hello"}"#),
-        assistant_stream("All done."),
+        assistant_stream(TOOL_REPORT),
     ]);
     let home = temp_home("two-turn");
     let mut session = Session::create(&home, "test-model").unwrap();
@@ -717,7 +723,7 @@ async fn run_completes_a_two_turn_tool_loop() {
 
     assert_eq!(report.stop_reason, StopReason::Completed);
     assert_eq!(report.turns, 2);
-    assert_eq!(report.final_message.as_deref(), Some("All done."));
+    assert_eq!(report.final_message.as_deref(), Some(TOOL_REPORT));
     assert_eq!(report.usage.prompt_tokens, 20);
     assert_eq!(report.usage.completion_tokens, 10);
 
@@ -1113,8 +1119,8 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
             "data: [DONE]".to_string(),
         ]),
         stream(vec![
-            content_delta("All "),
-            content_delta("done."),
+            content_delta("The command ran and printed hi; "),
+            content_delta("nothing needed from you."),
             finish_frame("stop"),
             usage_frame(10, 5),
             "data: [DONE]".to_string(),
@@ -1182,8 +1188,8 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
                 approved: true,
             },
             UiEvent::Turn(2),
-            UiEvent::Token("All ".to_string()),
-            UiEvent::Token("done.".to_string()),
+            UiEvent::Token("The command ran and printed hi; ".to_string()),
+            UiEvent::Token("nothing needed from you.".to_string()),
             UiEvent::Usage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
@@ -6020,6 +6026,190 @@ async fn a_chat_with_no_folder_cannot_touch_the_filesystem() {
     std::fs::remove_dir_all(&home).ok();
 }
 
+// --- the report repair -----------------------------------------------------
+
+/// The report the repaired run is expected to end with.
+const REPAIR_REPORT: &str = "The command printed hi (exit 0). Nothing needed from you.";
+
+/// The system prompt of one recorded request.
+fn request_system(mock: &MockApi, index: usize) -> String {
+    mock.bodies()[index]["messages"][0]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The end record's stop reason, when the log carries one.
+fn end_reason(records: &[Record]) -> Option<String> {
+    records.iter().find_map(|record| match record {
+        Record::End { stop_reason, .. } => Some(stop_reason.clone()),
+        _ => None,
+    })
+}
+
+/// C1/C5: a run that executed a tool and stopped with no message is
+/// asked once, with the conversation unchanged, and the report it
+/// returns is the run's answer.
+#[tokio::test]
+async fn a_blank_stop_is_asked_once_for_its_report() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "bash", r#"{"command":"echo hi"}"#),
+        assistant_stream(""),
+        assistant_stream(REPAIR_REPORT),
+    ]);
+    let home = temp_home("repair-blank");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        6,
+        "run the check",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.final_message.as_deref(), Some(REPAIR_REPORT));
+    let bodies = mock.bodies();
+    assert_eq!(
+        bodies.len(),
+        3,
+        "the tool turn, the silent turn, the repair"
+    );
+    let system = request_system(&mock, 2);
+    assert!(
+        system.contains("You stopped without a report"),
+        "the repair ask rides the request: {system}"
+    );
+    assert!(system.starts_with(fleet::agent::SYSTEM_PROMPT), "{system}");
+    assert_eq!(
+        bodies[2]["messages"].as_array().map(Vec::len),
+        bodies[1]["messages"].as_array().map(Vec::len),
+        "the silent turn was not pushed: the conversation is unchanged"
+    );
+
+    let records = session::replay(session.path()).unwrap();
+    assert!(
+        !records.iter().any(|record| matches!(
+            record,
+            Record::Assistant { content, tool_calls }
+                if tool_calls.is_empty()
+                    && content.as_deref().map(str::trim).unwrap_or("").is_empty()
+        )),
+        "no empty assistant turn is in the log"
+    );
+    assert_eq!(end_reason(&records).as_deref(), Some("completed"));
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// C2: a bare acknowledgment after tool work is the same failure.
+#[tokio::test]
+async fn a_bare_acknowledgment_is_asked_once_for_its_report() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "bash", r#"{"command":"echo hi"}"#),
+        assistant_stream("Done."),
+        assistant_stream(REPAIR_REPORT),
+    ]);
+    let home = temp_home("repair-ack");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        6,
+        "run the check",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.final_message.as_deref(), Some(REPAIR_REPORT));
+    assert_eq!(mock.bodies().len(), 3);
+    assert!(request_system(&mock, 2).contains("You stopped without a report"));
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// C2/C3: an informative answer and a conversational answer are not
+/// repaired — the trigger is a missing report, not a short message.
+#[tokio::test]
+async fn an_informative_or_conversational_stop_is_not_repaired() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "bash", r#"{"command":"echo hi"}"#),
+        assistant_stream("The command printed hi and exited 0; nothing needed from you."),
+    ]);
+    let home = temp_home("repair-no");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 6, "run it")
+        .await
+        .unwrap();
+    assert_eq!(mock.bodies().len(), 2, "no second ask");
+    assert_eq!(
+        report.final_message.as_deref(),
+        Some("The command printed hi and exited 0; nothing needed from you.")
+    );
+    for body in mock.bodies() {
+        assert!(
+            !body["messages"][0]["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("You stopped without a report"),
+            "{body}"
+        );
+    }
+
+    // A conversational "yes" ran no tools, so it is an answer, not a
+    // missing report.
+    let mock = MockApi::start(vec![assistant_stream("Yes.")]);
+    let home = temp_home("repair-chat");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(&mock, &mut session, Box::new(ApproveAll), 4, "is it ready?")
+        .await
+        .unwrap();
+    assert_eq!(report.final_message.as_deref(), Some("Yes."));
+    assert_eq!(mock.bodies().len(), 1, "a chat answer is not repaired");
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// C4: the repair is bounded. A second silent stop ends the run, and
+/// the log and the finished event say the report is what is missing.
+#[tokio::test]
+async fn a_second_silent_stop_ends_the_run_with_no_report() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "bash", r#"{"command":"echo hi"}"#),
+        assistant_stream(""),
+        assistant_stream("ok"),
+    ]);
+    let home = temp_home("repair-bound");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let report = run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        6,
+        "run the check",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        report.final_message.as_deref(),
+        Some("ok"),
+        "the second silent stop is what the run ended on"
+    );
+    assert_eq!(
+        mock.bodies().len(),
+        3,
+        "one ask, never a chain of them: {}",
+        mock.bodies().len()
+    );
+    let records = session::replay(session.path()).unwrap();
+    assert_eq!(
+        end_reason(&records).as_deref(),
+        Some("completed without a report")
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
 /// A routed parent's child runs on the routed candidate's model: the
 /// never-downgrade rule in its strongest form, because the child
 /// inherits the roster's choice rather than the nominal one.
@@ -6622,7 +6812,7 @@ fn crossing_script(summary: &str) -> Vec<ScriptedResponse> {
     // The compaction request: its answer is the summary.
     script.push(assistant_stream(summary));
     // The turn after the fold.
-    script.push(assistant_stream("All done."));
+    script.push(assistant_stream(TOOL_REPORT));
     script
 }
 
@@ -6748,7 +6938,7 @@ async fn the_measure_is_the_apis_own_count_when_it_reports_one() {
     let big = "x".repeat(400_000);
     let mock = MockApi::start(vec![
         tool_call_stream("call-1", "bash", &format!(r#"{{"command":"echo {big}"}}"#)),
-        assistant_stream("done"),
+        assistant_stream(TOOL_REPORT),
     ]);
     let mut progress: Vec<u8> = Vec::new();
     let report = run_capturing(
@@ -6804,7 +6994,7 @@ async fn the_measure_falls_back_to_the_estimate_when_usage_is_absent() {
         finish_frame("stop"),
         "data: [DONE]".to_string(),
     ]));
-    script.push(assistant_stream("done"));
+    script.push(assistant_stream(TOOL_REPORT));
     let mock = MockApi::start(script);
     let mut progress: Vec<u8> = Vec::new();
     let report = run_capturing(
@@ -6920,7 +7110,7 @@ async fn one_compaction_per_crossing_and_the_tool_loop_survives_it() {
     script.pop();
     script.push(counting_turn(7, 130_000));
     script.push(counting_turn(8, 140_000));
-    script.push(assistant_stream("done"));
+    script.push(assistant_stream(TOOL_REPORT));
     let mock = MockApi::start(script);
     let mut progress: Vec<u8> = Vec::new();
     let report = run_capturing(
@@ -7035,7 +7225,7 @@ async fn a_compacted_session_resumes_from_disk_and_continues_coherently() {
             "Summary of turns 1 through 2, compacted to fit the window:\n\n- the summary of the early turns"
         )
     );
-    assert_eq!(first[first.len() - 2].content.as_deref(), Some("All done."));
+    assert_eq!(first[first.len() - 2].content.as_deref(), Some(TOOL_REPORT));
     assert_eq!(
         first[first.len() - 1].content.as_deref(),
         Some("keep going")
@@ -7068,7 +7258,7 @@ async fn an_empty_summary_skips_the_fold_rather_than_dropping_the_conversation()
     let mut session = Session::create(&home, "test-model").unwrap();
     let mut script = crossing_script("");
     script.pop();
-    script.push(assistant_stream("done"));
+    script.push(assistant_stream(TOOL_REPORT));
     let mock = MockApi::start(script);
     let mut progress: Vec<u8> = Vec::new();
     let report = run_capturing(
@@ -7106,7 +7296,7 @@ async fn a_run_under_the_budget_logs_no_compaction_record() {
     let mut session = Session::create(&home, "test-model").unwrap();
     let mock = MockApi::start(vec![
         tool_call_stream("call-1", "bash", r#"{"command":"echo hello"}"#),
-        assistant_stream("All done."),
+        assistant_stream(TOOL_REPORT),
     ]);
     let mut progress = Vec::new();
     let report = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say hello")

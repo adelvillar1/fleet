@@ -754,6 +754,14 @@
     return row(el0, event);
   }
 
+  // The run stopped without the report it owes and the harness asked
+  // once. One line, so the extra request is seen and paid for knowingly.
+  function repairRow(event) {
+    var el0 = card('repair', '\u21bb', 'the run stopped without a report',
+      'asked once for the closing report (attempt ' + (event.attempt || 1) + ')', null, null);
+    return row(el0, event);
+  }
+
   // A row the client owes the owner and the server never sent: a run
   // the route refused, a rule the writer would not take. It is not in
   // the log the server replays and the inspector counts only what the
@@ -848,6 +856,12 @@
         break;
       case 'rewound':
         rewoundRow(event);
+        break;
+      case 'repair':
+        // The harness asked for the report it was owed. The line makes
+        // the extra model call visible rather than a turn that seemed
+        // to do nothing.
+        repairRow(event);
         break;
       case 'plan':
         planRow(event);

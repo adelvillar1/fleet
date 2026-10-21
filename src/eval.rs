@@ -1409,7 +1409,12 @@ async fn two_turn_tool_loop(mock_bin: PathBuf) -> ScenarioOutcome {
         &mock_bin,
         vec![
             tool_call_stream("call-1", "bash", r#"{"command":"echo hello"}"#),
-            assistant_stream("All done."),
+            // The stop contract: a report, not an acknowledgment. The
+            // harness asked once for it before this line existed, and
+            // the corpus now pins the shape the contract wants.
+            assistant_stream(
+                "The command printed hello (exit 0). The tool loop is complete; nothing needed from you.",
+            ),
         ],
     ) {
         Ok(mock) => mock,
@@ -1467,7 +1472,11 @@ async fn two_turn_tool_loop(mock_bin: PathBuf) -> ScenarioOutcome {
                             ("two turns", report.turns == 2),
                             (
                                 "the final answer",
-                                report.final_message.as_deref() == Some("All done."),
+                                report.final_message.as_deref()
+                                    == Some(
+                                        "The command printed hello (exit 0). The tool loop is \
+                                         complete; nothing needed from you.",
+                                    ),
                             ),
                             ("both requests streamed with usage", bodies.len() == 2),
                             (
@@ -1713,7 +1722,12 @@ async fn conversation_fold(mock_bin: PathBuf) -> ScenarioOutcome {
         .collect();
     script.push(counting_turn(6, 120_000));
     script.push(assistant_stream("- the summary of the early turns"));
-    script.push(assistant_stream("All done."));
+    // The post-fold stop is a report too: a run that folded its early
+    // turns still owes the owner the result, the status, and the next
+    // step.
+    script.push(assistant_stream(
+        "The early turns were folded into the summary above; the conversation continues from it and nothing needed from you.",
+    ));
     let mock = match MockApi::start(&mock_bin, script) {
         Ok(mock) => mock,
         Err(error) => {

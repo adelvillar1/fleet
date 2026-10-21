@@ -78,6 +78,7 @@ are documented in `docs/features/gui.md`.
 - DeepSeek is the only pay-as-you-go candidate and is declared in no workload's
   chain; it serves only when pinned.
 - A mid-stream failure is fatal rather than a failover.
+- A run that stops after tool work with no message — or a bare "done" — is asked once for its closing report; the ask is visible on every surface, and a second silent stop ends with the stop reason `completed without a report`. A run that executed no tools is never repaired.
 - Every tool call goes through the approval gate one call at a time; a denial
   is a model-visible result, not a panic.
 - Lane children are spawned lazily and closed on every exit path; a dead lane

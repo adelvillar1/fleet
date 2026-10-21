@@ -1598,6 +1598,14 @@ impl App {
                     });
                 }
             }
+            // The harness asked for the report it was owed: the run is
+            // still going, and the card says why another request is
+            // being paid for.
+            UiEvent::ReportRepair { attempt } => {
+                self.run.active = true;
+                self.run.stage = Stage::Think;
+                self.run.last = format!("no report \u{b7} asked once ({attempt})");
+            }
             UiEvent::Failed(message) => {
                 self.flush_streaming();
                 self.run.active = false;

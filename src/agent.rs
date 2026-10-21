@@ -76,6 +76,39 @@ pub fn default_prompt() -> String {
     format!("{SYSTEM_PROMPT}\n\n{REPORTING_CONTRACT}")
 }
 
+/// What the harness says when a run stops without the report it owes.
+///
+/// It rides the system prompt for the repair request only, so the
+/// conversation the model answers is the one it had when it stopped:
+/// the silent turn is not in the messages (nothing was said), and the
+/// report it returns becomes the ordinary assistant turn.
+pub const REPORT_INSTRUCTION: &str = "## You stopped without a report\n\nYour last message was empty or a bare acknowledgment, so the owner cannot tell what happened. Do not call another tool unless the task is genuinely unfinished. Reply now with the closing report: what happened (with the evidence), where it stands, and what is next — the action you are taking, the one decision the owner owns, or \"nothing needed from you\". If this run is a plan, the plan itself is the report.";
+
+/// True when a stop after tool work said nothing the owner can act on:
+/// no content at all, or an acknowledgment and nothing else.
+///
+/// The gate is `ran_tools`: the repair exists for the run that put work
+/// through the gate and then went quiet — a chat that answers "yes" to
+/// a yes/no question, or produces an empty reply with no tools behind
+/// it, has not failed to report the work it did.
+pub fn is_silent_stop(content: &str, ran_tools: bool) -> bool {
+    if !ran_tools {
+        return false;
+    }
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let word = trimmed
+        .trim_end_matches(['.', '!', '\u{2026}'])
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        word.as_str(),
+        "done" | "ok" | "okay" | "sure" | "great" | "all done" | "finished" | "completed"
+    )
+}
+
 /// Turn cap when the caller does not choose one.
 pub const DEFAULT_MAX_TURNS: usize = 25;
 
@@ -452,6 +485,11 @@ pub enum UiEvent {
     },
     /// The loop stopped orderly.
     Finished { stop_reason: String },
+    /// The harness asked once for the closing report the run owes: the
+    /// model stopped after tool work with no message, or with a bare
+    /// acknowledgment. Emitted when the repair request is built, so the
+    /// extra model call is visible to the owner who pays for it.
+    ReportRepair { attempt: u32 },
     /// The loop failed; the run is over.
     Failed(String),
 }
@@ -888,6 +926,14 @@ pub struct Agent<'a> {
     /// and the corpus stays untouched. Taken when they fire, so one
     /// assembly records exactly once.
     pending_hits: Option<PendingHits>,
+    /// How many tool calls this run put through the gate. The report
+    /// repair reads it: an acknowledgment-only stop is a missing report
+    /// only when the run had tool work whose result the owner needs.
+    tool_calls_run: u64,
+    /// How many times the harness has asked for the closing report it
+    /// was owed. One per run: a model that ignores the ask once will
+    /// ignore it again, and every ask is a paid request.
+    repairs: u32,
 }
 
 /// The recall hits an assembly surfaced, waiting for the model's first
@@ -996,6 +1042,8 @@ impl<'a> Agent<'a> {
             last_prompt_tokens: None,
             pending_hits: None,
             improve_home,
+            tool_calls_run: 0,
+            repairs: 0,
         })
     }
 
@@ -1460,6 +1508,8 @@ impl<'a> Agent<'a> {
         let memory_block = self.prepare_memory(task)?;
         let system_prompt = self.system_prompt(memory_block.as_deref());
         self.push_message(Message::text(Role::User, task))?;
+        // The next request is the repair ask, when it is.
+        let mut repair_next = false;
         while self.turns < self.options.max_turns as u64 {
             self.turns += 1;
             self.emit(UiEvent::Turn(self.turns));
@@ -1480,9 +1530,15 @@ impl<'a> Agent<'a> {
             // The system prompt is the compiled-in constant plus this
             // run's skills list, which the `skills` record above carries:
             // model-visible and reconstructable, like the tool
-            // declarations.
+            // declarations. The repair ask rides one request only.
+            let request_system = if repair_next {
+                repair_next = false;
+                format!("{system_prompt}\n\n{REPORT_INSTRUCTION}")
+            } else {
+                system_prompt.clone()
+            };
             let mut request_messages = Vec::with_capacity(self.messages.len() + 1);
-            request_messages.push(Message::text(Role::System, &system_prompt));
+            request_messages.push(Message::text(Role::System, &request_system));
             request_messages.extend(self.messages.iter().cloned());
             // The declarations are dynamic now: the four built-ins, the
             // `use_skill` tool when this run carries skills, plus every
@@ -1556,26 +1612,63 @@ impl<'a> Agent<'a> {
             // this same run would carry the same invalid sequence. KI-016.
             if message.tool_calls.is_empty() {
                 let content = message.content.clone().unwrap_or_default();
+                // The stop's contract can be ignored. A model that stops
+                // after tool work with no message — or a bare "done" —
+                // has left the owner without the result, the status, or
+                // the next step, so the harness asks once. The silent
+                // turn is not pushed (nothing was said, and a second
+                // assistant turn would poison a resume); the ask rides
+                // the next request's system prompt, and the report it
+                // returns is the ordinary assistant turn.
+                if self.repairs == 0
+                    && self.turns < self.options.max_turns as u64
+                    && is_silent_stop(&content, self.tool_calls_run > 0)
+                {
+                    self.repairs += 1;
+                    repair_next = true;
+                    let _ = writeln!(
+                        self.progress,
+                        "\u{2192} the run stopped without a report; asking once"
+                    );
+                    let _ = self.progress.flush();
+                    self.emit(UiEvent::ReportRepair {
+                        attempt: self.repairs,
+                    });
+                    continue;
+                }
                 self.push_message(message)?;
                 let turns = self.turns;
+                // A stop that still said nothing usable is named as such:
+                // the log's end record and the finished card must not
+                // report a clean completion over silence.
+                let no_report = is_silent_stop(&content, self.tool_calls_run > 0);
+                if no_report {
+                    let _ = writeln!(self.progress, "\u{2192} the run ended without a report");
+                    let _ = self.progress.flush();
+                }
+                let stop_reason = if no_report {
+                    "completed without a report"
+                } else {
+                    "completed"
+                };
                 // A plan-mode run's answer is a plan: it rides its own
                 // record beside the assistant message, so the browser's
                 // plan card reads the log rather than a face-local
                 // copy of what the model said.
-                if self.plan_mode {
+                if self.plan_mode && !content.trim().is_empty() {
                     self.record(&Record::Plan {
                         text: content.clone(),
                     })?;
                 }
                 self.record(&Record::End {
-                    stop_reason: "completed".to_string(),
+                    stop_reason: stop_reason.to_string(),
                     turns,
                     // KI-073: the model that answered, when the run was
                     // routed — the nominal one is on the start record.
                     served_model: self.served_model(),
                 })?;
                 self.emit(UiEvent::Finished {
-                    stop_reason: "completed".to_string(),
+                    stop_reason: stop_reason.to_string(),
                 });
                 return Ok(RunReport {
                     stop_reason: StopReason::Completed,
@@ -1587,6 +1680,7 @@ impl<'a> Agent<'a> {
             }
 
             let tool_calls = message.tool_calls.clone();
+            self.tool_calls_run += tool_calls.len() as u64;
             self.push_message(message)?;
             // The batch: the gate one call at a time, the approved calls
             // under the plan, every result recorded in the batch's own
@@ -5413,6 +5507,37 @@ You are auditing a change. Read the diff before you judge it.
                 "the contract is missing `{needle}`: {REPORTING_CONTRACT}"
             );
         }
+    }
+
+    /// C1–C3: the repair's trigger. A blank stop or an acknowledgment
+    /// after tool work; an informative answer, or any stop with no tool
+    /// work, never.
+    #[test]
+    fn the_report_repair_recognizes_a_silent_stop() {
+        assert!(is_silent_stop("", true));
+        assert!(!is_silent_stop("", false));
+        assert!(is_silent_stop("  \n", true));
+        for word in [
+            "done",
+            "Done.",
+            "OK!",
+            "okay",
+            "sure",
+            "all done",
+            "Finished",
+            "completed",
+        ] {
+            assert!(is_silent_stop(word, true), "an ack after tools: {word}");
+            assert!(
+                !is_silent_stop(word, false),
+                "a chat answer is not a missing report: {word}"
+            );
+        }
+        assert!(!is_silent_stop(
+            "The tests pass; nothing needed from you.",
+            true
+        ));
+        assert!(!is_silent_stop("Yes.", false));
     }
 
     #[test]
