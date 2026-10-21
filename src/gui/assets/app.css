@@ -1617,6 +1617,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   --ctl-h: 30px;
   --ctl-radius: 8px;
   --ctl-font: 11.5px;
+  container-type: inline-size;
   width: min(820px, calc(100% - 64px));
   margin: 0 auto;
   padding: 10px 12px;
@@ -1667,12 +1668,9 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .attach-drop { padding: 0 2px; border: 0; background: none; color: var(--dsw-alias-ink-tertiary); font: inherit; cursor: pointer; }
 .attach-drop:hover { color: var(--dsw-alias-down); }
 
-/* The run bar: the route and the folder, above the send row. Every
-   control is one height. The permission mode lives at the bottom of the
-   card with the send row, so this line carries only what a run needs
-   besides how far it may go. */
-.runbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 2px 0; }
-.runbar-note { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-size: 10.5px; }
+/* The standing run choices share the send row's line: permission mode,
+   provider, folder. */
+.foot-fields { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 
 /* A run-bar field is one bordered control holding its icon and value:
    no free-floating caption, no second border inside the first. */
@@ -1689,7 +1687,14 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   font-size: var(--ctl-font);
 }
 .runbar-field:hover { border-color: var(--dsw-alias-ink-tertiary); }
+.runbar-field:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--dsw-alias-accent) 55%, transparent);
+  outline-offset: 1px;
+}
 .runbar-field svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--dsw-alias-ink-tertiary); }
+/* A pinned provider or a chosen folder says so with the icon when the
+   word is not on the line. */
+.runbar-field[data-active="true"] svg { color: var(--dsw-alias-ink); }
 .runbar-field select {
   height: 100%;
   padding: 0 2px;
@@ -1703,13 +1708,16 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .runbar-field select:disabled { color: var(--dsw-alias-ink-tertiary); cursor: default; }
 
 /* The permission mode keeps its one red state: the field reads full
-   access in the destructive colour, and nothing else on the card does. */
+   access in the destructive colour, and nothing else on the card does.
+   Autonomous earns the ink icon, so a collapsed field still says it is
+   not the default. */
 .perm-field[data-mode="full"],
 .perm-field[data-mode="full"] select { border-color: var(--dsw-alias-down); color: var(--dsw-alias-down); }
 .perm-field[data-mode="full"] svg { color: var(--dsw-alias-down); }
 .perm-field[data-mode="full"] select { font-weight: 600; }
+.perm-field[data-mode="auto"] svg { color: var(--dsw-alias-ink); }
 
-/* The chat's working folder: a word-wide control in the run bar, and
+/* The chat's working folder: a word-wide field on the send row, and
    the picker that opens above the composer. The picker browses the
    launch directory one level at a time, so its list is small and its
    position fixed to the composer rather than to a page corner. */
@@ -1844,10 +1852,58 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   outline-offset: 1px;
 }
 
-/* On a narrow face the note has no room on the run bar and repeats what
-   the route control already says. */
-@media (max-width: 560px) {
-  .runbar-note { display: none; }
+/* The hint shares the line only where the line has room for it. The
+   composer's own width is what decides that, not the window's: the rail
+   appears at one breakpoint and the column narrows again. */
+@container (max-width: 790px) {
+  .composer-hint { display: none; }
+}
+
+/* Below the width where three labeled fields and the send actions fit
+   on one line, the provider and folder keep their icon and drop the
+   word. The native control still covers the whole field, so a tap opens
+   the same list; the icon turns ink when the choice is not the default. */
+@media (max-width: 720px) {
+  .composer :is(.runbar-route, .runbar-folder) {
+    position: relative;
+    width: var(--ctl-h);
+    padding: 0;
+    justify-content: center;
+  }
+  .composer :is(.runbar-route, .runbar-folder) select,
+  .composer :is(.runbar-route, .runbar-folder) button {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+  }
+}
+
+/* At phone widths the mode field is an icon too, and Plan gives up its
+   word so the row stays one line. */
+@media (max-width: 460px) {
+  .composer .perm-field {
+    position: relative;
+    width: var(--ctl-h);
+    padding: 0;
+    justify-content: center;
+  }
+  .composer .perm-field select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+  }
+  .composer .foot-btn.plan { width: var(--ctl-h); padding: 0; }
+  .composer .foot-btn.plan .foot-label { display: none; }
+}
+
+/* Below 360 the whole row cannot fit; the fields keep the left edge and
+   the actions take the next line rather than both drifting right. */
+@media (max-width: 360px) {
+  .composer-foot .foot-fields { margin-right: auto; }
 }
 
 /* ------------------------------------------------------- the chat aside */
@@ -5568,7 +5624,6 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   .process-pill { display: none; }
   .composer-hint { display: none; }
   .composer-foot { justify-content: flex-end; }
-  .composer-foot .perm-field { margin-right: auto; }
   .composer-foot .foot-actions { margin-left: auto; }
   .tile-label { letter-spacing: 0.06em; }
   .home-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }

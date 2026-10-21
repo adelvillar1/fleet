@@ -341,33 +341,6 @@
         <label class="sr-only" for="task">the task</label>
         <textarea id="task" rows="1" placeholder="Ask fleet for something&hellip;" spellcheck="false"></textarea>
         <div class="attach-chips" id="attach-chips" hidden></div>
-        <div class="runbar" id="runbar" data-mode="ask">
-          <label class="runbar-field runbar-route" title="pin a provider for this chat">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 7h3.5l9 10H20"></path>
-              <path d="M4 17h3.5l9-10H20"></path>
-              <path d="M17.5 4.5 20 7l-2.5 2.5"></path>
-              <path d="M17.5 14.5 20 17l-2.5 2.5"></path>
-            </svg>
-            <select id="run-provider" aria-label="pin a provider for this chat">
-              <option value="">Auto</option>
-            </select>
-          </label>
-          <!-- The third standing choice: where this chat's runs work. No
-               folder means no filesystem access at all — the grant is
-               the choice, and nothing is implicit. -->
-          <span class="runbar-field runbar-folder">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3.5 7.5a2 2 0 0 1 2-2h3.7l1.8 2h7.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path>
-            </svg>
-            <button type="button" id="run-folder" aria-haspopup="dialog"
-                    aria-expanded="false" aria-controls="folder-pop"
-                    title="no working folder: the filesystem tools are unavailable">no folder</button>
-          </span>
-          <span class="runbar-note" id="run-route-note">the router decides</span>
-        </div>
         <!-- The folder picker. It browses only inside the launch
              directory, one level at a time, and applies to the next run:
              a run in flight already carries the root it accepted. Choosing
@@ -401,22 +374,47 @@
           </div>
         </div>
         <footer class="composer-foot">
-          <!-- The run's permissions: one collapsed field showing the mode
-               in force. The other two are a list behind it, so the bar
-               stays quiet until the owner changes it. -->
-          <label class="runbar-field perm-field" id="run-perms" data-mode="ask">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M12 3.5l7 3V12c0 4.3-3 7.4-7 8.5-4-1.1-7-4.2-7-8.5V6.5z"></path>
-              <path d="M9 12l2 2 4-4"></path>
-            </svg>
-            <select id="run-mode" aria-label="how much runs before asking">
-              <option value="ask">Ask before</option>
-              <option value="auto">Autonomous</option>
-              <option value="full">Full access</option>
-            </select>
-          </label>
-          <span class="composer-hint" id="hint">Enter sends &middot; Shift+Enter is a newline</span>
+          <!-- The run's standing choices on one line: how far a tool call
+               may go, which provider serves it, and where it works. Each
+               is one field showing only its current value. -->
+          <span class="foot-fields">
+            <label class="runbar-field perm-field" id="run-perms" data-mode="ask">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3.5l7 3V12c0 4.3-3 7.4-7 8.5-4-1.1-7-4.2-7-8.5V6.5z"></path>
+                <path d="M9 12l2 2 4-4"></path>
+              </svg>
+              <select id="run-mode" aria-label="how much runs before asking">
+                <option value="ask">Ask before</option>
+                <option value="auto">Autonomous</option>
+                <option value="full">Full access</option>
+              </select>
+            </label>
+            <label class="runbar-field runbar-route" title="pin a provider for this chat">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 7h3.5l9 10H20"></path>
+                <path d="M4 17h3.5l9-10H20"></path>
+                <path d="M17.5 4.5 20 7l-2.5 2.5"></path>
+                <path d="M17.5 14.5 20 17l-2.5 2.5"></path>
+              </svg>
+              <select id="run-provider" aria-label="pin a provider for this chat">
+                <option value="">Auto</option>
+              </select>
+            </label>
+            <!-- No folder means no filesystem access at all — the grant
+                 is the choice, and nothing is implicit. -->
+            <span class="runbar-field runbar-folder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3.5 7.5a2 2 0 0 1 2-2h3.7l1.8 2h7.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path>
+              </svg>
+              <button type="button" id="run-folder" aria-haspopup="dialog"
+                      aria-expanded="false" aria-controls="folder-pop"
+                      title="no working folder: the filesystem tools are unavailable">no folder</button>
+            </span>
+          </span>
+          <span class="composer-hint" id="hint">Shift+Enter makes a newline</span>
           <span class="foot-actions">
             <button type="button" class="foot-btn icon" id="doc-open"
                     aria-label="attach a document from the workspace"
@@ -448,7 +446,7 @@
                 <path d="M9 12h6"></path>
                 <path d="M9 16h3"></path>
               </svg>
-              Plan
+              <span class="foot-label">Plan</span>
             </button>
             <button type="submit" class="foot-btn send" id="send">
               Send

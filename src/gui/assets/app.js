@@ -296,11 +296,9 @@
     send: document.getElementById('send'),
     plan: document.getElementById('plan'),
     hint: document.getElementById('hint'),
-    runbar: document.getElementById('runbar'),
     runPerms: document.getElementById('run-perms'),
     runMode: document.getElementById('run-mode'),
     runProvider: document.getElementById('run-provider'),
-    runRouteNote: document.getElementById('run-route-note'),
     runFolder: document.getElementById('run-folder'),
     docOpen: document.getElementById('doc-open'),
     docPop: document.getElementById('doc-pop'),
@@ -1110,7 +1108,7 @@
     } else if (face.running) {
       el.hint.textContent = 'a run is in flight \u00b7 the composer opens when it ends';
     } else {
-      el.hint.textContent = 'Enter sends \u00b7 Shift+Enter is a newline';
+      el.hint.textContent = 'Shift+Enter makes a newline';
     }
   }
 
@@ -4936,7 +4934,7 @@
   // "auto" is the empty pin, and the destructive class still asks under
   // autonomous.
   function paintRunbar() {
-    if (!el.runbar) return;
+    if (!el.runMode && !el.runProvider) return;
     // Full access is a grant only a working folder can bound: the option
     // is disabled without one, and a mode left on full from before the
     // folder was cleared falls back to ask rather than arming a run the
@@ -4955,20 +4953,20 @@
       el.runPerms.title = modes[face.permissions] || 'how much runs before asking';
       if (!face.folder) el.runPerms.title += '; full access needs a working folder';
     }
-    el.runbar.dataset.mode = face.permissions;
     if (el.runProvider) {
       el.runProvider.value = face.providerPin || '';
       el.runProvider.disabled = !face.providers;
+      // With the field collapsed to its icon the pin still has to show,
+      // so the icon carries it.
+      var route = el.runProvider.closest('.runbar-field');
+      if (route) route.dataset.active = face.providerPin ? 'true' : 'false';
     }
-    var route = face.providerPin ? 'pinned to ' + face.providerPin : 'the router decides';
-    el.runRouteNote.textContent = route;
     paintFolder();
   }
 
-  // The working folder is the run bar's third standing choice: its
-  // basename when the chat has one, "launch folder" when it does not.
-  // The full path rides the title, because the button is one word wide
-  // in a crowded bar.
+  // The working folder: its basename when the chat has one, "no folder"
+  // when it does not. The full path rides the title, because the field
+  // is one value wide in a crowded row.
   function paintFolder() {
     if (!el.runFolder) return;
     el.runFolder.textContent = face.folder ? face.folder.name : 'no folder';
@@ -4976,6 +4974,8 @@
     el.runFolder.title = face.folder
       ? 'this chat works in ' + face.folder.path
       : 'no working folder: the filesystem tools are unavailable until one is set';
+    var field = el.runFolder.closest('.runbar-field');
+    if (field) field.dataset.active = face.folder ? 'true' : 'false';
   }
 
   // The pin's choices are the roster's enabled providers, read once off
@@ -9954,7 +9954,7 @@
     el.plan.setAttribute('aria-pressed', face.planMode ? 'true' : 'false');
     el.hint.textContent = face.planMode
       ? 'Plan mode: the run plans and writes nothing \u00b7 Enter plans'
-      : 'Enter sends \u00b7 Shift+Enter is a newline';
+      : 'Shift+Enter makes a newline';
   });
 
   // The plan door: the same task, the plan arm. A plan-mode run's final
