@@ -161,6 +161,10 @@ store and its diff, and a command palette over every pane and panel
   until a folder is set. The folder picker browses the whole hierarchy
   and takes a typed path; the choice applies to the next run, never the
   one in flight.
+
+![the folder picker, descended](docs/images/picker-desktop-descended.jpg)
+
+![the folder picker at phone width](docs/images/picker-phone-open.jpg)
 - Compaction folds the context under a token budget between turns, and
   the fold is logged; consolidation runs on its hourly timer in chat and
   the TUI; cron jobs fire on schedule, catch up exactly one missed

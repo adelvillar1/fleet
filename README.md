@@ -84,6 +84,17 @@ named, not implied — see Sequencing in
 - **Credentials that seal** — a vault that lists names and renders no
   value, with onboarding that migrates the plaintext `.env`.
 
+The console, surface by surface — every destination a user lands on:
+
+| | |
+|---|---|
+| ![the conversation](docs/images/surface-chat.jpg) | ![the router](docs/images/surface-router.jpg) |
+| ![sessions](docs/images/surface-sessions.jpg) | ![delegation](docs/images/surface-delegation.jpg) |
+| ![memory](docs/images/surface-memory.jpg) | ![skills](docs/images/surface-skills.jpg) |
+| ![second brain](docs/images/surface-second-brain.jpg) | ![bots](docs/images/surface-bots.jpg) |
+| ![vault](docs/images/surface-vault.jpg) | ![settings](docs/images/surface-settings.jpg) |
+| ![calibration](docs/images/surface-calibration.jpg) | |
+
 ## What is next
 
 Effort levels per workload (research done, plan not written); the
