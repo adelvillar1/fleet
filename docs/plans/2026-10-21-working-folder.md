@@ -1,5 +1,5 @@
 ---
-status: done
+status: completed
 created: 2026-10-21
 updated: 2026-10-21
 slug: working-folder
