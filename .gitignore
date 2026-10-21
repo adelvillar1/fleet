@@ -33,3 +33,10 @@ docs/.DS_Store
 # execution record, rebuilt from the declaration whenever the plan
 # changes. The plan is git-tracked; its runtime state is not.
 docs/plans/*.graph.json
+
+# Scratch and harness-side noise, never repo content: tmp/ holds the vm
+# harnesses, screenshots and one-off scripts a session verifies with
+# (the harness lives in tmp/ and is never committed), and .zcode/ is the
+# harness's own plan store for a session, not fleet's.
+/tmp/
+/.zcode/
