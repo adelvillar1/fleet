@@ -26,12 +26,13 @@
     ['skills', 'skills'],
     ['sessions', 'sessions'],
     ['calibration', 'calibration'],
+    ['vault', 'vault'],
     ['settings', 'settings'],
     ['second-brain', 'second brain'],
     ['bots', 'bots']
   ];
 
-  // The same ten surfaces, grouped by what the owner came to do rather
+  // The same surfaces, grouped by what the owner came to do rather
   // than by subsystem. ONE declaration: the rail is built from it and
   // the palette searches it, so there is a single structure and nothing
   // to keep in sync between the two. The research is explicit that no
@@ -56,6 +57,7 @@
     ]],
     ['system', 'system', [
       ['bots', 'bots'],
+      ['vault', 'vault'],
       ['settings', 'settings'],
       ['calibration', 'calibration']
     ]]
@@ -246,6 +248,7 @@
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelBots: document.getElementById('panel-bots'),
+    panelVault: document.getElementById('panel-vault'),
     panelSettings: document.getElementById('panel-settings'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
@@ -258,6 +261,7 @@
     calibrationBoard: document.getElementById('calibration-board'),
     brainBoard: document.getElementById('brain-board'),
     botsBoard: document.getElementById('bots-board'),
+    vaultBoard: document.getElementById('vault-board'),
     settingsBoard: document.getElementById('settings-board'),
     routePill: document.getElementById('route-pill'),
     statePill: document.getElementById('state-pill'),
@@ -7499,6 +7503,7 @@
       .then(function (doc) {
         face.settings = doc;
         if (face.panel === 'settings') paintSettings();
+        else if (face.panel === 'vault') paintVault();
       })
       .catch(function () { });
   }
@@ -9385,6 +9390,33 @@
 
   // ------------------------------------------------------------- the vault
 
+  // The vault's own surface. The Settings page keeps its section card;
+  // this is the first-class destination, so onboarding is one click from
+  // the rail rather than a scroll through the settings page.
+  function paintVault() {
+    var read = face.settings;
+    el.vaultBoard.textContent = '';
+    if (!read) {
+      el.vaultBoard.appendChild(surfaceHead('System', 'Vault',
+        'The credentials Fleet seals, and the passphrase that keys them.', null));
+      var waiting = boardCard(12, 'reading', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The vault read has not landed yet. It reads this home\u2019s vault and its .env.'));
+      el.vaultBoard.appendChild(waiting);
+      return;
+    }
+    var vault = read.vault || {};
+    var instrument = surfaceInstrument('the vault',
+      vault.exists ? (vault.names.length + ' sealed') : 'not set up',
+      'a name is listed; a value is never rendered',
+      null);
+    el.vaultBoard.appendChild(surfaceHead('System', 'Vault',
+      'The credentials Fleet seals, and the passphrase that keys them. A value is never ' +
+      'rendered; onboarding creates the vault and migrates the plaintext .env entries.',
+      instrument));
+    el.vaultBoard.appendChild(vaultCard('vault-card'));
+  }
+
   function vaultPassword(aria) {
     var input = node('input', 'knob-box');
     input.type = 'password';
@@ -9393,7 +9425,7 @@
     return input;
   }
 
-  function vaultCard() {
+  function vaultCard(cardId) {
     var read = face.settings.vault || {
       names: [], exists: false, passphrase: false, plaintext: []
     };
@@ -9405,7 +9437,7 @@
           'with FLEET_VAULT_PASSPHRASE.'
         : 'No vault exists yet. Choose a passphrase to create one; it keys the vault and is ' +
           'never stored. There is no recovery, so store it before sealing anything.');
-    card.id = 'settings-vault';
+    card.id = cardId || 'settings-vault';
 
     if (!read.passphrase) {
       var plaintext = read.plaintext || [];
@@ -10166,6 +10198,7 @@
     calibration: el.panelCalibration,
     'second-brain': el.panelSecondBrain,
     bots: el.panelBots,
+    vault: el.panelVault,
     settings: el.panelSettings
   };
 
@@ -10221,6 +10254,7 @@
       },
       calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
       'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); readPlugin(true); },
+      vault: function () { paintVault(); readSettings(true).then(paintVault); },
       settings: function () { paintSettings(); readSettings(true).then(paintSettings); }
     };
     if (arrive[address]) arrive[address]();
@@ -10775,9 +10809,9 @@
   }
 
   // Which surfaces are live today, and which are a later increment — the
-  // rail says so rather than pretending all ten are built.
+  // rail says so rather than pretending every destination is built.
   var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration',
-    'tower', 'second-brain', 'bots', 'settings'];
+    'tower', 'second-brain', 'bots', 'vault', 'settings'];
 
   function markRail() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');

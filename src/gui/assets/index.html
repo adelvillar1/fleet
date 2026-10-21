@@ -480,6 +480,14 @@
     <div class="board" id="settings-board"></div>
   </main>
 
+  <!-- The vault. A first-class settings surface of its own: onboarding
+       (choose the passphrase, create, migrate the plaintext .env
+       entries), the sealed names, the plaintext ledger, seal/drop, and
+       the lock. A value is never rendered. -->
+  <main class="stage stage-board" id="panel-vault" hidden>
+    <div class="board" id="vault-board"></div>
+  </main>
+
   <!-- The second brain. The derived state, quieter: the gates, the
        loops, the harness runs, and the maturity signals. Cards, bars,
        and a week grid, never a plain-text table. -->
