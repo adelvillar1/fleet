@@ -149,7 +149,11 @@ store and its diff, and a command palette over every pane and panel
   `completed without a report`. A run that executed no tools is never
   repaired.
 - Every tool call goes through the approval gate one call at a time; a
-  denial is a model-visible result, not a panic.
+  denial is a model-visible result, not a panic. An answer lands as a line
+  in the transcript — "allowed this call", "allowed for the rest of this
+  run", "allowed and remembered", or "refused this call" — so the grant is
+  seen where it happened and the log holds what the owner allowed; the card
+  closes, and a seat for the next call opens as a new card.
 - Lane children are spawned lazily and closed on every exit path; a dead
   lane fails fast for the rest of the run without killing it.
 - A chat's folder is the agent's root: `bash` starts there and the file

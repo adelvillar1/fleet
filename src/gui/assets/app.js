@@ -773,6 +773,23 @@
     return row(el0, event);
   }
 
+  // The answer that closed a seat: one line in the transcript, so the
+  // grant is seen where it happened and the log holds what the owner
+  // allowed. The card itself closes; a seat for the next call is a new
+  // card, not this one changing under the owner's eyes — which is what
+  // made the popup read as "it never closes" (KI-283).
+  function approvalRow(event) {
+    var allowed = event.decision !== 'deny';
+    var word = event.decision === 'deny' ? 'refused this call'
+      : event.decision === 'always' ? 'allowed for the rest of this run'
+      : event.decision === 'remember' ? 'allowed and remembered'
+      : 'allowed this call';
+    var what = event.tool || 'the call';
+    var el0 = card('approval', allowed ? '\u2713' : '\u2715', word,
+      what + (event.summary ? ' \u00b7 ' + event.summary : ''), null, null);
+    return row(el0, event);
+  }
+
   // A row the client owes the owner and the server never sent: a run
   // the route refused, a rule the writer would not take. It is not in
   // the log the server replays and the inspector counts only what the
@@ -898,18 +915,28 @@
         face.seat = null;
         break;
       // The resolution of a seat this face did not answer: the seat is
-      // gone, and the page says who took it rather than leaving a button
-      // standing for a decision already made. A seat this face did answer
-      // arrives as `seat_cleared`, so the two are told apart.
+      // The answer that closed a seat. This surface's own answer leaves
+      // the transcript line as its acknowledgment; another surface's
+      // answer says who took it, because a button that vanishes without
+      // a word reads as a bug. Either way the seat closes — and a seat
+      // for the next call opens as a new card, so the popup reads as
+      // closing rather than as never closing (KI-283).
       case 'answered':
-        if (face.seat && (!event.session || event.session === face.session)) {
-          face.seat = null;
-          face.answeredElsewhere = event.by || 'another surface';
-          // The seat is gone and the owner should know whose decision it
-          // was: a button that vanishes without a word reads as a bug.
-          notice('the seat was answered elsewhere',
-            (event.by || 'another surface') + ' answered it ' +
-            (event.decision === 'deny' ? 'no' : 'yes') + '.');
+        if (!event.session || event.session === face.session) {
+          var mine = !!face.seat;
+          if (mine) {
+            face.seat = null;
+            face.answeredElsewhere = event.by || 'another surface';
+          }
+          approvalRow(event);
+          // A seat this face did not answer says who took it; a button
+          // that vanishes without a word reads as a bug. This surface's
+          // own answer is acknowledged by the line above instead.
+          if (mine && (event.by || '') !== 'this browser') {
+            notice('the seat was answered elsewhere',
+              (event.by || 'another surface') + ' answered it ' +
+              (event.decision === 'deny' ? 'no' : 'yes') + '.');
+          }
         }
         break;
       case 'rules':
@@ -4305,7 +4332,14 @@
   }
 
   function answer(decision) {
-    post('/api/approve', { decision: decision }).then(function (reply) {
+    // The seat names the session it belongs to, and the answer has to
+    // name it too: the bridge keeps one seat per session, and a
+    // session-less post is answered against the face's launch session —
+    // which is a different session the moment a channel peer's run is
+    // driving, and the seat then stands with the run hung behind it.
+    var seat = face.seat || {};
+    var path = '/api/approve' + (seat.session ? '?session=' + encodeURIComponent(seat.session) : '');
+    post(path, { decision: decision }).then(function (reply) {
       // The seat is already gone — the bridge clears it before it
       // replies — so a failure cannot be shown where it happened. A
       // `remember` the writer refused is the case that matters: the

@@ -558,6 +558,13 @@ impl Bridge {
             "events": attached.events,
             "approval": attached.seat.as_ref().map(|seat| {
                 json!({
+                    // The seat names its session on both delivery paths:
+                    // the stream's `seat` event carries it, and this
+                    // document's copy has to as well, or an answer to a
+                    // seat that arrived by the state read posts
+                    // session-less and is answered against the launch
+                    // session (KI-283).
+                    "session": key,
                     "tool": seat.call.function.name,
                     "summary": seat.summary,
                     "label": approvals::Rule::for_call(&seat.call).label(),
@@ -2248,13 +2255,31 @@ impl Bridge {
         // The seat comes out first and the lock drops with it: the write
         // below is a file write, and a mutex held across it would stall
         // every state read for as long as the disk takes.
-        let seat = {
+        //
+        // Which session's seat: the one asked for, and — for the
+        // session-less shape a page that predates the seat's own name
+        // posts — the session being driven. Seats are stored under the
+        // driving session (`target()`), which is the face's launch
+        // session until a channel peer's run takes over; answering a
+        // session-less post against the launch session alone refused
+        // with `NoSeat` while the peer's seat stood and its run hung.
+        let (seat, answered_session) = {
             let mut state = lock(&self.state);
-            state
-                .attached(session)
+            let asked = if session.is_empty()
+                && state
+                    .attached_if(&state.target())
+                    .is_some_and(|attached| attached.seat.is_some())
+            {
+                state.target()
+            } else {
+                session.to_string()
+            };
+            let seat = state
+                .attached(&asked)
                 .seat
                 .take()
-                .ok_or(AnswerError::NoSeat)?
+                .ok_or(AnswerError::NoSeat)?;
+            (seat, asked)
         };
         let mut rule = None;
         let mut error = None;
@@ -2280,9 +2305,14 @@ impl Bridge {
         // standing for a seat that is gone.
         let _ = self.events.send(json!({
             "type": "answered",
-            "session": session,
+            "session": answered_session,
             "decision": decision,
             "by": by.label(),
+            // The seat's own words ride the broadcast, so every surface
+            // can record what was allowed — and a replay rebuilds the
+            // same line from the event alone.
+            "tool": seat.call.function.name,
+            "summary": seat.summary,
         }));
         Ok(json!({
             "answered": decision,
@@ -5969,7 +5999,10 @@ mod tests {
             state: Arc::clone(&bridge.state),
         });
         bridge.run(&id, "go").expect("the run is accepted");
-        for _ in 0..300 {
+        // The run's teardown removes the control file; under a loaded
+        // suite that can outrun a three-second poll, and a bound the
+        // machine cannot meet is a flake, not a failure.
+        for _ in 0..1500 {
             if !control.exists() {
                 break;
             }
@@ -6132,6 +6165,50 @@ mod tests {
             .expect("the seat is answered");
         assert_eq!(answered["answered"], "once");
         assert!(bridge.state(&attached)["approval"].is_null());
+    }
+
+    /// KI-283: a seat belongs to the session being driven, and a
+    /// session-less answer — the shape a page that predates the seat's
+    /// own name posts — belongs there too. Answering it against the
+    /// face's launch session refused with `NoSeat` while the seat stood
+    /// and the run hung behind it; a channel peer's run is where the two
+    /// sessions diverge, and its seat shows on every surface.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_session_less_answer_answers_the_seat_being_driven() {
+        let (bridge, sources, _door) = bridge().await;
+        let driven = "20261021T000000Z-channelpeer";
+        bridge.drive(driven);
+        let shell = call("bash", r#"{"command":"echo hi"}"#);
+        let (responder, reply) = std::sync::mpsc::channel();
+        sources
+            .seat
+            .send(ApprovalRequest {
+                call: shell,
+                summary: "run echo hi".to_string(),
+                responder,
+            })
+            .expect("the seat arrives");
+        for _ in 0..50 {
+            if bridge.state(driven)["approval"].is_object() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            bridge.state(driven)["approval"].is_object(),
+            "the seat stands under the session being driven"
+        );
+        // No session named: the launch session has no seat, the driven
+        // one does, and the answer belongs to the seat.
+        let answered = bridge
+            .answer("", "once", &AnsweredBy::Desktop)
+            .expect("the session-less answer reaches the seat being driven");
+        assert_eq!(answered["answered"], "once");
+        assert!(bridge.state(driven)["approval"].is_null());
+        assert!(
+            reply.try_recv().is_ok(),
+            "the approval the responder waited for crossed"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

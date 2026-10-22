@@ -2131,11 +2131,14 @@ mod tests {
         assert!(cross.starts_with("HTTP/1.1 403"), "{cross}");
         assert!(cross.contains("origin is not this machine"), "{cross}");
         // The same state-changing request from the face itself — a
-        // loopback origin — is served.
-        let own = ask(
+        // loopback origin — is served. The rank route embeds over HTTP
+        // to the machine's shared backend, which a live face can keep
+        // busy, so this read carries its own budget (KI-280's shape).
+        let own = ask_within(
             port,
             "POST /api/rank HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: http://127.0.0.1:3080\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\n{}",
             None,
+            Duration::from_secs(30),
         );
         assert!(own.starts_with("HTTP/1.1 200"), "{own}");
     }
