@@ -38,7 +38,11 @@ you want, which provider serves it and which folder the work happens
 in. Attach a document from the workspace or a file from the machine.
 Plan instead of build. The run renders as cards in the same
 conversation: the route it took and why, the facts recalled, the skill
-loaded, the child spawned, the approval awaited. The home state names
+loaded, the child spawned, the approval awaited. While a run works, the
+composer says so and says how: the turn, and how long since the last
+event — a live run shows a small number, a long tool call shows it climb,
+and the state pill turns with it. A standing seat counts the owner's own
+wait. The home state names
 the counts (facts known, skills in reach, runs under this home), the
 method in three words — plan, delegate, verify — and where a run's work
 goes: local to the machine, turns to the providers that serve them, a
