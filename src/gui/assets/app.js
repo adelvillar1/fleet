@@ -299,6 +299,7 @@
     runPerms: document.getElementById('run-perms'),
     runMode: document.getElementById('run-mode'),
     runProvider: document.getElementById('run-provider'),
+    runTurns: document.getElementById('run-turns'),
     runFolder: document.getElementById('run-folder'),
     docOpen: document.getElementById('doc-open'),
     docPop: document.getElementById('doc-pop'),
@@ -872,8 +873,55 @@
     // owner's own decision a failure would be the wrong card.
     var stopped = event.type === 'failed' && /stopped by the owner/i.test(event.reason || '');
     var failed = event.type === 'failed' && !stopped;
+    var capped = event.reason === 'max-turns' && face.turn > 0;
+    // The continuation receipt (the contract, D4): reaching the cap is
+    // not a dead stop - the card states where the run stands, and the
+    // continue control resumes this session with a hand-off that names
+    // the budget, so the model picks the work back up with its state
+    // carried. The hand-off is seeded from the transcript the face
+    // holds; the run's own report may name it better, and a real final
+    // message wins when the event carries one.
     var el0 = card(failed ? 'failed' : 'finished', stopped ? '\u25a0' : failed ? '!' : '\u2713',
-      stopped ? 'stopped by you' : failed ? 'failed' : 'finished', event.reason, null, null);
+      stopped ? 'stopped by you' : failed ? 'failed' : capped ? 'the turn budget ran out'
+        : 'finished', event.reason, null, null);
+    if (capped) {
+      var note = el0.querySelector('.note');
+      note.hidden = false;
+      note.textContent = 'the run reached ' + face.turn + ' turns - its state is carried in ' +
+        'this session. Continue and it picks the work back up; raise the budget first in ' +
+        'settings (runs.max_turns) if the task needs more room.';
+      var actions = node('div', 'receipt-actions');
+      var go = node('button', 'replay-button receipt-continue', 'continue the work');
+      go.type = 'button';
+      go.addEventListener('click', function () {
+        go.disabled = true;
+        go.textContent = 'continuing\u2026';
+        var runPath = '/api/run' + (face.session
+          ? '?session=' + encodeURIComponent(face.session) : '');
+        post(runPath, {
+          task: 'continue the previous task from where the turn budget stopped it. ' +
+            'The conversation above carries your state; finish the remaining work and ' +
+            'close with the result.',
+          mode: face.permissions,
+          pin: face.providerPin || null,
+          budget_turns: face.turnBudget || null
+        }).then(function (reply) {
+          if (reply.status === 200) {
+            face.running = true;
+            face.stop = null;
+            resetProcess(face.planMode ? 'plan' : 'run');
+            paint();
+            return;
+          }
+          go.disabled = false;
+          go.textContent = 'continue the work';
+          notice('the continue was refused',
+            (reply.body && reply.body.error) || 'the face said no without a reason');
+        });
+      });
+      actions.appendChild(go);
+      el0.appendChild(actions);
+    }
     return row(el0, event);
   }
 
@@ -952,6 +1000,7 @@
           face.lastTurn = event.turn;
           face.turn = event.turn;
           turnRow(event);
+          paintRunbar();
         }
         break;
       case 'usage':
@@ -4929,6 +4978,7 @@
     face.workspace = state.workspace || '';
     face.folder = state.folder || null;
     face.budget = Number(state.budget) || 0;
+    face.turnBudget = Number(state.turn_budget) || 0;
     face.running = !!state.running;
     face.dropped = Number(state.dropped) || 0;
     face.rules = state.rules || [];
@@ -5248,6 +5298,19 @@
       // so the icon carries it.
       var route = el.runProvider.closest('.runbar-field');
       if (route) route.dataset.active = face.providerPin ? 'true' : 'false';
+    }
+    // The turn budget, while a run is live: the honest remaining count
+    // against the budget the state document named (D4). Nothing renders
+    // when there is no budget or no live run - the field is run
+    // telemetry, not decoration.
+    if (el.runTurns) {
+      var live = face.running && face.turn > 0 && face.turnBudget > 0;
+      el.runTurns.hidden = !live;
+      if (live) {
+        var left = Math.max(0, face.turnBudget - face.turn);
+        el.runTurns.textContent = left + ' turns left';
+        el.runTurns.dataset.low = left <= 10 ? 'true' : 'false';
+      }
     }
     paintFolder();
   }

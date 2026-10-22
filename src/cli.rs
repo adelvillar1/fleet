@@ -629,7 +629,7 @@ options for run and chat:
   --model <id>        pin the run to a model: provider/model, or a model id
                       that one roster provider serves (default: the router
                       decides; `fleet providers` lists the roster)
-  --max-turns <n>     tool-loop turn cap for run (default 25)
+  --max-turns <n>     tool-loop turn cap for run (default 100)
   --yes, -y           approve every tool call without prompting
 --compact-now       fold the context on the next turn boundary, whatever
                                 the token budget says

@@ -125,6 +125,12 @@ pub const SETTINGS: &[Setting] = &[
                   detects your tailnet name, or falls back to this machine's address.",
     },
     Setting {
+        key: "runs.max_turns",
+        kind: Kind::CountTo(crate::agent::DEFAULT_MAX_TURNS as u64),
+        file: File::Config,
+        summary: "The turn cap one run may loop under. Reaching it is a continuation                   receipt, not a dead stop; above this compiled ceiling is a change to                   the constant, not a config value.",
+    },
+    Setting {
         key: "skills.retire_after_sessions",
         kind: Kind::Count,
         file: File::Config,

@@ -585,6 +585,59 @@ struct ConfigFile {
     calib: Option<CalibEntry>,
     #[serde(default)]
     skills: Option<SkillsEntry>,
+    #[serde(default)]
+    runs: Option<RunsEntry>,
+}
+
+/// The `runs` section of config.json: the knobs a run reads at launch.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunsEntry {
+    /// The turn cap this machine runs under, at or below the compiled
+    /// default — config can only lower, the way `FLEET_CONCURRENCY`
+    /// lowers the fan-out. Zero or a malformed number leaves the
+    /// default standing.
+    #[serde(default)]
+    max_turns: Option<usize>,
+}
+
+/// The resolved run knobs, with the defaults applied.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunConfig {
+    pub max_turns: usize,
+}
+
+impl Default for RunConfig {
+    fn default() -> RunConfig {
+        RunConfig {
+            max_turns: crate::agent::DEFAULT_MAX_TURNS,
+        }
+    }
+}
+
+/// The run knobs this home configures, the way [`skills_config`] reads
+/// its own: the compiled defaults, overridden by the `runs` section of
+/// config.json when it names values. A missing or malformed file is the
+/// defaults — the same silence `skills_config` keeps. A named value
+/// above the compiled default clamps to it, because "config can only
+/// lower" is what makes the setting a bound and not a wish.
+pub fn run_config(home: &Path) -> RunConfig {
+    let mut config = RunConfig::default();
+    let Ok(text) = std::fs::read_to_string(home.join("config.json")) else {
+        return config;
+    };
+    let Ok(file) = serde_json::from_str::<ConfigFile>(&text) else {
+        return config;
+    };
+    let Some(runs) = file.runs else {
+        return config;
+    };
+    if let Some(turns) = runs.max_turns {
+        if turns > 0 {
+            config.max_turns = turns.min(crate::agent::DEFAULT_MAX_TURNS);
+        }
+    }
+    config
 }
 
 /// One provider override in the config file. Any subset of fields; a bare
@@ -4072,6 +4125,46 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calib_log_root(&home), None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_config_runs_section_names_the_turn_budget() {
+        let home = std::env::temp_dir().join(format!("fleet-runs-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        // Absent is the compiled-in default.
+        assert_eq!(run_config(&home), RunConfig::default());
+        assert_eq!(run_config(&home).max_turns, crate::agent::DEFAULT_MAX_TURNS);
+        // A named value lowers the cap.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "runs": { "max_turns": 30 } }"#,
+        )
+        .unwrap();
+        assert_eq!(run_config(&home).max_turns, 30);
+        // A value above the compiled default clamps to it: config can
+        // only lower, the way the fan-out bound does.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "runs": { "max_turns": 5000 } }"#,
+        )
+        .unwrap();
+        assert_eq!(run_config(&home).max_turns, crate::agent::DEFAULT_MAX_TURNS);
+        // Zero is not a cap anyone asked for; the default stands.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "runs": { "max_turns": 0 } }"#,
+        )
+        .unwrap();
+        assert_eq!(run_config(&home).max_turns, crate::agent::DEFAULT_MAX_TURNS);
+        // A misspelled key is rejected loud, the way a provider's is.
+        std::fs::write(
+            home.join("config.json"),
+            r#"{ "runs": { "max_turn": 30 } }"#,
+        )
+        .unwrap();
+        assert_eq!(run_config(&home), RunConfig::default());
         let _ = std::fs::remove_dir_all(&home);
     }
 

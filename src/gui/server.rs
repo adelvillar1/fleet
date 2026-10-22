@@ -377,6 +377,10 @@ async fn serve_connection(
                 Ok(policy) => policy,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
+            let budget = match turn_budget_of(&body) {
+                Ok(budget) => budget,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
             let folder = match folder_of(&body) {
                 Ok(folder) => folder,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
@@ -390,7 +394,7 @@ async fn serve_connection(
                 }
             }
             let session = asked_session(bridge, &request);
-            match bridge.run_with(&session, &task, mode, pin, folder.as_deref()) {
+            match bridge.run_with_budget(&session, &task, mode, pin, folder.as_deref(), budget) {
                 Ok(()) => {
                     write_reply(
                         &mut stream,
@@ -1068,6 +1072,26 @@ fn task_of(body: &str) -> Result<String, String> {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "a run's body is a JSON object with a task string".to_string())
+}
+
+/// The per-run turn budget a run's body names, when it names one.
+/// Absent or null is the home's config value; a number is this run's
+/// cap, clamped at the bridge the way the config value is; anything
+/// else is malformed.
+fn turn_budget_of(body: &str) -> Result<Option<usize>, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
+    match parsed.get("budget_turns") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => {
+            let turns = value
+                .as_u64()
+                .ok_or("a run's `budget_turns` is a whole number when it is present")?;
+            usize::try_from(turns)
+                .map(Some)
+                .map_err(|_| "a run's `budget_turns` does not fit this machine".to_string())
+        }
+    }
 }
 
 /// The folder a run's body names, when it names one. Absent or null

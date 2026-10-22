@@ -49,7 +49,6 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent::{
     Agent, AgentOptions, Approval, ApprovalRequest, Approver, SubagentStage, UiEvent,
-    DEFAULT_MAX_TURNS,
 };
 use crate::api::{Client, ToolCall};
 use crate::approvals;
@@ -178,6 +177,10 @@ struct GuiState {
     /// loop is serial, so one pair is the whole state.
     permissions: crate::approvals::Mode,
     provider_pin: Option<String>,
+    /// The next run's turn budget: the home's config by default, the
+    /// run body's override when the composer named one for this run.
+    /// Serial like the pair beside it; 0 means the config value.
+    turn_budget: usize,
     /// Each attached chat's working folder, keyed the way sessions are:
     /// the launch session's pending key is the empty string until the
     /// thread names the log, then it moves with it (see
@@ -350,6 +353,7 @@ impl Bridge {
             driving: None,
             permissions: crate::approvals::Mode::Ask,
             provider_pin: None,
+            turn_budget: 0,
             workdirs: load_workdirs(&home),
         }));
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
@@ -544,6 +548,7 @@ impl Bridge {
                 "workspace": self.cwd.display().to_string(),
                 "folder": folder_value(state.workdir_of(session).as_deref(), &self.cwd),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
+                "turn_budget": crate::route::run_config(&self.home).max_turns,
                 "gate": {
                     "name": "sys1",
                     "informs_failover": gate.informs_failover,
@@ -562,6 +567,7 @@ impl Bridge {
             "workspace": self.cwd.display().to_string(),
             "folder": folder_value(state.workdir_of(session).as_deref(), &self.cwd),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
+            "turn_budget": crate::route::run_config(&self.home).max_turns,
             "gate": {
                 "name": "sys1",
                 "informs_failover": gate.informs_failover,
@@ -1779,6 +1785,25 @@ impl Bridge {
             Command::Run(session.to_string(), task.to_string(), folder)
         })
         .map_err(RunError::Refused)
+    }
+
+    /// The same run, with a per-run turn budget named by the composer.
+    /// `None` is the home's config value; a named budget is clamped to
+    /// the compiled default exactly the way the config value is — a
+    /// request can tighten the cap, never raise it.
+    pub fn run_with_budget(
+        &self,
+        session: &str,
+        task: &str,
+        mode: crate::approvals::Mode,
+        pin: Option<String>,
+        folder: Option<&str>,
+        budget: Option<usize>,
+    ) -> Result<(), RunError> {
+        if let Some(turns) = budget {
+            lock(&self.state).turn_budget = turns.min(crate::agent::DEFAULT_MAX_TURNS);
+        }
+        self.run_with(session, task, mode, pin, folder)
     }
 
     /// Full access is never permitted on a chat with no working folder:
@@ -5409,9 +5434,23 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 continue;
                             }
                         };
+                        // The turn budget: the home's config value,
+                        // tightened by the face's per-run override when
+                        // the run body named one. The pair is cleared
+                        // after it is read — a budget is this run's
+                        // choice, not the chat's new standing policy.
+                        let mut turn_budget = crate::route::run_config(&home).max_turns;
+                        {
+                            let state = lock(&state);
+                            let named = state.turn_budget;
+                            if named > 0 {
+                                turn_budget = named;
+                            }
+                        }
+                        lock(&state).turn_budget = 0;
                         let options = AgentOptions {
                             model: model.clone(),
-                            max_turns: DEFAULT_MAX_TURNS,
+                            max_turns: turn_budget,
                             identity: crate::home::read_soul(&home),
                             ui_tx: Some(ui_tx.clone()),
                             lane_specs: None,

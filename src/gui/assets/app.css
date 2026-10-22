@@ -1427,6 +1427,26 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 @keyframes blink { to { visibility: hidden; } }
 
+/* D4: the turn budget, live in the run bar - remaining turns while a
+   run runs, warm when the budget is closing. */
+.runbar-turns {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dsw-alias-ink-tertiary);
+  letter-spacing: 0.04em;
+}
+.runbar-turns[data-low="true"] { color: var(--dsw-static-warn-on-dark); }
+
+/* D4: the continuation receipt's actions - the card the cap produces
+   is a door, not a wall. */
+.receipt-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px 12px;
+}
+.receipt-continue[disabled] { opacity: 0.6; cursor: default; }
+
 /* C2: a done tool collapses to one line; its preview rides the note,
    hidden until the row is clicked. A refused call keeps everything. */
 .card-row.tool.collapsed .card-open { padding: 6px 14px; }

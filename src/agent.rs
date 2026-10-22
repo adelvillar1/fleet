@@ -110,7 +110,16 @@ pub fn is_silent_stop(content: &str, ran_tools: bool) -> bool {
 }
 
 /// Turn cap when the caller does not choose one.
-pub const DEFAULT_MAX_TURNS: usize = 25;
+///
+/// 25 was the silent wall the chat-UX contract (D4) ruled against: a
+/// real task outlived it and the run died mid-work with nothing but an
+/// end card. 100 is the shipped default — enough for a long task to
+/// finish — and it is a knob, not a law: `runs.max_turns` in
+/// config.json lowers or raises it per machine, the face's run body
+/// carries a per-run override, and hitting it produces a continuation
+/// receipt instead of a dead stop. The cap still exists: an unbounded
+/// loop is a quota fire, not an agent.
+pub const DEFAULT_MAX_TURNS: usize = 100;
 
 /// The soft cap on how many skills one run declares in its system
 /// How many of one turn's independent tool calls may run at once.
