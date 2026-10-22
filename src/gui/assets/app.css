@@ -1427,6 +1427,55 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 @keyframes blink { to { visibility: hidden; } }
 
+/* C2: a done tool collapses to one line; its preview rides the note,
+   hidden until the row is clicked. A refused call keeps everything. */
+.card-row.tool.collapsed .card-open { padding: 6px 14px; }
+.card-row.tool.collapsed .glyph { width: 18px; height: 18px; font-size: 9px; }
+.card-row.tool.collapsed .title { font-size: 11px; }
+.card-row.tool.collapsed .sub {
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-row.tool.collapsed .status {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.card-row.tool[data-status="ok"] .status { color: var(--dsw-static-ok-on-dark); }
+.card-row.tool[data-status="refused"] .status { color: var(--dsw-static-down-on-dark); }
+.card-row.tool.collapsed .note {
+  border-top: 1px solid var(--dsw-alias-hairline);
+  padding: 7px 14px 9px;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+/* C3: the rewind affordance rides the turn row on hover, and the
+   strip's expanded checkpoint lines carry the same button. */
+.turn-mark { position: relative; }
+.row-rewind {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 9.5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--fast) var(--ease);
+}
+.turn-mark:hover .row-rewind,
+.row-rewind:focus-visible { opacity: 1; }
+.row-rewind:hover {
+  color: var(--dsw-alias-accent);
+  border-color: var(--dsw-alias-accent);
+}
+.strip-line .row-rewind { opacity: 0.85; }
+
 /* The run's plumbing line: eleven event kinds fold into one strip
    per run (the chat-UX contract, D1) instead of one card each. */
 .run-strip {

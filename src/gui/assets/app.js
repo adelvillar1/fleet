@@ -643,6 +643,16 @@
 
   function turnRow(event) {
     var el0 = node('div', 'turn-mark', 'turn ' + event.turn);
+    // Checkpoints are per-turn (the agent captures after every tool
+    // wave), so every turn mark is a rewind point: the affordance
+    // rides the row on hover instead of a checkpoint card per N turns
+    // (the contract, C3). Same endpoint, same confirm, same state the
+    // old card flow landed.
+    var rewind = node('button', 'row-rewind', '\u21a9 rewind');
+    rewind.type = 'button';
+    rewind.title = 'rewind the tree and the conversation to this turn';
+    rewind.addEventListener('click', function () { rewindTo(event.turn); });
+    el0.appendChild(rewind);
     return row(el0, event);
   }
 
@@ -654,19 +664,41 @@
   }
 
   function toolRow(event) {
-    var status = node('span', 'status', 'running');
+    var status = node('span', 'status', 'running \u00b7 0s');
     var el0 = card('tool', GLYPHS[event.tool] || event.tool.charAt(0).toUpperCase(),
       event.tool, event.summary, null, null);
     el0.classList.add('tool');
     el0.dataset.tool = event.tool;
     el0.dataset.status = 'running';
     el0.querySelector('.body').appendChild(status);
+    // The live seconds: informative loading (the contract, C2), not a
+    // spinner - the number is the truth about how long the call has
+    // run, and it stops the moment the answer lands.
+    var started = Date.now();
+    var tick = setInterval(function () {
+      status.textContent = 'running \u00b7 ' + Math.round((Date.now() - started) / 1000) + 's';
+    }, 1000);
     var made = row(el0, event, function (result) {
+      clearInterval(tick);
+      var took = Math.round((Date.now() - started) / 1000) + 's';
       el0.dataset.status = result.approved ? 'ok' : 'refused';
-      status.textContent = result.approved ? 'done' : 'refused';
+      status.textContent = took;
+      var note = el0.querySelector('.note');
       if (result.preview) {
-        var note = el0.querySelector('.note');
         note.textContent = result.preview;
+      }
+      if (result.approved) {
+        // Done collapses: one line, outcome dot in the css, the
+        // preview one click away on the row itself (C2). A refused
+        // call stays expanded - the owner's decision should never
+        // hide, and the reason is the reading.
+        el0.classList.add('collapsed');
+        if (note.textContent) note.hidden = true;
+        el0.querySelector('.card-open').addEventListener('click', function () {
+          if (!note.textContent) return;
+          note.hidden = !note.hidden;
+        });
+      } else {
         note.hidden = false;
       }
       made.event = { type: 'tool_result', tool: result.tool, preview: result.preview, approved: result.approved };
@@ -722,6 +754,15 @@
   function stripFold(event) {
     if (face.strip && face.strip.event.type === event.type) {
       face.strip.count += 1;
+      // The expanded list shows the run's latest per kind - a folded
+      // pair of checkpoints reads turn 20, not the first one it saw -
+      // and carries the turn so the line's rewind affordance has a
+      // destination.
+      var last = face.stripLog[face.stripLog.length - 1];
+      if (last && last.kind === (STRIP_LABEL[event.type] || event.type)) {
+        last.text = stripLine(event);
+        last.turn = event.turn || null;
+      }
     } else {
       if (face.strip) stripSeal();
       face.strip = { event: event, count: 1 };
@@ -791,7 +832,8 @@
     face.stripLog.push({
       kind: STRIP_LABEL[held.event.type] || held.event.type,
       count: held.count,
-      text: stripLine(held.event)
+      text: stripLine(held.event),
+      turn: held.event.type === 'checkpoint' ? held.event.turn : null
     });
     face.strip = null;
     stripPaint();
@@ -807,6 +849,13 @@
       line.appendChild(node('span', 'strip-line-kind', one.kind));
       line.appendChild(node('span', 'strip-line-text',
         one.text + (one.count > 1 ? ' \u00b7 \u00d7' + one.count : '')));
+      if (one.turn != null) {
+        var rewind = node('button', 'row-rewind', '\u21a9 rewind');
+        rewind.type = 'button';
+        rewind.title = 'rewind the tree and the conversation to turn ' + one.turn;
+        rewind.addEventListener('click', function () { rewindTo(one.turn); });
+        line.appendChild(rewind);
+      }
       list.appendChild(line);
     });
   }
