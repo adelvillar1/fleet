@@ -1438,6 +1438,36 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .runbar-turns[data-low="true"] { color: var(--dsw-static-warn-on-dark); }
 
+/* D5: the end receipt - the finished card states what happened, on
+   the evidence the run itself emitted. */
+.receipt { padding: 2px 0 4px; }
+.receipt .receipt-line {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: var(--dsw-alias-ink-secondary);
+}
+.receipt .receipt-line:first-child { margin-top: 2px; }
+.receipt-report { margin: 6px 0 4px; }
+.receipt-toggle {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--dsw-alias-accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.receipt-toggle:hover { text-decoration: underline; }
+.receipt-report-text {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--dsw-alias-ink-secondary);
+  white-space: pre-wrap;
+}
+.receipt .receipt-actions { padding: 4px 0 2px; }
+
 /* D4: the continuation receipt's actions - the card the cap produces
    is a door, not a wall. */
 .receipt-actions {

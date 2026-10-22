@@ -884,6 +884,9 @@
     var el0 = card(failed ? 'failed' : 'finished', stopped ? '\u25a0' : failed ? '!' : '\u2713',
       stopped ? 'stopped by you' : failed ? 'failed' : capped ? 'the turn budget ran out'
         : 'finished', event.reason, null, null);
+    if (!stopped && !failed) {
+      paintReceipt(el0, event);
+    }
     if (capped) {
       var note = el0.querySelector('.note');
       note.hidden = false;
@@ -923,6 +926,101 @@
       el0.appendChild(actions);
     }
     return row(el0, event);
+  }
+
+  // The end receipt (the contract, D5): outcome, artifacts,
+  // verification evidence, and the ask. Everything it renders is read
+  // from face.events - the same record replay feeds - so a receipt is
+  // true on a live finish and identical on a replayed one. The closing
+  // report is the token stream after the last tool result; on a replay
+  // it is the assistant message event instead. A finish with no report
+  // got the repair beat's ask already (the strip names it); what the
+  // model answered to that ask is this same tail.
+  function paintReceipt(el0, event) {
+    var events = face.events;
+    var calls = {};
+    var decks = 0;
+    events.forEach(function (one) {
+      if (one.type === 'tool_call') {
+        calls[one.tool] = (calls[one.tool] || 0) + 1;
+      }
+      if (one.type === 'deck') decks += 1;
+    });
+    var body = node('div', 'receipt');
+    var bits = [];
+    var tally = Object.keys(calls).map(function (tool) {
+      return calls[tool] + ' ' + tool;
+    }).join(', ');
+    if (tally) bits.push(tally);
+    if (decks) bits.push(decks + (decks === 1 ? ' deck rendered' : ' decks rendered'));
+    if (bits.length) {
+      body.appendChild(node('p', 'receipt-line',
+        'work \u00b7 ' + bits.join(' \u00b7 ')));
+    }
+    var evidence = [];
+    if (face.turn) evidence.push(face.turn + (face.turn === 1 ? ' turn' : ' turns'));
+    if (face.spend) evidence.push(tokens(face.spend) + ' tokens');
+    if (face.context && face.budget) {
+      evidence.push(Math.min(100, Math.round((face.context / face.budget) * 100)) +
+        '% of the window');
+    }
+    if (evidence.length) {
+      body.appendChild(node('p', 'receipt-line',
+        'evidence \u00b7 ' + evidence.join(' \u00b7 ')));
+    }
+    // The closing report: the tokens after the last tool result, or
+    // the replayed assistant message when there are no tokens.
+    var said = '';
+    var lastWork = -1;
+    for (var i = events.length - 1; i >= 0; i -= 1) {
+      var kind = events[i].type;
+      if (kind === 'tool_call' || kind === 'tool_result') {
+        lastWork = i;
+        break;
+      }
+    }
+    // Only what the run said after its last work: an unbounded walk
+    // would cross a tool boundary and quote the pre-work prose - a
+    // report the run never closed with.
+    var tokensTail = [];
+    for (var i = events.length - 1; i > lastWork; i -= 1) {
+      var one = events[i];
+      if (one.type === 'message' && one.role === 'assistant' && one.text) {
+        said = one.text;
+        break;
+      }
+      if (one.type === 'token') tokensTail.unshift(one.text);
+    }
+    if (!said && tokensTail.length) said = tokensTail.join('');
+    if (said) {
+      var report = node('div', 'receipt-report');
+      var label = node('button', 'receipt-toggle', 'the closing report');
+      label.type = 'button';
+      var bodyText = node('p', 'receipt-report-text', said);
+      bodyText.hidden = true;
+      label.addEventListener('click', function () {
+        bodyText.hidden = !bodyText.hidden;
+        label.textContent = bodyText.hidden ? 'the closing report' : 'hide the report';
+      });
+      report.appendChild(label);
+      report.appendChild(bodyText);
+      body.appendChild(report);
+    }
+    // The ask: one click fills the composer with the follow-up the
+    // report's own contract promises - never sent for the owner.
+    var actions = node('div', 'receipt-actions');
+    var ask = node('button', 'replay-button', 'ask what is next');
+    ask.type = 'button';
+    ask.addEventListener('click', function () {
+      askFace('The run above just finished. What is the one next step you would ' +
+        'take from here, and what do you need from me for it?');
+    });
+    actions.appendChild(ask);
+    body.appendChild(actions);
+    var note = el0.querySelector('.note');
+    note.hidden = false;
+    note.textContent = '';
+    note.appendChild(body);
   }
 
   // The log is a ring, and the ring let one go. The bridge says so once,
