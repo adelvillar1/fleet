@@ -70,6 +70,30 @@ this plan's approval request.
 - [ ] **C3 — the suggestion is the scan's own number.** The skills panel shows the usage scan's never-selected count beside the retire action on those rows (the suggestion is the number already measured), and `docs/features/skills.md`, CLAUDE.md's skills line, and the functional spec's skills section say what changed.
 - [ ] **C4 — it is visible where it counts.** After the retirement, the next run's `skills` record in its session log declares one fewer skill and does not name the retired one; the served `/app.js` carries the row's `retire` action and the retired section; and one prompt line in the record reads `` `name` — use when … ``. The evidence is read from the running face and the log, per the live check in Verification, not from the unit tests alone.
 
+## Fidelity to the current UI
+
+The owner's standing constraint for this build: the affordances mirror
+the panel that exists, and introduce no new visual language. The exact
+patterns, read from the panel's own assembly
+(`paintSkills`, `skillRow`, `skillsDecisions`):
+
+- **The row action** — `rowAction('retire', …)` appended after `copy` in
+  the row's existing `.row-actions` div: the same helper, the same
+  `.row-action` class, the last position because it is the destructive
+  one. The in-flight and refusal states mirror the decisions queue's
+  approve: disabled with `retiring\u2026`, then
+  `notice('the retire was refused', reply.body.error || '\u2026')` and
+  `readSkills(true).then(paintSkills)`.
+- **The counts strip** — one more entry in `surfaceStrip`'s existing
+  array: `[retired, 'retired', retired ? 'down' : null]`.
+- **The retired section** — a `boardCard(12, 'retired', <count>,
+  <sentence>)` with `.lib-card`, appended to the existing
+  `surfaceRail([skillsDecisions, skillsSkips, skillsCuration])` after
+  curation; each row the decisions queue's `.rail-row` shape with an
+  `unretire` `.row-action`.
+- **The head sentence** gains the retirement clause in the panel's own
+  voice; no new CSS class is introduced anywhere.
+
 ## Files to be touched
 
 `src/agent.rs` (the prompt section, the cap), `src/skills.rs` (the
