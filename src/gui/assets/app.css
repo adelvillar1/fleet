@@ -754,6 +754,42 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .pill { cursor: pointer; transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease); }
 .pill:hover { border-color: var(--dsw-alias-hairline-strong); background: var(--dsw-alias-surface-raised); }
 
+/* The face says it is working by moving. The pill's dot becomes a ring
+   that turns while a run is in flight or a seat is waiting, and the
+   composer's hint carries the same ring beside its clock. Drawn here
+   rather than shipped as an asset: geometry belongs with the code that
+   places it. */
+@keyframes fleet-spin { to { transform: rotate(360deg); } }
+
+.pill[data-state="working"]::before,
+.pill[data-state="waiting"]::before {
+  width: 7px;
+  height: 7px;
+  background: none;
+  border: 1.5px solid var(--dsw-alias-accent);
+  border-top-color: transparent;
+  animation: fleet-spin 0.9s linear infinite;
+}
+
+.composer-hint.busy::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border: 1.5px solid var(--dsw-alias-accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: fleet-spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pill[data-state="working"]::before,
+  .pill[data-state="waiting"]::before,
+  .composer-hint.busy::before { animation: none; }
+}
+
 .process-pill {
   color: var(--dsw-alias-accent-lift);
   font-family: var(--font-mono);
@@ -2012,7 +2048,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   font-size: 12px;
   font-weight: 600;
 }
-.process-state[data-state="running"] { color: var(--dsw-alias-accent-lift); }
+.process-state[data-state="working"] { color: var(--dsw-alias-accent-lift); }
 .process-state[data-state="done"] { color: var(--dsw-alias-ok); }
 .process-state[data-state="failed"] { color: var(--dsw-alias-down); }
 
@@ -2362,7 +2398,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   text-align: center;
 }
 
-.count[data-state="running"] { background: var(--dsw-alias-accent-wash); color: var(--dsw-alias-accent-lift); }
+.count[data-state="working"] { background: var(--dsw-alias-accent-wash); color: var(--dsw-alias-accent-lift); }
 .count[data-state="done"] { color: var(--dsw-alias-ok); }
 .count[data-state="failed"] { color: var(--dsw-alias-down); }
 

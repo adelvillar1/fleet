@@ -127,6 +127,10 @@ struct SessionState {
     /// The pending approval, with the responder the agent is blocked on.
     /// `None` when no call is waiting.
     seat: Option<ApprovalRequest>,
+    /// When that seat was raised, in epoch milliseconds, so the wait is
+    /// honest on every path a seat can arrive by — the stream's event and
+    /// the state document alike. 0 when no seat is waiting.
+    seat_at: u64,
 }
 
 impl SessionState {
@@ -136,8 +140,17 @@ impl SessionState {
             dropped: 0,
             running: false,
             seat: None,
+            seat_at: 0,
         }
     }
+}
+
+/// Now, in epoch milliseconds — the clock a seat's wait is measured on.
+fn epoch_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|span| span.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 /// The live face's shared truth: every attached session, the launch
@@ -563,8 +576,9 @@ impl Bridge {
                     // document's copy has to as well, or an answer to a
                     // seat that arrived by the state read posts
                     // session-less and is answered against the launch
-                    // session (KI-283).
+                    // session (KI-286).
                     "session": key,
+                    "since": attached.seat_at,
                     "tool": seat.call.function.name,
                     "summary": seat.summary,
                     "label": approvals::Rule::for_call(&seat.call).label(),
@@ -2274,11 +2288,9 @@ impl Bridge {
             } else {
                 session.to_string()
             };
-            let seat = state
-                .attached(&asked)
-                .seat
-                .take()
-                .ok_or(AnswerError::NoSeat)?;
+            let attached = state.attached(&asked);
+            let seat = attached.seat.take().ok_or(AnswerError::NoSeat)?;
+            attached.seat_at = 0;
             (seat, asked)
         };
         let mut rule = None;
@@ -5045,8 +5057,15 @@ async fn fan_out(
                     // not be shown one that is not theirs.
                     if let Some(object) = pending.as_object_mut() {
                         object.insert("session".to_string(), json!(session));
+                        // The seat names when it was raised, so the wait a
+                        // surface shows is the seat's own clock and not the
+                        // page's.
+                        object.insert("since".to_string(), json!(epoch_millis()));
                     }
-                    lock(&state).attached(&session).seat = Some(request);
+                    let mut state = lock(&state);
+                    let attached = state.attached(&session);
+                    attached.seat = Some(request);
+                    attached.seat_at = epoch_millis();
                     let _ = events.send(pending);
                 }
                 None => seat_done = true,
@@ -6167,7 +6186,7 @@ mod tests {
         assert!(bridge.state(&attached)["approval"].is_null());
     }
 
-    /// KI-283: a seat belongs to the session being driven, and a
+    /// KI-286: a seat belongs to the session being driven, and a
     /// session-less answer — the shape a page that predates the seat's
     /// own name posts — belongs there too. Answering it against the
     /// face's launch session refused with `NoSeat` while the seat stood

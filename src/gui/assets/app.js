@@ -910,6 +910,7 @@
       case 'seat':
         face.running = true;
         face.seat = event;
+        face.seatSince = event.since || Date.now();
         break;
       case 'seat_cleared':
         face.seat = null;
@@ -1128,16 +1129,52 @@
     }
   }
 
+  // The one ticker the face runs while something is in flight, so the
+  // composer can show how long since the last event — and an idle face
+  // has no timer at all.
+  var busyTick = null;
+
   function paintComposer() {
     var busy = face.running || !!face.seat;
     el.send.disabled = busy;
+    if (el.hint) el.hint.classList.toggle('busy', busy);
     if (face.seat) {
-      el.hint.textContent = 'the seat above is waiting for an answer';
+      // How long the owner has kept the run waiting is the number that
+      // matters here: a seat is the run's whole state.
+      el.hint.textContent = 'the seat above is waiting for an answer \u00b7 ' +
+        elapsed(Date.now() - (face.seatSince || Date.now()));
     } else if (face.running) {
-      el.hint.textContent = 'a run is in flight \u00b7 the composer opens when it ends';
+      // Seconds since the last event: a live run shows a small number, a
+      // long tool call shows the number climb — which is the honest
+      // answer to "is it doing anything", rather than a spinner that
+      // claims work it cannot see.
+      var since = face.process && face.process.at ? Date.now() - face.process.at : 0;
+      var turn = face.turn ? ' \u00b7 turn ' + face.turn : '';
+      el.hint.textContent = 'working' + turn + ' \u00b7 ' + elapsed(since) +
+        ' since the last event';
     } else {
       el.hint.textContent = 'Shift+Enter makes a newline';
     }
+    // One ticker, alive only while something is: a run moves the seconds,
+    // a seat counts the owner's wait, and an idle face has no timer.
+    if (busy && !busyTick) {
+      busyTick = setInterval(paintComposer, 1000);
+    } else if (!busy && busyTick) {
+      clearInterval(busyTick);
+      busyTick = null;
+    }
+  }
+
+  // mm:ss under an hour, h:mm:ss above it — a run can outlive a hour and
+  // a wrapped clock reads as a bug.
+  function elapsed(ms) {
+    var total = Math.max(0, Math.round(ms / 1000));
+    var hours = Math.floor(total / 3600);
+    var minutes = Math.floor((total % 3600) / 60);
+    var seconds = total % 60;
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return hours ? hours + ':' + pad(minutes) + ':' + pad(seconds)
+      : minutes + ':' + pad(seconds);
   }
 
   // ------------------------------------------------------------ the process
@@ -4696,6 +4733,7 @@
     face.dropped = Number(state.dropped) || 0;
     face.rules = state.rules || [];
     face.seat = state.approval || null;
+    if (face.seat) face.seatSince = face.seat.since || Date.now();
     face.events = [];
     face.rows = [];
     face.assistant = null;
