@@ -86,7 +86,7 @@
           'the agent reads its forced-fold flag once, when a run starts; arming it mid-run needs a shared flag the agent reads per turn');
       }],
     ['clear', ['new', 'reset'], 'clear the transcript and start a fresh session view',
-      function () { window.location.hash = '#/chat'; load(true); }],
+      function () { face.session = ''; window.location.hash = '#/chat'; load(true); }],
     ['approve', ['allow', 'yes'], 'answer the waiting approval: once, always, or deny',
       function (rest) { answer(rest.trim() || 'once'); }],
     ['help', ['commands', '?'], 'list every command and what it does',
@@ -815,6 +815,16 @@
           face.stop = null;
           ownerRow(event);
           break;
+        }
+        // The replay's shape for the assistant: the live path streams
+        // the words as tokens into the open row and never emits this
+        // card, so on a replay — where there are no tokens — the card
+        // has to build the row, or a resumed history shows the owner's
+        // questions with the answers missing between them.
+        if (!face.assistant && event.text) {
+          var said = node('div', 'assistant');
+          said.textContent = event.text;
+          row(said, event);
         }
         break;
       case 'token':
@@ -4755,10 +4765,14 @@
     el.log.appendChild(face.stream);
     // The empty state is the home when nothing has been said yet. A
     // boot-time skills event is not a conversation, so it must not push
-    // the owner into a transcript with no words in it.
+    // the owner into a transcript with no words in it. The shapes are
+    // the ones both paths emit — a message carries its role, it is not
+    // its own type — and a predicate naming types that never occur hid
+    // every resumed history behind the empty state (the log was
+    // replayed and invisible; only `send` ever unhid it).
     var talked = (state.events || []).some(function (event) {
-      return event.type === 'owner' || event.type === 'assistant' ||
-        event.type === 'tool' || event.type === 'turn';
+      return event.type === 'message' || event.type === 'turn' ||
+        event.type === 'tool_call' || event.type === 'tool_result';
     });
     el.log.hidden = !talked;
     el.empty.hidden = talked;
@@ -4788,7 +4802,15 @@
   // missing a turn. Three is where it stops asking.
   function load(pass) {
     pass = pass || 0;
-    return fetch('/api/state', { headers: { accept: 'application/json' } })
+    // The read names the session the face is showing: after a resume the
+    // launch session's document holds the boot events, not the history,
+    // and a session-less read would replay those instead (the launch
+    // itself stays the face's own session — a phone that names nothing
+    // still gets what this face booted with).
+    var asked = face.session
+      ? '/api/state?session=' + encodeURIComponent(face.session)
+      : '/api/state';
+    return fetch(asked, { headers: { accept: 'application/json' } })
       .then(function (reply) {
         if (reply.status === 401) throw new Error('token');
         return reply.json();
@@ -6057,13 +6079,18 @@
     line.appendChild(marks);
     var current = (face.sessions && face.sessions.current) || '';
     var acts = node('div', 'row-actions');
-    acts.appendChild(rowAction('open', 'read this replay', function () {
-      selectSession(row.id);
-    }, true));
+    // "Open" is the chat experience with this session's history loaded,
+    // first message at the top and the last one above the composer — the
+    // owner's spec. Reading a replay beside the list stays the row's own
+    // click, so scanning the archive never costs the place.
     if (row.id !== current && !face.running) {
-      acts.appendChild(rowAction('continue', 'open this conversation and keep working on it', function () {
+      acts.appendChild(rowAction('open', 'open this conversation with its history', function () {
         resumeSession(row.id);
-      }));
+      }, true));
+    } else {
+      acts.appendChild(rowAction('open', 'read this replay', function () {
+        selectSession(row.id);
+      }, true));
     }
     acts.appendChild(rowAction('copy', 'copy the session id', function () {
       if (navigator.clipboard) navigator.clipboard.writeText(row.id).catch(function () { });
@@ -6254,11 +6281,28 @@
       face.sessions = null;
       face.replay = null;
       face.replayId = null;
-      notice('resumed ' + id, reply.body.agent === false
+      notice('opened ' + id, reply.body.agent === false
         ? 'this face has no agent behind it; the conversation is here to read'
-        : 'the next message continues that conversation');
+        : 'the whole history is loaded; the next message continues it');
+      face.session = id;
       window.location.hash = '#/chat';
-      load(true);
+      // The last message is the current one: once the history has landed,
+      // the log sticks to its bottom rather than leaving the owner at the
+      // top of a long conversation. The last row is scrolled into view
+      // rather than the container's scrollTop being set once, because the
+      // rows land across the replay and a single assignment can run
+      // before the layout knows the height.
+      Promise.resolve(load(true)).then(function () {
+        face.stick = true;
+        var toLast = function () {
+          var rows = face.stream ? face.stream.children : [];
+          var last = rows.length ? rows[rows.length - 1] : null;
+          if (last && last.scrollIntoView) last.scrollIntoView({ block: 'end' });
+          else if (el.log) el.log.scrollTop = el.log.scrollHeight;
+        };
+        toLast();
+        window.setTimeout(toLast, 80);
+      });
     }).catch(function () { });
   }
 

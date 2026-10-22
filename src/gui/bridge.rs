@@ -2037,6 +2037,7 @@ impl Bridge {
             attached.dropped = 0;
             attached.running = false;
             attached.seat = None;
+            attached.seat_at = 0;
         }
         // The thread learns the new attachment even when it has nothing
         // to run yet: the reply says whether the command landed, because
