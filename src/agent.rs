@@ -113,13 +113,6 @@ pub fn is_silent_stop(content: &str, ran_tools: bool) -> bool {
 pub const DEFAULT_MAX_TURNS: usize = 25;
 
 /// The soft cap on how many skills one run declares in its system
-/// prompt. Past it, one line is logged naming the count — a warning
-/// only: every skill stays declared and callable, and nothing is hidden.
-/// The list grows the prompt on every request of every run, so an
-/// unbounded list is an unbounded per-turn cost; curation retiring
-/// unused skills is the lever that brings it back down.
-pub const SKILLS_PROMPT_SOFT_CAP: usize = 50;
-
 /// How many of one turn's independent tool calls may run at once.
 ///
 /// Three, sized for a single owner's machine and the embedder's single
@@ -164,12 +157,37 @@ fn clamp_concurrency(ceiling: usize, requested: Option<&str>) -> usize {
         .map_or(ceiling, |requested| requested.min(ceiling))
 }
 
-/// The one logged line when a run declares more than
-/// [`SKILLS_PROMPT_SOFT_CAP`] skills; `None` at or under the cap.
-fn skills_prompt_growth_line(declared: usize) -> Option<String> {
-    (declared > SKILLS_PROMPT_SOFT_CAP).then(|| {
+/// The cap on what one run declares. The prompt is not the library:
+/// every entry costs a 128k-window model an eighth of its window before
+/// the owner has said anything, and a list that long is a list no model
+/// reads. The cap curates the prompt's list, never the library.
+pub const SKILLS_PROMPT_CAP: usize = 60;
+
+/// The skills a run declares: the retired are already filtered by the
+/// loader, the newest by the skill's own mtime float up — the owner's
+/// recent work is the likely match — and the cap keeps the prompt's
+/// cost bounded. The prompt and the `skills` record read the same list,
+/// so the log pins what the model saw.
+fn declared_skills(skills: &[crate::skills::Skill]) -> Vec<&crate::skills::Skill> {
+    let mut skills: Vec<&crate::skills::Skill> = skills.iter().collect();
+    skills.sort_by(|left, right| {
+        right
+            .modified
+            .cmp(&left.modified)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    skills.truncate(SKILLS_PROMPT_CAP);
+    skills
+}
+
+/// The one logged line when the library is bigger than the cap, naming
+/// how many are held back and where the full list lives.
+fn skills_prompt_growth_line(library: usize, declared: usize) -> Option<String> {
+    (library > SKILLS_PROMPT_CAP).then(|| {
         format!(
-            "fleet: {declared} skills declared; the list is growing the prompt \u{2014} curation retires unused ones"
+            "fleet: {library} skills in the library; {} held back from this run's prompt \
+             (the newest {SKILLS_PROMPT_CAP} are declared) \u{2014} `fleet skills` lists them all",
+            library.saturating_sub(declared)
         )
     })
 }
@@ -1083,7 +1101,8 @@ impl<'a> Agent<'a> {
         {
             return default_prompt();
         }
-        if let Some(line) = skills_prompt_growth_line(self.skills.len()) {
+        let declared = declared_skills(&self.skills);
+        if let Some(line) = skills_prompt_growth_line(self.skills.len(), declared.len()) {
             // A live surface owns its own pane: bare stderr paints over
             // it (KI-216), and the TUI's session-start card already
             // carried the count once. The headless path keeps the line.
@@ -1097,12 +1116,16 @@ impl<'a> Agent<'a> {
         // expectation of a report is never the part a `SOUL.md` drops.
         prompt.push_str("\n\n");
         prompt.push_str(REPORTING_CONTRACT);
-        if !self.skills.is_empty() {
+        if !declared.is_empty() {
             prompt.push_str(
-                "\n\n## Skills\n\nSkills are procedural knowledge you can load on demand. Call `use_skill(name)` with one of these names when a task matches its description; the skill's body arrives as that call's result.\n",
+                "\n\n## Skills\n\nSkills are procedural knowledge you can load on demand. Each line says what its skill is for; call `use_skill(name)` when your task matches that trigger, and the skill's body arrives as that call's result.\n",
             );
-            for skill in &self.skills {
-                prompt.push_str(&format!("\n- {}: {}", skill.name, skill.description));
+            for skill in &declared {
+                prompt.push_str(&format!(
+                    "\n- `{}` \u{2014} use when {}",
+                    skill.name,
+                    crate::skills::trigger(&skill.description)
+                ));
             }
         }
         if let Some(block) = memory_block {
@@ -1492,13 +1515,14 @@ impl<'a> Agent<'a> {
         // precedent, applied to the skills seam. A run with no skills
         // records nothing and its prompt is the compiled-in constant, so
         // the skill-less run is byte-for-byte the run it has always been.
-        if !self.skills.is_empty() {
-            let declared: Vec<crate::skills::SkillRef> = self
-                .skills
-                .iter()
-                .map(crate::skills::SkillRef::from)
-                .collect();
-            self.record(&Record::Skills { skills: declared })?;
+        let declared_refs: Vec<crate::skills::SkillRef> = declared_skills(&self.skills)
+            .into_iter()
+            .map(crate::skills::SkillRef::from)
+            .collect();
+        if !declared_refs.is_empty() {
+            self.record(&Record::Skills {
+                skills: declared_refs,
+            })?;
         }
         // The assembled memory block, recorded the same way: the block
         // is dynamic — it depends on the corpus and the instruction —
@@ -4725,23 +4749,35 @@ mod tests {
     }
 
     #[test]
-    fn a_run_past_the_skills_soft_cap_still_declares_every_skill() {
-        // The cap warns; it never hides. A run carrying more skills than
-        // the soft cap declares every one of them in its prompt, and the
-        // warning line is the only thing that changes.
+    fn the_declared_list_is_the_newest_under_the_cap_and_the_line_names_the_rest() {
+        // C1: 70 skills in the library declare the newest 60 — the
+        // prompt is not the library — and the growth line names how many
+        // are held back and where the full list lives.
+        let skills: Vec<crate::skills::Skill> = (0..70)
+            .map(|index| crate::skills::Skill {
+                name: format!("skill-{index:02}"),
+                description: "a description".to_string(),
+                body: "body".to_string(),
+                path: std::path::PathBuf::from("/x/SKILL.md"),
+                // Newest first: skill-69 is the most recently modified.
+                modified: Some(
+                    std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(index),
+                ),
+            })
+            .collect();
+        let declared = declared_skills(&skills);
+        assert_eq!(declared.len(), SKILLS_PROMPT_CAP);
+        assert_eq!(declared[0].name, "skill-69", "the newest is first");
+        assert!(
+            !declared.iter().any(|skill| skill.name == "skill-09"),
+            "the oldest is held back"
+        );
+
+        // The prompt carries the declared list, trigger-shaped, and the
+        // record reads the same list.
         let home = scratch("skills-cap");
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
-        let count = SKILLS_PROMPT_SOFT_CAP + 1;
-        let skills: Vec<crate::skills::Skill> = (0..count)
-            .map(|index| crate::skills::Skill {
-                name: format!("skill-{index:02}"),
-                description: format!("description {index}"),
-                body: "body".to_string(),
-                path: std::path::PathBuf::from("/x/SKILL.md"),
-                modified: None,
-            })
-            .collect();
         let options = AgentOptions {
             model: "m".to_string(),
             identity: None,
@@ -4749,7 +4785,7 @@ mod tests {
             ui_tx: None,
             lane_specs: None,
             calib: None,
-            skills,
+            skills: skills.clone(),
             role_overlay: None,
             memory: None,
             scope: None,
@@ -4770,18 +4806,26 @@ mod tests {
         )
         .unwrap();
         let prompt = agent.system_prompt(None);
-        for index in 0..count {
-            assert!(
-                prompt.contains(&format!("skill-{index:02}")),
-                "skill {index} is missing"
-            );
-        }
-        // At the cap and under it, no warning line is built at all.
-        assert_eq!(skills_prompt_growth_line(SKILLS_PROMPT_SOFT_CAP), None);
-        assert_eq!(skills_prompt_growth_line(0), None);
-        let line = skills_prompt_growth_line(count).expect("the warning line");
-        assert!(line.contains(&format!("{count} skills declared")), "{line}");
-        assert!(line.contains("curation retires unused ones"), "{line}");
+        assert!(
+            prompt.contains("- `skill-69` \u{2014} use when a description"),
+            "{prompt}"
+        );
+        assert!(
+            !prompt.contains("skill-09"),
+            "a held-back skill is not in the prompt"
+        );
+
+        // The line names the held-back count and where the list lives; at
+        // the cap and under it there is no line at all.
+        assert_eq!(
+            skills_prompt_growth_line(SKILLS_PROMPT_CAP, SKILLS_PROMPT_CAP),
+            None
+        );
+        assert_eq!(skills_prompt_growth_line(0, 0), None);
+        let line = skills_prompt_growth_line(70, 60).expect("the growth line");
+        assert!(line.contains("70 skills in the library"), "{line}");
+        assert!(line.contains("10 held back"), "{line}");
+        assert!(line.contains("`fleet skills` lists them all"), "{line}");
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -5238,7 +5282,10 @@ mod tests {
         let prompt = agent.system_prompt(None);
         assert!(prompt.starts_with(identity), "{prompt}");
         assert!(prompt.contains("## Skills"), "{prompt}");
-        assert!(prompt.contains("- demo: a demo skill"), "{prompt}");
+        assert!(
+            prompt.contains("- `demo` \u{2014} use when a demo skill"),
+            "{prompt}"
+        );
     }
 
     #[test]

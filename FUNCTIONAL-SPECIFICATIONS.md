@@ -71,9 +71,12 @@ whole body and edit it in place; ask fleet what it knows; see today's
 recalls and their scores.
 
 **Knowledge — skills.** The library the model can reach, the names the
-loader declined and why, and the proposals waiting for a decision.
-Open a skill, ask the curator about it, approve or read a proposal the
-harness drafted from session evidence.
+loader declined and why, and the proposals waiting for a decision. Each
+run's prompt carries up to sixty of the library's skills, newest first,
+as a one-line trigger each — `use when …` — and the row's **retire**
+takes one out of every run's prompt, the library untouched, one click
+from returning. Open a skill, ask the curator about it, approve or read a
+proposal the harness drafted from session evidence.
 
 **Knowledge — second brain.** The owner's control tower, read as an
 atlas: every project's six-week pulse, the plans it keeps open, and the

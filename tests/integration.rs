@@ -4393,7 +4393,10 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
         .as_str()
         .expect("the system prompt");
     assert!(system.contains("demo-skill"), "{system}");
-    assert!(system.contains("Recover a failed bash call"), "{system}");
+    assert!(
+        system.contains("- `demo-skill` \u{2014} use when recover a failed bash call"),
+        "{system}"
+    );
     assert!(
         !system.contains("read the error, fix one thing"),
         "{system}"
@@ -6789,7 +6792,7 @@ async fn a_child_inherits_the_parents_declared_skills() {
     );
     assert!(child_prompt.contains("demo-skill"), "{child_prompt}");
     assert!(
-        child_prompt.contains("Recover a failed bash call"),
+        child_prompt.contains("- `demo-skill` \u{2014} use when recover a failed bash call"),
         "{child_prompt}"
     );
     assert!(!child_prompt.contains("fix one thing"), "{child_prompt}");

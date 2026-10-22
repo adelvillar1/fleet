@@ -2890,6 +2890,47 @@ pub fn allow_tool(
 /// Forget one remembered approval, the way it was remembered: through
 /// the writer, so the browser and a hand-edit cannot disagree about
 /// what the file holds.
+/// Retire one skill from every run's prompt, fleet-locally: the name
+/// is appended to `<home>/skills-retired.json`, the library file is
+/// never touched (KI-215 — the owner retires, the library stays), and
+/// the change is one `unretire` from reversing. Idempotent: a name
+/// already retired is a no-op, not an error.
+pub fn retire_skill(home: &Path, name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("a skill needs a name".to_string());
+    }
+    let path = home.join("skills-retired.json");
+    let mut names = crate::skills::retired(home);
+    if names.iter().any(|held| held == name) {
+        return Ok(());
+    }
+    names.push(name.to_string());
+    names.sort();
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&names).map_err(|error| error.to_string())?,
+    )
+}
+
+/// Return one retired skill to the prompt. The name's absence is a
+/// no-op, not an error: the button is the owner's, and a double click
+/// is not a failure.
+pub fn unretire_skill(home: &Path, name: &str) -> Result<(), String> {
+    let name = name.trim();
+    let path = home.join("skills-retired.json");
+    let mut names = crate::skills::retired(home);
+    let before = names.len();
+    names.retain(|held| held != name);
+    if names.len() == before {
+        return Ok(());
+    }
+    write_atomic(
+        &path,
+        &serde_json::to_string_pretty(&names).map_err(|error| error.to_string())?,
+    )
+}
+
 pub fn forget_tool(home: &Path, rule: &crate::approvals::Rule) -> Result<(), String> {
     let path = home.join("config.json");
     let mut document = read_json(&path)?;

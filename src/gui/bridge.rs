@@ -1415,6 +1415,36 @@ impl Bridge {
     /// is the source or the config is refused by name, because this is
     /// the skills panel's approve and the eval-corpus step that grades a
     /// source edit is a CLI step, not a button.
+    /// Retire one skill from every run's prompt, or return it. The
+    /// write is fleet-local — `<home>/skills-retired.json` through the
+    /// one writer — and the library is never touched: the owner
+    /// retires, the skill stays in the library one unretire from
+    /// returning (KI-215).
+    pub async fn skill_retire(&self, name: &str, retire: bool) -> Result<Value, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("a retire needs a skill name".to_string());
+        }
+        let home = self.home.clone();
+        let asked = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let outcome = if retire {
+                crate::settings::retire_skill(&home, &asked)
+            } else {
+                crate::settings::unretire_skill(&home, &asked)
+            };
+            outcome.map(|()| {
+                json!({
+                    "type": "skill_retired",
+                    "name": asked,
+                    "retired": retire,
+                })
+            })
+        })
+        .await
+        .unwrap_or_else(|_| Err("the retire did not land".to_string()))
+    }
+
     pub async fn skill_apply(&self, name: &str) -> Result<Value, String> {
         let name = name.trim();
         if name.is_empty() {
@@ -4713,6 +4743,7 @@ fn skills_read(home: &std::path::Path) -> Value {
             "threshold": merge.threshold,
         })).collect::<Vec<_>>(),
         "threshold": snapshot.threshold,
+        "retired": snapshot.retired,
         "sessions": snapshot.sessions,
         "unused": snapshot.unused,
         "curation_note": snapshot.curation_note,
@@ -5220,22 +5251,38 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
         };
         runtime.block_on(async move {
             let dotenv = crate::home::read_dotenv(&home);
-            // The skills are loaded once, when the agent thread starts,
-            // and declared on every run it drives: the files can change
-            // between runs, and each run's `skills` record pins what that
-            // run actually saw. A clean load emits nothing.
+            // The loader's skips are reported once, when the agent thread
+            // starts: a malformed skill is a named line, not a per-run
+            // one. What a run *declares* is read per run below, because
+            // the files change between runs and the owner's retirements
+            // have to reach the run in flight of them.
             let user_home = std::env::var("HOME").ok();
             let skills_override = std::env::var("FLEET_SKILLS_DIR").ok();
-            let (skills, skill_skips) =
+            if let Some(dir) =
                 crate::skills::resolve_skills_dir(skills_override.as_deref(), user_home.as_deref())
-                    .map(|dir| crate::skills::load_reported(&dir))
-                    .unwrap_or_default();
-            if !skill_skips.is_empty() {
-                let _ = ui_tx.send(UiEvent::SkillsLoaded {
-                    loaded: skills.len(),
-                    skipped: skill_skips.into_iter().map(|skip| skip.name).collect(),
-                });
+            {
+                let skips = crate::skills::load_reported(&dir).1;
+                if !skips.is_empty() {
+                    let _ = ui_tx.send(UiEvent::SkillsLoaded {
+                        loaded: crate::skills::load(&dir).len(),
+                        skipped: skips.into_iter().map(|skip| skip.name).collect(),
+                    });
+                }
             }
+            // The declared list for one run: the library with the owner's
+            // retired filtered out (KI-215's shape — the owner retires on
+            // the skills page, the library is never written). Read per
+            // run, so a retirement reaches the next run without a
+            // restart, and each run's `skills` record pins what that run
+            // actually saw.
+            let declared_skills = || {
+                crate::skills::resolve_skills_dir(
+                    std::env::var("FLEET_SKILLS_DIR").ok().as_deref(),
+                    std::env::var("HOME").ok().as_deref(),
+                )
+                .map(|dir| crate::skills::load_declared(&dir, &home))
+                .unwrap_or_default()
+            };
             // The route is chosen once per session, on that session's
             // first task, and the committed router is reused for the rest
             // of it — one sys1 judgment, not one per task. A session this
@@ -5369,7 +5416,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             ui_tx: Some(ui_tx.clone()),
                             lane_specs: None,
                             calib: Some(prepared.calib.clone()),
-                            skills: skills.clone(),
+                            skills: declared_skills(),
                             role_overlay: None,
                             memory,
                             scope: None,

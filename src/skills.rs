@@ -413,6 +413,87 @@ fn skip_line(name: &str, reason: &str) {
 
 // --- loading ---------------------------------------------------------------
 
+/// How long a prompt line's trigger may run before it is clipped at a
+/// word boundary. The trigger is the match signal; the body arrives on
+/// the call, and a prompt is not the place for the whole description.
+const TRIGGER_CLIP: usize = 160;
+
+/// The trigger a prompt line carries: the description with its leading
+/// frame stripped and its first word lowered, so the line reads as a
+/// match a model can make rather than as a library catalogue entry.
+/// A description with no frame is lowered as it stands.
+pub fn trigger(description: &str) -> String {
+    let text = description.trim();
+    let lowered = text.to_ascii_lowercase();
+    let stripped = ["use when ", "use this ", "use for "]
+        .iter()
+        .find_map(|frame| lowered.strip_prefix(frame).map(|_| &text[frame.len()..]))
+        .unwrap_or(text)
+        .trim();
+    let mut chars = stripped.chars();
+    let trigger = match chars.next() {
+        Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    };
+    clip_words(&trigger, TRIGGER_CLIP)
+}
+
+/// The longest prefix of `text` that ends on a word boundary at or
+/// before `limit` characters, with an ellipsis when it cut something.
+/// A word longer than the limit cuts mid-word rather than losing the
+/// line entirely.
+fn clip_words(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    let mut boundary = None;
+    for (seen, (index, ch)) in text.char_indices().enumerate() {
+        if seen > limit {
+            break;
+        }
+        if ch == ' ' {
+            boundary = Some(index);
+        }
+    }
+    let cut = boundary.unwrap_or_else(|| {
+        text.char_indices()
+            .nth(limit)
+            .map(|(index, _)| index)
+            .unwrap_or(text.len())
+    });
+    let mut clipped = text[..cut].trim_end().to_string();
+    clipped.push('\u{2026}');
+    clipped
+}
+
+/// `<home>/skills-retired.json`: the names the owner retired from the
+/// prompt on the skills page.
+const RETIRED_FILE: &str = "skills-retired.json";
+
+/// The retired names, in the file's own order. An absent or malformed
+/// file is an empty list — the same tolerance the recall index runs on.
+pub fn retired(home: &Path) -> Vec<String> {
+    std::fs::read_to_string(home.join(RETIRED_FILE))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
+        .unwrap_or_default()
+}
+
+/// The library as a run declares it: the loaded skills with the
+/// fleet-local retired filtered out. The library is cross-harness and
+/// is never written by this — a retired skill stays in it,
+/// byte-identical, and leaves only what a run declares (KI-215).
+pub fn load_declared(canonical: &Path, home: &Path) -> Vec<Skill> {
+    let retired = retired(home);
+    if retired.is_empty() {
+        return load(canonical);
+    }
+    load(canonical)
+        .into_iter()
+        .filter(|skill| !retired.iter().any(|name| name == &skill.name))
+        .collect()
+}
+
 /// The canonical skills library: `$FLEET_SKILLS_DIR` when set and
 /// non-empty, else `<user home>/.agents/skills` — the owner's
 /// cross-harness library, so a skill is authored once and every harness
@@ -1713,6 +1794,75 @@ pub(crate) fn wrap_detail(text: &str, width: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_retirement_leaves_the_library_byte_identical() {
+        // C2: the owner retires from the skills page, fleet-locally —
+        // and the library is never written (KI-215's shape). The file
+        // is hashed before and after, and the declared list moves.
+        let home = scratch("retire-library");
+        let canonical = canon(&home);
+        let path = write_skill(&home, "alpha", &good_skill("alpha", "use when x", "b"));
+        let before = std::fs::read(&path).expect("the library file");
+
+        crate::settings::retire_skill(&home, "alpha").expect("the retire lands");
+        assert_eq!(retired(&home), vec!["alpha".to_string()]);
+        assert_eq!(
+            std::fs::read(&path).expect("the library file after"),
+            before,
+            "the library file is byte-identical"
+        );
+        assert!(
+            load_declared(&canonical, &home).is_empty(),
+            "the retired skill leaves the declared list"
+        );
+
+        // Returning it is the same click, and the skill is declared again.
+        crate::settings::unretire_skill(&home, "alpha").expect("the return lands");
+        assert_eq!(
+            skill_names(&load_declared(&canonical, &home)),
+            vec!["alpha"]
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_trigger_strips_its_frame_and_lowers_its_first_word() {
+        // The three frames the library's descriptions lead with.
+        assert_eq!(
+            trigger("Use when needing to encrypt credentials at rest in Node"),
+            "needing to encrypt credentials at rest in Node"
+        );
+        assert_eq!(
+            trigger("Use this to diagnose why a generated asset looks wrong"),
+            "to diagnose why a generated asset looks wrong"
+        );
+        assert_eq!(
+            trigger("Use for triaging a stale accuracy page"),
+            "triaging a stale accuracy page"
+        );
+        // No frame: the description is lowered as it stands.
+        assert_eq!(
+            trigger("Systematic triage of the accuracy page when it shows stale data"),
+            "systematic triage of the accuracy page when it shows stale data"
+        );
+        // An empty description triggers nothing rather than panicking.
+        assert_eq!(trigger("   "), "");
+    }
+
+    #[test]
+    fn a_long_trigger_is_clipped_at_a_word_boundary() {
+        let long = format!("Use when {}", "word ".repeat(80));
+        let clipped = trigger(&long);
+        // The clip plus its ellipsis, and the cut is on a boundary: no
+        // half a word, no double space where the cut landed.
+        assert!(clipped.chars().count() <= TRIGGER_CLIP + 1, "{clipped}");
+        assert!(clipped.ends_with('\u{2026}'), "{clipped}");
+        assert!(!clipped.contains("  "), "{clipped}");
+        // A description inside the clip is kept whole.
+        let short = "Use when a task needs credentials encrypted at rest";
+        assert_eq!(trigger(short), "a task needs credentials encrypted at rest");
+    }
+
     use super::*;
 
     /// A scratch home, unique per call.

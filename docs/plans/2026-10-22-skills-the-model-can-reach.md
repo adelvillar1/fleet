@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-22
 updated: 2026-10-22
 slug: skills-the-model-can-actually-reach

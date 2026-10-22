@@ -577,6 +577,37 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
             }
         }
+        // Retire a skill from the prompt, or return it: the owner's
+        // click on the skills page, written fleet-locally, the library
+        // untouched.
+        ("POST", "/api/skill/retire") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let name = match proposal_of(&body) {
+                Ok(name) => name,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.skill_retire(&name, true).await {
+                Ok(retired) => write_reply(&mut stream, api(200, retired)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/skill/unretire") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let name = match proposal_of(&body) {
+                Ok(name) => name,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.skill_retire(&name, false).await {
+                Ok(returned) => write_reply(&mut stream, api(200, returned)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("POST", "/api/skill") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,

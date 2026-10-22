@@ -332,7 +332,7 @@ async fn run_command(options: &RunOptions) -> ExitCode {
         prepared.decision.how.label(),
         prepared.decision.model
     );
-    let skills = load_skills(user_home.as_deref());
+    let skills = load_skills(user_home.as_deref(), &home);
     let outcome = drive(
         &prepared,
         prepared.decision.model.clone(),
@@ -426,7 +426,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     // The skills are loaded once per chat session and declared on every
     // run in it: the files can change between runs, and the per-run
     // `skills` record is what pins what each run actually saw.
-    let skills = load_skills(user_home.as_deref());
+    let skills = load_skills(user_home.as_deref(), &home);
     let stdin = std::io::stdin();
     // The route is chosen once, on the first task, and the committed router
     // is reused for the rest of the session — one sys1 judgment, not one
@@ -941,10 +941,13 @@ fn draft_lessons(home: &std::path::Path, session_path: &std::path::Path) {
 /// The canonical library's skills, for the surfaces that declare them:
 /// `$FLEET_SKILLS_DIR` wins, else `<user home>/.agents/skills`. When
 /// neither is known there are no skills, and one line says so.
-fn load_skills(user_home: Option<&str>) -> Vec<fleet::skills::Skill> {
+fn load_skills(user_home: Option<&str>, home: &std::path::Path) -> Vec<fleet::skills::Skill> {
     let override_dir = std::env::var("FLEET_SKILLS_DIR").ok();
     match fleet::skills::resolve_skills_dir(override_dir.as_deref(), user_home) {
-        Some(dir) => fleet::skills::load(&dir),
+        // The declared list: the library with the owner's retired
+        // filtered out — the skills page is where a retirement happens,
+        // and the library is never written by it (KI-215).
+        Some(dir) => fleet::skills::load_declared(&dir, home),
         None => {
             eprintln!(
                 "fleet: skills: no skills directory resolvable \u{2014} set FLEET_SKILLS_DIR or HOME"
@@ -986,7 +989,7 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
         // The collapse report is its own surface: deterministic,
         // report-only, and never a writer — the curation proposals
         // stay the only path that changes the library.
-        let skills = load_skills(user_home.as_deref());
+        let skills = load_skills(user_home.as_deref(), &home);
         let pairs = fleet::skills::near_duplicates(&skills, fleet::skills::DUPLICATE_SIMILARITY);
         print!("{}", fleet::skills::render_duplicates(skills.len(), &pairs));
         return ExitCode::SUCCESS;
@@ -1018,7 +1021,7 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
         );
     } else if !options.curate {
         let config = route::skills_config(&home);
-        let skills = load_skills(user_home.as_deref());
+        let skills = load_skills(user_home.as_deref(), &home);
         let usage = fleet::skills::scan_usage(&home, config.retire_after_sessions);
         print!("{}", fleet::skills::render(&skills, &usage));
     }

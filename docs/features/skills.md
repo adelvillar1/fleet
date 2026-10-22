@@ -89,16 +89,27 @@ A run with no skills records nothing and its prompt is the compiled-in
 constant, so the skill-less run is byte-for-byte the run it has always
 been.
 
-The list has a **soft cap**, `agent::SKILLS_PROMPT_SOFT_CAP` (50): past
-it, one line per run is logged — `N skills declared; the list is
-growing the prompt — curation retires unused ones`. A warning only:
-nothing is hidden, every skill stays declared and callable, and the
-prompt still carries all of them. The list is re-sent on every request
-of every run, so an unbounded list is an unbounded per-turn cost. The
-owner's library is 444 skills, so the cap fires on every run of this
-machine — the known, accepted cost of portability; curated disclosure
-(subsetting what is declared) is the named follow-up, not curation's
-retirement, which no longer applies to a cross-harness library.
+The list is **capped** (`agent::SKILLS_PROMPT_CAP`, 60) and
+**trigger-shaped**. Each declared skill rides as one line,
+`` - `name` — use when <trigger> ``, where the trigger is the
+description with its leading frame stripped and its first word lowered,
+clipped near 160 characters — a match signal, not the catalogue entry,
+because the body arrives on the call. The cap selects the library's
+newest by the skill's own mtime, so the owner's recent work floats up,
+and one line per run names how many are held back and that `fleet skills`
+lists them all. The list is re-sent on every request of every run, so
+the cap is what keeps a 442-skill library from costing a 128k-window
+model an eighth of its window before the owner has said anything.
+
+A run declares the library **minus what the owner retired**: a `retire`
+action on the skills page writes the name to
+`<FLEET_HOME>/skills-retired.json` through the one writer, and the
+loader filters it out of every declared list. Retirement is
+fleet-local and reversible — the library file is never written
+(KI-215's shape: the usage scan reads fleet's sessions only and the
+library is cross-harness, so *fleet suggests and the owner retires*).
+The suggestion is the scan's own number: the panel's `never selected`
+count sits beside the action on those very rows.
 
 `use_skill` goes through the same Approver as every other tool: a
 skill's body is model-visible content, and approving a body into

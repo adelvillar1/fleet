@@ -3869,7 +3869,7 @@
     el.skillsBoard.textContent = '';
     if (!read) {
       el.skillsBoard.appendChild(surfaceHead('Knowledge', 'Skills',
-        'The library the model can reach, the names the loader declined, and the proposals waiting for a decision.', null));
+        'The library the model can reach, the names the loader declined, the proposals waiting for a decision, and what the owner retired.', null));
       var waiting = boardCard(12, 'reading', null, null);
       waiting.appendChild(node('p', 'board-empty',
         'The library read has not landed yet. It reads the canonical skills directory and the ' +
@@ -3910,7 +3910,7 @@
         }
       ]);
     el.skillsBoard.appendChild(surfaceHead('Knowledge', 'Skills',
-      'The library the model can reach, the names the loader declined, and the proposals waiting for a decision.',
+      'The library the model can reach, the names the loader declined, the proposals waiting for a decision, and what the owner retired.',
       instrument));
     el.skillsBoard.appendChild(surfaceStrip([
       [skills.length, 'loaded'],
@@ -3918,13 +3918,15 @@
       [read.unused, 'never selected'],
       [proposals.length, 'proposals', proposals.length ? 'live' : null],
       [skips.length, 'skipped', skips.length ? 'down' : null],
+      [read.retired.length, 'retired', read.retired.length ? 'down' : null],
       [read.sessions, 'sessions scanned']
     ], 'the library at ' + (read.canonical || '\u2014')));
     el.skillsBoard.appendChild(skillLibrary(read, shown, filter));
     el.skillsBoard.appendChild(surfaceRail([
       skillsDecisions(proposals),
       skillsSkips(skips),
-      skillsCuration(read)
+      skillsCuration(read),
+      skillsRetired(read)
     ]));
     if (read.refused && read.refused.length) {
       el.skillsBoard.appendChild(refusedCard(read.refused));
@@ -4013,6 +4015,68 @@
     return card;
   }
 
+  // Retire a skill from every run's prompt, or return it: the owner's
+  // click, written fleet-locally, the library untouched (KI-215). The
+  // in-flight and refusal states mirror the decisions queue's approve.
+  function retireSkill(name, button, retiring) {
+    var path = retiring ? '/api/skill/retire' : '/api/skill/unretire';
+    button.disabled = true;
+    button.textContent = retiring ? 'retiring\u2026' : 'returning\u2026';
+    post(path, { name: name }).then(function (reply) {
+      if (reply.status === 200) {
+        notice(retiring ? 'the skill is retired' : 'the skill is back',
+          name + (retiring
+            ? ' leaves every run\u2019s prompt; the library keeps it'
+            : ' is declared again'));
+        readSkills(true).then(paintSkills);
+        return;
+      }
+      button.disabled = false;
+      button.textContent = retiring ? 'retire' : 'unretire';
+      notice(retiring ? 'the retire was refused' : 'the return was refused',
+        reply.body.error || 'the face said no without a reason');
+    }).catch(function () {
+      button.disabled = false;
+      button.textContent = retiring ? 'retire' : 'unretire';
+      notice(retiring ? 'the retire did not cross' : 'the return did not cross',
+        'the server did not answer');
+    });
+  }
+
+  // The retired section: the names that left the prompt, one click
+  // from returning. The library is never written — a retirement is
+  // fleet-local and reversible (KI-215's shape, the owner's ruling).
+  function skillsRetired(read) {
+    var retired = read.retired || [];
+    var card = boardCard(12, 'retired', retired.length + ' retired',
+      'a retired skill leaves every run\u2019s prompt and stays in the library; ' +
+      'returning one is the same click.');
+    card.classList.add('lib-card');
+    if (!retired.length) {
+      card.appendChild(node('p', 'board-empty',
+        'Nothing is retired. Retire one from a row above when the scan says it has ' +
+        'never been selected.'));
+      return card;
+    }
+    var list = node('div', 'rail-list');
+    retired.forEach(function (name) {
+      var row = node('div', 'rail-row');
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.title = 'the retired skill ' + name;
+      row.appendChild(node('b', null, name));
+      var back = rowAction('unretire', 'declare this skill again', function () {
+        retireSkill(name, back, false);
+      });
+      var acts = node('div', 'row-actions');
+      acts.appendChild(back);
+      row.appendChild(acts);
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    return card;
+  }
+
   function skillRow(skill) {
     var row = node('div', 'skill-row');
     row.tabIndex = 0;
@@ -4039,6 +4103,10 @@
       if (navigator.clipboard) navigator.clipboard.writeText(skill.name).catch(function () { });
       notice('the skill name is copied', skill.name);
     }));
+    var retire = rowAction('retire', 'retire this skill from every run\u2019s prompt', function () {
+      retireSkill(skill.name, retire, true);
+    });
+    acts.appendChild(retire);
     row.appendChild(acts);
     var open = function () { inspectSkill(skill); };
     row.addEventListener('click', open);

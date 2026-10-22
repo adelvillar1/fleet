@@ -63,7 +63,7 @@ src/memory.rs           the git-tracked fact substrate: six-channel recall, asse
 src/recall_graph.rs     one bounded hop over the frontmatter's own edges (superseded-by, missing)
 src/filelock.rs         the shared per-file flock behind every read-modify-write
 src/session_recall.rs   the session archive as synthetic facts through the same ranker
-src/skills.rs           skills: SKILL.md loading, progressive disclosure via `use_skill`, the self-authoring drafter, usage-scan curation, `fleet skills`
+src/skills.rs           skills: SKILL.md loading, the trigger-shaped prompt lines, the 60-skill cap, the owner's retire list, progressive disclosure via `use_skill`, the self-authoring drafter, `fleet skills`
 src/nomenclature/       the canonical identifier vocabulary and the `convention` lookup
 src/subagents.rs        delegation: the child agent, its scope, the depth cap
 src/roles.rs            the named specializations a delegation runs under
