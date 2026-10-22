@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-22
 updated: 2026-10-22
 slug: chat-ux-polish
@@ -126,32 +126,32 @@ explicit paths before the next begins.
 
 ## Acceptance criteria
 
-- [ ] C1 — a fresh run's transcript shows at most one plumbing line
+- [x] C1 — a fresh run's transcript shows at most one plumbing line
   per run (the status strip); routing, memory, skills, lanes, cron,
   compaction, folder, repair, and dropped events never render their
   own cards in the live conversation, and the strip expands to the
   full event sequence on click.
-- [ ] C2 — a tool row shows verb, target, and live elapsed seconds
+- [x] C2 — a tool row shows verb, target, and live elapsed seconds
   while running; on approval it collapses to a single line with an
   outcome dot and the output preview one click away; a refused call
   stays expanded with its reason.
-- [ ] C3 — no checkpoint cards render in the transcript; rewind is
+- [x] C3 — no checkpoint cards render in the transcript; rewind is
   reachable from any turn's affordance and from the status strip's
   last-checkpoint line, and completing a rewind lands the same state
   the old card flow produced.
-- [ ] C4 — the turn budget is a settings knob with a raised default,
+- [x] C4 — the turn budget is a settings knob with a raised default,
   the run bar shows remaining turns during a run, and reaching the
   budget renders a continuation receipt whose continue control resumes
   the same session with its state carried.
-- [ ] C5 — every finished run ends in a structured receipt: outcome,
+- [x] C5 — every finished run ends in a structured receipt: outcome,
   artifacts, verification evidence, and a next-request affordance
   that fills the composer on click; a finish with no result text
   triggers the repair beat and the receipt renders the recovered
   report.
-- [ ] C6 — the replayed log (sessions surface) still shows every
+- [x] C6 — the replayed log (sessions surface) still shows every
   event: the hierarchy changes transcript weight, not the record, and
   a replayed session reconstructs what the model saw.
-- [ ] C7 — the eleven existing surfaces are unchanged beyond the
+- [x] C7 — the eleven existing surfaces are unchanged beyond the
   conversation panel; the gate is green in full, exit codes read on
   the cargo invocations.
 
