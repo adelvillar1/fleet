@@ -1427,6 +1427,71 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 @keyframes blink { to { visibility: hidden; } }
 
+/* The run's plumbing line: eleven event kinds fold into one strip
+   per run (the chat-UX contract, D1) instead of one card each. */
+.run-strip {
+  margin: 8px 0 2px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+  background: transparent;
+}
+
+.run-strip .strip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.run-strip .strip-head:hover { color: var(--dsw-alias-ink-secondary); }
+
+.run-strip .strip-glyph {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.run-strip .strip-count { margin-left: auto; }
+
+.run-strip.open .strip-list,
+.run-strip .strip-list { padding: 0 14px 7px 48px; }
+
+.run-strip .strip-list[hidden] { display: none; }
+
+.strip-line {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 11px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+
+.strip-line .strip-line-kind {
+  flex: none;
+  min-width: 72px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+  opacity: 0.85;
+}
+
+.strip-line .strip-line-text { color: var(--dsw-alias-ink-secondary); }
+
+.run-strip.done .strip-head { opacity: 0.75; }
+
 .turn-mark {
   display: flex;
   align-items: center;

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-10-22
 updated: 2026-10-22
 slug: chat-ux-polish

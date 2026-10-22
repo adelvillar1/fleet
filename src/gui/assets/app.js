@@ -675,25 +675,6 @@
     return made;
   }
 
-  function routeRow(event) {
-    var el0 = card('route', '~', 'route', event.how, event.provider, 'served');
-    return row(el0, event);
-  }
-
-  function memoryRow(event) {
-    var el0 = card('memory', 'm', 'memory', event.shape, String(event.facts), 'facts');
-    return row(el0, event);
-  }
-
-  function skillsRow(event) {
-    var el0 = card('skills', 's', 'skills',
-      event.skipped && event.skipped.length
-        ? 'skipped: ' + event.skipped.join(', ')
-        : 'all of the library',
-      String(event.loaded), 'loaded');
-    return row(el0, event);
-  }
-
   function delegationRow(event) {
     var el0 = card('delegation', '*', event.goal, 'spawned', null, event.session);
     var made = row(el0, event, function (next) {
@@ -710,28 +691,130 @@
     return made;
   }
 
-  function laneRow(event) {
-    var el0 = card('lane', '\u2387', 'lane', event.lane, String(event.tools), 'tools');
+  // The run's one plumbing line. The events that carry no work of
+  // their own - routing, memory, skills, lanes, cron, compaction,
+  // checkpoints, folder changes, repair, rewinds, the log's drops -
+  // fold into this strip instead of each rendering a card (the
+  // chat-UX contract, D1): the transcript carries the work and the
+  // words, and the harness tells its story one click away. The count
+  // is the strip's honest weight; replay and live share apply(), so
+  // a replayed history folds the same way the live run did.
+  // A deck the run produced: work, so it stays a card (D1), one line
+  // with the render a click away in the drawer. KI-292: this case
+  // called a function the file never carried, so every deck event
+  // threw and the transcript stopped at the throw - rebuilt on
+  // inspectDrawer's own inspector.
+  function deckRow(event) {
+    var el0 = card('deck', '\u25a6', event.project + ' \u00b7 ' + event.nodes + ' nodes',
+      'the render opens from the card', null, 'deck');
+    el0.querySelector('.card-open').addEventListener('click', function () {
+      inspectDeck(event);
+    });
     return row(el0, event);
   }
 
-  function compactedRow(event) {
-    var saved = Math.max(0, Number(event.before) - Number(event.after));
-    var el0 = card('compacted', '\u2193', 'compaction',
-      event.turns + ' turns \u00b7 ' + tokens(event.before) + ' \u2192 ' + tokens(event.after),
-      '\u2212' + tokens(saved), 'tokens');
-    return row(el0, event);
-  }
+  var STRIP_LABEL = {
+    routed: 'route', memory: 'memory', skills: 'skills', lane: 'lane',
+    cron: 'cron', compacted: 'compaction', checkpoint: 'checkpoint',
+    folder: 'folder', repair: 'repair', rewound: 'rewind', dropped: 'dropped'
+  };
 
-  function cronRow(event) {
-    var el0 = card('cron', '@', event.job,
-      event.minute + (event.catch_up ? ' \u00b7 catch-up' : ''), event.outcome, 'fired');
-    if (event.detail) {
-      var note = el0.querySelector('.note');
-      note.textContent = event.detail;
-      note.hidden = false;
+  function stripFold(event) {
+    if (face.strip && face.strip.event.type === event.type) {
+      face.strip.count += 1;
+    } else {
+      if (face.strip) stripSeal();
+      face.strip = { event: event, count: 1 };
     }
-    return row(el0, event);
+    stripPaint();
+  }
+
+  function stripLine(event) {
+    switch (event.type) {
+      case 'routed': return (event.how || '') + (event.provider ? ' \u00b7 ' + event.provider : '');
+      case 'memory': return (event.facts != null ? event.facts + ' facts' : '') + (event.shape ? ' \u00b7 ' + event.shape : '');
+      case 'skills': return event.skipped && event.skipped.length
+        ? 'skipped ' + event.skipped.join(', ') : 'library loaded';
+      case 'lane': return (event.lane || '') + (event.tools != null ? ' \u00b7 ' + event.tools + ' tools' : '');
+      case 'cron': return (event.job || '') + (event.outcome ? ' \u00b7 ' + event.outcome : '');
+      case 'compacted': return (event.turns || '?') + ' turns \u00b7 ' + tokens(event.before) + ' \u2192 ' + tokens(event.after);
+      case 'checkpoint': return 'turn ' + event.turn + ' \u00b7 ' + event.files + ' files held';
+      case 'folder': return event.note || (event.path ? 'set to ' + event.path : 'cleared');
+      case 'repair': return 'asked once for the closing report (attempt ' + (event.attempt || 1) + ')';
+      case 'rewound': return 'to turn ' + event.turn + ' \u00b7 ' + event.restored + ' restored';
+      case 'dropped': return 'the face holds the last 4096; one fell off the front';
+      default: return event.type;
+    }
+  }
+
+  function stripPaint() {
+    if (!face.stripEl) {
+      var el0 = node('div', 'run-strip');
+      var head = node('button', 'strip-head');
+      head.type = 'button';
+      head.appendChild(node('span', 'strip-glyph', '\u2261'));
+      head.appendChild(node('span', 'strip-text', ''));
+      head.appendChild(node('span', 'strip-count', ''));
+      var list = node('div', 'strip-list');
+      list.hidden = true;
+      el0.appendChild(head);
+      el0.appendChild(list);
+      head.addEventListener('click', function () {
+        list.hidden = !list.hidden;
+        el0.classList.toggle('open', !list.hidden);
+        if (!list.hidden) stripList(el0);
+      });
+      face.stripEl = el0;
+      face.stream.appendChild(el0);
+    }
+    // The head names the segment the run is in (or the last sealed one
+    // when the run has moved on), and the count chip is the honest
+    // total of everything the strip holds.
+    var held = face.strip;
+    var label = held
+      ? (STRIP_LABEL[held.event.type] || held.event.type)
+      : (face.stripLog.length ? face.stripLog[face.stripLog.length - 1].kind : '');
+    var detail = held && held.event.type === 'routed' && held.event.provider
+      ? held.event.provider : '';
+    var total = face.stripLog.length + (held ? 1 : 0);
+    face.stripEl.querySelector('.strip-text').textContent =
+      'run' + (label ? ' \u00b7 ' + label : '') + (detail ? ' \u00b7 ' + detail : '');
+    face.stripEl.querySelector('.strip-count').textContent = total > 1 ? String(total) : '';
+  }
+
+  // A different event kind arrived, or the run ended: the held run
+  // becomes one line in the strip's expanded list, re-rendered from
+  // face.stripLog - the folded record, not the live stream - so
+  // expansion is stable however many events followed.
+  function stripSeal() {
+    var held = face.strip;
+    face.stripLog.push({
+      kind: STRIP_LABEL[held.event.type] || held.event.type,
+      count: held.count,
+      text: stripLine(held.event)
+    });
+    face.strip = null;
+    stripPaint();
+    stripList(face.stripEl);
+  }
+
+  function stripList(el0) {
+    if (!el0) return;
+    var list = el0.querySelector('.strip-list');
+    list.textContent = '';
+    face.stripLog.forEach(function (one) {
+      var line = node('div', 'strip-line');
+      line.appendChild(node('span', 'strip-line-kind', one.kind));
+      line.appendChild(node('span', 'strip-line-text',
+        one.text + (one.count > 1 ? ' \u00b7 \u00d7' + one.count : '')));
+      list.appendChild(line);
+    });
+  }
+
+  // The run's end (or the owner's stop) seals whatever the strip held.
+  function stripFinish() {
+    if (face.strip) stripSeal();
+    if (face.stripEl) face.stripEl.classList.add('done');
   }
 
   function endRow(event) {
@@ -748,31 +831,13 @@
   // The log is a ring, and the ring let one go. The bridge says so once,
   // when it first happens; after that the rail's own dropped count is
   // the standing answer, which is why this row is not repeated.
-  function droppedRow(event) {
-    var el0 = card('dropped', '!', 'the log let an event go',
-      'the face holds the last 4096; one fell off the front', String(event.dropped), 'missed');
-    return row(el0, event);
-  }
-
   // The chat's working folder, as a line in the transcript: a chosen
   // folder, a reset to the launch folder, or the fallback a run took
   // when the stored folder had gone missing. The note is the server's
   // own sentence, so the page does not paraphrase a reason it did not
   // measure.
-  function folderRow(event) {
-    var el0 = card('folder', '\u2302', event.fallback ? 'folder fell back' : 'working folder',
-      event.note, null, null);
-    return row(el0, event);
-  }
-
   // The run stopped without the report it owes and the harness asked
   // once. One line, so the extra request is seen and paid for knowingly.
-  function repairRow(event) {
-    var el0 = card('repair', '\u21bb', 'the run stopped without a report',
-      'asked once for the closing report (attempt ' + (event.attempt || 1) + ')', null, null);
-    return row(el0, event);
-  }
-
   // The answer that closed a seat: one line in the transcript, so the
   // grant is seen where it happened and the log holds what the owner
   // allowed. The card itself closes; a seat for the next call is a new
@@ -856,16 +921,16 @@
         break;
       case 'routed':
         face.route = event;
-        routeRow(event);
+        stripFold(event);
         break;
       case 'lane':
-        laneRow(event);
+        stripFold(event);
         break;
       case 'memory':
-        memoryRow(event);
+        stripFold(event);
         break;
       case 'skills':
-        skillsRow(event);
+        stripFold(event);
         break;
       case 'deck':
         deckRow(event);
@@ -874,13 +939,13 @@
         applyDelegation(event);
         break;
       case 'compacted':
-        compactedRow(event);
+        stripFold(event);
         break;
       case 'cron':
-        cronRow(event);
+        stripFold(event);
         break;
       case 'checkpoint':
-        checkpointRow(event);
+        stripFold(event);
         break;
       case 'folder':
         // The chat's working folder changed: one line, and the run bar
@@ -889,17 +954,17 @@
         face.folder = event.path
           ? { path: event.path, name: event.name, rel: event.rel || '' }
           : null;
-        folderRow(event);
+        stripFold(event);
         paintRunbar();
         break;
       case 'rewound':
-        rewoundRow(event);
+        stripFold(event);
         break;
       case 'repair':
-        // The harness asked for the report it was owed. The line makes
-        // the extra model call visible rather than a turn that seemed
-        // to do nothing.
-        repairRow(event);
+        // The harness asked for the report it was owed. The fold keeps
+        // the extra call visible - in the strip, where the run's
+        // plumbing lives - rather than a turn that seemed to do nothing.
+        stripFold(event);
         break;
       case 'plan':
         planRow(event);
@@ -909,6 +974,7 @@
         face.assistant = null;
         face.running = false;
         face.stop = event;
+        stripFinish();
         endRow(event);
         // A plan-mode run's answer is a plan: the card it lands in is
         // the editable one, so the owner edits and builds.
@@ -955,7 +1021,7 @@
         break;
       case 'dropped':
         face.dropped = Number(event.dropped) || face.dropped;
-        droppedRow(event);
+        stripFold(event);
         break;
       default:
         break;
@@ -4822,6 +4888,9 @@
     face.events = [];
     face.rows = [];
     face.assistant = null;
+    face.strip = null;
+    face.stripEl = null;
+    face.stripLog = [];
     face.pending = [];
     face.delegations = {};
     face.lastTurn = 0;
@@ -10281,20 +10350,6 @@
   // offers the rewind. The store's own counts ride along, because a
   // checkpoint of nothing is a different fact from a checkpoint of the
   // whole tree.
-  function checkpointRow(event) {
-    var el0 = card('checkpoint', '\u25c7', 'checkpoint \u00b7 turn ' + event.turn,
-      event.files + ' files \u00b7 ' + event.bytes + ' bytes held for a rewind',
-      null, null);
-    var rewind = node('button', 'replay-button');
-    rewind.type = 'button';
-    rewind.textContent = 'rewind to here';
-    rewind.addEventListener('click', function () { rewindTo(event.turn); });
-    el0.querySelector('.note').textContent = '';
-    el0.querySelector('.note').hidden = false;
-    el0.querySelector('.note').appendChild(rewind);
-    return row(el0, event);
-  }
-
   // The rewind: the tree restored, the log cut, the face reseeded. The
   // reply names what it did, and the conversation that follows is the
   // one the next task seeds from.
@@ -10319,13 +10374,6 @@
   }
 
   // The rewind record, replayed: what the log says happened.
-  function rewoundRow(event) {
-    var el0 = card('rewound', '\u21a9', 'rewound to turn ' + event.turn,
-      event.restored + ' entries restored \u00b7 ' + event.removed + ' removed',
-      null, null);
-    return row(el0, event);
-  }
-
   // A plan-mode run's answer: the plan itself, editable, with Build.
   // The card is the log's own record, so a refresh replays the same
   // plan and the same buttons.
