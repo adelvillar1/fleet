@@ -4276,7 +4276,14 @@
     // choice, and a run that overtook its own folder would work in the
     // old one.
     Promise.resolve(folderSync).then(function () {
-      return post('/api/run', {
+      // The run names the session the face is showing: after opening a
+      // session from the archive, a session-less run would go to the
+      // launch session — a different conversation, or a refusal when
+      // that one is mid-run — which reads as "the conversation will not
+      // let me work in it".
+      var runPath = '/api/run' + (face.session
+        ? '?session=' + encodeURIComponent(face.session) : '');
+      return post(runPath, {
         task: task,
         mode: face.permissions,
         pin: face.providerPin || null,
@@ -10177,7 +10184,9 @@
     el.log.hidden = false;
     face.planned = true;
     Promise.resolve(folderSync).then(function () {
-      return post('/api/plan', { task: task });
+      var planPath = '/api/plan' + (face.session
+        ? '?session=' + encodeURIComponent(face.session) : '');
+      return post(planPath, { task: task });
     }).then(function (reply) {
       if (reply.status === 200) {
         face.running = true;
