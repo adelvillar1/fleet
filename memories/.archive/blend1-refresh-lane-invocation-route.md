@@ -8,9 +8,10 @@ tier: durable
 shape: [change, deps]
 phrases: [mcp__blend1__refresh, python3 -u service/mcp_server.py, BLEND1_PYTHONPATH, tools/call refresh, services/blend1, launch_spec]
 missing: []
-recall-count: 62
+recall-count: 86
 superseded-by:
-valid-until:
+valid-until: 2026-10-21
 ---
 
 The lane tool `mcp__blend1__refresh` is not one of Fleet's native tools in this harness — there is no MCP lane bridge exposed to the agent here, so a scheduled `corpus-refresh-*` job cannot call it by name. The working route is to spawn the vendored blend1 lane directly with fleet's own launch spec (src/lanes.rs `launch_spec`): `python3 -u <home>/service/mcp_server.py` with cwd = services/blend1, env = mcp::BASE_ENV (PATH, HOME, LANG, TMPDIR) plus `BLEND1_PYTHONPATH=<home>/src` and the four sibling path vars `BLEND1_SYS1_PYTHONPATH` / `BLEND1_SEM1_PYTHONPATH` / `BLEND1_SDM1_PYTHONPATH` / `BLEND1_GEN1_PYTHONPATH` pointing at `<services root>/<svc>/src`. Then the stdio JSON-RPC handshake: initialize (protocolVersion 2024-11-05), notifications/initialized, tools/list (returns ask, web, doctor, search, refresh, seed), tools/call with name "refresh" and arguments {project, sources}. The lane's own `refresh` resolves project names to `<root>/<project>` under ~/.local/share/blend1/vectors and returns {project, source_files, items, changed, action, store} with action ∈ rebuilt | unchanged | no-source. Note the relpath quirk: `_chunks` builds relpath relative to the child's cwd, so the lane's home cwd yields keys like `../../../sdm1/CLAUDE.md#(preamble)` — the corpus's keys are cwd-relative, which is why the staleness hash comparison only holds for the same cwd. The prior corpus-refresh-sys1 run in session 20261017T001501Z-bce8a3a6 used this same route, so it is the established fallback rather than an improvisation.
+Retired 2026-10-22: The route was re-verified end to end in this session's scheduled run (2026-10-22, corpus-refresh-dev-decisions) and two details have changed since the fact was written: the chunk keys are now absolute paths (KI-223's fix landed), so the relpath caveat in the old body is stale, and the refresh report now carries `missing_sources` (KI-225's fix). The new body records both verified facts plus the current KI-277 state so a later recall does not re-derive the cwd caveat.
