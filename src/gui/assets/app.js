@@ -6061,7 +6061,7 @@
       selectSession(row.id);
     }, true));
     if (row.id !== current && !face.running) {
-      acts.appendChild(rowAction('resume', 'resume this session here', function () {
+      acts.appendChild(rowAction('continue', 'open this conversation and keep working on it', function () {
         resumeSession(row.id);
       }));
     }
@@ -6119,7 +6119,10 @@
       resume.disabled = true;
       resume.textContent = 'a run is in flight';
     } else {
-      resume.textContent = 'resume this session here';
+      // The owner's words: navigate to the conversation with this
+      // session loaded and keep working on it. The label says that,
+      // because "resume" read like starting a run in place.
+      resume.textContent = 'continue in the conversation';
       resume.addEventListener('click', function () { resumeSession(replay.id); });
     }
     actions.appendChild(resume);
