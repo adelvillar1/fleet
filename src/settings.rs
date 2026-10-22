@@ -1589,10 +1589,47 @@ mod render_tests {
         dir
     }
 
+    /// The env-reading tests below serialize on this. `render` names the
+    /// truth about where a value came from — the environment included —
+    /// so a test that asserts a shape must hold the ambient names still
+    /// while it runs (KI-291: an exported `FLEET_EMBEDDING_ENDPOINT` on
+    /// the host flipped the unset count on an otherwise green machine).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Remove `name` for the duration of the guard, restoring whatever
+    /// was there before — including its absence — on the way out. The
+    /// lanes tests' own pattern, carried here.
+    struct EnvVar {
+        name: String,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVar {
+        fn absent(name: &str) -> EnvVar {
+            let previous = std::env::var_os(name);
+            std::env::remove_var(name);
+            EnvVar {
+                name: name.to_string(),
+                previous,
+            }
+        }
+    }
+
+    impl Drop for EnvVar {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(&self.name, value),
+                None => std::env::remove_var(&self.name),
+            }
+        }
+    }
+
     /// The surface is cards, never a table: every setting renders inside
     /// a box, and no line is a padded column row.
     #[test]
     fn the_surface_is_cards_and_never_a_table() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _embedding = EnvVar::absent("FLEET_EMBEDDING_ENDPOINT");
         let home = scratch("cards");
         set(&home, "pin", "stepfun").unwrap();
         set(&home, "approvals", "yes-guarded").unwrap();
@@ -1618,6 +1655,8 @@ mod render_tests {
     /// honest reading of a machine that has configured nothing.
     #[test]
     fn an_empty_home_renders_every_setting_as_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _embedding = EnvVar::absent("FLEET_EMBEDDING_ENDPOINT");
         let home = scratch("empty");
         let rendered = render(&home);
         assert!(rendered.contains("unset"), "{rendered}");
