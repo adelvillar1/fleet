@@ -1171,6 +1171,27 @@ pub const ALL_TOOLS: [Tool; 8] = [
     Tool::Todo,
 ];
 
+/// Every tool name the harness can declare, native and special, for a
+/// surface that has no run to ask.
+pub fn known_tool_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = ALL_TOOLS.iter().map(|tool| tool.name()).collect();
+    names.extend([
+        USE_SKILL_TOOL,
+        REMEMBER_TOOL,
+        SUPERSEDE_TOOL,
+        SUBAGENT_TOOL,
+        IMPROVE_TOOL,
+        CONVENTION_TOOL,
+        PLAN_TOOL,
+        DECK_TOOL,
+        VISION_TOOL,
+        WEB_TOOL,
+        COMPUTER_USE_TOOL,
+        TOOL_SEARCH_TOOL,
+    ]);
+    names
+}
+
 /// The deferred-tool search: declared only when the catalog is too large
 /// to declare whole. It executes nothing; it names the tools the next
 /// request should carry.

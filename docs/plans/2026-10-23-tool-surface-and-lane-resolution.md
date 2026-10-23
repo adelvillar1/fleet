@@ -488,11 +488,15 @@ Landed:
   the capability class, sem1 for cosine ranking with cached card
   vectors, and a floor/margin rule; lexical fallback when sem1 is
   unavailable. No language model is in the resolution path.
+- **The advisor (increment 6's visible half).** `fleet tools`,
+  `fleet tools scan`, and `fleet tools advise` read the session archive
+  and file build/fix/adopt/retire suggestions. Deterministic; no model,
+  no lane, no spend.
 
 Not built, and named rather than implied:
 
-- The `ToolResolution` session record, `fleet tools audit`, and the
-  resolution rates.
+- The `ToolResolution` session record; the scan reads what the log
+  already records, so the resolutions by method are still missing.
 - Tool-result elision with spill artifacts and the todo ledger's
   re-injection after a fold.
 - The typed `ToolResult`/artifacts/cancellation/per-turn cap.

@@ -69,6 +69,31 @@ The sys1 lane gained one task for this: `tool_route` in
 over the closed set. It is a vendored-file change; the upstream core
 needs the same task to survive a re-vendor.
 
+## The advisor
+
+`fleet tools` lists the eight built-ins. `fleet tools scan --sessions N`
+reads the most recent N session logs and counts, per name: calls,
+errors, denials, alias recoveries, unknown names, repeated
+(name, arguments) calls, `tool_search` results that found nothing, and
+the bash commands whose first word is `rg`/`grep`/`find`/`fd`/`bed`/`awk`
+— work `grep`, `glob`, or `edit` already covers.
+
+`fleet tools advise` turns those counts into four kinds of suggestion:
+
+- **build** — a name the model called that nothing answers, or a
+  `tool_search` that found no tool.
+- **fix** — a tool that fails at least a quarter of its calls over at
+  least three calls.
+- **adopt** — an alias the model reached for, or bash doing search and
+  edit work a native tool owns.
+- **retire** — enabled servers nobody called, in one row.
+
+The scan and the advice are deterministic: they read files and spend
+nothing. On this machine's last 30 sessions the first run found a
+`write_file` failing 18 of 22 calls, `remember` failing 10 of 18, 117
+bash calls doing grep/glob/sed work, and thirteen enabled servers with
+no calls — which is the surface doing its job.
+
 ## Not built yet
 
 Named here rather than implied by the plan: the `ToolResolution`

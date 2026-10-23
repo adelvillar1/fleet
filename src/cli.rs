@@ -63,6 +63,10 @@ pub enum Command {
     /// servers as cards; `scan`, `import`, `enable`, `disable`,
     /// `remove`, and `health` are the rest of the surface.
     Mcp(McpOptions),
+    /// The tool surface: the bare command lists the eight built-ins;
+    /// `scan` counts what the sessions actually called, and `advise`
+    /// turns those counts into build/fix/adopt/retire suggestions.
+    Tools(ToolsOptions),
     /// The self-maintenance surface: the bare command lists every
     /// proposal in both stores; `apply` runs one through the gate and
     /// `undo` reverts an applied one.
@@ -405,6 +409,25 @@ pub enum McpAction {
     Health,
 }
 
+/// Options for `fleet tools`: the tool surface's own card, the usage
+/// scan over the session archive, and the advisor over that scan.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ToolsOptions {
+    pub action: ToolsAction,
+}
+
+/// What `fleet tools` was asked to do.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ToolsAction {
+    /// The eight built-ins with their one-line contract.
+    List,
+    /// Count what the last N sessions called, errored on, and reached
+    /// for by a name nothing answers.
+    Scan { sessions: usize },
+    /// Turn the scan into evidence-backed suggestions.
+    Advise { sessions: usize },
+}
+
 /// What `fleet cron` was asked to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CronAction {
@@ -529,6 +552,12 @@ usage:
                                 fires on its own; --force folds one that
                                 is still under it
   fleet lanes                    probe the four vendored lanes' health
+  fleet tools [scan|advise] [--sessions N]
+                                the eight built-in tools; scan counts the
+                                last N sessions' calls, errors, unknown
+                                names and bash work a native tool covers;
+                                advise turns the counts into build, fix,
+                                adopt and retire suggestions
   fleet providers                list the routing roster and per-provider state
   fleet calib [--day <date>] [--calibration]
                                 the calibration stream: one day's rows by op;
@@ -731,6 +760,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "skills" => parse_skills(rest),
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
+        "tools" => parse_tools(rest),
         "improve" => parse_improve(rest),
         "vault" => parse_vault(rest),
         "remember" => parse_remember(rest),
@@ -1332,6 +1362,56 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
 /// the registry (`harness:name` when a name is discovered twice), and
 /// `enable`, `disable`, `remove` address one server by name, and
 /// `health` probes every configured server live.
+/// `fleet tools`: the bare command lists the built-ins; `scan` and
+/// `advise` read the same window of session logs. One window flag, and
+/// the same default when it is absent.
+fn parse_tools(args: &[String]) -> Result<Command, String> {
+    let Some(subcommand) = args.first() else {
+        return Ok(Command::Tools(ToolsOptions {
+            action: ToolsAction::List,
+        }));
+    };
+    let rest = &args[1..];
+    let sessions = |rest: &[String]| -> Result<usize, String> {
+        let mut sessions = crate::tool_advisor::DEFAULT_WINDOW;
+        let mut index = 0;
+        while index < rest.len() {
+            match rest[index].as_str() {
+                "--sessions" => {
+                    index += 1;
+                    let value = rest
+                        .get(index)
+                        .ok_or_else(|| "--sessions needs a number".to_string())?;
+                    sessions = value
+                        .parse()
+                        .map_err(|_| format!("`{value}` is not a session count"))?;
+                }
+                other => return Err(format!("unknown flag `{other}`")),
+            }
+            index += 1;
+        }
+        if sessions == 0 {
+            return Err("--sessions must be at least 1".to_string());
+        }
+        Ok(sessions)
+    };
+    match subcommand.as_str() {
+        "scan" => Ok(Command::Tools(ToolsOptions {
+            action: ToolsAction::Scan {
+                sessions: sessions(rest)?,
+            },
+        })),
+        "advise" => Ok(Command::Tools(ToolsOptions {
+            action: ToolsAction::Advise {
+                sessions: sessions(rest)?,
+            },
+        })),
+        other => Err(format!(
+            "unknown tools subcommand `{other}`; the verbs are list (bare), scan, advise"
+        )),
+    }
+}
+
 fn parse_mcp(args: &[String]) -> Result<Command, String> {
     let Some(subcommand) = args.first() else {
         return Ok(Command::Mcp(McpOptions {
@@ -3046,6 +3126,26 @@ mod tests {
                 duplicates: false,
             })
         );
+        assert_eq!(
+            parse(&args(&["tools"])).unwrap(),
+            Command::Tools(ToolsOptions {
+                action: ToolsAction::List
+            })
+        );
+        assert_eq!(
+            parse(&args(&["tools", "scan", "--sessions", "5"])).unwrap(),
+            Command::Tools(ToolsOptions {
+                action: ToolsAction::Scan { sessions: 5 }
+            })
+        );
+        assert_eq!(
+            parse(&args(&["tools", "advise"])).unwrap(),
+            Command::Tools(ToolsOptions {
+                action: ToolsAction::Advise { sessions: 20 }
+            })
+        );
+        assert!(parse(&args(&["tools", "advise", "--sessions", "0"])).is_err());
+        assert!(parse(&args(&["tools", "nope"])).is_err());
         assert_eq!(
             parse(&args(&["skills", "--curate", "--proposed"])).unwrap(),
             Command::Skills(SkillsOptions {

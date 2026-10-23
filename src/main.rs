@@ -158,6 +158,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
+        Ok(Command::Tools(options)) => tools_command(&options),
         Ok(Command::Improve(options)) => improve_command(&options),
         Ok(Command::Vault(options)) => vault_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
@@ -969,6 +970,42 @@ fn load_skills(user_home: Option<&str>, home: &std::path::Path) -> Vec<fleet::sk
 /// than failing. The two failures are a `--show` naming a draft that
 /// does not exist and a `--show` name that is not a bare name (a path
 /// separator or a parent component addresses a file, not a draft).
+/// `fleet tools`: the eight built-ins, the usage scan over the session
+/// archive, and the advisor over that scan. The scan reads files and
+/// spends nothing; the advice is a rule over its counts, so the whole
+/// surface answers without a lane or a model.
+fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
+    if matches!(options.action, cli::ToolsAction::List) {
+        for tool in fleet::tools::ALL_TOOLS {
+            let spec = tool.spec();
+            println!("{}  {}", spec.name(), spec.description());
+        }
+        println!(
+            "\ndeferred past {} tools or {} definition tokens; `tool_search` names the rest",
+            fleet::agent::MAX_VISIBLE_TOOLS,
+            fleet::agent::MAX_DEFINITION_TOKENS
+        );
+        return ExitCode::SUCCESS;
+    }
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let sessions = match &options.action {
+        cli::ToolsAction::Scan { sessions } | cli::ToolsAction::Advise { sessions } => *sessions,
+        cli::ToolsAction::List => unreachable!("handled above"),
+    };
+    let scan = fleet::tool_advisor::scan(&home, sessions);
+    match &options.action {
+        cli::ToolsAction::Advise { .. } => {
+            let advice = fleet::tool_advisor::advise(&scan);
+            print!("{}", fleet::tool_advisor::render_advice(&advice, &scan));
+        }
+        _ => print!("{}", fleet::tool_advisor::render_scan(&scan)),
+    }
+    ExitCode::SUCCESS
+}
+
 fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
