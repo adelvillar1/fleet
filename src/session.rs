@@ -413,10 +413,20 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
     // which is what surfaces name instead of the head's nominal stamp.
     let text = fs::read_to_string(path).ok()?;
     let last = text.lines().rev().find(|line| !line.trim().is_empty())?;
-    let (ended, served_model) = match serde_json::from_str::<Record>(last.trim()) {
-        Ok(Record::End { served_model, .. }) => (true, served_model),
-        _ => (false, None),
-    };
+    let (ended, served_model, stop_reason, turns) =
+        match serde_json::from_str::<Record>(last.trim()) {
+            Ok(Record::End {
+                stop_reason,
+                turns,
+                served_model,
+            }) => (true, served_model, Some(stop_reason), Some(turns)),
+            _ => (false, None, None, None),
+        };
+    let last_write = fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|age| age.as_secs());
     // The first owner message's first line: the archive's fallback
     // title. The text is already in hand, so this costs one pass.
     let first_text = text
@@ -477,6 +487,9 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         channel,
         compacted,
         served_model,
+        stop_reason,
+        turns,
+        last_write,
         path: path.to_path_buf(),
     })
 }
@@ -555,6 +568,21 @@ pub struct SessionSummary {
     /// (KI-073). `None` while the run is in flight, on an unrouted run,
     /// and on an unreadable log.
     pub served_model: Option<String>,
+    /// How the run ended, in the log's own words: `completed`,
+    /// `completed without a report`, `max-turns`, or `stopped by the
+    /// owner`. `None` when the log carries no `end` record — an
+    /// interrupted run or one still in flight. The archive names this
+    /// instead of a bare `ended` flag, because "finished" and "capped"
+    /// are different things to the owner who has to decide what to do
+    /// next.
+    pub stop_reason: Option<String>,
+    /// The turns the end record counted, beside `stop_reason`.
+    pub turns: Option<u64>,
+    /// The log file's own write time, in seconds since the epoch — the
+    /// archive's one liveness signal. A log with no `end` younger than
+    /// the live window may be a run on another process; an older one is
+    /// interrupted. The bound is a heuristic and a surface says so.
+    pub last_write: Option<u64>,
     pub path: PathBuf,
 }
 
@@ -618,6 +646,9 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     channel: None,
                     compacted: false,
                     served_model: None,
+                    stop_reason: None,
+                    turns: None,
+                    last_write: None,
                     path,
                 });
             }
@@ -872,10 +903,20 @@ mod tests {
         assert_eq!(summary.model, "m");
         assert!(summary.created.ends_with('Z'), "{}", summary.created);
         assert!(summary.ended);
+        // The ending rides the summary in the log's own words, with its
+        // turn count and the file's write time — what the archive needs
+        // to tell a capped run from a finished one.
+        assert_eq!(summary.stop_reason.as_deref(), Some("completed"));
+        assert_eq!(summary.turns, Some(2));
+        assert!(summary.last_write.is_some(), "{summary:?}");
         // A log with no end record reads as open.
         let open_home = temp_home("summarize-open");
         let open = Session::create(&open_home, "m").unwrap();
-        assert!(!summarize(open.path()).unwrap().ended);
+        let open_summary = summarize(open.path()).unwrap();
+        assert!(!open_summary.ended);
+        assert_eq!(open_summary.stop_reason, None);
+        assert_eq!(open_summary.turns, None);
+        assert!(open_summary.last_write.is_some(), "{open_summary:?}");
         // A log that is not ours reads as nothing.
         let stray = open_home.join("stray.jsonl");
         std::fs::write(&stray, "not a session log\n").unwrap();

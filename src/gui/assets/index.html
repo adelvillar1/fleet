@@ -253,6 +253,25 @@
   <main class="stage" id="panel-chat">
     <section class="column">
 
+      <!-- The conversation's own head: back to the work list (or open it,
+           where the column is not a column), the title with its switcher,
+           the state in words, and New. A conversation is a place with a
+           way out and a way to another, not a one-way door. -->
+      <header class="conv-head" id="conv-head" hidden>
+        <button class="conv-back" id="conv-back" type="button" title="the work list">
+          <span class="conv-back-mark" aria-hidden="true">&lsaquo;</span>work
+        </button>
+        <button class="conv-title" id="conv-title" type="button" title="switch conversations">
+          <span class="conv-name" id="conv-name">conversation</span>
+          <span class="conv-caret" aria-hidden="true">&#9662;</span>
+        </button>
+        <span class="conv-state" id="conv-state" data-state="idle" hidden></span>
+        <button class="conv-act" id="conv-rename" type="button" title="rename this conversation"
+                aria-label="rename this conversation">&#9998;</button>
+        <button class="conv-act conv-new" id="conv-new" type="button"
+                title="new conversation" aria-label="new conversation">+</button>
+      </header>
+
       <div class="empty" id="empty">
         <p class="empty-eyebrow" id="empty-eyebrow">fleet &middot; local console</p>
         <h1 id="empty-title">What are we building?</h1>
@@ -346,7 +365,7 @@
         <div class="queue-chip" id="queue-chip" hidden>
           <div class="queue-head">
             <span id="queue-count">queued</span>
-            <span class="queue-note">sends when the run ends &middot; a reload drops it</span>
+            <span class="queue-note" id="queue-note">sends when the run ends &middot; a reload drops it</span>
           </div>
           <div class="queue-list" id="queue-list"></div>
         </div>
@@ -501,6 +520,16 @@
        The cards are built in the script from the read document, because
        what a day with no route rows looks like is a fact about the day
        and not about the markup. -->
+  <!-- The work column: every conversation and background run, grouped by
+       what needs the owner. It rides beside the conversation as its own
+       grid column on the work surface, and becomes an overlay sheet where
+       there is no room for one. One list serves both, so a row cannot mean
+       two different things depending on how it was reached. -->
+  <aside class="work-col" id="work-col" hidden aria-label="work">
+    <div class="work-head" id="work-head"></div>
+    <div class="work-list" id="work-list"></div>
+  </aside>
+
   <main class="stage stage-board" id="panel-router" hidden>
     <div class="board" id="router-board"></div>
   </main>
@@ -531,12 +560,9 @@
     <div class="board" id="skills-board"></div>
   </main>
 
-  <!-- The sessions. The archive as cards; a row opens that session's
-       replay inline, and the replay's resume re-anchors the face to that
-       log — the same seed the TUI's picker performs, one surface over. -->
-  <main class="stage stage-board" id="panel-sessions" hidden>
-    <div class="board" id="sessions-board"></div>
-  </main>
+  <!-- The archive's panel retired into the work column above: the same
+       list is the surface, and the conversation beside it is the replay —
+       one act, not two modes. -->
 
   <!-- The calibration. The day's stream rows and the judged quality's
        fit cells, with the failover gate's state named rather than left

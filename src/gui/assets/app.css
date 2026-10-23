@@ -6091,3 +6091,323 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   .pair-body { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .pair-qr svg { width: 200px; height: 200px; margin: 0 auto; }
 }
+
+/* ------------------------------------------- work and the conversation */
+
+/* The work list is a column of the shell on the work surface, and an
+   overlay sheet where there is no room for one. One list, one meaning:
+   a row opens the conversation beside it, in place. */
+:root { --work-width: 320px; }
+
+.work-col {
+  position: absolute;
+  top: calc(var(--topbar-height) + 2px);
+  bottom: 0;
+  left: var(--rail-width);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  width: var(--work-width);
+  min-height: 0;
+  border-right: var(--card-hairline);
+  background: var(--dsw-alias-page);
+}
+
+body[data-work="open"] .stage { margin-left: var(--work-width); }
+
+.work-head { flex: 0 0 auto; padding: 14px 14px 8px; }
+
+.work-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.work-title h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+.work-title .work-count { color: var(--dsw-alias-ink-tertiary); font-size: 11px; }
+
+.work-new {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 11px;
+}
+
+.work-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface);
+}
+
+.work-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 11.5px;
+  outline: none;
+}
+
+.work-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 18px;
+}
+
+.work-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 13px 8px 5px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.work-group .work-group-why {
+  margin-left: auto;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--dsw-alias-warn);
+}
+
+.work-row {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr);
+  gap: 9px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.work-row:hover { background: var(--dsw-alias-surface); }
+
+.work-row[aria-current="true"] {
+  background: color-mix(in srgb, var(--dsw-alias-accent) 9%, var(--dsw-alias-surface));
+}
+
+.work-row .work-bar { border-radius: 3px; background: var(--dsw-alias-hairline-strong); }
+.work-row[data-state="needs-approval"] .work-bar,
+.work-row[data-state="paused"] .work-bar { background: var(--dsw-alias-warn); }
+.work-row[data-state="working"] .work-bar { background: var(--dsw-alias-ok); }
+.work-row[data-state="interrupted"] .work-bar { background: var(--dsw-alias-down); }
+
+.work-row .work-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.work-row[data-attention="true"] .work-name { font-weight: 500; }
+
+.work-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.work-meta .work-state { font-weight: 500; }
+.work-meta .work-state[data-state="needs-approval"],
+.work-meta .work-state[data-state="paused"] { color: var(--dsw-alias-warn); }
+.work-meta .work-state[data-state="working"] { color: var(--dsw-alias-ok); }
+.work-meta .work-state[data-state="interrupted"] { color: var(--dsw-alias-down); }
+
+.work-meta .work-badge {
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 9.5px;
+}
+
+.work-family {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px dashed var(--dsw-alias-hairline-strong);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.work-family b { color: var(--dsw-alias-ink); font-weight: 500; }
+
+/* The conversation's head: the way out, the way to another, and New. */
+.conv-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-bottom: var(--card-hairline);
+  background: color-mix(in srgb, var(--dsw-alias-page) 88%, transparent);
+}
+
+.conv-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 11px;
+}
+
+.conv-back:hover { border-color: var(--dsw-alias-hairline); color: var(--dsw-alias-ink); }
+.conv-back-mark { font-size: 15px; line-height: 1; }
+
+.conv-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 46ch;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-family: var(--font-display);
+  font-size: 14px;
+}
+
+.conv-title:hover { border-color: var(--dsw-alias-hairline); }
+.conv-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-caret { color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
+
+.conv-state {
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 10.5px;
+  line-height: 21px;
+  white-space: nowrap;
+}
+
+.conv-state[data-state="needs-approval"],
+.conv-state[data-state="paused"] {
+  background: color-mix(in srgb, var(--dsw-alias-warn) 14%, transparent);
+  color: var(--dsw-alias-warn);
+}
+
+.conv-state[data-state="working"] {
+  background: color-mix(in srgb, var(--dsw-alias-ok) 14%, transparent);
+  color: var(--dsw-alias-ok);
+}
+
+.conv-act {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.conv-act:hover { border-color: var(--dsw-alias-hairline); color: var(--dsw-alias-ink); }
+.conv-act.conv-new { margin-left: 0; }
+
+/* A rendered reply keeps the transcript's measure but not its
+   preformatted whitespace. */
+.assistant.md-rendered { white-space: normal; }
+.assistant .md { display: grid; gap: 10px; max-width: none; }
+.assistant .md-p { color: var(--dsw-alias-ink); font-size: 15px; line-height: 1.72; }
+.assistant .md-li { color: var(--dsw-alias-ink); font-size: 15px; line-height: 1.66; }
+.assistant .md-ul { display: grid; gap: 4px; padding-left: 20px; }
+.assistant .md-h { font-family: var(--font-display); font-weight: 400; }
+.assistant .md h3 { font-size: 18px; }
+.assistant .md h4 { font-size: 16px; }
+.assistant .md h5,
+.assistant .md h6 { font-size: 14.5px; }
+.assistant .md-code { font-size: 12px; line-height: 1.6; padding: 11px 13px; }
+.assistant .md-inline-code { font-size: 12.5px; }
+
+/* The work column is a sheet where there is no column to be. */
+@media (max-width: 1180px) {
+  body[data-work="open"] .stage { margin-left: 0; }
+  .work-col {
+    left: 0;
+    width: min(360px, 88vw);
+    box-shadow: var(--shadow-3);
+    z-index: 24;
+  }
+  body[data-work="open"] .conv-back { display: inline-flex; }
+}
+
+/* The conversation's column: a head row that takes its content, then the
+   log's 1fr. Explicit rows, because a hidden head must give its row back
+   rather than hand the 1fr track to whatever is first. */
+.column { grid-template-rows: auto minmax(0, 1fr); grid-auto-rows: auto; }
+.conv-head { grid-row: 1; grid-column: 1; }
+.empty, .log { grid-row: 2; grid-column: 1; }
+.process-strip, .seat, .actions, .commands, .composer { grid-row: auto; grid-column: 1; }
+
+.work-body { min-width: 0; }
+.work-family-wrap + .work-family-wrap { margin-top: 5px; }
+.work-family-rows { padding-left: 6px; margin-top: 3px; }
+
+/* A rendered receipt report is markdown, not preformatted text. */
+.receipt-report-text { margin: 8px 0 0; }
+.receipt-report-text .md { gap: 8px; }
+
+/* Where the list is a column beside the conversation, its way back is
+   the column itself; everywhere else the head carries it. */
+@media (min-width: 1181px) {
+  body[data-work="open"] .conv-back { display: none; }
+}

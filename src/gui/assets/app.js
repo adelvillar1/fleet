@@ -371,7 +371,16 @@
     panelDelegation: document.getElementById('panel-delegation'),
     panelMemory: document.getElementById('panel-memory'),
     panelSkills: document.getElementById('panel-skills'),
-    panelSessions: document.getElementById('panel-sessions'),
+    workCol: document.getElementById('work-col'),
+    workHead: document.getElementById('work-head'),
+    workList: document.getElementById('work-list'),
+    convHead: document.getElementById('conv-head'),
+    convBack: document.getElementById('conv-back'),
+    convTitle: document.getElementById('conv-title'),
+    convName: document.getElementById('conv-name'),
+    convState: document.getElementById('conv-state'),
+    convNew: document.getElementById('conv-new'),
+    convRename: document.getElementById('conv-rename'),
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelBots: document.getElementById('panel-bots'),
@@ -384,7 +393,7 @@
     delegationBoard: document.getElementById('delegation-board'),
     memoryBoard: document.getElementById('memory-board'),
     skillsBoard: document.getElementById('skills-board'),
-    sessionsBoard: document.getElementById('sessions-board'),
+    sessionsBoard: document.getElementById('work-list'),
     calibrationBoard: document.getElementById('calibration-board'),
     brainBoard: document.getElementById('brain-board'),
     botsBoard: document.getElementById('bots-board'),
@@ -424,6 +433,7 @@
     sendLabel: document.getElementById('send-label'),
     queueChip: document.getElementById('queue-chip'),
     queueCount: document.getElementById('queue-count'),
+    queueNote: document.getElementById('queue-note'),
     queueList: document.getElementById('queue-list'),
     runGoal: document.getElementById('run-goal'),
     runGoalBtn: document.getElementById('run-goal-btn'),
@@ -518,7 +528,12 @@
     turn: 0,
     route: null,
     stop: null,
+    // A run in flight somewhere, and the session it belongs to. The
+    // bridge drives one session at a time; the two are kept apart so a
+    // run in another conversation changes a row's words, not this
+    // composer's.
     running: false,
+    driving: '',
     dropped: 0,
     seat: null,
     seatKey: '',
@@ -589,8 +604,11 @@
     // reopening a row is the cached document and not a second read.
     sessions: null,
     sessionsAt: 0,
-    replay: null,
-    replayId: null,
+    // The work list's own state: the search, the project groups the
+    // owner folded, and the background families they opened.
+    sessionQuery: '',
+    sessionFolded: {},
+    workExpanded: {},
     // The calibration panel's read and its clock.
     calibration: null,
     calibrationAt: 0,
@@ -806,6 +824,26 @@
     return row(el0, null, function (text) {
       el0.textContent += text;
     });
+  }
+
+  // A reply renders as markdown when its block closes: streaming stays
+  // plain text (the cheapest thing to append per frame), and the block
+  // boundary is where the whole answer is in hand — a fenced code block
+  // can only be recognised once its fence has arrived.
+  function closeAssistant() {
+    var open = face.assistant;
+    face.assistant = null;
+    if (!open || !open.el) {
+      face.buffer = '';
+      return;
+    }
+    var el0 = open.el;
+    var text = (el0.textContent || '') + (face.buffer || '');
+    face.buffer = '';
+    el0.classList.remove('streaming');
+    el0.classList.add('md-rendered');
+    el0.textContent = '';
+    if (text) el0.appendChild(markdown(text));
   }
 
   function toolRow(event) {
@@ -1149,7 +1187,8 @@
       var report = node('div', 'receipt-report');
       var label = node('button', 'receipt-toggle', 'the closing report');
       label.type = 'button';
-      var bodyText = node('p', 'receipt-report-text', said);
+      var bodyText = node('div', 'receipt-report-text');
+      bodyText.appendChild(markdown(said));
       bodyText.hidden = true;
       label.addEventListener('click', function () {
         bodyText.hidden = !bodyText.hidden;
@@ -1165,7 +1204,7 @@
     var ask = node('button', 'replay-button', 'ask what is next');
     ask.type = 'button';
     ask.addEventListener('click', function () {
-      askFace('The run above just finished. What is the one next step you would ' +
+      ask('The run above just finished. What is the one next step you would ' +
         'take from here, and what do you need from me for it?');
     });
     actions.appendChild(ask);
@@ -1220,6 +1259,19 @@
   // called once per event from either end, which is the whole reason
   // the two cannot drift.
   function apply(event) {
+    // Every event names the session it belongs to. One conversation's
+    // words never land in another's transcript: a background run stays a
+    // row in the work list until the owner opens it, and the row's state
+    // refreshes when a seat or an ending arrives for another session.
+    if (event.session && face.session && event.session !== face.session) {
+      if (event.type === 'seat' || event.type === 'seat_cleared' ||
+          event.type === 'finished' || event.type === 'failed' ||
+          event.type === 'answered') {
+        face.sessions = null;
+        readSessions(false);
+      }
+      return;
+    }
     face.events.push(event);
     switch (event.type) {
       case 'session':
@@ -1244,8 +1296,8 @@
         // has to build the row, or a resumed history shows the owner's
         // questions with the answers missing between them.
         if (!face.assistant && event.text) {
-          var said = node('div', 'assistant');
-          said.textContent = event.text;
+          var said = node('div', 'assistant md-rendered');
+          said.appendChild(markdown(event.text));
           row(said, event);
         }
         break;
@@ -1271,7 +1323,7 @@
         face.context = Number(event.prompt);
         break;
       case 'tool_call':
-        face.assistant = null;
+        closeAssistant();
         toolRow(event);
         break;
       case 'tool_result':
@@ -1337,7 +1389,7 @@
         break;
       case 'finished':
       case 'failed':
-        face.assistant = null;
+        closeAssistant();
         face.running = false;
         face.stop = event;
         stripFinish();
@@ -1472,6 +1524,7 @@
       el.routePill.dataset.state = 'idle';
     }
 
+    paintConvHead();
     if (face.seat) {
       el.statePill.textContent = 'waiting for you';
       el.statePill.dataset.state = 'waiting';
@@ -1600,6 +1653,12 @@
     el.queueChip.hidden = !items.length;
     if (!items.length) return;
     el.queueCount.textContent = 'queued \u00b7 ' + items.length;
+    if (el.queueNote) {
+      el.queueNote.textContent = (face.driving && face.driving !== face.session)
+        ? 'a run is working in ' + conversationName(face.driving) +
+          ' \u00b7 this sends when it ends \u00b7 a reload drops it'
+        : 'sends when the run ends \u00b7 a reload drops it';
+    }
     el.queueList.textContent = '';
     items.forEach(function (text, index) {
       var row = node('div', 'queue-row');
@@ -2406,8 +2465,7 @@
         when ? when.slice(5, 16).replace('T', ' ') : '\u2014'));
       line.addEventListener('click', function () {
         el.recent.hidden = true;
-        window.location.hash = '#/sessions';
-        readReplay(row.id, true);
+        window.location.hash = '#/sessions/' + encodeURIComponent(row.id);
       });
       el.recent.appendChild(line);
     });
@@ -4907,7 +4965,8 @@
     // While a run is in flight the composer queues: one slot, sent the
     // moment the run ends. The queue is the face's own state — a reload
     // drops it, and the chip says so.
-    if (face.running || face.seat) {
+    if (face.running || face.seat ||
+        (face.driving && face.driving !== face.session)) {
       var pending = el.task.value.trim();
       if (pending) {
         face.queued.push(pending);
@@ -4958,6 +5017,7 @@
     }).then(function (reply) {
       if (reply.status === 200) {
         face.running = true;
+        face.driving = face.session;
         face.stop = null;
         face.attachments = [];
         paintAttachments();
@@ -5403,6 +5463,10 @@
     face.budget = Number(state.budget) || 0;
     face.turnBudget = Number(state.turn_budget) || 0;
     face.running = !!state.running;
+    // The session the bridge is executing, which is not always this one:
+    // a run in another conversation is a fact about that row, not a
+    // reason to disable this composer.
+    face.driving = state.driving || '';
     face.dropped = Number(state.dropped) || 0;
     face.rules = state.rules || [];
     face.seat = state.approval || null;
@@ -5607,12 +5671,13 @@
 
   try {
     var savedAside = window.localStorage.getItem('fleet-aside');
-    // A first visit keeps the labeled nav and leaves the dock closed
-    // until it is asked for; a wide desk has room for both. The topbar
-    // chip and the process strip keep the run visible either way.
-    setAside(savedAside ? savedAside === 'open' : window.innerWidth >= 1600);
+    // The dock is the owner's to open, at every width: the work column
+    // carries the run's state in the list and the strip carries it in
+    // the conversation, so a third column nobody asked for is space
+    // taken from the work.
+    setAside(savedAside === 'open');
   } catch (error) {
-    setAside(window.innerWidth >= 1600);
+    setAside(false);
   }
   if (el.asideToggle) {
     el.asideToggle.addEventListener('click', function () {
@@ -5661,6 +5726,38 @@
   el.statePill.addEventListener('click', function () {
     window.location.hash = face.session ? '#/sessions/' + encodeURIComponent(face.session) : '#/sessions';
   });
+  if (el.convBack) {
+    el.convBack.addEventListener('click', function () {
+      // The way out: the work list itself where it is a column, and the
+      // sheet's close where it is an overlay.
+      if (workOpen() && window.innerWidth <= 1180) { setWork(false); return; }
+      openWorkSurface();
+    });
+  }
+  if (el.convTitle) {
+    el.convTitle.addEventListener('click', function () { toggleWork(); });
+  }
+  if (el.convNew) {
+    el.convNew.addEventListener('click', function () { newConversation(); });
+  }
+  if (el.convRename) {
+    el.convRename.addEventListener('click', function () {
+      if (!face.session) return;
+      var row = workSelected();
+      var asked = window.prompt('name this conversation', (row && row.title) || '');
+      if (asked == null) return;
+      post('/api/session/title?session=' + encodeURIComponent(face.session), { title: asked })
+        .then(function (reply) {
+          if (reply.status !== 200) {
+            notice('the name was refused',
+              (reply.body && reply.body.error) || 'the face said no without a reason');
+            return;
+          }
+          face.sessions = null;
+          readSessions(true);
+        }).catch(function () { });
+    });
+  }
   [el.routePill, el.statePill].forEach(function (pill) {
     pill.tabIndex = 0;
     pill.setAttribute('role', 'button');
@@ -6373,10 +6470,37 @@
 
   // ------------------------------------------------- the hash addresses
 
-  // -------------------------------------------------------- the sessions panel
+  // ------------------------------------------------------------ the work surface
 
-  // The archive read: the log heads as summaries, newest first, with
-  // the session this face anchors named.
+  // The archive is the work list now: every conversation and background
+  // run under this home, grouped by what needs the owner rather than by
+  // where it was born. The state words are the bridge's own derivation —
+  // "needs-approval", "paused", "working", "active", "completed",
+  // "capped", "stopped", "interrupted", "new" — so the page cannot
+  // disagree with the archive about what a row is.
+  var WORK_STATE_WORD = {
+    'needs-approval': 'approval waiting',
+    paused: 'paused by you',
+    working: 'working',
+    active: 'active',
+    completed: 'completed',
+    capped: 'capped',
+    stopped: 'stopped by you',
+    interrupted: 'interrupted',
+    new: 'new'
+  };
+
+  // The states that mean the owner is the one holding the work up.
+  function workNeeds(state) {
+    return state === 'needs-approval' || state === 'paused';
+  }
+
+  function workStateWord(state) {
+    return WORK_STATE_WORD[state] || state || 'unknown';
+  }
+
+  // The archive read: the log heads as summaries, newest first, with the
+  // session this face anchors named and every row's derived state.
   function readSessions(force) {
     var now = Date.now();
     if (!force && face.sessions && now - face.sessionsAt < 4000) return Promise.resolve();
@@ -6388,142 +6512,37 @@
       })
       .then(function (doc) {
         face.sessions = doc;
-        if (face.panel === 'sessions') paintSessions();
+        if (face.panel === 'sessions') paintWork();
+        paintConvHead();
       })
       .catch(function () { });
   }
 
-  // One session's replay. One read per id, so reopening a row is the
-  // cached document and opening a different row is the only fetch.
-  function readReplay(id, force) {
-    if (!force && face.replayId === id && face.replay) return Promise.resolve();
-    return fetch('/api/session?id=' + encodeURIComponent(id), {
-      headers: { accept: 'application/json' }
-    })
-      .then(function (reply) {
-        if (reply.status === 401) throw new Error('token');
-        return reply.json();
-      })
-      .then(function (doc) {
-        face.replayId = id;
-        face.replay = doc;
-        if (face.panel === 'sessions') paintSessions();
-      })
-      .catch(function () { });
+  function workRows() {
+    return (face.sessions && face.sessions.sessions) || [];
   }
 
-  function paintSessions() {
-    var read = face.sessions;
-    el.sessionsBoard.textContent = '';
-    if (!read) {
-      el.sessionsBoard.appendChild(surfaceHead('Work', 'Sessions',
-        'Every run under this home, grouped by the project it was born in. A row reads its replay beside the list.', null));
-      var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'The archive read has not landed yet. It reads the session logs under this home, ' +
-        'which are this machine\u2019s own.'));
-      el.sessionsBoard.appendChild(waiting);
-      return;
-    }
-    if (read.refused && read.refused.length) {
-      el.sessionsBoard.appendChild(refusedCard(read.refused));
-      return;
-    }
-    var sessions = read.sessions || [];
-    var children = sessions.filter(function (row) { return row.kind === 'subagent'; }).length;
-    var compacted = sessions.filter(function (row) { return row.compacted; }).length;
-    var open = sessions.filter(function (row) { return !row.ended; }).length;
-    var viaChannel = sessions.filter(function (row) { return row.channel && row.channel.length; });
-    var groups = sessionGroups(sessions);
-    var instrument = surfaceInstrument('the archive', sessions.length + ' logs',
-      (read.current ? 'this face anchors ' + sessionLabel(read.current) : 'no session is anchored') +
-      (sessions.length ? ' \u00b7 newest ' + sessionShortDate(sessions[0].created) : ''),
-      [{
-        label: 'ask about the archive',
-        run: function () {
-          ask('review my recent sessions and tell me what work is still unfinished');
-        }
-      }]);
-    el.sessionsBoard.appendChild(surfaceHead('Work', 'Sessions',
-      'Every run under this home, grouped by the project it was born in. A row reads its replay beside the list.',
-      instrument));
-    el.sessionsBoard.appendChild(surfaceStrip([
-      [sessions.length, 'logs'],
-      [open, 'open', open ? 'live' : null],
-      [children, 'delegated'],
-      [compacted, 'compacted'],
-      [viaChannel.length, 'via a channel'],
-      [groups.length, 'projects']
-    ], read.current ? 'this face anchors ' + sessionLabel(read.current) : 'no session is anchored'));
+  function conversationName(id) {
+    var row = workRows().filter(function (row) { return row.id === id; })[0];
+    return (row && row.title) || sessionLabel(id);
+  }
 
-    var shown = sessions.filter(function (row) {
-      return sessionMatches(row) && sessionMatchesQuery(row);
-    });
-    var selected = !!face.replayId;
-    var split = (el.sessionsBoard.clientWidth || 0) >= 1000;
-    var docked = !split && window.innerWidth > 1180 &&
-      document.body.dataset.aside === 'open';
-    var listSpan = selected && split ? 7 : (selected ? 12 : 8);
-    var list = boardCard(listSpan, 'the archive',
-      shown.length + ' of ' + sessions.length,
-      selected
-        ? 'the row this face anchors is marked. Selecting a row reads it beside the list.'
-        : 'grouped by the project each run was born in; a group folds from its own header.');
-    list.classList.add('lib-card');
-    var tools = node('div', 'lib-tools');
-    tools.appendChild(sessionSearch());
-    list.appendChild(tools);
-    list.appendChild(filterBar([
-      { value: 'all', label: 'all', count: sessions.length },
-      { value: 'open', label: 'open', count: open },
-      { value: 'ended', label: 'ended', count: sessions.length - open },
-      { value: 'delegated', label: 'delegated', count: children },
-      { value: 'compacted', label: 'compacted', count: compacted },
-      { value: 'channel', label: 'via a channel', count: viaChannel.length }
-    ], face.sessionsFilter || 'all', function (value) {
-      face.sessionsFilter = value;
-      paintSessions();
-    }));
-    var cols = node('div', 'session-cols');
-    ['session', 'served by', 'state', 'actions'].forEach(function (label) {
-      cols.appendChild(node('span', null, label));
-    });
-    list.appendChild(cols);
+  function workSelected() {
+    return workRows().filter(function (row) { return row.id === face.session; })[0] || null;
+  }
 
-    var visible = groups.map(function (group) {
-      return {
-        name: group.name,
-        rows: group.rows.filter(function (row) {
-          return sessionMatches(row) && sessionMatchesQuery(row);
-        })
-      };
-    }).filter(function (group) { return group.rows.length; });
-    visible.forEach(function (group) {
-      var folded = !face.sessionQuery && !!face.sessionFolded[group.name];
-      list.appendChild(sessionGroupHeader(group.name, group.rows, folded));
-      if (!folded) group.rows.forEach(function (row) { list.appendChild(sessionRow(row)); });
-    });
-    if (!visible.length) {
-      list.appendChild(node('p', 'board-empty',
-        'No run in the archive matches' +
-        (face.sessionQuery ? ' \u201c' + face.sessionQuery + '\u201d' : ' this filter') +
-        '. The search reads the id, the project, the model, the channel and the kind.'));
-    }
-    el.sessionsBoard.appendChild(list);
-
-    if (selected) {
-      if (face.replay) {
-        if (split) paintReplayInto(el.sessionsBoard, face.replay, read.current, 5);
-        else if (docked) showSessionObject(face.replay, read.current);
-        else paintReplayInto(el.sessionsBoard, face.replay, read.current, 12);
-      } else {
-        var waitingReplay = boardCard(split ? 5 : 12, 'selected replay', null, null);
-        waitingReplay.appendChild(node('p', 'board-empty', 'Reading this run\u2026'));
-        el.sessionsBoard.appendChild(waitingReplay);
-      }
-    } else {
-      el.sessionsBoard.appendChild(archiveRail(groups, sessions));
-    }
+  function workAge(row) {
+    var stamp = row.created;
+    if (!stamp) return 'unknown';
+    var then = Date.parse(stamp);
+    if (isNaN(then)) return sessionShortDate(stamp);
+    var span = Math.max(0, Date.now() - then);
+    var minutes = Math.floor(span / 60000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return minutes + 'm';
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + 'h';
+    return Math.floor(hours / 24) + 'd';
   }
 
   // The project a run was born in: the workspace's last segment. A run
@@ -6534,20 +6553,30 @@
     return segments[segments.length - 1] || 'no project';
   }
 
-  function sessionGroups(sessions) {
+  function sessionLabel(id) {
+    var text = String(id || '');
+    return text.length > 13 ? text.slice(0, 13) + '\u2026' : text;
+  }
+
+  function sessionShortDate(stamp) {
+    var text = String(stamp || '');
+    return text.length >= 16 ? text.slice(5, 10) + ' ' + text.slice(11, 16) : text;
+  }
+
+  function sessionGroups(rows) {
     var map = {};
-    sessions.forEach(function (row) {
+    rows.forEach(function (row) {
       var key = sessionProject(row.workspace);
       (map[key] = map[key] || []).push(row);
     });
     var groups = Object.keys(map).map(function (name) {
-      var rows = map[name].slice().sort(function (left, right) {
+      var grouped = map[name].slice().sort(function (left, right) {
         return String(right.created || '').localeCompare(String(left.created || ''));
       });
       return {
         name: name,
-        rows: rows,
-        newest: rows.length ? String(rows[0].created || '') : ''
+        rows: grouped,
+        newest: grouped.length ? String(grouped[0].created || '') : ''
       };
     });
     groups.sort(function (left, right) {
@@ -6558,290 +6587,326 @@
     return groups;
   }
 
-  function sessionShortDate(stamp) {
-    var text = String(stamp || '');
-    return text.length >= 16 ? text.slice(5, 10) + ' ' + text.slice(11, 16) : text;
-  }
-
   function sessionMatchesQuery(row) {
     var asked = (face.sessionQuery || '').trim().toLowerCase();
     if (!asked) return true;
     var channel = (row.channel || []).join(' ');
-    return [row.id, row.workspace, row.model, row.kind, channel]
+    return [row.id, row.title, row.workspace, row.model, row.kind, row.job,
+      row.class, row.state, channel]
       .join(' ').toLowerCase().indexOf(asked) !== -1;
   }
 
-  function sessionSearch() {
-    var wrap = node('div', 'panel-search');
-    var box = node('input', 'panel-search-box');
+  // The list, painted: four groups in fixed order, because the owner's
+  // question is "what needs me" before "what exists".
+  function paintWork() {
+    if (!el.workList) return;
+    el.workHead.textContent = '';
+    el.workList.textContent = '';
+    var read = face.sessions;
+    var all = workRows();
+    var needs = all.filter(function (row) { return workNeeds(row.state); });
+    var head = node('div', 'work-title');
+    var title = node('h2', null, 'work');
+    head.appendChild(title);
+    head.appendChild(node('span', 'work-count',
+      needs.length
+        ? needs.length + (needs.length === 1 ? ' needs you' : ' need you')
+        : all.length + (all.length === 1 ? ' run' : ' runs')));
+    var fresh = node('button', 'work-new');
+    fresh.type = 'button';
+    fresh.appendChild(node('span', null, '+'));
+    fresh.appendChild(node('span', null, 'New'));
+    fresh.title = 'a new conversation';
+    fresh.addEventListener('click', function () { newConversation(); });
+    head.appendChild(fresh);
+    el.workHead.appendChild(head);
+    var search = node('div', 'work-search');
+    var box = node('input', null);
     box.type = 'search';
-    box.placeholder = 'search the archive \u2014 id, project, model, channel';
+    box.placeholder = 'id, project, model, job';
     box.value = face.sessionQuery || '';
-    box.setAttribute('aria-label', 'search the archive');
+    box.setAttribute('aria-label', 'search work');
     box.addEventListener('input', function () {
       face.sessionQuery = box.value;
-      paintSessions();
-      var again = el.sessionsBoard.querySelector('.panel-search-box');
+      paintWork();
+      var again = el.workList && el.workHead.querySelector('.work-search input');
       if (again) {
         again.focus();
         again.setSelectionRange(again.value.length, again.value.length);
       }
     });
-    wrap.appendChild(box);
-    return wrap;
+    search.appendChild(box);
+    el.workHead.appendChild(search);
+
+    if (!read) {
+      el.workList.appendChild(node('p', 'board-empty', 'Reading the archive\u2026'));
+      return;
+    }
+    if (read.refused && read.refused.length) {
+      el.workList.appendChild(node('p', 'board-empty',
+        'The archive could not be read: ' + read.refused.join('; ')));
+      return;
+    }
+    var shown = all.filter(sessionMatchesQuery);
+    var groups = {
+      needs: shown.filter(function (row) { return workNeeds(row.state); }),
+      working: shown.filter(function (row) { return row.state === 'working'; }),
+      background: shown.filter(function (row) {
+        return row.class === 'background' || row.class === 'delegated' || row.class === 'channel';
+      }),
+      earlier: shown.filter(function (row) {
+        return !workNeeds(row.state) && row.state !== 'working' &&
+          row.class !== 'background' && row.class !== 'delegated' && row.class !== 'channel';
+      })
+    };
+
+    if (groups.needs.length) {
+      el.workList.appendChild(workGroupHead('needs you', groups.needs.length));
+      groups.needs.forEach(function (row) { el.workList.appendChild(workRow(row)); });
+    }
+    if (groups.working.length) {
+      el.workList.appendChild(workGroupHead('working', groups.working.length));
+      groups.working.forEach(function (row) { el.workList.appendChild(workRow(row)); });
+    }
+    if (groups.background.length) {
+      el.workList.appendChild(workGroupHead('background', groups.background.length));
+      familyLines(groups.background).forEach(function (family) {
+        el.workList.appendChild(workFamily(family));
+      });
+    }
+    if (groups.earlier.length) {
+      el.workList.appendChild(workGroupHead('earlier', groups.earlier.length));
+      sessionGroups(groups.earlier).forEach(function (group) {
+        var folded = !face.sessionQuery && !!face.sessionFolded[group.name];
+        var head = node('button', 'work-group');
+        head.type = 'button';
+        head.setAttribute('aria-expanded', folded ? 'false' : 'true');
+        head.appendChild(node('span', null, (folded ? '\u25b8 ' : '\u25be ') + group.name));
+        head.appendChild(node('span', 'work-group-why', String(group.rows.length)));
+        head.addEventListener('click', function () {
+          face.sessionFolded[group.name] = !face.sessionFolded[group.name];
+          paintWork();
+        });
+        el.workList.appendChild(head);
+        if (!folded) group.rows.forEach(function (row) { el.workList.appendChild(workRow(row)); });
+      });
+    }
+    if (!shown.length) {
+      el.workList.appendChild(node('p', 'board-empty',
+        'Nothing under this home matches' +
+        (face.sessionQuery ? ' \u201c' + face.sessionQuery + '\u201d' : '') + '.'));
+    }
   }
 
-  function sessionGroupHeader(name, rows, folded) {
-    var head = node('button', 'session-group');
-    head.type = 'button';
-    head.setAttribute('aria-expanded', folded ? 'false' : 'true');
-    head.appendChild(node('span', 'session-group-fold', folded ? '\u25b8' : '\u25be'));
-    head.appendChild(node('span', 'session-group-name', name));
-    head.appendChild(node('span', 'session-group-count',
-      rows.length + (rows.length === 1 ? ' run' : ' runs')));
-    var open = rows.filter(function (row) { return !row.ended; }).length;
-    if (open) head.appendChild(badge(open + ' open', 'live'));
-    var inferred = rows.every(function (row) { return row.workspace_inferred; });
-    if (inferred) {
-      head.appendChild(badge('inferred', null));
-      head.title = 'the project inferred from the runs\u2019 own paths';
-    }
-    head.appendChild(node('span', 'session-group-last',
-      'newest ' + sessionShortDate(rows[0].created)));
-    head.addEventListener('click', function () {
-      face.sessionFolded[name] = !face.sessionFolded[name];
-      paintSessions();
-    });
+  // paintSessions is the name every existing trigger calls; one painter,
+  // so a stale name cannot paint a second list.
+  function paintSessions() { paintWork(); }
+
+  function workGroupHead(name, count) {
+    var head = node('div', 'work-group');
+    head.appendChild(node('span', null, name));
+    head.appendChild(node('span', 'work-group-why', String(count)));
     return head;
   }
 
-  // The rail when no run is selected: which projects the archive holds
-  // and how the last fortnight reads. Selecting a run replaces it with
-  // the replay.
-  function archiveRail(groups, sessions) {
-    var projects = boardCard(12, 'by project', groups.length + ' projects', null);
-    projects.classList.add('lib-card');
-    var list = node('div', 'rail-list');
-    var max = groups.reduce(function (value, group) {
-      return Math.max(value, group.rows.length);
-    }, 0);
-    groups.slice(0, 10).forEach(function (group) {
-      var row = node('div', 'mix-row');
-      var button = node('button', 'mix-name', group.name);
-      button.type = 'button';
-      button.title = 'search the archive for ' + group.name;
-      button.addEventListener('click', function () {
-        face.sessionQuery = group.name;
-        paintSessions();
-      });
-      row.appendChild(button);
-      var bar = node('span', 'mix-bar');
-      var fill = node('i');
-      fill.style.width = Math.round(100 * group.rows.length / max) + '%';
-      bar.appendChild(fill);
-      row.appendChild(bar);
-      row.appendChild(node('span', 'rail-em', String(group.rows.length)));
-      list.appendChild(row);
+  // One row: the state in words, the age, the project, and — for
+  // background work — the job it belongs to. Every row opens the same
+  // way, whatever its state: the conversation beside it, with a composer.
+  function workRow(row) {
+    var button = node('button', 'work-row');
+    button.type = 'button';
+    button.dataset.state = row.state || '';
+    if (workNeeds(row.state)) button.dataset.attention = 'true';
+    if (face.session === row.id) button.setAttribute('aria-current', 'true');
+    button.appendChild(node('span', 'work-bar'));
+    var body = node('span', 'work-body');
+    body.appendChild(node('span', 'work-name', row.title || sessionLabel(row.id)));
+    var meta = node('span', 'work-meta');
+    var state = node('span', 'work-state', workStateWord(row.state));
+    state.dataset.state = row.state || '';
+    meta.appendChild(state);
+    meta.appendChild(node('span', null, '\u00b7'));
+    meta.appendChild(node('span', null, sessionProject(row.workspace)));
+    meta.appendChild(node('span', null, '\u00b7'));
+    meta.appendChild(node('span', null, workAge(row)));
+    if (row.job) meta.appendChild(node('span', 'work-badge', row.job));
+    else if (row.kind === 'subagent') meta.appendChild(node('span', 'work-badge', 'child'));
+    else if (row.channel && row.channel.length) {
+      meta.appendChild(node('span', 'work-badge', row.channel[0]));
+    }
+    body.appendChild(meta);
+    button.appendChild(body);
+    button.addEventListener('click', function () { openWork(row.id); });
+    return button;
+  }
+
+  // Background work is one line per family until asked about: fourteen
+  // nightly jobs are not fourteen things the owner must read.
+  function familyLines(rows) {
+    var map = {};
+    rows.forEach(function (row) {
+      var name = row.job
+        || (row.class === 'delegated' ? 'subagents'
+          : row.class === 'channel' ? 'channel \u00b7 ' + ((row.channel && row.channel[0]) || 'peer')
+            : 'runs');
+      (map[name] = map[name] || []).push(row);
     });
-    projects.appendChild(list);
-
-    var days = boardCard(12, 'the last fourteen days', null,
-      'one bar per day a run was started, counted from the session logs.');
-    days.classList.add('lib-card');
-    var counts = {};
-    sessions.forEach(function (row) {
-      var day = String(row.created || '').slice(0, 10);
-      if (day) counts[day] = (counts[day] || 0) + 1;
+    return Object.keys(map).map(function (name) {
+      var family = map[name];
+      var newest = family.slice().sort(function (left, right) {
+        return String(right.created || '').localeCompare(String(left.created || ''));
+      })[0];
+      return {
+        name: name,
+        rows: family,
+        newest: newest,
+        open: family.filter(function (row) {
+          return row.state === 'working' || row.state === 'active' || workNeeds(row.state);
+        }).length
+      };
+    }).sort(function (left, right) {
+      return String(right.newest.created || '').localeCompare(String(left.newest.created || ''));
     });
-    var dates = Object.keys(counts).sort();
-    var newest = dates.length ? dates[dates.length - 1] : '';
-    var end = newest ? new Date(newest + 'T00:00:00Z') : new Date();
-    var strip = node('div', 'commit-bars');
-    var maxDay = 0;
-    var dayRows = [];
-    for (var back = 13; back >= 0; back -= 1) {
-      var at = new Date(end.getTime() - back * 86400000);
-      var key = at.toISOString().slice(0, 10);
-      var count = counts[key] || 0;
-      maxDay = Math.max(maxDay, count);
-      dayRows.push([key, count]);
-    }
-    dayRows.forEach(function (entry) {
-      var bar = node('span', entry[1] ? (entry[1] === maxDay ? 'max' : '') : 'zero');
-      if (entry[1]) {
-        bar.style.height = Math.max(1, Math.round(52 * Math.sqrt(entry[1] / Math.max(1, maxDay)))) + 'px';
-      }
-      bar.title = entry[0] + ': ' + entry[1] + ' runs';
-      strip.appendChild(bar);
+  }
+
+  function workFamily(family) {
+    var expanded = !!face.workExpanded[family.name];
+    var wrap = node('div', 'work-family-wrap');
+    var head = node('button', 'work-family');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    head.appendChild(node('span', null, expanded ? '\u25be' : '\u25b8'));
+    var label = node('span');
+    label.appendChild(node('b', null, family.name));
+    label.appendChild(document.createTextNode(' \u00b7 ' + family.rows.length +
+      (family.rows.length === 1 ? ' run' : ' runs') +
+      (family.open ? ' \u00b7 ' + family.open + ' active' : '') +
+      ' \u00b7 last ' + workStateWord(family.newest.state)));
+    head.appendChild(label);
+    head.addEventListener('click', function () {
+      face.workExpanded[family.name] = !face.workExpanded[family.name];
+      paintWork();
     });
-    days.appendChild(strip);
-    var axis = node('div', 'commit-axis');
-    axis.appendChild(node('span', null, dayRows[0][0].slice(5)));
-    axis.appendChild(node('span', null, dayRows[dayRows.length - 1][0].slice(5)));
-    days.appendChild(axis);
-    return surfaceRail([projects, days]);
-  }
-
-  // The archive's filter. It is the panel's own state and it never
-  // survives a relaunch: a list that quietly hides rows on the next
-  // visit is a list the owner cannot trust.
-  function sessionMatches(row) {
-    switch (face.sessionsFilter) {
-      case 'open': return !row.ended;
-      case 'ended': return !!row.ended;
-      case 'delegated': return row.kind === 'subagent';
-      case 'compacted': return !!row.compacted;
-      case 'channel': return !!(row.channel && row.channel.length);
-      default: return true;
+    wrap.appendChild(head);
+    if (expanded) {
+      var list = node('div', 'work-family-rows');
+      family.rows.forEach(function (row) { list.appendChild(workRow(row)); });
+      wrap.appendChild(list);
     }
+    return wrap;
   }
 
-  // Selecting a run is the interaction, not a navigation: the row stays
-  // selected, the replay reads beside it, and the address carries the id
-  // so back/forward and a copied link land on the same row.
-  function selectSession(id) {
-    closeDrawer();
-    face.focus = { panel: 'sessions', id: id };
-    if (face.replayId !== id) face.replay = null;
-    face.replayId = id;
-    if (window.location.hash !== '#/sessions/' + encodeURIComponent(id)) {
-      window.history.replaceState(null, '', '#/sessions/' + encodeURIComponent(id));
-    }
-    readReplay(id, true);
-    paintSessions();
-    window.setTimeout(function () {
-      var row = document.querySelector('.session-row[data-id="' + id + '"]');
-      if (row) row.focus();
-    }, 0);
-  }
-
-  function closeReplay() {
-    face.replayId = null;
-    face.replay = null;
-    face.focus = null;
-    window.history.replaceState(null, '', '#/sessions');
-    paintSessions();
-  }
-
-  // One archive row: the id, the model, the markers the summary
-  // carries, and a badge when it is the session this face anchors. A
-  // click opens the replay; a double purpose needs no second button.
-  // A session id is a timestamp and a hash. The list shows the part the
-  // owner reads — the day, the minute, the hash — and keeps the whole id
-  // in the tooltip and the copy action.
-  function sessionLabel(id) {
-    var text = String(id || '');
-    var parts = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})\d{2}Z-(.+)$/.exec(text);
-    if (!parts) return text;
-    return parts[2] + '-' + parts[3] + ' ' + parts[4] + ':' + parts[5] + ' \u00b7 ' + parts[6];
-  }
-
-  /// The origin line under a row's name: the project the session was
-  /// born in, and — for a channel conversation — which transport carried
-  /// it and who the peer is. An ordinary session in the launch directory
-  /// has nothing to say here, and says nothing.
-  function sessionWhere(row) {
-    var parts = [];
-    if (row.workspace) {
-      var full = String(row.workspace);
-      var segments = full.split('/');
-      var project = node('span', 'session-row-project', segments[segments.length - 1] || full);
-      project.title = full;
-      parts.push(project);
-    }
-    if (row.channel && row.channel.length >= 2) {
-      // The read carries (channel, peer id, name). The name is what an
-      // owner recognizes; the id is what the Bots surface matches on.
-      var peerName = row.channel.length > 2 ? row.channel[2] : row.channel[1];
-      var via = node('span', 'session-row-via',
-        'via ' + row.channel[0] + ' \u00b7 ' + (peerName || row.channel[1]));
-      via.title = row.channel[0] + ' \u00b7 ' + row.channel[1];
-      parts.push(via);
-    }
-    if (!parts.length) return null;
-    var line = node('span', 'session-row-where');
-    parts.forEach(function (part) { line.appendChild(part); });
-    return line;
-  }
-
-  function sessionRow(row) {
-    var line = node('div', 'session-row');
-    line.tabIndex = 0;
-    line.setAttribute('role', 'button');
-    line.dataset.act = 'inspect';
-    line.dataset.id = row.id;
-    line.title = row.id;
-    if (face.replayId === row.id) line.setAttribute('aria-selected', 'true');
-    var name = node('div', 'session-name');
-    var top = node('span', 'session-row-top');
-    // The owner's title when one is set, else the session's first
-    // message line the archive read carries, else the id.
-    top.appendChild(node('b', null, row.title ? clip(row.title, 48) : sessionLabel(row.id)));
-    if (row.current) top.appendChild(badge('this face', 'accent'));
-    name.appendChild(top);
-    if (row.channel && row.channel.length) {
-      name.appendChild(node('p', 'session-meta',
-        'via ' + row.channel[0] + ' \u00b7 ' + (row.channel[2] || row.channel[1])));
-    }
-    line.appendChild(name);
-    line.appendChild(node('span', 'session-model',
-      row.model || (row.ended ? '\u2014' : 'routing\u2026')));
-    var marks = node('div', 'session-marks');
-    if (row.kind) marks.appendChild(badge(row.kind, null));
-    if (row.compacted) marks.appendChild(badge('compacted', 'warn'));
-    marks.appendChild(badge(row.ended ? 'ended' : 'open', row.ended ? null : 'live'));
-    line.appendChild(marks);
-    var current = (face.sessions && face.sessions.current) || '';
-    var acts = node('div', 'row-actions');
-    // "Open" is the chat experience with this session's history loaded,
-    // first message at the top and the last one above the composer — the
-    // owner's spec. Reading a replay beside the list stays the row's own
-    // click, so scanning the archive never costs the place.
-    if (row.id !== current && !face.running) {
-      acts.appendChild(rowAction('open', 'open this conversation with its history', function () {
-        resumeSession(row.id);
-      }, true));
+  // The conversation's head: the way out, the way to another, the state
+  // in words, and New. Shown whenever a conversation is loaded, so the
+  // face never reads as a one-way door.
+  function paintConvHead() {
+    if (!el.convHead) return;
+    var row = workSelected();
+    el.convHead.hidden = !face.session;
+    if (!face.session) return;
+    el.convName.textContent = (row && row.title) || sessionLabel(face.session);
+    el.convTitle.title = (row && row.title) || face.session;
+    if (row) {
+      el.convState.hidden = false;
+      el.convState.textContent = workStateWord(row.state);
+      el.convState.dataset.state = row.state || '';
     } else {
-      acts.appendChild(rowAction('open', 'read this replay', function () {
-        selectSession(row.id);
-      }, true));
+      el.convState.hidden = true;
     }
-    acts.appendChild(rowAction('copy', 'copy the session id', function () {
-      if (navigator.clipboard) navigator.clipboard.writeText(row.id).catch(function () { });
-      notice('the session id is copied', row.id);
-    }));
-    line.appendChild(acts);
-    line.addEventListener('click', function () { selectSession(row.id); });
-    line.addEventListener('keydown', function (event) {
-      var card = line.closest('.lib-card') || line.parentNode;
-      var rows = Array.prototype.slice.call(card.querySelectorAll('.session-row'));
-      var at = rows.indexOf(line);
-      if (event.key === 'ArrowDown' && at < rows.length - 1) {
-        event.preventDefault();
-        rows[at + 1].focus();
-        selectSession(rows[at + 1].dataset.id);
-      } else if (event.key === 'ArrowUp' && at > 0) {
-        event.preventDefault();
-        rows[at - 1].focus();
-        selectSession(rows[at - 1].dataset.id);
-      } else if (event.key === 'Escape') {
-        event.preventDefault();
-        closeReplay();
-      } else if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        selectSession(row.id);
-      }
-    });
-    return line;
   }
 
-  function replayActions(replay, current) {
+  function workOpen() {
+    return document.body.dataset.work === 'open';
+  }
+
+  function setWork(open) {
+    document.body.dataset.work = open ? 'open' : '';
+    if (el.workCol) el.workCol.hidden = !open;
+    if (open) paintWork();
+  }
+
+  function toggleWork() {
+    // Where the list is a column it is already the switcher: the title
+    // brings it to the front rather than closing the place the owner is
+    // switching from. Where it is a sheet, the title opens and closes it.
+    if (window.innerWidth > 1180) { setWork(true); return; }
+    setWork(!workOpen());
+  }
+
+  // Open a work item in place: resume its log into the conversation
+  // beside the list, or — when it is already the open one — just keep
+  // the place. One verb, whatever the row's state; the resume refuses
+  // only a run in flight in that same session, which is the one case
+  // where reading would race the writer.
+  function openWork(id, opts) {
+    if (!id) return Promise.resolve();
+    var options = opts || {};
+    var same = face.session === id;
+    face.session = id;
+    face.focus = { panel: 'sessions', id: id };
+    if (!options.keepHash) {
+      try {
+        window.history.replaceState(null, '', '#/sessions/' + encodeURIComponent(id));
+      } catch (error) { }
+    }
+    face.panel = 'sessions';
+    setWork(true);
+    if (window.innerWidth <= 1180) setWork(false);
+    var driven = face.driving === id && face.running;
+    if (same || driven) {
+      paintWork();
+      paintConvHead();
+      return Promise.resolve();
+    }
+    return post('/api/resume', { session: id }).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('that conversation would not open',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+        return;
+      }
+      face.sessions = null;
+      return Promise.resolve(load(true)).then(function () {
+        face.stick = true;
+        var toLast = function () {
+          var rows = face.stream ? face.stream.children : [];
+          var last = rows.length ? rows[rows.length - 1] : null;
+          if (last && last.scrollIntoView) last.scrollIntoView({ block: 'end' });
+          else if (el.log) el.log.scrollTop = el.log.scrollHeight;
+        };
+        toLast();
+        window.setTimeout(toLast, 80);
+        paintWork();
+        paintConvHead();
+        readSessions(true);
+      });
+    }).catch(function () { });
+  }
+
+  // New is a real conversation: the route writes the log, so the work
+  // list holds it before its first message and the next run lands in it.
+  function newConversation() {
+    return post('/api/session/new', {}).then(function (reply) {
+      if (reply.status !== 200 || !reply.body || !reply.body.id) {
+        notice('a new conversation was refused',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+        return;
+      }
+      face.sessions = null;
+      setWork(true);
+      return openWork(reply.body.id);
+    }).catch(function () { });
+  }
+
+  // A branch's log reads in the drawer, over the live conversation
+  // rather than instead of it: the owner keeps watching the run and
+  // still reads the child's records.
+  function showSessionObject(replay, current) {
+    var summary = (replay.model || 'routing\u2026') +
+      (replay.kind ? ' \u00b7 ' + replay.kind : '') +
+      ' \u00b7 ' + (replay.ended
+        ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
+        : 'no end record \u2014 the run was interrupted');
     var actions = node('div', 'replay-actions');
-    var back = node('button', 'replay-button');
-    back.type = 'button';
-    back.textContent = 'close the replay';
-    back.addEventListener('click', closeReplay);
-    actions.appendChild(back);
     var copy = node('button', 'replay-button');
     copy.type = 'button';
     copy.textContent = 'copy id';
@@ -6851,23 +6916,26 @@
       window.setTimeout(function () { copy.textContent = 'copy id'; }, 1200);
     });
     actions.appendChild(copy);
-    var resume = node('button', 'replay-button replay-resume');
-    resume.type = 'button';
-    if (replay.id === current) {
-      resume.disabled = true;
-      resume.textContent = 'this face anchors this session';
-    } else if (face.running) {
-      resume.disabled = true;
-      resume.textContent = 'a run is in flight';
+    var open = node('button', 'replay-button replay-resume');
+    open.type = 'button';
+    open.textContent = replay.id === current
+      ? 'this is the open conversation'
+      : 'open in the conversation';
+    if (replay.id !== current) {
+      open.addEventListener('click', function () {
+        closeDrawer();
+        openWork(replay.id);
+      });
     } else {
-      // The owner's words: navigate to the conversation with this
-      // session loaded and keep working on it. The label says that,
-      // because "resume" read like starting a run in place.
-      resume.textContent = 'continue in the conversation';
-      resume.addEventListener('click', function () { resumeSession(replay.id); });
+      open.disabled = true;
     }
-    actions.appendChild(resume);
-    return actions;
+    actions.appendChild(open);
+    openDrawer('session \u00b7 ' + sessionLabel(replay.id), [
+      ['the run', node('p', 'derivation', summary)],
+      ['related', relatedFor('session', replay.id)],
+      ['the replay', replayBody(replay)],
+      ['what you can do', actions]
+    ]);
   }
 
   function replayBody(replay) {
@@ -6875,8 +6943,7 @@
     if (replay.omitted) {
       wrap.appendChild(node('p', 'board-empty',
         replay.omitted + ' earlier card' + (replay.omitted === 1 ? ' is' : 's are') +
-        ' left out of this preview. The log holds them; the preview shows the newest ' +
-        'and the resume reseeds from the whole log.'));
+        ' left out of this preview. The log holds them.'));
     }
     var lines = node('div', 'replay-lines');
     (replay.cards || []).forEach(function (entry) { lines.appendChild(replayLine(entry)); });
@@ -6887,61 +6954,11 @@
     return wrap;
   }
 
-  // The replay in the dock, for a narrow track: the same run summary,
-  // the same lines, and the same actions, without a second board card.
-  function showSessionObject(replay, current) {
-    var summary = (replay.model || 'routing\u2026') +
-      (replay.kind ? ' \u00b7 ' + replay.kind : '') +
-      ' \u00b7 ' + (replay.ended
-        ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
-        : 'no end record \u2014 the run was interrupted');
-    openDrawer('session \u00b7 ' + sessionLabel(replay.id), [
-      ['the run', node('p', 'derivation', summary)],
-      ['related', relatedFor('session', replay.id)],
-      ['the replay', replayBody(replay)],
-      ['what you can do', replayActions(replay, current)]
-    ]);
-  }
-
-  // The replay card: the head the start record pinned, the summary the
-  // end record and the compaction marks carry, the resume that
-  // re-anchors this face, and the cards themselves.
-  function paintReplayInto(board, replay, current, span) {
-    if (!replay) return;
-    if (replay.refused && replay.refused.length) {
-      board.appendChild(refusedCard(replay.refused));
-      return;
-    }
-    var summary = (replay.model || 'routing\u2026') +
-      (replay.kind ? ' \u00b7 ' + replay.kind : '') +
-      ' \u00b7 ' + (replay.ended
-        ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
-        : 'no end record \u2014 the run was interrupted');
-    var card = boardCard(span || 5, 'replay \u00b7 ' + sessionLabel(replay.id), replay.created, summary);
-    card.appendChild(replayActions(replay, current));
-    card.appendChild(relatedFor('session', replay.id));
-    card.appendChild(replayBody(replay));
-    board.appendChild(card);
-  }
-
   // One replayed record, as a line. The vocabulary is the live
   // transcript's, narrowed to what a log can reconstruct.
   function replayLine(entry) {
     var line = node('div', 'replay-line');
     line.dataset.kind = entry.type;
-    line.tabIndex = 0;
-    line.setAttribute('role', 'button');
-    line.addEventListener('click', function () {
-      openDrawer('replay \u00b7 ' + entry.type, [
-        ['the record', node('pre', 'raw', JSON.stringify(entry, null, 2))]
-      ]);
-    });
-    line.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        line.click();
-      }
-    });
     if (entry.type === 'message') {
       line.dataset.role = entry.role;
       line.appendChild(node('span', 'replay-who', entry.role === 'owner' ? 'you' : 'fleet'));
@@ -6949,75 +6966,20 @@
     } else if (entry.type === 'tool_result') {
       line.appendChild(node('span', 'replay-who', 'tool \u00b7 ' + entry.tool));
       line.appendChild(node('span', 'replay-text', entry.preview || ''));
-      line.appendChild(badge(entry.approved ? 'approved' : 'denied',
-        entry.approved ? null : 'down'));
     } else if (entry.type === 'lane') {
       line.appendChild(node('span', 'replay-who', 'lane \u00b7 ' + entry.lane));
       line.appendChild(node('span', 'replay-text', entry.tools + ' tools joined the run'));
-    } else if (entry.type === 'skills') {
-      line.appendChild(node('span', 'replay-who', 'skills'));
-      line.appendChild(node('span', 'replay-text', entry.loaded + ' declared on the run'));
-    } else if (entry.type === 'memory') {
-      line.appendChild(node('span', 'replay-who', 'memory'));
-      line.appendChild(node('span', 'replay-text',
-        entry.facts + ' facts rode the turn\u2019s context' +
-        (entry.shape ? ' \u00b7 shape ' + entry.shape : ' \u00b7 unclassified')));
-    } else if (entry.type === 'compacted') {
-      line.appendChild(node('span', 'replay-who', 'compacted'));
-      line.appendChild(node('span', 'replay-text',
-        entry.turns + ' turns became one summary \u00b7 ' +
-        entry.before + ' \u2192 ' + entry.after + ' tokens'));
-    } else if (entry.type === 'channel') {
-      // The booking the log opens with: which transport carried this
-      // conversation and who the peer is. It reads here rather than
-      // falling through to a bare type name, which is what a record the
-      // page does not know looks like.
-      line.appendChild(node('span', 'replay-who', 'channel'));
-      line.appendChild(node('span', 'replay-text',
-        'via ' + entry.channel + ' \u00b7 ' + (entry.peer || entry.peer_id || 'an unnamed peer')));
     } else {
       line.appendChild(node('span', 'replay-who', entry.type));
     }
     return line;
   }
 
-  // The resume: re-anchor this face to the replayed log. The reply says
-  // whether an agent took the anchor, because a face without one still
-  // resumes as a viewer, and saying nothing would leave the owner
-  // guessing which of the two happened.
-  function resumeSession(id) {
-    post('/api/resume', { session: id }).then(function (reply) {
-      if (reply.status !== 200) {
-        notice('the resume was refused',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
-        return;
-      }
-      face.sessions = null;
-      face.replay = null;
-      face.replayId = null;
-      notice('opened ' + id, reply.body.agent === false
-        ? 'this face has no agent behind it; the conversation is here to read'
-        : 'the whole history is loaded; the next message continues it');
-      face.session = id;
-      window.location.hash = '#/chat';
-      // The last message is the current one: once the history has landed,
-      // the log sticks to its bottom rather than leaving the owner at the
-      // top of a long conversation. The last row is scrolled into view
-      // rather than the container's scrollTop being set once, because the
-      // rows land across the replay and a single assignment can run
-      // before the layout knows the height.
-      Promise.resolve(load(true)).then(function () {
-        face.stick = true;
-        var toLast = function () {
-          var rows = face.stream ? face.stream.children : [];
-          var last = rows.length ? rows[rows.length - 1] : null;
-          if (last && last.scrollIntoView) last.scrollIntoView({ block: 'end' });
-          else if (el.log) el.log.scrollTop = el.log.scrollHeight;
-        };
-        toLast();
-        window.setTimeout(toLast, 80);
-      });
-    }).catch(function () { });
+  // The switcher is the same list, so a row cannot mean two things.
+  function openWorkSurface() {
+    if (window.location.hash.indexOf('#/sessions') === 0) return;
+    window.location.hash = '#/sessions' + (face.session
+      ? '/' + encodeURIComponent(face.session) : '');
   }
 
   // ---------------------------------------------------- the calibration panel
@@ -11096,7 +11058,7 @@
     delegation: el.panelDelegation,
     memory: el.panelMemory,
     skills: el.panelSkills,
-    sessions: el.panelSessions,
+
     calibration: el.panelCalibration,
     'second-brain': el.panelSecondBrain,
     bots: el.panelBots,
@@ -11111,17 +11073,23 @@
     var focusId = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : '';
     var known = ROUTES.filter(function (route) { return route[0] === which; })[0];
     var address = which === 'chat' || !known ? 'chat' : which;
+    // The work surface is not a panel of its own any more: it is the
+    // conversation with the work column beside it, so the two are one
+    // place with one verb (open in place) instead of a list you leave.
+    var work = address === 'sessions';
     closeDrawer();
     face.panel = address;
     usageRecord('panels', address, 'opens');
     face.focus = focusId ? { panel: address, id: focusId } : null;
     try { window.localStorage.setItem('fleet-panel', address); } catch (error) { }
     markRail();
+    setWork(work);
     Object.keys(PANEL_EL).forEach(function (key) {
-      PANEL_EL[key].hidden = key !== address;
+      PANEL_EL[key].hidden = work ? key !== 'chat' : key !== address;
     });
-    el.panelLater.hidden = Boolean(PANEL_EL[address]);
-    if (!PANEL_EL[address]) {
+    var panelHere = PANEL_EL[address] || (work ? el.panelChat : null);
+    el.panelLater.hidden = Boolean(panelHere);
+    if (!panelHere) {
       var named = known || [which, which];
       el.laterTitle.textContent = named[1];
       el.laterNote.textContent = named[1] + ' is a later increment of the same plan. ' +
@@ -11141,17 +11109,20 @@
         readAccess(true).then(paintBots);
       },
       sessions: function () {
-        if (face.focus && face.focus.id) face.replayId = face.focus.id;
-        paintSessions();
+        paintWork();
+        paintConvHead();
+        var asked = face.focus && face.focus.id ? face.focus.id : '';
+        if (asked && asked !== face.session) {
+          openWork(asked, { keepHash: true });
+          return;
+        }
         readSessions(true).then(function () {
-          if (!face.replayId && face.sessions && (face.sessions.sessions || []).length) {
-            face.replayId = face.sessions.sessions[0].id;
-            face.focus = { panel: 'sessions', id: face.replayId };
-            window.history.replaceState(null, '',
-              '#/sessions/' + encodeURIComponent(face.replayId));
-          }
-          paintSessions();
-          if (face.replayId) readReplay(face.replayId, true).then(paintSessions);
+          var rows = workRows();
+          var needs = rows.filter(function (row) { return workNeeds(row.state); })[0];
+          var pick = face.session || (needs || rows[0] || {}).id;
+          if (pick) return openWork(pick);
+          paintWork();
+          paintConvHead();
         });
       },
       calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },

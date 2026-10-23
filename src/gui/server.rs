@@ -239,6 +239,9 @@ async fn serve_connection(
         ("GET", "/apple-touch-icon.png") => {
             write_blob(&mut stream, "image/png", ICON_CACHE, ICON_192).await
         }
+        // A browser asks for this unprompted and logs a 404 in the console
+        // when it is missing (KI-299); the 192 icon answers it.
+        ("GET", "/favicon.ico") => write_blob(&mut stream, "image/png", ICON_CACHE, ICON_192).await,
         ("GET", "/app.css") => {
             let reply = if query_value(&request.query, "v") == Some(ASSET_HASH) {
                 versioned_asset("text/css; charset=utf-8", STYLES)
@@ -626,6 +629,19 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        // Create a conversation: the New control writes a real session,
+        // so the work list holds it before its first message and the
+        // next run posted with this id lands in it.
+        ("POST", "/api/session/new") => match bridge.new_session() {
+            Ok(id) => {
+                write_reply(
+                    &mut stream,
+                    api(200, json!({"type": "session", "id": id, "created": true})),
+                )
+                .await
+            }
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
         // Name a session: the owner's title for the archive.
         ("POST", "/api/session/title") => {
             let body = match read_body(&mut stream, &request, rest).await {
@@ -1574,7 +1590,7 @@ pub(crate) fn versioned_asset(content_type: &'static str, body: &'static str) ->
 /// serves cannot 404 on the remote face or the other way round.
 pub(crate) fn icon_for(path: &str) -> Option<&'static [u8]> {
     match path {
-        "/icon-192.png" | "/apple-touch-icon.png" => Some(ICON_192),
+        "/icon-192.png" | "/apple-touch-icon.png" | "/favicon.ico" => Some(ICON_192),
         "/icon-512.png" => Some(ICON_512),
         _ => None,
     }

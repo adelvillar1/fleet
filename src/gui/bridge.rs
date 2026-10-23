@@ -514,6 +514,16 @@ impl Bridge {
         self.model.clone()
     }
 
+    /// Create a new conversation and return its id: the New control's
+    /// one write. The log exists immediately, empty but for its `start`
+    /// record, so the work list can show the conversation the owner just
+    /// made — and the next run, posted with this id, writes into it.
+    pub fn new_session(&self) -> Result<String, String> {
+        let created = session::Session::create(&self.home, &self.model)
+            .map_err(|error| format!("could not create a conversation: {error}"))?;
+        Ok(created.id().to_string())
+    }
+
     /// One session's live state as one document: the session, the model,
     /// the context budget the meter divides by, the ordered log, the
     /// seat, and the remembered rules. Everything the header derives —
@@ -555,6 +565,11 @@ impl Bridge {
                     "informs_failover": gate.informs_failover,
                 },
                 "running": false,
+                // The session this face is executing, if any. A surface
+                // reading a conversation that is not the driving one
+                // knows a run is elsewhere instead of guessing from a
+                // process-global flag (the run belongs to a session).
+                "driving": state.driving.clone(),
                 "dropped": 0,
                 "events": [],
                 "approval": null,
@@ -575,6 +590,7 @@ impl Bridge {
                 "informs_failover": gate.informs_failover,
             },
             "running": attached.running,
+            "driving": state.driving.clone(),
             "dropped": attached.dropped,
             "events": attached.events,
             "approval": attached.seat.as_ref().map(|seat| {
@@ -1212,7 +1228,22 @@ impl Bridge {
     pub async fn sessions(&self, current: &str) -> Value {
         let home = self.home.clone();
         let current = current.to_string();
-        match tokio::task::spawn_blocking(move || sessions_read(&home, &current)).await {
+        // The live facts come from the face's own state, not the log: an
+        // approval and a driving run are process truths, and the archive
+        // is where the owner looks when they are waiting on one.
+        let live = {
+            let state = lock(&self.state);
+            LiveFace {
+                driving: state.driving.clone(),
+                seats: state
+                    .sessions
+                    .iter()
+                    .filter(|(_, attached)| attached.seat.is_some())
+                    .map(|(id, _)| id.clone())
+                    .collect(),
+            }
+        };
+        match tokio::task::spawn_blocking(move || sessions_read(&home, &current, &live)).await {
             Ok(document) => document,
             Err(_) => json!({
                 "type": "sessions",
@@ -3700,7 +3731,100 @@ fn access_read(home: &std::path::Path) -> Value {
     })
 }
 
-fn sessions_read(home: &std::path::Path, current: &str) -> Value {
+/// How fresh an unfinished log's last write must be for the archive to
+/// call it active rather than interrupted. There is no heartbeat record
+/// — a turn writes, a pause does not — so the window is a heuristic: ten
+/// minutes covers a model call plus a tool, and a pause shows as
+/// `paused` from its control file instead. A surface that says
+/// "active" is saying "written recently", not "running".
+const LIVE_WINDOW_SECS: u64 = 600;
+
+/// The live facts a row cannot read from its own log: which session this
+/// face is driving, and which sessions hold an approval. Gathered from
+/// the face's state before the archive walk.
+#[derive(Default, Clone)]
+struct LiveFace {
+    driving: Option<String>,
+    seats: std::collections::HashSet<String>,
+}
+
+/// A row's work state, derived once here so the page never guesses:
+/// what needs the owner first, then what is running, then how it ended.
+fn work_state(entry: &session::SessionSummary, live: &LiveFace, paused: bool) -> &'static str {
+    if live.seats.contains(&entry.id) {
+        return "needs-approval";
+    }
+    if paused {
+        return "paused";
+    }
+    // The log's own end is authoritative: a run that wrote its end is
+    // over, whatever a stale driver flag says for the instant between.
+    if entry.ended {
+        return match entry.stop_reason.as_deref() {
+            Some("max-turns") => "capped",
+            Some(reason) if reason.starts_with("stopped") => "stopped",
+            _ => "completed",
+        };
+    }
+    if live.driving.as_deref() == Some(entry.id.as_str()) {
+        return "working";
+    }
+    // A log with no owner message is a conversation created and not yet
+    // used: New writes the start record, and the next message is what
+    // makes it work.
+    if entry.first_text.is_none() {
+        return "new";
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|age| age.as_secs())
+        .unwrap_or_default();
+    match entry.last_write {
+        Some(write) if now.saturating_sub(write) <= LIVE_WINDOW_SECS => "active",
+        _ => "interrupted",
+    }
+}
+
+/// Whose work a row is: the owner's own conversation, a scheduled job's
+/// run, a delegated child, or a peer's channel conversation.
+fn work_class(entry: &session::SessionSummary) -> &'static str {
+    match entry.kind.as_deref() {
+        Some(session::SCHEDULED_KIND) => "background",
+        Some(session::SUBAGENT_KIND) => "delegated",
+        _ if entry.channel.is_some() => "channel",
+        _ => "yours",
+    }
+}
+
+/// The job a scheduled run belongs to, read from the frame
+/// `cron::frame_task` writes into the run's first message. `None` for
+/// anything that is not a scheduled run or whose frame cannot be read.
+fn scheduled_job(entry: &session::SessionSummary) -> Option<String> {
+    if entry.kind.as_deref() != Some(session::SCHEDULED_KIND) {
+        return None;
+    }
+    let text = entry.first_text.as_deref()?;
+    let start = text.find("job `")? + "job `".len();
+    let rest = &text[start..];
+    let end = rest.find('`')?;
+    let name = rest[..end].trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Whether the owner paused this run: the control file the agent reads
+/// before every model call, read here without consuming it.
+fn paused_by_owner(home: &std::path::Path, id: &str) -> bool {
+    let path = crate::home::sessions_dir(home).join(format!("{id}.control"));
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|value| value.get("pause").and_then(Value::as_bool))
+        == Some(true)
+}
+
+fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value {
     let titles = load_titles(home);
     let entries = match session::list(home) {
         Ok(entries) => entries,
@@ -3715,6 +3839,7 @@ fn sessions_read(home: &std::path::Path, current: &str) -> Value {
         .iter()
         .rev()
         .map(|entry| {
+            let paused = paused_by_owner(home, &entry.id);
             json!({
                 "id": entry.id,
                 // The owner's title when one is set, else the session's
@@ -3731,12 +3856,28 @@ fn sessions_read(home: &std::path::Path, current: &str) -> Value {
                 "model": entry.serving_model(),
                 "created": entry.created,
                 "ended": entry.ended,
+                // How it ended, in the log's own words, and the turns it
+                // counted: a row can say "capped at 8 turns" instead of
+                // leaving the owner to open it and guess.
+                "stop_reason": entry.stop_reason,
+                "turns": entry.turns,
+                // The log's write time: the archive's liveness signal,
+                // bounded by the live window rather than a heartbeat the
+                // log does not carry.
+                "last_write": entry.last_write,
                 "kind": entry.kind,
                 "workspace": entry.workspace,
                 "workspace_inferred": entry.workspace_inferred,
                 "channel": entry.channel,
                 "compacted": entry.compacted,
                 "current": entry.id == current,
+                // Whose work this is, and — for a scheduled run — which
+                // job, so the background group can be one line per job
+                // instead of a pile of anonymous runs.
+                "class": work_class(entry),
+                "job": scheduled_job(entry),
+                // The one derived word the list groups by.
+                "state": work_state(entry, live, paused),
             })
         })
         .collect::<Vec<_>>();
@@ -5143,6 +5284,19 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// a refresh replays; the broadcast is what a live page reduces. The
 /// two are written from the same value, so they cannot disagree.
 fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &str, value: Value) {
+    // Every event names the session it belongs to, so a surface reading
+    // one conversation can drop another's tokens instead of appending a
+    // background run's words to the transcript it happens to have open.
+    // The field is the session the thread is driving; an empty one is a
+    // face whose launch log does not exist yet, and stays untagged.
+    let mut value = value;
+    if !session.is_empty() {
+        if let Some(object) = value.as_object_mut() {
+            object
+                .entry("session")
+                .or_insert_with(|| Value::String(session.to_string()));
+        }
+    }
     let mut notice = None;
     {
         let mut state = lock(state);
@@ -7256,7 +7410,20 @@ mod tests {
 
         // A run starts in one; the other session's flag does not move.
         bridge.run(&one, "work in one").expect("accepted");
+        // No thread stands behind this detached bridge, so the test
+        // names the driving session the way the thread would.
+        bridge.drive(&one);
         assert_eq!(bridge.state(&one)["running"], true);
+        // Both documents name the session this face is executing, so a
+        // surface reading two knows a run is working in the other one
+        // rather than inferring it from a process-global flag (KI-283's
+        // shape, one field over).
+        assert_eq!(bridge.state(&one)["driving"], one.as_str());
+        assert_eq!(
+            bridge.state(&two)["driving"],
+            one.as_str(),
+            "the other conversation is told where the run is"
+        );
         assert_eq!(bridge.state(&two)["running"], false, "{two} is not running");
         assert_eq!(
             bridge.state(&two)["attached"],
@@ -7323,5 +7490,292 @@ mod tests {
             Attachment::Escalate { name, .. } => assert_eq!(name, "pixel.png"),
             other => panic!("{other:?}"),
         }
+    }
+
+    // --- work and the conversation: the row's state, class, and job ---
+
+    /// One summary row for the derivation tests.
+    fn row(
+        id: &str,
+        kind: Option<&str>,
+        channel: Option<(&str, &str, &str)>,
+        ended: bool,
+        stop_reason: Option<&str>,
+        first_text: Option<&str>,
+        last_write: Option<u64>,
+    ) -> crate::session::SessionSummary {
+        crate::session::SessionSummary {
+            id: id.to_string(),
+            model: "deepseek-flash".to_string(),
+            first_text: first_text.map(str::to_string),
+            created: "2026-10-23T00:00:00Z".to_string(),
+            ended,
+            kind: kind.map(str::to_string),
+            workspace: None,
+            workspace_inferred: false,
+            channel: channel.map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string())),
+            compacted: false,
+            served_model: None,
+            stop_reason: stop_reason.map(str::to_string),
+            turns: ended.then_some(3),
+            last_write,
+            path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),
+        }
+    }
+
+    fn now_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|age| age.as_secs())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_work_state_names_what_needs_the_owner_first() {
+        let live = LiveFace::default();
+        let done = row(
+            "a",
+            None,
+            None,
+            true,
+            Some("completed"),
+            Some("t"),
+            Some(now_secs()),
+        );
+        assert_eq!(work_state(&done, &live, false), "completed");
+        let capped = row(
+            "b",
+            None,
+            None,
+            true,
+            Some("max-turns"),
+            Some("t"),
+            Some(now_secs()),
+        );
+        assert_eq!(work_state(&capped, &live, false), "capped");
+        let stopped = row(
+            "c",
+            None,
+            None,
+            true,
+            Some("stopped by the owner"),
+            Some("t"),
+            Some(now_secs()),
+        );
+        assert_eq!(work_state(&stopped, &live, false), "stopped");
+        // Unfinished and recently written is active; stale is interrupted.
+        let fresh = row("d", None, None, false, None, Some("t"), Some(now_secs()));
+        assert_eq!(work_state(&fresh, &live, false), "active");
+        let stale = row("e", None, None, false, None, Some("t"), Some(1));
+        assert_eq!(work_state(&stale, &live, false), "interrupted");
+        // A log with no owner message is a conversation created and unused.
+        let created = row("f", None, None, false, None, None, Some(now_secs()));
+        assert_eq!(work_state(&created, &live, false), "new");
+        // The owner's pause outranks the log; an approval outranks both.
+        assert_eq!(work_state(&fresh, &live, true), "paused");
+        let mut seated = LiveFace::default();
+        seated.seats.insert("d".to_string());
+        assert_eq!(work_state(&fresh, &seated, true), "needs-approval");
+        // A run this face drives is working — but the log's own end wins
+        // over a stale flag for the instant between.
+        let driving = LiveFace {
+            driving: Some("d".to_string()),
+            seats: Default::default(),
+        };
+        assert_eq!(work_state(&fresh, &driving, false), "working");
+        assert_eq!(work_state(&capped, &driving, false), "capped");
+    }
+
+    #[test]
+    fn the_class_and_the_job_come_from_the_log_shape() {
+        let scheduled = row(
+            "s",
+            Some(crate::session::SCHEDULED_KIND),
+            None,
+            true,
+            Some("completed"),
+            Some("[scheduled run \u{2014} job `corpus-refresh-fleet` at 2026-10-23T00:10Z]"),
+            Some(1),
+        );
+        assert_eq!(work_class(&scheduled), "background");
+        assert_eq!(
+            scheduled_job(&scheduled).as_deref(),
+            Some("corpus-refresh-fleet")
+        );
+        // The catch-up frame names its job the same way.
+        let catch_up = row(
+            "c",
+            Some(crate::session::SCHEDULED_KIND),
+            None,
+            false,
+            None,
+            Some("[scheduled run \u{2014} catch-up for job `sem1-refresh`: the 2026-10-22T00:25Z window was missed while fleet was down]"),
+            Some(1),
+        );
+        assert_eq!(scheduled_job(&catch_up).as_deref(), Some("sem1-refresh"));
+        let child = row(
+            "k",
+            Some(crate::session::SUBAGENT_KIND),
+            None,
+            true,
+            Some("completed"),
+            Some("t"),
+            Some(1),
+        );
+        assert_eq!(work_class(&child), "delegated");
+        assert!(scheduled_job(&child).is_none());
+        let peer = row(
+            "p",
+            None,
+            Some(("telegram", "42", "owner")),
+            false,
+            None,
+            Some("t"),
+            Some(1),
+        );
+        assert_eq!(work_class(&peer), "channel");
+        let mine = row("m", None, None, true, Some("completed"), Some("t"), Some(1));
+        assert_eq!(work_class(&mine), "yours");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sessions_names_the_paused_run_the_capped_one_and_the_driven_one() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-work-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let mut ended = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        ended
+            .record(&crate::session::Record::User {
+                content: "the task".into(),
+            })
+            .unwrap();
+        ended
+            .record(&crate::session::Record::End {
+                stop_reason: "max-turns".into(),
+                turns: 8,
+                served_model: None,
+            })
+            .unwrap();
+        let ended_id = ended.id().to_string();
+        let mut paused = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        paused
+            .record(&crate::session::Record::User {
+                content: "hold this".into(),
+            })
+            .unwrap();
+        let paused_id = paused.id().to_string();
+        std::fs::write(
+            crate::home::sessions_dir(&home).join(format!("{paused_id}.control")),
+            "{\"pause\": true}",
+        )
+        .unwrap();
+        let mut working = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        working
+            .record(&crate::session::Record::User {
+                content: "still going".into(),
+            })
+            .unwrap();
+        let working_id = working.id().to_string();
+
+        let live = LiveFace {
+            driving: Some(working_id.clone()),
+            seats: Default::default(),
+        };
+        let document = sessions_read(&home, "", &live);
+        let rows = document["sessions"].as_array().expect("rows");
+        let row = |id: &str| {
+            rows.iter()
+                .find(|row| row["id"] == id)
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} in {document}"))
+        };
+        let capped = row(&ended_id);
+        assert_eq!(capped["state"], "capped");
+        assert_eq!(capped["turns"], 8);
+        assert_eq!(capped["stop_reason"], "max-turns");
+        assert_eq!(capped["class"], "yours");
+        assert!(capped["last_write"].as_u64().is_some(), "{capped}");
+        assert_eq!(row(&paused_id)["state"], "paused");
+        assert_eq!(row(&working_id)["state"], "working");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_new_conversation_is_a_real_log_and_the_archive_shows_it() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-new-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let (bridge, _sources) = Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
+        let first = bridge.new_session().expect("created");
+        let second = bridge.new_session().expect("created again");
+        assert_ne!(first, second);
+        let dir = crate::home::sessions_dir(&home);
+        assert!(dir.join(format!("{first}.jsonl")).exists(), "{first}");
+        assert!(dir.join(format!("{second}.jsonl")).exists(), "{second}");
+        // Two logs, each with its own start record and nothing else.
+        for id in [&first, &second] {
+            let records =
+                crate::session::replay(&dir.join(format!("{id}.jsonl"))).expect("replays");
+            assert_eq!(records.len(), 1, "{id}: {records:?}");
+            assert!(matches!(records[0], crate::session::Record::Start { .. }));
+        }
+        // The archive shows both as conversations created and not yet used.
+        let document = bridge.sessions("").await;
+        let rows = document["sessions"].as_array().expect("rows");
+        for id in [&first, &second] {
+            let row = rows
+                .iter()
+                .find(|row| row["id"] == id.as_str())
+                .unwrap_or_else(|| panic!("{id} in {document}"));
+            assert_eq!(row["state"], "new", "{row}");
+            assert_eq!(row["class"], "yours", "{row}");
+        }
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn every_recorded_event_names_its_session() {
+        let state = Mutex::new(GuiState {
+            sessions: Default::default(),
+            launch: Some("s".to_string()),
+            driving: Some("s".to_string()),
+            permissions: crate::approvals::Mode::Ask,
+            provider_pin: None,
+            turn_budget: 0,
+            workdirs: Default::default(),
+        });
+        let (events, mut seen) = broadcast::channel(4);
+        record(&state, &events, "s", json!({"type": "token", "text": "hi"}));
+        let logged = {
+            let state = lock(&state);
+            state.sessions["s"]
+                .events
+                .back()
+                .cloned()
+                .expect("one event logged")
+        };
+        assert_eq!(logged["session"], "s", "{logged}");
+        let streamed = seen.try_recv().expect("one event broadcast");
+        assert_eq!(streamed["session"], "s", "{streamed}");
+        // A face whose launch log does not exist yet has no id to name.
+        let empty = Mutex::new(GuiState {
+            sessions: Default::default(),
+            launch: None,
+            driving: None,
+            permissions: crate::approvals::Mode::Ask,
+            provider_pin: None,
+            turn_budget: 0,
+            workdirs: Default::default(),
+        });
+        record(&empty, &events, "", json!({"type": "token", "text": "hi"}));
+        let untagged = {
+            let state = lock(&empty);
+            state.sessions[""]
+                .events
+                .back()
+                .cloned()
+                .expect("one event logged")
+        };
+        assert!(untagged.get("session").is_none(), "{untagged}");
     }
 }
