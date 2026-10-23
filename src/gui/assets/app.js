@@ -429,8 +429,8 @@
     seatNote: document.getElementById('seat-note'),
     composer: document.getElementById('composer'),
     task: document.getElementById('task'),
-    textSmaller: document.getElementById('text-smaller'),
-    textBigger: document.getElementById('text-bigger'),
+    chatSmaller: document.getElementById('chat-smaller'),
+    chatBigger: document.getElementById('chat-bigger'),
     send: document.getElementById('send'),
     sendLabel: document.getElementById('send-label'),
     queueChip: document.getElementById('queue-chip'),
@@ -475,12 +475,13 @@
 
   // ------------------------------------------------------------ the face
 
-  // The composer's text size: the one place the owner writes, so the one
-  // place the size is theirs. A step index is what is kept, not a pixel
-  // value, so the scale can change without a stored number landing
-  // between two steps. The default is the field's own measure.
-  var COMPOSER_SIZES = [12, 13, 14.5, 16, 18, 20, 22];
-  var COMPOSER_SIZE_DEFAULT = 2;
+  // The conversation's text size: the one surface the owner reads at
+  // length, so the one size that is theirs. A multiplier, not a pixel
+  // step, so a reply, its headings and its code keep their ratios as they
+  // grow; a step index is what is kept, so the scale can change without a
+  // stored number landing between two steps.
+  var CHAT_SCALES = [0.85, 1, 1.15, 1.3, 1.5, 1.7];
+  var CHAT_SCALE_DEFAULT = 1;
 
   // Everything the header and the rail derive, in one place. `rows` is
   // the transcript; `events` is the raw log the inspector reads.
@@ -489,9 +490,9 @@
     // The messages typed while a run executes, in the owner's order:
     // one flushes per run, the head first.
     queued: [],
-    // The composer's text size, as an index into COMPOSER_SIZES. The
-    // owner's own, and remembered; nothing else on the page reads it.
-    composerStep: COMPOSER_SIZE_DEFAULT,
+    // The conversation's text size, as an index into CHAT_SCALES. The
+    // owner's own, and remembered; only the transcript reads it.
+    chatStep: CHAT_SCALE_DEFAULT,
     model: '',
     workspace: '',
     // The welcome's one read and its clock. The panels keep their own
@@ -1884,52 +1885,50 @@
   // has no timer at all.
   var busyTick = null;
 
-  function paintComposerSize() {
-    var step = face.composerStep;
-    var size = COMPOSER_SIZES[step] || COMPOSER_SIZES[COMPOSER_SIZE_DEFAULT];
-    // The token lives on the form, so the field and its placeholder read
-    // it and nothing else on the page does.
-    if (el.composer) el.composer.style.setProperty('--composer-size', size + 'px');
-    var smallest = step <= 0;
-    var largest = step >= COMPOSER_SIZES.length - 1;
-    if (el.textSmaller) {
-      el.textSmaller.disabled = smallest;
-      el.textSmaller.setAttribute('aria-disabled', smallest ? 'true' : 'false');
-      el.textSmaller.title = smallest
-        ? size + 'px is the smallest text'
+  function paintChatScale() {
+    var scale = CHAT_SCALES[face.chatStep] || CHAT_SCALES[CHAT_SCALE_DEFAULT];
+    // The token lives on the transcript's scroller, so the messages and
+    // their markdown read it and the composer, strip, cards and rail do
+    // not.
+    if (el.log) el.log.style.setProperty('--chat-scale', String(scale));
+    var smallest = face.chatStep <= 0;
+    var largest = face.chatStep >= CHAT_SCALES.length - 1;
+    var percent = Math.round(scale * 100) + '%';
+    if (el.chatSmaller) {
+      el.chatSmaller.disabled = smallest;
+      el.chatSmaller.setAttribute('aria-disabled', smallest ? 'true' : 'false');
+      el.chatSmaller.title = smallest
+        ? percent + ' is the smallest text'
         : 'smaller text \u00b7 Alt+\u2193';
     }
-    if (el.textBigger) {
-      el.textBigger.disabled = largest;
-      el.textBigger.setAttribute('aria-disabled', largest ? 'true' : 'false');
-      el.textBigger.title = largest
-        ? size + 'px is the largest text'
+    if (el.chatBigger) {
+      el.chatBigger.disabled = largest;
+      el.chatBigger.setAttribute('aria-disabled', largest ? 'true' : 'false');
+      el.chatBigger.title = largest
+        ? percent + ' is the largest text'
         : 'larger text \u00b7 Alt+\u2191';
     }
-    // A taller line needs a taller field: the auto-grow reads the
-    // scroll height, which the new size just changed.
-    if (el.task) grow();
     // Reaching an end dims the press that got there. A keyboard user
     // must not be dropped with the button, so focus moves to the pair.
-    if (document.activeElement === el.textBigger && el.textBigger.disabled && el.textSmaller) {
-      el.textSmaller.focus();
-    } else if (document.activeElement === el.textSmaller && el.textSmaller.disabled && el.textBigger) {
-      el.textBigger.focus();
+    if (document.activeElement === el.chatBigger && el.chatBigger.disabled && el.chatSmaller) {
+      el.chatSmaller.focus();
+    } else if (document.activeElement === el.chatSmaller && el.chatSmaller.disabled && el.chatBigger) {
+      el.chatBigger.focus();
     }
   }
 
   // One step up or down, clamped at the ends of the scale. A press at the
   // end is not a silent no-op: the button is already dimmed and its title
   // names the smallest or largest size.
-  function stepComposerSize(delta) {
-    var next = Math.min(COMPOSER_SIZES.length - 1,
-      Math.max(0, face.composerStep + delta));
-    if (next === face.composerStep) return;
-    face.composerStep = next;
+  function stepChatScale(delta) {
+    var next = Math.min(CHAT_SCALES.length - 1,
+      Math.max(0, face.chatStep + delta));
+    if (next === face.chatStep) return;
+    face.chatStep = next;
     try {
-      window.localStorage.setItem('fleet-composer-size', String(next));
+      window.localStorage.setItem('fleet-chat-size', String(next));
     } catch (error) { }
-    paintComposerSize();
+    paintChatScale();
   }
 
   function paintComposer() {
@@ -5836,16 +5835,16 @@
     if (draft) { el.task.value = draft; grow(); }
   } catch (error) { }
 
-  // The composer's text size survives a reload like the draft does. The
-  // stored value is a step index, clamped to the scale in case an older
-  // build wrote a longer one.
+  // The conversation's text size survives a reload like the draft does.
+  // The stored value is a step index, clamped to the scale in case an
+  // older build wrote a longer one.
   try {
-    var savedSize = parseInt(window.localStorage.getItem('fleet-composer-size'), 10);
+    var savedSize = parseInt(window.localStorage.getItem('fleet-chat-size'), 10);
     if (!isNaN(savedSize)) {
-      face.composerStep = Math.min(COMPOSER_SIZES.length - 1, Math.max(0, savedSize));
+      face.chatStep = Math.min(CHAT_SCALES.length - 1, Math.max(0, savedSize));
     }
   } catch (error) { }
-  paintComposerSize();
+  paintChatScale();
 
   try {
     var savedAside = window.localStorage.getItem('fleet-aside');
@@ -5980,24 +5979,25 @@
     // explicit control.
     send();
   });
-  // The composer's text size: two presses, and the same two keys from the
-  // field itself, so a screen reader and a keyboard reach it without the
-  // pointer. Alt+arrows are the browser's own history keys, so this
-  // claims them only inside the composer, where the owner is writing.
-  if (el.textSmaller) {
-    el.textSmaller.addEventListener('click', function () { stepComposerSize(-1); });
+  // The conversation's text size: two presses in its head, and the same
+  // two keys from the composer — the owner is reading the reply while
+  // typing, so the keys live where the hands are. Alt+arrows are the
+  // browser's own history keys, so this claims them only inside the
+  // composer.
+  if (el.chatSmaller) {
+    el.chatSmaller.addEventListener('click', function () { stepChatScale(-1); });
   }
-  if (el.textBigger) {
-    el.textBigger.addEventListener('click', function () { stepComposerSize(1); });
+  if (el.chatBigger) {
+    el.chatBigger.addEventListener('click', function () { stepChatScale(1); });
   }
   el.composer.addEventListener('keydown', function (event) {
     if (!event.altKey || event.metaKey || event.ctrlKey) return;
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      stepComposerSize(1);
+      stepChatScale(1);
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
-      stepComposerSize(-1);
+      stepChatScale(-1);
     }
   });
   if (el.send) {

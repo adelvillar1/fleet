@@ -192,13 +192,16 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   arguments, the elapsed time, the output preview, and a `raw record`
   button. The tool card's press opens that detail rather than the raw
   event. The run strip's folded lines open their records the same way.
-- **The composer's text size is the owner's.** `A−`/`A+` in the
-  field's own top-right corner — and `Alt+↓`/`Alt+↑` from the field — walk a
-  fixed scale (12 to 22px, default 14.5px), dimmed at each end rather
-  than pressing into nothing, and the choice survives a reload
-  (`localStorage["fleet-composer-size"]`, a step index). The token is set
-  on the form and read by the textarea, so the transcript, cards, rail
-  and panels keep the measure they have.
+- **The conversation's text size is the owner's.** `A−`/`A+` in the
+  conversation's head — and `Alt+↓`/`Alt+↑` from the composer — step a
+  multiplier (85% to 170%, 100% by default) on the transcript. The
+  multiplier keeps the hierarchy: a reply, its headings and its code grow
+  together, and the transcript's column widens with it so the measure
+  stays roughly the same characters per line. The composer, the run
+  strip, the activity rows, the cards and the rail keep the measure they
+  have. Each end dims its own press rather than pressing into nothing,
+  and the choice survives a reload (`localStorage["fleet-chat-size"]`, a
+  step index).
 - **Facts** open their detail and edit; their type and tier badges
   filter the corpus.
 - **Every panel has visible filters with counts.** Memory: all, live,
@@ -483,8 +486,8 @@ completed/working/interrupted rows, the conversation's head with its
 switcher and New, a send beside driving work (queued, named), a run's
 end clearing the way for the next send, a reply that is text until
 its block boundary and rendered once after, the work column's fold and
-its following the rail, and the composer's text size stepping, dimming
-at its bounds and surviving a reload. `tests/face.rs` runs it from
+its following the rail, and the conversation's text size stepping,
+dimming at its bounds and surviving a reload. `tests/face.rs` runs it from
 `cargo test` when `node` is on PATH and skips by name where it is not;
 the live passes in the recaps cover what a stub cannot — layout, the
 event stream over the wire, and a real run's records.

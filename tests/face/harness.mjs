@@ -802,61 +802,81 @@ async function theWorkListFoldsToAStrip() {
     'narrow override');
 }
 
-// C7 (composer size): the size is the owner's and only the composer's.
-// Two presses and two keys walk a fixed scale, the ends dim rather than
-// doing nothing, the field's own token carries it, and a reload keeps it.
-async function theComposerTextSizeIsTheOwners() {
-  const page = boot({ width: 1440, hash: '#/chat', documents: {} });
+// C7 (chat size): the size is the conversation's — the one surface the
+// owner reads at length. A multiplier on the transcript's own token, two
+// presses and two keys over a fixed scale, dimmed at the ends, kept
+// across a reload, and the composer keeps its measure.
+async function theConversationTextSizeIsTheOwners() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('chat-1', 'completed', { title: 'a conversation to read' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/chat-1', documents: doc });
   await flush();
   page.open();
   await flush();
-  const sizeOf = (one) =>
-    (one || page).IDS['composer'].style.getPropertyValue('--composer-size');
-  check('C7 the field opens at its own measure', sizeOf() === '14.5px', sizeOf());
-  check('C7 the transcript carries no size token',
-    !page.IDS['log'].style.getPropertyValue('--composer-size'), 'log token');
-  check('C7 the size token is the field\'s alone',
-    ruleBlock('.composer textarea').includes('font-size: var(--composer-size, 14.5px)'),
+  const scaleOf = (one) => (one || page).IDS['log'].style.getPropertyValue('--chat-scale');
+  check('C7 the transcript opens at its own measure', scaleOf() === '1', scaleOf());
+  check('C7 the composer carries no size token',
+    !page.IDS['composer'].style.getPropertyValue('--composer-size'), 'composer token');
+  check('C7 the composer keeps the plain measure',
+    ruleBlock('.composer textarea').includes('font-size: 14.5px') &&
+      !ruleBlock('.composer textarea').includes('--composer-size'),
     ruleBlock('.composer textarea'));
-  page.fireOn('text-bigger', 'click');
-  check('C7 one press up is the next step', sizeOf() === '16px', sizeOf());
+  check('C7 the multiplier rides the transcript\'s own sizes',
+    ruleBlock('.assistant').includes('font-size: calc(15px * var(--chat-scale, 1))') &&
+      ruleBlock('.owner').includes('font-size: calc(14px * var(--chat-scale, 1))'),
+    ruleBlock('.assistant') + ' | ' + ruleBlock('.owner'));
+  check('C7 the rendered reply scales with it',
+    ruleBlock('.assistant .md-p').includes('calc(15px * var(--chat-scale, 1))') &&
+      ruleBlock('.assistant .md-code').includes('calc(12px * var(--chat-scale, 1))'),
+    ruleBlock('.assistant .md-p'));
+  page.fireOn('chat-bigger', 'click');
+  check('C7 one press up is the next step', scaleOf() === '1.15', scaleOf());
   check('C7 the choice is kept',
-    page.window.localStorage.getItem('fleet-composer-size') === '3',
-    String(page.window.localStorage.getItem('fleet-composer-size')));
-  page.fireOn('text-bigger', 'click');
-  check('C7 a second press is the step above', sizeOf() === '18px', sizeOf());
-  page.fireOn('text-smaller', 'click');
-  page.fireOn('text-smaller', 'click');
-  check('C7 down walks back to the default', sizeOf() === '14.5px', sizeOf());
-  page.fireOn('text-smaller', 'click');
-  page.fireOn('text-smaller', 'click');
-  check('C7 the scale stops at its floor', sizeOf() === '12px', sizeOf());
-  check('C7 the floor dims its own press', page.IDS['text-smaller'].disabled === true,
-    String(page.IDS['text-smaller'].disabled));
+    page.window.localStorage.getItem('fleet-chat-size') === '2',
+    String(page.window.localStorage.getItem('fleet-chat-size')));
+  page.fireOn('chat-bigger', 'click');
+  check('C7 a second press is the step above', scaleOf() === '1.3', scaleOf());
+  page.fireOn('chat-smaller', 'click');
+  page.fireOn('chat-smaller', 'click');
+  check('C7 down walks back to the default', scaleOf() === '1', scaleOf());
+  page.fireOn('chat-smaller', 'click');
+  check('C7 the scale stops at its floor', scaleOf() === '0.85', scaleOf());
+  check('C7 the floor dims its own press', page.IDS['chat-smaller'].disabled === true,
+    String(page.IDS['chat-smaller'].disabled));
   check('C7 the floor names the size it stopped at',
-    page.IDS['text-smaller'].title.includes('12px'), page.IDS['text-smaller'].title);
-  page.fireOn('text-smaller', 'click');
-  check('C7 a press past the floor changes nothing', sizeOf() === '12px', sizeOf());
+    page.IDS['chat-smaller'].title.includes('85%'), page.IDS['chat-smaller'].title);
+  page.fireOn('chat-smaller', 'click');
+  check('C7 a press past the floor changes nothing', scaleOf() === '0.85', scaleOf());
   page.fireOn('composer', 'keydown', { key: 'ArrowUp', altKey: true });
-  check('C7 Alt+up is the same step as the button', sizeOf() === '13px', sizeOf());
+  check('C7 Alt+up is the same step as the button', scaleOf() === '1', scaleOf());
   page.fireOn('composer', 'keydown', { key: 'ArrowUp', altKey: false });
-  check('C7 a bare arrow is the field\'s own key', sizeOf() === '13px', sizeOf());
+  check('C7 a bare arrow is the field\'s own key', scaleOf() === '1', scaleOf());
 
   // A reload keeps the size, and a stored index the scale no longer has
   // is clamped rather than trusted.
-  const kept = boot({ width: 1440, hash: '#/chat', storage: { 'fleet-composer-size': '6' } });
+  const kept = boot({ width: 1440, hash: '#/sessions/chat-1', documents: doc,
+    storage: { 'fleet-chat-size': '4' } });
   await flush();
   kept.open();
   await flush();
-  check('C7 a reload keeps the size', sizeOf(kept) === '22px', sizeOf(kept));
-  check('C7 the top of the scale dims its own press', kept.IDS['text-bigger'].disabled === true,
-    String(kept.IDS['text-bigger'].disabled));
-  const stale = boot({ width: 1440, hash: '#/chat', storage: { 'fleet-composer-size': '99' } });
+  check('C7 a reload keeps the size', scaleOf(kept) === '1.5', scaleOf(kept));
+  check('C7 a middle step keeps the way up open', kept.IDS['chat-bigger'].disabled === false,
+    String(kept.IDS['chat-bigger'].disabled));
+  const stale = boot({ width: 1440, hash: '#/sessions/chat-1', documents: doc,
+    storage: { 'fleet-chat-size': '99' } });
   await flush();
   stale.open();
   await flush();
   check('C7 a stored index past the scale is clamped to its top',
-    sizeOf(stale) === '22px', sizeOf(stale));
+    scaleOf(stale) === '1.7', scaleOf(stale));
+  check('C7 the clamped top dims its own press', stale.IDS['chat-bigger'].disabled === true,
+    String(stale.IDS['chat-bigger'].disabled));
 }
 
 // C8: the addresses — `#/chat` is the new-work front door, and a reload
@@ -1109,7 +1129,7 @@ const cases = [
   ['C3 the pencil renames the conversation', thePencilRenamesTheConversation],
   ['C7 the dock is closed and the work column takes its place', theDockIsClosedAndTheWorkColumnTakesItsPlace],
   ['C7 the work list folds to a strip and follows the rail', theWorkListFoldsToAStrip],
-  ['C7 the composer text size is the owner\'s', theComposerTextSizeIsTheOwners],
+  ['C7 the conversation text size is the owner\'s', theConversationTextSizeIsTheOwners],
   ['C8 the addresses hold', theAddressesHold],
   ['C4 /clear starts a conversation', theClearCommandStartsAConversation],
   ['C2 a thought row opens on a press', aThoughtRowOpensOnAPress],

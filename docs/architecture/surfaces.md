@@ -82,9 +82,10 @@ that renames, its state in words, the way back to the work list, and
 New — so the conversation is a place you can leave and another you can
 choose. Replies read as
 markdown, at the block boundary where the whole answer is in hand. The
-field you write in also carries its own text size — `A−`/`A+`, or
-`Alt+↓`/`Alt+↑` — because it is the one place the owner composes, and
-the rest of the face keeps the measure it has.
+conversation itself carries its text size — `A−`/`A+` in its head, or
+`Alt+↓`/`Alt+↑` from the composer — because it is the one surface the
+owner reads at length: a reply, its headings and its code scale
+together, and the chrome around them keeps the measure it has.
 
 **Why.** Because the valuable things a harness does were, everywhere
 else, hidden in panes and logs. Here they are the transcript.

@@ -1466,8 +1466,12 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 .log[hidden] { display: none; }
 
+/* The transcript's column widens with the owner's text size, so the
+   measure stays roughly the same number of characters per line at every
+   step instead of collapsing to a narrow ribbon at the top of the
+   scale. The token is set on the log by the head's two presses. */
 .stream {
-  width: min(820px, calc(100% - 64px));
+  width: min(calc(820px * var(--chat-scale, 1)), calc(100% - 64px));
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -1482,7 +1486,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   border-radius: 14px 14px 4px 14px;
   background: var(--bubble-bg);
   color: var(--dsw-alias-ink);
-  font-size: 14px;
+  font-size: calc(14px * var(--chat-scale, 1));
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1503,7 +1507,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .assistant {
   max-width: 74ch;
   color: var(--dsw-alias-ink);
-  font-size: 15px;
+  font-size: calc(15px * var(--chat-scale, 1));
   line-height: 1.72;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1934,50 +1938,42 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   width: 100%;
   min-height: 42px;
   max-height: 220px;
-  /* The right padding is the size pair's corner: a line never runs under
-     the two glyphs, however long the owner's sentence is. */
-  padding: 6px 54px 6px 2px;
+  padding: 6px 2px;
   border: 0;
   background: transparent;
   color: var(--dsw-alias-ink);
-  /* The one size the owner sets. It lives on the field itself, so the
-     transcript, the rail and the cards keep the measure they have. */
-  font-size: var(--composer-size, 14.5px);
+  font-size: 14.5px;
   line-height: 1.55;
   resize: none;
 }
 
-/* The field and its own corner controls share a box, so the pair rides
-   the field's top-right instead of the footer row — which is full in a
-   real conversation, where the Shift+Enter hint is already squeezed to
-   nothing. */
-.write-wrap { position: relative; }
-.size-pair {
-  position: absolute;
-  top: 6px;
-  right: 0;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-.size-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
+/* The conversation's text size: two presses in its head, one multiplier
+   on the transcript. The reply, its headings and its code share the
+   factor; the composer, the strip, the cards and the rail keep the
+   measure they have. */
+.chat-size { display: inline-flex; align-items: center; gap: 2px; }
+.chat-size .size-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
   padding: 0;
-  border: 0;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 7px;
   background: transparent;
   color: var(--dsw-alias-ink-tertiary);
   font: inherit;
   line-height: 1;
 }
-.size-btn:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
-.size-btn[disabled] { opacity: 0.3; cursor: default; }
-.size-btn[disabled]:hover { background: transparent; color: var(--dsw-alias-ink-tertiary); }
+.chat-size .size-btn:hover {
+  border-color: var(--dsw-alias-hairline);
+  color: var(--dsw-alias-ink);
+}
+.chat-size .size-btn[disabled] { opacity: 0.35; cursor: default; }
+.chat-size .size-btn[disabled]:hover {
+  border-color: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+}
 .size-glyph { font-size: 11.5px; letter-spacing: -0.03em; line-height: 1; }
 
 .composer textarea:focus { outline: none; }
@@ -5923,7 +5919,7 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   .stream, .composer, .seat, .commands, .actions, .process-strip { width: calc(100% - 32px); }
   .log { padding: 20px 0 14px; }
   .owner { max-width: 90%; }
-  .assistant { font-size: 14.5px; }
+  .assistant { font-size: calc(14.5px * var(--chat-scale, 1)); }
   .card-row .value { font-size: 18px; }
   .card-row .label { display: none; }
 
@@ -6472,19 +6468,22 @@ body[data-work="collapsed"] .work-list { display: none; }
 .conv-act.conv-new { margin-left: 0; }
 
 /* A rendered reply keeps the transcript's measure but not its
-   preformatted whitespace. */
+   preformatted whitespace. Every size here carries the owner's
+   multiplier, so the reply's prose, its headings and its code keep their
+   ratios as they grow; the drawer's own rendered documents are not the
+   conversation and keep their measure. */
 .assistant.md-rendered { white-space: normal; }
-.assistant .md { display: grid; gap: 10px; max-width: none; }
-.assistant .md-p { color: var(--dsw-alias-ink); font-size: 15px; line-height: 1.72; }
-.assistant .md-li { color: var(--dsw-alias-ink); font-size: 15px; line-height: 1.66; }
+.assistant .md { display: grid; gap: calc(10px * var(--chat-scale, 1)); max-width: none; }
+.assistant .md-p { color: var(--dsw-alias-ink); font-size: calc(15px * var(--chat-scale, 1)); line-height: 1.72; }
+.assistant .md-li { color: var(--dsw-alias-ink); font-size: calc(15px * var(--chat-scale, 1)); line-height: 1.66; }
 .assistant .md-ul { display: grid; gap: 4px; padding-left: 20px; }
 .assistant .md-h { font-family: var(--font-display); font-weight: 400; }
-.assistant .md h3 { font-size: 18px; }
-.assistant .md h4 { font-size: 16px; }
+.assistant .md h3 { font-size: calc(18px * var(--chat-scale, 1)); }
+.assistant .md h4 { font-size: calc(16px * var(--chat-scale, 1)); }
 .assistant .md h5,
-.assistant .md h6 { font-size: 14.5px; }
-.assistant .md-code { font-size: 12px; line-height: 1.6; padding: 11px 13px; }
-.assistant .md-inline-code { font-size: 12.5px; }
+.assistant .md h6 { font-size: calc(14.5px * var(--chat-scale, 1)); }
+.assistant .md-code { font-size: calc(12px * var(--chat-scale, 1)); line-height: 1.6; padding: 11px 13px; }
+.assistant .md-inline-code { font-size: calc(12.5px * var(--chat-scale, 1)); }
 
 /* The work column is a sheet where there is no column to be, and a strip
    of the same overlay when it is folded. */
