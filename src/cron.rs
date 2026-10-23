@@ -750,6 +750,11 @@ pub const EVAL_MINUTE_FILE: &str = "eval-minute.txt";
 /// fleet's own launch spec and its stdio JSON-RPC driven by hand, which
 /// is the route the machine's own runs proved works.
 pub const SEED_MANIFEST: &[(&str, &str, &str)] = &[
+    (
+        "lifecycle-sweep",
+        "30 2 * * *",
+        "task:Run `fleet tools sweep --apply` with bash, then report each tool it          disabled (with the sweep's reason) and each it skipped, and stop. If the          verb refuses, report the refusal.",
+    ),
     ("corpus-refresh-fleet", "10 0 * * *", "fleet"),
     ("corpus-refresh-sys1", "15 0 * * *", "sys1"),
     ("corpus-refresh-sdm1", "20 0 * * *", "sdm1"),
@@ -791,6 +796,12 @@ pub const SEED_MANIFEST: &[(&str, &str, &str)] = &[
 /// stdio JSON-RPC driven by hand, which is the route this machine's own
 /// runs proved reaches the same capability.
 pub fn seed_task(project: &str) -> String {
+    // A manifest entry may carry a whole task rather than a project:
+    // the lifecycle sweep is fleet's own maintenance, not a corpus
+    // refresh, so its task is the verb it should run.
+    if let Some(task) = project.strip_prefix("task:") {
+        return task.to_string();
+    }
     format!(
         "Refresh the {project} project's fact corpus from its docs. The lane tool is not in \
          your toolset; use the spawn route: run the vendored blend1 lane child \

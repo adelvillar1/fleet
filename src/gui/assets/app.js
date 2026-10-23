@@ -10167,9 +10167,35 @@
       tools.calls_per_turn + ' calls run in one turn.');
     var list = node('ul', 'tool-list');
     tools.native.forEach(function (tool) {
-      list.appendChild(node('li', null, tool.name + ' \u2014 ' + tool.summary));
+      var row = node('li', null, null);
+      var state = tool.state || 'active';
+      var chip = node('span', 'tool-state tool-state-' + state, state);
+      row.appendChild(chip);
+      row.appendChild(node('span', null, ' ' + tool.name + ' \u2014 ' + tool.summary));
+      if (state === 'disabled') {
+        var enable = node('button', 'tool-enable', 'enable');
+        enable.type = 'button';
+        enable.addEventListener('click', function (stop) {
+          if (stop && stop.stopPropagation) stop.stopPropagation();
+          writeSettings('tool', { name: tool.name, disabled: false });
+        });
+        row.appendChild(enable);
+      } else if (state !== 'protected') {
+        var off = node('button', 'tool-enable', 'disable');
+        off.type = 'button';
+        off.addEventListener('click', function (stop) {
+          if (stop && stop.stopPropagation) stop.stopPropagation();
+          writeSettings('tool', { name: tool.name, disabled: true });
+        });
+        row.appendChild(off);
+      }
+      list.appendChild(row);
     });
     card.appendChild(list);
+    if (tools.last_sweep) {
+      card.appendChild(node('p', 'board-note',
+        'last sweep ' + tools.last_sweep + ' \u00b7 window ' + (tools.window || 50) + ' sessions'));
+    }
     if (tools.last_session) {
       var last = tools.last_session;
       var methods = Object.keys(last.methods || {}).map(function (key) {

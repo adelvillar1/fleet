@@ -628,6 +628,59 @@ fn read_env_file(path: &Path) -> BTreeMap<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_disabled_list_round_trips_and_enables_remove() {
+        let home = std::env::temp_dir().join(format!("fleet-life-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        assert!(tools_disabled(&home).is_empty());
+        set_tool_disabled(&home, "deck", true).unwrap();
+        set_tool_disabled(&home, "vision", true).unwrap();
+        assert_eq!(
+            tools_disabled(&home),
+            vec!["deck".to_string(), "vision".to_string()]
+        );
+        // Idempotent both ways.
+        set_tool_disabled(&home, "deck", true).unwrap();
+        assert_eq!(tools_disabled(&home).len(), 2);
+        set_tool_disabled(&home, "deck", false).unwrap();
+        assert_eq!(tools_disabled(&home), vec!["vision".to_string()]);
+        // A malformed file is an empty list, not an error.
+        std::fs::write(home.join("config.json"), "{ not json").unwrap();
+        assert!(tools_disabled(&home).is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_thresholds_default_and_read_the_overrides() {
+        let home = std::env::temp_dir().join(format!("fleet-life-th-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        assert_eq!(lifecycle_thresholds(&home).trial_runs, 10);
+        assert_eq!(lifecycle_thresholds(&home).idle_rate, 0.01);
+        std::fs::write(
+            home.join("config.json"),
+            r#"{"tools": {"trial_runs": 5, "idle_rate": 0.05}}"#,
+        )
+        .unwrap();
+        let thresholds = lifecycle_thresholds(&home);
+        assert_eq!(thresholds.trial_runs, 5);
+        assert_eq!(thresholds.idle_rate, 0.05);
+        assert_eq!(thresholds.max_disable_per_sweep, 3);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_sweep_stamp_round_trips() {
+        let home = std::env::temp_dir().join(format!("fleet-life-sw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        assert!(last_sweep(&home).is_none());
+        record_sweep(&home, "2026-10-24T02:30Z").unwrap();
+        assert_eq!(last_sweep(&home).as_deref(), Some("2026-10-24T02:30Z"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     use super::*;
 
     fn scratch(tag: &str) -> PathBuf {
@@ -2974,6 +3027,139 @@ fn remove_env(path: &Path, name: &str) -> Result<(), String> {
 /// than an error, the way every other reader here tolerates a file it
 /// does not own: a run must not stop because a list it was going to
 /// consult could not be parsed.
+/// The lifecycle's thresholds, read from `tools.*` in config.json with
+/// the defaults the plan names. Every knob the disable gate and the
+/// sweep consult; a missing key is the default, never an error.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifecycleThresholds {
+    /// A success rate at or below this over the window is idle
+    /// (fraction, default 0.01).
+    pub idle_rate: f64,
+    /// The most tools one sweep may disable (default 3).
+    pub max_disable_per_sweep: usize,
+    /// Declared runs before a tool leaves trial (default 10).
+    pub trial_runs: usize,
+    /// Days before a tool leaves trial (default 14).
+    pub trial_days: u64,
+    /// Declared runs before a tool can be a candidate (default 10).
+    pub disable_runs: usize,
+    /// Days before a tool can be a candidate (default 14).
+    pub disable_days: u64,
+    /// Days after a re-enable before the sweep may disable again
+    /// (default 7).
+    pub reactivate_days: u64,
+    /// Sessions the scan reads (default 50).
+    pub window: usize,
+}
+
+impl Default for LifecycleThresholds {
+    fn default() -> Self {
+        LifecycleThresholds {
+            idle_rate: 0.01,
+            max_disable_per_sweep: 3,
+            trial_runs: 10,
+            trial_days: 14,
+            disable_runs: 10,
+            disable_days: 14,
+            reactivate_days: 7,
+            window: 50,
+        }
+    }
+}
+
+/// Read the lifecycle thresholds from `tools.*` in config.json.
+pub fn lifecycle_thresholds(home: &Path) -> LifecycleThresholds {
+    let document = read_json(&home.join("config.json")).unwrap_or_default();
+    let number = |key: &str, fallback: f64| -> f64 {
+        document
+            .get("tools")
+            .and_then(|tools| tools.get(key))
+            .and_then(|value| value.as_f64())
+            .unwrap_or(fallback)
+    };
+    LifecycleThresholds {
+        idle_rate: number("idle_rate", 0.01),
+        max_disable_per_sweep: number("max_disable_per_sweep", 3.0).max(0.0) as usize,
+        trial_runs: number("trial_runs", 10.0).max(0.0) as usize,
+        trial_days: number("trial_days", 14.0).max(0.0) as u64,
+        disable_runs: number("disable_runs", 10.0).max(0.0) as usize,
+        disable_days: number("disable_days", 14.0).max(0.0) as u64,
+        reactivate_days: number("reactivate_days", 7.0).max(0.0) as u64,
+        window: number("window", 50.0).max(1.0) as usize,
+    }
+}
+
+/// The tools the owner (or the sweep) disabled, from `tools.disabled`.
+pub fn tools_disabled(home: &Path) -> Vec<String> {
+    read_json(&home.join("config.json"))
+        .unwrap_or_default()
+        .get("tools")
+        .and_then(|tools| tools.get("disabled"))
+        .and_then(|list| list.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|name| name.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Add or remove one name in `tools.disabled`, through the same
+/// read-merge-write every config list rides. Idempotent: disabling a
+/// disabled tool or enabling an absent one is still a valid write.
+pub fn set_tool_disabled(home: &Path, name: &str, disabled: bool) -> Result<(), String> {
+    let path = home.join("config.json");
+    let mut document = read_json(&path)?;
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?;
+    let tools = object
+        .entry("tools".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let tools = tools
+        .as_object_mut()
+        .ok_or_else(|| "`tools` is not a JSON object".to_string())?;
+    let list = tools
+        .entry("disabled".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let list = list
+        .as_array_mut()
+        .ok_or_else(|| "`tools.disabled` is not a list".to_string())?;
+    list.retain(|entry| entry.as_str() != Some(name));
+    if disabled {
+        list.push(Value::String(name.to_string()));
+    }
+    write_atomic(&path, &document.to_string())
+}
+
+/// The stamp of the last applied sweep, for the card's "last sweep"
+/// line. Written by the sweep itself.
+pub fn record_sweep(home: &Path, stamp: &str) -> Result<(), String> {
+    let path = home.join("config.json");
+    let mut document = read_json(&path)?;
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?;
+    let tools = object
+        .entry("tools".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    tools
+        .as_object_mut()
+        .ok_or_else(|| "`tools` is not a JSON object".to_string())?
+        .insert("last_sweep".to_string(), Value::String(stamp.to_string()));
+    write_atomic(&path, &document.to_string())
+}
+
+/// The last applied sweep's stamp, when there was one.
+pub fn last_sweep(home: &Path) -> Option<String> {
+    read_json(&home.join("config.json"))
+        .ok()?
+        .get("tools")?
+        .get("last_sweep")?
+        .as_str()
+        .map(str::to_string)
+}
+
 pub fn approval_rules(home: &Path) -> crate::approvals::Rules {
     let document = read_json(&home.join("config.json")).unwrap_or_default();
     crate::approvals::Rules::from_config(&document)

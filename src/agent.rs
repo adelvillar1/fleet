@@ -1067,6 +1067,11 @@ pub struct Agent<'a> {
     reads: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
     /// One resolution per call, written to the log before the result.
     resolutions: std::collections::BTreeMap<String, Resolution>,
+    /// Tools the owner (or the sweep) disabled. Read once at run start;
+    /// a mid-run config change applies to the next run, never the one
+    /// in flight, so the declarations a run carried stay what its log
+    /// says they were.
+    disabled: std::collections::BTreeSet<String>,
     /// The run's last full task list. A fold re-injects it, because the
     /// step the model was on is the one piece of state whose loss
     /// produces repeated work.
@@ -1219,6 +1224,13 @@ impl<'a> Agent<'a> {
             .improve_home
             .clone()
             .or_else(crate::lanes::fleet_home_path);
+        let disabled: std::collections::BTreeSet<String> = lanes
+            .home
+            .as_deref()
+            .map(crate::settings::tools_disabled)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
         let calib = options.calib.clone();
         // A resumed run seeds its conversation from the log, and the log's
         // own turn numbering with it: the compacted shape is materialized
@@ -1245,6 +1257,7 @@ impl<'a> Agent<'a> {
             tool_vectors: None,
             reads: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             resolutions: std::collections::BTreeMap::new(),
+            disabled,
             todos: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             skills,
@@ -1506,12 +1519,17 @@ impl<'a> Agent<'a> {
             // tools exactly once, in join order.
             None => crate::tools::ALL_TOOLS
                 .iter()
+                .filter(|tool| !self.disabled.contains(tool.name()))
                 .map(|tool| tool.spec())
                 .collect(),
         };
         // A scope that admits nothing admits the beside-the-four tools
-        // either; the check is one place, not one per tool.
-        let admitted = |name: &str| self.scope.as_ref().is_none_or(|scope| scope.admits(name));
+        // either; the check is one place, not one per tool. A disabled
+        // tool is not declared whatever the scope says.
+        let admitted = |name: &str| {
+            self.scope.as_ref().is_none_or(|scope| scope.admits(name))
+                && !self.disabled.contains(name)
+        };
         if !self.skills.is_empty() && admitted(tools::USE_SKILL_TOOL) {
             specs.push(tools::use_skill_spec());
         }
@@ -1601,6 +1619,10 @@ impl<'a> Agent<'a> {
                     })
                 })
                 .collect();
+            let lane_specs: Vec<_> = lane_specs
+                .into_iter()
+                .filter(|spec| !self.disabled.contains(spec.name()))
+                .collect();
             specs = tier_declarations(specs, lane_specs, &self.activated);
         }
         // The verdict the run already holds orders the native tools. A
@@ -1609,6 +1631,30 @@ impl<'a> Agent<'a> {
             profile_order(&mut specs, decision.workload.as_deref());
         }
         specs
+    }
+
+    /// Whether this name is disabled. The resolved name is checked
+    /// beside the raw one, so an alias of a disabled tool meets the same
+    /// named result the tool itself does.
+    fn is_disabled(&self, name: &str) -> bool {
+        if self.disabled.contains(name) {
+            return true;
+        }
+        tools::resolve_name(name)
+            .map(|(tool, _)| self.disabled.contains(tool.name()))
+            .unwrap_or(false)
+    }
+
+    /// The model-visible sentence a disabled call meets. It names the
+    /// rule, the evidence class, and the one-command reverse.
+    fn disabled_note(&self, name: &str) -> String {
+        let resolved = tools::resolve_name(name)
+            .map(|(tool, _)| tool.name().to_string())
+            .unwrap_or_else(|| name.to_string());
+        format!(
+            "disabled: `{resolved}` is disabled \u{2014} no use over the measured window. \
+             `fleet tools enable {resolved}` restores it; nothing ran."
+        )
     }
 
     /// The typed refusal for a call outside this run's admitted scope,
@@ -1931,6 +1977,23 @@ impl<'a> Agent<'a> {
             self.record(&Record::LaneFailed {
                 lane: lane.clone(),
                 reason: reason.clone(),
+            })?;
+        }
+        // The denominator of every usage rate: what this run's first
+        // request declared, recorded once, before that request. The
+        // list is computed from the same declarations() the request
+        // reads, so the log and the wire cannot disagree.
+        {
+            let specs = self.declarations();
+            let names: Vec<String> = specs.iter().map(|spec| spec.name().to_string()).collect();
+            let tier = if names.iter().any(|name| name == tools::TOOL_SEARCH_TOOL) {
+                "deferred"
+            } else {
+                "core"
+            };
+            self.record(&Record::Declarations {
+                names,
+                tier: tier.to_string(),
             })?;
         }
         let _ = self.progress.flush();
@@ -2848,6 +2911,11 @@ impl<'a> Agent<'a> {
         if self.lanes.hint_destructive(&call.function.name) {
             self.approver.annotate(call, true);
         }
+        // A disabled tool never reaches the gate: there is nothing to
+        // approve, and the named result is the one the model can act on.
+        if self.is_disabled(&call.function.name) {
+            return Ok(settled(self.disabled_note(&call.function.name)));
+        }
         let approved = self.approver.approve(call);
         // The screening verdict, recorded after the decision: the gate's
         // own answer, one row per call, never inside the decision itself.
@@ -3459,6 +3527,7 @@ impl<'a> Agent<'a> {
                     description: tool.description.clone(),
                 })
             })
+            .filter(|candidate| !self.disabled.contains(&candidate.name))
             .collect();
         if candidates.is_empty() {
             return Ok((

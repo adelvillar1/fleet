@@ -429,6 +429,16 @@ pub enum ToolsAction {
     /// Measure one session's tool calls: validity, error classes,
     /// truncation, redundancy, recovery, and resolutions by method.
     Audit { session: Option<String> },
+    /// Disable one tool by name; a protected tool needs `--force`.
+    Disable { name: String, force: bool },
+    /// Re-enable one tool by name.
+    Enable { name: String },
+    /// Compute the disable gate. Dry-run by default; `--apply` writes.
+    Sweep { apply: bool },
+    /// Owner-intent coverage: which tools the archive's owner turns
+    /// reached for by similarity and no call named. Reads the whole
+    /// archive; opt-in by design.
+    Coverage { sessions: usize },
 }
 
 /// What `fleet cron` was asked to do.
@@ -1420,8 +1430,56 @@ fn parse_tools(args: &[String]) -> Result<Command, String> {
                 },
             }))
         }
+        "disable" => {
+            let name = rest.first().cloned().ok_or("disable needs a tool name")?;
+            let force = rest.iter().any(|flag| flag == "--force");
+            if rest.len() > 2 || (rest.len() == 2 && !force) {
+                return Err("disable takes one name and optional --force".to_string());
+            }
+            Ok(Command::Tools(ToolsOptions {
+                action: ToolsAction::Disable { name, force },
+            }))
+        }
+        "enable" => {
+            let name = rest.first().cloned().ok_or("enable needs a tool name")?;
+            if rest.len() != 1 {
+                return Err("enable takes one name".to_string());
+            }
+            Ok(Command::Tools(ToolsOptions {
+                action: ToolsAction::Enable { name },
+            }))
+        }
+        "sweep" => {
+            let apply = rest.iter().any(|flag| flag == "--apply");
+            if rest.len() > 1 || (rest.len() == 1 && !apply) {
+                return Err("sweep takes no arguments, or --apply".to_string());
+            }
+            Ok(Command::Tools(ToolsOptions {
+                action: ToolsAction::Sweep { apply },
+            }))
+        }
+        "coverage" => {
+            let mut sessions = crate::tool_advisor::DEFAULT_WINDOW;
+            let mut rest = rest;
+            if rest.first().map(String::as_str) == Some("--sessions") {
+                let value = rest.get(1).ok_or("--sessions needs a number")?;
+                sessions = value
+                    .parse()
+                    .map_err(|_| format!("`{value}` is not a session count"))?;
+                if sessions == 0 {
+                    return Err("--sessions must be at least 1".to_string());
+                }
+                rest = &rest[2..];
+            }
+            if !rest.is_empty() {
+                return Err("coverage takes only --sessions N".to_string());
+            }
+            Ok(Command::Tools(ToolsOptions {
+                action: ToolsAction::Coverage { sessions },
+            }))
+        }
         other => Err(format!(
-            "unknown tools subcommand `{other}`; the verbs are list (bare), scan, advise"
+            "unknown tools subcommand `{other}`; the verbs are list (bare), scan, advise, audit, disable, enable, sweep, coverage"
         )),
     }
 }
@@ -3156,6 +3214,12 @@ mod tests {
             parse(&args(&["tools", "advise"])).unwrap(),
             Command::Tools(ToolsOptions {
                 action: ToolsAction::Advise { sessions: 20 }
+            })
+        );
+        assert_eq!(
+            parse(&args(&["tools", "coverage", "--sessions", "9"])).unwrap(),
+            Command::Tools(ToolsOptions {
+                action: ToolsAction::Coverage { sessions: 9 }
             })
         );
         assert_eq!(

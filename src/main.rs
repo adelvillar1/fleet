@@ -83,6 +83,7 @@ fn main() -> ExitCode {
             | Ok(Command::Eval(_))
             | Ok(Command::Explain(_))
             | Ok(Command::Mcp(_))
+            | Ok(Command::Tools(_))
     );
     if needs_runtime {
         return match tokio::runtime::Builder::new_current_thread()
@@ -114,6 +115,7 @@ async fn dispatch(args: &[String]) -> ExitCode {
         Ok(Command::Compact { session, force }) => compact_command(session.as_deref(), force).await,
         Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Mcp(options)) => mcp_command(&options).await,
+        Ok(Command::Tools(options)) => tools_command(&options).await,
         Ok(Command::Judge(options)) => judge_command(&options).await,
         Ok(Command::Delegate(options)) => delegate_command(&options).await,
         Ok(Command::Eval(options)) => eval_command(&options).await,
@@ -158,7 +160,6 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
-        Ok(Command::Tools(options)) => tools_command(&options),
         Ok(Command::Improve(options)) => improve_command(&options),
         Ok(Command::Vault(options)) => vault_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
@@ -970,15 +971,204 @@ fn load_skills(user_home: Option<&str>, home: &std::path::Path) -> Vec<fleet::sk
 /// than failing. The two failures are a `--show` naming a draft that
 /// does not exist and a `--show` name that is not a bare name (a path
 /// separator or a parent component addresses a file, not a draft).
+/// One lifecycle calibration row, on the stream the beats use. The row
+/// is the audit trail for "why is this disabled"; the config write is
+/// the fact, the row is the reason.
+fn lifecycle_row(home: &std::path::Path, name: &str, action: &str, reason: &str) {
+    let user_home = std::env::var("HOME").ok();
+    let stream = fleet::calib::Stream::open(fleet::calib::resolve_root(home, user_home.as_deref()));
+    fleet::calib::record_lifecycle(&stream, "tools", name, action, reason);
+}
+
+/// `fleet tools disable <name> [--force]`: the manual verb. A protected
+/// tool refuses without `--force` and names the protection.
+fn tools_disable(home: &std::path::Path, name: &str, force: bool) -> ExitCode {
+    if fleet::lifecycle::PROTECTED_TOOLS.contains(&name) && !force {
+        eprintln!(
+            "fleet: `{name}` is protected \u{2014} the working core the sweep never touches. \
+             `--force` disables it anyway."
+        );
+        return ExitCode::FAILURE;
+    }
+    let known = fleet::tools::known_tool_names().contains(&name)
+        || name.starts_with(fleet::tools::MCP_NAMESPACE);
+    if !known {
+        eprintln!("fleet: no tool named `{name}` is declared by this harness");
+        return ExitCode::FAILURE;
+    }
+    let reason = if force {
+        "forced by the owner".to_string()
+    } else {
+        "disabled by the owner".to_string()
+    };
+    match fleet::settings::set_tool_disabled(home, name, true) {
+        Ok(()) => {
+            lifecycle_row(home, name, "disable", &reason);
+            println!("fleet: disabled `{name}` \u{2014} `fleet tools enable {name}` restores it");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `fleet tools enable <name>`: the one-command reverse.
+fn tools_enable(home: &std::path::Path, name: &str) -> ExitCode {
+    match fleet::settings::set_tool_disabled(home, name, false) {
+        Ok(()) => {
+            lifecycle_row(home, name, "enable", "enabled by the owner");
+            println!("fleet: enabled `{name}` \u{2014} the next run declares it");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `fleet tools sweep [--apply]`: the gate computed over the archive,
+/// dry-run by default. Applies at most `max_disable_per_sweep`, never a
+/// protected, trial, or already-disabled tool, and records every write.
+fn tools_sweep(home: &std::path::Path, apply: bool) -> ExitCode {
+    let thresholds = fleet::settings::lifecycle_thresholds(home);
+    let disabled = fleet::settings::tools_disabled(home);
+    let scan = fleet::tool_advisor::scan(home, thresholds.window);
+    let metrics = fleet::tool_advisor::lifecycle_metrics(&scan);
+    let plan = fleet::lifecycle::sweep_plan(&metrics, &thresholds, &disabled);
+    let label = if apply { "apply" } else { "dry-run" };
+    println!(
+        "fleet tools sweep ({label}) \u{2014} {} session(s), cap {} per sweep",
+        scan.sessions, thresholds.max_disable_per_sweep
+    );
+    for (name, reason) in &plan.disabled {
+        println!("  disable  {name}  \u{2014} {reason}");
+    }
+    for (name, reason) in &plan.skipped {
+        println!("  skip     {name}  \u{2014} {reason}");
+    }
+    if plan.disabled.is_empty() {
+        println!("  nothing to disable");
+    }
+    if !apply {
+        return ExitCode::SUCCESS;
+    }
+    for (name, reason) in &plan.disabled {
+        if let Err(error) = fleet::settings::set_tool_disabled(home, name, true) {
+            eprintln!("fleet: could not disable `{name}`: {error} \u{2014} the sweep stops, nothing else changed");
+            return ExitCode::FAILURE;
+        }
+        lifecycle_row(home, name, "disable", reason);
+    }
+    if let Err(error) = fleet::settings::record_sweep(home, &fleet::boards::now_stamp()) {
+        eprintln!("fleet: could not record the sweep stamp: {error}");
+    }
+    ExitCode::SUCCESS
+}
+
+/// The sem1 lane as a coverage embedder: spawn, initialize, embed in
+/// bounded batches, tear down. A lane that cannot start is a named
+/// refusal \u{2014} the pass never silently answers nothing.
+struct Sem1Embedder {
+    spec: fleet::mcp::ServerSpec,
+}
+
+impl fleet::tool_coverage::TurnEmbedder for Sem1Embedder {
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let timeouts = fleet::mcp::Timeouts::default();
+                let server = fleet::mcp::McpServer::spawn_with(&self.spec, timeouts)
+                    .map_err(|error| format!("the sem1 lane could not start: {error}"))?;
+                let joined = async {
+                    server.initialize().await?;
+                    server.list_tools().await
+                }
+                .await
+                .map_err(|error| format!("the sem1 lane could not initialize: {error}"))?;
+                let short = joined
+                    .iter()
+                    .find(|tool| tool.name == "sem1_embed")
+                    .map(|tool| {
+                        tool.name
+                            .strip_prefix("sem1_")
+                            .unwrap_or(&tool.name)
+                            .to_string()
+                    })
+                    .unwrap_or_else(|| "embed".to_string());
+                let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+                for batch in texts.chunks(48) {
+                    let items: Vec<String> = batch.to_vec();
+                    let call = server
+                        .call_tool(&short, serde_json::json!({ "items": items }))
+                        .await
+                        .map_err(|error| format!("the sem1 lane failed: {error}"))?;
+                    let parsed = fleet::tool_router::parse_vectors(&call.text())
+                        .filter(|parsed| parsed.len() == batch.len())
+                        .ok_or_else(|| {
+                            "the sem1 lane answered with the wrong vector shape".to_string()
+                        })?;
+                    vectors.extend(parsed);
+                }
+                let _ = server.close().await;
+                Ok(vectors)
+            })
+        })
+    }
+}
+
+/// `fleet tools coverage [--sessions N]`: owner intent over the archive,
+/// through the sem1 lane, cached by message hash.
+async fn tools_coverage(home: &std::path::Path, sessions: usize) -> ExitCode {
+    let cards: Vec<(String, String)> = fleet::tools::ALL_TOOLS
+        .iter()
+        .map(|tool| {
+            let spec = tool.spec();
+            (spec.name().to_string(), spec.description().to_string())
+        })
+        .collect();
+    let disabled = fleet::settings::tools_disabled(home);
+    let spec = match fleet::lanes::spec_for("sem1") {
+        Ok(spec) => spec,
+        Err(error) => {
+            eprintln!("fleet: the sem1 lane cannot launch: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let embedder = Sem1Embedder { spec };
+    match fleet::tool_coverage::coverage(home, sessions, &embedder, &cards, &disabled) {
+        Ok(report) => {
+            print!("{}", fleet::tool_coverage::render(&report, sessions));
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `fleet tools`: the eight built-ins, the usage scan over the session
 /// archive, and the advisor over that scan. The scan reads files and
 /// spends nothing; the advice is a rule over its counts, so the whole
 /// surface answers without a lane or a model.
-fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
+async fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
     if matches!(options.action, cli::ToolsAction::List) {
+        let home = fleet_home().ok();
+        let disabled: Vec<String> = home
+            .as_deref()
+            .map(fleet::settings::tools_disabled)
+            .unwrap_or_default();
         for tool in fleet::tools::ALL_TOOLS {
             let spec = tool.spec();
-            println!("{}  {}", spec.name(), spec.description());
+            let mark = if disabled.iter().any(|name| name == spec.name()) {
+                "  [disabled]"
+            } else {
+                ""
+            };
+            println!("{}{}  {}", spec.name(), mark, spec.description());
         }
         println!(
             "\ndeferred past {} tools or {} definition tokens; `tool_search` names the rest",
@@ -1027,9 +1217,31 @@ fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
             }
         };
     }
+    // The lifecycle verbs: disable, enable, sweep, coverage. Each
+    // writes config through the one writer and leaves a row behind;
+    // coverage reads the archive through the sem1 lane.
+    match &options.action {
+        cli::ToolsAction::Disable { name, force } => {
+            return tools_disable(&home, name, *force);
+        }
+        cli::ToolsAction::Enable { name } => {
+            return tools_enable(&home, name);
+        }
+        cli::ToolsAction::Sweep { apply } => {
+            return tools_sweep(&home, *apply);
+        }
+        cli::ToolsAction::Coverage { sessions } => {
+            return tools_coverage(&home, *sessions).await;
+        }
+        _ => {}
+    }
     let sessions = match &options.action {
         cli::ToolsAction::Scan { sessions } | cli::ToolsAction::Advise { sessions } => *sessions,
         cli::ToolsAction::List | cli::ToolsAction::Audit { .. } => unreachable!("handled above"),
+        cli::ToolsAction::Disable { .. }
+        | cli::ToolsAction::Enable { .. }
+        | cli::ToolsAction::Sweep { .. }
+        | cli::ToolsAction::Coverage { .. } => unreachable!("handled above"),
     };
     let scan = fleet::tool_advisor::scan(&home, sessions);
     match &options.action {

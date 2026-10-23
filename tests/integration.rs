@@ -810,15 +810,16 @@ async fn run_completes_a_two_turn_tool_loop() {
 
     // The log holds exactly what the model saw plus bookkeeping.
     let records = session::replay(session.path()).unwrap();
-    assert_eq!(records.len(), 7);
+    assert_eq!(records.len(), 8);
     assert!(matches!(&records[0], Record::Start { v: 1, model, .. } if model == "test-model"));
-    assert!(matches!(&records[1], Record::User { content } if content == "say hello"));
+    assert!(matches!(&records[1], Record::Declarations { .. }));
+    assert!(matches!(&records[2], Record::User { content } if content == "say hello"));
     // KI-016: the assistant record carries the call the model made, so a
     // resumed session replays a valid sequence.
     assert!(
-        matches!(&records[2], Record::Assistant { tool_calls, .. } if tool_calls.len() == 1 && tool_calls[0].id == "call-1"),
+        matches!(&records[3], Record::Assistant { tool_calls, .. } if tool_calls.len() == 1 && tool_calls[0].id == "call-1"),
         "{:?}",
-        records[2]
+        records[3]
     );
     assert!(matches!(
         first_result(&records),
@@ -1143,6 +1144,118 @@ async fn tool_search_asks_sys1_and_ranks_with_sem1_end_to_end() {
         2,
         "tool_search made a model request of its own"
     );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The log's Declarations record is the first request's own
+/// declaration list: the denominator of every usage rate cannot drift
+/// from what the wire carried.
+#[tokio::test]
+async fn the_declarations_record_matches_the_first_request() {
+    let home = temp_home("declarations-record");
+    let mock = MockApi::start(vec![assistant_stream(TOOL_REPORT)]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "say done")
+        .await
+        .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let declared = records
+        .iter()
+        .find_map(|record| match record {
+            Record::Declarations { names, tier, .. } => Some((names.clone(), tier.clone())),
+            _ => None,
+        })
+        .expect("the record exists");
+    let wire = declared_tools(&mock.bodies()[0]);
+    assert_eq!(declared.0, wire, "log and wire must agree");
+    assert_eq!(declared.1, "core");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A disabled tool is not declared, is excluded from tool_search, and
+/// a call to it answers "disabled" with the enable command. Enabling
+/// puts it back on the next run.
+#[tokio::test]
+async fn a_disabled_tool_is_undeclared_and_its_call_names_the_rule() {
+    let home = temp_home("disabled-tool");
+    // Disable deck through the same writer the CLI rides. The run
+    // carries this home, the way the GUI and TUI runs do — a run with
+    // no home reads the ambient fleet home instead.
+    fleet::settings::set_tool_disabled(&home, "deck", true).unwrap();
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "deck", r#"{"deck":{}}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: Some(home.clone()),
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let mut progress = Vec::new();
+    let log_path = session.path().to_path_buf();
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("make a deck").await.unwrap();
+    }
+    let records = session::replay(&log_path).unwrap();
+    // Not declared.
+    let declared = records
+        .iter()
+        .find_map(|record| match record {
+            Record::Declarations { names, .. } => Some(names.clone()),
+            _ => None,
+        })
+        .expect("the record");
+    assert!(!declared.contains(&"deck".to_string()));
+    // The call answers with the rule and the reverse, not "unknown".
+    let output = records
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output),
+            _ => None,
+        })
+        .expect("the result");
+    assert!(output.starts_with("disabled:"), "{output}");
+    assert!(output.contains("fleet tools enable deck"), "{output}");
+    // Enable restores it: the next run declares it again.
+    fleet::settings::set_tool_disabled(&home, "deck", false).unwrap();
+    let mock2 = MockApi::start(vec![assistant_stream(TOOL_REPORT)]);
+    let mut session2 = Session::create(&home, "test-model").unwrap();
+    run_on(&mock2, &mut session2, Box::new(ApproveAll), 5, "again")
+        .await
+        .unwrap();
+    let declared2 = session::replay(session2.path())
+        .unwrap()
+        .iter()
+        .find_map(|record| match record {
+            Record::Declarations { names, .. } => Some(names.clone()),
+            _ => None,
+        })
+        .expect("the record");
+    assert!(declared2.contains(&"deck".to_string()));
     std::fs::remove_dir_all(&home).ok();
 }
 
@@ -1704,7 +1817,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
     // The headless contract is untouched: the log holds the whole turn, and
     // the progress sink saw the same deltas as raw text.
     let records = session::replay(&log_path).unwrap();
-    assert_eq!(records.len(), 7);
+    assert_eq!(records.len(), 8);
     let progress = String::from_utf8(progress).unwrap();
     assert!(progress.contains("bash: echo hi"), "{progress}");
     assert!(progress.contains("exit 0"), "{progress}");
@@ -2790,19 +2903,19 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The log holds the whole turn, in order: the assistant's call, the
     // lane that joined for it, the result, and the answer.
     let records = session::replay(session.path()).unwrap();
-    assert_eq!(records.len(), 8, "{records:?}");
+    assert_eq!(records.len(), 9, "{records:?}");
     assert!(
-        matches!(&records[1], Record::User { content } if content == "probe the embeddings worker")
+        matches!(&records[2], Record::User { content } if content == "probe the embeddings worker")
     );
     assert!(
-        matches!(&records[2], Record::Assistant { tool_calls, .. }
+        matches!(&records[3], Record::Assistant { tool_calls, .. }
             if tool_calls.len() == 1 && tool_calls[0].function.name == "mcp__sem1__probe"),
         "{:?}",
-        records[2]
+        records[3]
     );
     // The reconstructability record: the lane, and every tool it brought
     // with the description and schema the model was shown.
-    match &records[3] {
+    match &records[4] {
         Record::LaneTools { lane, tools } => {
             assert_eq!(lane, "sem1");
             let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
@@ -8094,7 +8207,7 @@ async fn a_run_under_the_budget_logs_no_compaction_record() {
     // Two requests, the log's own shape, and no compaction marker.
     assert_eq!(mock.bodies().len(), 2);
     let records = session::replay(session.path()).unwrap();
-    assert_eq!(records.len(), 7, "{records:?}");
+    assert_eq!(records.len(), 8, "{records:?}");
     assert!(!session::list(&home).unwrap()[0].compacted);
     // Every message the second request carried is reconstructable from the
     // log, and the log holds the final answer after it.

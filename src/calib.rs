@@ -540,6 +540,7 @@ pub fn record_delegation(stream: &Stream, mut row: DelegatedRunRow) -> Delegated
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Row {
     Route(RouteRow),
+    Lifecycle(LifecycleRow),
     ToolScreen(ToolScreenRow),
     Turn(TurnRow),
     RecallHit(RecallHitRow),
@@ -557,6 +558,7 @@ impl Row {
     pub fn op(&self) -> &'static str {
         match self {
             Row::Route(_) => OP_ROUTE,
+            Row::Lifecycle(_) => OP_LIFECYCLE,
             Row::ToolScreen(_) => OP_TOOL_SCREEN,
             Row::Turn(_) => OP_TURN,
             Row::RecallHit(_) => OP_RECALL_HIT,
@@ -574,6 +576,7 @@ impl Row {
     pub fn ts(&self) -> &str {
         match self {
             Row::Route(row) => &row.ts,
+            Row::Lifecycle(row) => &row.ts,
             Row::ToolScreen(row) => &row.ts,
             Row::Turn(row) => &row.ts,
             Row::RecallHit(row) => &row.ts,
@@ -586,6 +589,34 @@ impl Row {
             Row::Delegation(row) => &row.ts,
         }
     }
+}
+
+/// The lifecycle op: one disable, enable, or sweep decision.
+pub const OP_LIFECYCLE: &str = "lifecycle";
+
+/// One lifecycle action the harness took or proposed. The audit trail
+/// for "why is this tool disabled": the action, the kind it belongs to,
+/// and the evidence sentence the decision read.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LifecycleRow {
+    pub ts: String,
+    /// `tools`, `skills`, `loops`, or `workflows`.
+    pub kind: String,
+    pub name: String,
+    /// `disable`, `enable`, or `sweep-dry-run`.
+    pub action: String,
+    pub reason: String,
+}
+
+/// Record one lifecycle action on the stream, when there is one.
+pub fn record_lifecycle(stream: &Stream, kind: &str, name: &str, action: &str, reason: &str) {
+    stream.record(Row::Lifecycle(LifecycleRow {
+        ts: stamp(),
+        kind: kind.to_string(),
+        name: name.to_string(),
+        action: action.to_string(),
+        reason: reason.to_string(),
+    }));
 }
 
 /// The routing op.

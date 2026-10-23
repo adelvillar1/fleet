@@ -55,6 +55,18 @@ pub struct ToolScan {
     /// Enabled servers, and how often their tools were called.
     pub enabled_servers: Vec<String>,
     pub server_calls: BTreeMap<String, usize>,
+    /// Declared runs per tool: exact where a `Declarations` record
+    /// exists, estimated from the introduction date and the run-shape
+    /// preconditions where one does not.
+    pub declared_runs: BTreeMap<String, usize>,
+    /// Successful (approved, non-error) calls per tool.
+    pub successes: BTreeMap<String, usize>,
+    /// Argument characters and result bytes per tool, for tokens/call.
+    pub argument_chars: BTreeMap<String, usize>,
+    pub result_bytes: BTreeMap<String, usize>,
+    /// First `YYYY-MM-DD` the tool was declared (record or estimate),
+    /// falling back to the introduction table.
+    pub first_declared: BTreeMap<String, String>,
 }
 
 /// Scan the most recent `window` session logs.
@@ -87,6 +99,69 @@ pub fn scan(home: &Path, window: usize) -> ToolScan {
                 results.insert(call_id.clone(), (*approved, output.clone()));
             }
         }
+        // The session's own shape: its date, whether it is a child, the
+        // preconditions the declared-estimate reads, and the exact
+        // declaration record when the session wrote one.
+        let mut created = String::new();
+        let mut child = false;
+        let mut has_skills = false;
+        let mut has_memory = false;
+        let mut declared_names: Option<Vec<String>> = None;
+        for record in &records {
+            match record {
+                Record::Start {
+                    created: stamp,
+                    kind,
+                    ..
+                } => {
+                    created = stamp.chars().take(10).collect();
+                    child = kind.as_deref() == Some(crate::session::SUBAGENT_KIND);
+                }
+                Record::Skills { skills } => has_skills = !skills.is_empty(),
+                Record::Memory { .. } => has_memory = true,
+                Record::Declarations { names, .. } => {
+                    declared_names = Some(names.clone());
+                }
+                _ => {}
+            }
+        }
+        // One declared run per session per tool, whatever the session
+        // called: the declaration is the denominator, not the use.
+        // Exact when the session wrote a `Declarations` record;
+        // estimated from the introduction date and the run shape when
+        // it did not.
+        let bump = |scan: &mut ToolScan, tool: &str, created: &str| {
+            *scan.declared_runs.entry(tool.to_string()).or_insert(0) += 1;
+            let introduced = crate::lifecycle::introduced(tool).to_string();
+            let first = scan
+                .first_declared
+                .entry(tool.to_string())
+                .or_insert(introduced);
+            if !created.is_empty() && created < first.as_str() {
+                *first = created.to_string();
+            }
+        };
+        match &declared_names {
+            Some(names) => {
+                for name in names {
+                    bump(&mut scan, name, &created);
+                }
+            }
+            None => {
+                if !child && !created.is_empty() {
+                    for tool in crate::tools::known_tool_names() {
+                        let eligible = match tool {
+                            "use_skill" => has_skills,
+                            "remember" | "supersede" => has_memory,
+                            _ => created.as_str() >= crate::lifecycle::introduced(tool),
+                        };
+                        if eligible {
+                            bump(&mut scan, tool, &created);
+                        }
+                    }
+                }
+            }
+        }
         let known = crate::tools::known_tool_names();
         let mut seen: HashMap<(String, String), usize> = HashMap::new();
         for record in &records {
@@ -97,6 +172,8 @@ pub fn scan(home: &Path, window: usize) -> ToolScan {
                 let name = call.function.name.as_str();
                 let stat = scan.per_tool.entry(name.to_string()).or_default();
                 stat.calls += 1;
+                *scan.argument_chars.entry(name.to_string()).or_insert(0) +=
+                    call.function.arguments.chars().count();
                 let (approved, output) = results
                     .get(&call.id)
                     .cloned()
@@ -106,7 +183,10 @@ pub fn scan(home: &Path, window: usize) -> ToolScan {
                 }
                 if output.starts_with("error") || output.starts_with("denied") {
                     stat.errors += 1;
+                } else if approved {
+                    *scan.successes.entry(name.to_string()).or_insert(0) += 1;
                 }
+                *scan.result_bytes.entry(name.to_string()).or_insert(0) += output.len();
                 match crate::tools::resolve_name(name) {
                     Some((_, true)) => {
                         *scan.alias_attempts.entry(name.to_string()).or_insert(0) += 1;
@@ -155,6 +235,40 @@ pub fn scan(home: &Path, window: usize) -> ToolScan {
         }
     }
     scan
+}
+
+/// The scan's per-tool lifecycle metrics, in the shape the gate reads.
+/// Declared runs, successes, and the first-declared date come from the
+/// scan; the state comes from the lifecycle module against the
+/// thresholds and the disabled list.
+pub fn lifecycle_metrics(scan: &ToolScan) -> Vec<crate::lifecycle::Metrics> {
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    names.extend(scan.per_tool.keys().cloned());
+    names.extend(scan.declared_runs.keys().cloned());
+    names.extend(
+        crate::tools::known_tool_names()
+            .into_iter()
+            .map(str::to_string),
+    );
+    names
+        .into_iter()
+        .map(|name| {
+            let stat = scan.per_tool.get(&name);
+            crate::lifecycle::Metrics {
+                declared_runs: scan.declared_runs.get(&name).copied().unwrap_or(0),
+                calls: stat.map(|stat| stat.calls).unwrap_or(0),
+                successes: scan.successes.get(&name).copied().unwrap_or(0),
+                errors: stat.map(|stat| stat.errors).unwrap_or(0),
+                first_declared: scan
+                    .first_declared
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| crate::lifecycle::introduced(&name).to_string()),
+                name,
+                today: crate::boards::now_stamp().chars().take(10).collect(),
+            }
+        })
+        .collect()
 }
 
 /// What the advice is asking for.
@@ -324,14 +438,25 @@ pub fn render_scan(scan: &ToolScan) -> String {
         out.push_str("no tool calls in the window\n");
         return out;
     }
-    out.push_str("\n  calls  errors  tool\n");
+    out.push_str("\n  state      runs  calls  errs  tok/call  tool\n");
     let mut rows: Vec<(&String, &ToolStat)> = scan.per_tool.iter().collect();
     rows.sort_by(|left, right| right.1.calls.cmp(&left.1.calls));
     for (name, stat) in rows {
+        let declared = scan.declared_runs.get(name).copied().unwrap_or(0);
+        let arguments = scan.argument_chars.get(name).copied().unwrap_or(0);
+        let results = scan.result_bytes.get(name).copied().unwrap_or(0);
+        let tokens_per_call = if stat.calls > 0 {
+            (arguments + results) / 4 / stat.calls
+        } else {
+            0
+        };
         out.push_str(&format!(
-            "  {:>5}  {:>6}  {}{}\n",
+            "  {:>9}  {:>4}  {:>5}  {:>4}  {:>8}  {}{}\n",
+            "measured",
+            declared,
             stat.calls,
             stat.errors,
+            tokens_per_call,
             name,
             if stat.denied > 0 {
                 format!(" ({} denied)", stat.denied)
@@ -409,6 +534,19 @@ mod tests {
     use super::*;
     use crate::session::Session;
 
+    /// Move a just-created log to a fixture name and age it: the Start
+    /// record's `created` stamp is rewritten to 2026-10-01, so the
+    /// lifecycle's day counts read a real window rather than today.
+    fn write_session(home: &Path, stamp: &str, session: crate::session::Session) {
+        let dir = crate::home::sessions_dir(home);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join(format!("20261001T0000{stamp}Z-test.jsonl"));
+        let text = std::fs::read_to_string(session.path()).unwrap();
+        let aged = text.replacen(r#""created":""#, r#""created":"2026-10-01"#, 1);
+        std::fs::write(&target, aged).unwrap();
+        std::fs::remove_file(session.path()).unwrap();
+    }
+
     fn log(home: &Path, calls: &[(&str, &str, &str)]) {
         let mut session = Session::create(home, "test-model").unwrap();
         let tool_calls: Vec<crate::api::ToolCall> = calls
@@ -447,6 +585,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn declared_runs_are_exact_from_the_record_and_estimated_before_it() {
+        let home = scratch("declared");
+        // An old session with no Declarations record: the estimate
+        // applies; a newer session that wrote a record is exact.
+        log(&home, &[("grep", r#"{"pattern":"x"}"#, "one match")]);
+        let mut session = crate::session::Session::create(&home, "test-model").unwrap();
+        session
+            .record(&crate::session::Record::Declarations {
+                names: vec!["grep".to_string()],
+                tier: "core".to_string(),
+            })
+            .unwrap();
+        write_session(&home, "recorded", session);
+        let scan = scan(&home, 10);
+        assert!(scan.declared_runs["grep"] >= 2, "{:?}", scan.declared_runs);
+        assert_eq!(scan.successes["grep"], 1);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn lifecycle_metrics_feed_the_gate_and_the_sweep_caps() {
+        let home = scratch("sweep");
+        // Twelve sessions, each declaring deck (introduced 2026-10-17)
+        // and never calling it: past trial, past the window, zero use.
+        for index in 0..12 {
+            let mut session = crate::session::Session::create(&home, "test-model").unwrap();
+            session
+                .record(&crate::session::Record::Declarations {
+                    names: vec!["bash".to_string(), "deck".to_string()],
+                    tier: "core".to_string(),
+                })
+                .unwrap();
+            write_session(&home, &format!("s{index}"), session);
+        }
+        let thresholds = crate::settings::LifecycleThresholds::default();
+        let scan = scan(&home, thresholds.window);
+        let metrics = lifecycle_metrics(&scan);
+        let deck = metrics
+            .iter()
+            .find(|metrics| metrics.name == "deck")
+            .expect("deck is measured");
+        assert_eq!(deck.declared_runs, 12);
+        let state = crate::lifecycle::state_of(deck, &thresholds, &[]);
+        assert_eq!(state, crate::lifecycle::State::Candidate);
+        let plan = crate::lifecycle::sweep_plan(&metrics, &thresholds, &[]);
+        assert!(plan.disabled.iter().any(|(name, _)| name == "deck"));
+        assert!(plan.skipped.iter().any(|(name, _)| name == "bash"));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

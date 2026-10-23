@@ -3634,7 +3634,8 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             session::Record::Start { .. }
             | session::Record::End { .. }
             | session::Record::ToolResolution { .. }
-            | session::Record::LaneFailed { .. } => {}
+            | session::Record::LaneFailed { .. }
+            | session::Record::Declarations { .. } => {}
             // Bookkeeping, like start and end — it replays to no message
             // — but it carries the facts the inbox shows, so the replay
             // surfaces it rather than dropping it.
@@ -4546,18 +4547,43 @@ fn settings_read(home: &std::path::Path) -> Value {
                 })
             })
         });
+    // The lifecycle column: every native tool's state, the disabled
+    // names, and the last applied sweep \u{2014} the card's "what is on
+    // and what the evidence says about it".
+    let thresholds = crate::settings::lifecycle_thresholds(home);
+    let disabled_tools = crate::settings::tools_disabled(home);
+    let lifecycle_scan = crate::tool_advisor::scan(home, thresholds.window);
+    let lifecycle_metrics = crate::tool_advisor::lifecycle_metrics(&lifecycle_scan);
+    let states: std::collections::BTreeMap<String, String> = lifecycle_metrics
+        .iter()
+        .map(|metrics| {
+            (
+                metrics.name.clone(),
+                crate::lifecycle::state_of(metrics, &thresholds, &disabled_tools)
+                    .label()
+                    .to_string(),
+            )
+        })
+        .collect();
     let tools_document = json!({
         "native": crate::tools::ALL_TOOLS
             .iter()
             .map(|tool| {
                 let spec = tool.spec();
-                json!({ "name": spec.name(), "summary": spec.description() })
+                json!({
+                    "name": spec.name(),
+                    "summary": spec.description(),
+                    "state": states.get(spec.name()),
+                })
             })
             .collect::<Vec<_>>(),
         "deferred_above": crate::agent::MAX_VISIBLE_TOOLS,
         "definition_tokens": crate::agent::MAX_DEFINITION_TOKENS,
         "calls_per_turn": crate::agent::MAX_CALLS_PER_TURN,
         "last_session": last_audit,
+        "disabled": disabled_tools,
+        "last_sweep": crate::settings::last_sweep(home),
+        "window": thresholds.window,
     });
     json!({
         "type": "settings",
@@ -4922,6 +4948,21 @@ fn settings_apply(
         "server-remove" => {
             let name = text("name")?;
             crate::settings::remove_server(home, &name)
+        }
+        // The tool lifecycle: disable or enable one native tool through
+        // the same writer the CLI rides. A protected tool refuses here
+        // too \u{2014} the card is not a way around the gate.
+        "tool" => {
+            let name = text("name")?;
+            let disabled =
+                flag("disabled").ok_or_else(|| "the write says disable or enable".to_string())?;
+            if disabled && crate::lifecycle::PROTECTED_TOOLS.contains(&name.as_str()) {
+                return Err(format!(
+                    "`{name}` is protected \u{2014} the working core the sweep never touches"
+                ));
+            }
+            crate::settings::set_tool_disabled(home, &name, disabled)?;
+            Ok(name)
         }
         "server-import" => {
             let name = text("name")?;

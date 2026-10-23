@@ -106,6 +106,16 @@ pub enum Record {
         /// `core` or `deferred`.
         tier: String,
     },
+    /// The tool declarations this run's first request carried, recorded
+    /// once before that request: the model-visible names, the count, and
+    /// whether the catalog was tiered. The denominator of every usage
+    /// rate the lifecycle computes; without it, a tool added yesterday
+    /// is indistinguishable from one never used. Bookkeeping: it
+    /// replays to no message.
+    Declarations {
+        names: Vec<String>,
+        tier: String,
+    },
     /// A server that did not join at run start, and why. Bookkeeping:
     /// the model saw no declaration, so this record exists for the
     /// owner and the audit rather than the conversation.
@@ -807,6 +817,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
             | Record::End { .. }
             | Record::LaneFailed { .. }
             | Record::LaneTools { .. }
+            | Record::Declarations { .. }
             | Record::Skills { .. }
             | Record::Memory { .. }
             | Record::Goal { .. }
