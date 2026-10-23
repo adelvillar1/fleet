@@ -156,6 +156,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
+        Ok(Command::Mcp(options)) => mcp_command(&options),
         Ok(Command::Improve(options)) => improve_command(&options),
         Ok(Command::Vault(options)) => vault_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
@@ -1142,6 +1143,55 @@ fn remember_command(options: &cli::RememberOptions) -> ExitCode {
 /// the job's card beside the named line for what changed, and a typed
 /// refusal (a taken name, a schedule that does not parse, a name that is
 /// not in the store) prints its reason and exits 1.
+/// `fleet mcp`: the MCP server registry's surface. The bare command
+/// lists the configured servers as cards; the mutations address one
+/// server by name and go through the registry's own validation, so a
+/// refused write never lands half of itself. The exit code doubles as
+/// the list's health: success with zero servers too — an empty registry
+/// is a state, not an error.
+fn mcp_command(options: &cli::McpOptions) -> ExitCode {
+    use fleet::cli::McpAction;
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    match &options.action {
+        McpAction::List => match fleet::mcp_registry::read_servers(&home) {
+            Ok(servers) => {
+                print!("{}", fleet::mcp_registry::render(&servers));
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        McpAction::Remove { name } => match fleet::settings::remove_server(&home, name) {
+            Ok(removed) => {
+                println!("fleet: mcp: removed `{removed}`");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        McpAction::Enable { name, enabled } => {
+            let word = if *enabled { "enabled" } else { "disabled" };
+            match fleet::settings::set_server_enabled(&home, name, *enabled) {
+                Ok(set) => {
+                    println!("fleet: mcp: {word} `{set}` — the next run reads the registry");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+    }
+}
+
 fn cron_command(options: &cli::CronOptions) -> ExitCode {
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");

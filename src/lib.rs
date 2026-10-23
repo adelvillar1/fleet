@@ -33,6 +33,7 @@ pub mod judge;
 pub mod lane_client;
 pub mod lanes;
 pub mod mcp;
+pub mod mcp_registry;
 pub mod memory;
 pub mod net;
 pub mod nomenclature;

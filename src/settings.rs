@@ -2390,6 +2390,106 @@ pub fn lane_names() -> Vec<String> {
         .collect()
 }
 
+/// The MCP server registry's writers, beside the lane writer. The
+/// registry document lives in the fleet home as `mcp.json` and its
+/// shape is the registry module's; these are the write surface — the
+/// one home C7's enable/disable lands through, and the ops the CLI and
+/// the face's settings writer both call. The read-merge-write pattern
+/// is `set_lane`'s; the credential-name refusal deliberately is NOT:
+/// a server registry's job is to record which env names a server
+/// needs, and a value has no field to live in (mcp_registry D1a).
+pub fn set_server(home: &Path, name: &str, config: &Value) -> Result<String, String> {
+    let parsed = crate::mcp_registry::parse_server(name, config)?;
+    let mut document = crate::mcp_registry::read_registry(home)?;
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| "the registry document is not a JSON object".to_string())?;
+    let servers = object
+        .entry("servers")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(servers) = servers.as_object_mut() else {
+        return Err("the registry's `servers` is not an object".to_string());
+    };
+    servers.insert(name.to_string(), crate::mcp_registry::entry_value(&parsed));
+    crate::mcp_registry::write_registry(home, &document)?;
+    Ok(name.to_string())
+}
+
+/// One server out of the registry. Removing a name that is not there is
+/// a named refusal that lists what IS configured.
+pub fn remove_server(home: &Path, name: &str) -> Result<String, String> {
+    let mut document = crate::mcp_registry::read_registry(home)?;
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| "the registry document is not a JSON object".to_string())?;
+    let Some(servers) = object.get_mut("servers").and_then(Value::as_object_mut) else {
+        return Err(format!("`{name}` is not configured; the registry is empty"));
+    };
+    if servers.remove(name).is_none() {
+        let mut sorted: Vec<&String> = servers.keys().collect();
+        sorted.sort();
+        let carried = if sorted.is_empty() {
+            "nothing".to_string()
+        } else {
+            sorted
+                .iter()
+                .map(|key| format!("`{key}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        return Err(format!(
+            "`{name}` is not configured; the registry carries {carried}"
+        ));
+    }
+    crate::mcp_registry::write_registry(home, &document)?;
+    Ok(name.to_string())
+}
+
+/// Enabled on or off, in place: the rest of the entry is kept, so a
+/// disabled server stays in the registry and out of every run's
+/// declarations.
+pub fn set_server_enabled(home: &Path, name: &str, enabled: bool) -> Result<String, String> {
+    let mut document = crate::mcp_registry::read_registry(home)?;
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| "the registry document is not a JSON object".to_string())?;
+    let Some(servers) = object.get_mut("servers").and_then(Value::as_object_mut) else {
+        return Err(format!("`{name}` is not configured; the registry is empty"));
+    };
+    let Some(config) = servers.get_mut(name) else {
+        return Err(format!("`{name}` is not configured"));
+    };
+    let mut entry = crate::mcp_registry::parse_server(name, config)?;
+    entry.enabled = enabled;
+    *config = crate::mcp_registry::entry_value(&entry);
+    crate::mcp_registry::write_registry(home, &document)?;
+    Ok(name.to_string())
+}
+
+/// The probe's outcome into the registry, keeping the rest of the
+/// entry — the health path's writer.
+pub fn record_server_probe(
+    home: &Path,
+    name: &str,
+    probe: crate::mcp_registry::Probe,
+) -> Result<String, String> {
+    let mut document = crate::mcp_registry::read_registry(home)?;
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| "the registry document is not a JSON object".to_string())?;
+    let Some(servers) = object.get_mut("servers").and_then(Value::as_object_mut) else {
+        return Err(format!("`{name}` is not configured; the registry is empty"));
+    };
+    let Some(config) = servers.get_mut(name) else {
+        return Err(format!("`{name}` is not configured"));
+    };
+    let mut entry = crate::mcp_registry::parse_server(name, config)?;
+    entry.last_probe = Some(probe);
+    *config = crate::mcp_registry::entry_value(&entry);
+    crate::mcp_registry::write_registry(home, &document)?;
+    Ok(name.to_string())
+}
+
 /// Write one lane's object into `<FLEET_HOME>/lanes.json` through the
 /// same atomic, unknown-preserving rule every other writer here uses.
 /// The whole lane object is validated before the rename: a home is

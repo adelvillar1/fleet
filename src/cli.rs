@@ -59,6 +59,10 @@ pub enum Command {
     /// The scheduled jobs: the bare command lists them, each subcommand
     /// mutates the store by name.
     Cron(CronOptions),
+    /// The MCP server registry: the bare command lists the configured
+    /// servers as cards; `scan`, `import`, `enable`, `disable`,
+    /// `remove`, and `health` are the rest of the surface.
+    Mcp(McpOptions),
     /// The self-maintenance surface: the bare command lists every
     /// proposal in both stores; `apply` runs one through the gate and
     /// `undo` reverts an applied one.
@@ -366,6 +370,28 @@ pub struct ExplainOptions {
 #[derive(Debug, PartialEq, Eq)]
 pub struct CronOptions {
     pub action: CronAction,
+}
+
+/// Options for `fleet mcp`: the MCP server registry's surface. The bare
+/// command lists the configured servers as cards; the subcommands mutate
+/// the registry by name, `scan` reads the machine's foreign harness
+/// configs, `import` writes one discovered entry into the registry, and
+/// `health` probes every configured server live.
+#[derive(Debug, PartialEq, Eq)]
+pub struct McpOptions {
+    pub action: McpAction,
+}
+
+/// What `fleet mcp` was asked to do.
+#[derive(Debug, PartialEq, Eq)]
+pub enum McpAction {
+    /// List the configured servers as cards.
+    List,
+    /// Remove one configured server by name.
+    Remove { name: String },
+    /// Enable or disable one configured server; a disabled one stays in
+    /// the registry and out of every run.
+    Enable { name: String, enabled: bool },
 }
 
 /// What `fleet cron` was asked to do.
@@ -682,6 +708,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "compact" => parse_compact(rest),
         "settings" => parse_settings(rest),
         "lanes" => no_flags(rest, Command::Lanes),
+        "mcp" => parse_mcp(rest),
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
         "judge" => parse_judge(rest),
@@ -1286,6 +1313,54 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
         consolidate,
         archive,
     }))
+}
+
+/// `fleet mcp`: the MCP server registry's surface. The bare command
+/// lists the configured servers as cards; `enable`, `disable`, and
+/// `remove` address one server by name. The scan and import verbs ride
+/// the registry's discovery increment, health its probe increment.
+fn parse_mcp(args: &[String]) -> Result<Command, String> {
+    let Some(subcommand) = args.first() else {
+        return Ok(Command::Mcp(McpOptions {
+            action: McpAction::List,
+        }));
+    };
+    if *subcommand == "--help" || *subcommand == "-h" {
+        return Ok(Command::Help);
+    }
+    let rest = &args[1..];
+    let name = |what: &str| -> Result<String, String> {
+        match rest {
+            [name] if !name.starts_with('-') => Ok(name.clone()),
+            [name] => Err(format!("`{name}` takes no value here; see `fleet help`")),
+            [] => Err(format!("mcp {what} needs a server name (see `fleet help`)")),
+            _ => Err(format!(
+                "mcp {what} takes one server name (see `fleet help`)"
+            )),
+        }
+    };
+    match subcommand.as_str() {
+        "enable" => Ok(Command::Mcp(McpOptions {
+            action: McpAction::Enable {
+                name: name("enable")?,
+                enabled: true,
+            },
+        })),
+        "disable" => Ok(Command::Mcp(McpOptions {
+            action: McpAction::Enable {
+                name: name("disable")?,
+                enabled: false,
+            },
+        })),
+        "remove" => Ok(Command::Mcp(McpOptions {
+            action: McpAction::Remove {
+                name: name("remove")?,
+            },
+        })),
+        other => Err(format!(
+            "unknown mcp subcommand `{other}`; the verbs are list (bare), enable, disable, remove"
+        )),
+    }
 }
 
 /// `fleet cron`: the bare command lists the jobs; `add` creates one from
