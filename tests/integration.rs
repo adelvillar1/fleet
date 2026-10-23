@@ -868,6 +868,85 @@ async fn every_call_writes_one_resolution_and_the_methods_are_named() {
 }
 
 #[tokio::test]
+async fn a_turn_past_the_cap_is_refused_by_name() {
+    let home = temp_home("call-cap");
+    let note = home.join("note.txt");
+    std::fs::write(&note, "hello\n").unwrap();
+    let mut frames = Vec::new();
+    for index in 0..=fleet::agent::MAX_CALLS_PER_TURN {
+        frames.push(tool_call_delta(
+            index,
+            &format!("c{index}"),
+            "read_file",
+            &format!(r#"{{"path":"{}"}}"#, note.display()),
+        ));
+    }
+    frames.push(finish_frame("tool_calls"));
+    frames.push(usage_frame(10, 5));
+    frames.push("data: [DONE]".to_string());
+    let mock = MockApi::start(vec![stream(frames), assistant_stream(TOOL_REPORT)]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "read it")
+        .await
+        .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let refused = records
+        .iter()
+        .find(|record| matches!(record, Record::ToolResult { call_id, .. } if call_id == "c40"))
+        .expect("the 41st result");
+    match refused {
+        Record::ToolResult { output, .. } => assert!(
+            output.starts_with("error: this turn carried 41 calls"),
+            "{output}"
+        ),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn an_edit_without_a_prior_read_is_refused_and_a_read_unlocks_it() {
+    let home = temp_home("edit-without-read");
+    let file = home.join("code.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let edit = format!(
+        r#"{{"path":"{}","old_string":"fn main() {{}}","new_string":"fn main() {{ let _ = 1; }}"}}"#,
+        file.display()
+    );
+    let read = format!(r#"{{"path":"{}"}}"#, file.display());
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "edit", &edit),
+        tool_call_stream("c2", "read_file", &read),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "edit it")
+        .await
+        .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let results: Vec<&Record> = records
+        .iter()
+        .filter(|record| matches!(record, Record::ToolResult { .. }))
+        .collect();
+    assert_eq!(results.len(), 2, "{results:?}");
+    match results[0] {
+        Record::ToolResult { output, .. } => assert!(
+            output.starts_with("error: read") && output.contains("before editing"),
+            "{output}"
+        ),
+        other => panic!("expected the refusal, got {other:?}"),
+    }
+    match results[1] {
+        Record::ToolResult { output, .. } => assert!(
+            output.contains("fn main() {}"),
+            "the read answers with the file: {output}"
+        ),
+        other => panic!("expected the read, got {other:?}"),
+    }
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
 async fn streamed_tokens_reach_progress_before_the_run_ends() {
     // Three deltas with a pause between them, so the run is observably
     // mid-stream while the first one lands.
@@ -2893,6 +2972,61 @@ async fn a_lane_tool_refusal_is_recorded_as_a_failure_with_its_text() {
         "error: `items` must be a string"
     );
 
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A `tools/list` that pages is followed to its last cursor: a server
+/// that splits its roster is joined whole.
+#[tokio::test]
+async fn a_paged_tools_list_is_followed_to_the_last_cursor() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": {
+                "tools": [{ "name": "one", "description": "first", "inputSchema": { "type": "object" } }],
+                "nextCursor": "page-2"
+            }
+        }}),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": {
+                "tools": [{ "name": "two", "description": "second", "inputSchema": { "type": "object" } }]
+            }
+        }}),
+        serde_json::json!({ "reply": call_reply("ok") }),
+    ]);
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__sem1__one", "{}"),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("paged-tools");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(lane_specs(&fake)),
+        &mut progress,
+        "call one",
+    )
+    .await
+    .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let tools = records
+        .iter()
+        .find_map(|record| match record {
+            Record::LaneTools { tools, .. } => Some(tools),
+            _ => None,
+        })
+        .expect("the lane joined");
+    assert_eq!(tools.len(), 2, "{tools:?}");
+    let names: Vec<&str> = tools.iter().map(|tool| tool.lane_tool.as_str()).collect();
+    assert!(
+        names.contains(&"one") && names.contains(&"two"),
+        "{names:?}"
+    );
     std::fs::remove_dir_all(&home).ok();
 }
 

@@ -3769,4 +3769,61 @@ mod tests {
         let text = fs::read_to_string(path).unwrap_or_default();
         assert!(text.contains("background-ok"), "{text}");
     }
+
+    #[test]
+    fn computer_use_names_the_screenshot_file_not_an_image() {
+        let spec = computer_use_spec();
+        assert!(!spec.description().contains("rides to you as an image"));
+        assert!(spec.description().contains("written to a file"));
+    }
+
+    #[test]
+    fn unknown_arguments_are_named_and_declared_ones_are_not() {
+        let unknown = unknown_arguments(
+            Tool::ReadFile,
+            &serde_json::json!({"path": "a", "bogus": 1, "limit": 2}),
+        );
+        assert_eq!(unknown, vec!["bogus".to_string()]);
+        assert!(unknown_arguments(Tool::ReadFile, &serde_json::json!({"path": "a"})).is_empty());
+    }
+
+    #[test]
+    fn a_cut_result_spills_its_full_text_and_names_it() {
+        let dir = std::env::temp_dir().join(format!("fleet-spill-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let full = "x".repeat(MAX_TOOL_OUTPUT + 100);
+        let outcome = bound_with_spill(
+            ToolOutcome {
+                output: full.clone(),
+                truncated: false,
+            },
+            Some(&dir),
+        );
+        assert!(outcome.truncated);
+        let marker = outcome
+            .output
+            .lines()
+            .find_map(|line| line.strip_prefix("\u{2026}[full output: "))
+            .expect("the artifact is named")
+            .trim_end_matches(']')
+            .to_string();
+        let written = fs::read_to_string(&marker).unwrap();
+        assert_eq!(written.len(), full.len());
+        assert_eq!(written, full);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_path_names_the_real_entries() {
+        let dir = std::env::temp_dir().join(format!("fleet-nearest-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Cargo.toml"), "").unwrap();
+        let error = Tool::ReadFile
+            .execute_in(&serde_json::json!({"path": "Cargo.tml"}), &dir)
+            .unwrap_err();
+        assert!(error.contains("nearest: Cargo.toml"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

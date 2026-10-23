@@ -9138,6 +9138,25 @@ mod tier_tests {
     }
 
     #[test]
+    fn plan_mode_refuses_every_file_writing_tool_and_allows_the_rest() {
+        for name in [
+            "write_file",
+            "edit",
+            "remember",
+            "supersede",
+            "improve",
+            "plan",
+            "computer_use",
+        ] {
+            assert!(plan_refusal(true, name).is_some(), "{name} must be refused");
+        }
+        assert!(plan_refusal(true, "bash").is_none());
+        assert!(plan_refusal(true, "read_file").is_none());
+        assert!(plan_refusal(true, "grep").is_none());
+        assert!(plan_refusal(false, "write_file").is_none());
+    }
+
+    #[test]
     fn a_catalog_that_fits_is_declared_whole() {
         let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
         let lanes: Vec<_> = (0..3).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
