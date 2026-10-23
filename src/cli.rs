@@ -399,6 +399,10 @@ pub enum McpAction {
     /// Enable or disable one configured server; a disabled one stays in
     /// the registry and out of every run.
     Enable { name: String, enabled: bool },
+    /// Probe every configured server: spawn, initialize, list tools,
+    /// report, tear down. The outcome rides `last_probe` in the
+    /// registry, so the cards carry it.
+    Health,
 }
 
 /// What `fleet cron` was asked to do.
@@ -1326,8 +1330,8 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
 /// lists the configured servers as cards; `scan` reads the machine's
 /// foreign harness configs, `import` writes one discovered entry into
 /// the registry (`harness:name` when a name is discovered twice), and
-/// `enable`, `disable`, `remove` address one server by name. The health
-/// verb rides the registry's probe increment.
+/// `enable`, `disable`, `remove` address one server by name, and
+/// `health` probes every configured server live.
 fn parse_mcp(args: &[String]) -> Result<Command, String> {
     let Some(subcommand) = args.first() else {
         return Ok(Command::Mcp(McpOptions {
@@ -1350,6 +1354,7 @@ fn parse_mcp(args: &[String]) -> Result<Command, String> {
     };
     match subcommand.as_str() {
         "scan" => no_flags(rest, Command::Mcp(McpOptions { action: McpAction::Scan })),
+        "health" => no_flags(rest, Command::Mcp(McpOptions { action: McpAction::Health })),
         "import" => Ok(Command::Mcp(McpOptions {
             action: McpAction::Import {
                 name: name("import")?,
@@ -1373,7 +1378,7 @@ fn parse_mcp(args: &[String]) -> Result<Command, String> {
             },
         })),
         other => Err(format!(
-            "unknown mcp subcommand `{other}`; the verbs are list (bare), scan, import, enable, disable, remove"
+            "unknown mcp subcommand `{other}`; the verbs are list (bare), scan, import, enable, disable, remove, health"
         )),
     }
 }

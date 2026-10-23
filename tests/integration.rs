@@ -8230,3 +8230,69 @@ async fn a_disabled_server_is_absent_from_the_declarations() {
     );
     std::fs::remove_dir_all(&home).ok();
 }
+
+/// The health probe reports the server's self-reported name and version
+/// and its tool count, writes the outcome into the registry's
+/// `last_probe`, and a server that cannot start probes as failed with
+/// the reason named (C6).
+#[tokio::test]
+async fn a_probe_reports_the_server_and_writes_its_outcome() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "embed", "description": "an embed", "inputSchema": { "type": "object" } },
+        ])) }),
+    ]);
+    let home = temp_home("registry-probe");
+    fleet::settings::set_server(
+        &home,
+        "regtime",
+        &serde_json::json!({
+            "program": env!("CARGO_BIN_EXE_mock-mcp"),
+            "args": [fake.scratch.join("script.jsonl").to_string_lossy().into_owned()],
+            "env_names": [],
+            "enabled": true,
+        }),
+    )
+    .unwrap();
+    let probe =
+        fleet::mcp_registry::probe_server(&home, "regtime", &std::collections::BTreeMap::new())
+            .await
+            .expect("probes");
+    assert!(probe.ok, "{probe:?}");
+    assert_eq!(probe.server_name, "fake");
+    assert_eq!(probe.server_version, "9.9.9");
+    assert_eq!(probe.tools, 1);
+    fleet::settings::record_server_probe(&home, "regtime", probe).expect("records");
+    let (_, entry) = &fleet::mcp_registry::read_servers(&home).expect("reads")[0];
+    let probe = entry.last_probe.as_ref().expect("the outcome rode");
+    assert!(probe.ok);
+    assert_eq!(probe.tools, 1);
+    // A server that cannot start probes as failed, named.
+    fleet::settings::set_server(
+        &home,
+        "broken",
+        &serde_json::json!({
+            "program": "/fleet/no-such-binary-here",
+            "env_names": [],
+            "enabled": true,
+        }),
+    )
+    .unwrap();
+    let probe =
+        fleet::mcp_registry::probe_server(&home, "broken", &std::collections::BTreeMap::new())
+            .await
+            .expect("probes");
+    assert!(!probe.ok);
+    assert!(probe.reason.contains("could not start"), "{}", probe.reason);
+    fleet::settings::record_server_probe(&home, "broken", probe).expect("records");
+    let servers = fleet::mcp_registry::read_servers(&home).expect("reads");
+    let broken = &servers.iter().find(|(name, _)| name == "broken").unwrap().1;
+    assert!(!broken.last_probe.as_ref().expect("recorded").ok);
+    // The cards carry the outcomes: one ok, one failed, never a table.
+    let out = fleet::mcp_registry::render(&servers);
+    assert!(out.contains("probed ok"), "{out}");
+    assert!(out.contains("last probe failed"), "{out}");
+    assert!(out.contains("fake v9.9.9"), "{out}");
+    std::fs::remove_dir_all(&home).ok();
+}

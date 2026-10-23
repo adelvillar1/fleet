@@ -82,6 +82,7 @@ fn main() -> ExitCode {
             | Ok(Command::Delegate(_))
             | Ok(Command::Eval(_))
             | Ok(Command::Explain(_))
+            | Ok(Command::Mcp(_))
     );
     if needs_runtime {
         return match tokio::runtime::Builder::new_current_thread()
@@ -112,6 +113,7 @@ async fn dispatch(args: &[String]) -> ExitCode {
         Ok(Command::Gui(options)) => gui_command(&options).await,
         Ok(Command::Compact { session, force }) => compact_command(session.as_deref(), force).await,
         Ok(Command::Lanes) => lanes_command().await,
+        Ok(Command::Mcp(options)) => mcp_command(&options).await,
         Ok(Command::Judge(options)) => judge_command(&options).await,
         Ok(Command::Delegate(options)) => delegate_command(&options).await,
         Ok(Command::Eval(options)) => eval_command(&options).await,
@@ -156,7 +158,6 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Cron(options)) => cron_command(&options),
-        Ok(Command::Mcp(options)) => mcp_command(&options),
         Ok(Command::Improve(options)) => improve_command(&options),
         Ok(Command::Vault(options)) => vault_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
@@ -1143,13 +1144,73 @@ fn remember_command(options: &cli::RememberOptions) -> ExitCode {
 /// the job's card beside the named line for what changed, and a typed
 /// refusal (a taken name, a schedule that does not parse, a name that is
 /// not in the store) prints its reason and exits 1.
+/// `fleet mcp health`: probe every configured server — spawn,
+/// initialize, list its tools, report, tear down — and write each
+/// outcome into the registry's `last_probe`, so the cards carry it until
+/// the next probe. The exit code doubles as the fleet's: success only
+/// when every probe came back ok. A server whose env name resolves to
+/// nothing probes as failed with that reason — the named refusal, the
+/// probe's way.
+async fn mcp_health_command(home: &std::path::Path) -> ExitCode {
+    let servers = match fleet::mcp_registry::read_servers(home) {
+        Ok(servers) => servers,
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    if servers.is_empty() {
+        print!("{}", fleet::mcp_registry::render(&servers));
+        return ExitCode::SUCCESS;
+    }
+    let dotenv: std::collections::BTreeMap<String, String> =
+        home::read_dotenv_with_process_vault(home)
+            .into_iter()
+            .collect();
+    let mut probed: Vec<(String, fleet::mcp_registry::ServerEntry)> = Vec::new();
+    for (name, mut entry) in servers {
+        match fleet::mcp_registry::probe_server(home, &name, &dotenv).await {
+            Ok(probe) => {
+                if let Err(error) = fleet::settings::record_server_probe(home, &name, probe.clone())
+                {
+                    eprintln!("fleet: {error}");
+                    return ExitCode::from(2);
+                }
+                let word = if probe.ok { "ok" } else { "FAILED" };
+                println!(
+                    "fleet: mcp: probed `{name}` — {word}: {} v{} · {} tool{}",
+                    probe.server_name,
+                    probe.server_version,
+                    probe.tools,
+                    if probe.tools == 1 { "" } else { "s" },
+                );
+                entry.last_probe = Some(probe);
+                probed.push((name, entry));
+            }
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    print!("{}", fleet::mcp_registry::render(&probed));
+    if probed
+        .iter()
+        .all(|(_, entry)| entry.last_probe.as_ref().is_some_and(|probe| probe.ok))
+    {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
 /// `fleet mcp`: the MCP server registry's surface. The bare command
 /// lists the configured servers as cards; the mutations address one
 /// server by name and go through the registry's own validation, so a
 /// refused write never lands half of itself. The exit code doubles as
 /// the list's health: success with zero servers too — an empty registry
 /// is a state, not an error.
-fn mcp_command(options: &cli::McpOptions) -> ExitCode {
+async fn mcp_command(options: &cli::McpOptions) -> ExitCode {
     use fleet::cli::McpAction;
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
@@ -1220,6 +1281,7 @@ fn mcp_command(options: &cli::McpOptions) -> ExitCode {
                 }
             }
         }
+        McpAction::Health => mcp_health_command(&home).await,
         McpAction::Enable { name, enabled } => {
             let word = if *enabled { "enabled" } else { "disabled" };
             match fleet::settings::set_server_enabled(&home, name, *enabled) {

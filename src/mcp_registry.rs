@@ -165,7 +165,7 @@ pub fn enabled_specs(
         // No passthrough: the child gets the base plus the resolved env
         // entries and nothing else, the same minimal child KI-031
         // already gives a lane.
-        let mut spec = spec_from_entry(&name, &entry, dotenv)
+        let mut spec = spec_from_entry(&entry, dotenv)
             .map_err(|reason| format!("server `{name}`: {reason}"))?;
         spec.program = entry.program.clone();
         spec.args = entry.args.clone();
@@ -188,7 +188,7 @@ pub async fn probe_server(
     dotenv: &std::collections::BTreeMap<String, String>,
 ) -> Result<Probe, String> {
     let entry = read_server(home, name)?.ok_or_else(|| format!("`{name}` is not configured"))?;
-    let spec = match spec_from_entry(name, &entry, dotenv) {
+    let spec = match spec_from_entry(&entry, dotenv) {
         Ok(spec) => spec,
         Err(reason) => {
             return Ok(Probe {
@@ -256,7 +256,6 @@ pub async fn probe_server(
 /// The launch spec one entry builds, with its env names resolved the way
 /// `enabled_specs` resolves them — the probe proves the whole chain.
 fn spec_from_entry(
-    name: &str,
     entry: &ServerEntry,
     dotenv: &std::collections::BTreeMap<String, String>,
 ) -> Result<crate::mcp::ServerSpec, String> {
@@ -1956,6 +1955,29 @@ trust_level = "trusted"
             "{scan_out}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_probe_with_an_unresolved_env_name_fails_by_name() {
+        // The async body is the probe's; the env resolution is the
+        // registry's, and its refusal is the named one.
+        let home = scratch("probe-env");
+        set_server(
+            &home,
+            "weather",
+            &serde_json::json!({
+                "program": "python3",
+                "env_names": ["FLEET_TEST_MISSING_KEY"],
+                "enabled": true,
+            }),
+        )
+        .unwrap();
+        let entry = read_server(&home, "weather").unwrap().unwrap();
+        let error = spec_from_entry(&entry, &std::collections::BTreeMap::new())
+            .expect_err("refused");
+        assert!(error.contains("FLEET_TEST_MISSING_KEY"), "{error}");
+        assert!(error.contains("resolves to nothing"), "{error}");
         let _ = std::fs::remove_dir_all(&home);
     }
 }
