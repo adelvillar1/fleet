@@ -2024,6 +2024,7 @@ async fn drive(
     .await
     .ok();
     let options = AgentOptions {
+        goal: None,
         model,
         max_turns,
         identity: crate::home::read_soul(home),

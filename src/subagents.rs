@@ -1753,6 +1753,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     );
 
     let options = AgentOptions {
+        goal: None,
         model: child_route.model,
         max_turns,
         identity,

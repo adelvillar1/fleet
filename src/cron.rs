@@ -1292,6 +1292,7 @@ pub async fn execute(
     .await
     .ok();
     let options = AgentOptions {
+        goal: None,
         model: model.clone(),
         max_turns: DEFAULT_MAX_TURNS,
         identity: crate::home::read_soul(home),

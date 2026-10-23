@@ -1563,11 +1563,17 @@ pub struct SkillsSnapshot {
     /// A count, which is all the usage scan reports; the cards beside it
     /// name which ones, from their own `uses`.
     pub unused: usize,
-    /// Why the retire action is not one. Retirement curation is a
-    /// standing no-op under KI-215: the usage scan reads fleet's sessions
-    /// only, and the canonical library is cross-harness, so a fleet-side
-    /// count would retire another harness's skill. Carried by the read so
-    /// the card and the code cannot disagree about why.
+    /// The names the owner retired from the prompt on the skills page:
+    /// fleet-local, reversible, and the library is never written
+    /// (KI-215's shape — the owner retires, the library stays). Carried
+    /// so the panel's strip and its retired section read the same list
+    /// the loader filters by.
+    pub retired: Vec<String>,
+    /// Why the *automatic* retire action is not one. Retirement curation
+    /// is a standing no-op under KI-215: the usage scan reads fleet's
+    /// sessions only, and the canonical library is cross-harness, so a
+    /// fleet-side count would retire another harness's skill. Carried by
+    /// the read so the card and the code cannot disagree about why.
     pub curation_note: String,
     pub refused: Vec<String>,
 }
@@ -1592,6 +1598,7 @@ pub fn read_skills(canonical: Option<&Path>, home: &Path) -> SkillsSnapshot {
         }
     };
     let proposals = crate::skills::load_proposals(home);
+    let retired = crate::skills::retired(home);
     let usage = crate::skills::scan_usage(home, SKILL_USAGE_SESSIONS);
     let unused = usage.unused(&skills);
     let threshold = crate::skills::MERGE_SIMILARITY_THRESHOLD;
@@ -1650,6 +1657,7 @@ pub fn read_skills(canonical: Option<&Path>, home: &Path) -> SkillsSnapshot {
             .collect(),
         unused,
         sessions: usage.sessions,
+        retired,
         skills: loaded,
         proposals: proposals
             .iter()
