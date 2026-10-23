@@ -787,6 +787,37 @@ async function thePencilRenamesTheConversation() {
     renames.length ? renames[0].url + ' ' + renames[0].body : 'no rename');
 }
 
+
+// C4: `/clear` starts a conversation — it posts the new-session route and
+// opens what it made, instead of reloading the launch session under a
+// cleared view.
+async function theClearCommandStartsAConversation() {
+  const page = boot({
+    width: 1440,
+    hash: '#/chat',
+    newId: 'clear-made-1',
+    documents: {
+      sessions: emptySessions(),
+      state: (asked) => emptyState(asked),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.IDS.task.value = '/clear';
+  page.fireOn('task', 'input', {});
+  await flush();
+  const offered = page.rows('.command').find((command) => command.textContent.includes('/clear'));
+  check('C4 /clear is offered in the composer', !!offered,
+    page.rows('.command').map((command) => command.textContent).join(' | '));
+  if (offered) offered.click();
+  await flush(80);
+  const news = page.calls.filter((call) => call.url.startsWith('/api/session/new'));
+  check('C4 /clear posts the new-session route', news.length === 1, String(news.length));
+  check('C4 /clear opens the conversation it made',
+    page.window.location.hash === '#/sessions/clear-made-1', page.window.location.hash);
+}
+
 // --------------------------------------------------------------------- run
 
 const cases = [
@@ -800,6 +831,7 @@ const cases = [
   ['C3 the pencil renames the conversation', thePencilRenamesTheConversation],
   ['C7 the dock is closed and the work column takes its place', theDockIsClosedAndTheWorkColumnTakesItsPlace],
   ['C8 the addresses hold', theAddressesHold],
+  ['C4 /clear starts a conversation', theClearCommandStartsAConversation],
 ];
 
 for (const [name, run] of cases) {

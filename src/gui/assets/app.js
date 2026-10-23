@@ -148,8 +148,8 @@
         controlRun({ resume: true }, 'the run resumes',
           'it continues from where the pause stopped it', 'the resume was refused');
       }],
-    ['clear', ['new', 'reset'], 'clear the transcript and start a fresh session view',
-      function () { face.session = ''; window.location.hash = '#/chat'; load(true); }],
+    ['clear', ['new', 'reset'], 'start a new conversation \u2014 a real session, not a cleared view',
+      function () { newConversation(); }],
     ['approve', ['allow', 'yes'], 'answer the waiting approval: once, always, or deny',
       function (rest) { answer(rest.trim() || 'once'); }],
     ['help', ['commands', '?'], 'list every command and what it does',
