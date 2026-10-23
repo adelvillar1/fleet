@@ -66,13 +66,16 @@ A read of the code confirms each one, and names why:
 conversations, plus the runs the app made for itself. The bridge derives
 its state once and sends it, instead of the client guessing:
 
-`needs-you` (a live run is holding an approval seat, or a run is paused
-by the owner) · `working` (this face is driving it) · `active`
+`needs-approval` (a live run holding an approval seat) and `paused` (a
+run the owner paused) — two words in one *Needs you* group, because the
+owner's next act differs (answer a call, resume a run) and a single word
+would hide which · `working` (this face is driving it) · `active`
 (unfinished, log written within the live window, not driven here — a
-background run on another process) · `completed` · `capped` · `stopped`
-· `interrupted` (unfinished and stale) · `scheduled ok` / `scheduled
-failed` for the job family. Alongside it, a class: `yours`,
-`background` (scheduled), `delegated`, `channel`.
+background run on another process) · `new` (a conversation with no
+message yet) · `completed` · `capped` · `stopped` · `interrupted`
+(unfinished and stale). A background family's line carries its newest
+run's state. Alongside it, a class: `yours`, `background` (scheduled),
+`delegated`, `channel`.
 
 **Work lists by what needs the owner, not by project first.** Groups in
 fixed order: *Needs you* · *Working* · *Background* (collapsed to one
@@ -90,8 +93,10 @@ conversation does, so the distinction was only the coin toss and the
 composer says so when the session cannot accept a message yet.
 
 **The conversation has a head.** Back to work (narrow widths), the
-title (press to rename), its state, New, and a switcher that is the same
-list as a sheet, so switching never loses the place. At wide widths the
+title — which opens the switcher (the same list as a sheet) — the state,
+the pencil beside it for a rename, and New, so switching never loses the
+place. Two gestures, two controls: a press on the title switches, a
+press on the pencil asks for a name. At wide widths the
 work column stays visible and the head is the identity, not navigation.
 
 **New is real.** `POST /api/session/new` creates a session and anchors
@@ -126,15 +131,15 @@ switcher sheet.
 
 ## Acceptance criteria
 
-- [ ] **C0 — a row states what the log knows.** `GET /api/sessions` rows carry `stop_reason`, `turns`, `last_write` (the log's mtime), `job` (the scheduled run's job name, read with the cron module's own frame parse), `class` (`yours|background|delegated|channel`), and `state` from the vocabulary above. A unit test maps each recorded ending to its word; an unfinished log whose mtime is inside the live window and that this bridge does not drive reads `active`; a stale unfinished log reads `interrupted`; a `.control` file holding `pause` reads `needs-you`.
+- [ ] **C0 — a row states what the log knows.** `GET /api/sessions` rows carry `stop_reason`, `turns`, `last_write` (the log's mtime), `job` (the scheduled run's job name, read with the cron module's own frame parse), `class` (`yours|background|delegated|channel`), and `state` from the vocabulary above. A unit test maps each recorded ending to its word; an unfinished log whose mtime is inside the live window and that this bridge does not drive reads `active`; a stale unfinished log reads `interrupted`; a `.control` file holding `pause` reads `paused` (grouped under *Needs you* with an approval seat's `needs-approval`); a log with no owner message reads `new`.
 - [ ] **C1 — attention is first and the background is quiet.** The list renders *Needs you* → *Working* → *Background* → *Earlier* in that order, with the server's counts; *Background* is collapsed to one line per family (jobs, children, channels) with its last outcome, and expanding shows the runs. A face test over a fixture archive asserts the group order, the collapsed default, and that no scheduled run appears among *Earlier*.
 - [ ] **C2 — opening is one verb.** A row's click and Enter call one function for every state; the state-dependent handler at `app.js:6794` is gone. A face test opens an ended, a working, and an interrupted row and asserts each produced the conversation pane with a composer and its history — no read-only mode, and no 400-character clip.
-- [ ] **C3 — you can leave and switch.** The conversation head renders back (below 1180px), the title (which renames on a press and opens the switcher beside it), and New; the switcher rows carry the same states. A face test opens one item, picks another in the switcher, and asserts the head's title and the hash both moved, with the list still present.
+- [ ] **C3 — you can leave and switch.** The conversation head renders back (below 1180px), the title (which opens the switcher beside it), the pencil that renames, and New; the switcher rows carry the same states. A face test opens one item, picks another in the switcher, and asserts the head's title and the hash both moved, with the list still present; a second asserts the pencil posts `/api/session/title` with the conversation's id and the typed name.
 - [ ] **C4 — new is a session.** `POST /api/session/new` creates a distinct log (`Session::create`, the launch model, `kind: None`), anchors it as the open item, and the next run writes into it; `/clear` calls it. An integration test calls it twice and asserts two ids, two files, one `start` record each, and that the following run's records land in the second.
 - [ ] **C5 — running belongs to a session.** `/api/state` carries `driving`; the client keys `running` and the seat by session id. Opening another conversation while `driving` is set is allowed; sending there queues with the reason naming the working item. A bridge test pins `driving`; a face test opens a second item with `driving` set and asserts the composer exists and the queue chip names the working conversation.
 - [ ] **C6 — the transcript is markdown.** An assistant reply carrying a heading, a list, inline code, bold, and a fenced block renders those nodes in the transcript (not only in the file pane); a streaming reply is text until its boundary and re-rendered once after; the `streaming` class is removed when the block closes. Pinned by a face test over a fixture reply, and checked live.
-- [ ] **C7 — the space is the work's.** The dock is closed by default at every width and opens from the run strip; while it is closed the strip is the run's one line and no column is reserved for the dock; at ≥1600px the work column occupies that space with nothing empty beside it; the prose measure stays ≤80ch while the pane may widen. A face/CSS test asserts the grid at 1600 with the dock closed and the prose max-width.
-- [ ] **C8 — the addresses hold.** `#/sessions/<id>` opens that item in place with the list beside it and survives a reload; `#/chat` is the new-work front door; `#/sessions` with no id opens the first *Needs you* item, else the newest, and the URL names the choice. A face test walks all three.
+- [ ] **C7 — the space is the work's.** The dock is closed by default at every width and opens from the run strip; while it is closed the strip is the run's one line and no column is reserved for the dock; at ≥1600px the work column occupies that space with nothing empty beside it; the prose measure stays ≤80ch while the pane may widen. A face/CSS test asserts the mode at 1600 (the dock closed, the work column shown) and reads the rules that produce the geometry from the stylesheet (the work width, the conversation's inset, the sheet's override, the prose's `ch` bound); the live pass measures the pixels at 1600.
+- [ ] **C8 — the addresses hold.** `#/sessions/<id>` opens that item in place with the list beside it and survives a reload; `#/chat` is the new-work front door; `#/sessions` with no id opens the first *Needs you* item, else the newest, and the URL names the choice. A face test walks all three: the front door with the column closed and the composer standing, the list picking the row that needs the owner, and a reload at an id resuming that conversation with its history and the list beside it.
 - [ ] **C9 — documented and green.** `FUNCTIONAL-SPECIFICATIONS.md`'s conversation and sessions sections, `docs/features/gui.md`, and `docs/architecture/surfaces.md` speak the state vocabulary, the group order, the one verb, New, and the markdown; the gate is green.
 
 ## Files to be touched

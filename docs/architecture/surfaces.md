@@ -77,9 +77,10 @@ serves it and which folder it works in. Attach a document from the
 workspace or a file from the machine. Plan instead of build. Send, and
 watch the run happen as cards: the route it took, what it recalled, the
 skill it loaded, the child it spawned, the approval it is waiting for.
-The head names the conversation — its title (the switcher), its state in
-words, the way back to the work list, and New — so the conversation is
-a place you can leave and another you can choose. Replies read as
+The head names the conversation — its title (the switcher), the pencil
+that renames, its state in words, the way back to the work list, and
+New — so the conversation is a place you can leave and another you can
+choose. Replies read as
 markdown, at the block boundary where the whole answer is in hand.
 
 **Why.** Because the valuable things a harness does were, everywhere
