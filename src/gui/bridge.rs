@@ -3442,9 +3442,24 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             session::Record::User { content } => {
                 cards.push(json!({"type": "message", "role": "owner", "text": content}));
             }
-            session::Record::Assistant { content, .. } => {
+            session::Record::Assistant {
+                content,
+                tool_calls,
+            } => {
                 if let Some(text) = content {
                     cards.push(json!({"type": "message", "role": "assistant", "text": text}));
+                }
+                // The calls the answer requested, before their results:
+                // the replay shows the same pair the live stream does, and
+                // the call carries its arguments so an expanded row names
+                // what actually ran (the result alone cannot).
+                for call in tool_calls {
+                    cards.push(json!({
+                        "type": "tool_call",
+                        "tool": call.function.name,
+                        "summary": crate::agent::call_summary(call),
+                        "arguments": call.function.arguments,
+                    }));
                 }
             }
             session::Record::ToolResult {
@@ -7884,6 +7899,22 @@ mod tests {
             "the other conversation is told too"
         );
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_replayed_call_carries_the_command_it_ran() {
+        let records = vec![session::Record::Assistant {
+            content: Some("running it".to_string()),
+            tool_calls: vec![call("bash", "{\"command\":\"echo hi\"}")],
+        }];
+        let (cards, _) = cards_from_records(&records);
+        assert_eq!(cards[0]["type"], "message", "{cards:?}");
+        assert_eq!(cards[1]["type"], "tool_call", "{cards:?}");
+        assert_eq!(cards[1]["tool"], "bash");
+        assert_eq!(cards[1]["summary"], "echo hi");
+        // The full call, not the clipped line: the face's expanded row
+        // names what ran from this.
+        assert_eq!(cards[1]["arguments"], "{\"command\":\"echo hi\"}");
     }
 
     #[test]
