@@ -57,10 +57,10 @@ document escalated to Perception to Nace.
 **Work — the work list.** Every conversation and background run under
 this home, grouped by what needs the owner rather than by project:
 *needs you* (an approval waiting, a run you paused), *working*, the
-*background* (scheduled jobs, delegated children, and peer
-conversations, folded to one line per family with its last state and
-how many are active), then *earlier*, grouped by the project each run
-was born in. A row says its state in words — *completed*, *capped*,
+*background* — one quiet line, closed by default, naming how many of the
+app's own runs (scheduled jobs, delegated children, peer conversations)
+are behind it, which opens to the family lines and then the runs — then
+*earlier*, grouped by the project each run was born in. A row says its state in words — *completed*, *capped*,
 *stopped by you*, *interrupted*, *active* — with its age, its project,
 and, for background work, the job's name. One verb: opening a row loads
 that conversation in place, beside the list, with its composer, so

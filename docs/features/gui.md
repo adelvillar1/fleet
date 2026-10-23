@@ -165,8 +165,9 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   there is no separate read-only replay. `#/sessions/<id>` is the
   address of the open row and survives a reload; `#/chat` is the
   new-work front door. Rows are grouped by what needs the owner
-  (*needs you*, *working*, *background* folded per family, *earlier*
-  per project), and the state words come from the bridge's derivation:
+  (*needs you*, *working*, *background* closed behind one line that
+  names its run count, *earlier* per project), and the state words come
+  from the bridge's derivation:
   `needs-approval`, `paused`, `working`, `active`, `completed`,
   `capped`, `stopped`, `interrupted`, `new`. Where there is no room for
   the column it overlays as a sheet, opened from the conversation's

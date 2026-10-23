@@ -94,9 +94,10 @@ browses the whole disk and takes a typed path.
 **What it is.** Every conversation and every run under this home, as one
 list grouped by what needs the owner rather than by where it was born:
 *needs you* (an approval waiting, a run the owner paused), *working*,
-the *background* (scheduled jobs, delegated children, peer
-conversations — folded to one line per family with its last state and
-its active count), and *earlier*, grouped by project.
+the *background* — one line, closed by default, that says how many of
+the app's own runs (scheduled jobs, delegated children, peer
+conversations) it holds and opens to the family lines on request — and
+*earlier*, grouped by project.
 
 **What you do.** Read the state in words — *completed*, *capped*,
 *stopped by you*, *interrupted*, *active*, *new* — with each row's age,
