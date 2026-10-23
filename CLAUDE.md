@@ -50,7 +50,8 @@ src/tools.rs            bash, read_file, write_file, list_dir; output capping; t
 src/approvals.rs        the three-mode approval gate: ask, yes, yes-guarded, and the always-ask class
 src/compaction.rs       context-window management: summarize-and-continue under a token budget
 src/mcp.rs              the hand-rolled MCP stdio client (spawn, initialize, tools/list, tools/call, teardown)
-src/lanes.rs            the five vendored lane cores: home resolution, launch specs, health probe
+src/lanes.rs            the six vendored lane cores: home resolution, launch specs, health probe
+src/mcp_registry.rs     the MCP server registry: mcp.json, the scan over foreign harness configs, import, health, the fleet mcp cards
 src/lane_client.rs      the lane-kind candidate's boundary: a chat request in, blend1's grounded answer out
 src/session.rs          JSONL session log: append, replay, list, resume
 src/home.rs             FLEET_HOME / ~/.fleet, sessions dir, .env fallback (the whole credential chain)
@@ -86,7 +87,7 @@ tests/integration.rs    end-to-end tests: parser, client, tool loop, log, real s
 docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice records + dashboards record inherited from the fork)
 docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
 docs/known-issues.md    the ledger: every error/warning encountered, with evidence
-docs/architecture/      deep-dive-2026-10-15.md (current state), overview.md (slice-1 snapshot), ecosystem.md (the repos Fleet absorbs), surfaces.md (the what and why of all eleven destinations), lanes.md (why five specialized services stand between the owner and the LLM)
+docs/architecture/      deep-dive-2026-10-15.md (current state), overview.md (slice-1 snapshot), ecosystem.md (the repos Fleet absorbs), surfaces.md (the what and why of all eleven destinations), lanes.md (why five specialized services stand between the owner and the LLM), tool-surface.md (the model's tools, the gap, and the 2026 build order)
 docs/images/            the surface screenshots the README and the functional spec render
 README.md                the product's front door: the arc, what ships, what is next (product-manager register)
 TECHNICAL-DOCUMENTATION.md   the system of record: interface contracts, environments, runbooks, verification, risk, sequencing (technical-program-manager register)
@@ -107,7 +108,8 @@ cargo run --bin fleet -- doctor     # credentials, home, API, shell; masks the k
 cargo run --bin fleet -- run "<task>" --yes
 cargo run --bin fleet -- sessions   # the archive as cards; --recall ranks it, <id> opens one log
 cargo run --bin fleet -- compact    # fold a session's stored context on demand
-cargo run --bin fleet -- lanes      # probe the five vendored lanes, health cards
+cargo run --bin fleet -- lanes      # probe the six vendored lanes, health cards
+cargo run --bin fleet -- mcp        # the MCP server registry: cards; scan/import/enable/disable/remove/health
 cargo run --bin fleet -- providers  # the routing roster in chain order, per-provider state
 cargo run --bin fleet -- calib      # the calibration stream: today's rows by op, the writer's counters
 cargo run --bin fleet -- settings   # every configurable surface; `set <key> <value>` writes one

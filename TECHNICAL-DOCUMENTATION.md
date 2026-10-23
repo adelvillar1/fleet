@@ -78,7 +78,9 @@ id-keys pending waiters, per-op timeouts, and named errors only — a
 
 **The home's files.** `config.json` (pin, provider overrides, the calib
 and skills knobs), `routing.json` (the workload tiers and the gates),
-`lanes.json` (per-lane configuration), `vault.json` (the sealed
+`lanes.json` (per-lane configuration), `mcp.json` (the MCP server
+registry: program, args, env NAMES — never values — enabled, the import
+source, the last probe), `vault.json` (the sealed
 credentials), `sessions/` (the logs), `sessions-workdirs.json` (the
 chats' folders), `route-cache.json` (one recorded judgment per task,
 keyed to the judging lane), `ui.json` (the browser's counters), and the
@@ -308,6 +310,15 @@ The hand-rolled MCP stdio client: spawn, initialize, tools/list, tools/call,
 teardown. It speaks newline-delimited JSON-RPC 2.0, id-keys pending waiters,
 and applies per-op timeouts.
 
+#### `mcp_registry.rs`
+The MCP server registry (`docs/features/mcp.md`): the `mcp.json` document,
+its validation (reserved names — the six lanes and the built-in tools —
+name shapes, and the no-value schema whose `env_names` is the only env
+field), the scan over the four foreign harness configs with its shape
+reader for Codex's TOML subset, the `-e NAME=VALUE` extraction, the
+advisorial badges, the `fleet mcp` card renderer, and the health probe.
+The writers live in `settings.rs` beside `set_lane`.
+
 #### `judge.rs`
 The routing judgment beat: `fleet judge` grades a day's route decisions through
 sys1. The grader sees redacted route rows only — workload, verdict, attempts,
@@ -433,8 +444,11 @@ Fleet home resolution, `.env` fallback, and credential resolution. This is
 the single source of truth for "Fleet reads Fleet's home and nothing else."
 
 #### `settings.rs`
-One writer over `config.json` / `routing.json` / `fleet.env` / `lanes.json`,
-and the secret writer over the vault and `.env`. The CLI, TUI, and GUI
+One writer over `config.json` / `routing.json` / `fleet.env` / `lanes.json` /
+`mcp.json` (`set_server` / `remove_server` / `set_server_enabled` /
+`record_server_probe` — the read-merge-write pattern of `set_lane`, without
+its credential-name refusal, which a server registry cannot reuse), and the
+secret writer over the vault and `.env`. The CLI, TUI, and GUI
 settings surfaces read and write through this module. `router_config` reads
 the tiers, gates, pin, and roster through the router's own loader and key
 resolution, naming the first candidate that would serve each tier and the

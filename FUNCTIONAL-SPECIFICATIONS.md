@@ -116,10 +116,13 @@ passphrase is lost.
 
 **System — settings.** Every knob the home has: the router (spend gate,
 workload tiers with a resolved-now column, thresholds, pin), the
-provider roster as field editors, the lanes, the roles, the vault, the
-spend caps, the remembered rules, the cron jobs, and the identity slot.
-Every value is picked from what this home already knows; every write
-rides the one writer the CLI rides.
+provider roster as field editors, the lanes, the MCP servers
+(`docs/features/mcp.md`: the registry's rows with their probe dots and
+enable/probe/remove, the machine scan's discovery rows with their
+advisorial badges and one import each — the registry carries env NAMES
+only), the roles, the vault, the spend caps, the remembered rules, the
+cron jobs, and the identity slot. Every value is picked from what this
+home already knows; every write rides the one writer the CLI rides.
 
 **System — calibration.** The day's stream, the judged quality of what
 served, and the gate that decides whether the failover may learn from
@@ -209,6 +212,14 @@ head, the rail and the panels keep the measure they have.
   (route, memory, skills, lane, compaction, checkpoint, folder, control,
   repair, rewind) each open their own record on a press. Nothing on the
   transcript is a dead label, and none of it adds height until asked.
+- **The registry's servers ride every owner-facing run.** An enabled
+  server in the fleet home's `mcp.json` pre-joins before the first
+  request — its tools are declared from the first turn under
+  `mcp__<server>__<tool>`, each join logged as a `lane_tools` record
+  naming both ends of the mapping. A server whose env name resolves to
+  nothing refuses the run by name before anything spawns; a disabled
+  one stays in the registry and out of every declaration. A subagent's
+  run and a scheduled job do not pre-join.
 - A pinned provider routes every shape through that provider's own
   models; a bare model id on `--model` resolves to the one provider that
   serves it, refused by name when none or several do.

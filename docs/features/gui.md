@@ -286,7 +286,7 @@ a maze. The rail's collapsed state is remembered across launches.
 | `#/second-brain` | the project atlas: the attention queue, the six-week pulse, the commit ribbon, the report feed with the harness trust lines, and the method band (gates, loops, harness, maturity) |
 | `#/bots` | the channel control plane: the service and its heartbeat, the write-only Telegram token, the paired devices with revoke, who can reach the fleet with an editable capability, the peers waiting at the door, the pair form with its callback and one-time token reveal, and what they have done. The rail entry carries a count only when something is waiting |
 | `#/vault` | the vault as its own surface: first-run onboarding (choose the passphrase, create, migrate the plaintext `.env` entries), the sealed names, the plaintext ledger with seal/drop, lock, and start-over for a forgotten passphrase |
-| `#/settings` | every configurable surface: the router (spend guard, tiers with resolved-now, thresholds, pin), the providers as field editors, the four lane cards, the roles editor, the vault, the spend caps, the remaining knobs, the rules, the cron jobs, the identity slot, and the env names |
+| `#/settings` | every configurable surface: the router (spend guard, tiers with resolved-now, thresholds, pin), the providers as field editors, the lane cards, the MCP servers card (`docs/features/mcp.md`): the registry's rows with their probe dots and enable/probe/remove, the scan's discovery rows with their badges and import, the roles editor, the vault, the spend caps, the remaining knobs, the rules, the cron jobs, the identity slot, and the env names |
 
 ## The configuration surface
 

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-22
 updated: 2026-10-23
 slug: mcp-server-registry
@@ -43,16 +43,24 @@ Nothing in the repo reads any of these files today (re-verified
 2026-10-23: no source or service names any of the four paths), and Fleet
 must never write them — import is one-way, into Fleet's own home.
 
-**State — why this is still a draft.** The plan was drafted 2026-10-22
+**State — completed 2026-10-23.** The plan was drafted 2026-10-22
 (`2ef9de3`) in a fleet session that did not go as planned: the drafting
 runs hit the 25-turn cap twice, writing the file was refused eight times
 by the nomenclature write guard (KI-284), and the owner then pivoted to
 the chat-UX work — so `/goal implement as designed` implemented
-`2026-10-22-chat-ux-polish.md`, not this. Nothing here is built: no
-`src/mcp_registry.rs`, no `set_server`/`remove_server`, no `mcp` verb, no
-`~/.fleet/mcp.json`, no `docs/features/mcp.md`. Reviewed against the tree
-2026-10-23 and corrected below (the lane count, the entry arithmetic, the
-settings writer claim, the actual seams).
+`2026-10-22-chat-ux-polish.md`, not this. Reviewed against the tree and
+corrected (`dea0d1a`), it was then implemented as designed in five
+increments, each gated and committed: the registry and its writer
+(`a063f66`), discovery and import (`82b7679`), the run wiring
+(`32a1099`), health (`14e3bfe`), and the settings card (`4b7a9ec`). Two
+amendments landed with the increments and re-gated PASS: D3's args half
+(the desktop configs carry credentials inside the args; the scan
+extracts `-e NAME=VALUE` at the read) and D6's mechanism (the badges
+are read off the entry's own launch shape rather than asked of the sys1
+lane). The live machine scan reads 16 entries — 13 available, 3
+unsupported by shape — and its output, the face's document, and the
+imported registry file grep clean for every credential string on this
+machine.
 
 ## What we should do
 
@@ -268,46 +276,46 @@ written through the bash path until KI-284 closes.
 
 ## Acceptance criteria
 
-- [ ] C1 — the `mcp.json` file in the fleet home is the registry:
+- [x] C1 — the `mcp.json` file in the fleet home is the registry:
   `fleet mcp` lists configured servers as cards (name, shape, enabled
   state, tool count) and a machine with none shows an empty-state card,
   not a bare table.
-- [ ] C2 — a configured stdio server's tools are declared to the run in
+- [x] C2 — a configured stdio server's tools are declared to the run in
   the `mcp__<server>__<tool>` form from the first request; a call to one
   answers bounded and lands in the session log's `lane_tools` record with
   both ends of the name mapping. Verified by an integration test over the
   scripted mock server.
-- [ ] C3 — `fleet mcp scan` reads every known foreign config file
+- [x] C3 — `fleet mcp scan` reads every known foreign config file
   present, reports each entry as configured / available / unsupported with
   its source file named; absent files are skipped silently, an
   unparseable file is a named skip, an HTTP/SSE entry reports unsupported
   by shape rather than disappearing, and importing an unsupported shape is
   a named refusal.
-- [ ] C4 — importing writes the registry and executes nothing; neither
+- [x] C4 — importing writes the registry and executes nothing; neither
   the scan output, the face's servers document, nor the registry file ever
   contains an env value — key names only (grep-verified against a fixture
   config carrying a marker value), and the registry's shape carries no
   field a value could be written into.
-- [ ] C5 — the registry refuses the six lane names and the built-in tool
+- [x] C5 — the registry refuses the six lane names and the built-in tool
   names (D8), and a user server whose tool short-names collide with an
   already-declared name resolves to a distinct declared name (the
   `unique_name` rule), so no two declarations ever share a name.
-- [ ] C6 — `fleet mcp health` spawns, handshakes, lists tools, reports
+- [x] C6 — `fleet mcp health` spawns, handshakes, lists tools, reports
   the server's self-reported name/version, and tears down; a failing spawn
   names the reason from the child's stderr tail, the lane probe's way.
-- [ ] C7 — enable/disable lands through the one settings writer, takes
+- [x] C7 — enable/disable lands through the one settings writer, takes
   effect on the next run, and a disabled server appears in `fleet mcp` but
   is absent from that run's tool declarations.
-- [ ] C8 — the GUI settings board carries the surface described in The
+- [x] C8 — the GUI settings board carries the surface described in The
   app: configured servers as rows with status dots and an enable toggle,
   discovered entries as import rows with shape and judgment badges, an
   empty state that offers the scan, at the address `#/settings`; the
   remote allowlists are byte-for-byte unchanged (`/api/settings` stays
   absent from both `ALLOWED_GET` and `ALLOWED_POST`).
-- [ ] C9 — the gate is green: `cargo fmt --all --check`, `cargo clippy
+- [x] C9 — the gate is green: `cargo fmt --all --check`, `cargo clippy
   --all-targets -- -D warnings`, `cargo build --release`, `cargo test`,
   each exit code read on the cargo invocation itself.
-- [ ] C10 — the three outputs agree: the CLI's scan, the face's servers
+- [x] C10 — the three outputs agree: the CLI's scan, the face's servers
   document, and the session log carry the same names and shapes, and never
   a value. One fixture read three ways, one answer.
 
