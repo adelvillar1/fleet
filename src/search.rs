@@ -42,6 +42,30 @@ pub struct SearchOutcome {
     pub truncated: bool,
 }
 
+/// The two providers content search has, in preference order: `rg`
+/// (honors `.gitignore`, compiles patterns) and `grep` (always there).
+/// The dispatch policy picks between them; a provider that is not
+/// installed is unhealthy, and a healthy fallback is used instead.
+pub fn grep_providers() -> Vec<crate::tool_router::Provider> {
+    let rg = Command::new("rg")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    vec![
+        crate::tool_router::Provider {
+            name: "rg".to_string(),
+            warm: true,
+            healthy: rg,
+        },
+        crate::tool_router::Provider {
+            name: "grep".to_string(),
+            warm: true,
+            healthy: true,
+        },
+    ]
+}
+
 /// `grep`: literal or regex search, capped and counted.
 pub fn run_grep(
     pattern: &str,
@@ -53,8 +77,12 @@ pub fn run_grep(
     max: Option<usize>,
 ) -> Result<SearchOutcome, String> {
     let target = display_path(path, base);
-    let mut command = match Command::new("rg").arg("--version").output() {
-        Ok(output) if output.status.success() => {
+    let providers = grep_providers();
+    let chosen = crate::tool_router::choose(&providers, false)
+        .map(|(provider, reason)| (provider.name.clone(), reason))
+        .unwrap_or_else(|| ("grep".to_string(), "no provider"));
+    let mut command = match chosen.0.as_str() {
+        "rg" => {
             let mut command = Command::new("rg");
             command.arg("--color=never").arg("--no-messages");
             match mode {
@@ -161,6 +189,12 @@ pub fn run_grep(
             String::new()
         }
     ));
+    if chosen.0 != "rg" {
+        text.push_str(&format!(
+            "; rg unavailable — dispatch chose grep ({})",
+            chosen.1
+        ));
+    }
     text.push_str(")\n");
     Ok(SearchOutcome { text, truncated })
 }
@@ -354,6 +388,15 @@ pub(crate) fn distance(left: &str, right: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grep_has_two_providers_and_grep_is_always_healthy() {
+        let providers = grep_providers();
+        assert_eq!(providers.len(), 2);
+        assert_eq!(providers[0].name, "rg");
+        assert_eq!(providers[1].name, "grep");
+        assert!(providers[1].healthy);
+    }
 
     #[test]
     fn globs_match_segments_stars_and_double_stars() {

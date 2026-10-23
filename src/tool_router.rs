@@ -191,19 +191,24 @@ pub fn lexical_rank(query: &str, candidates: &[Candidate]) -> Vec<Ranked> {
 
 /// Apply the floor and the margin to a ranking.
 pub fn select(ranked: Vec<Ranked>) -> Selection {
-    let Some(best) = ranked.first() else {
-        return Selection::None(Vec::new());
-    };
-    if best.score < FLOOR {
-        return Selection::None(ranked.into_iter().take(2).collect());
+    // Only candidates above the floor are eligible; the nearest two ride
+    // along only when nothing clears it.
+    let nearest: Vec<Ranked> = ranked.iter().take(2).cloned().collect();
+    let above: Vec<Ranked> = ranked
+        .into_iter()
+        .filter(|rank| rank.score >= FLOOR)
+        .take(ACTIVATE_MAX)
+        .collect();
+    if above.is_empty() {
+        return Selection::None(nearest);
     }
-    let close = ranked
+    let close = above
         .get(1)
-        .is_some_and(|second| best.score - second.score < MARGIN);
+        .is_some_and(|second| above[0].score - second.score < MARGIN);
     if close {
-        return Selection::Ambiguous(ranked.into_iter().take(2).collect());
+        return Selection::Ambiguous(above.into_iter().take(2).collect());
     }
-    Selection::Confident(ranked.into_iter().take(ACTIVATE_MAX).collect())
+    Selection::Confident(above)
 }
 
 /// The text that rides into an embedding: the request plus the class

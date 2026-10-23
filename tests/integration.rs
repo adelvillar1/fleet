@@ -412,6 +412,38 @@ async fn run_on(
 }
 
 /// One full agent run whose progress sink records what it saw and when.
+/// `run_on` with the fold forced after the tool batch.
+async fn run_on_compacting(
+    mock: &MockApi,
+    session: &mut Session,
+    approver: Box<dyn Approver>,
+    task: &str,
+) -> Result<RunReport, AgentError> {
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        gui_prompt: None,
+        compact_now: true,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let mut progress = Vec::new();
+    let mut agent = Agent::new(&client, options, session, approver, &mut progress).unwrap();
+    agent.run(task).await
+}
+
 async fn run_on_probe(
     mock: &MockApi,
     session: &mut Session,
@@ -978,6 +1010,159 @@ async fn a_stop_during_bash_ends_the_call_within_a_second() {
         })
         .expect("the bash result");
     assert!(output.contains("stopped by the owner"), "{output}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn a_forced_fold_carries_the_todo_list() {
+    let home = temp_home("fold-todo");
+    // Four earlier turns are seeded so a fifth leaves something before
+    // the verbatim tail to fold; the live turn is the todo call.
+    let mut session = Session::create(&home, "test-model").unwrap();
+    session
+        .record(&Record::User {
+            content: "start".to_string(),
+        })
+        .unwrap();
+    for index in 0..4 {
+        session
+            .record(&Record::Assistant {
+                content: None,
+                tool_calls: vec![serde_json::from_value(tool_call(
+                    &format!("s{index}"),
+                    "bash",
+                    r#"{"command":"true"}"#,
+                ))
+                .unwrap()],
+            })
+            .unwrap();
+        session
+            .record(&Record::ToolResult {
+                call_id: format!("s{index}"),
+                name: "bash".to_string(),
+                output: "exit 0\n(no output)\n".to_string(),
+                truncated: false,
+                approved: true,
+            })
+            .unwrap();
+    }
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "c1",
+            "todo",
+            r#"{"items":[{"step":"read","status":"completed"},{"step":"edit","status":"in_progress"}]}"#,
+        ),
+        assistant_stream("The work so far."),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    run_on_compacting(&mock, &mut session, Box::new(ApproveAll), "do the work")
+        .await
+        .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let summary = records
+        .iter()
+        .find_map(|record| match record {
+            Record::Compaction { summary, .. } => Some(summary),
+            _ => None,
+        })
+        .expect("the fold happened");
+    assert!(
+        summary.contains("## Task list (carried across the fold)"),
+        "{summary}"
+    );
+    assert!(summary.contains("[x] read"), "{summary}");
+    assert!(summary.contains("[~] edit"), "{summary}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn tool_search_asks_sys1_and_ranks_with_sem1_end_to_end() {
+    // sys1 declares one classify tool and answers the capability head;
+    // sem1 declares two tools and returns vectors that put the sys1
+    // tool first.
+    let sys1 = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "sys1_classify", "description": "classify text", "inputSchema": { "type": "object" } }
+        ])) }),
+        serde_json::json!({ "reply": call_reply(
+            r#"{"verdict":"ok","answers":{"jev":{"capability":{"label":"search","confidence":0.9}}}}"#
+        ) }),
+    ]);
+    let sem1 = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "sem1_embed", "description": "embed text", "inputSchema": { "type": "object" } },
+            { "name": "sem1_search", "description": "search a store", "inputSchema": { "type": "object" } }
+        ])) }),
+        serde_json::json!({ "reply": call_reply(
+            r#"{"vectors":[[1.0,0.0],[0.1,1.0],[0.1,1.0],[0.9,0.1]],"dims":2,"model":"fake","provider":"fake"}"#
+        ) }),
+    ]);
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "tool_search", r#"{"query":"classify this text"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("tool-search");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("sys1".to_string(), sys1.spec());
+    specs.insert("sem1".to_string(), sem1.spec());
+    let mut progress = Vec::new();
+    run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(specs),
+        &mut progress,
+        "find a tool",
+    )
+    .await
+    .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let output = records
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "tool_search" => Some(output),
+            _ => None,
+        })
+        .expect("the search result");
+    assert!(
+        output.contains("sys1: search (0.90)"),
+        "{output}\n{records:?}"
+    );
+    assert!(
+        output.contains("activated for the next request: mcp__sys1__classify"),
+        "{output}"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A name that merely starts with `supersede` is not supersede: the
+/// dispatch matches the exact tool name, so a lookalike is an unknown.
+#[tokio::test]
+async fn a_name_that_only_starts_with_supersede_is_not_supersede() {
+    let home = temp_home("supersede-exact");
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "supersede_extra", "{}"),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "try it")
+        .await
+        .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let output = records
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output),
+            _ => None,
+        })
+        .expect("the result");
+    assert!(
+        output.starts_with("error: unknown tool `supersede_extra`"),
+        "{output}"
+    );
     std::fs::remove_dir_all(&home).ok();
 }
 

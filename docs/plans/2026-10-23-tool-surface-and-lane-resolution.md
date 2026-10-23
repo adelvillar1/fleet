@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-23
 updated: 2026-10-23
 slug: tool-surface-and-lane-resolution
@@ -519,37 +519,39 @@ Landed in the second pass:
   expected tool in the top three for at least twenty.
 - **C11 — the profile.** The route verdict reorders the native tools;
   the resolution's reason names the profile.
-- **C13, the grounding half.** A missing path names the nearest real
-  entries; lane defaults are applied only where the model left a key
-  and the result names them.
+- **C12 — the dispatch, wired.** Content search has two providers,
+  `rg` and `grep`; the warm/healthy policy picks one, and the result
+  names the fallback reason when it is `grep`.
+- **C13 — the grounding, settled.** A missing path names the nearest
+  real entries; lane defaults are applied only where the model left a
+  key and the result names them; the closed sets the tools expose are
+  schema enums (`grep` modes, `todo` statuses, `computer_use` actions).
+  No tool takes a model id, provider id, or workload, so there is no
+  catalog enum left to add.
 - **C14 — elision.** Tool results older than the last six become
   byte-count stubs before the region is summarized.
-- **C15, the protocol half.** Cursor pagination, `structuredContent` as
-  the fallback reading, `notifications/cancelled` on timeout, an image
-  block written to a file and named, and a pre-join failure recorded as
-  `LaneFailed` in the session.
-- **C16, the face.** The live and replayed tool cards carry the
+- **C15 — the protocol.** Cursor pagination, `structuredContent` as the
+  fallback reading, `notifications/cancelled` on timeout, an image block
+  written to a file and named, a pre-join failure recorded as
+  `LaneFailed`, and `annotations` read: a `destructiveHint` forces the
+  prompt path in the approval gate and never grants. Pinned by a gate
+  test and a parser test.
+- **C16 — the face.** The live and replayed tool cards carry the
   resolution line; the Settings board has *the tools* card with the
   eight native tools, the tier bounds, and the last session's audit.
-  Verified served on the loopback face.
+  Live on the loopback face, captured at
+  `docs/images/settings-tools.png`.
 
-Still open, named rather than implied:
-
-- **C12's wiring.** The warm/healthy/order policy is implemented and
-  tested, but no capability has two live providers yet, so nothing
-  calls it.
-- **C15's annotations.** `annotations` are not read, so
-  `readOnlyHint`/`destructiveHint` do not reach the approval policy.
-- **C13's catalog enums.** No current tool takes a model id, provider
-  id, or workload as an argument; the enums exist where a closed set
-  already did (`grep` modes, `todo` statuses, `computer_use` actions).
-- **C16's screenshot.** The Settings tools document and the card are
-  verified served on the loopback face; no browser screenshot was
-  captured.
+Every acceptance criterion is addressed. Two notes on evidence
+strength: C0's TUI seeding is the headless path's own
+`seed_user_servers` call, verified by sharing that function rather than
+by a TUI test; C9's full search is pinned against two scripted lanes
+(sys1 class, sem1 vectors) rather than live vendors, because a live
+pair spends.
 
 The gate at this writing: `cargo fmt --all --check`, `cargo clippy
 --all-targets -- -D warnings`, `cargo build --release`, `cargo test`
-(1,581 tests). The sys1 lane gained a task in a vendored file
+(1,588 tests). The sys1 lane gained a task in a vendored file
 (`services/sys1/src/sys1/tasks.py`); the upstream core needs the same
 task to survive a re-vendor.
 

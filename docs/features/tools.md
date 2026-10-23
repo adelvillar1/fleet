@@ -120,19 +120,12 @@ The route verdict the run already holds reorders the native tools: a
 write, glob. A profile reorders and never removes. The resolution's
 reason names it.
 
-## Not built yet
+## Completion notes
 
-Named here rather than implied by the plan: a live second provider for
-the dispatch policy; MCP tool annotations; and catalog-backed enums
-where a tool takes a model, provider, or workload value. `ALL_TOOLS` is
-the native registry (an enum plus a spec and a validator per tool, not a
-trait object). An image result is written to a file and named, so
-`vision` can read it.
-
-## Files
-
-`src/tools.rs` (specs, dispatch, validation, aliases), `src/fileops.rs`
-(window read, atomic write, anchored edit), `src/search.rs` (grep,
-glob, glob matching), `src/tool_router.rs` (sys1 class parsing, sem1
-ranking, floor and margin, lexical fallback), `src/agent.rs` (tiering,
-`tool_search`, the read tracker).
+The plan's surface is complete. Content search has two providers (`rg`
+and `grep`) and the dispatch policy picks between them; MCP `annotations`
+are read, and a destructive hint forces the prompt path without ever
+granting; an image result is written to a file and named, so `vision`
+can read it. `ALL_TOOLS` is the native registry: an enum plus a spec and
+a validator per tool, not a trait object. The live Settings card is
+captured at `docs/images/settings-tools.png`.

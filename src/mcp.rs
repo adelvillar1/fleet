@@ -241,6 +241,10 @@ pub struct ToolInfo {
     pub description: String,
     /// The tool's JSON Schema for its arguments, verbatim.
     pub input_schema: Value,
+    /// The tool's `annotations` object, when it sent one. The hints are
+    /// untrusted by the spec: they can route a call to a prompt, never
+    /// grant it.
+    pub annotations: Option<Value>,
 }
 
 /// One content block of a `tools/call` result.
@@ -763,6 +767,10 @@ fn parse_tools(result: Value) -> Result<Vec<ToolInfo>, McpError> {
                 .unwrap_or_default()
                 .to_string(),
             input_schema: tool.get("inputSchema").cloned().unwrap_or(Value::Null),
+            annotations: tool
+                .get("annotations")
+                .cloned()
+                .filter(|value| !value.is_null()),
         });
     }
     Ok(roster)
@@ -1269,6 +1277,28 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(both.text(), "ok");
+    }
+
+    #[test]
+    fn tool_annotations_are_read_but_not_trusted() {
+        let roster = parse_tools(json!({
+            "tools": [{
+                "name": "danger",
+                "description": "deletes things",
+                "inputSchema": { "type": "object" },
+                "annotations": { "destructiveHint": true, "readOnlyHint": false }
+            }]
+        }))
+        .unwrap();
+        let annotations = roster[0].annotations.as_ref().expect("the annotations");
+        assert_eq!(annotations["destructiveHint"], true);
+        // A tool without annotations is absent, not defaulted: the spec
+        // says an absent hint is not a hint.
+        let plain = parse_tools(json!({
+            "tools": [{ "name": "read", "inputSchema": { "type": "object" } }]
+        }))
+        .unwrap();
+        assert!(plain[0].annotations.is_none());
     }
 
     #[test]

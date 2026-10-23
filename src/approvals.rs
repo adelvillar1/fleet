@@ -235,15 +235,22 @@ fn bash_command(call: &ToolCall) -> Option<String> {
 /// input, and never blocks: prompting is [`crate::agent::ConsoleApprover`]'s
 /// or the TUI's job, and a gate that tried to do both would make the
 /// unattended path and the interactive one impossible to test apart.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Gate {
     mode: Mode,
+    /// Calls a server itself marked destructive. A hint forces the
+    /// prompt path even under a mode that would approve the call; it
+    /// never makes a call approvable.
+    hinted: std::collections::BTreeSet<String>,
 }
 
 impl Gate {
     /// A gate in `mode`.
     pub fn new(mode: Mode) -> Gate {
-        Gate { mode }
+        Gate {
+            mode,
+            hinted: std::collections::BTreeSet::new(),
+        }
     }
 
     /// The mode this gate enforces.
@@ -260,6 +267,11 @@ impl Gate {
     /// owner is AFK, not absent, and the run resumes the moment they
     /// answer.
     pub fn approves_without_asking(&self, call: &ToolCall) -> bool {
+        // A server's destructive hint sits with the always-ask class:
+        // the hint came from the server, so it can only raise the bar.
+        if self.hinted.contains(&call.id) {
+            return false;
+        }
         // The always-ask class sits ABOVE the modes: a call in it asks
         // even under `yes`, because its blast radius is the machine
         // itself and no execution mode waives that.
@@ -332,6 +344,16 @@ impl crate::agent::Approver for Gate {
         self.approves_without_asking(call)
     }
 
+    /// A destructive hint from the server forces the prompt path: the
+    /// gate records the call and its auto-approval refuses it. A hint
+    /// never makes a call approvable, so this method only ever adds to
+    /// the set.
+    fn annotate(&mut self, call: &crate::api::ToolCall, destructive: bool) {
+        if destructive {
+            self.hinted.insert(call.id.clone());
+        }
+    }
+
     /// The denial's sentence, or `None` for the modes that never deny
     /// on their own. The trait takes no call — the reason is the run's,
     /// not one call's so the gate names the class it holds rather than
@@ -345,6 +367,12 @@ impl crate::agent::Approver for Gate {
     /// yes. The rule denied it, and the model has to be able to tell
     /// the owner that.
     fn denial_reason(&self) -> Option<String> {
+        if !self.hinted.is_empty() {
+            return Some(
+                "denied: the server marks this tool destructive, which the owner's rule keeps                  behind a prompt; the run stops here rather than trusting a hint from the                  server as permission."
+                    .to_string(),
+            );
+        }
         if self.mode == Mode::YesGuarded {
             return Some(format!(
                 "approvals are `{}` and this call is in the destructive class \
@@ -579,6 +607,7 @@ pub fn allowlistable(call: &ToolCall) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::Approver;
     use crate::api::FunctionCall;
 
     /// The always-ask class sits above the modes: a call in it asks
@@ -606,6 +635,33 @@ mod tests {
         let grep = call("bash", r#"{"command":"grep -n pins src/route.rs"}"#);
         assert!(!asks_regardless(&grep));
         assert!(yes.approves_without_asking(&grep));
+    }
+
+    /// A server's destructive hint forces the prompt path even under
+    /// `yes`, and never touches another call.
+    #[test]
+    fn a_destructive_hint_forces_the_prompt_path_and_never_grants() {
+        let mut yes = Gate::new(Mode::Yes);
+        let danger = call("mcp__x__danger", "{}");
+        assert!(yes.approves_without_asking(&danger));
+        yes.annotate(&danger, true);
+        assert!(!yes.approves_without_asking(&danger));
+        assert!(!yes.approve(&danger));
+        assert!(yes
+            .denial_reason()
+            .unwrap_or_default()
+            .contains("destructive"));
+        // The hint is per call: another call is unaffected, and a
+        // read-only hint grants nothing.
+        let other = ToolCall {
+            id: "c2".to_string(),
+            ..danger.clone()
+        };
+        assert!(yes.approves_without_asking(&other));
+        let mut read_only = Gate::new(Mode::Yes);
+        let quiet = call("mcp__x__read", "{}");
+        read_only.annotate(&quiet, false);
+        assert!(read_only.approves_without_asking(&quiet));
     }
 
     /// A tool call as the API issues one: the arguments stay the JSON

@@ -746,6 +746,12 @@ pub trait Approver {
     fn latched(&self) -> bool {
         false
     }
+
+    /// A server's own `destructiveHint`, delivered before the decision.
+    /// A hint can route a call to a prompt; it never grants one. The
+    /// default ignores it, which is correct for an approver that asks
+    /// every call anyway.
+    fn annotate(&mut self, _call: &ToolCall, _destructive: bool) {}
 }
 
 /// Approves everything (`--yes`).
@@ -2738,6 +2744,12 @@ impl<'a> Agent<'a> {
                 )));
             }
         }
+        // The server's own hint is untrusted, so it is used one way
+        // only: a destructive hint forces the call through the prompt
+        // path. It can never make a call easier to approve.
+        if self.lanes.hint_destructive(&call.function.name) {
+            self.approver.annotate(call, true);
+        }
         let approved = self.approver.approve(call);
         // The screening verdict, recorded after the decision: the gate's
         // own answer, one row per call, never inside the decision itself.
@@ -3360,11 +3372,15 @@ impl<'a> Agent<'a> {
         // failed answer is a named absence, and the ranking proceeds
         // without a class rather than inventing one.
         let state = format!("{query}\ntool_definitions: {}", candidates.len());
+        let sys1_tool = self
+            .lanes
+            .short_for("sys1", "sys1_classify")
+            .unwrap_or_else(|| "sys1_classify".to_string());
         let outcome = self
             .lanes
             .call(
                 "sys1",
-                "sys1_classify",
+                &sys1_tool,
                 &serde_json::json!({ "task": "tool_route", "text": state }),
             )
             .await;
@@ -3409,9 +3425,13 @@ impl<'a> Agent<'a> {
                         .iter()
                         .map(|candidate| crate::tool_router::card(&candidate.description)),
                 );
+                let sem1_tool = self
+                    .lanes
+                    .short_for("sem1", "sem1_embed")
+                    .unwrap_or_else(|| "sem1_embed".to_string());
                 let embedded = self
                     .lanes
-                    .call("sem1", "sem1_embed", &serde_json::json!({ "items": items }))
+                    .call("sem1", &sem1_tool, &serde_json::json!({ "items": items }))
                     .await;
                 self.note_join("sem1", embedded.joined)?;
                 match crate::tool_router::parse_vectors(&embedded.text)
@@ -5438,6 +5458,9 @@ struct LaneRoster {
     /// Lane names in join order, so the declaration order is stable and
     /// the log reads in the order the run met the lanes.
     order: Vec<String>,
+    /// Destructive hints from joined servers, by model-visible name.
+    /// Untrusted input: used to force a prompt, never to grant.
+    hints: std::sync::Mutex<HashMap<String, bool>>,
     /// The fleet home the run's lane defaults read from, when it has
     /// one. `None` is a run with no home: no defaults, exactly the call
     /// the model made.
@@ -5485,7 +5508,53 @@ impl LaneRoster {
             home: None,
             children: HashMap::new(),
             order: Vec::new(),
+            hints: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Record the destructive hints a server declared for its tools, by
+    /// model-visible name. The hint is untrusted input, kept only to
+    /// route a call to a prompt.
+    fn record_hints(&self, listed: &[ToolInfo], tools: &[LaneTool]) {
+        let mut hints = match self.hints.lock() {
+            Ok(hints) => hints,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        for (info, visible) in listed.iter().zip(tools) {
+            let destructive = info
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.get("destructiveHint"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if destructive {
+                hints.insert(visible.name.clone(), true);
+            }
+        }
+    }
+
+    /// The short name this roster's call seam expects for a lane's own
+    /// tool: the namespace strips the lane prefix, so `sys1_classify` is
+    /// called as `classify`. `None` when the lane has not joined or does
+    /// not carry the tool.
+    fn short_for(&self, lane: &str, own: &str) -> Option<String> {
+        let tools = self.lane_tools();
+        tools
+            .iter()
+            .find(|joined| joined.lane == lane)?
+            .tools
+            .iter()
+            .find(|tool| tool.lane_tool == own)
+            .and_then(|tool| tools::lane_of(&tool.name).map(|(_, short)| short.to_string()))
+    }
+
+    /// Whether the server marked this tool destructive. Unknown names
+    /// are not hinted.
+    fn hint_destructive(&self, name: &str) -> bool {
+        self.hints
+            .lock()
+            .map(|hints| hints.contains_key(name))
+            .unwrap_or(false)
     }
 
     /// Each joined lane's tools as the model sees them, in join order. A
@@ -5556,6 +5625,7 @@ impl LaneRoster {
                     // join: the declarations, the log record, and the
                     // call below all read the same names.
                     let tools = tools::namespaced(lane, &listed);
+                    self.record_hints(&listed, &tools);
                     joined = Some(tools.clone());
                     self.order.push(lane.to_string());
                     self.children.insert(
@@ -5748,6 +5818,7 @@ impl LaneRoster {
             match self.join(&name).await {
                 Ok((server, listed)) => {
                     let tools = tools::namespaced(&name, &listed);
+                    self.record_hints(&listed, &tools);
                     self.order.push(name.clone());
                     self.children.insert(
                         name.clone(),
