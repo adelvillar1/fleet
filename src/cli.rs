@@ -387,6 +387,13 @@ pub struct McpOptions {
 pub enum McpAction {
     /// List the configured servers as cards.
     List,
+    /// Scan the machine's known foreign harness configs for MCP
+    /// servers: one card per harness, each entry configured /
+    /// available / unsupported with its source file named.
+    Scan,
+    /// Import one scanned entry into the registry by its scan name;
+    /// `harness:name` disambiguates a name discovered twice.
+    Import { name: String },
     /// Remove one configured server by name.
     Remove { name: String },
     /// Enable or disable one configured server; a disabled one stays in
@@ -1316,9 +1323,11 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
 }
 
 /// `fleet mcp`: the MCP server registry's surface. The bare command
-/// lists the configured servers as cards; `enable`, `disable`, and
-/// `remove` address one server by name. The scan and import verbs ride
-/// the registry's discovery increment, health its probe increment.
+/// lists the configured servers as cards; `scan` reads the machine's
+/// foreign harness configs, `import` writes one discovered entry into
+/// the registry (`harness:name` when a name is discovered twice), and
+/// `enable`, `disable`, `remove` address one server by name. The health
+/// verb rides the registry's probe increment.
 fn parse_mcp(args: &[String]) -> Result<Command, String> {
     let Some(subcommand) = args.first() else {
         return Ok(Command::Mcp(McpOptions {
@@ -1340,6 +1349,12 @@ fn parse_mcp(args: &[String]) -> Result<Command, String> {
         }
     };
     match subcommand.as_str() {
+        "scan" => no_flags(rest, Command::Mcp(McpOptions { action: McpAction::Scan })),
+        "import" => Ok(Command::Mcp(McpOptions {
+            action: McpAction::Import {
+                name: name("import")?,
+            },
+        })),
         "enable" => Ok(Command::Mcp(McpOptions {
             action: McpAction::Enable {
                 name: name("enable")?,
@@ -1358,7 +1373,7 @@ fn parse_mcp(args: &[String]) -> Result<Command, String> {
             },
         })),
         other => Err(format!(
-            "unknown mcp subcommand `{other}`; the verbs are list (bare), enable, disable, remove"
+            "unknown mcp subcommand `{other}`; the verbs are list (bare), scan, import, enable, disable, remove"
         )),
     }
 }

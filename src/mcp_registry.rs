@@ -339,6 +339,777 @@ pub(crate) fn write_registry(home: &Path, document: &Value) -> Result<(), String
         .map_err(|error| format!("{} is unwritable: {error}", path.display()))
 }
 
+// ------------------------------------------------------------ discovery
+
+/// The machine's foreign harness configs, as `(harness, user-home
+/// relative path)` pairs. The scan reads them and never writes them:
+/// import is one-way, into the fleet home.
+pub const FOREIGN_HARNESSES: &[(&str, &str)] = &[
+    (
+        "claude-desktop",
+        "Library/Application Support/Claude/claude_desktop_config.json",
+    ),
+    ("claude-code", ".claude.json"),
+    ("cursor", ".cursor/mcp.json"),
+    ("codex", ".codex/config.toml"),
+];
+
+/// The shape one scanned entry reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScanShape {
+    /// Spawnable by the client Fleet already has.
+    Stdio {
+        program: String,
+        args: Vec<String>,
+        env_names: Vec<String>,
+        /// The source's own enabled flag, when it declared one (Codex
+        /// does): an entry the other harness had disabled imports
+        /// disabled, so importing never turns something on the owner
+        /// had turned off.
+        enabled: bool,
+    },
+    /// Reported by shape, not disappeared (C3): the reason names what
+    /// the entry is.
+    Unsupported { reason: String },
+}
+
+/// The advisorial badge: what kind of launch the entry is, derived from
+/// its own shape (D6). The four labels are facts the config declares —
+/// the program is docker, or a package runner, or a bare interpreter, or
+/// the entry carries a url — so the badge is read off the entry rather
+/// than asked of a lane, which would spend the judgment budget per row
+/// on a fact in hand. `Unclassified` covers an exotic program; the
+/// owner decides imports either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Badge {
+    Containerized,
+    PinnedPackage,
+    BareInterpreter,
+    RemoteEndpoint,
+    Unclassified,
+}
+
+impl Badge {
+    pub fn label(self) -> &'static str {
+        match self {
+            Badge::Containerized => "containerized",
+            Badge::PinnedPackage => "pinned package",
+            Badge::BareInterpreter => "bare interpreter",
+            Badge::RemoteEndpoint => "remote endpoint",
+            Badge::Unclassified => "unclassified",
+        }
+    }
+
+    /// The review list's order: containerized and pinned first (their
+    /// surface is declared), the bare interpreter flagged (it runs the
+    /// machine's own runtime), then the remote and the unknown.
+    fn rank(self) -> usize {
+        match self {
+            Badge::Containerized | Badge::PinnedPackage => 0,
+            Badge::BareInterpreter => 1,
+            Badge::RemoteEndpoint => 2,
+            Badge::Unclassified => 3,
+        }
+    }
+}
+
+/// One scanned entry: who it is, which file named it, its shape, its
+/// badge, and whether the registry already carries the name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanRow {
+    pub name: String,
+    pub harness: &'static str,
+    pub file: String,
+    pub shape: ScanShape,
+    pub badge: Badge,
+    pub configured: bool,
+}
+
+/// The scan's whole answer: the rows in review order, and the named
+/// skips — the files that exist but could not be read (C3).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ScanReport {
+    pub rows: Vec<ScanRow>,
+    pub skips: Vec<String>,
+}
+
+/// The four foreign files under the USER's home — the other harnesses'
+/// configs, not the fleet home's — scanned against the registry at
+/// `home`. Absent files are skipped silently — a machine without Cursor
+/// has no Cursor servers — and a present-but-unreadable file is a named
+/// skip. No user home is an empty scan: there is nothing to discover.
+pub fn scan(home: &Path) -> ScanReport {
+    let configured: Vec<String> = read_servers(home)
+        .map(|servers| servers.into_iter().map(|(name, _)| name).collect())
+        .unwrap_or_default();
+    let Some(user_home) = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_dir())
+    else {
+        return ScanReport::default();
+    };
+    let mut files = Vec::new();
+    for (harness, relative) in FOREIGN_HARNESSES {
+        let path = user_home.join(relative);
+        if path.exists() {
+            files.push((*harness, path));
+        }
+    }
+    scan_files(&files, &configured)
+}
+
+/// The scan over explicit files — the testable core, and the shape the
+/// bridge's scan op reuses. Every entry present is reported: configured
+/// / available / unsupported (C3), its source file named.
+pub fn scan_files(
+    files: &[(&'static str, std::path::PathBuf)],
+    configured: &[String],
+) -> ScanReport {
+    let mut report = ScanReport::default();
+    for (harness, path) in files {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            // An absent file is skipped silently (C3): a machine
+            // without Cursor has no Cursor servers. A present file
+            // that cannot be read is a named skip.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                report.skips.push(format!(
+                    "{} ({}) is unreadable: {error}",
+                    path.display(),
+                    harness
+                ));
+                continue;
+            }
+        };
+        let entries = match *harness {
+            "codex" => parse_toml_mcp_servers(&text),
+            _ => parse_json_mcp_servers(&text),
+        };
+        let entries = match entries {
+            Ok(entries) => entries,
+            Err(error) => {
+                report.skips.push(format!(
+                    "{} ({harness}) could not be read: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        for (name, shape) in entries {
+            // The credential-shaped `-e NAME=VALUE` pairs a desktop
+            // config carries are extracted HERE, at the read: the row's
+            // args become `-e NAME`, the NAME joins env_names, and no
+            // field of the row carries the value — so nothing
+            // downstream (a card, the registry, the face's document)
+            // can repeat what it never received (D3).
+            let shape = match shape {
+                ScanShape::Stdio {
+                    program,
+                    args,
+                    env_names,
+                    enabled,
+                } => {
+                    let (args, extracted) = extract_env_args(&args);
+                    let mut env_names = env_names;
+                    for name in extracted {
+                        if !env_names.contains(&name) {
+                            env_names.push(name);
+                        }
+                    }
+                    ScanShape::Stdio {
+                        program,
+                        args,
+                        env_names,
+                        enabled,
+                    }
+                }
+                other => other,
+            };
+            let badge = badge_for(&shape);
+            report.rows.push(ScanRow {
+                badge,
+                configured: configured.iter().any(|carried| carried == &name),
+                file: path.display().to_string(),
+                harness,
+                name,
+                shape,
+            });
+        }
+    }
+    report.rows.sort_by(|left, right| {
+        left.badge
+            .rank()
+            .cmp(&right.badge.rank())
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    report
+}
+
+/// The credential-shaped args a foreign config can carry, extracted at
+/// the import: `docker run -e NAME=VALUE image` is how the desktop
+/// configs pass credentials, and the value rides the arg verbatim. The
+/// import rewrites the pair to `-e NAME`, records NAME in env_names,
+/// and lets the value resolve at spawn through the chain the lanes use
+/// (D3) — a bare `-e NAME` is recorded too. The transformation returns
+/// the args to store and the names it extracted.
+fn extract_env_args(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut clean: Vec<String> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "-e" || arg == "--env" {
+            match args.get(index + 1) {
+                Some(pair) if pair_contains_env_value(pair) => {
+                    // `-e NAME=VALUE` becomes `-e NAME`; the value
+                    // resolves at spawn, through the child's own env.
+                    let name = pair.split('=').next().unwrap_or(pair).to_string();
+                    clean.push(arg.clone());
+                    clean.push(name.clone());
+                    names.push(name);
+                    index += 2;
+                    continue;
+                }
+                Some(name) => {
+                    // A bare `-e NAME` already says "pass this through":
+                    // the name is recorded so the spawn resolves it.
+                    clean.push(arg.clone());
+                    clean.push(name.clone());
+                    names.push(name.clone());
+                    index += 2;
+                    continue;
+                }
+                None => {
+                    clean.push(arg.clone());
+                    index += 1;
+                    continue;
+                }
+            }
+        }
+        clean.push(arg.clone());
+        index += 1;
+    }
+    (clean, names)
+}
+
+/// Whether one arg is the `NAME=VALUE` shape with an env-shaped NAME —
+/// the shape docker's `-e` carries a credential in.
+fn pair_contains_env_value(arg: &str) -> bool {
+    let Some((name, value)) = arg.split_once('=') else {
+        return false;
+    };
+    !value.is_empty()
+        && !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// The args as the cards print them: a `NAME=VALUE` arg's value is the
+/// owner's credential or their machine's path, and a card has no
+/// reason to repeat either — the NAME and the fact that it resolves at
+/// spawn is what a reader needs. A URL's credential-shaped query
+/// parameter is redacted the same way. One display rule for both
+/// renders.
+fn display_args(args: &[String]) -> Vec<String> {
+    args.iter()
+        .map(|arg| {
+            if pair_contains_env_value(arg) {
+                let name = arg.split('=').next().unwrap_or(arg);
+                return format!("{name}=<resolves at spawn>");
+            }
+            redact_query(arg)
+        })
+        .collect()
+}
+
+/// The keys a query parameter must not show a value for on a card.
+const CREDENTIAL_QUERY_KEYS: &[&str] = &[
+    "apikey",
+    "api_key",
+    "token",
+    "access_token",
+    "key",
+    "password",
+    "secret",
+];
+
+/// `https://host/mcp?apiKey=x` prints as
+/// `https://host/mcp?apiKey=<redacted>`: the address stays readable,
+/// the key does not ride a card.
+fn redact_query(arg: &str) -> String {
+    let Some((base, query)) = arg.split_once('?') else {
+        return arg.to_string();
+    };
+    let parts: Vec<String> = query
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((key, _))
+                if CREDENTIAL_QUERY_KEYS.contains(&key.to_ascii_lowercase().as_str()) =>
+            {
+                format!("{key}=<redacted>")
+            }
+            Some((key, value)) => format!("{key}={value}"),
+            None => pair.to_string(),
+        })
+        .collect();
+    format!("{base}?{}", parts.join("&"))
+}
+
+/// The badge an entry's shape declares.
+fn badge_for(shape: &ScanShape) -> Badge {
+    match shape {
+        ScanShape::Unsupported { reason } if reason.starts_with("remote endpoint") => {
+            Badge::RemoteEndpoint
+        }
+        ScanShape::Unsupported { .. } => Badge::Unclassified,
+        ScanShape::Stdio { program, .. } => {
+            let runner = program
+                .rsplit('/')
+                .next()
+                .unwrap_or(program)
+                .to_ascii_lowercase();
+            match runner.as_str() {
+                "docker" | "podman" => Badge::Containerized,
+                "npx" | "uvx" | "pipx" | "bunx" => Badge::PinnedPackage,
+                "python" | "python3" | "node" | "deno" | "ruby" | "perl" => Badge::BareInterpreter,
+                _ => Badge::Unclassified,
+            }
+        }
+    }
+}
+
+/// The `mcpServers` object of a JSON config, as `(name, shape)` pairs.
+/// Values are never kept: an `env` object contributes its KEYS only,
+/// which is the C4 rule at the read, before anything could carry one
+/// into a report.
+fn parse_json_mcp_servers(text: &str) -> Result<Vec<(String, ScanShape)>, String> {
+    let document: Value =
+        serde_json::from_str(text).map_err(|error| format!("not valid JSON: {error}"))?;
+    let empty = Map::new();
+    let servers = document
+        .get("mcpServers")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
+    let mut entries = Vec::new();
+    for (name, spec) in servers {
+        entries.push((name.clone(), json_shape(name, spec)));
+    }
+    Ok(entries)
+}
+
+/// One JSON entry's shape, defensively: whatever the config carries,
+/// the scan reports a shape or a named unsupported — never a guess.
+fn json_shape(name: &str, spec: &Value) -> ScanShape {
+    let Some(object) = spec.as_object() else {
+        return ScanShape::Unsupported {
+            reason: "the entry is not an object".to_string(),
+        };
+    };
+    if let Some(url) = object.get("url").and_then(Value::as_str) {
+        return ScanShape::Unsupported {
+            reason: format!("remote endpoint: {url} needs a transport this slice does not carry"),
+        };
+    }
+    if let Some(kind) = object.get("type").and_then(Value::as_str) {
+        if kind == "http" || kind == "sse" {
+            return ScanShape::Unsupported {
+                reason: format!(
+                    "remote endpoint: a {kind} server needs a transport this slice does not carry"
+                ),
+            };
+        }
+    }
+    let Some(program) = object.get("command").and_then(Value::as_str) else {
+        return ScanShape::Unsupported {
+            reason: "no command and no url: the entry's shape is not one this reader takes"
+                .to_string(),
+        };
+    };
+    let args = object
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|args| {
+            args.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let env_names = object
+        .get("env")
+        .and_then(Value::as_object)
+        .map(|env| env.keys().cloned().collect())
+        .unwrap_or_default();
+    let _ = name;
+    ScanShape::Stdio {
+        program: program.to_string(),
+        args,
+        env_names,
+        enabled: true,
+    }
+}
+
+/// The `mcp_servers` tables of a TOML config (Codex), read by a
+/// purpose-built subset reader — the file is one harness's config, not
+/// a format this repo takes a dependency on. What the reader takes:
+/// `[table.name]` headers (bare or quoted segments), `key = value` with
+/// basic and literal strings, arrays of strings, booleans, integers,
+/// inline string tables, and comments. Anything else is a named skip
+/// for that file, not a silent misread.
+fn parse_toml_mcp_servers(text: &str) -> Result<Vec<(String, ScanShape)>, String> {
+    let mut entries: Vec<(String, ScanShape)> = Vec::new();
+    let mut current: Option<String> = None;
+    let mut in_env_table = false;
+    let mut raw_values: Vec<(String, String)> = Vec::new();
+    let mut env_names: Vec<String> = Vec::new();
+    let flush = |current: &mut Option<String>,
+                     raw_values: &mut Vec<(String, String)>,
+                     env_names: &mut Vec<String>,
+                     in_env_table: &mut bool,
+                     entries: &mut Vec<(String, ScanShape)>| {
+        if let Some(name) = current.take() {
+            let mut program = String::new();
+            let mut args = Vec::new();
+            let mut enabled = true;
+            let mut url: Option<String> = None;
+            for (key, value) in raw_values.drain(..) {
+                match key.as_str() {
+                    "command" => program = value,
+                    "args" => {
+                        args = value
+                            .strip_prefix('[')
+                            .and_then(|rest| rest.strip_suffix(']'))
+                            .map(|inner| {
+                                inner
+                                    .split(',')
+                                    .map(|part| part.trim().trim_matches('"').to_string())
+                                    .filter(|part| !part.is_empty())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                    }
+                    "enabled" => enabled = value == "true",
+                    "url" => url = Some(value),
+                    _ => {}
+                }
+            }
+            let shape = if let Some(url) = url {
+                ScanShape::Unsupported {
+                    reason: format!(
+                        "remote endpoint: {url} needs a transport this slice does not carry"
+                    ),
+                }
+            } else if program.is_empty() {
+                ScanShape::Unsupported {
+                    reason: "no command and no url: the entry's shape is not one this reader takes"
+                        .to_string(),
+                }
+            } else {
+                ScanShape::Stdio {
+                    program,
+                    args,
+                    env_names: std::mem::take(env_names),
+                    enabled,
+                }
+            };
+            entries.push((name, shape));
+            *in_env_table = false;
+        }
+    };
+    for (number, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            let Some(end) = line.strip_suffix(']') else {
+                return Err(format!(
+                    "line {}: `{line}` is not a table header",
+                    number + 1
+                ));
+            };
+            let path = end.strip_prefix('[').unwrap_or(end); // array-of-tables is not ours
+            let segments = split_toml_key(path);
+            let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+            match segments.as_slice() {
+                ["mcp_servers", name] => {
+                    flush(
+                        &mut current,
+                        &mut raw_values,
+                        &mut env_names,
+                        &mut in_env_table,
+                        &mut entries,
+                    );
+                    current = Some(name.to_string());
+                }
+                ["mcp_servers", _, "env"] => in_env_table = current.is_some(),
+                _ => {
+                    flush(
+                        &mut current,
+                        &mut raw_values,
+                        &mut env_names,
+                        &mut in_env_table,
+                        &mut entries,
+                    );
+                }
+            }
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!(
+                "line {}: `{line}` is not a key = value",
+                number + 1
+            ));
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if in_env_table {
+            if let Some(name) = env_name_of_toml(key) {
+                env_names.push(name);
+            }
+            continue;
+        }
+        if let Some(name) = env_name_of_toml(key) {
+            if current.is_some() && key.ends_with("_env_var") {
+                // A token's env NAME on an unsupported (HTTP) entry: the
+                // shape refusal covers the entry, and the name never
+                // carries a value, so there is nothing to record here.
+                continue;
+            }
+            let _ = name;
+        }
+        let parsed =
+            parse_toml_value(value).map_err(|error| format!("line {}: {error}", number + 1))?;
+        raw_values.push((key.to_string(), parsed));
+    }
+    flush(
+        &mut current,
+        &mut raw_values,
+        &mut env_names,
+        &mut in_env_table,
+        &mut entries,
+    );
+    Ok(entries)
+}
+
+/// A quoted or bare TOML key segment, unquoted.
+fn env_name_of_toml(key: &str) -> Option<String> {
+    let key = key.trim();
+    let unquoted = if (key.starts_with('"') && key.ends_with('"') && key.len() >= 2)
+        || (key.starts_with('\'') && key.ends_with('\'') && key.len() >= 2)
+    {
+        &key[1..key.len() - 1]
+    } else {
+        key
+    };
+    if unquoted.is_empty() {
+        None
+    } else {
+        Some(unquoted.to_string())
+    }
+}
+
+/// The dotted path of a table header, honoring quoted segments
+/// (`[projects."/Users/a b"]` is two segments, not five).
+fn split_toml_key(path: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    for character in path.chars() {
+        match quote {
+            Some(q) if character == q => quote = None,
+            Some(_) => current.push(character),
+            None if character == '"' || character == '\'' => quote = Some(character),
+            None if character == '.' => {
+                if !current.trim().is_empty() {
+                    segments.push(current.trim().to_string());
+                }
+                current.clear();
+            }
+            None => current.push(character),
+        }
+    }
+    if !current.trim().is_empty() {
+        segments.push(current.trim().to_string());
+    }
+    segments
+}
+
+/// One TOML scalar: a basic string, a literal string, a boolean, an
+/// integer, or an array of strings kept as its bracketed text (the args
+/// reader strips it). Anything else is a named error.
+fn parse_toml_value(value: &str) -> Result<String, String> {
+    if let Some(rest) = value.strip_prefix('"') {
+        let Some(end) = rest.rfind('"') else {
+            return Err("the string never closes".to_string());
+        };
+        return Ok(rest[..end].replace("\\\"", "\"").replace("\\\\", "\\"));
+    }
+    if let Some(rest) = value.strip_prefix('\'') {
+        let Some(end) = rest.rfind('\'') else {
+            return Err("the string never closes".to_string());
+        };
+        return Ok(rest[..end].to_string());
+    }
+    if value == "true" || value == "false" {
+        return Ok(value.to_string());
+    }
+    if value
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_digit() || c == '-')
+    {
+        // An integer, optionally signed: one leading dash and digits.
+        // A date (`1979-05-27`) carries dashes between digits and is
+        // not a value this reader takes — a named error, not a misread.
+        let digits = value.strip_prefix('-').unwrap_or(value);
+        if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+            return Ok(value.to_string());
+        }
+    }
+    if value.starts_with('[') {
+        return Ok(value.to_string());
+    }
+    Err(format!("`{value}` is a value this reader does not take"))
+}
+
+/// Import one scanned entry into the registry: the write executes
+/// nothing and carries the entry's shape — program, args, env NAMES,
+/// the source's own enabled flag — plus the source badge naming the
+/// harness and today's date. An unsupported shape is a named refusal
+/// (C3): the scan reported it, the import will not write it.
+///
+/// `harness: Some(...)` disambiguates a name discovered under more than
+/// one harness; the CLI's bare-name path resolves that first.
+pub fn import(home: &Path, row: &ScanRow, today: &str) -> Result<String, String> {
+    let (program, args, env_names, enabled) = match &row.shape {
+        ScanShape::Stdio {
+            program,
+            args,
+            env_names,
+            enabled,
+        } => (program.clone(), args.clone(), env_names.clone(), *enabled),
+        ScanShape::Unsupported { reason } => {
+            return Err(format!("`{}` cannot be imported: {reason}", row.name));
+        }
+    };
+    crate::settings::set_server(
+        home,
+        &row.name,
+        &serde_json::json!({
+            "program": program,
+            "args": args,
+            "env_names": env_names,
+            "enabled": enabled,
+            "source": {"harness": row.harness, "imported": today},
+        }),
+    )?;
+    Ok(row.name.clone())
+}
+
+/// Render the scan as cards: one card per harness that answered, its
+/// entries as dot-and-badge lines in review order, and the named skips
+/// at the end. Never a plain-text table, and never an env value — the
+/// rows carry names, which is all the scan ever read.
+pub fn render_scan(report: &ScanReport) -> String {
+    use palette::*;
+    let mut out = String::new();
+    if report.rows.is_empty() && report.skips.is_empty() {
+        out.push_str(&format!(
+            "{BOLD}fleet mcp scan{RESET} {DIM}— this machine's other harnesses{RESET}\n\n"
+        ));
+        out.push_str(&format!(
+            "{DIM}│{RESET} {TEXT}No foreign config file is present: nothing to discover.{RESET}\n"
+        ));
+        return out;
+    }
+    out.push_str(&format!(
+        "{BOLD}fleet mcp scan{RESET} {DIM}— {} entr{} across this machine's other harnesses{RESET}\n\n",
+        report.rows.len(),
+        if report.rows.len() == 1 { "y" } else { "ies" },
+    ));
+    let mut harnesses: Vec<&str> = report.rows.iter().map(|row| row.harness).collect();
+    harnesses.sort();
+    harnesses.dedup();
+    for harness in harnesses {
+        let rows: Vec<&ScanRow> = report
+            .rows
+            .iter()
+            .filter(|row| row.harness == harness)
+            .collect();
+        let file = rows[0].file.clone();
+        let header_right = format!(
+            "{DIM}{} {}{RESET}",
+            rows.len(),
+            if rows.len() == 1 { "entry" } else { "entries" },
+        );
+        out.push_str(&format!(
+            "{DIM}┌─{RESET} {BOLD}{ACCENT}{harness}{RESET} {DIM}{dashes} {header_right} {DIM}┐{RESET}\n",
+            dashes = dashes_for(harness, " entries "),
+        ));
+        out.push_str(&format!("{DIM}│{RESET} {DIM}{}{RESET}\n", file));
+        for row in rows {
+            let (mark, color) = if row.configured {
+                ("configured", TEXT)
+            } else {
+                match &row.shape {
+                    ScanShape::Stdio { .. } => ("available", OK),
+                    ScanShape::Unsupported { .. } => ("unsupported", DIM),
+                }
+            };
+            let detail = match &row.shape {
+                ScanShape::Stdio {
+                    program,
+                    args,
+                    env_names,
+                    ..
+                } => {
+                    let shown = display_args(args);
+                    let launch = if shown.is_empty() {
+                        program.clone()
+                    } else {
+                        format!("{program} {}", shown.join(" "))
+                    };
+                    if env_names.is_empty() {
+                        launch
+                    } else {
+                        format!("{launch} · env {}", env_names.join(","))
+                    }
+                }
+                ScanShape::Unsupported { reason } => reason.clone(),
+            };
+            let body = format!("{} · {} · {}", row.name, row.badge.label(), detail);
+            for (index, chunk) in wrap_detail(&body, CARD_WIDTH - 8).into_iter().enumerate() {
+                let lead = if index == 0 {
+                    format!("{DIM}│{RESET} {color}{mark}{RESET}")
+                } else {
+                    format!("{DIM}│{RESET}       ")
+                };
+                out.push_str(&format!("{lead} {chunk}\n"));
+            }
+        }
+        out.push_str(&format!("{DIM}└───{RESET}\n"));
+    }
+    if !report.skips.is_empty() {
+        out.push_str(&format!("\n{DIM}{} skip{RESET}\n", report.skips.len(),));
+        for skip in &report.skips {
+            out.push_str(&format!("{DIM}·{RESET} {skip}\n"));
+        }
+    }
+    let available = report
+        .rows
+        .iter()
+        .filter(|row| !row.configured && matches!(row.shape, ScanShape::Stdio { .. }))
+        .count();
+    out.push_str(&format!(
+        "\n{DIM}{} available to import · the rest configured or unsupported by shape{RESET}\n",
+        available,
+    ));
+    out
+}
+
 /// The entry as the document stores it. `env_names` is the only env
 /// field the shape has — there is nowhere for a value to go (D1a).
 pub(crate) fn entry_value(entry: &ServerEntry) -> Value {
@@ -516,10 +1287,11 @@ fn render_card(name: &str, entry: &ServerEntry) -> String {
     } else {
         lines.push(format!("{DIM}│{RESET} {DIM}never probed{RESET}"));
     }
-    let launch = if entry.args.is_empty() {
+    let shown = display_args(&entry.args);
+    let launch = if shown.is_empty() {
         entry.program.clone()
     } else {
-        format!("{} {}", entry.program, entry.args.join(" "))
+        format!("{} {}", entry.program, shown.join(" "))
     };
     for chunk in wrap_detail(&launch, CARD_WIDTH - 4) {
         lines.push(format!("{DIM}│{RESET} {DIM}{chunk}{RESET}"));
@@ -789,6 +1561,314 @@ mod tests {
         let servers = read_servers(&home).expect("reads");
         let names: Vec<&str> = servers.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "zeta"]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // ------------------------------------------------- the scan's tests
+
+    /// A JSON config fixture: one stdio entry with an env name, one
+    /// whose env value carries a marker, one HTTP entry.
+    fn json_fixture(marker: &str) -> String {
+        format!(
+            r#"{{"mcpServers": {{
+                "time": {{"command": "npx", "args": ["-y", "server-time"]}},
+                "weather": {{"command": "python3", "args": ["-m", "weather"], "env": {{"OWM_API_KEY": "{marker}"}}}},
+                "tinyfish": {{"type": "http", "url": "https://agent.tinyfish.example/mcp"}},
+                "github": {{"command": "docker", "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN={marker}", "ghcr.io/github/github-mcp-server"]}}
+            }}}}"#
+        )
+    }
+
+    /// A TOML config fixture in Codex's own shape: one stdio entry with
+    /// an env sub-table, one disabled stdio entry, one HTTP entry.
+    fn toml_fixture() -> String {
+        r#"
+model = "antigravity/gemini-3.8-flash-high"
+
+[mcp_servers.node_repl]
+args = []
+command = "/Applications/Codex.app/bin/node_repl"
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+NODE_REPL_NODE_PATH = "/Applications/Codex.app/bin/node"
+BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab,mcpapps"
+
+[mcp_servers.computer-use]
+command = "./SkyComputerUseClient"
+args = ["mcp"]
+cwd = "."
+enabled = false
+
+[mcp_servers.tinyfish]
+url = "https://agent.tinyfish.example/mcp"
+bearer_token_env_var = "TINYFISH_API_KEY"
+
+[projects."/Users/a b/Resource Allocation"]
+trust_level = "trusted"
+"#
+        .to_string()
+    }
+
+    #[test]
+    fn the_scan_reports_each_entry_with_its_shape_and_source_named() {
+        let dir = scratch("scan");
+        let json_path = dir.join("claude_desktop_config.json");
+        let toml_path = dir.join("config.toml");
+        std::fs::write(&json_path, json_fixture("sk-marker-1")).unwrap();
+        std::fs::write(&toml_path, toml_fixture()).unwrap();
+        let report = scan_files(
+            &[
+                ("claude-desktop", json_path.clone()),
+                ("codex", toml_path.clone()),
+            ],
+            &[],
+        );
+        // Every entry is reported, each with its source file named (C3).
+        assert_eq!(report.rows.len(), 7, "{:?}", report.rows);
+        assert!(report
+            .rows
+            .iter()
+            .all(|row| row.file == json_path.display().to_string()
+                || row.file == toml_path.display().to_string()));
+        // The shapes: stdio where there is a command, unsupported where
+        // there is a url.
+        let weather = &report
+            .rows
+            .iter()
+            .find(|r| r.name == "weather")
+            .unwrap()
+            .shape;
+        match weather {
+            ScanShape::Stdio {
+                program, env_names, ..
+            } => {
+                assert_eq!(program, "python3");
+                assert_eq!(env_names, &vec!["OWM_API_KEY".to_string()]);
+            }
+            other => panic!("weather is not stdio: {other:?}"),
+        }
+        let tinyfish = &report.rows.iter().find(|r| r.name == "tinyfish").unwrap();
+        match &tinyfish.shape {
+            ScanShape::Unsupported { reason } => {
+                assert!(reason.starts_with("remote endpoint"), "{reason}");
+            }
+            other => panic!("tinyfish is not unsupported: {other:?}"),
+        }
+        // Codex's own enabled flag rides the shape: computer-use was
+        // disabled there, and the scan says so.
+        let computer = &report
+            .rows
+            .iter()
+            .find(|r| r.name == "computer-use")
+            .unwrap()
+            .shape;
+        match computer {
+            ScanShape::Stdio { enabled, .. } => assert!(!enabled, "the source said disabled"),
+            other => panic!("computer-use is not stdio: {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_scan_carries_names_and_never_values() {
+        let marker = "sk-MARKER-VALUE-9f2c";
+        let dir = scratch("marker");
+        let json_path = dir.join("claude_desktop_config.json");
+        std::fs::write(&json_path, json_fixture(marker)).unwrap();
+        let report = scan_files(&[("claude-desktop", json_path)], &[]);
+        // The whole report — every row's every field — is free of the
+        // marker value, and carries the env NAME (C4).
+        let rendered = format!("{:?}", report);
+        assert!(!rendered.contains(marker), "the marker leaked: {rendered}");
+        let weather = report.rows.iter().find(|r| r.name == "weather").unwrap();
+        match &weather.shape {
+            ScanShape::Stdio { env_names, .. } => {
+                assert_eq!(env_names, &vec!["OWM_API_KEY".to_string()]);
+            }
+            other => panic!("weather is not stdio: {other:?}"),
+        }
+        // The same holds of the rendered cards and of the imported
+        // registry file: the import writes, then both are grepped.
+        let rendered = render_scan(&report);
+        assert!(!rendered.contains(marker), "the cards leaked the marker");
+        assert!(rendered.contains("OWM_API_KEY"), "the name is on the cards");
+        let home = scratch("marker-home");
+        let row = report.rows.iter().find(|r| r.name == "weather").unwrap();
+        import(&home, row, "2026-10-23").expect("imports");
+        let file = std::fs::read_to_string(servers_path(&home)).unwrap();
+        assert!(
+            !file.contains(marker),
+            "the registry leaked the marker: {file}"
+        );
+        assert!(file.contains("OWM_API_KEY"));
+        assert!(
+            file.contains("claude-desktop"),
+            "the source badge rides the import"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_import_carries_the_source_disabled_flag_and_refuses_unsupported() {
+        let dir = scratch("import");
+        let toml_path = dir.join("config.toml");
+        std::fs::write(&toml_path, toml_fixture()).unwrap();
+        let report = scan_files(&[("codex", toml_path)], &[]);
+        let home = scratch("import-home");
+        let computer = report
+            .rows
+            .iter()
+            .find(|r| r.name == "computer-use")
+            .unwrap();
+        import(&home, computer, "2026-10-23").expect("imports");
+        let (_, entry) = &read_servers(&home).expect("reads")[0];
+        assert!(!entry.enabled, "the source's disabled flag imports");
+        assert_eq!(entry.source.as_ref().expect("badged").harness, "codex");
+        // An unsupported shape is refused, by its reason.
+        let tinyfish = report.rows.iter().find(|r| r.name == "tinyfish").unwrap();
+        let error = import(&home, tinyfish, "2026-10-23").expect_err("refused");
+        assert!(error.contains("cannot be imported"), "{error}");
+        assert!(error.contains("remote endpoint"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn configured_names_are_marked_and_the_review_list_orders_by_badge() {
+        let dir = scratch("order");
+        let json_path = dir.join("claude_desktop_config.json");
+        std::fs::write(&json_path, json_fixture("sk-marker-2")).unwrap();
+        let report = scan_files(&[("claude-desktop", json_path)], &["time".to_string()]);
+        let time = report.rows.iter().find(|r| r.name == "time").unwrap();
+        assert!(time.configured, "the registry carries it");
+        let weather = report.rows.iter().find(|r| r.name == "weather").unwrap();
+        assert!(!weather.configured);
+        // The order: the declared-surface launches first — the pinned
+        // package and the containerized one — then the bare interpreter
+        // flagged, then the remote (D6's rank).
+        let names: Vec<&str> = report.rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["github", "time", "weather", "tinyfish"],
+            "{names:?}"
+        );
+        assert_eq!(report.rows[0].badge, Badge::Containerized);
+        assert_eq!(report.rows[1].badge, Badge::PinnedPackage);
+        assert_eq!(report.rows[2].badge, Badge::BareInterpreter);
+        assert_eq!(report.rows[3].badge, Badge::RemoteEndpoint);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unparseable_file_is_a_named_skip_and_an_absent_one_silence() {
+        let dir = scratch("skips");
+        let bad = dir.join("bad.json");
+        std::fs::write(&bad, "{not json").unwrap();
+        let absent = dir.join("absent.json");
+        let report = scan_files(&[("claude-desktop", bad), ("cursor", absent)], &[]);
+        assert!(report.rows.is_empty());
+        assert_eq!(report.skips.len(), 1, "{:?}", report.skips);
+        assert!(
+            report.skips[0].contains("not valid JSON"),
+            "{}",
+            report.skips[0]
+        );
+        assert!(
+            report.skips[0].contains("claude-desktop"),
+            "{}",
+            report.skips[0]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_toml_reader_takes_the_codex_shapes_and_names_what_it_cannot() {
+        let entries = parse_toml_mcp_servers(&toml_fixture()).expect("reads");
+        assert_eq!(entries.len(), 3);
+        let node = &entries
+            .iter()
+            .find(|(name, _)| name == "node_repl")
+            .unwrap()
+            .1;
+        match node {
+            ScanShape::Stdio {
+                program, env_names, ..
+            } => {
+                assert_eq!(program, "/Applications/Codex.app/bin/node_repl");
+                assert!(env_names.contains(&"NODE_REPL_NODE_PATH".to_string()));
+                assert!(env_names.contains(&"BROWSER_USE_AVAILABLE_BACKENDS".to_string()));
+            }
+            other => panic!("node_repl is not stdio: {other:?}"),
+        }
+        // A feature the reader does not take is a named error, not a
+        // misread.
+        let exotic = "[mcp_servers.odd]\ncommand = \"x\"\nvalue = 1979-05-27\n";
+        let error = parse_toml_mcp_servers(exotic).expect_err("refused");
+        assert!(error.contains("this reader does not take"), "{error}");
+    }
+
+    #[test]
+    fn the_scan_render_names_the_harness_and_never_a_value() {
+        let dir = scratch("render");
+        let json_path = dir.join("claude_desktop_config.json");
+        std::fs::write(&json_path, json_fixture("sk-MARKER-3")).unwrap();
+        let report = scan_files(&[("claude-desktop", json_path)], &["time".to_string()]);
+        let out = render_scan(&report);
+        assert!(out.contains("claude-desktop"), "{out}");
+        assert!(out.contains("configured"), "{out}");
+        assert!(out.contains("available"), "{out}");
+        assert!(out.contains("unsupported"), "{out}");
+        assert!(out.contains("pinned package"), "{out}");
+        assert!(!out.contains("sk-MARKER-3"), "{out}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_env_pair_in_the_args_is_extracted_and_never_stored_or_shown() {
+        let marker = "ghp-MARKER-PAT-4f2b";
+        let dir = scratch("env-pair");
+        let json_path = dir.join("claude_desktop_config.json");
+        std::fs::write(&json_path, json_fixture(marker)).unwrap();
+        let report = scan_files(&[("claude-desktop", json_path)], &[]);
+        // The scan's rows carry the args: the display rule is the
+        // cards', but the shape keeps what the import needs.
+        let github = report.rows.iter().find(|r| r.name == "github").unwrap();
+        let home = scratch("env-pair-home");
+        import(&home, github, "2026-10-23").expect("imports");
+        let (_, entry) = &read_servers(&home).expect("reads")[0];
+        // The pair became `-e NAME` plus a recorded env name; the value
+        // never reached the file (C4, the args half).
+        assert!(entry.args.contains(&"-e".to_string()));
+        assert!(entry
+            .args
+            .contains(&"GITHUB_PERSONAL_ACCESS_TOKEN".to_string()));
+        assert!(
+            !entry.args.iter().any(|arg| arg.contains(marker)),
+            "{:?}",
+            entry.args
+        );
+        assert!(entry
+            .env_names
+            .contains(&"GITHUB_PERSONAL_ACCESS_TOKEN".to_string()));
+        let file = std::fs::read_to_string(servers_path(&home)).unwrap();
+        assert!(
+            !file.contains(marker),
+            "the registry leaked the PAT: {file}"
+        );
+        // The cards show the NAME and the fact it resolves, never a value.
+        let out = render(&read_servers(&home).expect("reads"));
+        assert!(out.contains("env GITHUB_PERSONAL_ACCESS_TOKEN"), "{out}");
+        assert!(out.contains("resolves at spawn"), "{out}");
+        assert!(!out.contains(marker), "{out}");
+        let scan_out = render_scan(&report);
+        assert!(!scan_out.contains(marker), "{scan_out}");
+        assert!(
+            scan_out.contains("env GITHUB_PERSONAL_ACCESS_TOKEN"),
+            "{scan_out}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&home);
     }
 }

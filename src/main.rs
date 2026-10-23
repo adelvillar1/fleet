@@ -1176,6 +1176,50 @@ fn mcp_command(options: &cli::McpOptions) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        McpAction::Scan => {
+            let report = fleet::mcp_registry::scan(&home);
+            print!("{}", fleet::mcp_registry::render_scan(&report));
+            ExitCode::SUCCESS
+        }
+        McpAction::Import { name } => {
+            // The scan is the import's source of truth: it runs now, the
+            // row is found in its answer, and a name discovered under
+            // more than one harness is refused until the ask says which.
+            let report = fleet::mcp_registry::scan(&home);
+            let today = fleet::boards::now_stamp();
+            let today = &today[..today.len().min(10)];
+            let mut found: Vec<&fleet::mcp_registry::ScanRow> =
+                report.rows.iter().filter(|row| row.name == *name).collect();
+            if let Some((harness, _)) = name.split_once(':') {
+                found.retain(|row| row.harness == harness);
+            }
+            match found.as_slice() {
+                [one] => match fleet::mcp_registry::import(&home, one, today) {
+                    Ok(imported) => {
+                        println!("fleet: mcp: imported `{imported}` from {}", one.harness);
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => {
+                        eprintln!("fleet: {error}");
+                        ExitCode::FAILURE
+                    }
+                },
+                [] => {
+                    eprintln!(
+                        "fleet: `{name}` is not in the scan's answer; run `fleet mcp scan` to see what this machine carries"
+                    );
+                    ExitCode::FAILURE
+                }
+                many => {
+                    let harnesses: Vec<&str> = many.iter().map(|row| row.harness).collect();
+                    eprintln!(
+                        "fleet: `{name}` is discovered under more than one harness ({}); import one with `fleet mcp import <harness>:{name}`",
+                        harnesses.join(", ")
+                    );
+                    ExitCode::FAILURE
+                }
+            }
+        }
         McpAction::Enable { name, enabled } => {
             let word = if *enabled { "enabled" } else { "disabled" };
             match fleet::settings::set_server_enabled(&home, name, *enabled) {

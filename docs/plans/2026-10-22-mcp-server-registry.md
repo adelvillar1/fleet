@@ -139,6 +139,17 @@ configs hold literal credentials (D3's own case is `OWM_API_KEY` in plain
 text in Claude Desktop's config, and Codex's `node_repl` carries fifteen
 machine paths that are configuration, not secrets). The registry records
 names; values never cross, in the file, the scan output, or the log.
+Amended 2026-10-23, the live scan's discovery: the desktop configs also
+carry credentials **inside the args** — `docker run -e
+GITHUB_PERSONAL_ACCESS_TOKEN=ghp_… image` — so the scan itself extracts
+those pairs at the read: the row's args become `-e NAME`, the NAME joins
+`env_names`, and no field of the row ever carries the value. The cards
+additionally redact for display (`NAME=<resolves at spawn>`, and a
+URL's `apiKey=…` prints `<redacted>`). Named residual: a credential the
+server's own address carries — `npx mcp-remote
+https://host/mcp?apiKey=…` — cannot be extracted, because the URL is
+the launch; the registry stores it verbatim (the fleet home is where
+the vault and `.env` already live) and no card ever prints it.
 
 **D4 — both surfaces ship in this slice.** Hard rule 11 makes the visual
 surface a per-slice deliverable. The settings board's servers card is the
@@ -157,13 +168,19 @@ settings at all: `/api/settings` is absent from both `ALLOWED_GET` and
 `ALLOWED_POST` (`src/remote/listener.rs`), and management follows that
 ruling. Nothing new enters either allowlist.
 
-**D6 — scan-time judgment, advisorial only.** One sys1 Choice
-classification per scanned entry — containerized / pinned-package /
-bare-interpreter / remote-endpoint — badges the review list and orders it
-(containerized and pinned first, bare interpreters flagged). Without sys1
-keys the label is unclassified and every other part works. The owner
-decides imports; the judgment only orders and badges. No escalation lane:
-nothing here acts on its own judgment.
+**D6 — scan-time judgment, advisorial only.** Amended 2026-10-23
+before the increment landed: the four badges — containerized /
+pinned-package / bare-interpreter / remote-endpoint — are read off the
+entry's own launch shape rather than asked of the sys1 lane. The
+original text said "one sys1 Choice classification per scanned entry";
+the live design rejects that because the label is a fact the config
+already declares (`command: docker` IS containerized; `npx` IS a pinned
+package; a `url` IS a remote endpoint), so an ask would spend the
+judgment budget per row on a fact in hand and add a failure mode where
+the lane's task vocabulary has no word for the ask. The badge stays
+advisorial and ordering-only (containerized and pinned first, bare
+interpreters flagged), `unclassified` covers an exotic program, and the
+owner decides imports either way.
 
 **D7 — the registry is read on every run, so its read must be cheap and
 flat.** `mcp.json` is a small object read whole at run start, like
