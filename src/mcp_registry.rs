@@ -162,33 +162,14 @@ pub fn enabled_specs(
         if !entry.enabled {
             continue;
         }
-        let mut env = Vec::new();
-        for env_name in &entry.env_names {
-            let value = std::env::var(env_name)
-                .ok()
-                .filter(|value| !value.is_empty())
-                .or_else(|| dotenv.get(env_name).cloned())
-                .ok_or_else(|| {
-                    format!(
-                        "server `{name}` names env `{env_name}`, which resolves to nothing: \
-                         set it in the environment or the fleet home's .env"
-                    )
-                })?;
-            env.push((env_name.clone(), value));
-        }
-        specs.insert(
-            name.clone(),
-            crate::mcp::ServerSpec {
-                program: entry.program,
-                args: entry.args,
-                env,
-                // No passthrough: the child gets the base plus the
-                // resolved env entries and nothing else, the same
-                // minimal child KI-031 already gives a lane.
-                passthrough: Vec::new(),
-                cwd: None,
-            },
-        );
+        // No passthrough: the child gets the base plus the resolved env
+        // entries and nothing else, the same minimal child KI-031
+        // already gives a lane.
+        let mut spec = spec_from_entry(&name, &entry, dotenv)
+            .map_err(|reason| format!("server `{name}`: {reason}"))?;
+        spec.program = entry.program.clone();
+        spec.args = entry.args.clone();
+        specs.insert(name.clone(), spec);
     }
     Ok(specs)
 }
@@ -196,6 +177,112 @@ pub fn enabled_specs(
 /// Validate one registry entry and return it parsed. The write path and
 /// the read path share this, so a file a writer produced always reads
 /// back, and a hand-edited file that lost the shape is named at read.
+/// One probe of one configured server: spawn, initialize, list its
+/// tools, report the server's self-reported name and version, tear down.
+/// Every failure is named, and a spawn or handshake failure carries the
+/// child's stderr tail the way the lane probe does (C6) — the reason is
+/// where a Python import traceback lands, at the end.
+pub async fn probe_server(
+    home: &Path,
+    name: &str,
+    dotenv: &std::collections::BTreeMap<String, String>,
+) -> Result<Probe, String> {
+    let entry = read_server(home, name)?.ok_or_else(|| format!("`{name}` is not configured"))?;
+    let spec = match spec_from_entry(name, &entry, dotenv) {
+        Ok(spec) => spec,
+        Err(reason) => {
+            return Ok(Probe {
+                at: crate::boards::now_stamp(),
+                ok: false,
+                server_name: String::new(),
+                server_version: String::new(),
+                tools: 0,
+                reason,
+            });
+        }
+    };
+    let server = match crate::mcp::McpServer::spawn(&spec) {
+        Ok(server) => server,
+        Err(error) => {
+            return Ok(Probe {
+                at: crate::boards::now_stamp(),
+                ok: false,
+                server_name: String::new(),
+                server_version: String::new(),
+                tools: 0,
+                reason: format!("could not start: {error}"),
+            });
+        }
+    };
+    let info = match server.initialize().await {
+        Ok(info) => info,
+        Err(error) => {
+            let _ = server.close().await;
+            return Ok(Probe {
+                at: crate::boards::now_stamp(),
+                ok: false,
+                server_name: String::new(),
+                server_version: String::new(),
+                tools: 0,
+                reason: format!("could not initialize: {error}"),
+            });
+        }
+    };
+    let tools = match server.list_tools().await {
+        Ok(tools) => tools.len(),
+        Err(error) => {
+            let _ = server.close().await;
+            return Ok(Probe {
+                at: crate::boards::now_stamp(),
+                ok: false,
+                server_name: info.server_name,
+                server_version: info.server_version,
+                tools: 0,
+                reason: format!("could not list its tools: {error}"),
+            });
+        }
+    };
+    let _ = server.close().await;
+    Ok(Probe {
+        at: crate::boards::now_stamp(),
+        ok: true,
+        server_name: info.server_name,
+        server_version: info.server_version,
+        tools,
+        reason: String::new(),
+    })
+}
+
+/// The launch spec one entry builds, with its env names resolved the way
+/// `enabled_specs` resolves them — the probe proves the whole chain.
+fn spec_from_entry(
+    name: &str,
+    entry: &ServerEntry,
+    dotenv: &std::collections::BTreeMap<String, String>,
+) -> Result<crate::mcp::ServerSpec, String> {
+    let mut env = Vec::new();
+    for env_name in &entry.env_names {
+        let value = std::env::var(env_name)
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| dotenv.get(env_name).cloned())
+            .ok_or_else(|| {
+                format!(
+                    "env `{env_name}` resolves to nothing: set it in the environment or the \
+                     fleet home's .env"
+                )
+            })?;
+        env.push((env_name.clone(), value));
+    }
+    Ok(crate::mcp::ServerSpec {
+        program: entry.program.clone(),
+        args: entry.args.clone(),
+        env,
+        passthrough: Vec::new(),
+        cwd: None,
+    })
+}
+
 pub(crate) fn parse_server(name: &str, config: &Value) -> Result<ServerEntry, String> {
     if name_reserved(name) {
         return Err(format!(
@@ -765,10 +852,10 @@ fn parse_toml_mcp_servers(text: &str) -> Result<Vec<(String, ScanShape)>, String
     let mut raw_values: Vec<(String, String)> = Vec::new();
     let mut env_names: Vec<String> = Vec::new();
     let flush = |current: &mut Option<String>,
-                     raw_values: &mut Vec<(String, String)>,
-                     env_names: &mut Vec<String>,
-                     in_env_table: &mut bool,
-                     entries: &mut Vec<(String, ScanShape)>| {
+                 raw_values: &mut Vec<(String, String)>,
+                 env_names: &mut Vec<String>,
+                 in_env_table: &mut bool,
+                 entries: &mut Vec<(String, ScanShape)>| {
         if let Some(name) = current.take() {
             let mut program = String::new();
             let mut args = Vec::new();

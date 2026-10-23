@@ -5990,6 +5990,26 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             }
                         }
                         lock(&state).turn_budget = 0;
+                        // The registry's enabled servers seed the run's
+                        // lane specs, so the run pre-joins them before
+                        // its first request (D2). A name the env chain
+                        // cannot resolve fails the run by name — the
+                        // face reads it as a failed run, the model
+                        // spawned nothing half-configured.
+                        let dotenv: std::collections::BTreeMap<String, String> =
+                            crate::home::read_dotenv_with_process_vault(&home)
+                                .into_iter()
+                                .collect();
+                        let mut seed = AgentOptions::default();
+                        let lane_specs = match seed.seed_user_servers(&home, &dotenv) {
+                            Ok(()) => seed.lane_specs,
+                            Err(error) => {
+                                let _ = ui_tx.send(UiEvent::Failed(format!(
+                                    "the run did not start: {error}"
+                                )));
+                                continue;
+                            }
+                        };
                         let options = AgentOptions {
                             // The session's standing objective, read per
                             // run so a change reaches the next run with
@@ -5999,7 +6019,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             max_turns: turn_budget,
                             identity: crate::home::read_soul(&home),
                             ui_tx: Some(ui_tx.clone()),
-                            lane_specs: None,
+                            lane_specs,
                             calib: Some(prepared.calib.clone()),
                             skills: declared_skills(),
                             role_overlay: None,

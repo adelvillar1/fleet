@@ -332,6 +332,31 @@ pub struct AgentOptions {
     pub gui_prompt: Option<String>,
 }
 
+impl AgentOptions {
+    /// Seed the MCP registry's enabled servers into `lane_specs`, so the
+    /// run pre-joins them before its first request (the registry plan's
+    /// D2). The owner-facing surfaces call this at run construction; a
+    /// subagent's run and a scheduled job do not — the child sees
+    /// nothing of the owner's servers, and an unattended job neither
+    /// needs them nor pays their spawn cost. A name the env chain
+    /// cannot resolve fails here, by name: a server whose env is
+    /// missing must not half-join.
+    pub fn seed_user_servers(
+        &mut self,
+        home: &std::path::Path,
+        dotenv: &std::collections::BTreeMap<String, String>,
+    ) -> Result<(), String> {
+        let specs = crate::mcp_registry::enabled_specs(home, dotenv)?;
+        if specs.is_empty() {
+            return Ok(());
+        }
+        let mut merged = self.lane_specs.clone().unwrap_or_default();
+        merged.extend(specs);
+        self.lane_specs = Some(merged);
+        Ok(())
+    }
+}
+
 impl Default for AgentOptions {
     fn default() -> AgentOptions {
         AgentOptions {
@@ -625,6 +650,11 @@ pub struct RunReport {
 pub enum AgentError {
     Api(ClientError),
     Io(std::io::Error),
+    /// The run refused to start because a configured MCP server's env
+    /// name resolved to nothing — the named refusal, before anything
+    /// spawns (the registry plan's D2). A server whose env is missing
+    /// must not half-join.
+    Registry(String),
     /// The owner stopped this run through its control file. The typed
     /// reason is the sentence itself: a stop lands the partial result
     /// with this reason and the run's own log path, never silence, so
@@ -635,6 +665,7 @@ pub enum AgentError {
 impl std::fmt::Display for AgentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            AgentError::Registry(reason) => write!(f, "{reason}"),
             AgentError::Api(error) => write!(f, "{error}"),
             AgentError::Io(error) => write!(f, "session log write failed: {error}"),
             AgentError::Stopped => write!(f, "stopped by the owner"),
@@ -1543,6 +1574,13 @@ impl<'a> Agent<'a> {
                 Some(crate::route::failure_class(error).to_string()),
             ),
             Err(AgentError::Io(_)) => (crate::calib::TurnStop::Interrupted, Some("io".to_string())),
+            // A registry refusal never reached a model call: the run
+            // ends before turn 1, and the calibration reads it as the
+            // interrupted shape it is — no outcome evidence either way.
+            Err(AgentError::Registry(reason)) => (
+                crate::calib::TurnStop::Interrupted,
+                Some(format!("registry: {reason}")),
+            ),
             // An owner's stop is `interrupted` in the calibration's own
             // vocabulary — the class that means "stopped from outside",
             // which is absent outcome evidence rather than a named
@@ -1626,6 +1664,33 @@ impl<'a> Agent<'a> {
                 skills: declared_refs,
             })?;
         }
+        // The registry's enabled servers pre-join here, before the first
+        // request (the registry plan's D2): a lazy join would never
+        // declare their tools, so the model could not call what it was
+        // never told about. Each join is visible twice over — one event
+        // and one `lane_tools` record, the lane join's own shape — and a
+        // server that fails to join rides the progress log only: the
+        // model saw no declaration, so the log carries nothing the
+        // requests could contradict.
+        let (pre_joined, pre_join_failures) = self.lanes.pre_join().await;
+        for (name, tools) in pre_joined {
+            let count = tools.len();
+            let _ = writeln!(
+                self.progress,
+                "\u{2192} server {name} joined \u{2014} {count} tool{}",
+                if count == 1 { "" } else { "s" },
+            );
+            let _ = self.progress.flush();
+            self.emit(UiEvent::LaneJoined {
+                lane: name.clone(),
+                tool_count: count,
+            });
+            self.record(&Record::LaneTools { lane: name, tools })?;
+        }
+        for failure in &pre_join_failures {
+            let _ = writeln!(self.progress, "{failure}");
+        }
+        let _ = self.progress.flush();
         // The assembled memory block, recorded the same way: the block
         // is dynamic — it depends on the corpus and the instruction —
         // so the `memory` record is what keeps the prompt the model saw
@@ -4863,6 +4928,51 @@ impl LaneRoster {
                 Err(format!("lane `{lane}` could not list its tools: {error}"))
             }
         }
+    }
+
+    /// Pre-join every server this run carries a spec for, before the
+    /// first request (D2): a user server has no lazy channel — the model
+    /// learns the lanes from memory and orientation, and a user server
+    /// learned lazily would never declare its tools at all. Returns the
+    /// successfully joined servers' tools, in name order so the
+    /// declarations and the log are stable; a server that fails to join
+    /// is dead for the run (its calls would fail fast had the model a
+    /// name to call) and its reason rides back for the progress log.
+    async fn pre_join(&mut self) -> (Vec<(String, Vec<LaneTool>)>, Vec<String>) {
+        let mut joined = Vec::new();
+        let mut failures = Vec::new();
+        let mut names: Vec<String> = self.specs.keys().cloned().collect();
+        names.sort();
+        for name in names {
+            if self.children.contains_key(&name) {
+                continue;
+            }
+            match self.join(&name).await {
+                Ok((server, listed)) => {
+                    let tools = tools::namespaced(&name, &listed);
+                    self.order.push(name.clone());
+                    self.children.insert(
+                        name.clone(),
+                        LaneChild::Live {
+                            server: Box::new(server),
+                            tools: tools.clone(),
+                        },
+                    );
+                    joined.push((name, tools));
+                }
+                Err(reason) => {
+                    failures.push(format!("server `{name}` did not join: {reason}"));
+                    self.children.insert(
+                        name,
+                        LaneChild::Dead {
+                            reason,
+                            tools: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
+        (joined, failures)
     }
 
     /// Close every child this run spawned, on every exit path. Best

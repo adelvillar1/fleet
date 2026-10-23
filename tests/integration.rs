@@ -2599,11 +2599,17 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
     while let Some(event) = ui_rx.recv().await {
         events.push(event);
     }
-    // The lane's arrival sits between the call and its result, exactly
-    // where it happened.
+    // The lane joins before the first request now (the registry plan's
+    // D2: a spec in the map pre-joins, and the user servers are seeded
+    // into the map), so its arrival is the run's first tool fact —
+    // before turn 1's usage and call.
     assert_eq!(
         events,
         vec![
+            UiEvent::LaneJoined {
+                lane: "sem1".to_string(),
+                tool_count: 2
+            },
             UiEvent::Turn(1),
             UiEvent::Usage {
                 prompt_tokens: 10,
@@ -2613,10 +2619,6 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
                 name: "mcp__sem1__probe".to_string(),
                 summary: "embeddings \u{b7} probe {}".to_string(),
                 arguments: Some("{}".to_string()),
-            },
-            UiEvent::LaneJoined {
-                lane: "sem1".to_string(),
-                tool_count: 2
             },
             UiEvent::ToolResult {
                 name: "mcp__sem1__probe".to_string(),
@@ -2638,7 +2640,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
     );
     // The headless surface said the same thing.
     assert!(
-        progress_text.contains("lane sem1 joined \u{2014} 2 tools"),
+        progress_text.contains("server sem1 joined \u{2014} 2 tools"),
         "{progress_text}"
     );
     // And the run closed the child it spawned rather than killing it.
@@ -2767,6 +2769,12 @@ async fn a_lane_tool_refusal_is_recorded_as_a_failure_with_its_text() {
     assert_eq!(report.turns, 2);
 
     let records = session::replay(session.path()).unwrap();
+    assert!(
+        records
+            .iter()
+            .any(|r| matches!(r, Record::LaneTools { lane, .. } if lane == "sem1")),
+        "the pre-join is in the log"
+    );
     match &records[4] {
         Record::ToolResult {
             name,
@@ -2887,9 +2895,12 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
         })
         .collect();
     assert_eq!(outputs.len(), 2);
+    // The lane dies at the pre-join now: the run's first request carries
+    // no tools from it, and both calls fail fast — the start failure is
+    // named once, on the progress log, not per call.
     assert!(
-        outputs[0].starts_with("error: lane `sem1` could not start:"),
-        "the launch failure is named: {}",
+        outputs[0].starts_with("error: lane `sem1` is gone for the rest of this run"),
+        "the pre-join failure fails the call fast: {}",
         outputs[0]
     );
     assert!(
@@ -7966,4 +7977,256 @@ async fn a_job_declared_unattended_lets_its_calls_run() {
     let job = harness.store().job("trusted").unwrap().clone();
     assert_eq!(job.last_outcome, Some(fleet::cron::Outcome::Completed));
     std::fs::remove_dir_all(&harness.home).ok();
+}
+
+// --- the MCP registry's run wiring ---------------------------------------
+
+/// The registry's enabled servers are declared to the run from the FIRST
+/// request, not from the first call (the registry plan's D2 / C2): the
+/// pre-join happens before the turn loop, its `lane_tools` record is in
+/// the log with the mapping, and the call itself answers bounded through
+/// the same seam the lanes cross.
+#[tokio::test]
+async fn a_registry_server_declares_from_the_first_request() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "embed", "description": "an embed", "inputSchema": { "type": "object" } },
+        ])) }),
+        serde_json::json!({ "reply": call_reply("embedded.") }),
+    ]);
+    // The registry names the server; its env name resolves through the
+    // home's own .env, the chain the lanes use — never the process env,
+    // which the test cannot set for a parallel suite.
+    let home = temp_home("registry-run");
+    let entry = serde_json::json!({
+        "program": env!("CARGO_BIN_EXE_mock-mcp"),
+        "args": [fake.scratch.join("script.jsonl").to_string_lossy().into_owned()],
+        "env_names": ["FLEET_TEST_REGISTRY_KEY"],
+        "enabled": true,
+    });
+    std::fs::write(
+        home.join("mcp.json"),
+        serde_json::to_string(&serde_json::json!({ "servers": { "regtime": entry } })).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".env"),
+        "FLEET_TEST_REGISTRY_KEY=from-home-dotenv\n",
+    )
+    .unwrap();
+
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__regtime__embed", r#"{"items":"x"}"#),
+        assistant_stream("The registry server answered."),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    let client = Client::new(mock.url(), "test-key");
+    let mut options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let dotenv: std::collections::BTreeMap<String, String> =
+        fleet::home::read_dotenv_with_process_vault(&home)
+            .into_iter()
+            .collect();
+    options
+        .seed_user_servers(&home, &dotenv)
+        .expect("the registry seeds");
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("embed x").await.unwrap();
+    }
+
+    // The FIRST request carried the server's tool already — the pre-join
+    // beat the turn loop.
+    let bodies = mock.bodies();
+    assert!(
+        declared_tools(&bodies[0]).contains(&"mcp__regtime__embed".to_string()),
+        "the first request declares the registry server: {:?}",
+        declared_tools(&bodies[0])
+    );
+    // The answer crossed, bounded.
+    let records = session::replay(session.path()).unwrap();
+    let result = records.iter().find_map(|record| match record {
+        Record::ToolResult { name, output, .. } if name == "mcp__regtime__embed" => {
+            Some(output.clone())
+        }
+        _ => None,
+    });
+    assert_eq!(result.as_deref(), Some("embedded."));
+    // The log carries the mapping, both ends of it.
+    match records
+        .iter()
+        .find(|r| matches!(r, Record::LaneTools { .. }))
+    {
+        Some(Record::LaneTools { lane, tools }) => {
+            assert_eq!(lane, "regtime");
+            assert_eq!(tools.len(), 1);
+            assert_eq!(tools[0].name, "mcp__regtime__embed");
+            assert_eq!(tools[0].lane_tool, "embed");
+        }
+        other => panic!("no lane_tools record for the registry server: {other:?}"),
+    }
+    // The resolved env value crossed the spawn boundary (the lane's own
+    // KI-031 guarantee, now for a user server): the scripted server's
+    // env tool would name it. The registry's spec resolved it from the
+    // home's .env, not the process.
+    let stderr = String::from_utf8(progress).unwrap();
+    assert!(
+        stderr.contains("server regtime joined"),
+        "the pre-join says so: {stderr}"
+    );
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A server whose tools/list carries two tools of one short name
+/// declares two DISTINCT names — the `unique_name` rule (C5) — so no two
+/// declarations ever share a name, and both calls reach their tool.
+#[tokio::test]
+async fn colliding_tool_names_declare_distinct_names() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "probe", "description": "first", "inputSchema": { "type": "object" } },
+            { "name": "probe", "description": "second", "inputSchema": { "type": "object" } },
+        ])) }),
+        serde_json::json!({ "reply": call_reply("first.") }),
+        serde_json::json!({ "reply": call_reply("second.") }),
+    ]);
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("alpha".to_string(), fake.spec());
+    let mock = MockApi::start(vec![
+        tool_call_stream("call-1", "mcp__alpha__probe", "{}"),
+        tool_call_stream("call-2", "mcp__alpha__probe_2", "{}"),
+        assistant_stream("Both answered."),
+    ]);
+    let home = temp_home("registry-collision");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(specs),
+        &mut progress,
+        "probe twice",
+    )
+    .await
+    .unwrap();
+    let bodies = mock.bodies();
+    let declared = declared_tools(&bodies[0]);
+    assert!(
+        declared.contains(&"mcp__alpha__probe".to_string())
+            && declared.contains(&"mcp__alpha__probe_2".to_string()),
+        "both tools declared, distinct: {declared:?}"
+    );
+    let records = session::replay(session.path()).unwrap();
+    let outputs: Vec<String> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outputs, vec!["first.", "second."]);
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A disabled server stays in the registry and out of the run: its name
+/// is in `fleet mcp`, and its tools are in no request (C7).
+#[tokio::test]
+async fn a_disabled_server_is_absent_from_the_declarations() {
+    let fake = FakeMcp::start(vec![serde_json::json!({ "reply": initialize_reply() })]);
+    let home = temp_home("registry-disabled");
+    let entry = serde_json::json!({
+        "program": env!("CARGO_BIN_EXE_mock-mcp"),
+        "args": [fake.scratch.join("script.jsonl").to_string_lossy().into_owned()],
+        "env_names": [],
+        "enabled": false,
+    });
+    std::fs::write(
+        home.join("mcp.json"),
+        serde_json::to_string(&serde_json::json!({ "servers": { "regtime": entry } })).unwrap(),
+    )
+    .unwrap();
+    // The registry still lists it.
+    let servers = fleet::mcp_registry::read_servers(&home).unwrap();
+    assert_eq!(servers.len(), 1);
+    assert!(!servers[0].1.enabled);
+
+    let mock = MockApi::start(vec![assistant_stream("Nothing to call.")]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    let client = Client::new(mock.url(), "test-key");
+    let mut options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let dotenv: std::collections::BTreeMap<String, String> =
+        fleet::home::read_dotenv_with_process_vault(&home)
+            .into_iter()
+            .collect();
+    options
+        .seed_user_servers(&home, &dotenv)
+        .expect("the registry seeds");
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("anything").await.unwrap();
+    }
+    let bodies = mock.bodies();
+    assert!(
+        !declared_tools(&bodies[0])
+            .iter()
+            .any(|name| name.starts_with("mcp__regtime__")),
+        "a disabled server declares nothing: {:?}",
+        declared_tools(&bodies[0])
+    );
+    std::fs::remove_dir_all(&home).ok();
 }

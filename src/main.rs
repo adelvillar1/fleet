@@ -2117,13 +2117,25 @@ async fn drive(
     })
     .await
     .ok();
+    // The registry's enabled servers seed the run's lane specs, so the
+    // run pre-joins them before its first request (D2). A name the env
+    // chain cannot resolve is a named refusal before anything spawns.
+    let dotenv: std::collections::BTreeMap<String, String> =
+        home::read_dotenv_with_process_vault(home)
+            .into_iter()
+            .collect();
+    let mut seed = AgentOptions::default();
+    let lane_specs = match seed.seed_user_servers(home, &dotenv) {
+        Ok(()) => seed.lane_specs,
+        Err(error) => return Err(AgentError::Registry(error)),
+    };
     let options = AgentOptions {
         goal: None,
         model,
         max_turns,
         identity: crate::home::read_soul(home),
         ui_tx: None,
-        lane_specs: None,
+        lane_specs,
         calib: Some(prepared.calib.clone()),
         skills,
         // The parent's own run carries no role: a role is a
