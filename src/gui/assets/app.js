@@ -1264,9 +1264,16 @@
     // row in the work list until the owner opens it, and the row's state
     // refreshes when a seat or an ending arrives for another session.
     if (event.session && face.session && event.session !== face.session) {
-      if (event.type === 'seat' || event.type === 'seat_cleared' ||
-          event.type === 'finished' || event.type === 'failed' ||
-          event.type === 'answered') {
+      if (event.type === 'finished' || event.type === 'failed') {
+        // That run is over. A message queued in this conversation was
+        // waiting on it, so the queue drains now — the send names this
+        // session, and the run it starts is this one's.
+        face.driving = '';
+        face.sessions = null;
+        readSessions(true);
+        if ((face.queued || []).length && !face.running && !face.seat) flushQueue();
+      } else if (event.type === 'seat' || event.type === 'seat_cleared' ||
+                 event.type === 'answered') {
         face.sessions = null;
         readSessions(false);
       }
@@ -1391,6 +1398,12 @@
       case 'failed':
         closeAssistant();
         face.running = false;
+        // The run this face was executing is over: no conversation is
+        // driving, so the next send anywhere starts a run rather than
+        // queueing behind one that has ended.
+        if (face.driving && (!event.session || event.session === face.driving)) {
+          face.driving = '';
+        }
         face.stop = event;
         stripFinish();
         endRow(event);
@@ -6603,15 +6616,22 @@
     el.workHead.textContent = '';
     el.workList.textContent = '';
     var read = face.sessions;
+    // The counts are the document's own (the bridge derives them from the
+    // rows' state words); the page never re-derives what the archive
+    // already counted. Without a read yet there is nothing honest to
+    // show, so the head says so rather than inventing a zero.
+    var counts = read && read.counts ? read.counts : null;
     var all = workRows();
-    var needs = all.filter(function (row) { return workNeeds(row.state); });
     var head = node('div', 'work-title');
     var title = node('h2', null, 'work');
     head.appendChild(title);
-    head.appendChild(node('span', 'work-count',
-      needs.length
-        ? needs.length + (needs.length === 1 ? ' needs you' : ' need you')
-        : all.length + (all.length === 1 ? ' run' : ' runs')));
+    var countText = 'reading\u2026';
+    if (counts) {
+      countText = counts.needs
+        ? counts.needs + (counts.needs === 1 ? ' needs you' : ' need you')
+        : counts.total + (counts.total === 1 ? ' run' : ' runs');
+    }
+    head.appendChild(node('span', 'work-count', countText));
     var fresh = node('button', 'work-new');
     fresh.type = 'button';
     fresh.appendChild(node('span', null, '+'));
@@ -6660,22 +6680,25 @@
       })
     };
 
+    var groupCount = function (key, rows) {
+      return counts ? counts[key] : rows.length;
+    };
     if (groups.needs.length) {
-      el.workList.appendChild(workGroupHead('needs you', groups.needs.length));
+      el.workList.appendChild(workGroupHead('needs you', groupCount('needs', groups.needs)));
       groups.needs.forEach(function (row) { el.workList.appendChild(workRow(row)); });
     }
     if (groups.working.length) {
-      el.workList.appendChild(workGroupHead('working', groups.working.length));
+      el.workList.appendChild(workGroupHead('working', groupCount('working', groups.working)));
       groups.working.forEach(function (row) { el.workList.appendChild(workRow(row)); });
     }
     if (groups.background.length) {
-      el.workList.appendChild(workGroupHead('background', groups.background.length));
+      el.workList.appendChild(workGroupHead('background', groupCount('background', groups.background)));
       familyLines(groups.background).forEach(function (family) {
         el.workList.appendChild(workFamily(family));
       });
     }
     if (groups.earlier.length) {
-      el.workList.appendChild(workGroupHead('earlier', groups.earlier.length));
+      el.workList.appendChild(workGroupHead('earlier', groupCount('earlier', groups.earlier)));
       sessionGroups(groups.earlier).forEach(function (group) {
         var folded = !face.sessionQuery && !!face.sessionFolded[group.name];
         var head = node('button', 'work-group');

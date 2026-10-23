@@ -3881,10 +3881,44 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Valu
             })
         })
         .collect::<Vec<_>>();
+    // The counts the page shows are derived here, once, from the same
+    // state words it renders: a head that re-derived them in the browser
+    // would be a second answer to what the archive holds (KI-300).
+    let count = |wanted: &[&str]| {
+        sessions
+            .iter()
+            .filter(|row| {
+                row.get("state")
+                    .and_then(Value::as_str)
+                    .map(|state| wanted.contains(&state))
+                    .unwrap_or(false)
+            })
+            .count()
+    };
+    let needs = count(&["needs-approval", "paused"]);
+    let working = count(&["working"]);
+    let background = sessions
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.get("class").and_then(Value::as_str),
+                Some("background") | Some("delegated") | Some("channel")
+            )
+        })
+        .count();
+    let total = sessions.len();
+    let earlier = total.saturating_sub(needs + working + background);
     json!({
         "type": "sessions",
         "read_at": crate::boards::now_stamp(),
         "current": current,
+        "counts": {
+            "needs": needs,
+            "working": working,
+            "background": background,
+            "earlier": earlier,
+            "total": total,
+        },
         "sessions": sessions,
     })
 }
@@ -5298,26 +5332,37 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &
         }
     }
     let mut notice = None;
+    // The run is over the moment the core says so, whichever word it used:
+    // a header that kept counting after the loop stopped would be lying
+    // about where the owner is.
+    let finished = matches!(
+        value.get("type").and_then(Value::as_str),
+        Some("finished") | Some("failed")
+    );
     {
         let mut state = lock(state);
-        let attached = state.attached(session);
-        // The run is over the moment the core says so, whichever word it
-        // used: a header that kept counting after the loop stopped would
-        // be lying about where the owner is.
-        if matches!(
-            value.get("type").and_then(Value::as_str),
-            Some("finished") | Some("failed")
-        ) {
-            attached.running = false;
-        }
-        if attached.events.len() >= MAX_EVENTS {
-            attached.events.pop_front();
-            attached.dropped += 1;
-            if attached.dropped == 1 {
-                notice = Some(json!({"type": "dropped", "dropped": attached.dropped}));
+        {
+            let attached = state.attached(session);
+            if finished {
+                attached.running = false;
             }
+            if attached.events.len() >= MAX_EVENTS {
+                attached.events.pop_front();
+                attached.dropped += 1;
+                if attached.dropped == 1 {
+                    notice = Some(json!({"type": "dropped", "dropped": attached.dropped}));
+                }
+            }
+            attached.events.push_back(value.clone());
         }
-        attached.events.push_back(value.clone());
+        // The run that was driving is over. Clearing it here — at the one
+        // seam every event crosses, beside the flag it belongs with —
+        // closes the window where the archive still said a finished run
+        // was driving and a send in another conversation queued behind
+        // work that had ended (KI-301).
+        if finished && state.driving.as_deref() == Some(session) {
+            state.driving = None;
+        }
     }
     if let Some(notice) = notice {
         let _ = events.send(notice);
@@ -7705,7 +7750,12 @@ mod tests {
         let home = std::env::temp_dir().join(format!("fleet-gui-new-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a temp home");
-        let (bridge, _sources) = Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
+        let (mut bridge, _sources) =
+            Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
+        // The door stands open with no thread behind it: the command is
+        // accepted and the owner's message is recorded, which is the
+        // record this test is about.
+        let _door = bridge.connect();
         let first = bridge.new_session().expect("created");
         let second = bridge.new_session().expect("created again");
         assert_ne!(first, second);
@@ -7719,7 +7769,43 @@ mod tests {
             assert_eq!(records.len(), 1, "{id}: {records:?}");
             assert!(matches!(records[0], crate::session::Record::Start { .. }));
         }
-        // The archive shows both as conversations created and not yet used.
+        // A run posted to the new conversation lands in ITS session: the
+        // route names the session, and the bridge records the owner's
+        // message as that session's first event (the thread writes it to
+        // the log when it picks the run up; the log line is the live
+        // pass's evidence, the event is this seam's).
+        bridge
+            .run(&second, "work in the new conversation")
+            .expect("accepted");
+        let second_events = bridge.state(&second)["events"]
+            .as_array()
+            .cloned()
+            .expect("the new session's log");
+        assert!(
+            second_events.iter().any(|event| {
+                event["type"] == "message"
+                    && event["role"] == "owner"
+                    && event["text"] == "work in the new conversation"
+            }),
+            "the run's message landed in the new session: {second_events:?}"
+        );
+        assert_eq!(
+            bridge.state(&first)["events"]
+                .as_array()
+                .map(Vec::len)
+                .unwrap_or(0),
+            0,
+            "the conversation the run was not posted to gained nothing"
+        );
+        // Both logs still hold their one start record: the run's own
+        // records are the thread's to write, and this face has none.
+        for id in [&first, &second] {
+            let records =
+                crate::session::replay(&dir.join(format!("{id}.jsonl"))).expect("replays");
+            assert_eq!(records.len(), 1, "{id}: {records:?}");
+        }
+        // The archive shows both as conversations (one now carrying its
+        // first message).
         let document = bridge.sessions("").await;
         let rows = document["sessions"].as_array().expect("rows");
         for id in [&first, &second] {
@@ -7730,6 +7816,44 @@ mod tests {
             assert_eq!(row["state"], "new", "{row}");
             assert_eq!(row["class"], "yours", "{row}");
         }
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    // KI-301: a run's end clears the session it was driving, at the one
+    // seam every event crosses — so the next send in any conversation is
+    // accepted instead of queueing behind work that is over.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_finished_run_stops_driving_the_face() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-finish-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let (bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("one".to_string()),
+        );
+        bridge.drive("one");
+        assert_eq!(bridge.state("one")["driving"], "one");
+        assert_eq!(
+            bridge.state("two")["driving"],
+            "one",
+            "both documents agree"
+        );
+        record(
+            &bridge.state,
+            &bridge.events,
+            "one",
+            json!({"type": "finished", "reason": "stop"}),
+        );
+        assert!(
+            bridge.state("one")["driving"].is_null(),
+            "the finished run still drives: {}",
+            bridge.state("one")["driving"]
+        );
+        assert!(
+            bridge.state("two")["driving"].is_null(),
+            "the other conversation is told too"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 
