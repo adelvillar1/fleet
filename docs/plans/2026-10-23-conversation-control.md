@@ -52,10 +52,13 @@ process card says which is in effect.
   line). The run's log gains nothing from it.
 
 **The queue.** While a run is in flight the composer accepts text and
-Enter queues it — one slot, shown as a chip above the composer
-("queued · sends when the run ends · cancel"), flushed as the next run
-when the run's end event lands. Client-side state; a reload drops it,
-and the chip says so.
+Enter appends it to an **ordered queue** above the composer. The owner
+decides the order: a row drags to a new position (pointer drag), and
+**send first** promotes one row to the head so it is read first; a ×
+drops it. The flush sends the head as the next run, and when that run
+ends the next row follows — the queue drains one message per run, in
+the owner's order. Client-side state; a reload drops it, and the chip
+says so.
 
 **The smaller two.** Sessions get a title: `/rename <title>` writes
 `<home>/sessions-titles.json`, the archive's rows show the title, and a
@@ -77,8 +80,11 @@ the transcript, after /btw what does the picker's row action do?
         "The row's open action opens the session in the conversation…"
         a side ask · one model call · not part of the run
 
-the composer, with a run in flight
- [ queued · "then check the gate" · sends when the run ends  × ]
+the composer, with a run in flight and two queued messages
+ ┌ queued · 2 · sends when the run ends ──────────────────────┐
+ │ ⣿ then check the gate            [send first] [×]         │
+ │ ⣿ and update the plan            [send first] [×]         │
+ └────────────────────────────────────────────────────────────┘
  Ask fleet for something…                                  [Stop]
 
 the process card, while a control is in effect
@@ -91,7 +97,7 @@ the process card, while a control is in effect
 - [ ] **C0 — the goal is standing and logged.** `POST /api/goal {text}` sets it (empty clears); `<home>/sessions-goals.json` survives a face restart; each run declares the session's goal from the sidecar and pins a `goal` record in its log; the system prompt carries `## Goal` with the text while set. A unit test pins the prompt with and without a goal, and the first-message early return holds only when no goal is set.
 - [ ] **C1 — steer is the composer's too.** `/steer <text>` posts the control route with the run's session; with no run in flight it is refused by name and writes no control file (bridge test); with a run in flight the text reaches the file the agent reads (the existing `apply_steer` path).
 - [ ] **C2 — btw answers beside the run.** `POST /api/btw {text}` returns the question and the answer from a one-shot, tool-less call through the session's prepared router (preparing one when none); the transcript gains a `btw` row with the cost line; the session's log gains no message or turn from the exchange (a bridge test asserts the record count and the text's absence). It works whether or not a run is in flight.
-- [ ] **C3 — the queue sends after the run.** With a run in flight, Enter queues the text (one slot; a second Enter replaces it), the chip renders with a cancel, and the run's `finished`/`failed` event flushes the queue as the next run in the same session. A face test pins the flush; the chip states that a reload drops it.
+- [ ] **C3 — the queue is a list the owner orders.** With a run in flight, Enter appends the text to an ordered queue above the composer; each row renders its text with a drag handle, **send first**, and a cancel. A drag reorders the rows (pointer drag), and **send first** promotes a row to the head. The run's `finished`/`failed` event flushes the head as the next run in the same session, and the next row follows when that run ends. A face test pins the order (append, promote, drag-reorder) and the flush; the chip says a reload drops the queue.
 - [ ] **C4 — fold is real.** `/compact` with a run in flight writes `Control::Fold`; the turn loop reads it and forces the fold at the next boundary (a unit test on the control's parse and the loop's fold call). With no run in flight the command says honestly that there is nothing to fold yet.
 - [ ] **C5 — the pin reaches the running session.** `Control::Pin(text)` re-prepares the route for the running session's next turn — a provider id, a `provider/model` pair, or `auto` — and the swapped route is what the next turn's request crosses (no new run needed). The row's reason names the re-route; an unusable pin is refused by name and the run continues on its route. Pinned by a unit test on the control and an integration test whose second turn serves on the pinned provider.
 - [ ] **C6 — pause freezes and resume continues.** `Control::Pause` blocks the turn loop before the next model call; the face shows `paused by you` with a resume control; resume writes `Control::Resume` and the run continues from the same turn, its log gaining no message from the pause. A unit test pins the parse and the loop's wait.
