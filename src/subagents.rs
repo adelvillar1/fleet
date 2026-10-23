@@ -210,11 +210,15 @@ const BRIEF_PART_CAP: usize = 8 * 1024;
 /// that names it opens a second level, and a delegation that does not
 /// keeps the chain at one. It is stripped again at the cap, so the
 /// admission a depth-2 run can be given is empty by construction.
-pub const ADMISSIBLE_TOOLS: [&str; 8] = [
+pub const ADMISSIBLE_TOOLS: [&str; 12] = [
     "bash",
     "read_file",
     "write_file",
     "list_dir",
+    "edit",
+    "grep",
+    "glob",
+    "todo",
     tools::USE_SKILL_TOOL,
     tools::SUBAGENT_TOOL,
     // The live source rides a delegate by default: a child reasoning
@@ -2167,7 +2171,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_scope_is_the_four_builtins_plus_use_skill() {
+    fn the_default_scope_is_the_builtins_plus_use_skill() {
         let scope = Scope::child(None, 1);
         assert_eq!(scope.depth, 1);
         assert_eq!(
@@ -2177,6 +2181,10 @@ mod tests {
                 "read_file".to_string(),
                 "write_file".to_string(),
                 "list_dir".to_string(),
+                "edit".to_string(),
+                "grep".to_string(),
+                "glob".to_string(),
+                "todo".to_string(),
                 "use_skill".to_string(),
             ]
         );

@@ -839,13 +839,27 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                                 continue;
                             }
                         };
+                        let dotenv: std::collections::BTreeMap<String, String> =
+                            crate::home::read_dotenv_with_process_vault(&home)
+                                .into_iter()
+                                .collect();
+                        let mut seed = AgentOptions::default();
+                        let lane_specs = match seed.seed_user_servers(&home, &dotenv) {
+                            Ok(()) => seed.lane_specs,
+                            Err(error) => {
+                                let _ = ui_tx.send(UiEvent::Failed(format!(
+                                    "the MCP registry refused this run: {error}"
+                                )));
+                                continue;
+                            }
+                        };
                         let options = AgentOptions {
                             goal: None,
                             model: model.clone(),
                             max_turns: DEFAULT_MAX_TURNS,
                             identity: crate::home::read_soul(&home),
                             ui_tx: Some(ui_tx.clone()),
-                            lane_specs: None,
+                            lane_specs,
                             calib: Some(prepared.calib.clone()),
                             skills: skills.clone(),
                             role_overlay: None,

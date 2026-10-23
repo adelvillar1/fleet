@@ -106,7 +106,8 @@ docs/recaps/                  the journals: what each session shipped and left o
 docs/known-issues.md          the ledger: every error/warning, ID'd KI-NNN, with evidence
 docs/architecture/            deep-dive-2026-10-15.md (current state), ecosystem.md (the
                               sibling repos), overview.md (slice-1 snapshot), delivery-seam.md
-                              (an open ruling, deliberately unbuilt)
+                              (an open ruling, deliberately unbuilt), tool-surface.md
+                              (the model's tool set, what is missing, and why)
 docs/features/                one doc per feature as it lands
 docs/harness-orientation.md   this document
 TECHNICAL-DOCUMENTATION.md    crate contract, environment contract, module reference

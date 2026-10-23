@@ -141,7 +141,7 @@ pub fn subagent_spec() -> ToolSpec {
                     "description": "The capabilities this subtree needs, which IS the subagent's admitted scope: a declared tool is admitted and an undeclared one is refused by name. Naming subagent opens a second delegation level; at depth 2 it is stripped and the call is refused citing the cap. An empty list admits no tool at all.",
                     "items": {
                         "type": "string",
-                        "enum": ["bash", "read_file", "write_file", "list_dir", "use_skill", "subagent", "web", "computer_use"],
+                        "enum": ["bash", "read_file", "write_file", "list_dir", "edit", "grep", "glob", "todo", "use_skill", "subagent", "web", "computer_use"],
                     },
                 },
                 "node": {
@@ -697,7 +697,7 @@ pub fn web_spec() -> ToolSpec {
 pub fn computer_use_spec() -> ToolSpec {
     ToolSpec::function(
         COMPUTER_USE_TOOL,
-        "Drive the desktop: take a screenshot, click, type, press a key or a combination, scroll, or drag. Use it for the things no file tool can reach — a native app with no CLI, a browser window with a form half filled, a thing a human would do with a mouse. Every call asks for approval, in every mode, because it acts on the machine itself. A screenshot's image rides to you as an image and its file path is named; never paste credentials into a `type` action you have not read back.",
+        "Drive the desktop: take a screenshot, click, type, press a key or a combination, scroll, or drag. Use it for the things no file tool can reach — a native app with no CLI, a browser window with a form half filled, a thing a human would do with a mouse. Every call asks for approval, in every mode, because it acts on the machine itself. A screenshot is written to a file and its path is named; read it with `vision` when you need to look at it. Never paste credentials into a `type` action you have not read back.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -1153,10 +1153,28 @@ pub enum Tool {
     ReadFile,
     WriteFile,
     ListDir,
+    Edit,
+    Grep,
+    Glob,
+    Todo,
 }
 
 /// All tools, in declaration order.
-pub const ALL_TOOLS: [Tool; 4] = [Tool::Bash, Tool::ReadFile, Tool::WriteFile, Tool::ListDir];
+pub const ALL_TOOLS: [Tool; 8] = [
+    Tool::Bash,
+    Tool::ReadFile,
+    Tool::WriteFile,
+    Tool::ListDir,
+    Tool::Edit,
+    Tool::Grep,
+    Tool::Glob,
+    Tool::Todo,
+];
+
+/// The deferred-tool search: declared only when the catalog is too large
+/// to declare whole. It executes nothing; it names the tools the next
+/// request should carry.
+pub const TOOL_SEARCH_TOOL: &str = "tool_search";
 
 impl Tool {
     /// The tool named `name`, or `None` for anything else.
@@ -1171,15 +1189,23 @@ impl Tool {
             Tool::ReadFile => "read_file",
             Tool::WriteFile => "write_file",
             Tool::ListDir => "list_dir",
+            Tool::Edit => "edit",
+            Tool::Grep => "grep",
+            Tool::Glob => "glob",
+            Tool::Todo => "todo",
         }
     }
 
     fn description(self) -> &'static str {
         match self {
-            Tool::Bash => "Run a shell command and return its combined output. Working directory is the user's current directory.",
-            Tool::ReadFile => "Read a UTF-8 text file. Fails for binary files; use bash for those.",
-            Tool::WriteFile => "Write a UTF-8 text file, replacing its contents. The parent directory must already exist.",
-            Tool::ListDir => "List a directory's entries, directories marked with a trailing slash.",
+            Tool::Bash => "Run a shell command and return its output. Use timeout_ms for a long command (default 120000, maximum 600000). Set run_in_background for a server, watch, or build that outlives the turn: the result names an output file to read. Output over 64 KiB is cut; a failure returns the head and tail. The working directory is the run's folder when it has one.",
+            Tool::ReadFile => "Read a text file with line numbers. Returns a window: default 2000 lines, use offset and limit to continue, and the header says how many lines the file has and what was left. Empty, past-the-end, and binary files each say so by name. Read a file before you edit it.",
+            Tool::WriteFile => "Create or replace a whole file, atomically. Use edit for a change to part of an existing file: this tool loses anything you do not reproduce exactly. The parent directory must already exist.",
+            Tool::ListDir => "List a directory's entries, directories marked with a trailing slash. depth (default 1, maximum 8) lists nested levels. Capped at 1000 entries.",
+            Tool::Edit => "Replace one exact passage in a file you have already read. Use this for every change to an existing file; do not rewrite the file with write_file. old_string must match byte for byte, including indentation, and must appear exactly once - include two or three surrounding lines to make it unique. Do not use line numbers: they shift. Zero matches names the closest line; several matches name their lines. Returns the changed line and a diff.",
+            Tool::Grep => "Search file contents. Prefer this over bash grep: results are capped, counted, and say when they were cut. output_mode is files (default), content, or count. Honors .gitignore when rg is installed. When the cap is hit, narrow the pattern or add glob.",
+            Tool::Glob => "Find files by path pattern. Supports * and ? within a segment and ** across segments, for example src/**/*.rs. Newest first, capped at 100. Use it to locate files; use grep to find contents.",
+            Tool::Todo => "Replace the run's task list. Send the complete list every time; it is not appended. status is pending, in_progress, or completed (todo, doing, and done are accepted). Keep one line per step, and mark the step in progress before starting it.",
         }
     }
 
@@ -1188,12 +1214,32 @@ impl Tool {
         match self {
             Tool::Bash => serde_json::json!({
                 "type": "object",
-                "properties": { "command": { "type": "string" } },
+                "properties": {
+                    "command": { "type": "string", "description": "The shell command to run." },
+                    "timeout_ms": {
+                        "type": "integer", "minimum": 1000, "maximum": 600000,
+                        "description": "Wall-clock budget in milliseconds. Default 120000."
+                    },
+                    "run_in_background": {
+                        "type": "boolean",
+                        "description": "Start the command and return an output file instead of waiting."
+                    },
+                },
                 "required": ["command"],
             }),
             Tool::ReadFile => serde_json::json!({
                 "type": "object",
-                "properties": { "path": { "type": "string" } },
+                "properties": {
+                    "path": { "type": "string" },
+                    "offset": {
+                        "type": "integer", "minimum": 1,
+                        "description": "First line to return, 1-based. Default 1."
+                    },
+                    "limit": {
+                        "type": "integer", "minimum": 1, "maximum": 10000,
+                        "description": "Lines to return. Default 2000."
+                    },
+                },
                 "required": ["path"],
             }),
             Tool::WriteFile => serde_json::json!({
@@ -1206,8 +1252,75 @@ impl Tool {
             }),
             Tool::ListDir => serde_json::json!({
                 "type": "object",
-                "properties": { "path": { "type": "string" } },
+                "properties": {
+                    "path": { "type": "string" },
+                    "depth": {
+                        "type": "integer", "minimum": 1, "maximum": 8,
+                        "description": "Nested levels to list. Default 1."
+                    },
+                },
                 "required": ["path"],
+            }),
+            Tool::Edit => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "old_string": { "type": "string", "description": "Exact text to replace; must be unique unless replace_all is true." },
+                    "new_string": { "type": "string", "description": "Replacement text." },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Replace every occurrence. Default false; a non-unique match is refused."
+                    },
+                },
+                "required": ["path", "old_string", "new_string"],
+            }),
+            Tool::Grep => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "Search pattern; a regular expression when rg is installed." },
+                    "path": { "type": "string", "description": "File or directory to search. Default the working folder." },
+                    "glob": { "type": "string", "description": "Restrict files, for example *.rs." },
+                    "case_sensitive": { "type": "boolean", "description": "Default true." },
+                    "output_mode": {
+                        "type": "string", "enum": ["files", "content", "count"],
+                        "description": "files (default) names paths, content shows matching lines, count shows per-file totals."
+                    },
+                    "max": {
+                        "type": "integer", "minimum": 1, "maximum": 1000,
+                        "description": "Rows to return. Defaults: 100 files, 50 lines, 100 counts."
+                    },
+                },
+                "required": ["pattern"],
+            }),
+            Tool::Glob => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "Glob such as src/**/*.rs." },
+                    "path": { "type": "string", "description": "Directory to walk. Default the working folder." },
+                },
+                "required": ["pattern"],
+            }),
+            Tool::Todo => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "description": "The complete task list, in order.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "step": { "type": "string" },
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "in_progress", "completed"],
+                                    "description": "todo/doing/done are accepted as aliases."
+                                },
+                            },
+                            "required": ["step"],
+                        },
+                    },
+                },
+                "required": ["items"],
             }),
         }
     }
@@ -1221,7 +1334,16 @@ impl Tool {
     pub fn summarize(self, arguments: &serde_json::Value, limit: usize) -> String {
         let key = match self {
             Tool::Bash => "command",
-            Tool::ReadFile | Tool::WriteFile | Tool::ListDir => "path",
+            Tool::ReadFile | Tool::WriteFile | Tool::ListDir | Tool::Edit => "path",
+            Tool::Grep | Tool::Glob => "pattern",
+            Tool::Todo => {
+                let count = arguments
+                    .get("items")
+                    .and_then(|items| items.as_array())
+                    .map(|items| items.len())
+                    .unwrap_or(0);
+                return format!("{count} step{}", if count == 1 { "" } else { "s" });
+            }
         };
         let value = arguments
             .get(key)
@@ -1257,20 +1379,28 @@ impl Tool {
         root: &Path,
     ) -> Result<ToolOutcome, String> {
         let outcome = match self {
-            Tool::Bash => run_bash_in(&string_arg(arguments, "command")?, Some(root))?,
-            Tool::ReadFile => run_read_file(&string_arg(arguments, "path")?, Some(root))?,
+            Tool::Bash => run_bash_arguments(arguments, Some(root))?,
+            Tool::ReadFile => run_read_file_window(arguments, Some(root))?,
             Tool::WriteFile => run_write_file(arguments, Some(root))?,
-            Tool::ListDir => run_list_dir(&string_arg(arguments, "path")?, Some(root))?,
+            Tool::ListDir => run_list_dir(arguments, Some(root))?,
+            Tool::Edit => run_edit_tool(arguments, Some(root))?,
+            Tool::Grep => run_grep_tool(arguments, Some(root))?,
+            Tool::Glob => run_glob_tool(arguments, Some(root))?,
+            Tool::Todo => run_todo(arguments)?,
         };
         Ok(bound(outcome))
     }
 
     fn execute_without_folder(self, arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
         let outcome = match self {
-            Tool::Bash => run_bash_in(&string_arg(arguments, "command")?, None)?,
-            Tool::ReadFile => run_read_file(&string_arg(arguments, "path")?, None)?,
+            Tool::Bash => run_bash_arguments(arguments, None)?,
+            Tool::ReadFile => run_read_file_window(arguments, None)?,
             Tool::WriteFile => run_write_file(arguments, None)?,
-            Tool::ListDir => run_list_dir(&string_arg(arguments, "path")?, None)?,
+            Tool::ListDir => run_list_dir(arguments, None)?,
+            Tool::Edit => run_edit_tool(arguments, None)?,
+            Tool::Grep => run_grep_tool(arguments, None)?,
+            Tool::Glob => run_glob_tool(arguments, None)?,
+            Tool::Todo => run_todo(arguments)?,
         };
         Ok(bound(outcome))
     }
@@ -1282,6 +1412,424 @@ fn string_arg(arguments: &serde_json::Value, key: &str) -> Result<String, String
         .and_then(|value| value.as_str())
         .map(str::to_string)
         .ok_or_else(|| format!("the `{key}` argument is required and must be a string"))
+}
+
+fn integer_arg(arguments: &serde_json::Value, key: &str) -> Option<i64> {
+    arguments.get(key).and_then(|value| value.as_i64())
+}
+
+fn bool_arg(arguments: &serde_json::Value, key: &str) -> Option<bool> {
+    arguments.get(key).and_then(|value| value.as_bool())
+}
+
+/// The names another harness taught a model, mapped onto this one. An
+/// exact declared name always wins; an alias is only consulted when it
+/// does not.
+pub const ALIASES: &[(&str, Tool)] = &[
+    ("read", Tool::ReadFile),
+    ("view", Tool::ReadFile),
+    ("cat", Tool::ReadFile),
+    ("write", Tool::WriteFile),
+    ("create_file", Tool::WriteFile),
+    ("ls", Tool::ListDir),
+    ("shell", Tool::Bash),
+    ("run_command", Tool::Bash),
+    ("execute_command", Tool::Bash),
+    ("exec", Tool::Bash),
+    ("str_replace", Tool::Edit),
+    ("replace_in_file", Tool::Edit),
+    ("search_replace", Tool::Edit),
+    ("apply_diff", Tool::Edit),
+    ("grep_search", Tool::Grep),
+    ("search", Tool::Grep),
+    ("search_files", Tool::Grep),
+    ("rg", Tool::Grep),
+    ("find_files", Tool::Glob),
+    ("find", Tool::Glob),
+    ("todo_write", Tool::Todo),
+    ("update_todo_list", Tool::Todo),
+    ("todowrite", Tool::Todo),
+];
+
+/// Resolve a model-supplied name to a tool, saying whether an alias was
+/// used. `None` means neither a declared name nor an alias.
+pub fn resolve_name(name: &str) -> Option<(Tool, bool)> {
+    if let Some(tool) = Tool::from_name(name) {
+        return Some((tool, false));
+    }
+    ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map(|(_, tool)| (*tool, true))
+}
+
+/// The closest declared name or alias, when one is close enough to be a
+/// typo rather than a different tool.
+pub fn nearest_tool(name: &str) -> Option<String> {
+    let mut best: Option<(usize, String)> = None;
+    let names = ALL_TOOLS
+        .iter()
+        .map(|tool| tool.name().to_string())
+        .chain(ALIASES.iter().map(|(alias, _)| (*alias).to_string()));
+    for candidate in names {
+        let distance = crate::search::distance(&candidate, name);
+        if distance <= 3 && best.as_ref().is_none_or(|(best, _)| distance < *best) {
+            best = Some((distance, candidate));
+        }
+    }
+    best.map(|(_, candidate)| candidate)
+}
+
+/// Validate one parsed argument object against the tool's declared
+/// schema. The subset covers everything a declared schema uses: type,
+/// required, enum, and integer bounds.
+pub fn validate(tool: Tool, arguments: &serde_json::Value) -> Result<(), String> {
+    let schema = tool.parameters();
+    let Some(object) = arguments.as_object() else {
+        return Err("arguments must be a JSON object".to_string());
+    };
+    if let Some(required) = schema.get("required").and_then(|value| value.as_array()) {
+        for key in required.iter().filter_map(|value| value.as_str()) {
+            if !object.contains_key(key) {
+                let expected = schema
+                    .get("properties")
+                    .and_then(|properties| properties.get(key))
+                    .and_then(|property| property.get("type"))
+                    .and_then(|kind| kind.as_str())
+                    .unwrap_or("value");
+                return Err(format!(
+                    "missing required field `{key}` (expected {expected})"
+                ));
+            }
+        }
+    }
+    let Some(properties) = schema.get("properties").and_then(|value| value.as_object()) else {
+        return Ok(());
+    };
+    for (key, property) in properties {
+        let Some(value) = object.get(key) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+        if let Some(kind) = property.get("type").and_then(|kind| kind.as_str()) {
+            if !type_matches(kind, value) {
+                return Err(format!(
+                    "field `{key}` expects {kind}; got {}",
+                    json_kind(value)
+                ));
+            }
+        }
+        if let Some(values) = property.get("enum").and_then(|value| value.as_array()) {
+            if !values.iter().any(|allowed| allowed == value) {
+                let list: Vec<String> = values.iter().map(|value| value.to_string()).collect();
+                return Err(format!(
+                    "field `{key}` must be one of {}; got {value}",
+                    list.join(", ")
+                ));
+            }
+        }
+        if let Some(minimum) = property.get("minimum").and_then(|value| value.as_i64()) {
+            if value.as_i64().is_some_and(|number| number < minimum) {
+                return Err(format!(
+                    "field `{key}` must be at least {minimum}; got {value}"
+                ));
+            }
+        }
+        if let Some(maximum) = property.get("maximum").and_then(|value| value.as_i64()) {
+            if value.as_i64().is_some_and(|number| number > maximum) {
+                return Err(format!(
+                    "field `{key}` must be at most {maximum}; got {value}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn type_matches(kind: &str, value: &serde_json::Value) -> bool {
+    match kind {
+        "string" => value.is_string(),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "number" => value.is_number(),
+        "boolean" => value.is_boolean(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => true,
+    }
+}
+
+fn json_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
+    }
+}
+
+/// `bash` with its optional deadline and background switch.
+fn run_bash_arguments(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<ToolOutcome, String> {
+    let command = string_arg(arguments, "command")?;
+    let timeout = integer_arg(arguments, "timeout_ms")
+        .map(|ms| Duration::from_millis(ms.clamp(1_000, 600_000) as u64))
+        .unwrap_or(BASH_TIMEOUT);
+    if bool_arg(arguments, "run_in_background").unwrap_or(false) {
+        return run_bash_background(&command, root);
+    }
+    run_bash_in(&command, root, timeout)
+}
+
+/// Start a command whose life outlasts the call. Its output goes to one
+/// file, so a later `read_file` or `bash tail` sees it without the
+/// turn's pipes holding the result.
+fn run_bash_background(command: &str, root: Option<&Path>) -> Result<ToolOutcome, String> {
+    let dir = std::env::temp_dir().join("fleet-background");
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let path = dir.join(format!("{}-{stamp}.log", std::process::id()));
+    let file = fs::File::create(&path)
+        .map_err(|error| format!("could not create {}: {error}", path.display()))?;
+    let copy = file
+        .try_clone()
+        .map_err(|error| format!("could not share {}: {error}", path.display()))?;
+    let mut shell = Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+    if cfg!(windows) {
+        shell.arg("/C");
+    } else {
+        shell.arg("-c");
+    }
+    shell
+        .arg(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(file))
+        .stderr(Stdio::from(copy));
+    if let Some(root) = root {
+        shell.current_dir(root);
+    }
+    let child = shell
+        .spawn()
+        .map_err(|error| format!("could not spawn the shell: {error}"))?;
+    Ok(ToolOutcome {
+        output: format!(
+            "started in the background (pid {})\noutput: {}\nread it with read_file, or tail it with bash\n",
+            child.id(),
+            path.display()
+        ),
+        truncated: false,
+    })
+}
+
+/// `edit`: one anchored replacement, with the diff the model needs to
+/// confirm what changed.
+fn run_edit_tool(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<ToolOutcome, String> {
+    let path = string_arg(arguments, "path")?;
+    let old = string_arg(arguments, "old_string")?;
+    let new = string_arg(arguments, "new_string")?;
+    let replace_all = bool_arg(arguments, "replace_all").unwrap_or(false);
+    let target = match root {
+        Some(root) => resolve_write_in_root(root, &path)?,
+        None => PathBuf::from(&path),
+    };
+    let outcome = crate::fileops::edit(&target, &old, &new, replace_all)?;
+    Ok(ToolOutcome {
+        output: format!(
+            "edited {path}: {} occurrence(s), first at line {}\n{}",
+            outcome.replaced, outcome.first_line, outcome.diff
+        ),
+        truncated: false,
+    })
+}
+
+/// `grep`: bounded, counted content search.
+fn run_grep_tool(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<ToolOutcome, String> {
+    let pattern = string_arg(arguments, "pattern")?;
+    let asked = arguments
+        .get("path")
+        .and_then(|value| value.as_str())
+        .unwrap_or(".");
+    let base = match root {
+        Some(root) => root.to_path_buf(),
+        None => std::env::current_dir().unwrap_or_default(),
+    };
+    let resolved = match root {
+        Some(root) => resolve_in_root(root, asked)?,
+        None => {
+            let given = Path::new(asked);
+            if given.is_absolute() {
+                given.to_path_buf()
+            } else {
+                base.join(given)
+            }
+        }
+    };
+    if !resolved.exists() {
+        let parent = resolved.parent().unwrap_or(&base);
+        let name = resolved
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let near = crate::search::nearest_entries(parent, &name);
+        return Err(match near.is_empty() {
+            true => format!("{asked}: no such file or directory"),
+            false => format!(
+                "{asked}: no such file or directory; nearest: {}",
+                near.join(", ")
+            ),
+        });
+    }
+    let glob = arguments.get("glob").and_then(|value| value.as_str());
+    let case_sensitive = bool_arg(arguments, "case_sensitive").unwrap_or(true);
+    let mode = arguments
+        .get("output_mode")
+        .and_then(|value| value.as_str())
+        .unwrap_or("files");
+    let max = integer_arg(arguments, "max").map(|value| value.max(1) as usize);
+    let outcome =
+        crate::search::run_grep(&pattern, &resolved, &base, glob, case_sensitive, mode, max)?;
+    Ok(ToolOutcome {
+        output: outcome.text,
+        truncated: outcome.truncated,
+    })
+}
+
+/// `glob`: newest-first file listing.
+fn run_glob_tool(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<ToolOutcome, String> {
+    let pattern = string_arg(arguments, "pattern")?;
+    let asked = arguments
+        .get("path")
+        .and_then(|value| value.as_str())
+        .unwrap_or(".");
+    let base = match root {
+        Some(root) => root.to_path_buf(),
+        None => std::env::current_dir().unwrap_or_default(),
+    };
+    let resolved = match root {
+        Some(root) => resolve_in_root(root, asked)?,
+        None => {
+            let given = Path::new(asked);
+            if given.is_absolute() {
+                given.to_path_buf()
+            } else {
+                base.join(given)
+            }
+        }
+    };
+    let outcome = crate::search::run_glob(&pattern, &resolved, &base)?;
+    Ok(ToolOutcome {
+        output: outcome.text,
+        truncated: outcome.truncated,
+    })
+}
+
+/// `todo`: a full-list replacement rendered as a checklist.
+fn run_todo(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+    let items = arguments
+        .get("items")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "the `items` argument is required and must be an array".to_string())?;
+    let mut output = String::new();
+    let mut done = 0usize;
+    for (index, item) in items.iter().enumerate() {
+        let step = item
+            .get("step")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("item {} needs a `step` string", index + 1))?;
+        let raw = item
+            .get("status")
+            .and_then(|value| value.as_str())
+            .unwrap_or("pending");
+        let (mark, status) = match raw {
+            "pending" | "todo" | "not_started" | "not-started" => ("[ ]", "pending"),
+            "in_progress" | "in-progress" | "inprogress" | "doing" | "active" => {
+                ("[~]", "in_progress")
+            }
+            "completed" | "done" | "finished" => ("[x]", "completed"),
+            other => {
+                return Err(format!(
+                    "item {} has unknown status `{other}`; use pending, in_progress, or completed",
+                    index + 1
+                ))
+            }
+        };
+        if status == "completed" {
+            done += 1;
+        }
+        output.push_str(&format!("{mark} {step}\n"));
+    }
+    output.push_str(&format!("\n{done}/{} done\n", items.len()));
+    Ok(ToolOutcome {
+        output,
+        truncated: false,
+    })
+}
+
+/// The declaration of the deferred-tool search, built when the catalog
+/// is larger than one request should carry.
+pub fn tool_search_spec() -> ToolSpec {
+    ToolSpec::function(
+        TOOL_SEARCH_TOOL,
+        "Find a tool that is not in the current list. Some tools are held back when the catalog is large; describe what you need to do in one sentence and this returns the best candidates, with the strongest activated for your next request. Selection uses sys1 to classify the intent and sem1 to rank the tools by meaning, so describe the task, not a guessed tool name. If nothing fits, it says so and names the nearest two.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What you need to do, in one sentence."
+                }
+            },
+            "required": ["query"]
+        }),
+    )
+}
+
+/// Collect a directory's entries, with `/` on directories and a depth.
+fn collect_entries(
+    dir: &Path,
+    prefix: &str,
+    depth: usize,
+    out: &mut Vec<String>,
+    label: &str,
+) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|error| format!("{label}: {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("{label}: {error}"))?;
+        let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+        let name = entry.file_name().to_string_lossy().into_owned();
+        out.push(format!("{prefix}{name}{}", if is_dir { "/" } else { "" }));
+        if out.len() > MAX_DIR_ENTRIES * 4 {
+            return Ok(());
+        }
+        if is_dir && depth > 1 {
+            collect_entries(
+                &entry.path(),
+                &format!("{prefix}{name}/"),
+                depth - 1,
+                out,
+                label,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// What a tool produced, before and after bounding.
@@ -1340,8 +1888,12 @@ enum DrainEvent {
 /// reaped — by exiting or by the deadline — each pipe gets [`DRAIN_GRACE`]
 /// to deliver the rest: a background process that inherited the pipe can
 /// keep it, but it cannot keep the call (KI-211).
-fn run_bash_in(command: &str, root: Option<&Path>) -> Result<ToolOutcome, String> {
-    run_bash_within_root(command, root, BASH_TIMEOUT)
+fn run_bash_in(
+    command: &str,
+    root: Option<&Path>,
+    timeout: Duration,
+) -> Result<ToolOutcome, String> {
+    run_bash_within_root(command, root, timeout)
 }
 
 /// [`run_bash_in`] with the deadline made explicit — the seam the tests
@@ -1632,19 +2184,50 @@ fn escapes_with_parent_dir(path: &Path) -> bool {
     false
 }
 
-fn run_read_file(path: &str, root: Option<&Path>) -> Result<ToolOutcome, String> {
+fn run_read_file_window(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<ToolOutcome, String> {
+    let path = string_arg(arguments, "path")?;
+    let offset = integer_arg(arguments, "offset").unwrap_or(1).max(1) as usize;
+    let limit = integer_arg(arguments, "limit")
+        .unwrap_or(crate::fileops::READ_DEFAULT_LINES as i64)
+        .clamp(1, crate::fileops::READ_MAX_LINES as i64) as usize;
     // `None` is the unrestricted run: the path is used as it was named,
     // which is how the tool has always read a file.
     let resolved = match root {
-        Some(root) => resolve_in_root(root, path)?,
-        None => PathBuf::from(path),
+        Some(root) => resolve_in_root(root, &path)?,
+        None => PathBuf::from(&path),
     };
-    let bytes = fs::read(&resolved).map_err(|error| format!("{path}: {error}"))?;
-    let text = String::from_utf8(bytes)
-        .map_err(|_| format!("{path}: not valid UTF-8; use bash to inspect binary files"))?;
+    let window = crate::fileops::read_window(&resolved, offset, limit)?;
+    let mut output = format!("{path} ({} lines)\n", window.total_lines);
+    if window.total_lines == 0 {
+        output.push_str("(empty file)\n");
+    } else if window.end == 0 {
+        output.push_str(&format!(
+            "(offset {offset} is past the last line, {})\n",
+            window.total_lines
+        ));
+    } else {
+        output.push_str(&window.text);
+        if window.end < window.total_lines {
+            output.push_str(&format!(
+                "(showing {}-{} of {}; continue with offset={})\n",
+                window.start,
+                window.end,
+                window.total_lines,
+                window.end + 1
+            ));
+        } else if window.start > 1 {
+            output.push_str(&format!(
+                "(showing {}-{} of {}; end of file)\n",
+                window.start, window.end, window.total_lines
+            ));
+        }
+    }
     Ok(ToolOutcome {
-        output: text,
-        truncated: false,
+        output,
+        truncated: window.cut,
     })
 }
 
@@ -1690,29 +2273,22 @@ fn run_write_file(
     let _guard =
         crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(target.as_path()));
     let length = content.len();
-    fs::write(&target, content).map_err(|error| format!("{path}: {error}"))?;
+    crate::fileops::atomic_write(&target, &content)?;
     Ok(ToolOutcome {
         output: format!("wrote {length} bytes to {path}\n"),
         truncated: false,
     })
 }
 
-fn run_list_dir(path: &str, root: Option<&Path>) -> Result<ToolOutcome, String> {
+fn run_list_dir(arguments: &serde_json::Value, root: Option<&Path>) -> Result<ToolOutcome, String> {
+    let path = string_arg(arguments, "path")?;
+    let depth = integer_arg(arguments, "depth").unwrap_or(1).clamp(1, 8) as usize;
     let resolved = match root {
-        Some(root) => resolve_in_root(root, path)?,
-        None => PathBuf::from(path),
+        Some(root) => resolve_in_root(root, &path)?,
+        None => PathBuf::from(&path),
     };
-    let mut names: Vec<String> = fs::read_dir(resolved)
-        .map_err(|error| format!("{path}: {error}"))?
-        .map(|entry| {
-            let entry = entry.map_err(|error| format!("{path}: {error}"))?;
-            let mut name = entry.file_name().to_string_lossy().into_owned();
-            if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-                name.push('/');
-            }
-            Ok(name)
-        })
-        .collect::<Result<_, String>>()?;
+    let mut names: Vec<String> = Vec::new();
+    collect_entries(&resolved, "", depth, &mut names, &path)?;
     names.sort();
     let total = names.len();
     names.truncate(MAX_DIR_ENTRIES);
@@ -2020,7 +2596,10 @@ mod tests {
         let read = Tool::ReadFile
             .execute(&serde_json::json!({ "path": path.display().to_string() }))
             .unwrap();
-        assert_eq!(read.output, "hello");
+        assert_eq!(
+            read.output,
+            format!("{} (1 lines)\n     1\thello\n", path.display())
+        );
 
         let missing = dir.join("nope").join("file.txt");
         let error = Tool::WriteFile
@@ -2061,7 +2640,7 @@ mod tests {
         let read = Tool::ReadFile
             .execute_in(&serde_json::json!({ "path": "nested/note.txt" }), &root)
             .unwrap();
-        assert_eq!(read.output, "hello");
+        assert_eq!(read.output, "nested/note.txt (1 lines)\n     1\thello\n");
         let listed = Tool::ListDir
             .execute_in(&serde_json::json!({ "path": "nested" }), &root)
             .unwrap();
@@ -2218,7 +2797,7 @@ mod tests {
         let error = Tool::ReadFile
             .execute(&serde_json::json!({ "path": path.display().to_string() }))
             .unwrap_err();
-        assert!(error.contains("UTF-8"));
+        assert!(error.contains("binary file"), "{error}");
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -2498,8 +3077,8 @@ mod tests {
             &[("probe", "probe the embeddings worker")],
         )];
         let specs = declarations(&lanes);
-        // The four built-ins keep their names and their order, always.
-        assert_eq!(specs.len(), 5);
+        // The eight built-ins keep their names and their order, always.
+        assert_eq!(specs.len(), 9);
         let names: Vec<String> = specs
             .iter()
             .map(|spec| {
@@ -2516,11 +3095,15 @@ mod tests {
                 "read_file",
                 "write_file",
                 "list_dir",
+                "edit",
+                "grep",
+                "glob",
+                "todo",
                 "mcp__sem1__probe"
             ]
         );
         // The lane's own description and schema rode along verbatim.
-        let lane = serde_json::to_value(&specs[4]).unwrap();
+        let lane = serde_json::to_value(&specs[8]).unwrap();
         assert_eq!(
             lane["function"]["description"],
             "probe the embeddings worker"
@@ -2538,11 +3121,11 @@ mod tests {
             lane_roster("sys1", &[("sys1_classify", "classify")]),
         ];
         let specs = declarations(&lanes);
-        assert_eq!(specs.len(), 6);
-        let last = serde_json::to_value(&specs[5]).unwrap();
+        assert_eq!(specs.len(), 10);
+        let last = serde_json::to_value(&specs[9]).unwrap();
         assert_eq!(last["function"]["name"], "mcp__sys1__sys1_classify");
-        // No lanes joined: exactly the closed four, unchanged.
-        assert_eq!(declarations(&[]).len(), 4);
+        // No lanes joined: exactly the closed eight, unchanged.
+        assert_eq!(declarations(&[]).len(), 8);
     }
 
     #[test]
@@ -2978,5 +3561,180 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("is not a plan document"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_file_returns_a_window_with_line_numbers() {
+        let dir = std::env::temp_dir().join(format!("fleet-tools-window-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.txt");
+        let body: String = (1..=40).map(|n| format!("line {n}\n")).collect();
+        fs::write(&path, body).unwrap();
+        let window = Tool::ReadFile
+            .execute_in(
+                &serde_json::json!({"path": "big.txt", "offset": 10, "limit": 5}),
+                &dir,
+            )
+            .unwrap();
+        assert!(
+            window.output.starts_with("big.txt (40 lines)\n"),
+            "{}",
+            window.output
+        );
+        assert!(
+            window.output.contains("    10\tline 10"),
+            "{}",
+            window.output
+        );
+        assert!(
+            window.output.contains("    14\tline 14"),
+            "{}",
+            window.output
+        );
+        assert!(!window.output.contains("line 15"), "{}", window.output);
+        assert!(
+            window.output.contains("continue with offset=15"),
+            "{}",
+            window.output
+        );
+        let past = Tool::ReadFile
+            .execute_in(&serde_json::json!({"path": "big.txt", "offset": 100}), &dir)
+            .unwrap();
+        assert!(
+            past.output.contains("past the last line"),
+            "{}",
+            past.output
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn edit_writes_one_anchored_passage_and_names_an_ambiguous_one() {
+        let dir = std::env::temp_dir().join(format!("fleet-tools-edit-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("code.rs"), "fn main() {\n    let x = 1;\n}\n").unwrap();
+        let outcome = Tool::Edit
+            .execute_in(
+                &serde_json::json!({
+                    "path": "code.rs",
+                    "old_string": "let x = 1;",
+                    "new_string": "let x = 2;"
+                }),
+                &dir,
+            )
+            .unwrap();
+        assert!(
+            outcome.output.contains("edited code.rs"),
+            "{}",
+            outcome.output
+        );
+        assert!(
+            outcome.output.contains("+    let x = 2;"),
+            "{}",
+            outcome.output
+        );
+        assert!(fs::read_to_string(dir.join("code.rs"))
+            .unwrap()
+            .contains("let x = 2;"));
+        fs::write(dir.join("twice.rs"), "same\nother\nsame\n").unwrap();
+        let error = Tool::Edit
+            .execute_in(
+                &serde_json::json!({
+                    "path": "twice.rs",
+                    "old_string": "same",
+                    "new_string": "different"
+                }),
+                &dir,
+            )
+            .unwrap_err();
+        assert!(error.contains("appears 2 times"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn todo_replaces_the_list_and_accepts_status_aliases() {
+        let outcome = Tool::Todo
+            .execute(&serde_json::json!({"items": [
+                {"step": "read", "status": "done"},
+                {"step": "edit", "status": "doing"},
+                {"step": "test"}
+            ]}))
+            .unwrap();
+        assert!(outcome.output.contains("[x] read"), "{}", outcome.output);
+        assert!(outcome.output.contains("[~] edit"), "{}", outcome.output);
+        assert!(outcome.output.contains("[ ] test"), "{}", outcome.output);
+        assert!(outcome.output.contains("1/3 done"), "{}", outcome.output);
+        let error = Tool::Todo
+            .execute(&serde_json::json!({"items": [{"step": "x", "status": "nope"}]}))
+            .unwrap_err();
+        assert!(error.contains("unknown status"), "{error}");
+    }
+
+    #[test]
+    fn validation_names_the_field_and_the_expected_type() {
+        assert!(validate(Tool::Bash, &serde_json::json!({}))
+            .unwrap_err()
+            .contains("command"));
+        let error = validate(
+            Tool::Bash,
+            &serde_json::json!({"command": "ls", "timeout_ms": "soon"}),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("timeout_ms") && error.contains("integer"),
+            "{error}"
+        );
+        let error = validate(
+            Tool::Grep,
+            &serde_json::json!({"pattern": "x", "output_mode": "words"}),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("output_mode") && error.contains("files"),
+            "{error}"
+        );
+        assert!(validate(
+            Tool::ReadFile,
+            &serde_json::json!({"path": "a", "limit": 0})
+        )
+        .is_err());
+        assert!(validate(
+            Tool::ReadFile,
+            &serde_json::json!({"path": "a", "limit": 10})
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn a_foreign_tool_name_resolves_to_this_harness_tool() {
+        assert_eq!(resolve_name("str_replace"), Some((Tool::Edit, true)));
+        assert_eq!(resolve_name("edit"), Some((Tool::Edit, false)));
+        assert_eq!(resolve_name("nope"), None);
+        assert_eq!(nearest_tool("bashh").as_deref(), Some("bash"));
+    }
+
+    #[test]
+    fn a_background_command_names_output_that_lands() {
+        let outcome = Tool::Bash
+            .execute(&serde_json::json!({
+                "command": "printf background-ok",
+                "run_in_background": true
+            }))
+            .unwrap();
+        assert!(
+            outcome.output.contains("started in the background"),
+            "{}",
+            outcome.output
+        );
+        let path = outcome
+            .output
+            .lines()
+            .find_map(|line| line.strip_prefix("output: "))
+            .expect("the output file is named");
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let text = fs::read_to_string(path).unwrap_or_default();
+        assert!(text.contains("background-ok"), "{text}");
     }
 }

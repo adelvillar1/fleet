@@ -46,7 +46,10 @@ src/cli.rs              argument parsing, help text, usage errors
 src/api.rs              DeepSeek chat-completions client (ureq), streaming, typed errors
 src/boards.rs           the three read-only boards: Fleet's own routing state, the second-brain's derived state files, git facts per project
 src/agent.rs            the tool loop, approvals, turn cap, progress reporting
-src/tools.rs            bash, read_file, write_file, list_dir; output capping; the tool-declaration vocabulary
+src/tools.rs            the eight built-ins, schemas and validation, alias resolution, output capping
+src/fileops.rs          window reads, atomic writes, the anchored edit and its diff
+src/search.rs           grep and glob, capped and counted
+src/tool_router.rs      sys1 capability parsing, sem1 ranking, floor/margin, lexical fallback
 src/approvals.rs        the three-mode approval gate: ask, yes, yes-guarded, and the always-ask class
 src/compaction.rs       context-window management: summarize-and-continue under a token budget
 src/mcp.rs              the hand-rolled MCP stdio client (spawn, initialize, tools/list, tools/call, teardown)

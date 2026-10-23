@@ -579,7 +579,7 @@ async fn client_posts_auth_and_tool_declarations() {
     );
     let body: serde_json::Value = serde_json::from_str(&recorded.body).unwrap();
     assert_eq!(body["model"], "test-model");
-    assert_eq!(body["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(body["tools"].as_array().unwrap().len(), 8);
     assert_eq!(body["messages"][0]["role"], "user");
 }
 
@@ -969,9 +969,13 @@ async fn unknown_tool_and_bad_arguments_are_model_visible_errors() {
         })
         .collect();
     assert_eq!(outputs.len(), 2);
-    assert_eq!(outputs[0], "error: unknown tool `sudo`");
     assert!(
-        outputs[1].starts_with("error: arguments were not valid JSON"),
+        outputs[0].starts_with("error: unknown tool `sudo`"),
+        "{}",
+        outputs[0]
+    );
+    assert!(
+        outputs[1].starts_with("error[validation]: arguments were not valid JSON"),
         "{}",
         outputs[1]
     );
@@ -1081,10 +1085,7 @@ async fn oversized_tool_output_is_truncated_in_the_log() {
             truncated: true,
             ..
         } => {
-            assert!(
-                output.contains("[truncated"),
-                "expected the truncation marker"
-            );
+            assert!(output.contains('\u{2026}'), "expected the line-cut marker");
             assert!(output.len() < MAX_TOOL_OUTPUT + 100);
         }
         other => panic!("expected a truncated tool result, got {other:?}"),
@@ -1106,7 +1107,10 @@ async fn tools_execute_against_the_real_filesystem() {
     let read = Tool::ReadFile
         .execute(&serde_json::json!({ "path": target.display().to_string() }))
         .unwrap();
-    assert_eq!(read.output, "from fleet");
+    assert_eq!(
+        read.output,
+        format!("{} (1 lines)\n     1\tfrom fleet\n", target.display())
+    );
     let listed = Tool::ListDir
         .execute(&serde_json::json!({ "path": home.display().to_string() }))
         .unwrap();
@@ -2336,6 +2340,10 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "read_file",
             "write_file",
             "list_dir",
+            "edit",
+            "grep",
+            "glob",
+            "todo",
             "subagent",
             "convention",
             "plan",
@@ -2346,13 +2354,13 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         ]
     );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 15, "{second:?}");
+    assert_eq!(second.len(), 19, "{second:?}");
     assert_eq!(
         &second[..4],
         &["bash", "read_file", "write_file", "list_dir"]
     );
     assert_eq!(
-        &second[4..8],
+        &second[15..19],
         &[
             "mcp__sem1__embed",
             "mcp__sem1__probe",
@@ -2360,10 +2368,10 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "mcp__sem1__search"
         ]
     );
-    // The delegation tool rides beside the four built-ins and every
-    // joined lane's tools, with the convention lookup after it.
+    // The native tools ride before the joined lane's, and the lane's
+    // tools are the deferred tail of the declaration list.
     assert_eq!(
-        &second[8..],
+        &second[8..15],
         &[
             "subagent",
             "convention",
@@ -2526,8 +2534,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     // model can still see them, and calling one is a typed failure.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 12);
-    assert_eq!(declared_tools(&bodies[2]).len(), 12);
+    assert_eq!(declared_tools(&bodies[1]).len(), 16);
+    assert_eq!(declared_tools(&bodies[2]).len(), 16);
     assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
 
     std::fs::remove_dir_all(&home).ok();
@@ -2843,7 +2851,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     // No lane joined, so the second request still declares only the
     // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 11);
+    assert_eq!(declared_tools(&bodies[1]).len(), 15);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -2913,7 +2921,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert!(records
         .iter()
         .all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 11);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 15);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -4532,7 +4540,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 12, "{declared:?}");
+    assert_eq!(declared.len(), 16, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
     assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
@@ -5394,6 +5402,10 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
             "read_file",
             "write_file",
             "list_dir",
+            "edit",
+            "grep",
+            "glob",
+            "todo",
             "remember",
             "supersede",
             "subagent",
@@ -5533,6 +5545,10 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "read_file",
             "write_file",
             "list_dir",
+            "edit",
+            "grep",
+            "glob",
+            "todo",
             "subagent",
             "convention",
             "plan",
@@ -5582,6 +5598,10 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "read_file",
             "write_file",
             "list_dir",
+            "edit",
+            "grep",
+            "glob",
+            "todo",
             "remember",
             "supersede",
             "subagent",
@@ -5867,6 +5887,10 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "read_file",
             "write_file",
             "list_dir",
+            "edit",
+            "grep",
+            "glob",
+            "todo",
             "subagent",
             "improve",
             "convention",
@@ -5929,6 +5953,10 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
             "read_file",
             "write_file",
             "list_dir",
+            "edit",
+            "grep",
+            "glob",
+            "todo",
             "subagent",
             "convention",
             "plan",
@@ -6110,7 +6138,16 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
     // unknown the skills path returns, not a scope refusal.
     assert_eq!(
         declared_tools(&bodies[1]),
-        vec!["bash", "read_file", "write_file", "list_dir"]
+        vec![
+            "bash",
+            "read_file",
+            "write_file",
+            "list_dir",
+            "edit",
+            "grep",
+            "glob",
+            "todo"
+        ]
     );
     let (skill_result, _) = tool_result(&child_records, "use_skill");
     assert!(skill_result.starts_with("error:"), "{skill_result}");

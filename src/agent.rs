@@ -132,6 +132,14 @@ pub const DEFAULT_MAX_TURNS: usize = 100;
 /// config value.
 pub const DELEGATION_CONCURRENCY: usize = 3;
 
+/// The most tools one request should declare before the rest are held
+/// behind `tool_search`. Past roughly thirty, selection accuracy falls
+/// faster than the extra tools help.
+pub const MAX_VISIBLE_TOOLS: usize = 28;
+
+/// The most definition tokens one request should carry.
+pub const MAX_DEFINITION_TOKENS: usize = 8_000;
+
 /// The one config seam over [`DELEGATION_CONCURRENCY`]: an environment
 /// variable naming a smaller positive number. It lives here, beside the
 /// constant it lowers, so there is exactly one place the bound can move.
@@ -905,6 +913,7 @@ impl Approver for TuiApprover {
 /// mistaken for an escape.
 fn vision_images(
     arguments: &serde_json::Value,
+    root: &std::path::Path,
 ) -> Result<(String, Vec<crate::api::ImageRef>), String> {
     let question = arguments
         .get("question")
@@ -920,7 +929,9 @@ fn vision_images(
     if paths.is_empty() {
         return Err("a vision ask needs at least one image".to_string());
     }
-    let root = std::env::current_dir().unwrap_or_default();
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", root.display()))?;
     let mut images: Vec<crate::api::ImageRef> = Vec::new();
     for path in paths {
         let asked = path
@@ -929,6 +940,14 @@ fn vision_images(
         let name = asked.rsplit('/').next().unwrap_or(asked);
         if name == ".env" || name.starts_with(".env.") {
             return Err("a credential file is never served".to_string());
+        }
+        // An absolute path is refused rather than joined: `root.join`
+        // with an absolute argument discards the root, which would serve
+        // any file the account can read.
+        if std::path::Path::new(asked).is_absolute() {
+            return Err(format!(
+                "{asked}: absolute paths are not served; name the file relative to the working folder"
+            ));
         }
         let mut depth: i64 = 0;
         for part in asked.split('/') {
@@ -943,16 +962,26 @@ fn vision_images(
                 _ => depth += 1,
             }
         }
-        let at = root.join(asked);
-        let bytes = std::fs::read(&at).map_err(|error| format!("{}: {error}", at.display()))?;
-        if bytes.len() > VISION_IMAGE_CAP {
+        let at = root
+            .join(asked)
+            .canonicalize()
+            .map_err(|error| format!("{asked}: {error}"))?;
+        if !at.starts_with(&root) {
             return Err(format!(
-                "{} is {} bytes, past the {VISION_IMAGE_CAP}-byte cap",
-                at.display(),
-                bytes.len()
+                "{asked}: a symlink resolves outside the working folder"
             ));
         }
-        images.push(crate::api::ImageRef::new(media_type(&at), bytes));
+        let size = std::fs::metadata(&at)
+            .map_err(|error| format!("{asked}: {error}"))?
+            .len();
+        if size > VISION_IMAGE_CAP as u64 {
+            return Err(format!(
+                "{asked} is {size} bytes, past the {VISION_IMAGE_CAP}-byte cap"
+            ));
+        }
+        let bytes = std::fs::read(&at).map_err(|error| format!("{asked}: {error}"))?;
+        let media = media_type(&bytes, &at)?;
+        images.push(crate::api::ImageRef::new(media, bytes));
     }
     Ok((question, images))
 }
@@ -962,17 +991,23 @@ fn vision_images(
 /// capture is tens. The cap is the last of those.
 const VISION_IMAGE_CAP: usize = 8 * 1024 * 1024;
 
-/// One image's media type, from its extension — the two every endpoint
-/// accepts, and a refusal for anything else rather than a guess.
-fn media_type(path: &std::path::Path) -> String {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        _ => "image/png",
-    }
-    .to_string()
+/// One image's media type, read from its bytes. An extension is a name,
+/// not evidence; a file that is not one of the four accepted formats is
+/// refused by name rather than sent as PNG and rejected upstream.
+fn media_type(bytes: &[u8], path: &std::path::Path) -> Result<String, String> {
+    let kind = if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    };
+    kind.map(str::to_string)
+        .ok_or_else(|| format!("{}: not a PNG, JPEG, GIF, or WebP image", path.display()))
 }
 
 /// The roster this run's client walks, for a second route off it. The
@@ -1006,6 +1041,15 @@ pub struct Agent<'a> {
     /// tool spawns nothing; a run that does closes every child it
     /// spawned when it ends.
     lanes: LaneRoster,
+    /// Lane tools a `tool_search` activated. They append to the next
+    /// request's declarations, in name order, and nothing else reorders.
+    activated: std::collections::BTreeSet<String>,
+    /// Cached card vectors, keyed by the catalog hash that produced them.
+    tool_vectors: Option<(u64, Vec<Vec<f32>>)>,
+    /// The files this run has successfully read. `edit` refuses a path
+    /// that is not here: an anchored replacement needs the text the
+    /// model actually saw.
+    reads: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
     /// The skills this run declared, in load order. Their
     /// name+description pairs ride the system prompt; a body enters
     /// context only when the loop selects it through `use_skill`.
@@ -1092,7 +1136,15 @@ pub fn plan_refusal(plan_mode: bool, name: &str) -> Option<String> {
     if !plan_mode {
         return None;
     }
-    let write_class = [tools::Tool::WriteFile.name(), tools::COMPUTER_USE_TOOL];
+    let write_class = [
+        tools::Tool::WriteFile.name(),
+        tools::Tool::Edit.name(),
+        tools::COMPUTER_USE_TOOL,
+        tools::REMEMBER_TOOL,
+        tools::SUPERSEDE_TOOL,
+        tools::IMPROVE_TOOL,
+        tools::PLAN_TOOL,
+    ];
     write_class.contains(&name).then(|| {
         format!(
             "plan mode is read-only: `{name}` was refused. Plan the change \u{2014} the \
@@ -1164,6 +1216,9 @@ impl<'a> Agent<'a> {
             usage: Usage::default(),
             turns: 0,
             lanes,
+            activated: std::collections::BTreeSet::new(),
+            tool_vectors: None,
+            reads: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             skills,
             memory,
             scope,
@@ -1321,7 +1376,12 @@ impl<'a> Agent<'a> {
                 .filter(|tool| scope.admits(tool.name()))
                 .map(|tool| tool.spec())
                 .collect(),
-            None => self.lanes.declarations(),
+            // The built-ins alone; the tiering below appends the lanes'
+            // tools exactly once, in join order.
+            None => crate::tools::ALL_TOOLS
+                .iter()
+                .map(|tool| tool.spec())
+                .collect(),
         };
         // A scope that admits nothing admits the beside-the-four tools
         // either; the check is one place, not one per tool.
@@ -1395,6 +1455,27 @@ impl<'a> Agent<'a> {
         // rest and the gate is what makes it different.
         if admitted(tools::COMPUTER_USE_TOOL) {
             specs.push(tools::computer_use_spec());
+        }
+        // A large catalog is declared in two tiers. The core above stays
+        // byte-stable; the lanes' tools are held back when they would
+        // push the request past the bound, and `tool_search` names the
+        // ones the model asks for. Below either bound nothing changes.
+        if self.scope.is_none() {
+            let lane_specs: Vec<crate::api::ToolSpec> = self
+                .lanes
+                .lane_tools()
+                .iter()
+                .flat_map(|lane| {
+                    lane.tools.iter().map(|tool| {
+                        crate::api::ToolSpec::function(
+                            tool.name.clone(),
+                            tool.description.clone(),
+                            tool.input_schema.clone(),
+                        )
+                    })
+                })
+                .collect();
+            specs = tier_declarations(specs, lane_specs, &self.activated);
         }
         specs
     }
@@ -2419,6 +2500,13 @@ impl<'a> Agent<'a> {
                     (true, output, truncated)
                 }
             };
+            // A successful read is what the edit tool's safety rule is
+            // built on: remember the files this run has seen, so an
+            // anchored edit is never written over text the model did not
+            // read.
+            if approved && !output.starts_with("error") {
+                self.note_read(&call.function.name, &call.function.arguments);
+            }
             let _ = writeln!(
                 self.progress,
                 "\u{2190} {}",
@@ -2646,7 +2734,13 @@ impl<'a> Agent<'a> {
             // rather than a call that asks a model to look at nothing.
             return Ok(match serde_json::from_str(&call.function.arguments) {
                 Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
-                Ok(arguments) => match vision_images(&arguments) {
+                Ok(arguments) => match vision_images(
+                    &arguments,
+                    &match &self.options.file_access {
+                        FileAccess::Folder(root) => root.clone(),
+                        _ => std::env::current_dir().unwrap_or_default(),
+                    },
+                ) {
                     Err(reason) => settled(format!("error: {reason}")),
                     Ok((question, images)) => Prepared::Ready(Work::Vision {
                         question,
@@ -2677,7 +2771,7 @@ impl<'a> Agent<'a> {
                 },
             });
         }
-        if name.starts_with(tools::SUPERSEDE_TOOL) {
+        if name == tools::SUPERSEDE_TOOL {
             return self.prepare_supersede(call);
         }
         if name == tools::SUBAGENT_TOOL {
@@ -2779,22 +2873,73 @@ impl<'a> Agent<'a> {
                 }),
             });
         }
+        if name == tools::TOOL_SEARCH_TOOL {
+            return Ok(Prepared::Serial { call: call.clone() });
+        }
         if tools::lane_of(name).is_some() {
             return Ok(Prepared::Serial { call: call.clone() });
         }
-        match Tool::from_name(name) {
-            None => Ok(settled(format!("error: unknown tool `{name}`"))),
-            Some(tool) => match serde_json::from_str(&call.function.arguments) {
+        match tools::resolve_name(name) {
+            None => {
+                let hint = match tools::nearest_tool(name) {
+                    Some(near) => format!("; did you mean `{near}`?"),
+                    None => format!(
+                        "; the tools are: {}",
+                        tools::ALL_TOOLS
+                            .iter()
+                            .map(|tool| tool.name())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                };
+                Ok(settled(format!("error: unknown tool `{name}`{hint}")))
+            }
+            Some((tool, aliased)) => match serde_json::from_str(&call.function.arguments) {
                 Err(error) => Ok(settled(format!(
-                    "error: arguments were not valid JSON: {error}"
+                    "error[validation]: arguments were not valid JSON: {error}"
                 ))),
-                Ok(arguments) => Ok(Prepared::Ready(Work::Builtin {
-                    tool,
-                    arguments,
-                    // The run's file access, decided at the boundary:
-                    // a folder, nothing, or the process's directory.
-                    access: self.options.file_access.clone(),
-                })),
+                Ok(arguments) => {
+                    if let Err(reason) = tools::validate(tool, &arguments) {
+                        return Ok(settled(format!("error[validation]: {reason}")));
+                    }
+                    if tool == Tool::Edit {
+                        let path = arguments
+                            .get("path")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("");
+                        let seen = read_marker(&self.options.file_access, path)
+                            .map(|marker| {
+                                self.reads
+                                    .lock()
+                                    .map(|reads| reads.contains(&marker))
+                                    .unwrap_or(false)
+                            })
+                            .unwrap_or(false);
+                        if !seen {
+                            return Ok(settled(format!(
+                                "error: read `{path}` before editing it — edit replaces an exact                                  passage and needs the text you actually saw; call read_file first"
+                            )));
+                        }
+                    }
+                    // The progress line says when a name from another
+                    // harness was mapped onto this one; the result is the
+                    // tool's own, unmodified.
+                    if aliased {
+                        let _ = writeln!(
+                            self.progress,
+                            "\u{2192} `{name}` resolved to `{}`",
+                            tool.name()
+                        );
+                        let _ = self.progress.flush();
+                    }
+                    Ok(Prepared::Ready(Work::Builtin {
+                        tool,
+                        arguments,
+                        // The run's file access, decided at the boundary:
+                        // a folder, nothing, or the process's directory.
+                        access: self.options.file_access.clone(),
+                    }))
+                }
             },
         }
     }
@@ -2887,6 +3032,9 @@ impl<'a> Agent<'a> {
     async fn run_serial(&mut self, call: &ToolCall) -> Result<(String, bool), AgentError> {
         if call.function.name == tools::SUBAGENT_TOOL {
             return self.run_subagent(call).await;
+        }
+        if call.function.name == tools::TOOL_SEARCH_TOOL {
+            return self.run_tool_search(call).await;
         }
         let (lane, lane_tool) = tools::lane_of(&call.function.name)
             .expect("a serial call is a delegation or a lane call");
@@ -3023,6 +3171,210 @@ impl<'a> Agent<'a> {
         // the same `bound` the built-ins go through (KI-041), so the log
         // says whether the model read a whole answer or a cut one.
         Ok((outcome.text, outcome.truncated))
+    }
+
+    /// Record a lane that joined on a harness-initiated call, so the
+    /// log keeps the dynamic declarations reconstructable.
+    fn note_join(
+        &mut self,
+        lane: &str,
+        joined: Option<Vec<crate::tools::LaneTool>>,
+    ) -> Result<(), AgentError> {
+        if let Some(tools) = joined {
+            let count = tools.len();
+            let _ = writeln!(
+                self.progress,
+                "\u{2192} lane {lane} joined \u{2014} {count} tool{}",
+                if count == 1 { "" } else { "s" },
+            );
+            let _ = self.progress.flush();
+            self.emit(UiEvent::LaneJoined {
+                lane: lane.to_string(),
+                tool_count: count,
+            });
+            self.record(&Record::LaneTools {
+                lane: lane.to_string(),
+                tools,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// One deferred-tool search. sys1 names the capability class from a
+    /// closed set, sem1 ranks the candidates by meaning, and a declared
+    /// floor decides whether anything fits. Nothing here calls a
+    /// language model; a failed lane is a named fallback, never a guess.
+    async fn run_tool_search(&mut self, call: &ToolCall) -> Result<(String, bool), AgentError> {
+        let arguments = parse_arguments(&call.function.arguments);
+        let query = arguments
+            .get("query")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if query.is_empty() {
+            return Ok((
+                "error[validation]: the `query` argument is required and must be a string"
+                    .to_string(),
+                false,
+            ));
+        }
+        let candidates: Vec<crate::tool_router::Candidate> = self
+            .lanes
+            .lane_tools()
+            .iter()
+            .flat_map(|lane| {
+                lane.tools.iter().map(|tool| crate::tool_router::Candidate {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                })
+            })
+            .collect();
+        if candidates.is_empty() {
+            return Ok((
+                "no deferred tools: every tool this run can use is already declared\n".to_string(),
+                false,
+            ));
+        }
+        // The class decision: sys1's closed label set. An unparseable or
+        // failed answer is a named absence, and the ranking proceeds
+        // without a class rather than inventing one.
+        let state = format!("{query}\ntool_definitions: {}", candidates.len());
+        let outcome = self
+            .lanes
+            .call(
+                "sys1",
+                "sys1_classify",
+                &serde_json::json!({ "task": "tool_route", "text": state }),
+            )
+            .await;
+        self.note_join("sys1", outcome.joined)?;
+        let (class, confidence, class_note) =
+            match crate::tool_router::parse_capability(&outcome.text) {
+                Some((label, confidence)) => (Some(label), confidence, String::new()),
+                None => (
+                    None,
+                    0.0,
+                    "\nsys1 gave no capability label; ranked without the class".to_string(),
+                ),
+            };
+        if class.as_deref() == Some("none") {
+            return Ok((
+                format!(
+                    "sys1 judged that no tool is needed for this request ({confidence:.2}){class_note}\n\
+                     proceed without a tool, or ask again naming the concrete action\n"
+                ),
+                false,
+            ));
+        }
+        // The instance decision: geometry over the cards. Cached by the
+        // catalog hash, so one batch embed serves every search until the
+        // catalog changes.
+        let hash = crate::tool_router::catalog_hash(&candidates, class.as_deref());
+        let cached = self
+            .tool_vectors
+            .as_ref()
+            .filter(|(cached, _)| *cached == hash)
+            .map(|(_, vectors)| vectors.clone());
+        let (ranked, ranker, rank_note) = match cached {
+            Some(vectors) => (
+                crate::tool_router::rank_by_vectors(&vectors, &candidates, class.as_deref()),
+                "sem1 (cached)",
+                String::new(),
+            ),
+            None => {
+                let mut items = vec![crate::tool_router::query_text(&query, class.as_deref())];
+                items.extend(
+                    candidates
+                        .iter()
+                        .map(|candidate| crate::tool_router::card(&candidate.description)),
+                );
+                let embedded = self
+                    .lanes
+                    .call("sem1", "sem1_embed", &serde_json::json!({ "items": items }))
+                    .await;
+                self.note_join("sem1", embedded.joined)?;
+                match crate::tool_router::parse_vectors(&embedded.text)
+                    .filter(|vectors| vectors.len() == candidates.len() + 1)
+                {
+                    Some(vectors) => {
+                        self.tool_vectors = Some((hash, vectors.clone()));
+                        (
+                            crate::tool_router::rank_by_vectors(
+                                &vectors,
+                                &candidates,
+                                class.as_deref(),
+                            ),
+                            "sem1",
+                            String::new(),
+                        )
+                    }
+                    None => (
+                        crate::tool_router::lexical_rank(
+                            &crate::tool_router::query_text(&query, class.as_deref()),
+                            &candidates,
+                        ),
+                        "lexical",
+                        "\nsem1 was unavailable or returned the wrong shape; ranked lexically"
+                            .to_string(),
+                    ),
+                }
+            }
+        };
+        let selection = crate::tool_router::select(ranked);
+        let descriptions: std::collections::BTreeMap<&str, &str> = candidates
+            .iter()
+            .map(|candidate| (candidate.name.as_str(), candidate.description.as_str()))
+            .collect();
+        let mut text = String::new();
+        if let Some(class) = &class {
+            text.push_str(&format!("sys1: {class} ({confidence:.2})\n"));
+        }
+        text.push_str(&format!(
+            "{ranker} ranked {} deferred tool(s){rank_note}{class_note}\n\n",
+            candidates.len()
+        ));
+        for (index, rank) in selection.shown().iter().enumerate() {
+            let description = descriptions
+                .get(rank.name.as_str())
+                .map(|line| crate::tool_router::card(line))
+                .unwrap_or_default();
+            text.push_str(&format!(
+                "{}. {}  {:.2} \u{2014} {}\n",
+                index + 1,
+                rank.name,
+                rank.score,
+                description
+            ));
+        }
+        match &selection {
+            crate::tool_router::Selection::Confident(_) => {
+                let names = selection.activate();
+                for name in &names {
+                    self.activated.insert(name.clone());
+                }
+                text.push_str(&format!(
+                    "\nactivated for the next request: {}\n",
+                    names.join(", ")
+                ));
+            }
+            crate::tool_router::Selection::Ambiguous(_) => {
+                let names = selection.activate();
+                for name in &names {
+                    self.activated.insert(name.clone());
+                }
+                text.push_str(&format!(
+                    "\ntwo tools are close; both are activated \u{2014} choose one by name: {}\n",
+                    names.join(", ")
+                ));
+            }
+            crate::tool_router::Selection::None(_) => {
+                text.push_str(
+                    "\nno tool clears the floor; if none fits, proceed without one. The two nearest are named above.\n",
+                );
+            }
+        }
+        Ok((text, false))
     }
 
     /// Send one event to the UI, when a UI is listening. A closed channel
@@ -3911,15 +4263,94 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
                 tool, arguments, ..
             } => match tool {
                 Tool::Bash => Some("shell".to_string()),
-                Tool::WriteFile => arguments
+                Tool::WriteFile | Tool::Edit => arguments
                     .get("path")
                     .and_then(|path| path.as_str())
                     .filter(|path| !path.is_empty())
                     .map(|path| format!("path:{path}")),
-                Tool::ReadFile | Tool::ListDir => None,
+                // The ledger is one slot: two todo calls in a batch would
+                // otherwise race to be the last full-list replacement.
+                Tool::Todo => Some("todo".to_string()),
+                // Search reads the tree and writes nothing.
+                Tool::ReadFile | Tool::ListDir | Tool::Grep | Tool::Glob => None,
             },
         },
     }
+}
+
+impl Agent<'_> {
+    /// Remember a successful read, when the call was one. The edit
+    /// tool's safety rule is this set.
+    fn note_read(&self, name: &str, raw: &str) {
+        if !tools::resolve_name(name).is_some_and(|(tool, _)| tool == Tool::ReadFile) {
+            return;
+        }
+        let Ok(arguments) = serde_json::from_str::<serde_json::Value>(raw) else {
+            return;
+        };
+        let Some(path) = arguments.get("path").and_then(|value| value.as_str()) else {
+            return;
+        };
+        let Some(marker) = read_marker(&self.options.file_access, path) else {
+            return;
+        };
+        if let Ok(mut reads) = self.reads.lock() {
+            reads.insert(marker);
+        }
+    }
+}
+
+/// The marker a read records: the canonical path a later edit compares
+/// against, under the run's own file access.
+fn read_marker(access: &FileAccess, path: &str) -> Option<std::path::PathBuf> {
+    match access {
+        FileAccess::Folder(root) => {
+            let canonical_root = root.canonicalize().ok()?;
+            root.join(path)
+                .canonicalize()
+                .ok()
+                .filter(|resolved| resolved.starts_with(&canonical_root))
+        }
+        FileAccess::Unrestricted => std::path::Path::new(path).canonicalize().ok(),
+        FileAccess::None => None,
+    }
+}
+
+/// Declare everything when it fits, otherwise the core plus the
+/// activated tools plus the search. Pure, so the tier boundary is a
+/// test rather than a prompt experiment.
+fn tier_declarations(
+    core: Vec<crate::api::ToolSpec>,
+    lanes: Vec<crate::api::ToolSpec>,
+    activated: &std::collections::BTreeSet<String>,
+) -> Vec<crate::api::ToolSpec> {
+    let tokens = declaration_tokens(&core) + declaration_tokens(&lanes);
+    if core.len() + lanes.len() <= MAX_VISIBLE_TOOLS && tokens <= MAX_DEFINITION_TOKENS {
+        let mut specs = core;
+        specs.extend(lanes);
+        return specs;
+    }
+    let mut specs = core;
+    for spec in lanes {
+        if activated.contains(spec.name()) {
+            specs.push(spec);
+        }
+    }
+    specs.push(tools::tool_search_spec());
+    specs
+}
+
+/// The tokens one declaration list costs, estimated the way the
+/// compaction budget estimates text: characters over four.
+fn declaration_tokens(specs: &[crate::api::ToolSpec]) -> usize {
+    specs
+        .iter()
+        .map(|spec| {
+            serde_json::to_string(spec)
+                .map(|text| text.chars().count() / 4)
+                .unwrap_or(0)
+        })
+        .sum()
 }
 
 /// One call's place in the execution plan.
@@ -4709,13 +5140,6 @@ impl LaneRoster {
         }
     }
 
-    /// Every declaration the run's requests carry: the four built-ins,
-    /// then each joined lane's tools under the lane namespace, in join
-    /// order.
-    fn declarations(&self) -> Vec<crate::api::ToolSpec> {
-        tools::declarations(&self.lane_tools())
-    }
-
     /// Each joined lane's tools as the model sees them, in join order. A
     /// lane that died after joining keeps its tools here: the model saw
     /// them declared, so withdrawing them would make the log's
@@ -5328,7 +5752,7 @@ mod tests {
         assert!(second.text.contains("remain declared"), "{}", second.text);
         // A dead lane contributes no declarations: the model never saw a
         // tool that cannot run.
-        assert_eq!(roster.declarations().len(), 4);
+        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 8);
         assert!(roster.lane_tools().is_empty());
         // And an unknown lane is a named reason, not a panic — and not a
         // spawn: no registry lane carries this name, so nothing launches.
@@ -5347,9 +5771,8 @@ mod tests {
     async fn a_lane_that_never_joins_leaves_the_declarations_at_the_builtins() {
         // The lazy path's cost when no lane is called: nothing.
         let roster = LaneRoster::new(HashMap::new());
-        assert_eq!(roster.declarations().len(), 4);
-        let names: Vec<String> = roster
-            .declarations()
+        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 8);
+        let names: Vec<String> = crate::tools::declarations(&roster.lane_tools())
             .iter()
             .map(|spec| {
                 serde_json::to_value(spec).unwrap()["function"]["name"]
@@ -5358,7 +5781,19 @@ mod tests {
                     .to_string()
             })
             .collect();
-        assert_eq!(names, vec!["bash", "read_file", "write_file", "list_dir"]);
+        assert_eq!(
+            names,
+            vec![
+                "bash",
+                "read_file",
+                "write_file",
+                "list_dir",
+                "edit",
+                "grep",
+                "glob",
+                "todo",
+            ]
+        );
     }
 
     // --- memory ---
@@ -5456,6 +5891,10 @@ mod tests {
                 "read_file",
                 "write_file",
                 "list_dir",
+                "edit",
+                "grep",
+                "glob",
+                "todo",
                 "remember",
                 "supersede",
                 "subagent",
@@ -5514,7 +5953,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 11);
+        assert_eq!(plain.declarations().len(), 15);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
@@ -7088,44 +7527,48 @@ You are auditing a change. Read the diff before you judge it.
         // credential file is refused by name, and a question with no
         // images is a named refusal rather than a call that asks a model
         // to look at nothing.
+        let here = std::env::current_dir().expect("a working directory");
         let escaping = serde_json::json!({
             "question": "what is this?",
             "images": ["../../etc/passwd"],
         });
         assert_eq!(
-            vision_images(&escaping).expect_err("the escape is refused"),
+            vision_images(&escaping, &here).expect_err("the escape is refused"),
             "outside the working directory"
+        );
+        let absolute = serde_json::json!({"question": "what is this?", "images": ["/etc/hosts"]});
+        assert!(
+            vision_images(&absolute, &here)
+                .expect_err("an absolute path is refused")
+                .contains("absolute paths are not served"),
+            "the refusal names the rule"
         );
         let dotenv = serde_json::json!({"question": "what is this?", "images": [".env"]});
         assert_eq!(
-            vision_images(&dotenv).expect_err("the dotenv is refused"),
+            vision_images(&dotenv, &here).expect_err("the dotenv is refused"),
             "a credential file is never served"
         );
         let none = serde_json::json!({"question": "what is this?", "images": []});
         assert!(
-            vision_images(&none)
+            vision_images(&none, &here)
                 .expect_err("no images is refused")
                 .contains("at least one image"),
             "the refusal names the rule"
         );
 
-        // And a real image reads, with its media type from its extension.
+        // And a real image reads, with its media type from its bytes.
         let scratch = scratch("vision-image");
-        std::fs::write(scratch.join("a.png"), [0x89, b'P', b'N', b'G']).unwrap();
-        let here = std::env::current_dir().expect("a working directory");
-        let asked = scratch
-            .strip_prefix(&here)
-            .map(|rest| rest.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| scratch.display().to_string());
+        let png = [0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        std::fs::write(scratch.join("a.png"), png).unwrap();
         let good = serde_json::json!({
             "question": "what is in this diagram?",
-            "images": [format!("{asked}/a.png")],
+            "images": ["a.png"],
         });
-        let (question, images) = vision_images(&good).expect("the image reads");
+        let (question, images) = vision_images(&good, &scratch).expect("the image reads");
         assert_eq!(question, "what is in this diagram?");
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].media, "image/png");
-        assert_eq!(images[0].data, vec![0x89, b'P', b'N', b'G']);
+        assert_eq!(images[0].data, png);
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
@@ -8297,5 +8740,44 @@ You are auditing a change. Read the diff before you judge it.
             ),
             "a backticked identifier in a doc is a doc naming a thing"
         );
+    }
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn spec(name: &str) -> crate::api::ToolSpec {
+        crate::api::ToolSpec::function(name, "a tool", serde_json::json!({"type": "object"}))
+    }
+
+    #[test]
+    fn a_large_catalog_keeps_the_core_and_defers_the_rest() {
+        let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
+        let lanes: Vec<_> = (0..32).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
+        let tiers = tier_declarations(core.clone(), lanes.clone(), &BTreeSet::new());
+        assert_eq!(tiers.len(), 9, "the eight core tools plus the search");
+        assert_eq!(tiers.last().unwrap().name(), "tool_search");
+    }
+
+    #[test]
+    fn an_activated_tool_is_declared_beside_the_search() {
+        let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
+        let lanes: Vec<_> = (0..32).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
+        let mut activated = BTreeSet::new();
+        activated.insert("mcp__x__t7".to_string());
+        let tiers = tier_declarations(core, lanes, &activated);
+        assert_eq!(tiers.len(), 10);
+        assert!(tiers.iter().any(|spec| spec.name() == "mcp__x__t7"));
+    }
+
+    #[test]
+    fn a_catalog_that_fits_is_declared_whole() {
+        let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
+        let lanes: Vec<_> = (0..3).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
+        let tiers = tier_declarations(core, lanes, &BTreeSet::new());
+        assert_eq!(tiers.len(), 11);
+        assert!(!tiers.iter().any(|spec| spec.name() == "tool_search"));
     }
 }

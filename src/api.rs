@@ -342,6 +342,11 @@ impl ToolSpec {
         }
     }
 
+    /// The declaration's name.
+    pub fn name(&self) -> &str {
+        &self.function.name
+    }
+
     /// The declaration's description.
     pub fn description(&self) -> &str {
         &self.function.description
