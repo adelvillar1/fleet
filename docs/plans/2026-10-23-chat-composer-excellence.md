@@ -80,6 +80,14 @@ first, because it is the surface touched most:
    transcript half). Then, the two bigger legs: **turn navigation**
    (collapse per turn, next/prev, expand-whole-run) and **content
    search** across the home's logs, server-side and literal.
+6. **The audit layer.** **What the model saw**: any turn's exact request
+   — system prompt, message list, tool declarations — reconstructed by
+   the same function the run loop uses, pinned byte-equal against the
+   bodies a scripted provider received. And **single-tool re-run**: one
+   recorded call, optionally with edited arguments, executed through
+   the harness's own executor with its approval gate and bound, the
+   result landing in the drawer — never in the conversation the model
+   reads.
 
 **Four decisions to confirm before increment 1** (my recommendation
 first in each):
@@ -104,6 +112,11 @@ first in each):
 - **Notifications' carrier.** The browser's Notification API on the
    loopback/PWA face, permission asked lazily on first enable
    (recommended) — no new server push, no provider dependency.
+- **The re-run's blast radius.** Read-class calls and lane calls re-run;
+   the write class (`write_file`) is refused by name (recommended) — a
+   re-run would rewrite the tree with no checkpoint behind it, and
+   edit-and-resend is the correction path. The alternative — snapshot
+   then re-run — is a follow-up if the refusal chafes.
 
 ## Approach
 
@@ -170,6 +183,29 @@ collapse (a turn folds to its mark line), next/prev turn jumps, and one
 expand-this-run control for the audit pass. Quiet by default: nothing
 auto-collapses.
 
+**D10 — the context inspector IS the loop's own assembler.** The turn
+loop's request assembly — the system prompt (the compiled constant, the
+skills record, the memory block, the goal), the message list, and the
+tool declarations (the four built-ins plus every `lane_tools` record
+joined so far) — becomes one pure function over the log's records,
+called by the loop and by a new `GET /api/context?session=<id>&turn=<n>`
+read alike. There is no second implementation to drift; a compacted
+session's turn N shows the compacted context the loop actually sent,
+because the assembler inherits `conversation()`'s materialization. The
+drawer renders system, messages, and declarations with their counts,
+read-only, from any turn mark and from the receipt.
+
+**D11 — a re-run is a playground, not a run.** A recorded call's card
+offers **re-run** and **re-run with edited arguments**: one execution
+through the tools' own executor — the same output bound, the same
+approval classes, a seat standing when the class asks — with lane calls
+crossing the roster's one-call seam (the health probe's pattern). The
+result lands in the inspector drawer beside the original's, never in
+the conversation log: the log is the model's context, and a result the
+model never asked for must not enter it. The write class is refused by
+name (the fifth decision above). The owner copies or references the
+result; the transcript stays the truth.
+
 **D9 — content search is literal, server-side, and bounded.** The
 sessions read gains a match pass over the logs' owner/assistant text
 when the query asks for it: per-log, first match wins the row, the
@@ -187,7 +223,9 @@ typeahead, edit-and-resend on the owner's bubbles. **The transcript**:
 unchanged ladder, plus the return divider, back-to-live, collapsible
 turns, and clickable paths; the receipt's artifacts block. **The work
 list**: the same rows, plus the matched line when a content query drove
-them. **The chrome**: one notification permission, asked lazily.
+them. **The chrome**: one notification permission, asked lazily. **The audit
+layer**: any turn opens "what the model saw" in the drawer; any recorded
+call offers a bounded re-run whose answer stays in the drawer.
 
 ## Increments
 
@@ -215,6 +253,13 @@ code read on the cargo invocation itself — with a harness case pinned in
    Harness case.
 7. **Content search.** The server's match pass, the row's matched line,
    the jump. A server test over fixture logs + a harness case.
+8. **What the model saw.** The assembler extraction from the turn loop
+   (one function, two callers), the `/api/context` read, the drawer's
+   audit view. The byte-equality integration test against captured
+   provider bodies + a harness case.
+9. **Single-tool re-run.** The replay op over the executor and the
+   roster's seam, the seat when the class asks, the drawer's result, the
+   write-class refusal. Integration tests + a harness case.
 
 ## Acceptance criteria
 
@@ -261,7 +306,22 @@ code read on the cargo invocation itself — with a harness case pinned in
   row, a row opens the conversation, the pass names its bound (first N
   logs, newest-first), and the row metadata fields keep their current
   matches. Pinned by a server test over fixture logs and a harness case.
-- [ ] C10 — the gate is green: `cargo fmt --all --check`, `cargo clippy
+- [ ] C10 — for any turn of a logged run, "what the model saw" returns
+  the exact request: the assembled system prompt, the message list, and
+  the declarations — and the document is byte-equal (messages and tools
+  arrays) to the body the provider received for that turn, verified by
+  an integration test over the scripted mock that captures the bodies
+  and compares. A compacted session's pre-compaction turns show the
+  compacted context the loop sent. Pinned by that test and a harness
+  case for the drawer.
+- [ ] C11 — a recorded call's card offers re-run: with edited arguments
+  it executes through the same executor and bound and the result renders
+  in the drawer; the session log gains no record for it (the model's
+  context is untouched); an approval-class call stands a seat first; a
+  write-class call is refused by name; a lane call re-runs through the
+  roster's one-call seam. Pinned by integration tests and a harness
+  case.
+- [ ] C12 — the gate is green: `cargo fmt --all --check`, `cargo clippy
   --all-targets -- -D warnings`, `cargo build --release`, `cargo test`,
   each exit code read on the cargo invocation itself.
 
@@ -276,20 +336,21 @@ code read on the cargo invocation itself — with a harness case pinned in
   collapsed turn, the artifacts rows, the edit affordance's hover
 - `src/gui/assets/index.html` — the goal popover's anchor, the
   back-to-live control, the divider's mount
+- `src/agent.rs` — the request assembly extracted into one pure function
+  over the records, the turn loop its first caller (D10)
 - `src/gui/bridge.rs` — the content match pass beside the sessions read
-  (D9); nothing else server-side: `/api/goal`, `/api/attach`,
-  `/api/rewind`, `/api/checkpoints`, `/api/diff` already carry what the
-  composer half needs
+  (D9); the `/api/context` read over the assembler (D10); the replay op
+  (D11). `/api/goal`, `/api/attach`, `/api/rewind`, `/api/checkpoints`,
+  `/api/diff` already carry what the composer half needs
 - `tests/face/harness.mjs` — the seven new cases, with the Notification
   and clipboard stubs
 - `src/gui/server.rs` — a test for the content match pass over fixture
-  logs
+  logs; the `/api/context` route
+- `tests/integration.rs` — the byte-equality test over captured mock
+  bodies (C10); the replay tests (C11)
 
 ## Out of scope
 
-- **A "what the model saw" inspector** (the assembled context of any
-  turn, reconstructed from the log) and **single-tool re-run with edited
-  arguments** — named as the audit layer's next plan, not this one.
 - **Floating overlay bubbles** over the transcript, and chat-app
   furniture (read receipts, avatars, typing dots) — ruled out in design.
 - **Semantic/embedding search** over sessions — measured 1/81 top-1 on
@@ -310,7 +371,16 @@ code read on the cargo invocation itself — with a harness case pinned in
   the receipt's artifacts and the pane.
 - C9: a server test over fixture logs (a match in the owner text, one in
   an assistant reply, a bound that stops at N) plus the harness case.
-- C10: the full gate, exit codes read directly.
+- C10: the integration test runs a scripted two-turn conversation,
+  captures every request body the mock received, and asserts the
+  `/api/context` document for each turn equals that body's messages and
+  tools arrays — plus a compacted-session case asserting the
+  pre-compaction turn shows the compacted context.
+- C11: integration tests — a bash call re-run with edited arguments
+  through the executor (its bound and its seat class), a write-class
+  call refused by name, a lane call through the roster seam, and the
+  session log gaining no record for any of them.
+- C12: the full gate, exit codes read directly.
 
 ## Linked artifacts
 
@@ -342,6 +412,14 @@ code read on the cargo invocation itself — with a harness case pinned in
 - **The content pass walks logs on the ask.** Bounded and newest-first,
   it is a disk scan over JSONL; the bound is named on the row so "no
   match" always means "no match in the first N logs", never a lie.
+- **The assembler extraction touches the turn loop.** The refactor is
+  mechanical (the loop already builds these three things), but the
+  byte-equality pin is what proves it changed nothing — it lands in the
+  same increment, not after.
+- **The replay op is a new execution surface.** It must not grow a
+  second approval policy or a second bound: the executor's own classes
+  and cap are the ones it crosses, and the log-untouched rule is the
+  criterion that keeps it a playground.
 - **The write guard (KI-284) and the credential scan (KI-308)** — this
   plan's assets are prose and JS; no mandated spellings are expected,
   and `sk-` remains a live constraint on any string the face ships.
