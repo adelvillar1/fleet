@@ -1065,6 +1065,10 @@ pub struct Agent<'a> {
     /// step the model was on is the one piece of state whose loss
     /// produces repeated work.
     todos: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    /// Set by the control watcher while the run is in flight, so a
+    /// `bash` child is killed instead of holding the stop until it
+    /// finishes.
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The skills this run declared, in load order. Their
     /// name+description pairs ride the system prompt; a body enters
     /// context only when the loop selects it through `use_skill`.
@@ -1236,6 +1240,7 @@ impl<'a> Agent<'a> {
             reads: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             resolutions: std::collections::BTreeMap::new(),
             todos: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             skills,
             memory,
             scope,
@@ -1641,7 +1646,34 @@ impl<'a> Agent<'a> {
     /// failure alike. A teardown that goes wrong never fails a run that
     /// is already over.
     pub async fn run(&mut self, task: &str) -> Result<RunReport, AgentError> {
+        // The turn boundary already reads the control file, but a child
+        // command can run for minutes. The watcher turns the owner's
+        // stop into a flag the bash poll sees, so the stop lands during
+        // the call rather than after it.
+        let stop = self.stop.clone();
+        let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let watch_alive = alive.clone();
+        let control = self.control_path();
+        let watcher = std::thread::spawn(move || {
+            while watch_alive.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Ok(text) = std::fs::read_to_string(&control) {
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if value
+                            .get("stop")
+                            .and_then(|flag| flag.as_bool())
+                            .unwrap_or(false)
+                        {
+                            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                            break;
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
         let outcome = self.run_task(task).await;
+        alive.store(false, std::sync::atomic::Ordering::Relaxed);
+        let _ = watcher.join();
         self.lanes.close_all().await;
         // One turn row per run, on every exit path — the outcome's grade
         // and the ending named. Best-effort by construction.
@@ -3025,6 +3057,7 @@ impl<'a> Agent<'a> {
                         // a folder, nothing, or the process's directory.
                         access: self.options.file_access.clone(),
                         spill: self.session.path().parent().map(|dir| dir.join("calls")),
+                        stop: Some(self.stop.clone()),
                     }))
                 }
             },
@@ -3559,6 +3592,8 @@ enum Work {
         /// Where a cut result's full text is written, when the run has
         /// a session directory to put it beside.
         spill: Option<std::path::PathBuf>,
+        /// The run's stop flag, for a command that must not outlive it.
+        stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     },
     /// A skill's body, fetched from this run's declared list.
     UseSkill {
@@ -3648,6 +3683,7 @@ async fn run_work(work: Work) -> (String, bool) {
             arguments,
             access,
             spill,
+            stop,
         } => {
             // The write-time guard reads the vocabulary of the tree the
             // run works in: the chat's folder when it has one, else the
@@ -3698,13 +3734,13 @@ async fn run_work(work: Work) -> (String, bool) {
                 // of the process (KI-232). The guard is the one caller
                 // that knows the tree changed.
                 crate::nomenclature::invalidate(&guard_root);
-                let (output, truncated) = run_builtin(tool, arguments, access, spill).await;
+                let (output, truncated) = run_builtin(tool, arguments, access, spill, stop).await;
                 return match note {
                     Some(note) => (format!("{output}\n{note}"), truncated),
                     None => (output, truncated),
                 };
             }
-            run_builtin(tool, arguments, access, spill).await
+            run_builtin(tool, arguments, access, spill, stop).await
         }
         Work::UseSkill { skills, arguments } => {
             let outcome = tools::bound(ToolOutcome {
@@ -3948,6 +3984,7 @@ async fn run_builtin(
     arguments: serde_json::Value,
     access: FileAccess,
     spill: Option<std::path::PathBuf>,
+    stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> (String, bool) {
     let unknown = tools::unknown_arguments(tool, &arguments);
     // KI-017: tool execution is blocking work (a `bash` child can run
@@ -3956,9 +3993,13 @@ async fn run_builtin(
     match tokio::task::spawn_blocking(move || match access {
         // A chat's folder is a boundary: relative paths resolve under
         // it and a path that leaves it is refused.
-        FileAccess::Folder(root) => tool.execute_in_with_spill(&arguments, &root, spill.as_deref()),
+        FileAccess::Folder(root) => {
+            tool.execute_in_with_spill_stop(&arguments, &root, spill.as_deref(), stop.as_ref())
+        }
         // No folder: the process's working directory, unrestricted.
-        FileAccess::Unrestricted => tool.execute_with_spill(&arguments, spill.as_deref()),
+        FileAccess::Unrestricted => {
+            tool.execute_without_folder_spill_stop(&arguments, spill.as_deref(), stop.as_ref())
+        }
         // Unreachable from the loop — the gate refuses the call first —
         // but a run built by hand still gets the rule rather than a
         // panic.
@@ -8130,6 +8171,7 @@ You are auditing a change. Read the diff before you judge it.
             arguments,
             access: FileAccess::Folder(std::path::PathBuf::from("/root")),
             spill: None,
+            stop: None,
         })
     }
 
@@ -8868,6 +8910,7 @@ You are auditing a change. Read the diff before you judge it.
             }),
             access: FileAccess::Folder(root.clone()),
             spill: None,
+            stop: None,
         })
         .await;
         assert!(output.contains("write_file` refused"), "{output}");
@@ -8882,6 +8925,7 @@ You are auditing a change. Read the diff before you judge it.
             }),
             access: FileAccess::Folder(root.clone()),
             spill: None,
+            stop: None,
         })
         .await;
         assert_eq!(
@@ -8910,6 +8954,7 @@ You are auditing a change. Read the diff before you judge it.
             }),
             access: FileAccess::Folder(root.clone()),
             spill: None,
+            stop: None,
         })
         .await;
         assert!(

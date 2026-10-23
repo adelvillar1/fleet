@@ -509,9 +509,12 @@ Landed in the second pass:
   named, not killed.
 - **C7 — the todo ledger.** The last full list is stored and
   re-injected into a fold's summary.
-- **C8, the limits half.** At most 40 calls run in one turn; calls past
-  the cap are refused by name. Unknown arguments are dropped with a
-  note, not a refusal.
+- **C8.** At most 40 calls run in one turn; calls past the cap are
+  refused by name. Unknown arguments are dropped with a note, not a
+  refusal. `ALL_TOOLS` is the native registry, and a test iterates it,
+  checks every schema, and proves the validator agrees. A stop written
+  during `bash` kills the child within the second: a watcher reads the
+  control file, and the shell polls the flag.
 - **C10 — the corpus.** Twenty-four queries over forty candidates, the
   expected tool in the top three for at least twenty.
 - **C11 — the profile.** The route verdict reorders the native tools;
@@ -531,9 +534,6 @@ Landed in the second pass:
 
 Still open, named rather than implied:
 
-- **C8's registry and cancellation.** Dispatch is still the branch
-  chain; there is no `trait Tool` registry, and a `Stop` mid-`bash`
-  waits for the child.
 - **C12's wiring.** The warm/healthy/order policy is implemented and
   tested, but no capability has two live providers yet, so nothing
   calls it.

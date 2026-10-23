@@ -1419,8 +1419,20 @@ impl Tool {
         root: &Path,
         spill: Option<&Path>,
     ) -> Result<ToolOutcome, String> {
+        self.execute_in_with_spill_stop(arguments, root, spill, None)
+    }
+
+    /// The same execution with an in-flight stop flag: `bash` polls it
+    /// while the child runs, so the owner's stop does not wait for it.
+    pub fn execute_in_with_spill_stop(
+        self,
+        arguments: &serde_json::Value,
+        root: &Path,
+        spill: Option<&Path>,
+        stop: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<ToolOutcome, String> {
         let outcome = match self {
-            Tool::Bash => run_bash_arguments(arguments, Some(root))?,
+            Tool::Bash => run_bash_arguments(arguments, Some(root), stop)?,
             Tool::ReadFile => run_read_file_window(arguments, Some(root))?,
             Tool::WriteFile => run_write_file(arguments, Some(root))?,
             Tool::ListDir => run_list_dir(arguments, Some(root))?,
@@ -1441,8 +1453,17 @@ impl Tool {
         arguments: &serde_json::Value,
         spill: Option<&Path>,
     ) -> Result<ToolOutcome, String> {
+        self.execute_without_folder_spill_stop(arguments, spill, None)
+    }
+
+    pub fn execute_without_folder_spill_stop(
+        self,
+        arguments: &serde_json::Value,
+        spill: Option<&Path>,
+        stop: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<ToolOutcome, String> {
         let outcome = match self {
-            Tool::Bash => run_bash_arguments(arguments, None)?,
+            Tool::Bash => run_bash_arguments(arguments, None, stop)?,
             Tool::ReadFile => run_read_file_window(arguments, None)?,
             Tool::WriteFile => run_write_file(arguments, None)?,
             Tool::ListDir => run_list_dir(arguments, None)?,
@@ -1645,6 +1666,7 @@ fn json_kind(value: &serde_json::Value) -> &'static str {
 fn run_bash_arguments(
     arguments: &serde_json::Value,
     root: Option<&Path>,
+    stop: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<ToolOutcome, String> {
     let command = string_arg(arguments, "command")?;
     let timeout = integer_arg(arguments, "timeout_ms")
@@ -1653,7 +1675,7 @@ fn run_bash_arguments(
     if bool_arg(arguments, "run_in_background").unwrap_or(false) {
         return run_bash_background(&command, root);
     }
-    run_bash_in(&command, root, timeout)
+    run_bash_in(&command, root, timeout, stop)
 }
 
 /// Start a command whose life outlasts the call. Its output goes to one
@@ -1995,8 +2017,9 @@ fn run_bash_in(
     command: &str,
     root: Option<&Path>,
     timeout: Duration,
+    stop: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<ToolOutcome, String> {
-    run_bash_within_root(command, root, timeout)
+    run_bash_within_root(command, root, timeout, stop)
 }
 
 /// [`run_bash_in`] with the deadline made explicit — the seam the tests
@@ -2005,7 +2028,7 @@ fn run_bash_in(
 /// unchanged run.
 #[cfg(test)]
 fn run_bash_within(command: &str, timeout: Duration) -> Result<ToolOutcome, String> {
-    run_bash_within_root(command, None, timeout)
+    run_bash_within_root(command, None, timeout, None)
 }
 
 /// One shell call spawned in `root`, or in the process's working
@@ -2017,6 +2040,7 @@ fn run_bash_within_root(
     command: &str,
     root: Option<&Path>,
     timeout: Duration,
+    stop: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<ToolOutcome, String> {
     let root = match root {
         Some(root) => root.to_path_buf(),
@@ -2053,7 +2077,14 @@ fn run_bash_within_root(
         .map_err(|error| format!("could not spawn the shell: {error}"))?;
 
     let started = Instant::now();
+    let mut stopped = false;
     let status = loop {
+        if stop.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            stopped = true;
+            break None;
+        }
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
@@ -2076,6 +2107,7 @@ fn run_bash_within_root(
     let stdout = read(&out_path);
     let stderr = read(&err_path);
     let mut output = match status {
+        _ if stopped => "stopped by the owner\n".to_string(),
         Some(status) => {
             // The command is over; the files have said all they will.
             let _ = fs::remove_file(&out_path);
@@ -3825,5 +3857,44 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("nearest: Cargo.toml"), "{error}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_declared_tool_has_a_schema_and_a_unique_name() {
+        let mut names = std::collections::BTreeSet::new();
+        for tool in ALL_TOOLS {
+            let spec = tool.spec();
+            assert!(
+                names.insert(spec.name().to_string()),
+                "duplicate name {}",
+                spec.name()
+            );
+            let parameters = tool.parameters();
+            assert_eq!(parameters["type"], "object", "{}", spec.name());
+            assert!(
+                parameters
+                    .get("properties")
+                    .and_then(|value| value.as_object())
+                    .is_some(),
+                "{} declares no properties",
+                spec.name()
+            );
+            if let Some(required) = parameters
+                .get("required")
+                .and_then(|value| value.as_array())
+            {
+                assert!(
+                    !required.is_empty(),
+                    "{} has an empty required",
+                    spec.name()
+                );
+                let error = validate(tool, &serde_json::json!({})).unwrap_err();
+                assert!(
+                    error.contains("missing required field"),
+                    "{}: {error}",
+                    spec.name()
+                );
+            }
+        }
     }
 }

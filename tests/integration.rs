@@ -946,6 +946,41 @@ async fn an_edit_without_a_prior_read_is_refused_and_a_read_unlocks_it() {
     std::fs::remove_dir_all(&home).ok();
 }
 
+/// A stop written while a command runs lands during the call: the child
+/// is killed, the result says who stopped it, and the run ends.
+#[tokio::test]
+async fn a_stop_during_bash_ends_the_call_within_a_second() {
+    let home = temp_home("stop-bash");
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "bash", r#"{"command":"sleep 10"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let control = session.path().with_extension("control");
+    let writer = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        std::fs::write(&control, r#"{"stop": true}"#).unwrap();
+    });
+    let started = std::time::Instant::now();
+    let error = run_on(&mock, &mut session, Box::new(ApproveAll), 5, "sleep")
+        .await
+        .unwrap_err();
+    let elapsed = started.elapsed();
+    writer.await.unwrap();
+    assert_eq!(error.to_string(), "stopped by the owner");
+    assert!(elapsed < std::time::Duration::from_secs(5), "{elapsed:?}");
+    let records = session::replay(session.path()).unwrap();
+    let output = records
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output),
+            _ => None,
+        })
+        .expect("the bash result");
+    assert!(output.contains("stopped by the owner"), "{output}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
 #[tokio::test]
 async fn streamed_tokens_reach_progress_before_the_run_ends() {
     // Three deltas with a pause between them, so the run is observably

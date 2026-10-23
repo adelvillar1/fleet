@@ -122,10 +122,11 @@ reason names it.
 
 ## Not built yet
 
-Named here rather than implied by the plan: the `trait Tool` registry
-and mid-`bash` cancellation; a live second provider for the dispatch
-policy; MCP annotations and image artifacts; and catalog-backed enums
-where a tool takes a model, provider, or workload value.
+Named here rather than implied by the plan: a live second provider for
+the dispatch policy; MCP annotations and image artifacts; and
+catalog-backed enums where a tool takes a model, provider, or workload
+value. `ALL_TOOLS` is the native registry (an enum plus a spec and a
+validator per tool, not a trait object).
 
 ## Files
 
