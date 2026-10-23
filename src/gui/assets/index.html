@@ -369,7 +369,24 @@
           </div>
           <div class="queue-list" id="queue-list"></div>
         </div>
-        <textarea id="task" rows="1" placeholder="Ask fleet for something&hellip;" spellcheck="false"></textarea>
+        <div class="write-wrap">
+          <textarea id="task" rows="1" placeholder="Ask fleet for something&hellip;" spellcheck="false"></textarea>
+          <!-- The composer's text size. The rest of the face has its
+               measure and keeps it; this is the one place the owner
+               writes, so this is the one place the size is theirs. It
+               rides the field's own corner rather than the footer row,
+               which is full in a real conversation. -->
+          <span class="size-pair" role="group" aria-label="composer text size">
+            <button type="button" class="size-btn" id="text-smaller"
+                    aria-label="smaller composer text" title="smaller text &middot; Alt+&darr;">
+              <span class="size-glyph" aria-hidden="true">A&minus;</span>
+            </button>
+            <button type="button" class="size-btn" id="text-bigger"
+                    aria-label="larger composer text" title="larger text &middot; Alt+&uarr;">
+              <span class="size-glyph" aria-hidden="true">A+</span>
+            </button>
+          </span>
+        </div>
         <div class="attach-chips" id="attach-chips" hidden></div>
         <!-- The folder picker. It browses only inside the launch
              directory, one level at a time, and applies to the next run:

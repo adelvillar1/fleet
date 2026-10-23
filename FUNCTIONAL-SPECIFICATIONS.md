@@ -185,6 +185,13 @@ The composer's own commands, all reachable as `/` in the chat:
 `Stop` is the run's termination and it is graceful: a tool call already
 running finishes first, then the run ends.
 
+The composer's text size is the owner's and the composer's alone:
+`A−`/`A+` in the field's own top-right corner, or `Alt+↓`/`Alt+↑` from the
+field, walk a fixed scale from 12 to 22px (14.5px by default). Each end
+dims the press that would go past it, and the choice survives a reload.
+The transcript, the cards and the rest of the face keep the measure
+they have.
+
 ## Run behavior
 
 - **The transcript is an activity list, one line per thing that

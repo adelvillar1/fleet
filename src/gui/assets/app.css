@@ -1934,14 +1934,51 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   width: 100%;
   min-height: 42px;
   max-height: 220px;
-  padding: 6px 2px;
+  /* The right padding is the size pair's corner: a line never runs under
+     the two glyphs, however long the owner's sentence is. */
+  padding: 6px 54px 6px 2px;
   border: 0;
   background: transparent;
   color: var(--dsw-alias-ink);
-  font-size: 14.5px;
+  /* The one size the owner sets. It lives on the field itself, so the
+     transcript, the rail and the cards keep the measure they have. */
+  font-size: var(--composer-size, 14.5px);
   line-height: 1.55;
   resize: none;
 }
+
+/* The field and its own corner controls share a box, so the pair rides
+   the field's top-right instead of the footer row — which is full in a
+   real conversation, where the Shift+Enter hint is already squeezed to
+   nothing. */
+.write-wrap { position: relative; }
+.size-pair {
+  position: absolute;
+  top: 6px;
+  right: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.size-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  line-height: 1;
+}
+.size-btn:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
+.size-btn[disabled] { opacity: 0.3; cursor: default; }
+.size-btn[disabled]:hover { background: transparent; color: var(--dsw-alias-ink-tertiary); }
+.size-glyph { font-size: 11.5px; letter-spacing: -0.03em; line-height: 1; }
 
 .composer textarea:focus { outline: none; }
 .composer textarea::placeholder { color: var(--dsw-alias-ink-tertiary); }
@@ -2114,6 +2151,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 /* The actions are one unit: when the row runs out of room they wrap
    together and stay right-aligned, never leaving Send alone. */
 .foot-actions { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+
 
 /* The send row's controls: quiet by default, one filled button. The two
    attachment actions are icons with names read by the screen reader and

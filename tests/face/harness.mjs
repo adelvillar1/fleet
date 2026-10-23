@@ -71,7 +71,12 @@ class El {
     this.children = [];
     this.parentNode = null;
     this.dataset = {};
-    this.style = { setProperty() {}, removeProperty() {} };
+    this.style = {
+      _props: {},
+      setProperty(name, value) { this._props[name] = String(value); },
+      getPropertyValue(name) { return this._props[name] || ''; },
+      removeProperty(name) { delete this._props[name]; },
+    };
     this.className = '';
     this._text = '';
     this._html = '';
@@ -176,7 +181,7 @@ function boot(options) {
   const calls = [];
   const events = [];
   let streamSource = null;
-  const storage = new Map();
+  const storage = new Map(Object.entries(opts.storage || {}));
 
   const documents = opts.documents || {};
   const fetchImpl = (url, init) => {
@@ -797,6 +802,63 @@ async function theWorkListFoldsToAStrip() {
     'narrow override');
 }
 
+// C7 (composer size): the size is the owner's and only the composer's.
+// Two presses and two keys walk a fixed scale, the ends dim rather than
+// doing nothing, the field's own token carries it, and a reload keeps it.
+async function theComposerTextSizeIsTheOwners() {
+  const page = boot({ width: 1440, hash: '#/chat', documents: {} });
+  await flush();
+  page.open();
+  await flush();
+  const sizeOf = (one) =>
+    (one || page).IDS['composer'].style.getPropertyValue('--composer-size');
+  check('C7 the field opens at its own measure', sizeOf() === '14.5px', sizeOf());
+  check('C7 the transcript carries no size token',
+    !page.IDS['log'].style.getPropertyValue('--composer-size'), 'log token');
+  check('C7 the size token is the field\'s alone',
+    ruleBlock('.composer textarea').includes('font-size: var(--composer-size, 14.5px)'),
+    ruleBlock('.composer textarea'));
+  page.fireOn('text-bigger', 'click');
+  check('C7 one press up is the next step', sizeOf() === '16px', sizeOf());
+  check('C7 the choice is kept',
+    page.window.localStorage.getItem('fleet-composer-size') === '3',
+    String(page.window.localStorage.getItem('fleet-composer-size')));
+  page.fireOn('text-bigger', 'click');
+  check('C7 a second press is the step above', sizeOf() === '18px', sizeOf());
+  page.fireOn('text-smaller', 'click');
+  page.fireOn('text-smaller', 'click');
+  check('C7 down walks back to the default', sizeOf() === '14.5px', sizeOf());
+  page.fireOn('text-smaller', 'click');
+  page.fireOn('text-smaller', 'click');
+  check('C7 the scale stops at its floor', sizeOf() === '12px', sizeOf());
+  check('C7 the floor dims its own press', page.IDS['text-smaller'].disabled === true,
+    String(page.IDS['text-smaller'].disabled));
+  check('C7 the floor names the size it stopped at',
+    page.IDS['text-smaller'].title.includes('12px'), page.IDS['text-smaller'].title);
+  page.fireOn('text-smaller', 'click');
+  check('C7 a press past the floor changes nothing', sizeOf() === '12px', sizeOf());
+  page.fireOn('composer', 'keydown', { key: 'ArrowUp', altKey: true });
+  check('C7 Alt+up is the same step as the button', sizeOf() === '13px', sizeOf());
+  page.fireOn('composer', 'keydown', { key: 'ArrowUp', altKey: false });
+  check('C7 a bare arrow is the field\'s own key', sizeOf() === '13px', sizeOf());
+
+  // A reload keeps the size, and a stored index the scale no longer has
+  // is clamped rather than trusted.
+  const kept = boot({ width: 1440, hash: '#/chat', storage: { 'fleet-composer-size': '6' } });
+  await flush();
+  kept.open();
+  await flush();
+  check('C7 a reload keeps the size', sizeOf(kept) === '22px', sizeOf(kept));
+  check('C7 the top of the scale dims its own press', kept.IDS['text-bigger'].disabled === true,
+    String(kept.IDS['text-bigger'].disabled));
+  const stale = boot({ width: 1440, hash: '#/chat', storage: { 'fleet-composer-size': '99' } });
+  await flush();
+  stale.open();
+  await flush();
+  check('C7 a stored index past the scale is clamped to its top',
+    sizeOf(stale) === '22px', sizeOf(stale));
+}
+
 // C8: the addresses — `#/chat` is the new-work front door, and a reload
 // at `#/sessions/<id>` reopens that conversation with the list beside it.
 async function theAddressesHold() {
@@ -1047,6 +1109,7 @@ const cases = [
   ['C3 the pencil renames the conversation', thePencilRenamesTheConversation],
   ['C7 the dock is closed and the work column takes its place', theDockIsClosedAndTheWorkColumnTakesItsPlace],
   ['C7 the work list folds to a strip and follows the rail', theWorkListFoldsToAStrip],
+  ['C7 the composer text size is the owner\'s', theComposerTextSizeIsTheOwners],
   ['C8 the addresses hold', theAddressesHold],
   ['C4 /clear starts a conversation', theClearCommandStartsAConversation],
   ['C2 a thought row opens on a press', aThoughtRowOpensOnAPress],

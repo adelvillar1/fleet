@@ -841,15 +841,21 @@ fn the_proof_the_vocabulary_is_bounded_and_reports_itself() {
     // The bound is named, not discovered.
     assert!(vocabulary.len() <= MAX_TERMS);
     assert!(vocabulary.sources <= MAX_SOURCES);
-    // The budget's flag agrees with the time the derivation took. This is
-    // an assertion about the REPORTING, not about the machine's speed: a
-    // wall-clock claim in a parallel suite measures the load, not the
-    // code, and this test used to fail three runs in four for exactly
-    // that reason while passing alone every time.
-    assert_eq!(
-        vocabulary.budget_exhausted,
-        vocabulary.elapsed > DERIVE_BUDGET,
-        "the budget's flag agrees with the elapsed time: {:?} against {DERIVE_BUDGET:?}",
+    // The budget's flag IMPLIES the clock, not the reverse. A walk the
+    // budget cut short took longer than the budget; a walk that finished
+    // inside it can still take longer once the fold and the index run,
+    // and that is the machine's business, not a cut-short derivation.
+    // Asserting the equality made a busy machine report a stop that never
+    // happened — the flake this line replaces (KI-287).
+    assert!(
+        !vocabulary.budget_exhausted || vocabulary.elapsed > DERIVE_BUDGET,
+        "a budget stop reports a longer elapsed time: {:?} against {DERIVE_BUDGET:?}",
         vocabulary.elapsed
+    );
+    // And the two facts stay apart: a clock stop is not a tree fact, so it
+    // cannot be the reason a vocabulary claims not to fit its bounds.
+    assert!(
+        !vocabulary.budget_exhausted || !vocabulary.truncated,
+        "a clock stop does not make the tree too large"
     );
 }

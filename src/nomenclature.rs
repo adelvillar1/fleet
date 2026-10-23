@@ -604,12 +604,11 @@ pub fn derive(root: &Path) -> Vocabulary {
         }
         extract(root, &path, days, &mut sink);
     }
-    // A walk that still had files left when the bounds stopped it is a
-    // truncated vocabulary: the walk is sorted, so what was read is a
-    // deterministic prefix of the whole.
-    if !truncated && paths.next().is_some() {
-        truncated = true;
-    }
+    // No promotion of a clock stop into a tree fact here. Both content
+    // bounds set `truncated` on their own break; a walk the budget cut
+    // short stays a fact about the machine, reported by
+    // `budget_exhausted`, so a loaded machine cannot say this tree does
+    // not fit inside bounds it fits inside every other day.
 
     let entries = sink.finish();
     let mut index: HashMap<String, Vec<usize>> = HashMap::new();

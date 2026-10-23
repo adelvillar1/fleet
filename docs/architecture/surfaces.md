@@ -81,7 +81,10 @@ The head names the conversation — its title (the switcher), the pencil
 that renames, its state in words, the way back to the work list, and
 New — so the conversation is a place you can leave and another you can
 choose. Replies read as
-markdown, at the block boundary where the whole answer is in hand.
+markdown, at the block boundary where the whole answer is in hand. The
+field you write in also carries its own text size — `A−`/`A+`, or
+`Alt+↓`/`Alt+↑` — because it is the one place the owner composes, and
+the rest of the face keeps the measure it has.
 
 **Why.** Because the valuable things a harness does were, everywhere
 else, hidden in panes and logs. Here they are the transcript.
