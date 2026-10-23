@@ -1299,6 +1299,10 @@ impl App {
     /// Apply one event off the agent's channel.
     pub fn apply_ui_event(&mut self, event: UiEvent) {
         match event {
+            // The model's thinking is the face's row first; the TUI's own
+            // Thought block is a later increment, so the pane reads the
+            // answer and the calls as it does today.
+            UiEvent::Reasoning { .. } => {}
             UiEvent::Token(delta) => self.streaming.push_str(&delta),
             UiEvent::Turn(turn) => {
                 self.flush_streaming();
@@ -1342,7 +1346,7 @@ impl App {
                     self.run.tokens.remove(0);
                 }
             }
-            UiEvent::ToolCall { name, summary } => {
+            UiEvent::ToolCall { name, summary, .. } => {
                 self.flush_streaming();
                 self.run.stage = Stage::Act;
                 self.run.calls += 1;
@@ -3028,6 +3032,10 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // Bookkeeping: the channel a peer arrived on is not a
         // conversation block.
         Record::Channel { .. } => None,
+        // The model's thinking is a card the face draws first; the TUI's
+        // own Thought block is a later increment, so a resumed log's
+        // reasoning does not become a pane entry here.
+        Record::Reasoning { .. } => None,
         Record::User { content } => Some(Entry::User(content.clone())),
         Record::Assistant {
             content,
@@ -3766,6 +3774,7 @@ mod tests {
         app.apply_ui_event(UiEvent::ToolCall {
             name: "bash".to_string(),
             summary: "ls -la".to_string(),
+            arguments: None,
         });
         app.apply_ui_event(UiEvent::ToolResult {
             name: "bash".to_string(),
@@ -3791,6 +3800,7 @@ mod tests {
         app.apply_ui_event(UiEvent::ToolCall {
             name: "subagent".to_string(),
             summary: "count the files".to_string(),
+            arguments: None,
         });
         // Spawned with no open card still belongs on screen.
         let mut fresh = crate::tui::app::App::new("deepseek-flash", "session-1");
@@ -3865,6 +3875,7 @@ mod tests {
         app.apply_ui_event(UiEvent::ToolCall {
             name: "mcp__sem1__probe".to_string(),
             summary: "embeddings \u{b7} probe {}".to_string(),
+            arguments: None,
         });
         app.apply_ui_event(UiEvent::LaneJoined {
             lane: "sem1".to_string(),
@@ -4051,6 +4062,7 @@ mod tests {
         app.apply_ui_event(UiEvent::ToolCall {
             name: "bash".to_string(),
             summary: "rm -rf /".to_string(),
+            arguments: None,
         });
         app.apply_ui_event(UiEvent::ToolResult {
             name: "bash".to_string(),
@@ -4244,6 +4256,7 @@ mod tests {
         app.apply_ui_event(UiEvent::ToolCall {
             name: "bash".to_string(),
             summary: "ls -la".to_string(),
+            arguments: None,
         });
         app.show_approval("bash", "ls -la");
         assert_eq!(app.mode, Mode::Approval);
@@ -4532,6 +4545,7 @@ mod tests {
         app.apply_ui_event(UiEvent::ToolCall {
             name: "bash".to_string(),
             summary: "cargo test".to_string(),
+            arguments: None,
         });
         assert_eq!(app.run.stage, Stage::Act);
         assert_eq!(app.run.calls, 1);

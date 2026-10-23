@@ -390,6 +390,11 @@ pub struct StreamRequest<'a> {
 pub enum StreamEvent {
     /// One content delta: a token, a fragment of one, or a text chunk.
     Content(String),
+    /// One delta of the model's reasoning, when the provider sends it
+    /// (`reasoning_content`). It is display material: it is logged and
+    /// shown, and never sent back in a later request — the conversation
+    /// builder ignores it, which is what a reasoning model requires.
+    Reasoning(String),
     /// Every tool call the answer requested, assembled and complete.
     ToolCalls(Vec<ToolCall>),
     /// The request's token accounting; providers send it in the final chunk,
@@ -419,6 +424,10 @@ struct ChunkChoice {
 struct ChunkDelta {
     #[serde(default)]
     content: Option<String>,
+    /// The model's thinking, on the providers that stream it beside the
+    /// answer (DeepSeek's reasoner and its kin). Absent elsewhere.
+    #[serde(default)]
+    reasoning_content: Option<String>,
     #[serde(default)]
     tool_calls: Vec<ChunkToolCall>,
 }
@@ -660,6 +669,9 @@ impl Client {
         while let Some(event) = receiver.recv().await {
             match &event {
                 StreamEvent::Content(delta) => content.push_str(delta),
+                // Reasoning is shown and logged by the caller; it is not
+                // part of the answer the conversation carries.
+                StreamEvent::Reasoning(_) => {}
                 StreamEvent::ToolCalls(calls) => tool_calls = calls.clone(),
                 StreamEvent::Usage(counted) => {
                     if counted.finish_reason.is_some() {
@@ -789,6 +801,15 @@ fn parse_sse(
             }
         }
         for choice in &chunk.choices {
+            if let Some(reasoning) = &choice.delta.reasoning_content {
+                if !reasoning.is_empty()
+                    && events
+                        .send(StreamEvent::Reasoning(reasoning.clone()))
+                        .is_err()
+                {
+                    return Ok(true);
+                }
+            }
             if let Some(delta) = &choice.delta.content {
                 if !delta.is_empty() && events.send(StreamEvent::Content(delta.clone())).is_err() {
                     return Ok(true);
@@ -1129,6 +1150,36 @@ mod tests {
                 }),
             ]
         );
+    }
+
+    #[test]
+    fn parse_sse_emits_reasoning_beside_the_answer() {
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"the ledger asks\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\" for the count\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"It is 3.\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let (events, closed) = parse(body);
+        assert!(closed);
+        assert_eq!(
+            events,
+            vec![
+                StreamEvent::Reasoning("the ledger asks".to_string()),
+                StreamEvent::Reasoning(" for the count".to_string()),
+                StreamEvent::Content("It is 3.".to_string()),
+            ]
+        );
+        // The assembled answer carries only the content: reasoning is
+        // display material and never rides back to the provider.
+        let answer: String = events
+            .iter()
+            .filter_map(|event| match event {
+                StreamEvent::Content(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(answer, "It is 3.");
     }
 
     #[test]

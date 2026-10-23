@@ -6412,3 +6412,69 @@ body[data-work="open"] .stage { margin-left: var(--work-width); }
 @media (min-width: 1181px) {
   body[data-work="open"] .conv-back { display: none; }
 }
+
+/* ------------------------------------------------------- activity rows */
+
+/* One thought block: a row that says how long it took, closed, and the
+   words behind a press. Quiet by construction — no card, no border. */
+.thought { display: grid; }
+.thought-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+.thought-head:hover { color: var(--dsw-alias-ink-secondary); }
+.thought-glyph { font-size: 13px; line-height: 1; }
+.thought.open .thought-glyph { color: var(--dsw-alias-accent-lift); }
+.thought-body {
+  margin: 2px 0 8px 21px;
+  padding: 2px 0 2px 11px;
+  border-left: 1px solid var(--dsw-alias-hairline);
+}
+.thought-body .md { max-width: 68ch; gap: 7px; }
+.thought-body .md-p,
+.thought-body .md-li {
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12.5px;
+  line-height: 1.62;
+}
+.thought-body .md-code { font-size: 11px; }
+
+/* A command's expanded detail: what ran, how long, what came back. */
+.tool-detail { margin: 4px 10px 8px 34px; }
+.tool-command,
+.tool-output {
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+.tool-facts { margin: 0 0 6px; color: var(--dsw-alias-ink-tertiary); font-size: 10.5px; }
+.tool-raw {
+  height: 22px;
+  padding: 0 8px;
+  border: var(--card-hairline);
+  border-radius: 6px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 10.5px;
+}
+.strip-line[role="button"] { border-radius: 6px; }
+.strip-line[role="button"]:hover { background: var(--dsw-alias-surface); }

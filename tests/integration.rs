@@ -1184,7 +1184,8 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
             },
             UiEvent::ToolCall {
                 name: "bash".to_string(),
-                summary: "echo hi".to_string()
+                summary: "echo hi".to_string(),
+                arguments: Some("{\"command\":\"echo hi\"}".to_string()),
             },
             UiEvent::ToolResult {
                 name: "bash".to_string(),
@@ -2515,6 +2516,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             UiEvent::ToolCall {
                 name: "mcp__sem1__probe".to_string(),
                 summary: "embeddings \u{b7} probe {}".to_string(),
+                arguments: Some("{}".to_string()),
             },
             UiEvent::LaneJoined {
                 lane: "sem1".to_string(),

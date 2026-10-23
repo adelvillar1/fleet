@@ -3414,6 +3414,16 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
                     "peer": peer,
                 }));
             }
+            // The model's thinking, as one block per turn: the
+            // transcript shows it closed and opens it on a press, and a
+            // replay rebuilds the same row from this record.
+            session::Record::Reasoning { text, seconds } => {
+                cards.push(json!({
+                    "type": "reasoning",
+                    "text": text,
+                    "seconds": seconds,
+                }));
+            }
             session::Record::Rewind {
                 turn,
                 restored,
@@ -5382,6 +5392,11 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &
 fn describe(event: &UiEvent) -> Value {
     match event {
         UiEvent::Token(text) => json!({"type": "token", "text": text}),
+        UiEvent::Reasoning { text, seconds } => json!({
+            "type": "reasoning",
+            "text": text,
+            "seconds": seconds,
+        }),
         // The browser face drives its own agent thread, which creates
         // the log on the first run exactly as the TUI's does (KI-022):
         // the page's session line reads the id it is given, and nothing
@@ -5396,9 +5411,18 @@ fn describe(event: &UiEvent) -> Value {
             "prompt": prompt_tokens,
             "completion": completion_tokens,
         }),
-        UiEvent::ToolCall { name, summary } => {
-            json!({"type": "tool_call", "tool": name, "summary": summary})
-        }
+        UiEvent::ToolCall {
+            name,
+            summary,
+            arguments,
+        } => json!({
+            "type": "tool_call",
+            "tool": name,
+            "summary": summary,
+            // The full call, so an expanded row names what ran rather
+            // than the clipped line.
+            "arguments": arguments,
+        }),
         UiEvent::ToolResult {
             name,
             preview,

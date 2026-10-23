@@ -824,6 +824,31 @@
     return row(el0, event);
   }
 
+  // One thought block, closed: a row that says how long it took and opens
+  // its words on a press. The reasoning is display material — the log
+  // holds it, the provider never sees it again.
+  function thoughtRow(event) {
+    var el0 = node('div', 'thought');
+    var head = node('button', 'thought-head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', 'false');
+    head.appendChild(node('span', 'thought-glyph', '\u25c7'));
+    head.appendChild(node('span', 'thought-label',
+      'Thought' + (event.seconds != null ? ' \u00b7 ' + event.seconds + 's' : '')));
+    var body = node('div', 'thought-body');
+    body.hidden = true;
+    if (event.text) body.appendChild(markdown(event.text));
+    head.addEventListener('click', function () {
+      body.hidden = !body.hidden;
+      head.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
+      el0.classList.toggle('open', !body.hidden);
+      settle();
+    });
+    el0.appendChild(head);
+    el0.appendChild(body);
+    return row(el0, event);
+  }
+
   function assistantRow() {
     var el0 = node('div', 'assistant streaming');
     return row(el0, null, function (text) {
@@ -851,6 +876,20 @@
     if (text) el0.appendChild(markdown(text));
   }
 
+  // The value a call actually names — the command, the path, the content.
+  // The raw arguments ride the event so an expanded row shows the whole
+  // text rather than the clipped line.
+  function toolArgumentText(event) {
+    var raw = event.arguments;
+    if (!raw) return '';
+    try {
+      var parsed = JSON.parse(raw);
+      var value = parsed.command || parsed.path || parsed.content || parsed.name;
+      if (typeof value === 'string') return value;
+    } catch (error) { }
+    return String(raw);
+  }
+
   function toolRow(event) {
     var status = node('span', 'status', 'running \u00b7 0s');
     var el0 = card('tool', GLYPHS[event.tool] || event.tool.charAt(0).toUpperCase(),
@@ -859,6 +898,34 @@
     el0.dataset.tool = event.tool;
     el0.dataset.status = 'running';
     el0.querySelector('.body').appendChild(status);
+    // The expanded detail: what ran, how long, what came back, and the
+    // raw record one more press away. Closed by default, one line while
+    // closed.
+    var detail = node('div', 'tool-detail');
+    detail.hidden = true;
+    var command = toolArgumentText(event);
+    if (command) detail.appendChild(node('pre', 'tool-command', command));
+    var facts = node('p', 'tool-facts', 'running');
+    detail.appendChild(facts);
+    var output = node('pre', 'tool-output');
+    output.hidden = true;
+    detail.appendChild(output);
+    var raw = node('button', 'tool-raw', 'raw record');
+    raw.type = 'button';
+    raw.addEventListener('click', function (stop) {
+      if (stop && stop.stopPropagation) stop.stopPropagation();
+      openDrawer('tool \u00b7 ' + event.tool, [
+        ['the call', node('pre', 'raw', JSON.stringify(event, null, 2))],
+        ['the result', node('pre', 'raw', JSON.stringify(made.event || {}, null, 2))]
+      ]);
+    });
+    detail.appendChild(raw);
+    el0.appendChild(detail);
+    el0.querySelector('.card-open').addEventListener('click', function () {
+      detail.hidden = !detail.hidden;
+      el0.classList.toggle('open', !detail.hidden);
+      settle();
+    });
     // The live seconds: informative loading (the contract, C2), not a
     // spinner - the number is the truth about how long the call has
     // run, and it stops the moment the answer lands.
@@ -871,23 +938,20 @@
       var took = Math.round((Date.now() - started) / 1000) + 's';
       el0.dataset.status = result.approved ? 'ok' : 'refused';
       status.textContent = took;
-      var note = el0.querySelector('.note');
+      facts.textContent = took + ' \u00b7 ' + (result.approved ? 'ran' : 'not run · refused');
       if (result.preview) {
-        note.textContent = result.preview;
+        output.textContent = result.preview;
+        output.hidden = false;
       }
       if (result.approved) {
-        // Done collapses: one line, outcome dot in the css, the
-        // preview one click away on the row itself (C2). A refused
-        // call stays expanded - the owner's decision should never
-        // hide, and the reason is the reading.
+        // Done collapses: one line, outcome dot in the css, the command
+        // and its output one press away.
         el0.classList.add('collapsed');
-        if (note.textContent) note.hidden = true;
-        el0.querySelector('.card-open').addEventListener('click', function () {
-          if (!note.textContent) return;
-          note.hidden = !note.hidden;
-        });
       } else {
-        note.hidden = false;
+        // A refused call stays expanded - the owner's decision should
+        // never hide, and the reason is the reading.
+        detail.hidden = false;
+        el0.classList.add('open');
       }
       made.event = { type: 'tool_result', tool: result.tool, preview: result.preview, approved: result.approved };
     });
@@ -1030,7 +1094,8 @@
       kind: STRIP_LABEL[held.event.type] || held.event.type,
       count: held.count,
       text: stripLine(held.event),
-      turn: held.event.type === 'checkpoint' ? held.event.turn : null
+      turn: held.event.type === 'checkpoint' ? held.event.turn : null,
+      event: held.event
     });
     face.strip = null;
     stripPaint();
@@ -1043,6 +1108,23 @@
     list.textContent = '';
     face.stripLog.forEach(function (one) {
       var line = node('div', 'strip-line');
+      // Every folded line opens its record: the same click-to-see-more
+      // the transcript's rows have, so no action is a dead label.
+      line.setAttribute('role', 'button');
+      line.tabIndex = 0;
+      var open = function (stop) {
+        if (stop && stop.target && stop.target.closest && stop.target.closest('.row-rewind')) return;
+        openDrawer(one.kind, [
+          ['the record', node('pre', 'raw', JSON.stringify(one.event || {}, null, 2))]
+        ]);
+      };
+      line.addEventListener('click', open);
+      line.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          open(event);
+        }
+      });
       line.appendChild(node('span', 'strip-line-kind', one.kind));
       line.appendChild(node('span', 'strip-line-text',
         one.text + (one.count > 1 ? ' \u00b7 \u00d7' + one.count : '')));
@@ -1312,6 +1394,9 @@
           said.appendChild(markdown(event.text));
           row(said, event);
         }
+        break;
+      case 'reasoning':
+        thoughtRow(event);
         break;
       case 'token':
         if (!face.assistant) face.assistant = assistantRow();
@@ -6468,6 +6553,10 @@
   el.log.addEventListener('click', function (event) {
     var opened = event.target.closest ? event.target.closest('.card-row') : null;
     if (!opened) return;
+    // A tool card has its own detail — what ran, how long, what came
+    // back — and a raw-record button inside it. The generic inspector
+    // would be a second, less useful answer to the same press.
+    if (opened.classList.contains('tool')) return;
     var made = face.rows.filter(function (candidate) { return candidate.el === opened; })[0];
     var event = made ? made.event : null;
     // A deck's card opens the rendered deck rather than the raw event:

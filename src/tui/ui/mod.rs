@@ -2891,6 +2891,7 @@ mod tests {
         app.apply_ui_event(UiEvent::ToolCall {
             name: "bash".to_string(),
             summary: "ls -la".to_string(),
+            arguments: None,
         });
         app.apply_ui_event(UiEvent::ToolResult {
             name: "bash".to_string(),
@@ -4110,6 +4111,7 @@ mod tests {
         app.apply_ui_event(UiEvent::ToolCall {
             name: "mcp__sem1__probe".to_string(),
             summary: "embeddings \u{b7} probe {}".to_string(),
+            arguments: None,
         });
         app.apply_ui_event(UiEvent::LaneJoined {
             lane: "sem1".to_string(),
@@ -4448,6 +4450,7 @@ mod tests {
         app.apply_ui_event(UiEvent::ToolCall {
             name: "bash".to_string(),
             summary: "cargo test".to_string(),
+            arguments: None,
         });
         app.apply_ui_event(UiEvent::Subagent {
             goal: "read the router".to_string(),

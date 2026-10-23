@@ -72,6 +72,16 @@ pub enum Record {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
+    /// The model's thinking for one response, when the provider streams it
+    /// (`reasoning_content`). Display material: it rides the transcript
+    /// and the log, and it replays to no message — a reasoning model
+    /// requires that its thinking is not sent back, and the conversation
+    /// builder ignores this record for exactly that reason.
+    Reasoning {
+        text: String,
+        /// How long the block took, from its first delta to the answer.
+        seconds: u64,
+    },
     /// One executed or denied tool call, with exactly the output text the
     /// model received.
     ToolResult {
@@ -725,7 +735,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
         match record {
             // Bookkeeping: a rewind marks a cut the caller already
             // applied, and a plan rides the assistant message beside it.
-            Record::Rewind { .. } | Record::Plan { .. } => {}
+            Record::Rewind { .. } | Record::Plan { .. } | Record::Reasoning { .. } => {}
             // Bookkeeping: which channel the peer arrived on replays to
             // no message.
             Record::Channel { .. } => {}
@@ -923,6 +933,51 @@ mod tests {
         assert!(summarize(&stray).is_none());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&open_home);
+    }
+
+    #[test]
+    fn a_reasoning_record_round_trips_and_replays_to_no_message() {
+        let home = temp_home("reasoning");
+        let mut session = Session::create(&home, "m").unwrap();
+        session
+            .record(&Record::User {
+                content: "how many?".into(),
+            })
+            .unwrap();
+        session
+            .record(&Record::Reasoning {
+                text: "count the rows".into(),
+                seconds: 5,
+            })
+            .unwrap();
+        session
+            .record(&Record::Assistant {
+                content: Some("three".into()),
+                tool_calls: Vec::new(),
+            })
+            .unwrap();
+        session
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+                served_model: None,
+            })
+            .unwrap();
+        let records = replay(session.path()).unwrap();
+        assert!(
+            matches!(&records[2], Record::Reasoning { text, seconds } if text == "count the rows" && *seconds == 5),
+            "{records:?}"
+        );
+        // The conversation the model would be sent holds the question and
+        // the answer, never the thinking.
+        let built = conversation(&records);
+        let said: Vec<String> = built
+            .messages
+            .iter()
+            .map(|m| m.content.clone().unwrap_or_default())
+            .collect();
+        assert_eq!(said, vec!["how many?".to_string(), "three".to_string()]);
+        fs::remove_dir_all(&home).ok();
     }
 
     #[test]

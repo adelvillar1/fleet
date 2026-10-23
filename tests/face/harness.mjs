@@ -133,11 +133,12 @@ class El {
   fire(kind, event) {
     const ev = event || {};
     ev.preventDefault = ev.preventDefault || (() => {});
-    ev.stopPropagation = ev.stopPropagation || (() => {});
+    ev.stopPropagation = () => { ev._stopped = true; };
     ev.target = ev.target || this;
     let node = this;
     while (node) {
       (node.listeners[kind] || []).slice().forEach((fn) => fn(ev));
+      if (ev._stopped) break;
       node = node.parentNode;
     }
   }
@@ -270,6 +271,7 @@ function boot(options) {
       this.onerror = null;
       streamSource = this;
     },
+    Node: El,
     URLSearchParams,
     URL,
     Intl,
@@ -845,6 +847,125 @@ async function theClearCommandStartsAConversation() {
     page.window.location.hash === '#/sessions/clear-made-1', page.window.location.hash);
 }
 
+
+// C2: a thought block is one closed row that opens its words on a press.
+async function aThoughtRowOpensOnAPress() {
+  const page = boot({
+    hash: '#/sessions/thinking-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, yours: 1, total: 1 },
+        sessions: [row('thinking-1', 'completed', { title: 'a thinking run' })],
+      },
+      state: (asked) => ({
+        ...emptyState(asked), session: asked,
+        events: [
+          { type: 'message', role: 'owner', text: 'how many rows?' },
+          { type: 'reasoning', text: 'Count the **rows** first, then the files.', seconds: 5 },
+          { type: 'message', role: 'assistant', text: 'Three rows.' },
+        ],
+      }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  const thoughts = page.rows('.thought');
+  check('C2 one thought row', thoughts.length === 1, String(thoughts.length));
+  const body = thoughts[0] && thoughts[0].querySelector('.thought-body');
+  check('C2 closed by default', !!body && body.hidden === true, body ? String(body.hidden) : 'no body');
+  check('C2 the row names the duration', /Thought · 5s/.test(page.text('log')), page.text('log').slice(0, 120));
+  const head = thoughts[0] && thoughts[0].querySelector('.thought-head');
+  if (head) head.click();
+  await flush();
+  check('C2 a press opens it', !!body && body.hidden === false, body ? String(body.hidden) : 'no body');
+  check('C2 its words render as markdown', page.rows('.thought .md-strong').length === 1,
+    String(page.rows('.thought .md-strong').length));
+  if (head) head.click();
+  await flush();
+  check('C2 a second press closes it', !!body && body.hidden === true, body ? String(body.hidden) : 'no body');
+}
+
+// C3: a command's expanded row names what actually ran, how long, and
+// what came back — and the raw record is one more press away.
+async function aCommandRowNamesWhatRan() {
+  const full = 'cargo test --test integration -- --ignored --nocapture';
+  const page = boot({
+    hash: '#/sessions/cmd-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, yours: 1, total: 1 },
+        sessions: [row('cmd-1', 'working', { title: 'a command run' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'message', role: 'owner', text: 'run the tests' });
+  page.push({
+    type: 'tool_call', tool: 'bash', summary: 'cargo test --test integration \u2026',
+    arguments: JSON.stringify({ command: full }),
+  });
+  page.push({ type: 'tool_result', tool: 'bash', preview: '1498 passed \u00b7 0 failed', approved: true });
+  await flush();
+  const detail = page.rows('.tool-detail')[0];
+  check('C3 the detail starts closed', !!detail && detail.hidden === true, detail ? String(detail.hidden) : 'none');
+  check('C3 the whole command is carried', page.text('log').includes(full), page.text('log').slice(0, 160));
+  const opener = page.rows('.tool .card-open')[0];
+  if (opener) opener.click();
+  await flush();
+  check('C3 a press opens the detail', !!detail && detail.hidden === false, detail ? String(detail.hidden) : 'none');
+  check('C3 it names the command', page.rows('.tool-command')[0] &&
+    page.rows('.tool-command')[0].textContent === full,
+    page.rows('.tool-command')[0] ? page.rows('.tool-command')[0].textContent : 'none');
+  check('C3 it says the call ran', /ran/.test(page.text('log')), page.text('log').slice(0, 160));
+  check('C3 the output is there', page.rows('.tool-output')[0] &&
+    /1498 passed/.test(page.rows('.tool-output')[0].textContent),
+    page.rows('.tool-output')[0] ? page.rows('.tool-output')[0].textContent : 'none');
+  const raw = page.rows('.tool-raw')[0];
+  if (raw) raw.click();
+  await flush();
+  check('C3 the raw record opens', /the call/.test(page.text('dock-object-body')),
+    page.text('dock-object-body').slice(0, 100));
+}
+
+// C4: a folded strip line opens its record.
+async function theStripsLinesOpenTheirRecord() {
+  const page = boot({
+    hash: '#/sessions/strip-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, yours: 1, total: 1 },
+        sessions: [row('strip-1', 'working', { title: 'a routed run' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'message', role: 'owner', text: 'go' });
+  page.push({ type: 'turn', turn: 1 });
+  page.push({ type: 'routed', provider: 'stepfun', how: 'the first model of the roster' });
+  page.push({ type: 'finished', reason: 'stop' });
+  await flush();
+  const head = page.rows('.strip-head')[0];
+  check('C4 the strip has a head', !!head, String(page.rows('.strip-head').length));
+  if (head) head.click();
+  await flush();
+  const line = page.rows('.strip-line')[0];
+  check('C4 a folded line exists', !!line, String(page.rows('.strip-line').length));
+  if (line) line.click();
+  await flush();
+  check('C4 the line opens its record', page.text('dock-object-body').includes('the first model of the roster'),
+    page.text('dock-object-body').slice(0, 120));
+}
+
 // --------------------------------------------------------------------- run
 
 const cases = [
@@ -859,6 +980,9 @@ const cases = [
   ['C7 the dock is closed and the work column takes its place', theDockIsClosedAndTheWorkColumnTakesItsPlace],
   ['C8 the addresses hold', theAddressesHold],
   ['C4 /clear starts a conversation', theClearCommandStartsAConversation],
+  ['C2 a thought row opens on a press', aThoughtRowOpensOnAPress],
+  ['C3 a command row names what ran', aCommandRowNamesWhatRan],
+  ['C4 the strip lines open their record', theStripsLinesOpenTheirRecord],
 ];
 
 for (const [name, run] of cases) {

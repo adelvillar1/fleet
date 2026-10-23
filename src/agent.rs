@@ -363,6 +363,12 @@ impl Default for AgentOptions {
 pub enum UiEvent {
     /// One streamed content delta.
     Token(String),
+    /// The model's thinking for one response, when the provider streams
+    /// it (`reasoning_content`). One event per response, at the moment
+    /// the answer begins (or the stream ends, for a turn that only calls
+    /// a tool), with the block's own duration — the surface draws one row
+    /// per block, closed, and opens it on a press.
+    Reasoning { text: String, seconds: u64 },
     /// A turn started.
     Turn(u64),
     /// What the response that just landed cost, and where it left the
@@ -386,8 +392,15 @@ pub enum UiEvent {
         /// What this response generated.
         completion_tokens: u64,
     },
-    /// The model requested a tool call, before the approval gate.
-    ToolCall { name: String, summary: String },
+    /// The model requested a tool call, before the approval gate. The
+    /// summary is the clipped line the transcript shows; `arguments` is
+    /// the raw call, so an expanded row can name what actually ran
+    /// rather than a 72-character excerpt.
+    ToolCall {
+        name: String,
+        summary: String,
+        arguments: Option<String>,
+    },
     /// A call finished: executed or denied.
     ToolResult {
         name: String,
@@ -526,6 +539,47 @@ pub enum UiEvent {
     ReportRepair { attempt: u32 },
     /// The loop failed; the run is over.
     Failed(String),
+}
+
+/// A turn's thinking: the text as it arrives, the clock its first delta
+/// started, and the one duration the block reports. Kept apart from the
+/// turn loop so the block's rule — one close, one reading, nothing when
+/// empty — is testable without a socket.
+#[derive(Default)]
+struct ReasoningBlock {
+    text: String,
+    started: Option<std::time::Instant>,
+    reported: bool,
+    seconds: u64,
+}
+
+impl ReasoningBlock {
+    fn push(&mut self, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        if self.started.is_none() {
+            self.started = Some(std::time::Instant::now());
+        }
+        self.text.push_str(delta);
+    }
+
+    /// Close the block: its text and duration, once. Called when the
+    /// answer begins and again when the response lands (a tool-only turn
+    /// has no answer to start), so the second call is `None`.
+    fn close(&mut self) -> Option<(String, u64)> {
+        if self.reported || self.text.is_empty() {
+            return None;
+        }
+        self.reported = true;
+        self.seconds = self.started.map(|at| at.elapsed().as_secs()).unwrap_or(0);
+        Some((self.text.clone(), self.seconds))
+    }
+
+    /// What the log keeps, once the block has closed.
+    fn closed(&self) -> Option<(String, u64)> {
+        (self.reported && !self.text.is_empty()).then(|| (self.text.clone(), self.seconds))
+    }
 }
 
 /// Where a delegated child run stands.
@@ -1648,18 +1702,37 @@ impl<'a> Agent<'a> {
             };
             let progress = &mut *self.progress;
             let ui_tx = self.ui_tx.clone();
+            let mut thinking = ReasoningBlock::default();
             let response = client
-                .chat_stream(&request, |event| {
-                    if let StreamEvent::Content(delta) = event {
+                .chat_stream(&request, |event| match event {
+                    StreamEvent::Reasoning(delta) => thinking.push(&delta),
+                    StreamEvent::Content(delta) => {
+                        // The answer begins: the thought block closes
+                        // first, so the transcript reads in the order it
+                        // happened.
+                        if let Some((text, seconds)) = thinking.close() {
+                            if let Some(tx) = &ui_tx {
+                                let _ = tx.send(UiEvent::Reasoning { text, seconds });
+                            }
+                        }
                         let _ = progress.write_all(delta.as_bytes());
                         let _ = progress.flush();
                         if let Some(tx) = &ui_tx {
                             let _ = tx.send(UiEvent::Token(delta.clone()));
                         }
                     }
+                    _ => {}
                 })
                 .await
                 .map_err(AgentError::Api)?;
+            // A turn that thought and then went straight to a tool call has
+            // no answer to close the block; the response's end does.
+            if let Some((text, seconds)) = thinking.close() {
+                self.emit(UiEvent::Reasoning { text, seconds });
+            }
+            if let Some((text, seconds)) = thinking.closed() {
+                self.record(&Record::Reasoning { text, seconds })?;
+            }
             self.usage.prompt_tokens += response.usage.prompt_tokens;
             self.usage.completion_tokens += response.usage.completion_tokens;
             // The API's own count of this request's prompt, when it
@@ -1694,6 +1767,7 @@ impl<'a> Agent<'a> {
                 self.emit(UiEvent::ToolCall {
                     name: call.function.name.clone(),
                     summary: call_summary(call),
+                    arguments: Some(call.function.arguments.clone()),
                 });
             }
             let _ = self.progress.flush();
@@ -4818,6 +4892,23 @@ fn lane_call_output(result: &CallResult) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_reasoning_block_closes_once_and_keeps_its_reading() {
+        let mut block = ReasoningBlock::default();
+        assert!(block.close().is_none(), "an empty block closes to nothing");
+        block.push("");
+        assert!(block.closed().is_none(), "an empty push is no block");
+        block.push("the first half, ");
+        block.push("the second.");
+        let (text, seconds) = block.close().expect("closes with text");
+        assert_eq!(text, "the first half, the second.");
+        assert!(seconds < 5, "{seconds}");
+        assert!(block.close().is_none(), "a second close reports nothing");
+        let kept = block.closed().expect("the log keeps it");
+        assert_eq!(kept.0, "the first half, the second.");
+        assert_eq!(kept.1, seconds);
+    }
+
     use super::*;
     use crate::api::FunctionCall;
 
