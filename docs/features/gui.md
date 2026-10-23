@@ -171,7 +171,13 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   `needs-approval`, `paused`, `working`, `active`, `completed`,
   `capped`, `stopped`, `interrupted`, `new`. Where there is no room for
   the column it overlays as a sheet, opened from the conversation's
-  title or back control and closed by picking a row.
+  title or back control and closed by picking a row. The column folds
+  too: one control in its head closes it to a 48px strip — the control
+  that brings it back, and the archive's count of what needs you — and
+  the conversation takes the rest of the width. The choice survives a
+  reload (`localStorage["fleet-work"]`), and the column's left edge
+  follows the navigation, so folding the rail onto its icons leaves no
+  gutter between the two.
 - **The conversation's head** carries the way back to the work list, the
   title (press for the switcher, the pencil to rename), the state in
   words, and **New** — which writes a real session (`POST

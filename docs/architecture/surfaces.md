@@ -103,7 +103,10 @@ conversations) it holds and opens to the family lines on request — and
 *stopped by you*, *interrupted*, *active*, *new* — with each row's age,
 project, and, for background work, its job. Open a row: it loads in
 place with its composer. Search the title, id, project, model, job and
-state. Or press New.
+state. Or press New. The column folds to a strip — its way back and the
+count of what needs you — and its left edge follows the navigation, so
+a folded rail leaves no gutter behind the list and a folded list leaves
+the width to the conversation.
 
 **Why.** A session log is the system of record — if it is not in the log,
 the model never saw it — so the list is where accountability lives. But

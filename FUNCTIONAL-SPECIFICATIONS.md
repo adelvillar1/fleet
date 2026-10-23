@@ -66,8 +66,12 @@ and, for background work, the job's name. One verb: opening a row loads
 that conversation in place, beside the list, with its composer, so
 reading and continuing are the same act. **New** writes a real
 conversation. Search reads the title, id, project, model, job and
-state; the list folds into a sheet where there is no room for a
-column.
+state; the list becomes a sheet where there is no room for a column,
+and the column itself folds to a narrow strip — its own way back and
+the count of what needs you — so the conversation takes the whole
+width when the list is not wanted. The column starts where the
+navigation ends, whichever navigation is showing, so a folded rail
+leaves no gutter behind the list.
 
 **Intelligence — router.** Where this run's work went, what it tried
 first, and what the day has served: the live decision, the declared

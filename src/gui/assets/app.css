@@ -6112,7 +6112,28 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   background: var(--dsw-alias-page);
 }
 
+/* The list sits against the rail, so a folded rail leaves no gutter
+   behind it: the list moves onto the space the icons gave back. */
+body[data-rail="icons"] .work-col { left: var(--rail-width-icons); }
 body[data-work="open"] .stage { margin-left: var(--work-width); }
+
+/* Folded, the list keeps a strip — the control that brings it back and
+   the count that makes it worth looking at — and the conversation takes
+   the rest of the width. */
+body[data-work="collapsed"] { --work-width: 48px; }
+body[data-work="collapsed"] .stage { margin-left: var(--work-width); }
+
+body[data-work="collapsed"] .work-head {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 14px 0 12px;
+}
+
+body[data-work="collapsed"] .work-list { display: none; }
 
 .work-head { flex: 0 0 auto; padding: 14px 14px 8px; }
 
@@ -6175,6 +6196,55 @@ body[data-work="open"] .stage { margin-left: var(--work-width); }
   min-height: 0;
   overflow-y: auto;
   padding: 0 8px 18px;
+}
+
+/* The fold: one control in the head closes the list to a strip, and the
+   strip's own control brings it back. Same box, same place, so the
+   owner never has to hunt for it. */
+.work-fold,
+.work-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: var(--card-hairline);
+  border-radius: 7px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.work-fold:hover,
+.work-expand:hover {
+  border-color: var(--dsw-alias-hairline);
+  color: var(--dsw-alias-ink);
+}
+
+.work-folded-label {
+  writing-mode: vertical-rl;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--dsw-alias-ink-tertiary);
+}
+
+.work-folded-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--dsw-alias-warn) 14%, transparent);
+  color: var(--dsw-alias-warn);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .work-group {
@@ -6378,16 +6448,20 @@ body[data-work="open"] .stage { margin-left: var(--work-width); }
 .assistant .md-code { font-size: 12px; line-height: 1.6; padding: 11px 13px; }
 .assistant .md-inline-code { font-size: 12.5px; }
 
-/* The work column is a sheet where there is no column to be. */
+/* The work column is a sheet where there is no column to be, and a strip
+   of the same overlay when it is folded. */
 @media (max-width: 1180px) {
   body[data-work="open"] .stage { margin-left: 0; }
+  body[data-work="collapsed"] .stage { margin-left: 0; }
   .work-col {
     left: 0;
     width: min(360px, 88vw);
     box-shadow: var(--shadow-3);
     z-index: 24;
   }
-  body[data-work="open"] .conv-back { display: inline-flex; }
+  body[data-work="collapsed"] .work-col { width: 48px; }
+  body[data-work="open"] .conv-back,
+  body[data-work="collapsed"] .conv-back { display: inline-flex; }
 }
 
 /* The conversation's column: the head, then the content that grows, then
@@ -6407,10 +6481,12 @@ body[data-work="open"] .stage { margin-left: var(--work-width); }
 .receipt-report-text { margin: 8px 0 0; }
 .receipt-report-text .md { gap: 8px; }
 
-/* Where the list is a column beside the conversation, its way back is
-   the column itself; everywhere else the head carries it. */
+/* Where the list is a column beside the conversation — open or folded to
+   its strip — its way back is the column itself; everywhere else the
+   head carries it. */
 @media (min-width: 1181px) {
-  body[data-work="open"] .conv-back { display: none; }
+  body[data-work="open"] .conv-back,
+  body[data-work="collapsed"] .conv-back { display: none; }
 }
 
 /* ------------------------------------------------------- activity rows */

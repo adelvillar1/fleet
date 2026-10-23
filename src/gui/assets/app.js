@@ -614,6 +614,10 @@
     // alive but they are not the owner's work. One line names them and
     // opens them on request.
     showBackground: false,
+    // The work list folded to its strip: the owner's choice, kept for the
+    // next reload the way the dock's is. The conversation takes the width
+    // either way.
+    workFolded: false,
     // The calibration panel's read and its clock.
     calibration: null,
     calibrationAt: 0,
@@ -5782,6 +5786,12 @@
   } catch (error) {
     setAside(false);
   }
+
+  // The list's fold is the owner's too, and read before the first route
+  // paints so the page opens in the shape they left it in.
+  try {
+    face.workFolded = window.localStorage.getItem('fleet-work') === 'collapsed';
+  } catch (error) { }
   if (el.asideToggle) {
     el.asideToggle.addEventListener('click', function () {
       // A dock opened by hand is the owner's: closing an object later
@@ -5832,8 +5842,15 @@
   if (el.convBack) {
     el.convBack.addEventListener('click', function () {
       // The way out: the work list itself where it is a column, and the
-      // sheet's close where it is an overlay.
-      if (workOpen() && window.innerWidth <= 1180) { setWork(false); return; }
+      // sheet's close where it is an overlay. A folded list is still the
+      // list, so the back control unfolds it; a sheet already closed is
+      // opened, because the head's word is "work", not "away".
+      if (window.innerWidth <= 1180) {
+        if (workFolded()) foldWork(false);
+        else if (workOpen()) setWork(false);
+        else setWork(true);
+        return;
+      }
       openWorkSurface();
     });
   }
@@ -6703,6 +6720,28 @@
       .join(' ').toLowerCase().indexOf(asked) !== -1;
   }
 
+  // The folded list: a strip that names itself, carries the archive's own
+  // count of what needs the owner, and holds the one control that brings
+  // the rows back. No row width, no second meaning — the rows are one
+  // press away and the conversation holds the rest of the page.
+  function workStrip(counts) {
+    var expand = node('button', 'work-expand');
+    expand.type = 'button';
+    expand.setAttribute('aria-expanded', 'false');
+    expand.setAttribute('aria-label', 'expand the work list');
+    expand.title = 'expand the work list';
+    expand.textContent = '\u203a';
+    expand.addEventListener('click', function () { foldWork(false); });
+    el.workHead.appendChild(expand);
+    el.workHead.appendChild(node('span', 'work-folded-label', 'work'));
+    var needs = counts ? counts.needs : 0;
+    if (needs) {
+      var badge = node('span', 'work-folded-badge', String(needs));
+      badge.title = needs + (needs === 1 ? ' conversation needs you' : ' conversations need you');
+      el.workHead.appendChild(badge);
+    }
+  }
+
   // The list, painted: four groups in fixed order, because the owner's
   // question is "what needs me" before "what exists".
   function paintWork() {
@@ -6715,6 +6754,12 @@
     // already counted. Without a read yet there is nothing honest to
     // show, so the head says so rather than inventing a zero.
     var counts = read && read.counts ? read.counts : null;
+    // Folded, the column is a strip: the way back and how much is waiting,
+    // and nothing that would need a row's width.
+    if (workFolded()) {
+      workStrip(counts);
+      return;
+    }
     var all = workRows();
     var head = node('div', 'work-title');
     var title = node('h2', null, 'work');
@@ -6734,6 +6779,14 @@
     fresh.title = 'a new conversation';
     fresh.addEventListener('click', function () { newConversation(); });
     head.appendChild(fresh);
+    var fold = node('button', 'work-fold');
+    fold.type = 'button';
+    fold.setAttribute('aria-expanded', 'true');
+    fold.setAttribute('aria-label', 'collapse the work list');
+    fold.title = 'collapse the work list';
+    fold.textContent = '\u2039';
+    fold.addEventListener('click', function () { foldWork(true); });
+    head.appendChild(fold);
     el.workHead.appendChild(head);
     var search = node('div', 'work-search');
     var box = node('input', null);
@@ -6961,16 +7014,39 @@
     return document.body.dataset.work === 'open';
   }
 
+  // Folded is still there: the strip is shown, so the control that brings
+  // the rows back never leaves the page the owner is reading them from.
+  function workFolded() {
+    return document.body.dataset.work === 'collapsed';
+  }
+
   function setWork(open) {
-    document.body.dataset.work = open ? 'open' : '';
-    if (el.workCol) el.workCol.hidden = !open;
-    if (open) paintWork();
+    // A shown list takes the mode the owner last chose. The width the
+    // conversation gives up is declared by that mode, so the two can never
+    // disagree about how much of the page the list holds.
+    var mode = open ? (face.workFolded ? 'collapsed' : 'open') : '';
+    document.body.dataset.work = mode;
+    if (el.workCol) el.workCol.hidden = !mode;
+    if (mode) paintWork();
+  }
+
+  // Fold or unfold the list and keep the choice. The head's own control and
+  // the strip's are the same press in two places, so either direction is
+  // always one click away.
+  function foldWork(folded) {
+    face.workFolded = folded;
+    try {
+      window.localStorage.setItem('fleet-work', folded ? 'collapsed' : 'open');
+    } catch (error) { }
+    setWork(true);
   }
 
   function toggleWork() {
-    // Where the list is a column it is already the switcher: the title
-    // brings it to the front rather than closing the place the owner is
-    // switching from. Where it is a sheet, the title opens and closes it.
+    // Folded, the title brings the list back before it can become a
+    // switcher. Where the list is a column it is already the switcher: the
+    // title brings it to the front rather than closing the place the owner
+    // is switching from. Where it is a sheet, the title opens and closes it.
+    if (workFolded()) { foldWork(false); return; }
     if (window.innerWidth > 1180) { setWork(true); return; }
     setWork(!workOpen());
   }

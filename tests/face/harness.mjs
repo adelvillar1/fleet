@@ -735,6 +735,68 @@ async function theDockIsClosedAndTheWorkColumnTakesItsPlace() {
     ruleBlock('.empty, .log') + ' | ' + ruleBlock('.process-strip, .seat, .actions, .commands, .composer'));
 }
 
+// C7 (fold): the list folds to a strip with its own way back and the
+// count it is worth watching for, the choice is kept, and the column
+// follows the rail so a folded nav leaves no gutter behind it.
+async function theWorkListFoldsToAStrip() {
+  const page = boot({
+    width: 1600,
+    hash: '#/sessions/fold-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 2, working: 0, background: 0, earlier: 1, total: 3 },
+        sessions: [
+          row('fold-1', 'waiting', { title: 'a conversation that needs you' }),
+          row('fold-2', 'completed', { title: 'a past conversation' }),
+        ],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  await flush();
+  check('C7 the head carries the fold control', page.rows('.work-fold').length === 1,
+    String(page.rows('.work-fold').length));
+  const rowsBefore = page.rows('.work-row').length;
+  check('C7 the open list shows its rows', rowsBefore >= 1, String(rowsBefore));
+  page.rows('.work-fold')[0].click();
+  await flush();
+  check('C7 the fold collapses the list', page.body.dataset.work === 'collapsed',
+    String(page.body.dataset.work));
+  check('C7 the strip stays on the page', page.IDS['work-col'].hidden === false,
+    'hidden=' + page.IDS['work-col'].hidden);
+  check('C7 the strip holds the way back and nothing else',
+    page.rows('.work-expand').length === 1 && page.rows('.work-row').length === 0,
+    'expand=' + page.rows('.work-expand').length + ' rows=' + page.rows('.work-row').length);
+  check('C7 the strip carries the count of what needs the owner',
+    page.text('work-head').includes('2'), page.text('work-head'));
+  check('C7 the choice is remembered', page.window.localStorage.getItem('fleet-work') === 'collapsed',
+    String(page.window.localStorage.getItem('fleet-work')));
+  page.rows('.work-expand')[0].click();
+  await flush();
+  check('C7 the way back restores the rows',
+    page.body.dataset.work === 'open' && page.rows('.work-row').length === rowsBefore,
+    String(page.body.dataset.work) + ' rows=' + page.rows('.work-row').length);
+  // The geometry, from the sheet that declares it: the column starts where
+  // the nav ends, whichever nav is showing, and the stage is inset by the
+  // width the list declares in that mode.
+  check('C7 the column follows a folded rail onto the freed space',
+    ruleBlock('body[data-rail="icons"] .work-col').includes('left: var(--rail-width-icons)'),
+    ruleBlock('body[data-rail="icons"] .work-col'));
+  check('C7 the folded width is the strip\'s own',
+    ruleBlock('body[data-work="collapsed"]').includes('--work-width: 48px'),
+    ruleBlock('body[data-work="collapsed"]'));
+  check('C7 the conversation takes the rest of the width when folded',
+    ruleBlock('body[data-work="collapsed"] .stage').includes('margin-left: var(--work-width)'),
+    ruleBlock('body[data-work="collapsed"] .stage'));
+  check('C7 the strip drops the inset where the list is a sheet',
+    flat(CSS).includes('body[data-work="collapsed"] .stage { margin-left: 0; }'),
+    'narrow override');
+}
+
 // C8: the addresses — `#/chat` is the new-work front door, and a reload
 // at `#/sessions/<id>` reopens that conversation with the list beside it.
 async function theAddressesHold() {
@@ -984,6 +1046,7 @@ const cases = [
   ['C6 a replayed reply renders as markdown', aReplayedReplyRendersAsMarkdown],
   ['C3 the pencil renames the conversation', thePencilRenamesTheConversation],
   ['C7 the dock is closed and the work column takes its place', theDockIsClosedAndTheWorkColumnTakesItsPlace],
+  ['C7 the work list folds to a strip and follows the rail', theWorkListFoldsToAStrip],
   ['C8 the addresses hold', theAddressesHold],
   ['C4 /clear starts a conversation', theClearCommandStartsAConversation],
   ['C2 a thought row opens on a press', aThoughtRowOpensOnAPress],
