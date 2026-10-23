@@ -2955,6 +2955,9 @@ mod tests {
             channel: None,
             compacted: false,
             served_model: None,
+            stop_reason: None,
+            turns: None,
+            last_write: None,
             path: std::path::PathBuf::from("/tmp/x.jsonl"),
         }]);
         let picker = draw(&app, 120, 40);
@@ -2980,6 +2983,9 @@ mod tests {
             channel: None,
             compacted: false,
             served_model: None,
+            stop_reason: None,
+            turns: None,
+            last_write: None,
             path: std::path::PathBuf::from("/tmp/child.jsonl"),
         }]);
         let child_picker = draw(&children, 120, 40);
@@ -3001,6 +3007,9 @@ mod tests {
             channel: None,
             compacted: true,
             served_model: None,
+            stop_reason: None,
+            turns: None,
+            last_write: None,
             path: std::path::PathBuf::from("/tmp/folded.jsonl"),
         }]);
         let folded_picker = draw(&folded, 120, 40);
@@ -3901,6 +3910,9 @@ mod tests {
                     channel: None,
                     compacted: false,
                     served_model: None,
+                    stop_reason: None,
+                    turns: None,
+                    last_write: None,
                     path: std::path::PathBuf::from("/tmp/x.jsonl"),
                 })
                 .collect(),

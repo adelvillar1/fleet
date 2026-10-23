@@ -1627,6 +1627,9 @@ mod tests {
             channel: None,
             compacted: false,
             served_model: None,
+            stop_reason: None,
+            turns: None,
+            last_write: None,
             path: std::path::PathBuf::from(format!("/tmp/{id}.jsonl")),
         }
     }
