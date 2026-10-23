@@ -190,9 +190,12 @@ alone: `A−`/`A+` in the conversation's head, or `Alt+↓`/`Alt+↑` from the
 composer, step a multiplier from 85% to 170% (100% by default). The
 reply, its headings and its code grow together and the transcript's
 column widens with them, so the measure stays roughly the same
-characters per line. Each end dims the press that would go past it, and
-the choice survives a reload. The composer, the run strip, the activity
-rows, the cards and the rest of the face keep the measure they have.
+characters per line. Everything inside the transcript scales with it —
+your messages, the reply, the thought rows, the command cards and their
+expanded detail, the receipt and the run line. Each end dims the press
+that would go past it, and the choice survives a reload. Outside the
+transcript nothing moves: the composer, the run strip, the conversation
+head, the rail and the panels keep the measure they have.
 
 ## Run behavior
 

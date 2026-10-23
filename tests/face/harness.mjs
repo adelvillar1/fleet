@@ -835,6 +835,29 @@ async function theConversationTextSizeIsTheOwners() {
     ruleBlock('.assistant .md-p').includes('calc(15px * var(--chat-scale, 1))') &&
       ruleBlock('.assistant .md-code').includes('calc(12px * var(--chat-scale, 1))'),
     ruleBlock('.assistant .md-p'));
+  // The run's own telemetry is text the owner reads too, so it scales
+  // with the reply — the thought row, the command card and its expanded
+  // detail, the receipt, and the run line.
+  check('C7 the thought row scales with it',
+    ruleBlock('.thought-head').includes('calc(12px * var(--chat-scale, 1))') &&
+      ruleBlock('.thought-body .md-li')
+        .includes('calc(12.5px * var(--chat-scale, 1))'),
+    ruleBlock('.thought-head'));
+  check('C7 the command card and its detail scale with it',
+    ruleBlock('.card-row .title').includes('calc(12.5px * var(--chat-scale, 1))') &&
+      ruleBlock('.tool-output').includes('calc(11px * var(--chat-scale, 1))') &&
+      ruleBlock('.tool-facts').includes('calc(10.5px * var(--chat-scale, 1))'),
+    ruleBlock('.tool-output'));
+  check('C7 the receipt and the run line scale with it',
+    ruleBlock('.receipt .receipt-line').includes('calc(11px * var(--chat-scale, 1))') &&
+      ruleBlock('.stream-text').includes('calc(11.5px * var(--chat-scale, 1))'),
+    ruleBlock('.receipt .receipt-line'));
+  // The boundary: a card's own furniture — the big metric and its
+  // caption — is display, not telemetry, and keeps its size.
+  check('C7 a card\'s metric and caption keep their size',
+    ruleBlock('.card-row .value').includes('font-size: 20px') &&
+      !ruleBlock('.card-row .value').includes('chat-scale'),
+    ruleBlock('.card-row .value'));
   page.fireOn('chat-bigger', 'click');
   check('C7 one press up is the next step', scaleOf() === '1.15', scaleOf());
   check('C7 the choice is kept',

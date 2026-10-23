@@ -84,8 +84,9 @@ choose. Replies read as
 markdown, at the block boundary where the whole answer is in hand. The
 conversation itself carries its text size — `A−`/`A+` in its head, or
 `Alt+↓`/`Alt+↑` from the composer — because it is the one surface the
-owner reads at length: a reply, its headings and its code scale
-together, and the chrome around them keeps the measure it has.
+owner reads at length: the reply, its headings and its code scale
+together, and so do the run's own rows (the thought, the command card,
+the receipt), while the chrome around them keeps the measure it has.
 
 **Why.** Because the valuable things a harness does were, everywhere
 else, hidden in panes and logs. Here they are the transcript.

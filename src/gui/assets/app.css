@@ -1542,7 +1542,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .receipt { padding: 2px 0 4px; }
 .receipt .receipt-line {
   margin: 0 0 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--chat-scale, 1));
   color: var(--dsw-alias-ink-secondary);
 }
 .receipt .receipt-line:first-child { margin-top: 2px; }
@@ -1553,14 +1553,14 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   background: transparent;
   color: var(--dsw-alias-accent);
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--chat-scale, 1));
   font-weight: 600;
   cursor: pointer;
 }
 .receipt-toggle:hover { text-decoration: underline; }
 .receipt-report-text {
   margin: 6px 0 0;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--chat-scale, 1));
   line-height: 1.5;
   color: var(--dsw-alias-ink-secondary);
   white-space: pre-wrap;
@@ -1580,7 +1580,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
    hidden until the row is clicked. A refused call keeps everything. */
 .card-row.tool.collapsed .card-open { padding: 6px 14px; }
 .card-row.tool.collapsed .glyph { width: 18px; height: 18px; font-size: 9px; }
-.card-row.tool.collapsed .title { font-size: 11px; }
+.card-row.tool.collapsed .title { font-size: calc(11px * var(--chat-scale, 1)); }
 .card-row.tool.collapsed .sub {
   max-width: 60%;
   overflow: hidden;
@@ -1589,7 +1589,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .card-row.tool.collapsed .status {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--chat-scale, 1));
   color: var(--dsw-alias-ink-tertiary);
 }
 .card-row.tool[data-status="ok"] .status { color: var(--dsw-static-ok-on-dark); }
@@ -1597,7 +1597,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .card-row.tool.collapsed .note {
   border-top: 1px solid var(--dsw-alias-hairline);
   padding: 7px 14px 9px;
-  font-size: 11px;
+  font-size: calc(11px * var(--chat-scale, 1));
   white-space: pre-wrap;
 }
 
@@ -1766,7 +1766,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .card-row .body { min-width: 0; flex: 1; display: grid; gap: 1px; }
 
 .card-row .title {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--chat-scale, 1));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -1775,7 +1775,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 .card-row .sub {
   color: var(--dsw-alias-ink-secondary);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--chat-scale, 1));
   line-height: 1.45;
   white-space: nowrap;
   overflow: hidden;
@@ -4775,14 +4775,14 @@ pre.drawer-code {
   min-width: 92px;
   color: var(--dsw-alias-ink-tertiary);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--chat-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 
 .stream-text {
   min-width: 0;
   color: var(--dsw-alias-ink);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--chat-scale, 1));
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
@@ -6540,11 +6540,11 @@ body[data-work="collapsed"] .work-list { display: none; }
   background: transparent;
   color: var(--dsw-alias-ink-tertiary);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--chat-scale, 1));
   text-align: left;
 }
 .thought-head:hover { color: var(--dsw-alias-ink-secondary); }
-.thought-glyph { font-size: 13px; line-height: 1; }
+.thought-glyph { font-size: calc(13px * var(--chat-scale, 1)); line-height: 1; }
 .thought.open .thought-glyph { color: var(--dsw-alias-accent-lift); }
 .thought-body {
   margin: 2px 0 8px 21px;
@@ -6555,10 +6555,10 @@ body[data-work="collapsed"] .work-list { display: none; }
 .thought-body .md-p,
 .thought-body .md-li {
   color: var(--dsw-alias-ink-secondary);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--chat-scale, 1));
   line-height: 1.62;
 }
-.thought-body .md-code { font-size: 11px; }
+.thought-body .md-code { font-size: calc(11px * var(--chat-scale, 1)); }
 
 /* A command's expanded detail: what ran, how long, what came back. */
 .tool-detail { margin: 4px 10px 8px 34px; }
@@ -6571,23 +6571,23 @@ body[data-work="collapsed"] .work-list { display: none; }
   background: var(--dsw-alias-page);
   color: var(--dsw-alias-ink-secondary);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--chat-scale, 1));
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 240px;
   overflow: auto;
 }
-.tool-facts { margin: 0 0 6px; color: var(--dsw-alias-ink-tertiary); font-size: 10.5px; }
+.tool-facts { margin: 0 0 6px; color: var(--dsw-alias-ink-tertiary); font-size: calc(10.5px * var(--chat-scale, 1)); }
 .tool-raw {
-  height: 22px;
+  height: calc(22px * var(--chat-scale, 1));
   padding: 0 8px;
   border: var(--card-hairline);
   border-radius: 6px;
   background: var(--dsw-alias-surface);
   color: var(--dsw-alias-ink-secondary);
   font: inherit;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--chat-scale, 1));
 }
 .strip-line[role="button"] { border-radius: 6px; }
 .strip-line[role="button"]:hover { background: var(--dsw-alias-surface); }

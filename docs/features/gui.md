@@ -197,11 +197,15 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   multiplier (85% to 170%, 100% by default) on the transcript. The
   multiplier keeps the hierarchy: a reply, its headings and its code grow
   together, and the transcript's column widens with it so the measure
-  stays roughly the same characters per line. The composer, the run
-  strip, the activity rows, the cards and the rail keep the measure they
-  have. Each end dims its own press rather than pressing into nothing,
-  and the choice survives a reload (`localStorage["fleet-chat-size"]`, a
-  step index).
+  stays roughly the same characters per line. Everything inside the
+  transcript scales — your messages, the reply, the thought rows, the
+  command cards with their expanded detail, the receipt and the run line
+  — because all of it is text the owner reads. Outside it nothing moves:
+  the composer, the run strip, the conversation head, the rail and the
+  panels keep their measure, and a card's own furniture (its metric and
+  caption) stays put. Each end dims its own press rather than pressing
+  into nothing, and the choice survives a reload
+  (`localStorage["fleet-chat-size"]`, a step index).
 - **Facts** open their detail and edit; their type and tier badges
   filter the corpus.
 - **Every panel has visible filters with counts.** Memory: all, live,
