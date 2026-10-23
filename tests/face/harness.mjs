@@ -704,6 +704,14 @@ async function theDockIsClosedAndTheWorkColumnTakesItsPlace() {
     flat(CSS).includes('body[data-work="open"] .stage { margin-left: 0; }'), 'narrow override');
   const measure = (ruleBlock('.assistant').match(/max-width: (\d+)ch/) || [])[1];
   check('C7 the prose measure is at most 80ch', measure && Number(measure) <= 80, String(measure));
+  check('C7 the conversation stacks head, content and footer',
+    ruleBlock('.column').includes('display: flex') &&
+      ruleBlock('.column').includes('flex-direction: column'),
+    ruleBlock('.column'));
+  check('C7 the content grows and the footer keeps its height',
+    ruleBlock('.empty, .log').includes('flex: 1 1 auto') &&
+      ruleBlock('.process-strip, .seat, .actions, .commands, .composer').includes('flex: 0 0 auto'),
+    ruleBlock('.empty, .log') + ' | ' + ruleBlock('.process-strip, .seat, .actions, .commands, .composer'));
 }
 
 // C8: the addresses — `#/chat` is the new-work front door, and a reload
