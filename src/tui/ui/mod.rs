@@ -2897,6 +2897,7 @@ mod tests {
             name: "bash".to_string(),
             preview: "exit 0".to_string(),
             approved: true,
+            resolution: None,
         });
         app.entries.push(Entry::User("do the thing".to_string()));
 

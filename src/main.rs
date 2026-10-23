@@ -991,9 +991,45 @@ fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
         return ExitCode::from(2);
     };
+    if let cli::ToolsAction::Audit { session } = &options.action {
+        let path = match session {
+            Some(id) => fleet::home::sessions_dir(&home).join(format!("{id}.jsonl")),
+            None => match fleet::session::list(&home)
+                .ok()
+                .and_then(|mut list| list.pop())
+            {
+                Some(summary) => summary.path,
+                None => {
+                    eprintln!(
+                        "fleet: no sessions in {}",
+                        fleet::home::sessions_dir(&home).display()
+                    );
+                    return ExitCode::from(2);
+                }
+            },
+        };
+        if !path.exists() {
+            eprintln!("fleet: no session log at {}", path.display());
+            return ExitCode::from(2);
+        }
+        let name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        return match fleet::tool_audit::audit(&path) {
+            Ok(audit) => {
+                print!("{}", fleet::tool_audit::render(&name, &audit));
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let sessions = match &options.action {
         cli::ToolsAction::Scan { sessions } | cli::ToolsAction::Advise { sessions } => *sessions,
-        cli::ToolsAction::List => unreachable!("handled above"),
+        cli::ToolsAction::List | cli::ToolsAction::Audit { .. } => unreachable!("handled above"),
     };
     let scan = fleet::tool_advisor::scan(&home, sessions);
     match &options.action {

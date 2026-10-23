@@ -503,6 +503,15 @@ fn call_reply(text: &str) -> serde_json::Value {
 }
 
 /// The model-visible names in one request body's tool declarations.
+/// The first tool result in a replay, wherever the resolution and
+/// bookkeeping records sit around it.
+fn first_result(records: &[Record]) -> &Record {
+    records
+        .iter()
+        .find(|record| matches!(record, Record::ToolResult { .. }))
+        .expect("a tool result")
+}
+
 fn declared_tools(body: &serde_json::Value) -> Vec<String> {
     body["tools"]
         .as_array()
@@ -769,7 +778,7 @@ async fn run_completes_a_two_turn_tool_loop() {
 
     // The log holds exactly what the model saw plus bookkeeping.
     let records = session::replay(session.path()).unwrap();
-    assert_eq!(records.len(), 6);
+    assert_eq!(records.len(), 7);
     assert!(matches!(&records[0], Record::Start { v: 1, model, .. } if model == "test-model"));
     assert!(matches!(&records[1], Record::User { content } if content == "say hello"));
     // KI-016: the assistant record carries the call the model made, so a
@@ -780,14 +789,81 @@ async fn run_completes_a_two_turn_tool_loop() {
         records[2]
     );
     assert!(matches!(
-        &records[3],
+        first_result(&records),
         Record::ToolResult { approved: true, .. }
     ));
     assert!(matches!(
-        &records[5],
-        Record::End { stop_reason, turns: 2, .. } if stop_reason == "completed"
+        records.last(),
+        Some(Record::End { stop_reason, turns: 2, .. }) if stop_reason == "completed"
     ));
 
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn every_call_writes_one_resolution_and_the_methods_are_named() {
+    // One alias (`view` -> read_file), one alias (`search` -> grep), one
+    // name nothing answers. The ledger is the log's answer to "what did
+    // the model ask for, and how did it get an answer".
+    let home = temp_home("resolution-ledger");
+    let note = home.join("note.txt");
+    std::fs::write(&note, "hello\n").unwrap();
+    let stream = stream(vec![
+        tool_call_delta(
+            0,
+            "c1",
+            "view",
+            &format!(r#"{{"path":"{}"}}"#, note.display()),
+        ),
+        tool_call_delta(
+            1,
+            "c2",
+            "search",
+            &format!(r#"{{"pattern":"hello","path":"{}"}}"#, home.display()),
+        ),
+        tool_call_delta(2, "c3", "ghost", "{}"),
+        finish_frame("tool_calls"),
+        usage_frame(10, 5),
+        "data: [DONE]".to_string(),
+    ]);
+    let mock = MockApi::start(vec![stream, assistant_stream(TOOL_REPORT)]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "look around")
+        .await
+        .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let resolutions: Vec<(String, String, String)> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResolution {
+                requested,
+                resolved,
+                method,
+                ..
+            } => Some((requested.clone(), resolved.clone(), method.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(resolutions.len(), 3, "{resolutions:?}");
+    assert_eq!(
+        resolutions[0],
+        (
+            "view".to_string(),
+            "read_file".to_string(),
+            "alias".to_string()
+        )
+    );
+    assert_eq!(
+        resolutions[1],
+        (
+            "search".to_string(),
+            "grep".to_string(),
+            "alias".to_string()
+        )
+    );
+    assert_eq!(resolutions[2].0, "ghost");
+    assert_eq!(resolutions[2].2, "refused");
+    assert!(resolutions[2].1.is_empty());
     std::fs::remove_dir_all(&home).ok();
 }
 
@@ -921,7 +997,7 @@ async fn denied_call_is_recorded_and_shown_to_the_model() {
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     let records = session::replay(session.path()).unwrap();
-    match &records[3] {
+    match first_result(&records) {
         Record::ToolResult {
             output,
             approved: false,
@@ -1006,7 +1082,7 @@ async fn tool_failure_is_a_model_visible_error_result() {
     .unwrap();
 
     let records = session::replay(session.path()).unwrap();
-    match &records[3] {
+    match first_result(&records) {
         Record::ToolResult {
             output,
             approved: true,
@@ -1079,7 +1155,19 @@ async fn oversized_tool_output_is_truncated_in_the_log() {
     .unwrap();
 
     let records = session::replay(session.path()).unwrap();
-    match &records[5] {
+    match records
+        .iter()
+        .find(|record| {
+            matches!(
+                record,
+                Record::ToolResult {
+                    truncated: true,
+                    ..
+                }
+            )
+        })
+        .expect("a truncated result")
+    {
         Record::ToolResult {
             output,
             truncated: true,
@@ -1291,6 +1379,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
                 name: "bash".to_string(),
                 preview: "exit 0".to_string(),
                 approved: true,
+                resolution: Some("exact \u{b7} declared".to_string()),
             },
             UiEvent::Turn(2),
             UiEvent::Token("The command ran and printed hi; ".to_string()),
@@ -1308,7 +1397,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
     // The headless contract is untouched: the log holds the whole turn, and
     // the progress sink saw the same deltas as raw text.
     let records = session::replay(&log_path).unwrap();
-    assert_eq!(records.len(), 6);
+    assert_eq!(records.len(), 7);
     let progress = String::from_utf8(progress).unwrap();
     assert!(progress.contains("bash: echo hi"), "{progress}");
     assert!(progress.contains("exit 0"), "{progress}");
@@ -1421,6 +1510,7 @@ async fn a_denied_call_reports_its_result_event() {
             name,
             preview,
             approved,
+            ..
         } => {
             assert_eq!(name, "bash");
             assert!(!approved);
@@ -2393,7 +2483,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The log holds the whole turn, in order: the assistant's call, the
     // lane that joined for it, the result, and the answer.
     let records = session::replay(session.path()).unwrap();
-    assert_eq!(records.len(), 7, "{records:?}");
+    assert_eq!(records.len(), 8, "{records:?}");
     assert!(
         matches!(&records[1], Record::User { content } if content == "probe the embeddings worker")
     );
@@ -2436,7 +2526,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         }
         other => panic!("expected a lane_tools record, got {other:?}"),
     }
-    match &records[4] {
+    match first_result(&records) {
         Record::ToolResult {
             name,
             output,
@@ -2449,8 +2539,8 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         other => panic!("expected a lane tool result, got {other:?}"),
     }
     assert!(matches!(
-        &records[6],
-        Record::End { stop_reason, turns: 2, .. } if stop_reason == "completed"
+        records.last(),
+        Some(Record::End { stop_reason, turns: 2, .. }) if stop_reason == "completed"
     ));
 
     // And the headless surface said the lane joined.
@@ -2634,6 +2724,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
                 // answer is shorter, so it arrives whole.
                 preview: "{\"provider\":\"fake\",\"reachable\":true}".to_string(),
                 approved: true,
+                resolution: Some("exact \u{b7} lane tool".to_string()),
             },
             UiEvent::Turn(2),
             UiEvent::Token("Probed.".to_string()),
@@ -2699,7 +2790,7 @@ async fn a_lane_answer_past_the_cap_is_bounded_and_marked() {
     assert_eq!(report.turns, 2);
 
     let records = session::replay(session.path()).unwrap();
-    let output = match &records[4] {
+    let output = match first_result(&records) {
         Record::ToolResult {
             name,
             output,
@@ -2783,7 +2874,7 @@ async fn a_lane_tool_refusal_is_recorded_as_a_failure_with_its_text() {
             .any(|r| matches!(r, Record::LaneTools { lane, .. } if lane == "sem1")),
         "the pre-join is in the log"
     );
-    match &records[4] {
+    match first_result(&records) {
         Record::ToolResult {
             name,
             output,
@@ -2836,7 +2927,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
             .all(|record| !matches!(record, Record::LaneTools { .. })),
         "a denied call must not join a lane: {records:?}"
     );
-    match &records[3] {
+    match first_result(&records) {
         Record::ToolResult {
             name,
             output,
@@ -2923,6 +3014,50 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
         .all(|record| !matches!(record, Record::LaneTools { .. })));
     assert_eq!(declared_tools(&mock.bodies()[1]).len(), 15);
 
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A server that fails its run-start join is named in the session, not
+/// only in the progress log, and it declares nothing to the model.
+#[tokio::test]
+async fn a_server_that_fails_to_pre_join_is_recorded_in_the_session() {
+    let mock = MockApi::start(vec![assistant_stream("Nothing to do.")]);
+    let home = temp_home("pre-join-failure");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut specs = std::collections::HashMap::new();
+    specs.insert(
+        "broken".to_string(),
+        ServerSpec {
+            program: "/no/such/fleet-program".to_string(),
+            args: Vec::new(),
+            env: Vec::new(),
+            passthrough: Vec::new(),
+            cwd: None,
+        },
+    );
+    let mut progress = Vec::new();
+    run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(specs),
+        &mut progress,
+        "say done",
+    )
+    .await
+    .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    assert!(
+        records.iter().any(|record| matches!(
+            record,
+            Record::LaneFailed { lane, reason } if lane == "broken" && !reason.is_empty()
+        )),
+        "{records:?}"
+    );
+    // A failed server declares nothing.
+    assert!(!declared_tools(&mock.bodies()[0])
+        .iter()
+        .any(|name| name.starts_with("mcp__broken__")));
     std::fs::remove_dir_all(&home).ok();
 }
 
@@ -4570,7 +4705,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The body is in the log exactly once — as the tool result — and the
     // messages the log rebuilds are the four the model saw.
     assert_eq!(session::messages(&records).len(), 4, "{records:?}");
-    match &records[4] {
+    match first_result(&records) {
         Record::ToolResult {
             name,
             output,
@@ -4606,7 +4741,7 @@ async fn an_unknown_skill_is_a_typed_error_result() {
     assert_eq!(report.stop_reason, StopReason::Completed);
 
     let records = session::replay(session.path()).unwrap();
-    match &records[4] {
+    match first_result(&records) {
         Record::ToolResult { name, output, .. } => {
             assert_eq!(name, "use_skill");
             assert_eq!(output, "error: no skill named `no-such-skill`");
@@ -7597,7 +7732,7 @@ async fn a_run_under_the_budget_logs_no_compaction_record() {
     // Two requests, the log's own shape, and no compaction marker.
     assert_eq!(mock.bodies().len(), 2);
     let records = session::replay(session.path()).unwrap();
-    assert_eq!(records.len(), 6, "{records:?}");
+    assert_eq!(records.len(), 7, "{records:?}");
     assert!(!session::list(&home).unwrap()[0].compacted);
     // Every message the second request carried is reconstructable from the
     // log, and the log holds the final answer after it.

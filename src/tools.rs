@@ -1388,6 +1388,15 @@ impl Tool {
         self.execute_without_folder(arguments)
     }
 
+    /// [`Tool::execute`] with a spill directory for a cut result.
+    pub fn execute_with_spill(
+        self,
+        arguments: &serde_json::Value,
+        spill: Option<&Path>,
+    ) -> Result<ToolOutcome, String> {
+        self.execute_without_folder_spill(arguments, spill)
+    }
+
     /// Execute the tool bounded by `root`: `bash` spawns with it as its
     /// working directory, and the three file tools resolve a relative
     /// path against it and refuse a path that leaves it. This is the
@@ -1399,6 +1408,18 @@ impl Tool {
         arguments: &serde_json::Value,
         root: &Path,
     ) -> Result<ToolOutcome, String> {
+        self.execute_in_with_spill(arguments, root, None)
+    }
+
+    /// The same execution, with a directory for the full text when the
+    /// 64 KiB cap cuts it. The model reads the bounded head and the
+    /// path; the artifact holds what the cap removed.
+    pub fn execute_in_with_spill(
+        self,
+        arguments: &serde_json::Value,
+        root: &Path,
+        spill: Option<&Path>,
+    ) -> Result<ToolOutcome, String> {
         let outcome = match self {
             Tool::Bash => run_bash_arguments(arguments, Some(root))?,
             Tool::ReadFile => run_read_file_window(arguments, Some(root))?,
@@ -1409,10 +1430,18 @@ impl Tool {
             Tool::Glob => run_glob_tool(arguments, Some(root))?,
             Tool::Todo => run_todo(arguments)?,
         };
-        Ok(bound(outcome))
+        Ok(bound_with_spill(outcome, spill))
     }
 
     fn execute_without_folder(self, arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+        self.execute_without_folder_spill(arguments, None)
+    }
+
+    fn execute_without_folder_spill(
+        self,
+        arguments: &serde_json::Value,
+        spill: Option<&Path>,
+    ) -> Result<ToolOutcome, String> {
         let outcome = match self {
             Tool::Bash => run_bash_arguments(arguments, None)?,
             Tool::ReadFile => run_read_file_window(arguments, None)?,
@@ -1423,7 +1452,7 @@ impl Tool {
             Tool::Glob => run_glob_tool(arguments, None)?,
             Tool::Todo => run_todo(arguments)?,
         };
-        Ok(bound(outcome))
+        Ok(bound_with_spill(outcome, spill))
     }
 }
 
@@ -1471,6 +1500,27 @@ pub const ALIASES: &[(&str, Tool)] = &[
     ("update_todo_list", Tool::Todo),
     ("todowrite", Tool::Todo),
 ];
+
+/// Argument keys the tool's schema does not declare. A provider may add
+/// fields of its own; they are dropped with a note rather than refused.
+pub fn unknown_arguments(tool: Tool, arguments: &serde_json::Value) -> Vec<String> {
+    let Some(object) = arguments.as_object() else {
+        return Vec::new();
+    };
+    let declared: Vec<String> = tool
+        .parameters()
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .map(|properties| properties.keys().cloned().collect())
+        .unwrap_or_default();
+    let mut unknown: Vec<String> = object
+        .keys()
+        .filter(|key| !declared.iter().any(|known| known == *key))
+        .cloned()
+        .collect();
+    unknown.sort();
+    unknown
+}
 
 /// Resolve a model-supplied name to a tool, saying whether an alias was
 /// used. `None` means neither a declared name nor an alias.
@@ -1665,6 +1715,9 @@ fn run_edit_tool(
         Some(root) => resolve_write_in_root(root, &path)?,
         None => PathBuf::from(&path),
     };
+    if !target.exists() {
+        return Err(missing_path(&path, &target));
+    }
     let outcome = crate::fileops::edit(&target, &old, &new, replace_all)?;
     Ok(ToolOutcome {
         output: format!(
@@ -1673,6 +1726,24 @@ fn run_edit_tool(
         ),
         truncated: false,
     })
+}
+
+/// A missing path with the real names beside it, so the model can
+/// correct the path instead of re-reading the tree.
+fn missing_path(path: &str, resolved: &Path) -> String {
+    let parent = resolved.parent().unwrap_or(Path::new("."));
+    let name = resolved
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let near = crate::search::nearest_entries(parent, &name);
+    match near.is_empty() {
+        true => format!("{path}: no such file or directory"),
+        false => format!(
+            "{path}: no such file or directory; nearest: {}",
+            near.join(", ")
+        ),
+    }
 }
 
 /// `grep`: bounded, counted content search.
@@ -1886,6 +1957,31 @@ pub fn bound(outcome: ToolOutcome) -> ToolOutcome {
         ),
         truncated: true,
     }
+}
+
+/// [`bound`] with a spill file for the text the cap removes. A result
+/// that fits is untouched; a cut one names the artifact so the model can
+/// recover the whole answer with `read_file`.
+pub fn bound_with_spill(outcome: ToolOutcome, spill: Option<&Path>) -> ToolOutcome {
+    if outcome.output.len() <= MAX_TOOL_OUTPUT {
+        return outcome;
+    }
+    let mut note = String::new();
+    if let Some(dir) = spill {
+        if fs::create_dir_all(dir).is_ok() {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0);
+            let path = dir.join(format!("{}-{stamp}.out", std::process::id()));
+            if fs::write(&path, &outcome.output).is_ok() {
+                note = format!("\n\u{2026}[full output: {}]", path.display());
+            }
+        }
+    }
+    let mut bounded = bound(outcome);
+    bounded.output.push_str(&note);
+    bounded
 }
 
 /// How long a finished command's pipes may keep draining after the call
@@ -2128,9 +2224,23 @@ fn resolve_in_root(root: &Path, path: &str) -> Result<PathBuf, String> {
         }
         root.join(given)
     };
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|error| format!("{path}: {error}"))?;
+    let canonical = candidate.canonicalize().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            let parent = candidate.parent().unwrap_or(Path::new("."));
+            let name = candidate
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let near = crate::search::nearest_entries(parent, &name);
+            if !near.is_empty() {
+                return format!(
+                    "{path}: no such file or directory; nearest: {}",
+                    near.join(", ")
+                );
+            }
+        }
+        format!("{path}: {error}")
+    })?;
     let canonical_root = root
         .canonicalize()
         .map_err(|error| format!("{}: {error}", root.display()))?;
@@ -2220,6 +2330,9 @@ fn run_read_file_window(
         Some(root) => resolve_in_root(root, &path)?,
         None => PathBuf::from(&path),
     };
+    if !resolved.exists() {
+        return Err(missing_path(&path, &resolved));
+    }
     let window = crate::fileops::read_window(&resolved, offset, limit)?;
     let mut output = format!("{path} ({} lines)\n", window.total_lines);
     if window.total_lines == 0 {

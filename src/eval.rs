@@ -1484,7 +1484,7 @@ async fn two_turn_tool_loop(mock_bin: PathBuf) -> ScenarioOutcome {
                                 "the second request saw the tool result",
                                 mock.roles(1) == vec!["system", "user", "assistant", "tool"],
                             ),
-                            ("the log reconstructs the turn", records.len() == 6),
+                            ("the log reconstructs the turn", records.len() == 7),
                             ("the assistant record carries its call", assistant_call),
                         ],
                     )
@@ -1580,7 +1580,7 @@ async fn session_corpus_replay(mock_bin: PathBuf) -> ScenarioOutcome {
                         NAME,
                         family,
                         &[
-                            ("the log reconstructs", records.len() == 6),
+                            ("the log reconstructs", records.len() == 7),
                             (
                                 "the replayed conversation matches the request",
                                 replayed == sent,
@@ -5238,7 +5238,7 @@ async fn blend1_grounded_fact(mock_bin: PathBuf) -> ScenarioOutcome {
                 run.lane_answer.contains("\"path\":\"synthesized\"")
                     && run.lane_answer.contains("\"escalated\":false"),
             ),
-            ("the log reconstructs the turn", run.records.len() == 7),
+            ("the log reconstructs the turn", run.records.len() == 8),
         ],
     )
 }
@@ -5332,7 +5332,7 @@ async fn blend1_escalation(mock_bin: PathBuf) -> ScenarioOutcome {
                 "the escalated answer still carries the computed fact",
                 final_answer.contains(FACT),
             ),
-            ("the log reconstructs the turn", run.records.len() == 7),
+            ("the log reconstructs the turn", run.records.len() == 8),
         ],
     )
 }
@@ -5400,7 +5400,7 @@ async fn blend1_reprocess(mock_bin: PathBuf) -> ScenarioOutcome {
                 "the wrong answer is retained in the result, not dropped",
                 run.lane_answer.contains(wrong),
             ),
-            ("the log reconstructs the turn", run.records.len() == 7),
+            ("the log reconstructs the turn", run.records.len() == 8),
         ],
     )
 }
@@ -5459,7 +5459,7 @@ async fn blend1_corpus_recall(mock_bin: PathBuf) -> ScenarioOutcome {
                 "the final answer quotes the fact unaltered",
                 final_answer.contains(fact),
             ),
-            ("the log reconstructs the turn", run.records.len() == 7),
+            ("the log reconstructs the turn", run.records.len() == 8),
         ],
     )
 }

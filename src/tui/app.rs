@@ -1367,6 +1367,7 @@ impl App {
                 name,
                 preview,
                 approved,
+                ..
             } => {
                 let status = if approved {
                     ToolStatus::Done
@@ -3032,6 +3033,11 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // Bookkeeping: the channel a peer arrived on is not a
         // conversation block.
         Record::Channel { .. } => None,
+        // Bookkeeping: how a call was resolved is audit material, not a
+        // conversation block.
+        Record::ToolResolution { .. } => None,
+        // Bookkeeping: a server that did not join is run metadata.
+        Record::LaneFailed { .. } => None,
         // The model's thinking is a card the face draws first; the TUI's
         // own Thought block is a later increment, so a resumed log's
         // reasoning does not become a pane entry here.
@@ -3780,6 +3786,7 @@ mod tests {
             name: "bash".to_string(),
             preview: "total 0".to_string(),
             approved: true,
+            resolution: None,
         });
         let Entry::Tool(card) = &app.entries[0] else {
             panic!("expected a tool card")
@@ -3849,6 +3856,7 @@ mod tests {
             name: "subagent".to_string(),
             preview: "subagent completed \u{b7} 3 turns".to_string(),
             approved: true,
+            resolution: None,
         });
         assert_eq!(app.entries.len(), 1, "{:?}", app.entries);
         let Entry::Tool(card) = &app.entries[0] else {
@@ -3885,6 +3893,7 @@ mod tests {
             name: "mcp__sem1__probe".to_string(),
             preview: "reachable".to_string(),
             approved: true,
+            resolution: None,
         });
         // The streaming tail flushed when the lane landed, and the lane's
         // block sits between the call and its result.
@@ -4068,6 +4077,7 @@ mod tests {
             name: "bash".to_string(),
             preview: "denied: the user did not approve this call.".to_string(),
             approved: false,
+            resolution: None,
         });
         let Entry::Tool(card) = &app.entries[0] else {
             panic!("expected a tool card")
@@ -4277,6 +4287,7 @@ mod tests {
             name: "bash".to_string(),
             preview: "exit 0".to_string(),
             approved: true,
+            resolution: None,
         });
         let Entry::Tool(card) = &app.entries[0] else {
             panic!("expected a tool card")

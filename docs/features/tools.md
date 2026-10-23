@@ -94,13 +94,39 @@ nothing. On this machine's last 30 sessions the first run found a
 bash calls doing grep/glob/sed work, and thirteen enabled servers with
 no calls — which is the surface doing its job.
 
+## The ledger and the audit
+
+Every call writes a `ToolResolution` before its result: the name it
+asked for, the tool that answered, the method (`exact`, `alias`,
+`retrieved`, `refused`), the reason, the catalog size, and the tier.
+`fleet tools audit [<session>]` reads one log and prints the
+schema-valid share, error classes, p95 result bytes, truncation,
+redundant calls, recovery after a failure, and resolutions by method and
+tier. The transcript's tool card shows the method; the detail shows the
+whole reason.
+
+## The limits
+
+At most 40 calls run in one turn; the rest are refused by name. A result
+past 64 KiB spills its full text to `<session>/calls/<id>.out` and names
+the path. Unknown arguments are dropped with a note. A fold elides tool
+results older than the last six to a byte count, and re-injects the
+todo ledger, so the step in progress survives the summary.
+
+## The profile
+
+The route verdict the run already holds reorders the native tools: a
+`standard_code` run sees read, edit, grep first; `prose` sees read,
+write, glob. A profile reorders and never removes. The resolution's
+reason names it.
+
 ## Not built yet
 
-Named here rather than implied by the plan: the `ToolResolution`
-session record and `fleet tools audit`; tool-result elision with spill
-artifacts; the todo ledger's re-injection after a compaction; the MCP
-protocol stage (annotations, pagination, structured content, image
-artifacts, cancellation); and the route-verdict tool profile.
+Named here rather than implied by the plan: promotion of a timed-out
+foreground command to the background; the `trait Tool` registry and
+mid-`bash` cancellation; a live second provider for the dispatch policy;
+MCP annotations and image artifacts; and catalog-backed enums where a
+tool takes a model, provider, or workload value.
 
 ## Files
 

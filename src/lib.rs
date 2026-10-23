@@ -53,6 +53,7 @@ pub mod settings;
 pub mod skills;
 pub mod subagents;
 pub mod tool_advisor;
+pub mod tool_audit;
 pub mod tool_router;
 pub mod tools;
 pub mod tui;

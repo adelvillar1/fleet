@@ -3435,9 +3435,27 @@ const REPLAY_PREVIEW: usize = 80;
 /// instead of cards, which is where a conversation's facts belong.
 fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
     let mut cards: Vec<Value> = Vec::new();
+    // The resolutions ride beside the results they explain. A replay
+    // that dropped them would show a call with no account of how it was
+    // chosen.
+    let resolutions: std::collections::HashMap<String, String> = records
+        .iter()
+        .filter_map(|record| match record {
+            session::Record::ToolResolution {
+                call_id,
+                method,
+                reason,
+                ..
+            } => Some((call_id.clone(), format!("{method} \u{b7} {reason}"))),
+            _ => None,
+        })
+        .collect();
     for record in records {
         match record {
-            session::Record::Start { .. } | session::Record::End { .. } => {}
+            session::Record::Start { .. }
+            | session::Record::End { .. }
+            | session::Record::ToolResolution { .. }
+            | session::Record::LaneFailed { .. } => {}
             // Bookkeeping, like start and end — it replays to no message
             // — but it carries the facts the inbox shows, so the replay
             // surfaces it rather than dropping it.
@@ -3502,6 +3520,7 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
                 }
             }
             session::Record::ToolResult {
+                call_id,
                 name,
                 output,
                 approved,
@@ -3512,6 +3531,7 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
                     "tool": name,
                     "preview": crate::agent::preview(output, REPLAY_PREVIEW),
                     "approved": approved,
+                    "resolution": resolutions.get(call_id),
                 }));
             }
             session::Record::LaneTools { lane, tools } => {
@@ -4273,6 +4293,37 @@ fn settings_read(home: &std::path::Path) -> Value {
     let vault = crate::settings::vault_state(home);
     let (telegram_present, telegram_source) =
         crate::settings::secret_state(home, "FLEET_TELEGRAM_BOT_TOKEN");
+    // The tool surface as the settings board reads it: the native
+    // tools, the tier bounds, and the last session's measured calls.
+    let last_audit = crate::session::list(home)
+        .ok()
+        .and_then(|mut list| list.pop())
+        .and_then(|summary| {
+            crate::tool_audit::audit(&summary.path).ok().map(|audit| {
+                json!({
+                    "session": summary.id,
+                    "calls": audit.calls,
+                    "errors": audit.errors,
+                    "truncated": audit.truncated,
+                    "redundant": audit.redundant,
+                    "p95_bytes": audit.p95_bytes,
+                    "methods": audit.methods,
+                })
+            })
+        });
+    let tools_document = json!({
+        "native": crate::tools::ALL_TOOLS
+            .iter()
+            .map(|tool| {
+                let spec = tool.spec();
+                json!({ "name": spec.name(), "summary": spec.description() })
+            })
+            .collect::<Vec<_>>(),
+        "deferred_above": crate::agent::MAX_VISIBLE_TOOLS,
+        "definition_tokens": crate::agent::MAX_DEFINITION_TOKENS,
+        "calls_per_turn": crate::agent::MAX_CALLS_PER_TURN,
+        "last_session": last_audit,
+    });
     json!({
         "type": "settings",
         "read_at": crate::boards::now_stamp(),
@@ -4289,6 +4340,7 @@ fn settings_read(home: &std::path::Path) -> Value {
         "catalog": catalog_document(&catalog),
         "lanes": lanes,
         "servers": servers,
+        "tools": tools_document,
         "roles": roles,
         "vault": {
             "names": vault.names,
@@ -5612,11 +5664,13 @@ fn describe(event: &UiEvent) -> Value {
             name,
             preview,
             approved,
+            resolution,
         } => json!({
             "type": "tool_result",
             "tool": name,
             "preview": preview,
             "approved": approved,
+            "resolution": resolution,
         }),
         UiEvent::LaneJoined { lane, tool_count } => {
             json!({"type": "lane", "lane": lane, "tools": tool_count})

@@ -493,6 +493,57 @@ Landed:
   and file build/fix/adopt/retire suggestions. Deterministic; no model,
   no lane, no spend.
 
+Landed in the second pass:
+
+- **C1 — the resolution ledger.** One `ToolResolution` record per call,
+  written before its result: requested, resolved, method (`exact`,
+  `alias`, `retrieved`, `refused`), reason, catalog size and tier. A
+  three-call session pins the four methods.
+- **C2 — the audit.** `fleet tools audit [<session>]` prints the
+  schema-valid share, error classes, p95 result bytes, truncation,
+  redundancy, recovery after a failure, and resolutions by method and
+  tier.
+- **C6, the spill half.** A cut result writes its full text to
+  `<session>/calls/<id>.out` and names the path.
+- **C7 — the todo ledger.** The last full list is stored and
+  re-injected into a fold's summary.
+- **C8, the limits half.** At most 40 calls run in one turn; calls past
+  the cap are refused by name. Unknown arguments are dropped with a
+  note, not a refusal.
+- **C10 — the corpus.** Twenty-four queries over forty candidates, the
+  expected tool in the top three for at least twenty.
+- **C11 — the profile.** The route verdict reorders the native tools;
+  the resolution's reason names the profile.
+- **C13, the grounding half.** A missing path names the nearest real
+  entries; lane defaults are applied only where the model left a key
+  and the result names them.
+- **C14 — elision.** Tool results older than the last six become
+  byte-count stubs before the region is summarized.
+- **C15, the protocol half.** Cursor pagination, `structuredContent` as
+  the fallback reading, `notifications/cancelled` on timeout, and a
+  pre-join failure recorded as `LaneFailed` in the session.
+- **C16, the face.** The live and replayed tool cards carry the
+  resolution line; the Settings board has *the tools* card with the
+  eight native tools, the tier bounds, and the last session's audit.
+  Verified served on the loopback face.
+
+Still open, named rather than implied:
+
+- **C6's promotion-on-timeout.** A foreground timeout still kills the
+  child; the message points at `run_in_background`. The command is not
+  promoted.
+- **C8's registry and cancellation.** Dispatch is still the branch
+  chain; there is no `trait Tool` registry, and a `Stop` mid-`bash`
+  waits for the child.
+- **C12's wiring.** The warm/healthy/order policy is implemented and
+  tested, but no capability has two live providers yet, so nothing
+  calls it.
+- **C15's annotations and image artifacts.** Annotations are not read;
+  an image result is still `[image]`, not a file.
+- **C13's catalog enums.** No current tool takes a model id, provider
+  id, or workload as an argument; the enums exist where a closed set
+  already did (`grep` modes, `todo` statuses, `computer_use` actions).
+
 Not built, and named rather than implied:
 
 - The `ToolResolution` session record; the scan reads what the log

@@ -957,9 +957,13 @@
     var made = row(el0, event, function (result) {
       clearInterval(tick);
       var took = Math.round((Date.now() - started) / 1000) + 's';
+      // How the call was resolved, when the run recorded it: the method
+      // on the collapsed line, the whole reason in the detail.
+      var method = result.resolution ? result.resolution.split(' \u00b7 ')[0] : null;
       el0.dataset.status = result.approved ? 'ok' : 'refused';
-      status.textContent = took;
-      facts.textContent = took + ' \u00b7 ' + (result.approved ? 'ran' : 'not run · refused');
+      status.textContent = method ? took + ' \u00b7 ' + method : took;
+      facts.textContent = took + ' \u00b7 ' + (result.approved ? 'ran' : 'not run · refused') +
+        (result.resolution ? ' \u00b7 ' + result.resolution : '');
       if (result.preview) {
         output.textContent = result.preview;
         output.hidden = false;
@@ -974,7 +978,8 @@
         detail.hidden = false;
         el0.classList.add('open');
       }
-      made.event = { type: 'tool_result', tool: result.tool, preview: result.preview, approved: result.approved };
+      made.event = { type: 'tool_result', tool: result.tool, preview: result.preview, approved: result.approved,
+        resolution: result.resolution };
     });
     face.pending.push(made);
     return made;
@@ -9503,6 +9508,38 @@
     return wrap;
   }
 
+  function toolsCard() {
+    var read = face.settings || {};
+    var tools = read.tools;
+    if (!tools) {
+      var waiting = boardCard(6, 'the tools', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The tool read has not landed yet.'));
+      return waiting;
+    }
+    var card = boardCard(6, 'the tools', String(tools.native.length) + ' native',
+      'Above ' + tools.deferred_above + ' visible tools or ' + tools.definition_tokens +
+      ' definition tokens the MCP tools are held behind tool_search; at most ' +
+      tools.calls_per_turn + ' calls run in one turn.');
+    var list = node('ul', 'tool-list');
+    tools.native.forEach(function (tool) {
+      list.appendChild(node('li', null, tool.name + ' \u2014 ' + tool.summary));
+    });
+    card.appendChild(list);
+    if (tools.last_session) {
+      var last = tools.last_session;
+      var methods = Object.keys(last.methods || {}).map(function (key) {
+        return key + ' ' + last.methods[key];
+      }).join(' \u00b7 ');
+      card.appendChild(node('p', 'board-note',
+        'last session ' + last.session + ': ' + last.calls + ' calls \u00b7 ' +
+        last.errors + ' errors \u00b7 p95 ' + last.p95_bytes + ' bytes \u00b7 ' +
+        last.truncated + ' truncated \u00b7 ' + last.redundant + ' redundant' +
+        (methods ? ' \u00b7 ' + methods : '')));
+    }
+    return card;
+  }
+
   function paintSettings() {
     var read = face.settings;
     el.settingsBoard.textContent = '';
@@ -9546,6 +9583,7 @@
     el.settingsBoard.appendChild(providersCard());
     el.settingsBoard.appendChild(lanesCard());
     el.settingsBoard.appendChild(serversCard());
+    el.settingsBoard.appendChild(toolsCard());
     el.settingsBoard.appendChild(rolesCard());
     el.settingsBoard.appendChild(vaultCard());
     el.settingsBoard.appendChild(spendCard());

@@ -91,6 +91,28 @@ pub enum Record {
         truncated: bool,
         approved: bool,
     },
+    /// How one call was resolved: what the model asked for, what
+    /// answered, and how that answer was chosen. Written before the
+    /// `tool_result`, so a refused call is in the record too. Bookkeeping:
+    /// it replays to no message.
+    ToolResolution {
+        call_id: String,
+        requested: String,
+        resolved: String,
+        /// `exact`, `alias`, `retrieved`, or `refused`.
+        method: String,
+        reason: String,
+        catalog: usize,
+        /// `core` or `deferred`.
+        tier: String,
+    },
+    /// A server that did not join at run start, and why. Bookkeeping:
+    /// the model saw no declaration, so this record exists for the
+    /// owner and the audit rather than the conversation.
+    LaneFailed {
+        lane: String,
+        reason: String,
+    },
     /// The tools one lane brought into a run, recorded the moment the
     /// lane joined. The tool declarations are dynamic now — a lane's
     /// tools enter the model's tool set mid-run — so this record is what
@@ -783,10 +805,12 @@ pub fn conversation(records: &[Record]) -> Conversation {
             }
             Record::Start { .. }
             | Record::End { .. }
+            | Record::LaneFailed { .. }
             | Record::LaneTools { .. }
             | Record::Skills { .. }
             | Record::Memory { .. }
-            | Record::Goal { .. } => {}
+            | Record::Goal { .. }
+            | Record::ToolResolution { .. } => {}
         }
     }
     let next_turn = turns

@@ -140,6 +140,11 @@ pub const MAX_VISIBLE_TOOLS: usize = 28;
 /// The most definition tokens one request should carry.
 pub const MAX_DEFINITION_TOKENS: usize = 8_000;
 
+/// The most tool calls one turn may run. A model that returns a hundred
+/// calls is looping, not planning; the calls past this line are refused
+/// by name so the failure is visible rather than silently dropped.
+pub const MAX_CALLS_PER_TURN: usize = 40;
+
 /// The one config seam over [`DELEGATION_CONCURRENCY`]: an environment
 /// variable naming a smaller positive number. It lives here, beside the
 /// constant it lowers, so there is exactly one place the bound can move.
@@ -439,6 +444,10 @@ pub enum UiEvent {
         name: String,
         preview: String,
         approved: bool,
+        /// How the call was resolved, one line: `exact \u{b7} declared` or
+        /// `refused \u{b7} denied: ...`. The transcript shows the method;
+        /// the audit reads the record.
+        resolution: Option<String>,
     },
     /// A lane joined the run: its tools are in the model's tool set for
     /// the rest of the run, and its `lane_tools` record is in the log.
@@ -1050,6 +1059,12 @@ pub struct Agent<'a> {
     /// that is not here: an anchored replacement needs the text the
     /// model actually saw.
     reads: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
+    /// One resolution per call, written to the log before the result.
+    resolutions: std::collections::BTreeMap<String, Resolution>,
+    /// The run's last full task list. A fold re-injects it, because the
+    /// step the model was on is the one piece of state whose loss
+    /// produces repeated work.
+    todos: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
     /// The skills this run declared, in load order. Their
     /// name+description pairs ride the system prompt; a body enters
     /// context only when the loop selects it through `use_skill`.
@@ -1219,6 +1234,8 @@ impl<'a> Agent<'a> {
             activated: std::collections::BTreeSet::new(),
             tool_vectors: None,
             reads: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            resolutions: std::collections::BTreeMap::new(),
+            todos: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills,
             memory,
             scope,
@@ -1476,6 +1493,11 @@ impl<'a> Agent<'a> {
                 })
                 .collect();
             specs = tier_declarations(specs, lane_specs, &self.activated);
+        }
+        // The verdict the run already holds orders the native tools. A
+        // profile reorders; it never removes an ability.
+        if let Some(decision) = self.client.route_decision() {
+            profile_order(&mut specs, decision.workload.as_deref());
         }
         specs
     }
@@ -1768,8 +1790,12 @@ impl<'a> Agent<'a> {
             });
             self.record(&Record::LaneTools { lane: name, tools })?;
         }
-        for failure in &pre_join_failures {
-            let _ = writeln!(self.progress, "{failure}");
+        for (lane, reason) in &pre_join_failures {
+            let _ = writeln!(self.progress, "server `{lane}` did not join: {reason}");
+            self.record(&Record::LaneFailed {
+                lane: lane.clone(),
+                reason: reason.clone(),
+            })?;
         }
         let _ = self.progress.flush();
         // The assembled memory block, recorded the same way: the block
@@ -2208,7 +2234,10 @@ impl<'a> Agent<'a> {
         let _ = self.progress.flush();
         let mut request_messages = Vec::with_capacity(tail_start + 2);
         request_messages.push(Message::text(Role::System, system_prompt));
-        request_messages.extend(self.messages[..tail_start].iter().cloned());
+        request_messages.extend(compaction::elide_tool_results(
+            &self.messages[..tail_start],
+            compaction::VERBATIM_TOOL_RESULTS,
+        ));
         request_messages.push(Message::text(
             Role::User,
             compaction::COMPACTION_INSTRUCTION,
@@ -2256,6 +2285,12 @@ impl<'a> Agent<'a> {
         // The fold is skipped rather than performed: the run keeps its
         // context and its next request, and the log records no compaction
         // that did not happen.
+        // The ledger is the one piece of state a fold must not lose:
+        // the step in progress is what the next turn acts on.
+        let summary = match self.todo_block() {
+            Some(block) => format!("{summary}\n\n{block}"),
+            None => summary,
+        };
         if summary.trim().is_empty() {
             let _ = writeln!(
                 self.progress,
@@ -2420,8 +2455,35 @@ impl<'a> Agent<'a> {
     async fn execute_calls(&mut self, calls: &[ToolCall]) -> Result<(), AgentError> {
         // Phase 1: the gate.
         let mut prepared: Vec<Option<Prepared>> = Vec::with_capacity(calls.len());
-        for call in calls {
+        for (index, call) in calls.iter().enumerate() {
+            if index >= MAX_CALLS_PER_TURN {
+                prepared.push(Some(settled(format!(
+                    "error: this turn carried {} calls; at most {MAX_CALLS_PER_TURN} run per turn — split the batch",
+                    calls.len()
+                ))));
+                continue;
+            }
             prepared.push(Some(self.prepare_call(call)?));
+        }
+        // The resolution ledger: one row per call, computed after the
+        // gate so a refusal is recorded as one. The log write happens
+        // with the result, in the batch's own order.
+        for (index, call) in calls.iter().enumerate() {
+            let mut resolution = self.resolution_for(call);
+            if let Some(Some(Prepared::Settled { output, .. })) = prepared.get(index) {
+                if output.starts_with("denied") || output.starts_with("error") {
+                    resolution.method = "refused".to_string();
+                    resolution.resolved = String::new();
+                    resolution.reason = output
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(160)
+                        .collect();
+                }
+            }
+            self.resolutions.insert(call.id.clone(), resolution);
         }
         // Phase 2: the plan, then the waves.
         let plan = plan_batch(&prepared, concurrency_bound());
@@ -2506,6 +2568,15 @@ impl<'a> Agent<'a> {
             // read.
             if approved && !output.starts_with("error") {
                 self.note_read(&call.function.name, &call.function.arguments);
+                if tools::resolve_name(&call.function.name)
+                    .is_some_and(|(tool, _)| tool == Tool::Todo)
+                {
+                    if let Ok(arguments) =
+                        serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    {
+                        store_todo(&self.todos, &arguments);
+                    }
+                }
             }
             let _ = writeln!(
                 self.progress,
@@ -2517,11 +2588,26 @@ impl<'a> Agent<'a> {
                 },
             );
             let _ = self.progress.flush();
+            let resolution = self
+                .resolutions
+                .remove(&call.id)
+                .unwrap_or_else(|| self.resolution_for(call));
+            let resolution_note = format!("{} \u{b7} {}", resolution.method, resolution.reason);
             self.emit(UiEvent::ToolResult {
                 name: call.function.name.clone(),
                 preview: preview(&output, 80),
                 approved,
+                resolution: Some(resolution_note),
             });
+            self.record(&Record::ToolResolution {
+                call_id: call.id.clone(),
+                requested: resolution.requested,
+                resolved: resolution.resolved,
+                method: resolution.method,
+                reason: resolution.reason,
+                catalog: resolution.catalog,
+                tier: resolution.tier,
+            })?;
             self.record(&Record::ToolResult {
                 call_id: call.id.clone(),
                 name: call.function.name.clone(),
@@ -2938,6 +3024,7 @@ impl<'a> Agent<'a> {
                         // The run's file access, decided at the boundary:
                         // a folder, nothing, or the process's directory.
                         access: self.options.file_access.clone(),
+                        spill: self.session.path().parent().map(|dir| dir.join("calls")),
                     }))
                 }
             },
@@ -3469,6 +3556,9 @@ enum Work {
         tool: Tool,
         arguments: serde_json::Value,
         access: FileAccess,
+        /// Where a cut result's full text is written, when the run has
+        /// a session directory to put it beside.
+        spill: Option<std::path::PathBuf>,
     },
     /// A skill's body, fetched from this run's declared list.
     UseSkill {
@@ -3557,6 +3647,7 @@ async fn run_work(work: Work) -> (String, bool) {
             tool,
             arguments,
             access,
+            spill,
         } => {
             // The write-time guard reads the vocabulary of the tree the
             // run works in: the chat's folder when it has one, else the
@@ -3607,13 +3698,13 @@ async fn run_work(work: Work) -> (String, bool) {
                 // of the process (KI-232). The guard is the one caller
                 // that knows the tree changed.
                 crate::nomenclature::invalidate(&guard_root);
-                let (output, truncated) = run_builtin(tool, arguments, access).await;
+                let (output, truncated) = run_builtin(tool, arguments, access, spill).await;
                 return match note {
                     Some(note) => (format!("{output}\n{note}"), truncated),
                     None => (output, truncated),
                 };
             }
-            run_builtin(tool, arguments, access).await
+            run_builtin(tool, arguments, access, spill).await
         }
         Work::UseSkill { skills, arguments } => {
             let outcome = tools::bound(ToolOutcome {
@@ -3856,16 +3947,18 @@ async fn run_builtin(
     tool: Tool,
     arguments: serde_json::Value,
     access: FileAccess,
+    spill: Option<std::path::PathBuf>,
 ) -> (String, bool) {
+    let unknown = tools::unknown_arguments(tool, &arguments);
     // KI-017: tool execution is blocking work (a `bash` child can run
     // for minutes), so it leaves the async context on the blocking pool
     // instead of stalling the runtime's worker thread.
     match tokio::task::spawn_blocking(move || match access {
         // A chat's folder is a boundary: relative paths resolve under
         // it and a path that leaves it is refused.
-        FileAccess::Folder(root) => tool.execute_in(&arguments, &root),
+        FileAccess::Folder(root) => tool.execute_in_with_spill(&arguments, &root, spill.as_deref()),
         // No folder: the process's working directory, unrestricted.
-        FileAccess::Unrestricted => tool.execute(&arguments),
+        FileAccess::Unrestricted => tool.execute_with_spill(&arguments, spill.as_deref()),
         // Unreachable from the loop — the gate refuses the call first —
         // but a run built by hand still gets the rule rather than a
         // panic.
@@ -3877,7 +3970,20 @@ async fn run_builtin(
     .await
     {
         Err(error) => (format!("error: the tool task failed: {error}"), false),
-        Ok(Ok(outcome)) => (outcome.output, outcome.truncated),
+        Ok(Ok(outcome)) => {
+            if unknown.is_empty() {
+                (outcome.output, outcome.truncated)
+            } else {
+                (
+                    format!(
+                        "note: unknown arguments ignored: {}\n{}",
+                        unknown.join(", "),
+                        outcome.output
+                    ),
+                    outcome.truncated,
+                )
+            }
+        }
         Ok(Err(message)) => (format!("error: {message}"), false),
     }
 }
@@ -4281,6 +4387,12 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
 impl Agent<'_> {
     /// Remember a successful read, when the call was one. The edit
     /// tool's safety rule is this set.
+    /// The run's task list as a fold block, when it has one.
+    fn todo_block(&self) -> Option<String> {
+        let todos = self.todos.lock().ok()?;
+        (!todos.is_empty()).then(|| render_todo_block(&todos))
+    }
+
     fn note_read(&self, name: &str, raw: &str) {
         if !tools::resolve_name(name).is_some_and(|(tool, _)| tool == Tool::ReadFile) {
             return;
@@ -4296,6 +4408,121 @@ impl Agent<'_> {
         };
         if let Ok(mut reads) = self.reads.lock() {
             reads.insert(marker);
+        }
+    }
+}
+
+/// Remember a todo call's list. Full replacement, like the tool's own
+/// contract: the list the model last sent is the run's list.
+fn store_todo(todos: &std::sync::Mutex<Vec<(String, String)>>, arguments: &serde_json::Value) {
+    let Some(items) = arguments.get("items").and_then(|value| value.as_array()) else {
+        return;
+    };
+    let mut next: Vec<(String, String)> = Vec::new();
+    for item in items {
+        let Some(step) = item.get("step").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let status = match item.get("status").and_then(|value| value.as_str()) {
+            Some("completed" | "done" | "finished") => "completed",
+            Some("in_progress" | "in-progress" | "inprogress" | "doing" | "active") => {
+                "in_progress"
+            }
+            _ => "pending",
+        };
+        next.push((step.to_string(), status.to_string()));
+    }
+    if let Ok(mut todos) = todos.lock() {
+        *todos = next;
+    }
+}
+
+/// The block a fold carries.
+fn render_todo_block(items: &[(String, String)]) -> String {
+    let mut out = String::from("## Task list (carried across the fold)\n");
+    for (step, status) in items {
+        let mark = match status.as_str() {
+            "completed" => "[x]",
+            "in_progress" => "[~]",
+            _ => "[ ]",
+        };
+        out.push_str(&format!("{mark} {step}\n"));
+    }
+    out
+}
+
+/// One call's resolution, before it is written to the log.
+#[derive(Debug, Clone)]
+struct Resolution {
+    requested: String,
+    resolved: String,
+    method: String,
+    reason: String,
+    catalog: usize,
+    tier: String,
+}
+
+impl Agent<'_> {
+    /// Resolve one call for the record: the name it asked for, the tool
+    /// that answered, and the method that joined them. The gate's
+    /// override makes a sibling refusal.
+    fn resolution_for(&self, call: &ToolCall) -> Resolution {
+        let declared = self.declarations();
+        let catalog = declared.len();
+        let tiered = declared
+            .iter()
+            .any(|spec| spec.name() == tools::TOOL_SEARCH_TOOL);
+        let name = call.function.name.as_str();
+        let lane = name.starts_with(tools::MCP_NAMESPACE);
+        let tier = if lane && tiered { "deferred" } else { "core" }.to_string();
+        match tools::resolve_name(name) {
+            Some((tool, true)) => Resolution {
+                requested: name.to_string(),
+                resolved: tool.name().to_string(),
+                method: "alias".to_string(),
+                reason: format!("alias of `{}`", tool.name()),
+                catalog,
+                tier: "core".to_string(),
+            },
+            Some((tool, false)) => {
+                let retrieved = self.activated.contains(name);
+                Resolution {
+                    requested: name.to_string(),
+                    resolved: tool.name().to_string(),
+                    method: if retrieved { "retrieved" } else { "exact" }.to_string(),
+                    reason: if retrieved {
+                        "activated by tool_search".to_string()
+                    } else {
+                        match self
+                            .client
+                            .route_decision()
+                            .and_then(|decision| decision.workload)
+                        {
+                            Some(workload) => format!("declared \u{b7} profile: {workload}"),
+                            None => "declared".to_string(),
+                        }
+                    },
+                    catalog,
+                    tier,
+                }
+            }
+            None => {
+                let retrieved = self.activated.contains(name);
+                Resolution {
+                    requested: name.to_string(),
+                    resolved: name.to_string(),
+                    method: if retrieved { "retrieved" } else { "exact" }.to_string(),
+                    reason: if retrieved {
+                        "activated by tool_search".to_string()
+                    } else if tools::lane_of(name).is_some() {
+                        "lane tool".to_string()
+                    } else {
+                        "special tool".to_string()
+                    },
+                    catalog,
+                    tier,
+                }
+            }
         }
     }
 }
@@ -4338,6 +4565,86 @@ fn tier_declarations(
     }
     specs.push(tools::tool_search_spec());
     specs
+}
+
+/// The rank a workload gives a tool, or `usize::MAX` for a tool the
+/// profile does not name.
+fn profile_rank(workload: &str, name: &str) -> usize {
+    let order: &[&str] = match workload {
+        "standard_code" => &[
+            "read_file",
+            "edit",
+            "grep",
+            "glob",
+            "bash",
+            "list_dir",
+            "write_file",
+            "todo",
+        ],
+        "quick" => &[
+            "read_file",
+            "bash",
+            "write_file",
+            "list_dir",
+            "edit",
+            "grep",
+            "glob",
+            "todo",
+        ],
+        "hard" => &[
+            "read_file",
+            "grep",
+            "edit",
+            "bash",
+            "glob",
+            "write_file",
+            "list_dir",
+            "todo",
+        ],
+        "prose" => &[
+            "read_file",
+            "write_file",
+            "glob",
+            "grep",
+            "list_dir",
+            "edit",
+            "bash",
+            "todo",
+        ],
+        "deep_context" => &[
+            "grep",
+            "glob",
+            "read_file",
+            "list_dir",
+            "edit",
+            "bash",
+            "write_file",
+            "todo",
+        ],
+        _ => return usize::MAX,
+    };
+    order
+        .iter()
+        .position(|tool| *tool == name)
+        .unwrap_or(usize::MAX)
+}
+
+/// Reorder the native declarations by the run's workload. Only the
+/// native head is touched; the specials and lane tools keep their
+/// order, so the prompt prefix stays stable for everything else.
+fn profile_order(specs: &mut [crate::api::ToolSpec], workload: Option<&str>) {
+    let Some(workload) = workload else {
+        return;
+    };
+    let count = tools::ALL_TOOLS.len().min(specs.len());
+    if !specs[..count]
+        .iter()
+        .all(|spec| tools::Tool::from_name(spec.name()).is_some())
+    {
+        return;
+    }
+    specs[..count]
+        .sort_by_key(|spec| (profile_rank(workload, spec.name()), spec.name().to_string()));
 }
 
 /// The tokens one declaration list costs, estimated the way the
@@ -5287,13 +5594,39 @@ impl LaneRoster {
                 // run's home is the same one `improve` files under, with
                 // the ambient home as the fallback for a run that has
                 // none.
-                let arguments = match &self.home {
-                    Some(home) => crate::lanes::lane_arguments(home, lane, &lane_tool, arguments),
-                    None => arguments.clone(),
+                let (arguments, applied) = match &self.home {
+                    Some(home) => {
+                        let before: std::collections::BTreeSet<String> = arguments
+                            .as_object()
+                            .map(|object| object.keys().cloned().collect())
+                            .unwrap_or_default();
+                        let merged =
+                            crate::lanes::lane_arguments(home, lane, &lane_tool, arguments);
+                        let added: Vec<String> = merged
+                            .as_object()
+                            .map(|object| {
+                                object
+                                    .keys()
+                                    .filter(|key| !before.contains(*key))
+                                    .cloned()
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        (merged, added)
+                    }
+                    None => (arguments.clone(), Vec::new()),
                 };
                 match server.call_tool(&lane_tool, arguments).await {
                     Ok(result) => LaneOutcome {
-                        text: lane_call_output(&result),
+                        text: if applied.is_empty() {
+                            lane_call_output(&result)
+                        } else {
+                            format!(
+                                "note: applied configured defaults from lanes.json: {}\n{}",
+                                applied.join(", "),
+                                lane_call_output(&result)
+                            )
+                        },
                         truncated: false,
                         joined,
                     },
@@ -5362,7 +5695,7 @@ impl LaneRoster {
     /// declarations and the log are stable; a server that fails to join
     /// is dead for the run (its calls would fail fast had the model a
     /// name to call) and its reason rides back for the progress log.
-    async fn pre_join(&mut self) -> (Vec<(String, Vec<LaneTool>)>, Vec<String>) {
+    async fn pre_join(&mut self) -> (Vec<(String, Vec<LaneTool>)>, Vec<(String, String)>) {
         let mut joined = Vec::new();
         let mut failures = Vec::new();
         let mut names: Vec<String> = self.specs.keys().cloned().collect();
@@ -5385,7 +5718,7 @@ impl LaneRoster {
                     joined.push((name, tools));
                 }
                 Err(reason) => {
-                    failures.push(format!("server `{name}` did not join: {reason}"));
+                    failures.push((name.clone(), reason.clone()));
                     self.children.insert(
                         name,
                         LaneChild::Dead {
@@ -5688,6 +6021,7 @@ mod tests {
                 data: serde_json::json!("`items` must be a string"),
             }],
             is_error: true,
+            structured: None,
         };
         assert_eq!(
             lane_call_output(&refused),
@@ -5700,6 +6034,7 @@ mod tests {
                 data: serde_json::json!("{\"dims\": 768}"),
             }],
             is_error: false,
+            structured: None,
         };
         assert_eq!(lane_call_output(&answered), "{\"dims\": 768}");
     }
@@ -7794,6 +8129,7 @@ You are auditing a change. Read the diff before you judge it.
             tool,
             arguments,
             access: FileAccess::Folder(std::path::PathBuf::from("/root")),
+            spill: None,
         })
     }
 
@@ -8531,6 +8867,7 @@ You are auditing a change. Read the diff before you judge it.
                 "content": "let judgeRoute = 1;"
             }),
             access: FileAccess::Folder(root.clone()),
+            spill: None,
         })
         .await;
         assert!(output.contains("write_file` refused"), "{output}");
@@ -8544,6 +8881,7 @@ You are auditing a change. Read the diff before you judge it.
                 "content": "let route_judge = 1;"
             }),
             access: FileAccess::Folder(root.clone()),
+            spill: None,
         })
         .await;
         assert_eq!(
@@ -8571,6 +8909,7 @@ You are auditing a change. Read the diff before you judge it.
                 "content": "# The Plan\n\n## Context\n\nThe judge route is stable. Approach: reuse it.\n"
             }),
             access: FileAccess::Folder(root.clone()),
+            spill: None,
         })
         .await;
         assert!(
@@ -8773,11 +9112,64 @@ mod tier_tests {
     }
 
     #[test]
+    fn the_workload_profile_orders_the_native_tools() {
+        let mut specs: Vec<_> = crate::tools::ALL_TOOLS
+            .iter()
+            .map(|tool| tool.spec())
+            .collect();
+        profile_order(&mut specs, Some("standard_code"));
+        assert_eq!(specs[0].name(), "read_file");
+        assert_eq!(specs[1].name(), "edit");
+        let mut prose: Vec<_> = crate::tools::ALL_TOOLS
+            .iter()
+            .map(|tool| tool.spec())
+            .collect();
+        profile_order(&mut prose, Some("prose"));
+        assert_eq!(prose[0].name(), "read_file");
+        assert_eq!(prose[1].name(), "write_file");
+        let mut none: Vec<_> = crate::tools::ALL_TOOLS
+            .iter()
+            .map(|tool| tool.spec())
+            .collect();
+        let before: Vec<String> = none.iter().map(|spec| spec.name().to_string()).collect();
+        profile_order(&mut none, None);
+        let after: Vec<String> = none.iter().map(|spec| spec.name().to_string()).collect();
+        assert_eq!(before, after);
+    }
+
+    #[test]
     fn a_catalog_that_fits_is_declared_whole() {
         let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
         let lanes: Vec<_> = (0..3).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
         let tiers = tier_declarations(core, lanes, &BTreeSet::new());
         assert_eq!(tiers.len(), 11);
         assert!(!tiers.iter().any(|spec| spec.name() == "tool_search"));
+    }
+}
+
+#[cfg(test)]
+mod todo_ledger_tests {
+    use super::*;
+
+    #[test]
+    fn the_ledger_replaces_the_list_and_marks_statuses() {
+        let todos = std::sync::Mutex::new(Vec::new());
+        store_todo(
+            &todos,
+            &serde_json::json!({"items": [
+                {"step": "read", "status": "done"},
+                {"step": "edit", "status": "doing"},
+                {"step": "test"}
+            ]}),
+        );
+        let block = render_todo_block(&todos.lock().unwrap());
+        assert!(block.contains("[x] read"), "{block}");
+        assert!(block.contains("[~] edit"), "{block}");
+        assert!(block.contains("[ ] test"), "{block}");
+        // A second call replaces, never appends.
+        store_todo(&todos, &serde_json::json!({"items": [{"step": "ship"}]}));
+        let items = todos.lock().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, "ship");
     }
 }

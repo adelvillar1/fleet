@@ -257,6 +257,10 @@ pub struct CallResult {
     pub content: Vec<ContentBlock>,
     /// The server's `isError` flag: the call ran, the tool refused.
     pub is_error: bool,
+    /// The result's `structuredContent`, when the server sent one. The
+    /// text blocks stay the model's primary reading; this is the typed
+    /// answer beside them and the fallback when there is no text.
+    pub structured: Option<Value>,
 }
 
 impl CallResult {
@@ -279,6 +283,10 @@ impl CallResult {
             }
         }
         if parts.is_empty() {
+            if let Some(structured) = &self.structured {
+                return serde_json::to_string(structured)
+                    .unwrap_or_else(|_| "(the tool returned structured content)".to_string());
+            }
             return "(the tool returned no content)".to_string();
         }
         parts.join("\n")
@@ -463,13 +471,30 @@ impl McpServer {
     /// The server's tool roster. Part of the startup handshake, so a
     /// failure here carries the child's stderr tail too (KI-043).
     pub async fn list_tools(&self) -> Result<Vec<ToolInfo>, McpError> {
-        match self
-            .request("tools/list", json!({}), self.timeouts.list)
-            .await
-        {
-            Ok(result) => parse_tools(result),
-            Err(error) => Err(annotated(error, &self.stderr_tail())),
+        let mut roster: Vec<ToolInfo> = Vec::new();
+        let mut cursor: Option<String> = None;
+        // Cursor pages, bounded: a server that keeps answering a cursor
+        // cannot make the join unbounded.
+        for _ in 0..10 {
+            let params = match &cursor {
+                Some(cursor) => json!({ "cursor": cursor }),
+                None => json!({}),
+            };
+            let result = match self.request("tools/list", params, self.timeouts.list).await {
+                Ok(result) => result,
+                Err(error) => return Err(annotated(error, &self.stderr_tail())),
+            };
+            roster.extend(parse_tools(result.clone())?);
+            cursor = result
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .filter(|cursor| !cursor.is_empty())
+                .map(str::to_string);
+            if cursor.is_none() {
+                break;
+            }
         }
+        Ok(roster)
     }
 
     /// The last `STDERR_TAIL_BYTES` the child wrote to stderr, as text.
@@ -546,8 +571,17 @@ impl McpServer {
                 "no reply to `{method}` before the child closed its output"
             ))),
             Err(_elapsed) => {
-                // A late reply now finds no waiter and is ignored.
+                // A late reply now finds no waiter and is ignored. The
+                // server is told the request is gone, best effort and
+                // bounded: a wedged child must not extend the wait it
+                // already blew.
                 lock(&self.pending).remove(&id);
+                let cancellation = json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": { "requestId": id, "reason": "timeout" },
+                });
+                let _ = timeout(Duration::from_millis(250), self.write_frame(&cancellation)).await;
                 Err(McpError::Timeout {
                     method: method.to_string(),
                     budget,
@@ -683,6 +717,7 @@ fn parse_call(result: Value) -> Result<CallResult, McpError> {
                 data: Value::String(message.to_string()),
             }],
             is_error: true,
+            structured: None,
         });
     }
     let content = result
@@ -708,6 +743,10 @@ fn parse_call(result: Value) -> Result<CallResult, McpError> {
             .get("isError")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        structured: result
+            .get("structuredContent")
+            .cloned()
+            .filter(|value| !value.is_null()),
     })
 }
 
@@ -1133,6 +1172,22 @@ mod tests {
             false,
         );
         assert_eq!(result.text(), "{\"dims\": 768}\nmodel: bge-small\n[image]");
+
+        // A typed result with no text blocks is still an answer: the
+        // structured content is the fallback reading.
+        let structured = parse_call(json!({
+            "content": [],
+            "structuredContent": { "dims": 768, "model": "bge-small" }
+        }))
+        .unwrap();
+        assert_eq!(structured.text(), "{\"dims\":768,\"model\":\"bge-small\"}");
+        // When both arrive, the text is what the model already reads.
+        let both = parse_call(json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "structuredContent": { "dims": 768 }
+        }))
+        .unwrap();
+        assert_eq!(both.text(), "ok");
     }
 
     #[test]

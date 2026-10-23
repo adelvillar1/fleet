@@ -426,6 +426,9 @@ pub enum ToolsAction {
     Scan { sessions: usize },
     /// Turn the scan into evidence-backed suggestions.
     Advise { sessions: usize },
+    /// Measure one session's tool calls: validity, error classes,
+    /// truncation, redundancy, recovery, and resolutions by method.
+    Audit { session: Option<String> },
 }
 
 /// What `fleet cron` was asked to do.
@@ -552,12 +555,13 @@ usage:
                                 fires on its own; --force folds one that
                                 is still under it
   fleet lanes                    probe the four vendored lanes' health
-  fleet tools [scan|advise] [--sessions N]
+  fleet tools [scan|advise|audit] [--sessions N] [<session>]
                                 the eight built-in tools; scan counts the
                                 last N sessions' calls, errors, unknown
                                 names and bash work a native tool covers;
                                 advise turns the counts into build, fix,
-                                adopt and retire suggestions
+                                adopt and retire suggestions; audit measures
+                                one session's calls and resolutions
   fleet providers                list the routing roster and per-provider state
   fleet calib [--day <date>] [--calibration]
                                 the calibration stream: one day's rows by op;
@@ -1406,6 +1410,16 @@ fn parse_tools(args: &[String]) -> Result<Command, String> {
                 sessions: sessions(rest)?,
             },
         })),
+        "audit" => {
+            if rest.len() > 1 {
+                return Err("audit takes one optional session id".to_string());
+            }
+            Ok(Command::Tools(ToolsOptions {
+                action: ToolsAction::Audit {
+                    session: rest.first().cloned(),
+                },
+            }))
+        }
         other => Err(format!(
             "unknown tools subcommand `{other}`; the verbs are list (bare), scan, advise"
         )),
@@ -3142,6 +3156,20 @@ mod tests {
             parse(&args(&["tools", "advise"])).unwrap(),
             Command::Tools(ToolsOptions {
                 action: ToolsAction::Advise { sessions: 20 }
+            })
+        );
+        assert_eq!(
+            parse(&args(&["tools", "audit"])).unwrap(),
+            Command::Tools(ToolsOptions {
+                action: ToolsAction::Audit { session: None }
+            })
+        );
+        assert_eq!(
+            parse(&args(&["tools", "audit", "abc"])).unwrap(),
+            Command::Tools(ToolsOptions {
+                action: ToolsAction::Audit {
+                    session: Some("abc".into())
+                }
             })
         );
         assert!(parse(&args(&["tools", "advise", "--sessions", "0"])).is_err());

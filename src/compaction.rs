@@ -160,6 +160,45 @@ pub fn summary_frame(first_turn: u64, last_turn: u64, summary: &str) -> String {
 /// The agent and the session log's replay both call this one function
 /// on the same message list, so the split a compaction records and the
 /// split a replay reconstructs cannot drift.
+/// How many of the most recent tool results a fold keeps verbatim.
+pub const VERBATIM_TOOL_RESULTS: usize = 6;
+
+/// Replace older tool results with a byte-count stub before the region
+/// is summarized. The observation is the expensive part of a long
+/// conversation, and a summary of summaries does not need every log
+/// line to say what the work was; the recent tail keeps the ones the
+/// next turn might act on.
+pub fn elide_tool_results(messages: &[Message], keep: usize) -> Vec<Message> {
+    let tools: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| message.role == Role::Tool)
+        .map(|(index, _)| index)
+        .collect();
+    let cut = tools.len().saturating_sub(keep);
+    let elide: std::collections::BTreeSet<usize> = tools.into_iter().take(cut).collect();
+    messages
+        .iter()
+        .enumerate()
+        .map(|(index, message)| {
+            if elide.contains(&index) {
+                let bytes = message
+                    .content
+                    .as_deref()
+                    .map(|text| text.len())
+                    .unwrap_or(0);
+                let mut stub = message.clone();
+                stub.content = Some(format!(
+                    "[tool output elided before the fold: {bytes} bytes; the result was already read]"
+                ));
+                stub
+            } else {
+                message.clone()
+            }
+        })
+        .collect()
+}
+
 pub fn tail_start(messages: &[Message]) -> usize {
     let assistants = messages
         .iter()
@@ -416,5 +455,36 @@ mod tests {
         // The fork's prior-checkpoint rule: a second compaction folds the
         // first summary rather than copying it forward.
         assert!(COMPACTION_INSTRUCTION.contains("prior checkpoint"));
+    }
+}
+
+#[cfg(test)]
+mod elision_tests {
+    use super::*;
+
+    #[test]
+    fn a_fold_elides_old_tool_results_and_keeps_the_recent_tail() {
+        let mut messages = vec![Message::text(Role::User, "start")];
+        for index in 0..8 {
+            messages.push(Message::tool_result(
+                format!("c{index}"),
+                format!("tool output {index}"),
+            ));
+        }
+        let elided = elide_tool_results(&messages, 6);
+        assert_eq!(elided.len(), messages.len());
+        assert!(elided[1]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("elided before the fold"));
+        assert!(elided[2]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("elided before the fold"));
+        assert_eq!(elided[3].content.as_deref(), Some("tool output 2"));
+        assert_eq!(elided[8].content.as_deref(), Some("tool output 7"));
+        assert_eq!(elided[0].content.as_deref(), Some("start"));
     }
 }

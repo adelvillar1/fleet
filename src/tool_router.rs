@@ -315,6 +315,40 @@ fn tokens(text: &str) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+/// One provider of a capability, as the dispatch policy sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provider {
+    pub name: String,
+    /// Already joined or loaded, so calling it costs no spawn.
+    pub warm: bool,
+    /// The last health probe said it answers.
+    pub healthy: bool,
+}
+
+/// Choose a provider: warm first, then healthy, then declared order.
+/// `write` capabilities never fall back — a half-applied write in two
+/// places is worse than a refusal — so their choice is the first
+/// provider or none.
+pub fn choose(providers: &[Provider], write: bool) -> Option<(&Provider, &'static str)> {
+    if write {
+        return providers
+            .first()
+            .map(|provider| (provider, "the only provider for a write"));
+    }
+    if let Some(provider) = providers
+        .iter()
+        .find(|provider| provider.warm && provider.healthy)
+    {
+        return Some((provider, "warm and healthy"));
+    }
+    if let Some(provider) = providers.iter().find(|provider| provider.healthy) {
+        return Some((provider, "healthy; a cold spawn is accepted"));
+    }
+    providers
+        .first()
+        .map(|provider| (provider, "no healthy provider; the first is tried"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,5 +441,101 @@ mod tests {
             catalog_hash(&[a.clone(), b.clone()], Some("read")),
             catalog_hash(&[a, b], Some("read"))
         );
+    }
+
+    fn fake_vector(text: &str) -> Vec<f32> {
+        let dims = 128;
+        let mut vector = vec![0.0f32; dims];
+        for token in text.split(|c: char| !c.is_alphanumeric()) {
+            if token.len() < 3 {
+                continue;
+            }
+            let mut hash = 0xcbf29ce484222325u64;
+            for byte in token.to_lowercase().bytes() {
+                hash ^= byte as u64;
+                hash = hash.wrapping_mul(0x100000001b3);
+            }
+            vector[(hash as usize) % dims] += 1.0;
+        }
+        let norm: f32 = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            for value in &mut vector {
+                *value /= norm;
+            }
+        }
+        vector
+    }
+
+    #[test]
+    fn selection_ranks_the_expected_tool_across_the_corpus() {
+        // Forty candidates, twenty-four queries, each naming one
+        // candidate's distinctive token. The point is the pipeline —
+        // query, cards, cosine, floor — not the quality of a fake
+        // embedder.
+        let candidates: Vec<Candidate> = (0..40)
+            .map(|index| {
+                candidate(
+                    &format!("c{index}"),
+                    &format!("capability token{index} work"),
+                )
+            })
+            .collect();
+        let card_vectors: Vec<Vec<f32>> = candidates
+            .iter()
+            .map(|candidate| fake_vector(&format!("{} {}", candidate.name, candidate.description)))
+            .collect();
+        let mut hits = 0;
+        for index in 0..24 {
+            let mut vectors = vec![fake_vector(&format!("do token{index} now"))];
+            vectors.extend(card_vectors.iter().cloned());
+            let ranked = rank_by_vectors(&vectors, &candidates, None);
+            let top: Vec<&str> = ranked
+                .iter()
+                .take(3)
+                .map(|rank| rank.name.as_str())
+                .collect();
+            if top.contains(&format!("c{index}").as_str()) {
+                hits += 1;
+            }
+        }
+        assert!(hits >= 20, "only {hits}/24 in the top three");
+    }
+
+    #[test]
+    fn dispatch_prefers_warm_then_healthy_then_order() {
+        let providers = vec![
+            Provider {
+                name: "cold".into(),
+                warm: false,
+                healthy: true,
+            },
+            Provider {
+                name: "warm".into(),
+                warm: true,
+                healthy: true,
+            },
+            Provider {
+                name: "dead".into(),
+                warm: true,
+                healthy: false,
+            },
+        ];
+        let (chosen, reason) = choose(&providers, false).unwrap();
+        assert_eq!(chosen.name, "warm");
+        assert_eq!(reason, "warm and healthy");
+        // A write never falls back: the first provider is the choice,
+        // whatever its health.
+        let (chosen, reason) = choose(&providers, true).unwrap();
+        assert_eq!(chosen.name, "cold");
+        assert!(reason.contains("only provider"));
+        // Nothing healthy: the first is tried, and the reason says so.
+        let dead = vec![Provider {
+            name: "dead".into(),
+            warm: false,
+            healthy: false,
+        }];
+        let (chosen, reason) = choose(&dead, false).unwrap();
+        assert_eq!(chosen.name, "dead");
+        assert!(reason.contains("no healthy"));
     }
 }

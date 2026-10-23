@@ -49,6 +49,7 @@ src/agent.rs            the tool loop, approvals, turn cap, progress reporting
 src/tools.rs            the eight built-ins, schemas and validation, alias resolution, output capping
 src/fileops.rs          window reads, atomic writes, the anchored edit and its diff
 src/tool_advisor.rs     the session scan and the build/fix/adopt/retire advice
+src/tool_audit.rs       one session's tool rates: validity, classes, p95, recovery, resolutions
 src/search.rs           grep and glob, capped and counted
 src/tool_router.rs      sys1 capability parsing, sem1 ranking, floor/margin, lexical fallback
 src/approvals.rs        the three-mode approval gate: ask, yes, yes-guarded, and the always-ask class
