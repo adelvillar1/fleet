@@ -15,6 +15,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
 const SRC = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.js'), 'utf8');
 const HTML = fs.readFileSync(path.join(ROOT, 'src/gui/assets/index.html'), 'utf8');
+const CSS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.css'), 'utf8');
+const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
+const ruleBlock = (selector) => {
+  const at = CSS.indexOf(selector + ' {');
+  if (at < 0) return '';
+  const end = CSS.indexOf('}', at);
+  return flat(CSS.slice(at + selector.length + 1, end));
+};
 
 // ------------------------------------------------------------------ DOM
 
@@ -621,6 +629,127 @@ async function aFinishedRunStopsBlockingTheNextSend() {
     runs.length ? runs[0].url : 'no run');
 }
 
+
+// C7: the dock is closed by default at 1600 and the work column holds
+// its place; the prose measure stays inside 80ch. The mode is the DOM's
+// to prove here; the rules that produce the geometry are read from the
+// stylesheet, because a DOM stub has no layout engine (the live pass
+// measures the pixels at 1600).
+async function theDockIsClosedAndTheWorkColumnTakesItsPlace() {
+  const page = boot({
+    width: 1600,
+    hash: '#/sessions/wide-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('wide-1', 'completed', { title: 'a wide conversation' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  check('C7 the dock is closed by default at 1600', page.body.dataset.aside === 'closed',
+    String(page.body.dataset.aside));
+  check('C7 the work column is open', page.body.dataset.work === 'open', String(page.body.dataset.work));
+  check('C7 the work column is shown', page.IDS['work-col'].hidden === false, 'hidden');
+  check('C7 the column has a width token', flat(CSS).includes('--work-width: 320px'), '--work-width');
+  check('C7 the conversation is inset by the column',
+    ruleBlock('body[data-work="open"] .stage').includes('margin-left: var(--work-width)'),
+    ruleBlock('body[data-work="open"] .stage'));
+  check('C7 the column sits beside the rail and is that wide',
+    ruleBlock('.work-col').includes('left: var(--rail-width)') &&
+      ruleBlock('.work-col').includes('width: var(--work-width)'),
+    ruleBlock('.work-col'));
+  check('C7 the sheet drops the inset where there is no room',
+    flat(CSS).includes('body[data-work="open"] .stage { margin-left: 0; }'), 'narrow override');
+  const measure = (ruleBlock('.assistant').match(/max-width: (\d+)ch/) || [])[1];
+  check('C7 the prose measure is at most 80ch', measure && Number(measure) <= 80, String(measure));
+}
+
+// C8: the addresses — `#/chat` is the new-work front door, and a reload
+// at `#/sessions/<id>` reopens that conversation with the list beside it.
+async function theAddressesHold() {
+  const chat = boot({
+    width: 1600,
+    hash: '#/chat',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('some-1', 'completed', { title: 'a past conversation' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  chat.open();
+  await flush();
+  check('C8 #/chat closes the work column', chat.body.dataset.work !== 'open', String(chat.body.dataset.work));
+  check('C8 #/chat hides the work column', chat.IDS['work-col'].hidden === true, 'hidden');
+  check('C8 #/chat shows the front door', chat.IDS['empty'].hidden === false, 'empty hidden');
+  check('C8 #/chat hides the conversation head', chat.IDS['conv-head'].hidden === true, 'head hidden');
+  check('C8 #/chat keeps the composer', chat.IDS['composer'].offsetHeight > 0, 'composer');
+
+  const opened = boot({
+    width: 1600,
+    hash: '#/sessions/addressed-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('addressed-1', 'completed', { title: 'the addressed one' })],
+      },
+      state: (asked) => ({
+        ...emptyState(asked), session: asked,
+        events: [{ type: 'message', role: 'owner', text: 'earlier words' }],
+      }),
+    },
+  });
+  await flush();
+  opened.open();
+  await flush();
+  const resumes = opened.calls.filter((c) => c.url.startsWith('/api/resume') && String(c.body).includes('addressed-1'));
+  check('C8 a reload at an id resumes that conversation', resumes.length >= 1, String(resumes.length));
+  check('C8 the head names the addressed conversation', opened.text('conv-name') === 'the addressed one',
+    opened.text('conv-name'));
+  check('C8 the list stands beside it', opened.IDS['work-col'].hidden === false &&
+    opened.rows('.work-row').length === 1, String(opened.rows('.work-row').length));
+  check('C8 its history is loaded', opened.text('log').includes('earlier words'), opened.text('log').slice(0, 80));
+}
+
+// C3: the pencil renames — one route, the conversation's id, the typed
+// title. The title itself is the switcher, so the two gestures cannot
+// fight over one control.
+async function thePencilRenamesTheConversation() {
+  const page = boot({
+    width: 1440,
+    hash: '#/sessions/name-1',
+    promptAnswer: 'the new name',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('name-1', 'completed', { title: 'the old name' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.fireOn('conv-rename', 'click');
+  await flush();
+  const renames = page.calls.filter((c) => c.url.startsWith('/api/session/title'));
+  check('C3 the pencil posts the rename', renames.length === 1, String(renames.length));
+  check('C3 the rename names the conversation and the title',
+    renames.length === 1 && String(renames[0].url).includes('name-1') &&
+      String(renames[0].body).includes('the new name'),
+    renames.length ? renames[0].url + ' ' + renames[0].body : 'no rename');
+}
+
 // --------------------------------------------------------------------- run
 
 const cases = [
@@ -631,6 +760,9 @@ const cases = [
   ['C5 a finished run stops blocking the next send', aFinishedRunStopsBlockingTheNextSend],
   ['C6 a streamed reply renders at its boundary', aStreamedReplyRendersAtItsBoundary],
   ['C6 a replayed reply renders as markdown', aReplayedReplyRendersAsMarkdown],
+  ['C3 the pencil renames the conversation', thePencilRenamesTheConversation],
+  ['C7 the dock is closed and the work column takes its place', theDockIsClosedAndTheWorkColumnTakesItsPlace],
+  ['C8 the addresses hold', theAddressesHold],
 ];
 
 for (const [name, run] of cases) {
